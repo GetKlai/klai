@@ -94,7 +94,10 @@ def create_app() -> FastAPI:
 
         # Portal client (control plane) — constructed before adapters so OAuth
         # adapters can receive it for token writeback.
+        # Exposed on app.state for routes that need a live config fetch
+        # (e.g. the post-OAuth folder picker on ms_docs).
         portal_client = PortalClient(settings)
+        app.state.portal_client = portal_client
 
         # Adapter registry
         registry = AdapterRegistry()

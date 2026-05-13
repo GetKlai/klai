@@ -17,6 +17,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import type { ConnectorSummary, CookieRow } from './$kbSlug/-kb-types'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
+import { MsDocsFolderPicker } from './$kbSlug/_components/MsDocsFolderPicker'
 import {
   AuthProbeFeedback,
   PreviewClassificationFeedback,
@@ -96,10 +97,20 @@ function EditConnectorPage() {
   })
   const [folderId, setFolderId] = useState('')
   const [isReconnecting, setIsReconnecting] = useState(false)
-  // ms_docs (SPEC-KB-MS-DOCS-001 R4.4): optional site_url + drive_id
+  // ms_docs (SPEC-KB-MS-DOCS-001 R4.4): optional site_url + drive_id +
+  // post-OAuth scope. Three mutually-exclusive scope modes:
+  //   - msFolderId set → sync subtree under that folder
+  //   - msFileIds non-empty → sync only those pinned files (item_ids)
+  //   - both empty → whole drive
+  // ``msFolderName`` is a display-only cache so the UI can show the
+  // picked folder name without an extra Graph call after save.
   const [msSiteUrl, setMsSiteUrl] = useState('')
   const [msDriveId, setMsDriveId] = useState('')
   const [msSiteUrlError, setMsSiteUrlError] = useState<string | null>(null)
+  const [msFolderId, setMsFolderId] = useState('')
+  const [msFolderName, setMsFolderName] = useState('')
+  const [msFileIds, setMsFileIds] = useState<string[]>([])
+  const [msShowFolderPicker, setMsShowFolderPicker] = useState(false)
   // airtable (SPEC-KB-CONNECTORS-001 R3)
   const [airtableConfig, setAirtableConfig] = useState<AirtableConfig>({
     api_key: '', base_id: '', table_names: '', view_name: '',
@@ -232,10 +243,20 @@ function EditConnectorPage() {
       setFolderId(cfg.folder_id ?? '')
     }
     if (connector.connector_type === 'ms_docs') {
-      const cfg = connector.config as { site_url?: string; drive_id?: string }
+      const cfg = connector.config as {
+        site_url?: string
+        drive_id?: string
+        folder_id?: string
+        folder_name?: string
+        item_ids?: string[]
+      }
       setMsSiteUrl(cfg.site_url ?? '')
       setMsDriveId(cfg.drive_id ?? '')
+      setMsFolderId(cfg.folder_id ?? '')
+      setMsFolderName(cfg.folder_name ?? '')
+      setMsFileIds(Array.isArray(cfg.item_ids) ? cfg.item_ids : [])
       setMsSiteUrlError(null)
+      setMsShowFolderPicker(false)
     }
     if (connector.connector_type === 'airtable') {
       const cfg = connector.config as { api_key?: string; base_id?: string; table_names?: string[]; view_name?: string }
@@ -306,6 +327,14 @@ function EditConnectorPage() {
         setMsSiteUrlError(null)
         if (siteUrl) config.site_url = siteUrl
         if (msDriveId.trim()) config.drive_id = msDriveId.trim()
+        // Scope: file selection takes priority over folder; only one of
+        // the two is ever written. Both empty = whole drive (default).
+        if (msFileIds.length > 0) {
+          config.item_ids = msFileIds
+        } else if (msFolderId.trim()) {
+          config.folder_id = msFolderId.trim()
+          if (msFolderName.trim()) config.folder_name = msFolderName.trim()
+        }
       }
       if (connector.connector_type === 'airtable') {
         if (airtableConfig.api_key.trim()) config.api_key = airtableConfig.api_key.trim()
@@ -1073,6 +1102,56 @@ function EditConnectorPage() {
                 <Label htmlFor="edit-ms-drive-id">{m.admin_connectors_ms_docs_drive_id()}</Label>
                 <Input id="edit-ms-drive-id" placeholder="b!xyz..." value={msDriveId} onChange={(e) => setMsDriveId(e.target.value)} />
                 <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_drive_id_help()}</p>
+              </div>
+              {/* Post-OAuth picker. Three scope modes are mutually
+                  exclusive — folder, files, or whole drive (default). */}
+              <div className="space-y-1.5">
+                <Label>Wat wil je syncen?</Label>
+                <div className="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    {msFileIds.length > 0 ? (
+                      <p className="text-sm text-gray-900 truncate">
+                        {msFileIds.length} bestand{msFileIds.length === 1 ? '' : 'en'} geselecteerd
+                      </p>
+                    ) : msFolderId ? (
+                      <p className="text-sm text-gray-900 truncate">
+                        Map: {msFolderName || 'geselecteerd'}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-gray-400">Hele drive (alles)</p>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setMsShowFolderPicker((p) => !p)}
+                  >
+                    {msShowFolderPicker
+                      ? 'Sluiten'
+                      : msFolderId || msFileIds.length > 0
+                        ? 'Wijzigen'
+                        : 'Kies mappen / bestanden'}
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-400">
+                  Bestanden groter dan 200 MB worden overgeslagen.
+                </p>
+                {msShowFolderPicker && connector && (
+                  <MsDocsFolderPicker
+                    kbSlug={kbSlug}
+                    connectorId={connector.id}
+                    initialFolderId={msFolderId}
+                    initialFileIds={msFileIds}
+                    onCancel={() => setMsShowFolderPicker(false)}
+                    onConfirm={(result) => {
+                      setMsFolderId(result.folderId)
+                      setMsFolderName(result.folderId ? result.folderName : '')
+                      setMsFileIds(result.fileIds)
+                      setMsShowFolderPicker(false)
+                    }}
+                  />
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label>{m.admin_connectors_assertion_modes_label()}</Label>

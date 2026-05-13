@@ -153,5 +153,45 @@ class KlaiConnectorClient:
             )
             return None
 
+    async def list_ms_docs_folders(
+        self,
+        connector_id: str,
+        *,
+        org_id: str,
+        parent_id: str | None = None,
+    ) -> list[dict]:
+        """List child folders for a Microsoft 365 connector's drive.
+
+        Powers the post-OAuth folder picker. ``parent_id=None`` returns the
+        drive root's top-level folders.
+
+        Args:
+            connector_id: Portal connector UUID (string form).
+            org_id: Zitadel resourceowner string — propagated via
+                ``X-Org-ID`` so the connector's RLS / scoping admits the
+                read.
+            parent_id: Graph driveItem id of the parent folder, or None
+                for the drive root.
+
+        Returns:
+            ``[{id, name, child_count}, ...]`` from the connector.
+
+        Raises:
+            httpx.HTTPStatusError: On 4xx/5xx from klai-connector.
+        """
+        params: dict[str, str] = {}
+        if parent_id:
+            params["parent"] = parent_id
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                f"{settings.klai_connector_url}/api/v1/connectors/{connector_id}/ms-docs/folders",
+                params=params,
+                headers=self._headers(org_id=org_id),
+            )
+            response.raise_for_status()
+            data = response.json()
+            folders = data.get("folders", []) if isinstance(data, dict) else []
+            return folders if isinstance(folders, list) else []
+
 
 klai_connector_client = KlaiConnectorClient()

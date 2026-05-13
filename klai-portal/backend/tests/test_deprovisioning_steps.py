@@ -733,6 +733,78 @@ class TestDeleteScribeArtifacts:
         assert "acme/file1.txt" in keys
         assert "acme/file2.mp3" in keys
 
+    @pytest.mark.asyncio
+    async def test_schemeless_endpoint_gets_http_scheme_prepended(self) -> None:
+        """Production GARAGE_S3_ENDPOINT is `garage:3900` (schemeless — Minio
+        SDK form used by kb_images.py). boto3 needs `http://garage:3900` or
+        raises `Invalid endpoint`. The step must defensively prepend `http://`
+        so the same env var works for both consumers.
+
+        SPEC-INFRA-TENANT-DELETE-003 follow-up — Bug C surfaced on the first
+        production deprovisioning retry after Bug A + B were fixed.
+        """
+        state = _make_state(slug="acme")
+
+        mock_s3 = MagicMock()
+        mock_s3.get_paginator.return_value.paginate.return_value = []
+
+        captured_kwargs: dict[str, object] = {}
+
+        def _capture(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return mock_s3
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("boto3.client", side_effect=_capture),
+        ):
+            mock_settings.garage_s3_endpoint = "garage:3900"  # schemeless prod form
+            mock_settings.garage_s3_access_key = "key"
+            mock_settings.garage_s3_secret_key = "secret"
+            mock_settings.garage_s3_bucket = "klai-scribe"
+            from app.services.provisioning.deprovisioning_steps import _delete_scribe_artifacts
+
+            await _delete_scribe_artifacts(state)
+
+        assert captured_kwargs.get("endpoint_url") == "http://garage:3900", (
+            f"boto3 must receive a scheme-prefixed endpoint URL; got {captured_kwargs.get('endpoint_url')!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_such_bucket_is_idempotent(self) -> None:
+        """SPEC R3 — al-weg = geen exception. If the scribe S3 bucket itself
+        does not exist (tenant never uploaded audio, or Scribe backend not
+        yet provisioned), the step must return gracefully rather than
+        propagate ``NoSuchBucket`` as a step failure.
+
+        SPEC-INFRA-TENANT-DELETE-003 Bug D — surfaced on the e2e tenant
+        retry after Bug C (scheme) was fixed.
+        """
+        state = _make_state(slug="acme")
+
+        class _NoSuchBucket(Exception):
+            pass
+
+        mock_s3 = MagicMock()
+        mock_s3.exceptions.NoSuchBucket = _NoSuchBucket
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.side_effect = _NoSuchBucket("Bucket not found: klai-scribe")
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("boto3.client", return_value=mock_s3),
+        ):
+            mock_settings.garage_s3_endpoint = "http://garage:3900"
+            mock_settings.garage_s3_access_key = "key"
+            mock_settings.garage_s3_secret_key = "secret"
+            mock_settings.garage_s3_bucket = "klai-scribe"
+            from app.services.provisioning.deprovisioning_steps import _delete_scribe_artifacts
+
+            await _delete_scribe_artifacts(state)  # must not raise
+
+        mock_s3.delete_objects.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Step 11 — _delete_litellm_team
@@ -974,10 +1046,11 @@ class TestFinalizePostgresDelete:
 
     @pytest.mark.asyncio
     async def test_execute_called_for_each_non_cascading_child_table(self) -> None:
-        """db.execute called exactly 9 times: 8 explicit child DELETEs + 1 portal_orgs DELETE.
+        """db.execute called exactly 11 times: 10 explicit child DELETEs + 1 portal_orgs DELETE.
 
         Order MUST be: portal_knowledge_bases, portal_kb_tombstones, vexa_meetings,
-        portal_groups, portal_products, portal_templates, portal_users,
+        portal_group_products, portal_groups, portal_templates,
+        portal_user_products, portal_user_seat_history, portal_users,
         portal_join_requests, portal_orgs.
 
         This list is the source of truth for the FK audit. If a new non-cascading
@@ -985,13 +1058,14 @@ class TestFinalizePostgresDelete:
         DELETE list extended — otherwise the production deprovision will fail
         on FK violation.
 
+        SPEC-INFRA-TENANT-DELETE-003 Bug F/G/H/I expanded this list:
+        - Removed `portal_products` (table no longer exists post-RBAC-001)
+        - Added `portal_group_products` (RBAC-001) before portal_groups
+        - Added `portal_user_products` (RBAC-001) before portal_users
+        - Added `portal_user_seat_history` (PRICING-PER-USER-001) before portal_users
+
         SPEC-INFRA-TENANT-DELETE-002 G1 added portal_join_requests just
-        before portal_orgs. Ordering relative to portal_users is independent
-        — verified 2026-05-05: portal_join_requests has exactly ONE FK,
-        `org_id → portal_orgs(id) ON DELETE SET NULL`, and no FK to
-        portal_users. The DELETE must run BEFORE portal_orgs (otherwise
-        SET NULL leaves orphaned PII rows); placement after portal_users
-        is a docstring-readability choice, not a correctness requirement.
+        before portal_orgs.
         """
         state = _make_state(org_id=42, slug="acme")
 
@@ -1007,16 +1081,18 @@ class TestFinalizePostgresDelete:
 
             await _finalize_postgres_delete(state)
 
-        assert state.db.execute.await_count == 9
+        assert state.db.execute.await_count == 11
 
         # Verify the table-name + order of every executed DELETE.
         expected_tables_in_order = [
             "portal_knowledge_bases",
             "portal_kb_tombstones",
             "vexa_meetings",
+            "portal_group_products",
             "portal_groups",
-            "portal_products",
             "portal_templates",
+            "portal_user_products",
+            "portal_user_seat_history",
             "portal_users",
             "portal_join_requests",
             "portal_orgs",

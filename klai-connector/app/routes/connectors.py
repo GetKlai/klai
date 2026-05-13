@@ -2,6 +2,7 @@
 
 import uuid
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,7 @@ from app.core.database import get_session, set_tenant
 from app.core.logging import get_logger
 from app.models.connector import Connector
 from app.routes.deps import enforce_org_rate_limit, get_org_id
+from app.routes.sync import _require_portal_call  # pyright: ignore[reportPrivateUsage]
 from app.schemas.connector import ConnectorCreate, ConnectorResponse, ConnectorUpdate
 
 logger = get_logger(__name__)
@@ -155,3 +157,61 @@ async def delete_connector(
     await session.delete(connector)
     await session.commit()
     logger.info("Connector deleted: %s", connector_id, extra={"org_id": str(org_id)})
+
+
+@router.get("/{connector_id}/ms-docs/folders")
+async def list_ms_docs_folders(
+    connector_id: uuid.UUID,
+    request: Request,
+    parent: str | None = None,
+) -> dict[str, list[dict[str, object]]]:
+    """List child folders of a Microsoft 365 connector's drive.
+
+    Powers the post-OAuth folder picker in the portal. Called exclusively
+    by the portal-api control plane, NOT by an end-user — uses the
+    ``_require_portal_call`` bypass (X-Internal-Secret) for auth and
+    fetches the live connector config + credentials from portal via
+    ``PortalClient`` so this stateless service does not need a local
+    copy of the OAuth tokens.
+
+    Errors:
+        400 — not an ms_docs connector.
+        404 — connector not found in portal (deleted between portal
+              fetch and the picker open).
+        502 — adapter raised a Graph error.
+        503 — adapter not registered (MS_DOCS_CLIENT_ID unset).
+    """
+    _require_portal_call(request)
+
+    portal_client = getattr(request.app.state, "portal_client", None)
+    if portal_client is None:
+        raise HTTPException(status_code=503, detail="Portal client unavailable")
+    try:
+        portal_config = await portal_client.get_connector_config(connector_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Connector not found") from exc
+        logger.exception("Portal config fetch failed for %s", connector_id)
+        raise HTTPException(status_code=502, detail="Portal config fetch failed") from exc
+
+    if portal_config.connector_type != "ms_docs":
+        raise HTTPException(status_code=400, detail="Not an ms_docs connector")
+
+    registry = getattr(request.app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Adapter registry unavailable")
+    try:
+        adapter = registry.get("ms_docs")
+    except ValueError:
+        raise HTTPException(
+            status_code=503,
+            detail="ms_docs adapter not registered on this deployment",
+        ) from None
+
+    parent_id = parent.strip() if parent else None
+    try:
+        folders = await adapter.list_folders(portal_config, parent_id=parent_id)
+    except httpx.HTTPStatusError as exc:
+        logger.exception("ms_docs list_folders failed for %s", connector_id)
+        raise HTTPException(status_code=502, detail=f"Microsoft Graph error: {exc.response.status_code}") from exc
+    return {"folders": folders}
