@@ -123,6 +123,17 @@ describe('InviteUserPage', () => {
     expect(badge.textContent).toContain('Derived from the chosen Profile.')
     // No radio buttons in the badge container — it is display-only.
     expect(badge.querySelectorAll('input[type="radio"]')).toHaveLength(0)
+    // A11y contract: the badge announces itself as a status region with
+    // a polite live-region (so SR users hear the re-derivation when the
+    // Profile changes), and is labelled by the standalone heading div
+    // — NOT by an htmlFor= label, which would mis-imply a focusable
+    // form control behind it.
+    expect(badge.getAttribute('role')).toBe('status')
+    expect(badge.getAttribute('aria-live')).toBe('polite')
+    expect(badge.getAttribute('aria-labelledby')).toBe('account-type-label')
+    const heading = document.getElementById('account-type-label')
+    expect(heading).not.toBeNull()
+    expect(heading?.textContent).toBe('Account type')
   })
 
   it('updates the account-type badge to knowledge (€68/mo) when role flips to kb_manager', async () => {
