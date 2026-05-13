@@ -38,7 +38,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[("logo", "https://example.com/logo.png")],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -56,7 +56,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[("img", "https://broken.com/img.png")],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -77,7 +77,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[("fake", "https://example.com/page.html")],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -98,7 +98,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[("big", "https://example.com/huge.png")],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -130,7 +130,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=urls,
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=mock_http,
@@ -154,7 +154,7 @@ class TestDownloadAndUploadImages:
 
         result = await download_and_upload_images(
             image_urls=[],
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,
             http_client=AsyncMock(),
@@ -209,7 +209,7 @@ class TestUploadImagesIsConnectorAgnostic:
         result = await engine._upload_images(
             parsed_images=[],
             ref=ref,
-            org_id="org-1",
+            org_id="100000000000000001",
             kb_slug="kb-1",
         )
 

@@ -183,23 +183,17 @@ async def _download_validate_upload(
         return None
 
     try:
-        result = await image_store.upload_image(org_id, kb_slug, data, kb_image.ext)
+        await image_store.upload_image(org_id, kb_slug, data, kb_image.ext)
     except Exception:
         logger.exception("image_upload_failed", url=url)
         return None
 
-    # Defensive: ImageStore.build_object_key MUST match KbImage.s3_key. Same
-    # invariant as the portal-api POST route — a drift here is a regression
-    # of the v1 problem.
-    if result.object_key != kb_image.s3_key:
-        logger.error(
-            "image_store_key_drift",
-            url=url,
-            store_key=result.object_key,
-            kb_image_key=kb_image.s3_key,
-        )
-        return None
-
+    # SPEC-KB-IMAGES-V2-FOLLOWUPS-001: the runtime drift-check between
+    # ImageStore.build_object_key and KbImage.s3_key is now a unit test in
+    # klai_image_storage/tests/test_kb_image.py
+    # (test_image_store_build_object_key_matches_kb_image_s3_key). One
+    # test proves the invariant for the whole class instead of paying for
+    # a string-compare on every upload.
     return kb_image.public_path
 
 
@@ -237,20 +231,14 @@ async def _upload_parsed_image(
         return None
 
     try:
-        result = await image_store.upload_image(org_id, kb_slug, image.data, kb_image.ext)
+        await image_store.upload_image(org_id, kb_slug, image.data, kb_image.ext)
     except Exception:
         logger.exception("parsed_image_upload_failed", source_id=image.source_id)
         return None
 
-    if result.object_key != kb_image.s3_key:
-        logger.error(
-            "parsed_image_store_key_drift",
-            source_id=image.source_id,
-            store_key=result.object_key,
-            kb_image_key=kb_image.s3_key,
-        )
-        return None
-
+    # SPEC-KB-IMAGES-V2-FOLLOWUPS-001: runtime drift-check replaced by the
+    # lib-level unit test that proves ImageStore.build_object_key and
+    # KbImage.s3_key agree for all inputs.
     return kb_image.public_path
 
 

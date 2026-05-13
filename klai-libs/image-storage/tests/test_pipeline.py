@@ -89,20 +89,20 @@ class TestAdapterUrls:
         ) as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[("alt", "https://example.com/img.png")],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
             )
         assert len(urls) == 1
-        assert urls[0].startswith("/kb-images/org-1/images/kb/")
+        assert urls[0].startswith("/kb-images/100000000000000001/images/kb/")
 
     async def test_empty_input_returns_empty(self) -> None:
         store = _mock_image_store()
         async with _http_client() as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -114,7 +114,7 @@ class TestAdapterUrls:
         async with _http_client() as client:  # default 404
             urls = await download_and_upload_adapter_images(
                 image_urls=[("alt", "https://example.com/missing.png")],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -130,7 +130,7 @@ class TestAdapterUrls:
         ) as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[("alt", "https://example.com/not-an-image.png")],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -147,7 +147,7 @@ class TestAdapterUrls:
         ) as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[("alt", "https://example.com/huge.png")],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -168,7 +168,7 @@ class TestAdapterUrls:
                     ("", "https://example.com/bad.png"),
                     ("", "https://example.com/good.png"),
                 ],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -185,7 +185,7 @@ class TestAdapterUrls:
         async with _http_client(handler=httpx.MockTransport(_raise)) as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[("", "https://example.com/img.png")],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -199,7 +199,7 @@ class TestAdapterParsedImages:
         async with _http_client() as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -215,7 +215,7 @@ class TestAdapterParsedImages:
         async with _http_client() as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -228,7 +228,7 @@ class TestAdapterParsedImages:
         async with _http_client() as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -270,7 +270,7 @@ class TestAdapterSsrfGuard:
                         "https://portal-api:8010/internal/v1/orgs",
                     ),
                 ],
-                org_id="org-notion",
+                org_id="100000000000000002",
                 kb_slug="kb-notion",
                 image_store=store,
                 http_client=client,
@@ -298,7 +298,7 @@ class TestAdapterSsrfGuard:
                         "https://docker-socket-proxy:2375/v1.42/info",
                     ),
                 ],
-                org_id="org-gh",
+                org_id="100000000000000003",
                 kb_slug="kb-gh",
                 image_store=store,
                 http_client=client,
@@ -321,7 +321,7 @@ class TestAdapterSsrfGuard:
                 image_urls=[
                     ("attachment", "https://10.0.0.5/asset.png"),
                 ],
-                org_id="org-air",
+                org_id="100000000000000004",
                 kb_slug="kb-air",
                 image_store=store,
                 http_client=client,
@@ -342,7 +342,7 @@ class TestAdapterSsrfGuard:
         async with _http_client(handler=httpx.MockTransport(_spy)) as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[("alt", "http://example.com/img.png")],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -364,7 +364,7 @@ class TestAdapterSsrfGuard:
                     ("bad", "https://portal-api:8010/leak"),  # rejected
                     ("good", "https://example.com/good.png"),  # uploaded
                 ],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -400,7 +400,7 @@ class TestAdapterSsrfGuard:
             ):
                 urls = await download_and_upload_adapter_images(
                     image_urls=[("alt", "https://pinned.example.test/img.png")],
-                    org_id="org-1",
+                    org_id="100000000000000001",
                     kb_slug="kb",
                     image_store=store,
                     http_client=client,
@@ -421,7 +421,7 @@ class TestAdapterSsrfGuard:
         ) as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[("alt", "https://example.com/ok.png")],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -437,7 +437,7 @@ class TestAdapterSsrfGuard:
         ) as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[("", "https://example.com/a.png")],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -451,7 +451,7 @@ class TestAdapterSsrfGuard:
         async with _http_client() as client:
             urls = await download_and_upload_adapter_images(
                 image_urls=[],
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -479,13 +479,13 @@ class TestCrawlImages:
             urls = await download_and_upload_crawl_images(
                 media_images=media,
                 base_url="https://example.com/page",
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
             )
         assert len(urls) == 1
-        assert urls[0].startswith("/kb-images/org-1/images/kb/")
+        assert urls[0].startswith("/kb-images/100000000000000001/images/kb/")
 
     async def test_empty_media_images_returns_empty(self) -> None:
         store = _mock_image_store()
@@ -493,7 +493,7 @@ class TestCrawlImages:
             urls = await download_and_upload_crawl_images(
                 media_images=[],
                 base_url="https://example.com",
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -512,7 +512,7 @@ class TestCrawlImages:
             urls = await download_and_upload_crawl_images(
                 media_images=media,
                 base_url="https://example.com",
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -530,7 +530,7 @@ class TestCrawlImages:
             urls = await download_and_upload_crawl_images(
                 media_images=media,
                 base_url="https://example.com/page",
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -555,7 +555,7 @@ class TestCrawlImages:
             urls = await download_and_upload_crawl_images(
                 media_images=media,
                 base_url="https://example.com",
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -577,7 +577,7 @@ class TestCrawlImages:
             urls = await download_and_upload_crawl_images(
                 media_images=media,
                 base_url="https://example.com",
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -598,7 +598,7 @@ class TestCrawlImages:
             urls = await download_and_upload_crawl_images(
                 media_images=media,
                 base_url="https://example.com",
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -614,7 +614,7 @@ class TestCrawlImages:
             urls = await download_and_upload_crawl_images(
                 media_images=media,
                 base_url="https://example.com",
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
@@ -632,7 +632,7 @@ class TestCrawlImages:
             urls = await download_and_upload_crawl_images(
                 media_images=media,
                 base_url="https://example.com",
-                org_id="org-1",
+                org_id="100000000000000001",
                 kb_slug="kb",
                 image_store=store,
                 http_client=client,
