@@ -92,6 +92,48 @@ class ZitadelClient:
 
     # ── User management ───────────────────────────────────────────────────────
 
+    async def create_human_user_v2_with_verify(
+        self,
+        org_id: str,
+        email: str,
+        first_name: str,
+        last_name: str,
+        password: str,
+        *,
+        url_template: str,
+        preferred_language: str = "nl",
+    ) -> dict:
+        """Create a human user and send the Klai verify-email link.
+
+        The v2 AddHumanUser endpoint accepts
+        ``email.verification.sendCode.urlTemplate`` in the same request as user
+        creation. That keeps self-service signup on the Klai-branded
+        ``/verify`` page instead of Zitadel's hosted initialization UI.
+        """
+        resp = await self._http.post(
+            "/v2/users/human",
+            json={
+                "username": email.lower(),
+                "organization": {"orgId": org_id},
+                "profile": {
+                    "givenName": first_name,
+                    "familyName": last_name,
+                    "displayName": f"{first_name} {last_name}",
+                    "preferredLanguage": preferred_language,
+                },
+                "email": {
+                    "email": email,
+                    "verification": {"sendCode": {"urlTemplate": url_template}},
+                },
+                "password": {
+                    "password": password,
+                    "changeRequired": False,
+                },
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def create_human_user(
         self,
         org_id: str,
