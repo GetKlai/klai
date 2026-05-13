@@ -6,6 +6,7 @@ All calls use the portal-api service account PAT — never exposed to the browse
 import asyncio
 import logging
 import time
+from typing import Literal
 
 import httpx
 
@@ -374,8 +375,16 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()["callbackUrl"]
 
-    async def set_password_with_code(self, user_id: str, code: str, new_password: str) -> None:
+    async def set_password_with_code(
+        self, user_id: str, code: str, new_password: str
+    ) -> Literal["invite", "reset"]:
         """Set a new password using a one-time code from email.
+
+        Returns ``"invite"`` if the code was consumed via the invite flow
+        (``invite_code/verify`` + ``password`` without code) and ``"reset"``
+        if it was consumed via the legacy single-call reset flow
+        (``password`` with verificationCode). Callers should record this
+        in their structured logs so operators can split metrics by path.
 
         Zitadel has TWO distinct code flows that both land on Klai's
         ``/password/set`` page:
@@ -400,11 +409,8 @@ class ZitadelClient:
         common case (every newly invited user goes through it). If the
         verify step returns a 4xx we fall back to the reset-flow.
 
-        Behaviour parity with the previous implementation:
-        - Raises ``httpx.HTTPStatusError`` (caller maps to 400/502).
-        - Both flows leave the user in a state where they can immediately
-          authenticate with the new password — the auto-login chain in
-          ``password_set`` works for either path.
+        Raises ``httpx.HTTPStatusError`` (caller maps to 400/502) when
+        both flows fail or Zitadel returns a 5xx during verify.
         """
         # ---- Path 1: invite flow ------------------------------------------------
         verify_resp = await self._http.post(
@@ -418,7 +424,7 @@ class ZitadelClient:
                 json={"newPassword": {"password": new_password, "changeRequired": False}},
             )
             password_resp.raise_for_status()
-            return
+            return "invite"
 
         # invite_code/verify returned 4xx/5xx. Two reasons it might:
         #   - 4xx: the code is not an invite code (likely a password-reset code).
@@ -437,6 +443,7 @@ class ZitadelClient:
             },
         )
         reset_resp.raise_for_status()
+        return "reset"
 
     async def find_user_id_by_email(self, email: str) -> str | None:
         """Return the Zitadel userId for the given email, or None if not found.

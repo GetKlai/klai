@@ -39,6 +39,7 @@
   "set_back": "Back to login",
   "set_done_heading": "Password set",
   "set_done_body": "You can now log in.",
+  "set_done_continue": "Log in",
   "set_error_min_length": "Password must be at least 8 characters",
   "set_error_mismatch": "Passwords do not match",
   "set_error_invalid_link": "Link has expired or is invalid, request a new reset link",

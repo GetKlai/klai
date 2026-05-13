@@ -50,7 +50,8 @@ async def test_invite_flow_happy_path() -> None:
         ]
     )
 
-    await client.set_password_with_code("uid-1", "INVITE", "NewSecret123!")
+    flow = await client.set_password_with_code("uid-1", "INVITE", "NewSecret123!")
+    assert flow == "invite"
 
     assert client._http.post.await_count == 2
     # First call: verify
@@ -75,7 +76,8 @@ async def test_invite_verify_4xx_falls_back_to_reset_flow() -> None:
         ]
     )
 
-    await client.set_password_with_code("uid-1", "RESETCODE", "NewSecret123!")
+    flow = await client.set_password_with_code("uid-1", "RESETCODE", "NewSecret123!")
+    assert flow == "reset"
 
     assert client._http.post.await_count == 2
     second = client._http.post.await_args_list[1]

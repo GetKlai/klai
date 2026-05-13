@@ -1075,7 +1075,7 @@ async def password_set(body: PasswordSetRequest) -> None:
     ``/authorize``) — tracked as a follow-up.
     """
     try:
-        await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
+        flow = await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
         _slog.exception("set_password_with_code_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 404, 410):
@@ -1104,13 +1104,20 @@ async def password_set(body: PasswordSetRequest) -> None:
             detail="Failed to set password, please try again later",
         ) from exc
 
+    # Surface which Zitadel flow consumed the code so operators can split
+    # invite-completion vs reset-completion in VictoriaLogs / Grafana.
+    _slog.info(
+        "password_set",
+        actor_user_id=body.user_id,
+        flow=flow,
+    )
     await audit.log_event(
         org_id=0,
         actor=body.user_id,
         action="auth.password.set",
         resource_type="user",
         resource_id=body.user_id,
-        details={"reason": "set"},
+        details={"reason": "set", "flow": flow},
     )
 
 
