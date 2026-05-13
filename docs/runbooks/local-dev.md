@@ -153,7 +153,7 @@ make setup
 
 # 3. Vul frontend/.env.local in:
 #    VITE_OIDC_AUTHORITY=https://auth.getklai.com
-#    VITE_OIDC_CLIENT_ID=362901948573220875
+#    VITE_OIDC_CLIENT_ID=<oidc-client-id>
 
 # 4. Start de frontend
 make frontend
@@ -247,7 +247,7 @@ Open `klai-portal/frontend/.env.local` en vul in:
 ```bash
 # Echte Zitadel authenticatie
 VITE_OIDC_AUTHORITY=https://auth.getklai.com
-VITE_OIDC_CLIENT_ID=362901948573220875
+VITE_OIDC_CLIENT_ID=<oidc-client-id>
 ```
 
 De Vite proxy stuurt `/api` calls standaard door naar productie (`getklai.getklai.com`). Om tegen de lokale backend te ontwikkelen (Modus B), voeg toe:
@@ -257,7 +257,7 @@ De Vite proxy stuurt `/api` calls standaard door naar productie (`getklai.getkla
 VITE_API_PROXY_TARGET=http://localhost:8010
 ```
 
-> **Let op:** De `VITE_OIDC_CLIENT_ID` is `362901948573220875` (OIDC Client ID), **niet** `362901948573155339` (dat is de App ID). Deze staan apart in Zitadel.
+> **Let op:** De `VITE_OIDC_CLIENT_ID` is `<oidc-client-id>` (OIDC Client ID), **niet** `<zitadel-app-id>` (dat is de App ID). Deze staan apart in Zitadel.
 
 > **Vite herstart vereist bij env-wijzigingen:** In tegenstelling tot de backend pikt Vite `.env.local` wijzigingen pas op na een volledige herstart (`Ctrl+C` → `npm run dev`). Hot reload werkt niet voor env vars.
 
@@ -319,7 +319,7 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
 
 ### Redirect URIs en Dev Mode (al geconfigureerd)
 
-De OIDC app "Klai Portal" (app ID `362901948573155339`) is al geconfigureerd voor lokale development:
+De OIDC app "Klai Portal" (app ID `<zitadel-app-id>`) is al geconfigureerd voor lokale development:
 
 - **Redirect URI:** `http://localhost:5174/callback`
 - **Post Logout URI:** `http://localhost:5174/logged-out`
@@ -390,12 +390,12 @@ cd klai-portal/backend && uv run python -c "import secrets; print(secrets.token_
 
 **Oorzaak:** `VITE_OIDC_CLIENT_ID` bevat de App ID in plaats van de OIDC Client ID. Beide zijn 18-cijferige nummers maar zijn **niet** hetzelfde.
 
-**Fix:** Gebruik `362901948573220875` (OIDC Client ID), niet `362901948573155339` (App ID).
+**Fix:** Gebruik `<oidc-client-id>` (OIDC Client ID), niet `<zitadel-app-id>` (App ID).
 
 Verifieer via Zitadel API:
 ```bash
 curl -s -H "Authorization: Bearer $ZITADEL_PAT" \
-  "https://auth.getklai.com/management/v1/projects/362771533686374406/apps/_search" \
+  "https://auth.getklai.com/management/v1/projects/<zitadel-project-id>/apps/_search" \
   -d '{}' | grep -o '"clientId":"[^"]*"\|"name":"[^"]*"'
 ```
 
@@ -412,7 +412,7 @@ curl -s -H "Authorization: Bearer $ZITADEL_PAT" \
 ```bash
 # VITE_AUTH_DEV_MODE=true    ← uitgecommentarieerd
 VITE_OIDC_AUTHORITY=https://auth.getklai.com
-VITE_OIDC_CLIENT_ID=362901948573220875
+VITE_OIDC_CLIENT_ID=<oidc-client-id>
 ```
 
 ### LiteLLM start niet op

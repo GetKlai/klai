@@ -11,25 +11,11 @@ paths:
 CI green ≠ production rollout. After `gh run watch --exit-status`:
 1. Check container age: `docker ps --format '{{.Names}}\t{{.Status}}'`
 2. Verify health endpoint or logs: `docker logs --tail 20 <ctr>`
-3. Bundle timestamp for frontend: `ls -lt /srv/klai-portal/assets/*.js | head -3`
-
-### Server rollout verification
-Frontend: newest `.js` timestamp must match deploy time. If old, rsync target may be wrong.
-```bash
-ssh core-01 "ls -lt /srv/klai-portal/assets/*.js | head -3"
-ssh core-01 "grep -l 'expected_keyword' /srv/klai-portal/assets/*.js"
-```
-Backend: container `CreatedAt` must be recent, health must return `{"status":"ok"}`.
-```bash
-ssh core-01 "docker ps --filter name=portal-api --format 'table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}'"
-ssh core-01 "curl -s http://localhost:8010/health"
-```
-Never skip verification — even for trivial changes or successful local builds.
+3. Bundle timestamp for frontend: check newest `.js` asset timestamp matches deploy time
 
 ## docker-compose.yml sync
 CI service workflows do NOT copy compose to server — only pull image + restart.
 `deploy-compose.yml` auto-syncs when `deploy/docker-compose.yml` changes on main.
-Manual: `scp deploy/docker-compose.yml core-01:/opt/klai/docker-compose.yml`
 
 ## Bind-mount config sync — required pattern (HIGH)
 
@@ -149,10 +135,6 @@ EOF
 chmod 600 /opt/klai/.env.new && mv /opt/klai/.env.new /opt/klai/.env
 ```
 
-## GHCR auth stale deploys
-`docker pull` fails silently without `set -e` → old image runs. Store `GHCR_READ_PAT` in SOPS.
-Alternative: build on server from public repo (sparse checkout + `docker build`).
-
 ## Alembic revision IDs — never hand-typed (CRIT)
 Hand-typed placeholder IDs (e.g. `a1b2c3d4e5f6`, `p1r2o3v4s5b1`, `z3a4b5c6d7e8`)
 collide with existing migrations. SPEC-KB-020 and SPEC-PROV-001 both got hit
@@ -170,7 +152,7 @@ fails the build if:
   — never write a revision id by hand. Alembic uses `uuid.uuid4().hex[:12]`
   which is collision-safe (2^48 space).
 - Before setting `down_revision`, confirm actual DB head: `SELECT version_num FROM alembic_version;`
-- If in doubt: `docker exec klai-core-portal-api-1 alembic heads` to see what the container sees.
+- If in doubt: `alembic heads` to see what the container sees.
 - Run the integrity check locally before pushing: `cd klai-portal/backend && uv run python scripts/validate_alembic.py`
 
 Local `alembic/versions/` may be missing migrations that only exist in production
