@@ -31,9 +31,7 @@ from qdrant_client import AsyncQdrantClient  # noqa: E402
 from qdrant_client.models import (  # noqa: E402
     FieldCondition,
     Filter,
-    IsEmptyCondition,
     MatchValue,
-    PayloadField,
 )
 
 from knowledge_ingest.config import settings  # noqa: E402
@@ -441,6 +439,83 @@ class TopTagsResponse(BaseModel):
     total_chunks_sampled: int
 
 
+async def _build_coverage_stats_from_qdrant(
+    client: AsyncQdrantClient,
+    org_id: str,
+    kb_slug: str,
+    taxonomy_nodes: list,
+) -> CoverageStatsResponse:
+    """Build taxonomy coverage with one payload-only Qdrant scroll.
+
+    The previous implementation ran exact Qdrant counts for total chunks,
+    untagged chunks, and every taxonomy node. On production KBs this made the
+    coverage endpoint scale with category count and could spend 20s+ in Qdrant
+    for a page that only needs counters.
+    """
+    node_ids = {int(node.id) for node in taxonomy_nodes}
+    counts_by_node = {int(node.id): 0 for node in taxonomy_nodes}
+    total_chunks = 0
+    untagged_count = 0
+
+    scroll_filter = Filter(
+        must=[
+            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+            FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+        ]
+    )
+
+    offset = None
+    while True:
+        points, next_offset = await asyncio.wait_for(
+            client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=scroll_filter,
+                limit=1000,
+                offset=offset,
+                with_payload=["taxonomy_node_ids"],
+                with_vectors=False,
+            ),
+            timeout=10.0,
+        )
+        if not points:
+            break
+
+        for point in points:
+            total_chunks += 1
+            payload = point.payload or {}
+            raw_node_ids = payload.get("taxonomy_node_ids") or []
+            if not raw_node_ids:
+                untagged_count += 1
+                continue
+
+            matched_ids: set[int] = set()
+            for raw_node_id in raw_node_ids:
+                try:
+                    node_id = int(raw_node_id)
+                except (TypeError, ValueError):
+                    continue
+                if node_id in node_ids:
+                    matched_ids.add(node_id)
+            for node_id in matched_ids:
+                counts_by_node[node_id] += 1
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    return CoverageStatsResponse(
+        nodes=[
+            CoverageNodeStats(
+                taxonomy_node_id=int(node.id),
+                chunk_count=counts_by_node.get(int(node.id), 0),
+            )
+            for node in taxonomy_nodes
+        ],
+        total_chunks=total_chunks,
+        untagged_count=untagged_count,
+    )
+
+
 @router.get("/ingest/v1/taxonomy/top-tags", response_model=TopTagsResponse)
 async def taxonomy_top_tags(
     request: Request,
@@ -711,64 +786,6 @@ async def taxonomy_coverage_stats(
         api_key=settings.qdrant_api_key or None,
     )
 
-    from qdrant_client.models import MatchAny
-
     # Get all taxonomy nodes from portal for this KB
     taxonomy_nodes = await fetch_taxonomy_nodes(kb_slug, org_id)
-
-    # Count total chunks for this KB
-    total_filter = Filter(
-        must=[
-            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-            FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-        ]
-    )
-    total_count = await asyncio.wait_for(
-        client.count(collection_name=COLLECTION, count_filter=total_filter, exact=True),
-        timeout=15.0,
-    )
-    total_chunks = total_count.count
-
-    # Count chunks per taxonomy node
-    async def count_node_chunks(node) -> CoverageNodeStats:
-        node_filter = Filter(
-            must=[
-                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-                FieldCondition(
-                    key="taxonomy_node_ids",
-                    match=MatchAny(any=[node.id]),
-                ),
-            ]
-        )
-        async with node_count_sem:
-            count_result = await asyncio.wait_for(
-                client.count(collection_name=COLLECTION, count_filter=node_filter, exact=True),
-                timeout=10.0,
-            )
-        return CoverageNodeStats(
-            taxonomy_node_id=node.id,
-            chunk_count=count_result.count,
-        )
-
-    node_count_sem = asyncio.Semaphore(8)
-    node_stats = await asyncio.gather(*(count_node_chunks(node) for node in taxonomy_nodes))
-
-    # Count untagged chunks (no taxonomy_node_ids field or empty)
-    untagged_filter = Filter(
-        must=[
-            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-            FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-            IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_ids")),
-        ]
-    )
-    untagged_count_result = await asyncio.wait_for(
-        client.count(collection_name=COLLECTION, count_filter=untagged_filter, exact=True),
-        timeout=10.0,
-    )
-
-    return CoverageStatsResponse(
-        nodes=node_stats,
-        total_chunks=total_chunks,
-        untagged_count=untagged_count_result.count,
-    )
+    return await _build_coverage_stats_from_qdrant(client, org_id, kb_slug, taxonomy_nodes)

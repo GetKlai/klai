@@ -31,7 +31,7 @@ router = APIRouter(prefix="/api/app/knowledge-bases", tags=["taxonomy"])
 
 # Coverage/top-tags are derived ingest metrics. Portal DB categories and gaps
 # should render immediately when knowledge-ingest is slow.
-_DERIVED_INGEST_READ_TIMEOUT = httpx.Timeout(1.0, connect=0.3)
+_DERIVED_INGEST_READ_TIMEOUT = httpx.Timeout(3.0, connect=0.5)
 
 # -- Pydantic schemas ---------------------------------------------------------
 
@@ -1073,6 +1073,9 @@ async def taxonomy_coverage(
 
     # Fetch chunk counts from knowledge-ingest
     ingest_data = await _fetch_ingest_coverage(zitadel_org_id, kb_slug)
+    has_ingest_data = ingest_data is not None
+    if ingest_data is None and cached is not None:
+        return CoverageResponse(**cached[1])
     if ingest_data is None:
         ingest_data = {"nodes": [], "total_chunks": 0, "untagged_count": 0}
 
@@ -1101,8 +1104,10 @@ async def taxonomy_coverage(
 
     response = _make_coverage_response(ingest_data, gap_counts, node_names, node_descriptions)
 
-    # Cache the response
-    _coverage_cache[cache_key] = (time.monotonic(), response.model_dump())
+    # Do not cache the zero fallback. A transient ingest timeout should not pin
+    # misleading "0 chunks" coverage for the full TTL.
+    if has_ingest_data:
+        _coverage_cache[cache_key] = (time.monotonic(), response.model_dump())
 
     return response
 
@@ -1177,6 +1182,9 @@ async def taxonomy_top_tags(
             return TopTagsResponse(**cached_response)
 
     data = await _fetch_ingest_top_tags(zitadel_org_id, kb_slug, limit, taxonomy_node_id)
+    has_ingest_data = data is not None
+    if data is None and cached is not None:
+        return TopTagsResponse(**cached[1])
     if data is None:
         data = {"tags": [], "total_chunks_sampled": 0}
 
@@ -1185,5 +1193,6 @@ async def taxonomy_top_tags(
         total_chunks_sampled=data.get("total_chunks_sampled", 0),
     )
 
-    _top_tags_cache[cache_key] = (time.monotonic(), response.model_dump())
+    if has_ingest_data:
+        _top_tags_cache[cache_key] = (time.monotonic(), response.model_dump())
     return response
