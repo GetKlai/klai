@@ -39,12 +39,13 @@ logger = structlog.get_logger()
 
 _MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]]*)\]\(([^)]*)\)")
 _BARE_CITATION_RE = re.compile(r"(?<!!)\[(\d+)\](?!\()")
+_BARE_CITATION_NUMBER_RUN_RE = re.compile(r"(?<![\w/\]\)])(\d{1,3}(?:\s*[,;]\s*\d{1,3})+)(?=(?:[.!?])?(?:\s|$))")
 _CITATION_LINK_RE = re.compile(r"\[(\d+)\]\(([^)]*)\)")
 _MALFORMED_CITATION_LINK_RE = re.compile(r"(?<!\[)\b(\d+)\((https?://[^)\s]+)\)")
 _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
 _EMPTY_PARENS_RE = re.compile(r"\s*\(\s*\)")
 _CITATION_MARKER_RE = re.compile(r"\((\d+)\)")
-_STREAM_GUARD_TAIL_CHARS = 16
+_STREAM_GUARD_TAIL_CHARS = 32
 
 CitationOutput = Literal["links", "markers"]
 
@@ -261,6 +262,65 @@ def _join_formatted_citations(citations: list[str], *, citation_output: Citation
             return ", ".join(citations)
         labels.append(match.group(1))
     return f"({','.join(labels)})" if labels else ""
+
+
+def _format_bare_number_citation_run(
+    labels: list[str],
+    *,
+    citation_source_urls: dict[int, str],
+    emitted_source_keys: set[str],
+    emitted_source_key_order: list[str] | None = None,
+    citation_output: CitationOutput,
+) -> tuple[str, bool]:
+    if len(labels) < 2:
+        return "", False
+
+    kept: list[str] = []
+    seen_urls: set[str] = set()
+
+    for label in labels:
+        url = _citation_url_for_label(label, citation_source_urls)
+        url_key = _source_url_key(url)
+        if not url_key:
+            return "", False
+        if url_key in seen_urls or url_key in emitted_source_keys:
+            continue
+        display_label = str(len(emitted_source_keys) + 1)
+        seen_urls.add(url_key)
+        _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
+        kept.append(_format_citation_label(label, citation_source_urls, display_label, citation_output=citation_output))
+
+    return _join_formatted_citations(kept, citation_output=citation_output), True
+
+
+def _sanitize_bare_number_citation_runs(
+    text: str,
+    *,
+    citation_source_urls: dict[int, str],
+    emitted_source_keys: set[str],
+    emitted_source_key_order: list[str] | None = None,
+    citation_output: CitationOutput,
+) -> tuple[str, int]:
+    changed = 0
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal changed
+        original = match.group(0)
+        labels = re.findall(r"\d+", match.group(1))
+        replacement, citation_changed = _format_bare_number_citation_run(
+            labels,
+            citation_source_urls=citation_source_urls,
+            emitted_source_keys=emitted_source_keys,
+            emitted_source_key_order=emitted_source_key_order,
+            citation_output=citation_output,
+        )
+        if not replacement:
+            return original
+        if citation_changed or replacement != original:
+            changed += 1
+        return replacement
+
+    return _BARE_CITATION_NUMBER_RUN_RE.sub(_replace, text), changed
 
 
 def _record_emitted_source_key(
@@ -641,6 +701,14 @@ def _sanitize_kb_markdown_output(  # noqa: C901 - citation/link guard has severa
     sanitized = _MALFORMED_CITATION_LINK_RE.sub(_replace_malformed_citation, text)
     sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, sanitized)
     sanitized = _BARE_CITATION_RE.sub(_replace_bare_citation, sanitized)
+    sanitized, bare_number_changed = _sanitize_bare_number_citation_runs(
+        sanitized,
+        citation_source_urls=citation_source_urls,
+        emitted_source_keys=emitted_source_keys,
+        emitted_source_key_order=emitted_source_key_order,
+        citation_output=citation_output,
+    )
+    changed += bare_number_changed
     before_dedupe = sanitized
     if citation_output == "markers":
         sanitized = _dedupe_adjacent_citation_markers(sanitized)
@@ -695,7 +763,15 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
         start = _earliest_guard_start(buffer)
         if start < 0:
             if final:
-                out.append(buffer)
+                sanitized, bare_number_changed = _sanitize_bare_number_citation_runs(
+                    buffer,
+                    citation_source_urls=citation_source_urls,
+                    emitted_source_keys=emitted_source_keys,
+                    emitted_source_key_order=emitted_source_key_order,
+                    citation_output=citation_output,
+                )
+                out.append(sanitized)
+                changed += bare_number_changed
                 return "".join(out), "", changed
             if len(buffer) <= _STREAM_GUARD_TAIL_CHARS:
                 return "".join(out), buffer, changed
