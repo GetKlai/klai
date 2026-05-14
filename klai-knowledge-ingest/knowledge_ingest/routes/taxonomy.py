@@ -730,8 +730,7 @@ async def taxonomy_coverage_stats(
     total_chunks = total_count.count
 
     # Count chunks per taxonomy node
-    node_stats: list[CoverageNodeStats] = []
-    for node in taxonomy_nodes:
+    async def count_node_chunks(node) -> CoverageNodeStats:
         node_filter = Filter(
             must=[
                 FieldCondition(key="org_id", match=MatchValue(value=org_id)),
@@ -742,16 +741,18 @@ async def taxonomy_coverage_stats(
                 ),
             ]
         )
-        count_result = await asyncio.wait_for(
-            client.count(collection_name=COLLECTION, count_filter=node_filter, exact=True),
-            timeout=10.0,
-        )
-        node_stats.append(
-            CoverageNodeStats(
-                taxonomy_node_id=node.id,
-                chunk_count=count_result.count,
+        async with node_count_sem:
+            count_result = await asyncio.wait_for(
+                client.count(collection_name=COLLECTION, count_filter=node_filter, exact=True),
+                timeout=10.0,
             )
+        return CoverageNodeStats(
+            taxonomy_node_id=node.id,
+            chunk_count=count_result.count,
         )
+
+    node_count_sem = asyncio.Semaphore(8)
+    node_stats = await asyncio.gather(*(count_node_chunks(node) for node in taxonomy_nodes))
 
     # Count untagged chunks (no taxonomy_node_ids field or empty)
     untagged_filter = Filter(

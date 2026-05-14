@@ -107,6 +107,28 @@ class TestMakeCoverageResponse:
         assert response.nodes[0].gap_count == 0
         assert response.nodes[0].health == "healthy"
 
+    def test_db_nodes_remain_visible_when_ingest_omits_them(self) -> None:
+        """Portal taxonomy nodes should not disappear when ingest coverage is partial."""
+        ingest_data = {
+            "nodes": [{"taxonomy_node_id": 1, "chunk_count": 20}],
+            "total_chunks": 20,
+            "untagged_count": 0,
+        }
+
+        response = _make_coverage_response(
+            ingest_data,
+            {},
+            {1: "Billing", 2: "Support"},
+            {1: "Invoices and payments", 2: "Support articles"},
+        )
+
+        assert [node.taxonomy_node_id for node in response.nodes] == [1, 2]
+        support = response.nodes[1]
+        assert support.taxonomy_node_name == "Support"
+        assert support.description == "Support articles"
+        assert support.chunk_count == 0
+        assert support.health == "empty"
+
 
 class TestFetchIngestCoverage:
     """Test _fetch_ingest_coverage HTTP client."""

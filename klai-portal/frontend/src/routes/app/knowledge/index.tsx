@@ -110,18 +110,27 @@ function KbIcon({ ownerType }: { ownerType: string }) {
 function KbRow({
   kb,
   stats,
+  statsState,
   isMine,
 }: {
   kb: KnowledgeBase
   stats: KBStatsSummary | undefined
+  statsState: 'loading' | 'unavailable' | 'ready'
   isMine: boolean
 }) {
-  const sourcesCount = stats?.sources ?? 0
-  const chunks = stats?.chunks ?? 0
-  const status = deriveStatus(stats)
-
-  const sourcesLabel = sourcesCount === 1 ? m.kb_count_bron_singular() : m.kb_count_bronnen({ count: String(sourcesCount) })
-  const chunksLabel = chunks === 1 ? m.kb_count_chunk_singular() : m.kb_count_chunks({ count: String(chunks) })
+  const status = stats ? deriveStatus(stats) : null
+  const statsLabel = stats
+    ? [
+        stats.sources === 1
+          ? m.kb_count_bron_singular()
+          : m.kb_count_bronnen({ count: String(stats.sources) }),
+        stats.chunks === 1
+          ? m.kb_count_chunk_singular()
+          : m.kb_count_chunks({ count: String(stats.chunks) }),
+      ].join(' · ')
+    : statsState === 'loading'
+      ? m.knowledge_page_stat_loading()
+      : m.knowledge_detail_volume_unavailable()
 
   return (
     <Link
@@ -141,14 +150,14 @@ function KbRow({
             </Badge>
           )}
           <span className="text-xs text-gray-400">
-            {sourcesLabel} · {chunksLabel}
+            {statsLabel}
           </span>
         </div>
         {kb.description && (
           <p className="text-xs text-gray-400 mt-0.5 truncate">{kb.description}</p>
         )}
       </div>
-      <StatusBadge status={status} />
+      {status && <StatusBadge status={status} />}
       <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
     </Link>
   )
@@ -188,7 +197,11 @@ function KnowledgePage() {
     retry: false,
   })
 
-  const { data: statsData } = useQuery<KBStatsSummaryResponse>({
+  const {
+    data: statsData,
+    isLoading: statsLoading,
+    isError: statsError,
+  } = useQuery<KBStatsSummaryResponse>({
     queryKey: kbQueryKeys.statsSummary(),
     queryFn: () => apiFetch<KBStatsSummaryResponse>('/api/app/knowledge-bases/stats-summary'),
     enabled: auth.isAuthenticated,
@@ -281,6 +294,7 @@ function KnowledgePage() {
               key={kb.slug}
               kb={kb}
               stats={statsBySlug[kb.slug]}
+              statsState={statsLoading ? 'loading' : statsError ? 'unavailable' : 'ready'}
               isMine={kb.owner_type === 'user' && !!myUserId && kb.slug === `personal-${myUserId}`}
             />
           ))}
