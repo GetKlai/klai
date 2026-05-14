@@ -84,6 +84,7 @@ _CRAWL_WORKER_LOST_ERROR = "crawl_worker_lost"
 _FAILED_PARTIAL_STATUS = "failed_partial"
 _RUNNABLE_CRAWL_STATUSES = {"pending", "running"}
 _TERMINAL_PROCRASTINATE_STATUSES = {"failed", "cancelled", "aborted", "succeeded"}
+_BLOG_ARCHIVE_SEGMENTS = ("tag", "tags", "category", "categories", "author", "page")
 
 
 async def _validate_connector(
@@ -134,6 +135,13 @@ async def _validate_connector(
         raise HTTPException(status_code=500, detail="encryption_key_invalid") from exc
 
 
+def _default_exclude_patterns(normalized_path_prefix: str | None) -> list[str] | None:
+    """Exclude collection/archive pages that should not count as content."""
+    if normalized_path_prefix != "/blog":
+        return None
+    return [f"/blog/{segment}/*" for segment in _BLOG_ARCHIVE_SEGMENTS]
+
+
 @router.post(
     "/ingest/v1/crawl/sync",
     response_model=CrawlSyncResponse,
@@ -179,6 +187,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         if normalized_path_prefix
         else None
     )
+    exclude_patterns = _default_exclude_patterns(normalized_path_prefix)
 
     # BFS must enter the graph at a node that links into the allowed subtree.
     # If the root page only links to sibling language paths (e.g. wiki shows
@@ -200,7 +209,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         max_depth=req.max_depth,
         max_pages=req.max_pages,
         include_patterns=include_patterns,
-        exclude_patterns=None,
+        exclude_patterns=exclude_patterns,
         rate_limit=2.0,
         content_selector=req.content_selector,
         login_indicator_selector=req.login_indicator,
@@ -218,6 +227,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         org_id=req.org_id,
         kb_slug=req.kb_slug,
         start_url=start_url,
+        exclude_patterns=exclude_patterns,
     )
     return CrawlSyncResponse(job_id=job_id, status="queued")
 

@@ -253,9 +253,9 @@ async def run_crawl_job(
     Seeds the crawl with start_url + sitemap.xml, then recurses to max_depth
     using Crawl4AI's BFSDeepCrawlStrategy (same strategy as klai-connector).
 
-    Note: exclude_patterns is accepted for API compatibility but not forwarded
-    to Crawl4AI (URLPatternFilter supports include-only).  rate_limit is also
-    accepted for compatibility; Crawl4AI manages its own request pacing.
+    ``exclude_patterns`` is applied after crawl4ai discovery and before
+    progress counting / dirty-content decisions. ``rate_limit`` is accepted
+    for compatibility; Crawl4AI manages its own request pacing.
 
     ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
     injected into crawl4ai's wait_for and also re-checked on every returned
@@ -289,6 +289,7 @@ async def run_crawl_job(
             max_depth=max_depth,
             max_pages=max_pages,
             include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
             login_indicator_selector=login_indicator_selector,
             cookies=cookies,
         )
