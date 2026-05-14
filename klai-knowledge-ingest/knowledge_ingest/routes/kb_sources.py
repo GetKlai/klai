@@ -203,6 +203,13 @@ async def chunks_summary(
     request: Request,
     body: ChunksSummaryRequest,
     org_id: str = Query(..., description="Zitadel org ID"),
+    include_chunks: bool = Query(
+        default=True,
+        description=(
+            "Include parent_chunks counts. Portal list views pass false "
+            "because they use Qdrant counts."
+        ),
+    ),
 ) -> ChunksSummaryResponse:
     """Bulk chunk counts per KB for the portal stats-summary endpoint."""
     if len(body.kb_slugs) > 200:
@@ -211,7 +218,11 @@ async def chunks_summary(
     if not body.kb_slugs:
         return ChunksSummaryResponse(chunks_by_kb={}, sources_by_kb={}, bronnen_by_kb={})
     async with tenant_scoped_connection(verified_org_id) as conn:
-        chunks_by_kb = await pg_store.count_chunks_per_kb(conn, verified_org_id, body.kb_slugs)
+        chunks_by_kb = (
+            await pg_store.count_chunks_per_kb(conn, verified_org_id, body.kb_slugs)
+            if include_chunks
+            else {}
+        )
         sources_by_kb = await pg_store.count_sources_per_kb(conn, verified_org_id, body.kb_slugs)
     # SPEC-PORTAL-SOURCES-RENAME-001 dual-key window — emit BOTH so a
     # rolling deploy where portal-api lags behind keeps rendering counts.

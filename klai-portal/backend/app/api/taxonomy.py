@@ -999,10 +999,20 @@ def _make_coverage_response(
     untagged_count = ingest_data.get("untagged_count", 0)
     untagged_pct = round((untagged_count / total_chunks * 100), 2) if total_chunks > 0 else 0.0
 
-    nodes: list[CoverageNodeOut] = []
+    chunk_counts_by_node: dict[int, int] = {}
+    ordered_node_ids: list[int] = []
     for node_data in ingest_data.get("nodes", []):
-        nid = node_data["taxonomy_node_id"]
-        chunk_count = node_data["chunk_count"]
+        nid = int(node_data["taxonomy_node_id"])
+        chunk_counts_by_node[nid] = int(node_data.get("chunk_count") or 0)
+        ordered_node_ids.append(nid)
+
+    for nid in node_names:
+        if nid not in chunk_counts_by_node:
+            ordered_node_ids.append(nid)
+
+    nodes: list[CoverageNodeOut] = []
+    for nid in ordered_node_ids:
+        chunk_count = chunk_counts_by_node.get(nid, 0)
         gap_count = gap_counts.get(nid, 0)
 
         if chunk_count == 0:
