@@ -5,6 +5,7 @@
      Override via css_variables from widget config. */
   --klai-primary-color: #fcaa2d;          /* rl-accent (amber) */
   --klai-primary-hover: #e89a1f;          /* rl-accent-hover */
+  --klai-primary-text-color: var(--klai-text-color);
   --klai-text-color: #191918;             /* rl-dark */
   --klai-text-muted: #19191899;           /* rl-dark-60 */
   --klai-user-text-color: var(--klai-text-color);
@@ -67,7 +68,7 @@
 .klai-bubble svg {
   width: 24px;
   height: 24px;
-  fill: var(--klai-text-color);  /* dark icon on amber bubble */
+  fill: var(--klai-primary-text-color);
 }
 
 /* Chat window */
@@ -93,7 +94,7 @@
 .klai-header {
   padding: 16px;
   background-color: var(--klai-primary-color);
-  color: var(--klai-text-color);
+  color: var(--klai-primary-text-color);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -110,7 +111,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--klai-text-color);
+  color: var(--klai-primary-text-color);
   padding: 4px;
   display: flex;
   align-items: center;
@@ -132,7 +133,7 @@
 .klai-close-btn svg {
   width: 18px;
   height: 18px;
-  stroke: var(--klai-text-color);
+  stroke: var(--klai-primary-text-color);
   stroke-width: 2;
   fill: none;
 }
@@ -312,7 +313,7 @@
 
 .klai-send-btn {
   background-color: var(--klai-primary-color);
-  color: var(--klai-text-color);
+  color: var(--klai-primary-text-color);
 }
 
 .klai-send-btn:hover:not(:disabled) {
