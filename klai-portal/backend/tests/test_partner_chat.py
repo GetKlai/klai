@@ -39,6 +39,31 @@ def _mock_retrieval_log(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_llm_messages_strip_widget_metadata():
+    """Widget-only metadata must never be sent back to the LLM provider."""
+    from app.services.partner_chat import _augment_messages_with_system_prompt
+
+    messages = [
+        {"role": "user", "content": "What is Klai?"},
+        {
+            "role": "assistant",
+            "content": "Klai is an AI workspace. (1)",
+            "sources": [{"label": "1", "title": "Klai", "url": "https://getklai.com/"}],
+        },
+        {"role": "user", "content": "And ownership?"},
+    ]
+
+    augmented = _augment_messages_with_system_prompt(messages, "system prompt")
+
+    assert augmented == [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "What is Klai?"},
+        {"role": "assistant", "content": "Klai is an AI workspace. (1)"},
+        {"role": "user", "content": "And ownership?"},
+    ]
+    assert all(set(message) == {"role", "content"} for message in augmented)
+
+
 @pytest.mark.asyncio
 async def test_invalid_model_returns_400():
     """Model must be klai-primary or klai-fast; anything else -> 400."""
