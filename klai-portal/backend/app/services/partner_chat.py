@@ -18,7 +18,10 @@ user query and the model response so VictoriaLogs gets
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import httpx
 import structlog
@@ -32,6 +35,10 @@ from app.utils.language_detect import (
 )
 
 logger = structlog.get_logger()
+
+_MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]]*)\]\(([^)]*)\)")
+_RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
+_STREAM_GUARD_TAIL_CHARS = 16
 
 
 def _last_user_message(messages: list[dict]) -> str | None:
@@ -85,9 +92,191 @@ def _emit_language_correctness_log(
         logger.warning("chat_synthesis_language_log_failed", exc_info=True)
 
 
-def _build_system_prompt(chunks: list[dict], original_system: str | None = None) -> str:
+def _normalise_guard_url(url: object) -> str:
+    if not isinstance(url, str):
+        return ""
+    return url.strip().strip("<>")
+
+
+def _source_urls_from_chunks(chunks: list[dict]) -> set[str]:
+    return {
+        normalised for normalised in (_normalise_guard_url(chunk.get("source_url")) for chunk in chunks) if normalised
+    }
+
+
+def _sanitize_kb_markdown_output(text: str, *, allowed_source_urls: set[str]) -> tuple[str, int]:
+    """Remove source links that were not present in retrieved chunk metadata."""
+    changed = 0
+
+    def _replace_link(match: re.Match[str]) -> str:
+        nonlocal changed
+        marker = match.group(0)
+        label = match.group(1)
+        url = _normalise_guard_url(match.group(2))
+        if marker.startswith("!"):
+            changed += 1
+            return label or "[image unavailable in knowledge base]"
+        if url in allowed_source_urls:
+            return marker
+        changed += 1
+        return label
+
+    def _replace_raw_url(match: re.Match[str]) -> str:
+        nonlocal changed
+        raw = match.group(0)
+        url = raw.rstrip(".,;:")
+        suffix = raw[len(url) :]
+        if _normalise_guard_url(url) in allowed_source_urls:
+            return raw
+        changed += 1
+        return f"[link removed]{suffix}"
+
+    sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, text)
+    sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
+    return sanitized, changed
+
+
+def _earliest_guard_start(text: str) -> int:
+    starts = [
+        idx
+        for idx in (
+            text.find("["),
+            text.find("!["),
+            text.find("http://"),
+            text.find("https://"),
+        )
+        if idx >= 0
+    ]
+    return min(starts) if starts else -1
+
+
+def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
+    buffer: str,
+    *,
+    allowed_source_urls: set[str],
+    final: bool,
+) -> tuple[str, str, int]:
+    """Return safe text to stream now, retaining incomplete link/URL tails."""
+    out: list[str] = []
+    changed = 0
+
+    while buffer:
+        start = _earliest_guard_start(buffer)
+        if start < 0:
+            if final:
+                out.append(buffer)
+                return "".join(out), "", changed
+            if len(buffer) <= _STREAM_GUARD_TAIL_CHARS:
+                return "".join(out), buffer, changed
+            safe_len = len(buffer) - _STREAM_GUARD_TAIL_CHARS
+            out.append(buffer[:safe_len])
+            buffer = buffer[safe_len:]
+            return "".join(out), buffer, changed
+
+        if start > 0:
+            out.append(buffer[:start])
+            buffer = buffer[start:]
+            continue
+
+        link_match = _MARKDOWN_LINK_RE.match(buffer)
+        if link_match:
+            marker = link_match.group(0)
+            label = link_match.group(1)
+            url = _normalise_guard_url(link_match.group(2))
+            if marker.startswith("!"):
+                out.append(label or "[image unavailable in knowledge base]")
+                changed += 1
+            elif url in allowed_source_urls:
+                out.append(marker)
+            else:
+                out.append(label)
+                changed += 1
+            buffer = buffer[len(marker) :]
+            continue
+
+        if buffer.startswith("![") or buffer.startswith("["):
+            end = buffer.find("]")
+            if end < 0:
+                if final:
+                    out.append(buffer)
+                    return "".join(out), "", changed
+                return "".join(out), buffer, changed
+            if len(buffer) > end + 1 and buffer[end + 1] == "(":
+                if final:
+                    out.append(buffer[0])
+                    buffer = buffer[1:]
+                    continue
+                return "".join(out), buffer, changed
+            out.append(buffer[: end + 1])
+            buffer = buffer[end + 1 :]
+            continue
+
+        raw_match = _RAW_URL_RE.match(buffer)
+        if raw_match:
+            raw = raw_match.group(0)
+            if not final and len(raw) == len(buffer):
+                return "".join(out), buffer, changed
+            url = raw.rstrip(".,;:")
+            suffix = raw[len(url) :]
+            if _normalise_guard_url(url) in allowed_source_urls:
+                out.append(raw)
+            else:
+                out.append(f"[link removed]{suffix}")
+                changed += 1
+            buffer = buffer[len(raw) :]
+            continue
+
+        if final:
+            out.append(buffer[0])
+            buffer = buffer[1:]
+            continue
+        return "".join(out), buffer, changed
+
+    return "".join(out), "", changed
+
+
+def _sanitize_completion_body(body: dict, *, allowed_source_urls: set[str]) -> int:
+    changed = 0
+    for choice in body.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        sanitized, content_changed = _sanitize_kb_markdown_output(
+            content,
+            allowed_source_urls=allowed_source_urls,
+        )
+        if content_changed:
+            message["content"] = sanitized
+            changed += content_changed
+    return changed
+
+
+def _sse_content_delta(text: str) -> bytes:
+    payload = {"choices": [{"delta": {"content": text}}]}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
+def _build_system_prompt(
+    chunks: list[dict],
+    original_system: str | None = None,
+    widget_system_prompt: str | None = None,
+) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks."""
     base = original_system or GROUNDED_CHAT_SYSTEM_PROMPT
+    widget_system_prompt = (widget_system_prompt or "").strip()
+    if widget_system_prompt:
+        base = (
+            f"{base}\n\n"
+            "[Widget behaviour instructions: apply these to tone, persona, "
+            "scope, and escalation style. They do not override the source URL "
+            "rules below.]\n"
+            f"{widget_system_prompt}"
+        )
 
     if not chunks:
         return base
@@ -96,13 +285,28 @@ def _build_system_prompt(chunks: list[dict], original_system: str | None = None)
     for i, chunk in enumerate(chunks, 1):
         text = chunk.get("text", "")
         if text:
-            context_parts.append(f"[{i}] {text}")
+            title = (
+                chunk.get("title")
+                or (chunk.get("metadata") or {}).get("title")
+                or chunk.get("source_label")
+                or "Knowledge Base"
+            )
+            source_url = (chunk.get("source_url") or "").strip()
+            source_line = f"\nsource_url: {source_url}" if source_url else ""
+            context_parts.append(f"[{i}] title: {title}{source_line}\n{text}")
 
     if not context_parts:
         return base
 
     context_block = "\n\n".join(context_parts)
-    return f"{base}\n\nContext:\n{context_block}"
+    url_guard = (
+        "URL rules for citations and source links:\n"
+        "- Use only literal source_url values shown in the context below.\n"
+        "- Copy source_url values exactly; do not invent, rewrite, or guess URLs.\n"
+        "- If a cited chunk has no source_url, cite it as [n] without adding a link.\n"
+        "- Never turn a title, heading, or documentation phrase into a URL.\n"
+    )
+    return f"{base}\n\n{url_guard}\nContext:\n{context_block}"
 
 
 async def retrieve_context(
@@ -113,6 +317,7 @@ async def retrieve_context(
     settings: Settings,
     *,
     partner_user_id: str | None = None,
+    widget_system_prompt: str | None = None,
 ) -> tuple[list[dict], str]:
     """Call retrieval-api and return (chunks, augmented_system_prompt).
 
@@ -130,7 +335,7 @@ async def retrieve_context(
     """
     query = _last_user_message(messages)
     if not query:
-        return [], _build_system_prompt([])
+        return [], _build_system_prompt([], widget_system_prompt=widget_system_prompt)
 
     conversation_history = _build_conversation_history(messages)
 
@@ -157,7 +362,7 @@ async def retrieve_context(
     retrieval_url = settings.knowledge_retrieve_url
     if not retrieval_url:
         logger.warning("partner_chat_no_retrieval_url")
-        return [], _build_system_prompt([], original_system)
+        return [], _build_system_prompt([], original_system, widget_system_prompt)
 
     # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
     # retrieval_api_internal_secret (separate from portal-api's mailer secret).
@@ -181,7 +386,7 @@ async def retrieve_context(
         result = resp.json()
 
     chunks = result.get("chunks", [])
-    system_prompt = _build_system_prompt(chunks, original_system)
+    system_prompt = _build_system_prompt(chunks, original_system, widget_system_prompt)
 
     return chunks, system_prompt
 
@@ -208,6 +413,7 @@ async def chat_completion_non_streaming(
     settings: Settings,
     *,
     org_id: int | str | None = None,
+    allowed_source_urls: set[str] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -240,6 +446,15 @@ async def chat_completion_non_streaming(
         resp.raise_for_status()
         body = resp.json()
 
+    allowed_source_urls = allowed_source_urls or set()
+    stripped_links = _sanitize_completion_body(body, allowed_source_urls=allowed_source_urls)
+    if stripped_links:
+        logger.warning(
+            "partner_chat_unretrieved_links_stripped",
+            org_id=org_id,
+            stripped_links=stripped_links,
+        )
+
     # Passive language-correctness telemetry (SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07).
     user_query = _last_user_message(messages) or ""
     response_text = _extract_completion_text(body)
@@ -259,16 +474,15 @@ async def chat_completion_streaming(
     settings: Settings,
     *,
     org_id: int | str | None = None,
+    allowed_source_urls: set[str] | None = None,
 ) -> AsyncGenerator[bytes]:
-    """Stream LiteLLM SSE response byte-for-byte.
+    """Stream LiteLLM SSE response with KB-source URL sanitization.
 
-    POST to LiteLLM with stream=true, yield each chunk as-is. Collects
+    POST to LiteLLM with stream=true, yield sanitized content deltas. Collects
     the streamed assistant text alongside the byte forwarding so the
     ``chat_synthesis_complete`` log event (REQ-07) gets the full
     response text even though we never buffer it for the client.
     """
-    import json as _json
-    import re as _re
 
     augmented_messages = [{"role": "system", "content": system_prompt}]
     for msg in messages:
@@ -277,8 +491,10 @@ async def chat_completion_streaming(
 
     litellm_url = settings.litellm_base_url
     user_query = _last_user_message(messages) or ""
+    allowed_source_urls = allowed_source_urls or set()
     collected_text_parts: list[str] = []
-    _SSE_DATA = _re.compile(rb"^data: (.+)$", _re.MULTILINE)
+    pending_text = ""
+    stripped_links = 0
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
@@ -296,26 +512,61 @@ async def chat_completion_streaming(
             },
         ) as resp:
             resp.raise_for_status()
-            async for chunk in resp.aiter_bytes():
-                # Best-effort SSE parse for the observability log; never
-                # block forwarding on parse failures.
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:].strip()
+                if not payload:
+                    continue
+                if payload == "[DONE]":
+                    safe_text, pending_text, changed = _pop_sanitized_stream_text(
+                        pending_text,
+                        allowed_source_urls=allowed_source_urls,
+                        final=True,
+                    )
+                    stripped_links += changed
+                    if safe_text:
+                        collected_text_parts.append(safe_text)
+                        yield _sse_content_delta(safe_text)
+                    yield b"data: [DONE]\n\n"
+                    continue
                 try:
-                    for match in _SSE_DATA.finditer(chunk):
-                        payload = match.group(1).decode("utf-8", errors="ignore").strip()
-                        if not payload or payload == "[DONE]":
-                            continue
-                        evt = _json.loads(payload)
-                        delta = (evt.get("choices") or [{}])[0].get("delta") or {}
-                        text = delta.get("content")
-                        if isinstance(text, str) and text:
-                            collected_text_parts.append(text)
-                except Exception:
-                    # Observability is best-effort. SSE chunks can split
-                    # JSON payloads across multiple frames, malformed
-                    # provider responses can yield unexpected shapes —
-                    # we never block forwarding on parse failure.
+                    evt: dict[str, Any] = json.loads(payload)
+                except json.JSONDecodeError:
                     logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
-                yield chunk
+                    continue
+                delta = (evt.get("choices") or [{}])[0].get("delta") or {}
+                text = delta.get("content")
+                if not isinstance(text, str) or not text:
+                    continue
+                pending_text += text
+                safe_text, pending_text, changed = _pop_sanitized_stream_text(
+                    pending_text,
+                    allowed_source_urls=allowed_source_urls,
+                    final=False,
+                )
+                stripped_links += changed
+                if safe_text:
+                    collected_text_parts.append(safe_text)
+                    yield _sse_content_delta(safe_text)
+
+    if pending_text:
+        safe_text, pending_text, changed = _pop_sanitized_stream_text(
+            pending_text,
+            allowed_source_urls=allowed_source_urls,
+            final=True,
+        )
+        stripped_links += changed
+        if safe_text:
+            collected_text_parts.append(safe_text)
+            yield _sse_content_delta(safe_text)
+
+    if stripped_links:
+        logger.warning(
+            "partner_chat_unretrieved_links_stripped",
+            org_id=org_id,
+            stripped_links=stripped_links,
+        )
 
     _emit_language_correctness_log(
         org_id=org_id,

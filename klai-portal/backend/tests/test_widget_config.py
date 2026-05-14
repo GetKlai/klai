@@ -33,6 +33,7 @@ class FakeWidget:
             "allowed_origins": ["https://example.com"],
             "title": "Chat",
             "welcome_message": "Hello!",
+            "system_prompt": "Use a friendly support tone.",
             "css_variables": {},
         }
     )
@@ -100,6 +101,7 @@ async def test_widget_config_happy_path():
     body = response.body.decode()
     assert '"session_token": "fake.jwt.token"' in body
     assert '"title": "Chat"' in body
+    assert "system_prompt" not in body
 
 
 @pytest.mark.asyncio
@@ -151,6 +153,7 @@ async def test_widget_config_empty_allowed_origins_fail_closed():
             "allowed_origins": [],
             "title": "",
             "welcome_message": "",
+            "system_prompt": "",
             "css_variables": {},
         },
     )

@@ -51,13 +51,15 @@ export function AppearanceTab({ widget }: Props) {
 
   const [title, setTitle] = useState(config.title)
   const [welcome, setWelcome] = useState(config.welcome_message)
+  const [systemPrompt, setSystemPrompt] = useState(config.system_prompt)
   const [cssVarRows, setCssVarRows] = useState<CssVarRow[]>(cssVarsFromRecord(config.css_variables))
 
   useEffect(() => {
     setTitle(config.title)
     setWelcome(config.welcome_message)
+    setSystemPrompt(config.system_prompt)
     setCssVarRows(cssVarsFromRecord(config.css_variables))
-  }, [config.title, config.welcome_message, config.css_variables])
+  }, [config.title, config.welcome_message, config.system_prompt, config.css_variables])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -65,6 +67,7 @@ export function AppearanceTab({ widget }: Props) {
       ...config,
       title: title.trim(),
       welcome_message: welcome.trim(),
+      system_prompt: systemPrompt.trim(),
       css_variables: cssVarsToRecord(cssVarRows),
     }
     updateMutation.mutate(
@@ -100,6 +103,21 @@ export function AppearanceTab({ widget }: Props) {
             value={welcome}
             onChange={(e) => setWelcome(e.target.value)}
             placeholder={m.admin_widgets_widget_welcome_placeholder()}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="widget-system-prompt">{m.admin_widgets_widget_system_prompt_label()}</Label>
+          <p className="text-xs text-gray-400">
+            {m.admin_widgets_widget_system_prompt_help()}
+          </p>
+          <textarea
+            id="widget-system-prompt"
+            value={systemPrompt}
+            onChange={(e) => setSystemPrompt(e.target.value)}
+            rows={5}
+            maxLength={4000}
+            placeholder={m.admin_widgets_widget_system_prompt_placeholder()}
+            className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
           />
         </div>
         <div className="space-y-2">

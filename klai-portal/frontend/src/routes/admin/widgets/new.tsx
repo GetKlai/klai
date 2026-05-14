@@ -38,6 +38,7 @@ interface FormState {
   rate_limit_rpm: number
   widget_title: string
   widget_welcome: string
+  widget_system_prompt: string
   allowed_origins_raw: string
   css_var_rows: CssVarRow[]
 }
@@ -49,6 +50,7 @@ const INITIAL_FORM: FormState = {
   rate_limit_rpm: 60,
   widget_title: '',
   widget_welcome: '',
+  widget_system_prompt: '',
   allowed_origins_raw: '',
   css_var_rows: [{ key: '', value: '' }],
 }
@@ -140,6 +142,7 @@ function NewWidgetPage() {
       allowed_origins: parseOrigins(form.allowed_origins_raw),
       title: form.widget_title.trim(),
       welcome_message: form.widget_welcome.trim(),
+      system_prompt: form.widget_system_prompt.trim(),
       css_variables: cssVarsToRecord(form.css_var_rows),
     }
 
@@ -257,6 +260,21 @@ function NewWidgetPage() {
                 value={form.widget_welcome}
                 onChange={(e) => setForm((p) => ({ ...p, widget_welcome: e.target.value }))}
                 placeholder={m.admin_widgets_widget_welcome_placeholder()}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="widget-system-prompt">{m.admin_widgets_widget_system_prompt_label()}</Label>
+              <p className="text-xs text-gray-400">
+                {m.admin_widgets_widget_system_prompt_help()}
+              </p>
+              <textarea
+                id="widget-system-prompt"
+                value={form.widget_system_prompt}
+                onChange={(e) => setForm((p) => ({ ...p, widget_system_prompt: e.target.value }))}
+                rows={5}
+                maxLength={4000}
+                placeholder={m.admin_widgets_widget_system_prompt_placeholder()}
+                className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
             <div className="space-y-2">
