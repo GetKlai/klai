@@ -29,6 +29,8 @@ export const Route = createFileRoute('/app/account')({
 
 interface MeAccount {
   preferred_language?: 'nl' | 'en'
+  name?: string
+  email?: string
 }
 
 function AccountPage() {
@@ -93,8 +95,11 @@ function AccountPage() {
     },
   })
 
-  const name = auth.user?.profile?.name ?? auth.user?.profile?.preferred_username ?? ''
-  const email = auth.user?.profile?.email ?? ''
+  // Name and email come from /api/me (sourced server-side from the Zitadel
+  // userinfo claims). The BFF session only carries `sub`, so reading from
+  // auth.user.profile here would always be empty.
+  const name = meData?.name ?? ''
+  const email = meData?.email ?? ''
   const hasProfileInfo = Boolean(name || email)
 
   const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
