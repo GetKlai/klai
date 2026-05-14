@@ -32,6 +32,63 @@ interface ChatStreamOptions {
 class RetriableError extends Error {}
 class FatalError extends Error {}
 
+const INVALID_SOURCE_VALUES = new Set(["", "undefined", "null", "none"]);
+const INVALID_SOURCE_PLACEHOLDERS = new Set(["undefined", "null", "none"]);
+
+export function normalizeSourceUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+
+  const value = raw.trim();
+  if (INVALID_SOURCE_VALUES.has(value.toLowerCase()) || !/^https?:\/\//i.test(value)) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    if (INVALID_SOURCE_PLACEHOLDERS.has(url.hostname.toLowerCase())) {
+      return null;
+    }
+    const placeholderPath = url.pathname.replace(/^\/+|\/+$/g, "").toLowerCase();
+    if (INVALID_SOURCE_PLACEHOLDERS.has(placeholderPath)) {
+      return null;
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeMessageSources(rawSources: unknown): MessageSource[] {
+  if (!Array.isArray(rawSources)) {
+    return [];
+  }
+
+  const normalized: MessageSource[] = [];
+  const seenLabels = new Set<string>();
+
+  for (const rawSource of rawSources) {
+    if (!rawSource || typeof rawSource !== "object") {
+      continue;
+    }
+    const source = rawSource as Partial<MessageSource>;
+    const label = typeof source.label === "string" ? source.label.trim() : "";
+    const url = normalizeSourceUrl(source.url);
+    if (!/^\d+$/.test(label) || !url || seenLabels.has(label)) {
+      continue;
+    }
+    const title = typeof source.title === "string" && source.title.trim() ? source.title.trim() : `Source ${label}`;
+    normalized.push({ label, title, url });
+    seenLabels.add(label);
+  }
+
+  return normalized;
+}
+
 export async function streamChat(options: ChatStreamOptions): Promise<void> {
   const { endpoint, token, messages, widgetId, callbacks, abortController } = options;
   let currentToken = token;
@@ -76,7 +133,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
           try {
             const parsed = JSON.parse(event.data) as {
               choices?: Array<{
-                delta?: { content?: string; sources?: MessageSource[] };
+                delta?: { content?: string; sources?: unknown };
                 finish_reason?: string;
               }>;
             };
@@ -85,8 +142,9 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             if (content) {
               callbacks.onToken(content);
             }
-            if (Array.isArray(delta?.sources)) {
-              callbacks.onSources?.(delta.sources);
+            const sources = normalizeMessageSources(delta?.sources);
+            if (sources.length > 0) {
+              callbacks.onSources?.(sources);
             }
             if (parsed.choices?.[0]?.finish_reason === "stop") {
               callbacks.onDone();

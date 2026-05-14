@@ -43,6 +43,7 @@ _CITATION_LINK_RE = re.compile(r"\[(\d+)\]\(([^)]*)\)")
 _MALFORMED_CITATION_LINK_RE = re.compile(r"(?<!\[)\b(\d+)\((https?://[^)\s]+)\)")
 _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
 _EMPTY_PARENS_RE = re.compile(r"\s*\(\s*\)")
+_CITATION_MARKER_RE = re.compile(r"\((\d+)\)")
 _STREAM_GUARD_TAIL_CHARS = 16
 
 CitationOutput = Literal["links", "markers"]
@@ -114,6 +115,12 @@ def _normalise_guard_url(url: object) -> str:
     netloc = parsed.netloc.lower()
     if netloc.startswith("www."):
         netloc = netloc[4:]
+    hostname = (parsed.hostname or "").lower()
+    if hostname in {"undefined", "null", "none"}:
+        return ""
+    placeholder_path = (parsed.path or "").strip("/").lower()
+    if placeholder_path in {"undefined", "null", "none"}:
+        return ""
     return urlunparse((parsed.scheme.lower(), netloc, parsed.path or "/", "", parsed.query, ""))
 
 
@@ -229,12 +236,31 @@ def _format_citation_label(
     url = _citation_url_for_label(label, citation_source_urls)
     if not url:
         if label.isdigit():
+            if citation_output == "markers":
+                return f"({label})"
             return f"[{label}]"
         return label
     visible_label = display_label or _citation_display_label(url, citation_source_urls) or label
     if citation_output == "markers":
-        return f"[{visible_label}]"
+        return f"({visible_label})"
     return f"[{visible_label}]({url})"
+
+
+def _format_citation_marker(label: str) -> str:
+    return f"({label.strip()})"
+
+
+def _join_formatted_citations(citations: list[str], *, citation_output: CitationOutput) -> str:
+    if citation_output != "markers":
+        return ", ".join(citations)
+
+    labels: list[str] = []
+    for citation in citations:
+        match = _CITATION_MARKER_RE.fullmatch(citation)
+        if not match:
+            return ", ".join(citations)
+        labels.append(match.group(1))
+    return f"({','.join(labels)})" if labels else ""
 
 
 def _record_emitted_source_key(
@@ -298,6 +324,42 @@ def _dedupe_adjacent_citation_links(text: str) -> str:
             current = next_match
 
         output.append(", ".join(kept))
+        pos = run_end
+
+
+def _dedupe_adjacent_citation_markers(text: str) -> str:
+    output: list[str] = []
+    pos = 0
+
+    while True:
+        match = _CITATION_MARKER_RE.search(text, pos)
+        if not match:
+            output.append(text[pos:])
+            return "".join(output)
+
+        output.append(text[pos : match.start()])
+        labels: list[str] = []
+        seen: set[str] = set()
+        current = match
+        run_end = match.end()
+
+        while current:
+            label = current.group(1)
+            if label not in seen:
+                labels.append(label)
+                seen.add(label)
+            run_end = current.end()
+
+            separator_start = run_end
+            separator_end = separator_start
+            while separator_end < len(text) and text[separator_end] in " \t\r\n,;":
+                separator_end += 1
+            next_match = _CITATION_MARKER_RE.match(text, separator_end)
+            if not next_match:
+                break
+            current = next_match
+
+        output.append(f"({','.join(labels)})")
         pos = run_end
 
 
@@ -367,7 +429,7 @@ def _parse_bare_citation_run(
             seen_urls.add(url_key)
             _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
         kept.append(_format_citation_label(label, citation_source_urls, display_label, citation_output=citation_output))
-    return ", ".join(kept), buffer[pos:], changed
+    return _join_formatted_citations(kept, citation_output=citation_output), buffer[pos:], changed
 
 
 def _parse_citation_link_run(
@@ -429,9 +491,13 @@ def _parse_citation_link_run(
                 _format_citation_label(label, citation_source_urls, display_label, citation_output=citation_output)
             )
         else:
-            kept.append(f"[{display_label or label}]" if citation_output == "markers" else f"[{label}]({output_url})")
+            kept.append(
+                _format_citation_marker(display_label or label)
+                if citation_output == "markers"
+                else f"[{label}]({output_url})"
+            )
 
-    return ", ".join(kept), buffer[pos:], changed
+    return _join_formatted_citations(kept, citation_output=citation_output), buffer[pos:], changed
 
 
 def _format_provided_citation_link(
@@ -468,7 +534,7 @@ def _format_provided_citation_link(
             citation_output=citation_output,
         ), changed
     if citation_output == "markers" and label.strip().isdigit():
-        return f"[{display_label or label.strip()}]", changed
+        return _format_citation_marker(display_label or label.strip()), changed
     return f"[{label}]({output_url})", changed
 
 
@@ -541,7 +607,7 @@ def _sanitize_kb_markdown_output(  # noqa: C901 - citation/link guard has severa
                 if url_key:
                     _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
                 changed += 1
-                return f"[{display_label}]"
+                return _format_citation_marker(display_label)
             return marker
         changed += 1
         if label.strip().isdigit():
@@ -576,8 +642,11 @@ def _sanitize_kb_markdown_output(  # noqa: C901 - citation/link guard has severa
     sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, sanitized)
     sanitized = _BARE_CITATION_RE.sub(_replace_bare_citation, sanitized)
     before_dedupe = sanitized
-    sanitized = _dedupe_adjacent_citation_links(sanitized)
-    sanitized = _dedupe_repeated_citation_links(sanitized)
+    if citation_output == "markers":
+        sanitized = _dedupe_adjacent_citation_markers(sanitized)
+    else:
+        sanitized = _dedupe_adjacent_citation_links(sanitized)
+        sanitized = _dedupe_repeated_citation_links(sanitized)
     if sanitized != before_dedupe:
         changed += 1
     sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
@@ -761,7 +830,7 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
                         changed += 1
                     else:
                         display_label = str(len(emitted_source_keys) + 1) if url_key else label.strip()
-                        out.append(f"[{display_label}]")
+                        out.append(_format_citation_marker(display_label))
                         if url_key:
                             _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
                         changed += 1
@@ -949,7 +1018,7 @@ def _build_system_prompt(
         "- Never turn a title, heading, or documentation phrase into a URL.\n"
         "- Optimize for a clean web-widget answer: do not cite the same document repeatedly.\n"
         "- If several facts in one paragraph or list come from the same source_url, cite that source once.\n"
-        "- If you cite multiple different documents at the same spot, separate citation numbers with spaces.\n"
+        "- If you cite multiple different documents at the same spot, separate citation numbers with commas.\n"
     )
     return f"{base}\n\n{url_guard}\nContext:\n{context_block}"
 

@@ -1,6 +1,7 @@
 import { createStore } from "solid-js/store";
 import type { WidgetConfig } from "../api/widget-config";
 import type { Message, MessageSource } from "../api/chat-stream";
+import { normalizeMessageSources } from "../api/chat-stream";
 
 export interface ChatState {
   messages: Message[];
@@ -61,11 +62,15 @@ export function appendToLastMessage(token: string): void {
 }
 
 export function setLastMessageSources(sources: MessageSource[]): void {
+  const normalizedSources = normalizeMessageSources(sources);
+  if (normalizedSources.length === 0) {
+    return;
+  }
   setChatState("messages", (msgs) => {
     const updated = [...msgs];
     const last = updated[updated.length - 1];
     if (last && last.role === "assistant") {
-      updated[updated.length - 1] = { ...last, sources };
+      updated[updated.length - 1] = { ...last, sources: normalizedSources };
     }
     return updated;
   });
