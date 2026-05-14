@@ -650,7 +650,7 @@ def test_sanitizer_deduplicates_adjacent_citations_for_same_document():
     assert sanitized == (
         "Klai is steward-owned "
         "[1](https://getklai.com/docs/company/steward-ownership) "
-        "and mission-led [4](https://getklai.com/docs/company/mission)."
+        "and mission-led [2](https://getklai.com/docs/company/mission)."
     )
     assert "www.getklai.com" not in sanitized
 
@@ -693,10 +693,43 @@ def test_sanitizer_separates_multiple_different_citations():
     assert changed >= 1
     assert sanitized == (
         "Klai is public "
-        "[1](https://getklai.com/docs/company/open-source) "
-        "[3](https://getklai.com/docs/legal/dpa) "
-        "[7](https://getklai.com/docs/legal/subprocessors)."
+        "[1](https://getklai.com/docs/company/open-source), "
+        "[2](https://getklai.com/docs/legal/dpa), "
+        "[3](https://getklai.com/docs/legal/subprocessors)."
     )
+
+
+def test_sanitizer_maps_chunk_numbers_to_document_source_numbers():
+    """Visible source numbers are document numbers, not raw retrieval chunk indices."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    sanitized, changed = _sanitize_kb_markdown_output(
+        "Steward ownership is written into the articles [13].",
+        allowed_source_urls=set(),
+        citation_source_urls={
+            1: "https://getklai.com/docs/company/open-source",
+            13: "https://getklai.com/docs/company/steward-ownership",
+        },
+    )
+
+    assert changed == 0
+    assert sanitized == (
+        "Steward ownership is written into the articles [1](https://getklai.com/docs/company/steward-ownership)."
+    )
+
+
+def test_sanitizer_repairs_malformed_citation_link_text():
+    """The backend should not leak '4(https://...)' into the widget."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    sanitized, changed = _sanitize_kb_markdown_output(
+        "Naam en e-mailadres 4(https://getklai.com/docs/legal/privacy).",
+        allowed_source_urls=set(),
+        citation_source_urls={4: "https://getklai.com/docs/legal/privacy"},
+    )
+
+    assert changed >= 1
+    assert sanitized == ("Naam en e-mailadres [1](https://getklai.com/docs/legal/privacy).")
 
 
 def test_sanitizer_removes_parenthesized_raw_urls_without_placeholder():
@@ -860,10 +893,27 @@ def test_stream_sanitizer_separates_explicit_citation_link_runs():
     assert pending == ""
     assert changed == 0
     assert out == (
-        "[1](https://getklai.com/docs/company/open-source) "
-        "[3](https://getklai.com/docs/legal/dpa) "
-        "[7](https://getklai.com/docs/legal/subprocessors)."
+        "[1](https://getklai.com/docs/company/open-source), "
+        "[2](https://getklai.com/docs/legal/dpa), "
+        "[3](https://getklai.com/docs/legal/subprocessors)."
     )
+
+
+def test_stream_sanitizer_repairs_malformed_citation_link_text():
+    """Streaming should repair label(url) citations before the widget sees them."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    out, pending, changed = _pop_sanitized_stream_text(
+        "Naam en e-mailadres 4(https://getklai.com/docs/legal/privacy).",
+        allowed_source_urls=set(),
+        citation_source_urls={4: "https://getklai.com/docs/legal/privacy"},
+        emitted_source_keys=set(),
+        final=True,
+    )
+
+    assert pending == ""
+    assert changed >= 1
+    assert out == "Naam en e-mailadres [1](https://getklai.com/docs/legal/privacy)."
 
 
 def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placeholder():

@@ -4,8 +4,36 @@ import snarkdown from "snarkdown";
 import { TypingIndicator } from "./TypingIndicator";
 import { t } from "../i18n/labels";
 
+const MALFORMED_CITATION_RE = /(^|[^\[])\b(\d+)\((https?:\/\/[^)\s]+)\)/g;
+
+function normalizeCitationMarkdown(text: string): string {
+  return text.replace(MALFORMED_CITATION_RE, (_match, prefix: string, label: string, url: string) => {
+    return `${prefix}[${label}](${url})`;
+  });
+}
+
+function decorateLinks(html: string): string {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+
+  template.content.querySelectorAll("a").forEach((anchor) => {
+    anchor.setAttribute("target", "_blank");
+    anchor.setAttribute("rel", "noopener noreferrer");
+
+    const label = anchor.textContent?.trim() ?? "";
+    if (/^\d+$/.test(label)) {
+      anchor.classList.add("klai-citation");
+      anchor.textContent = `[${label}]`;
+    }
+  });
+
+  return template.innerHTML;
+}
+
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(snarkdown(text));
+  const markdown = normalizeCitationMarkdown(text);
+  const sanitized = DOMPurify.sanitize(snarkdown(markdown));
+  return decorateLinks(sanitized);
 }
 import type { Message } from "../api/chat-stream";
 
