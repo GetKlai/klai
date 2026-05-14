@@ -22,6 +22,7 @@ import os
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -273,6 +274,8 @@ KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.co
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)")
 _MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)")
 _RAW_URL_RE = re.compile(r"https?://[^\s<>()\]]+")
+_BARE_CITATION_RE = re.compile(r"\[(\d+)\]")
+_SENTINEL_URLS = {"undefined", "null", "none", "n/a", "na", "-", "#"}
 
 # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2 — anti-hallucination injection
 # fired when retrieval-api signals confidence_band ∈ {low, unknown}. Dutch
@@ -1171,7 +1174,136 @@ def _compose_libre_chat_prefix(*blocks: str) -> str:
 def _normalise_guard_url(url: object) -> str:
     if not isinstance(url, str):
         return ""
-    return url.strip().strip("<>")
+    value = url.strip().strip("<>")
+    if not value or value.lower() in _SENTINEL_URLS:
+        return ""
+    if value.startswith("/"):
+        return value
+
+    parsed = urlparse(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return ""
+
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    path = parsed.path or "/"
+    return urlunparse((parsed.scheme.lower(), netloc, path, "", parsed.query, ""))
+
+
+def _source_url_key(url: str) -> str:
+    return _normalise_guard_url(url).rstrip("/")
+
+
+def _chunk_source_url(chunk: dict[str, Any]) -> str:
+    candidates: list[object] = [
+        chunk.get("source_url"),
+        chunk.get("sourceUrl"),
+        chunk.get("canonical_url"),
+        chunk.get("page_url"),
+        chunk.get("url"),
+    ]
+    metadata = chunk.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.extend(
+            [
+                metadata.get("source_url"),
+                metadata.get("sourceUrl"),
+                metadata.get("canonical_url"),
+                metadata.get("page_url"),
+                metadata.get("url"),
+            ]
+        )
+    source = chunk.get("source")
+    if isinstance(source, dict):
+        candidates.extend(
+            [
+                source.get("source_url"),
+                source.get("url"),
+                source.get("href"),
+            ]
+        )
+
+    for candidate in candidates:
+        normalised = _normalise_guard_url(candidate)
+        if normalised and not normalised.startswith("/"):
+            return normalised
+    return ""
+
+
+def _chunk_title(chunk: dict[str, Any]) -> str:
+    metadata = chunk.get("metadata")
+    title = chunk.get("title")
+    if not title and isinstance(metadata, dict):
+        title = metadata.get("title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    return "Source"
+
+
+def _citation_source_urls_from_chunks(chunks: list[dict[str, Any]]) -> dict[int, str]:
+    citation_source_urls: dict[int, str] = {}
+    for index, chunk in enumerate(chunks, 1):
+        source_url = _chunk_source_url(chunk)
+        if source_url:
+            citation_source_urls[index] = source_url
+    return citation_source_urls
+
+
+def _document_sources_from_chunks(
+    chunks: list[dict[str, Any]],
+) -> list[dict[str, object]]:
+    sources: list[dict[str, object]] = []
+    by_key: dict[str, dict[str, object]] = {}
+    for index, chunk in enumerate(chunks, 1):
+        source_url = _chunk_source_url(chunk)
+        if not source_url:
+            continue
+        key = _source_url_key(source_url)
+        if not key:
+            continue
+        source = by_key.get(key)
+        if source is None:
+            source = {
+                "title": _chunk_title(chunk),
+                "url": source_url,
+                "chunk_numbers": [],
+            }
+            by_key[key] = source
+            sources.append(source)
+        source["chunk_numbers"].append(index)  # type: ignore[union-attr]
+    return sources
+
+
+def _dedupe_adjacent_bare_citations(
+    text: str,
+    citation_source_urls: dict[int, str],
+) -> tuple[str, int]:
+    changed = 0
+
+    def _replace_run(match: re.Match[str]) -> str:
+        nonlocal changed
+        run = match.group(0)
+        citations = list(_BARE_CITATION_RE.finditer(run))
+        if len(citations) <= 1:
+            return run
+
+        seen_source_keys: set[str] = set()
+        kept: list[str] = []
+        for citation in citations:
+            citation_text = citation.group(0)
+            index = int(citation.group(1))
+            source_key = _source_url_key(citation_source_urls.get(index, ""))
+            if source_key:
+                if source_key in seen_source_keys:
+                    changed += 1
+                    continue
+                seen_source_keys.add(source_key)
+            kept.append(citation_text)
+        return "".join(kept)
+
+    sanitized = re.sub(r"(?:\[\d+\]\s*){2,}", _replace_run, text)
+    return sanitized, changed
 
 
 def _absolute_image_url(url: object) -> str:
@@ -1190,6 +1322,7 @@ def _sanitize_kb_markdown_output(
     *,
     allowed_source_urls: set[str],
     allowed_image_urls: set[str],
+    citation_source_urls: dict[int, str] | None = None,
 ) -> tuple[str, int]:
     """Remove model-invented URLs/images from KB-grounded answers."""
     allowed_urls = allowed_source_urls | allowed_image_urls
@@ -1226,6 +1359,12 @@ def _sanitize_kb_markdown_output(
     sanitized = _MARKDOWN_IMAGE_RE.sub(_replace_image, text)
     sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, sanitized)
     sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
+    if citation_source_urls:
+        sanitized, citation_changed = _dedupe_adjacent_bare_citations(
+            sanitized,
+            citation_source_urls,
+        )
+        changed += citation_changed
     return sanitized, changed
 
 
@@ -1234,12 +1373,14 @@ def _sanitize_response_message_content(
     *,
     allowed_source_urls: set[str],
     allowed_image_urls: set[str],
+    citation_source_urls: dict[int, str],
 ) -> tuple[object, int]:
     if isinstance(content, str):
         return _sanitize_kb_markdown_output(
             content,
             allowed_source_urls=allowed_source_urls,
             allowed_image_urls=allowed_image_urls,
+            citation_source_urls=citation_source_urls,
         )
     if not isinstance(content, list):
         return content, 0
@@ -1258,6 +1399,7 @@ def _sanitize_response_message_content(
             text,
             allowed_source_urls=allowed_source_urls,
             allowed_image_urls=allowed_image_urls,
+            citation_source_urls=citation_source_urls,
         )
         changed += part_changed
         sanitized_parts.append({**part, "text": sanitized_text})
@@ -1284,8 +1426,28 @@ def _set_message_content(message: object, content: object) -> None:
 
 
 def _sanitize_kb_response(response: object, kb_meta: dict[str, Any]) -> int:
-    allowed_source_urls = set(kb_meta.get("allowed_source_urls") or [])
-    allowed_image_urls = set(kb_meta.get("allowed_image_urls") or [])
+    allowed_source_urls = {
+        url
+        for url in (
+            _normalise_guard_url(url) for url in kb_meta.get("allowed_source_urls") or []
+        )
+        if url
+    }
+    allowed_image_urls = {
+        url
+        for url in (
+            _normalise_guard_url(url) for url in kb_meta.get("allowed_image_urls") or []
+        )
+        if url
+    }
+    citation_source_urls = {
+        int(index): source_url
+        for index, source_url in (
+            (index, _normalise_guard_url(source_url))
+            for index, source_url in (kb_meta.get("citation_source_urls") or {}).items()
+        )
+        if source_url and str(index).isdigit()
+    }
     changed = 0
     for choice in getattr(response, "choices", []) or []:
         for key in ("message", "delta"):
@@ -1296,6 +1458,7 @@ def _sanitize_kb_response(response: object, kb_meta: dict[str, Any]) -> int:
                 _get_message_content(message),
                 allowed_source_urls=allowed_source_urls,
                 allowed_image_urls=allowed_image_urls,
+                citation_source_urls=citation_source_urls,
             )
             if content_changed:
                 _set_message_content(message, sanitized)
@@ -1807,23 +1970,25 @@ class KlaiKnowledgeHook(CustomLogger):
             "user's question — NOT the language of the source documents. "
             "'TL;DR' is universally understood and is a safe default in any "
             "language.\n"
-            "2. Immediately after, a sources list. Use ONLY the literal "
-            "source_url value from each chunk.\n"
-            "   Format: 📎 [Page title](source_url_from_chunk)\n"
+            "2. Immediately after, a sources list. Use ONLY the document "
+            "sources listed in DOCUMENT SOURCES below.\n"
+            "   Format: 📎 [Page title](source_url)\n"
             "   If no chunk has a source_url, write the source title as plain "
             "text only; do NOT add a link.\n"
+            "   If multiple chunks come from the same source_url, show that "
+            "source only once.\n"
             "3. If needed for a clear explanation, or if the user asks for "
             "more detail, follow with an extended answer with inline "
             "citations.\n"
             "   Cite with [n] where n is the chunk number. ALWAYS with a "
             "leading space: '...text [1].' NEVER '...text1' or '...text[1]'.\n"
+            "   Avoid citation stacks. If several adjacent chunks come from "
+            "the same document, cite only the most relevant chunk once.\n"
             "   Be concise but complete. No walls of text — write as if you "
             "are helping a colleague.\n\n"
             "STRICT:\n"
             "- Some chunks have a 'source_url:' field. That is the ONLY URL "
             "you may use for that source.\n"
-            "- Copy that URL EXACTLY as it appears. Do not change a single "
-            "character.\n"
             "- NEVER invent a URL. No notion.so, no portal.voys.nl, no URL "
             "that does not appear literally as source_url in a chunk.\n"
             "- NEVER use placeholder, example, or documentation-only domains.\n"
@@ -1845,14 +2010,28 @@ class KlaiKnowledgeHook(CustomLogger):
             "- Do NOT add images in the TL;DR (section 1).]\n"
         )
         lines = [header, source_link_instruction]
-        allowed_source_urls: set[str] = set()
+        citation_source_urls = _citation_source_urls_from_chunks(chunks)
+        document_sources = _document_sources_from_chunks(chunks)
+        allowed_source_urls: set[str] = {
+            str(source["url"]) for source in document_sources if source.get("url")
+        }
         allowed_image_urls: set[str] = set()
-        for chunk in chunks:
-            title = chunk.get("title") or chunk.get("metadata", {}).get("title", "")
-            source_url = chunk.get("source_url", "")
-            normalised_source_url = _normalise_guard_url(source_url)
-            if normalised_source_url:
-                allowed_source_urls.add(normalised_source_url)
+
+        if document_sources:
+            lines.append("DOCUMENT SOURCES (deduplicated by source_url):")
+            for source_index, source in enumerate(document_sources, 1):
+                chunk_numbers = ", ".join(
+                    f"[{number}]" for number in source["chunk_numbers"]
+                )
+                lines.append(
+                    f"S{source_index}. {source['title']} — {source['url']} "
+                    f"(chunks {chunk_numbers})"
+                )
+            lines.append("")
+
+        for chunk_index, chunk in enumerate(chunks, 1):
+            title = _chunk_title(chunk)
+            source_url = citation_source_urls.get(chunk_index, "")
             scope_label = chunk.get("scope", "org")
             # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English chunk
             # labels. These appear inside the system prompt only — the model
@@ -1934,6 +2113,9 @@ class KlaiKnowledgeHook(CustomLogger):
             "chunk_ids": chunk_ids,
             "allowed_source_urls": sorted(allowed_source_urls),
             "allowed_image_urls": sorted(allowed_image_urls),
+            "citation_source_urls": {
+                str(index): url for index, url in citation_source_urls.items()
+            },
             "retrieval_ms": retrieval_ms,
             "gate_bypassed": False,
         }

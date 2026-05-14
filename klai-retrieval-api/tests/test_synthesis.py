@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 from retrieval_api.services.synthesis import (
     _build_citations,
     _build_context,
@@ -43,6 +42,20 @@ class TestBuildContext:
         chunks = [{"context_prefix": None, "text": "hello"}]
         result = _build_context(chunks)
         assert "[1] hello" in result
+
+    def test_context_includes_canonical_source_url(self):
+        chunks = [
+            {
+                "title": "Steward ownership",
+                "text": "Klai is steward-owned.",
+                "metadata": {
+                    "source_url": "https://www.getklai.com/docs/company/steward-ownership"
+                },
+            }
+        ]
+        result = _build_context(chunks)
+        assert "title: Steward ownership" in result
+        assert "source_url: https://getklai.com/docs/company/steward-ownership" in result
 
 
 class TestExtractCitationIndices:
@@ -154,6 +167,43 @@ class TestBuildCitations:
         ]
         result = _build_citations([1], chunks)
         assert len(result[0]["title"]) == 80
+
+    def test_same_source_url_merges_to_one_document_citation(self):
+        chunks = [
+            {
+                "artifact_id": "a1",
+                "title": "Steward ownership",
+                "source_url": "https://www.getklai.com/docs/company/steward-ownership",
+                "chunk_id": "c1",
+                "score": 0.5,
+            },
+            {
+                "artifact_id": "a1",
+                "title": "Steward ownership",
+                "source_url": "https://getklai.com/docs/company/steward-ownership",
+                "chunk_id": "c2",
+                "reranker_score": 0.9,
+            },
+            {
+                "artifact_id": "a2",
+                "title": "Mission",
+                "metadata": {"source_url": "https://www.getklai.com/docs/company/mission"},
+                "chunk_id": "c3",
+                "score": 0.7,
+            },
+        ]
+
+        result = _build_citations([1, 2, 3], chunks)
+
+        assert len(result) == 2
+        assert result[0]["index"] == 1
+        assert result[0]["indices"] == [1, 2]
+        assert result[0]["chunk_ids"] == ["c1", "c2"]
+        assert result[0]["source_url"] == (
+            "https://getklai.com/docs/company/steward-ownership"
+        )
+        assert result[0]["relevance_score"] == 0.9
+        assert result[1]["source_url"] == "https://getklai.com/docs/company/mission"
 
 
 class TestSynthesize:

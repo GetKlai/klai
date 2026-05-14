@@ -2255,6 +2255,84 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             "https://getklai.getklai.com/kb-images/org/images/support/diagram.png"
         ]
 
+    @pytest.mark.asyncio
+    async def test_prompt_deduplicates_document_sources(self, monkeypatch):
+        """Multiple chunks from one URL should become one document source."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat is steward ownership?"}],
+        }
+        chunks = [
+            {
+                "text": "Klai is steward-owned.",
+                "scope": "org",
+                "metadata": {
+                    "title": "Steward ownership",
+                    "source_url": "https://www.getklai.com/docs/company/steward-ownership",
+                },
+                "chunk_id": "c1",
+            },
+            {
+                "text": "Steward ownership protects the mission.",
+                "scope": "org",
+                "metadata": {"title": "Steward ownership"},
+                "source_url": "https://getklai.com/docs/company/steward-ownership",
+                "chunk_id": "c2",
+            },
+            {
+                "text": "Klai is mission-led.",
+                "scope": "org",
+                "metadata": {"title": "Mission"},
+                "source": {"url": "https://www.getklai.com/docs/company/mission"},
+                "chunk_id": "c3",
+            },
+        ]
+        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "DOCUMENT SOURCES (deduplicated by source_url):" in sys_content
+        document_sources = sys_content.split(
+            "DOCUMENT SOURCES (deduplicated by source_url):", 1
+        )[1].split("###", 1)[0]
+        assert document_sources.count(
+            "https://getklai.com/docs/company/steward-ownership"
+        ) == 1
+        assert (
+            "S1. Steward ownership — https://getklai.com/docs/company/steward-ownership "
+            "(chunks [1], [2])"
+        ) in document_sources
+        assert (
+            "S2. Mission — https://getklai.com/docs/company/mission (chunks [3])"
+            in document_sources
+        )
+        assert "www.getklai.com" not in sys_content
+
+        kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert kb_meta["allowed_source_urls"] == [
+            "https://getklai.com/docs/company/mission",
+            "https://getklai.com/docs/company/steward-ownership",
+        ]
+        assert kb_meta["citation_source_urls"] == {
+            "1": "https://getklai.com/docs/company/steward-ownership",
+            "2": "https://getklai.com/docs/company/steward-ownership",
+            "3": "https://getklai.com/docs/company/mission",
+        }
+
     def test_sanitizer_removes_unretrieved_links_and_images(self, monkeypatch):
         """Output guard keeps only exact URLs retrieved for this KB call."""
         mod = _load_hook(monkeypatch)
@@ -2281,6 +2359,24 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "https://example.com" not in sanitized
         assert "fake" in sanitized
         assert "[link removed]" in sanitized
+
+    def test_sanitizer_deduplicates_adjacent_same_document_citations(self, monkeypatch):
+        """Inline citation stacks from the same document are collapsed."""
+        mod = _load_hook(monkeypatch)
+
+        sanitized, changed = mod._sanitize_kb_markdown_output(
+            "Klai is steward-owned [1][2][3].",
+            allowed_source_urls={"https://getklai.com/docs/company/steward-ownership"},
+            allowed_image_urls=set(),
+            citation_source_urls={
+                1: "https://getklai.com/docs/company/steward-ownership",
+                2: "https://www.getklai.com/docs/company/steward-ownership",
+                3: "https://getklai.com/docs/company/mission",
+            },
+        )
+
+        assert sanitized == "Klai is steward-owned [1][3]."
+        assert changed == 1
 
     @pytest.mark.asyncio
     async def test_post_call_guard_mutates_response_content(self, monkeypatch):
