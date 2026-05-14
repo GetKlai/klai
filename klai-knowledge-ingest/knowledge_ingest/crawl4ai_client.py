@@ -12,6 +12,7 @@ import fnmatch
 import json
 import re
 from dataclasses import dataclass, field
+from html import unescape
 from typing import Any
 from urllib.parse import urldefrag, urlparse, urlunparse
 
@@ -164,29 +165,106 @@ def _auth_headers() -> dict[str, str]:
 
 
 async def _fetch_sitemap_urls(base_url: str) -> list[str]:
-    """Fetch same-domain URLs from sitemap.xml.
+    """Fetch same-site URLs from sitemap.xml or sitemap-index.xml.
 
     Best-effort — returns [] on any error (sitemap is optional). The
     caller decides whether absent sitemap is fatal or fallback-worthy
     (SPEC-INGEST-RECONCILE-001 AC-3 requires fallback to BFS-only,
     not crawl failure).
+
+    ``base_url`` may be a scoped start URL such as ``/blog``. Sitemaps live
+    at the site root, so discovery probes the origin root rather than
+    ``{start_url}/sitemap.xml``. Sitemap indexes are followed one level
+    recursively. Apex/www variants are treated as the same site and returned
+    URLs are coerced back to the configured base host, preserving connector
+    identity and avoiding duplicate no-www/www artifacts.
     """
-    sitemap_url = base_url.rstrip("/") + "/sitemap.xml"
-    base_domain = urlparse(base_url).netloc.lower()
+    parsed = urlparse(base_url)
+    base_domain = parsed.netloc.lower()
+    origin = urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+    sitemap_urls = [f"{origin}/sitemap.xml", f"{origin}/sitemap-index.xml"]
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(sitemap_url, headers=_auth_headers())
-            resp.raise_for_status()
-            locs = re.findall(r"<loc>\s*(.*?)\s*</loc>", resp.text)
-            return [u for u in locs if urlparse(u).netloc.lower() == base_domain]
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            seen: set[str] = set()
+            for sitemap_url in sitemap_urls:
+                urls = await _fetch_sitemap_document(
+                    client,
+                    sitemap_url=sitemap_url,
+                    base_domain=base_domain,
+                    seen_sitemaps=seen,
+                    depth=0,
+                )
+                if urls:
+                    return urls
+            return []
     except Exception as exc:
         # AC-3: log unavailability at warning level; caller falls back.
+        logger.warning(
+            "crawl_discovery_sitemap_unavailable",
+            sitemap_url=",".join(sitemap_urls),
+            error=str(exc),
+        )
+        return []
+
+
+async def _fetch_sitemap_document(
+    client: httpx.AsyncClient,
+    *,
+    sitemap_url: str,
+    base_domain: str,
+    seen_sitemaps: set[str],
+    depth: int,
+) -> list[str]:
+    """Fetch one sitemap document and return same-site URL entries."""
+    if depth > 2:
+        return []
+    canonical_sitemap = _canonicalise_url(sitemap_url)
+    if canonical_sitemap in seen_sitemaps:
+        return []
+    seen_sitemaps.add(canonical_sitemap)
+
+    try:
+        resp = await client.get(sitemap_url, headers=_auth_headers())
+        resp.raise_for_status()
+    except Exception as exc:
         logger.warning(
             "crawl_discovery_sitemap_unavailable",
             sitemap_url=sitemap_url,
             error=str(exc),
         )
         return []
+
+    kind, locs = _parse_sitemap_locs(resp.text)
+    if kind == "sitemapindex":
+        urls: list[str] = []
+        for loc in locs[:50]:
+            if not _same_site_domain(urlparse(loc).netloc.lower(), base_domain):
+                continue
+            urls.extend(
+                await _fetch_sitemap_document(
+                    client,
+                    sitemap_url=loc,
+                    base_domain=base_domain,
+                    seen_sitemaps=seen_sitemaps,
+                    depth=depth + 1,
+                )
+            )
+        return urls
+
+    return [
+        _coerce_same_site_url_to_base_host(loc, base_domain)
+        for loc in locs
+        if _same_site_domain(urlparse(loc).netloc.lower(), base_domain)
+    ]
+
+
+def _parse_sitemap_locs(xml_text: str) -> tuple[str, list[str]]:
+    """Parse a sitemap or sitemap-index XML document."""
+    root_match = re.search(r"<\s*([A-Za-z_:][\w:.-]*)\b", xml_text or "")
+    root_name = (root_match.group(1).split(":")[-1].lower() if root_match else "urlset")
+    kind = "sitemapindex" if root_name == "sitemapindex" else "urlset"
+    locs = [unescape(u.strip()) for u in re.findall(r"<loc>\s*(.*?)\s*</loc>", xml_text or "")]
+    return kind, [u for u in locs if u]
 
 
 # SPEC-INGEST-RECONCILE-001 — URL canonicalisation for set-union dedup.
@@ -219,6 +297,184 @@ def _canonicalise_url(url: str) -> str:
             "",  # fragment
         )
     )
+
+
+def _host_key(host: str) -> str:
+    """Return a comparison key that treats apex and www as the same site."""
+    host = (host or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _same_site_domain(host: str, base_domain: str) -> bool:
+    return _host_key(host) == _host_key(base_domain)
+
+
+def _coerce_same_site_url_to_base_host(url: str, base_domain: str) -> str:
+    """Use the connector's configured host for apex/www sitemap variants."""
+    parsed = urlparse(url)
+    if not _same_site_domain(parsed.netloc.lower(), base_domain):
+        return url
+    return urlunparse(
+        (
+            parsed.scheme,
+            base_domain,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+
+
+_ARTICLE_OG_TYPES = {"article"}
+_ARTICLE_JSONLD_TYPES = {
+    "Article",
+    "BlogPosting",
+    "NewsArticle",
+    "TechArticle",
+    "Report",
+    "ScholarlyArticle",
+}
+_LISTING_JSONLD_TYPES = {
+    "CollectionPage",
+    "SearchResultsPage",
+    "ItemList",
+    "Blog",
+}
+_ARCHIVE_PATH_SEGMENTS = {
+    "tag",
+    "tags",
+    "category",
+    "categories",
+    "author",
+    "authors",
+    "archive",
+    "archives",
+    "search",
+}
+
+
+def _meta_contents(html_text: str, *, attr_name: str, attr_value: str) -> list[str]:
+    """Extract meta tag content values by name/property/http-equiv."""
+    values: list[str] = []
+    for match in re.finditer(r"<meta\s+[^>]*>", html_text or "", flags=re.IGNORECASE):
+        tag = match.group(0)
+        attrs = {
+            key.lower(): unescape(value)
+            for key, _quote, value in re.findall(
+                r"([:\w-]+)\s*=\s*(['\"])(.*?)\2",
+                tag,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+        }
+        if attrs.get(attr_name.lower(), "").lower() == attr_value.lower():
+            content = attrs.get("content", "").strip()
+            if content:
+                values.append(content)
+    return values
+
+
+def _og_type(result: CrawlResult) -> str | None:
+    metadata = result.metadata or {}
+    for key in ("og:type", "og_type"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    values = _meta_contents(result.html, attr_name="property", attr_value="og:type")
+    return values[0].strip().lower() if values else None
+
+
+def _robots_values(result: CrawlResult) -> list[str]:
+    values: list[str] = []
+    headers = result.response_headers or {}
+    for key, value in headers.items():
+        if key.lower() == "x-robots-tag" and value:
+            values.append(str(value))
+    metadata = result.metadata or {}
+    robots = metadata.get("robots")
+    if isinstance(robots, str) and robots.strip():
+        values.append(robots)
+    values.extend(_meta_contents(result.html, attr_name="name", attr_value="robots"))
+    return values
+
+
+def _has_noindex(result: CrawlResult) -> bool:
+    for value in _robots_values(result):
+        directives = {part.strip().lower() for part in value.split(",")}
+        if "noindex" in directives:
+            return True
+    return False
+
+
+def _jsonld_types(result: CrawlResult) -> set[str]:
+    types: set[str] = set()
+    scripts = re.findall(
+        r"<script\b[^>]*type\s*=\s*['\"]application/ld\+json['\"][^>]*>(.*?)</script>",
+        result.html or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def _collect(node: Any) -> None:
+        if isinstance(node, dict):
+            raw_type = node.get("@type")
+            if isinstance(raw_type, str):
+                types.add(raw_type)
+            elif isinstance(raw_type, list):
+                types.update(t for t in raw_type if isinstance(t, str))
+            for value in node.values():
+                _collect(value)
+        elif isinstance(node, list):
+            for item in node:
+                _collect(item)
+
+    for script in scripts:
+        try:
+            _collect(json.loads(unescape(script).strip()))
+        except Exception as exc:
+            logger.debug("crawl_jsonld_parse_failed", url=result.url, error=str(exc))
+            continue
+    return types
+
+
+def _has_article_metadata(result: CrawlResult) -> bool:
+    if _og_type(result) in _ARTICLE_OG_TYPES:
+        return True
+    return bool(_jsonld_types(result) & _ARTICLE_JSONLD_TYPES)
+
+
+def _path_segments(url: str) -> list[str]:
+    return [segment for segment in urlparse(url).path.split("/") if segment]
+
+
+def _looks_like_archive_url(url: str) -> bool:
+    return bool(set(_path_segments(url)) & _ARCHIVE_PATH_SEGMENTS)
+
+
+def _looks_like_link_listing(result: CrawlResult) -> bool:
+    if _og_type(result) != "website":
+        return False
+    internal_links = (result.links or {}).get("internal") or []
+    if len(internal_links) < 12:
+        return False
+    segments = _path_segments(result.url)
+    if _looks_like_archive_url(result.url):
+        return True
+    # Section roots such as /blog or /resources that mostly list children.
+    return len(segments) == 1 and len(internal_links) >= 20
+
+
+def _is_non_content_listing_page(result: CrawlResult) -> bool:
+    """Return True for crawlable pages that should not become KB documents."""
+    if not result.success:
+        return False
+    if _has_noindex(result):
+        return True
+    if _has_article_metadata(result):
+        return False
+    jsonld_types = _jsonld_types(result)
+    if jsonld_types & _LISTING_JSONLD_TYPES:
+        return True
+    return _looks_like_link_listing(result)
 
 
 def _classify_fetch_outcome(
@@ -507,7 +763,7 @@ async def crawl_site(
     bfs_results = [
         r
         for r in bfs_results
-        if urlparse(r.url).netloc.lower() == base_domain
+        if _same_site_domain(urlparse(r.url).netloc.lower(), base_domain)
         and not _url_matches_patterns(r.url, exclude_patterns)
     ]
 
@@ -524,6 +780,7 @@ async def crawl_site(
     for u in sitemap_urls:
         if remaining_budget <= 0:
             break
+        u = _coerce_same_site_url_to_base_host(u, base_domain)
         canonical = _canonicalise_url(u)
         if canonical in seen_canonicals:
             continue
@@ -531,7 +788,7 @@ async def crawl_site(
             continue
         if _url_matches_patterns(u, exclude_patterns):
             continue
-        if urlparse(u).netloc.lower() != base_domain:
+        if not _same_site_domain(urlparse(u).netloc.lower(), base_domain):
             continue
         seen_canonicals.add(canonical)
         supplement_candidates.append(u)
@@ -564,7 +821,7 @@ async def crawl_site(
     # result (when same-domain + non-empty markdown).
     for r in bfs_results:
         outcomes.append(_build_outcome_from_result(r.url, r))
-        if _result_is_ingestable(r, base_domain=base_domain):
+        if _result_is_ingestable(r, base_domain=base_domain) and not _is_non_content_listing_page(r):
             crawl_results.append(r)
 
     # If the BFS itself failed (network/timeout/5xx) AND we got no results,
@@ -683,16 +940,20 @@ def _extract_bfs_seeds(seed_result: CrawlResult, *, base_domain: str) -> list[st
         href = entry.get("href") if isinstance(entry, dict) else None
         if not href:
             continue
-        if urlparse(href).netloc.lower() != base_domain:
+        if not _same_site_domain(urlparse(href).netloc.lower(), base_domain):
             continue
-        seeds.append(href)
+        seeds.append(_coerce_same_site_url_to_base_host(href, base_domain))
     return seeds
 
 
 def _build_outcome_from_result(url: str, result: CrawlResult) -> FetchOutcome:
     """Map a CrawlResult (the seed path) to a fetch_outcomes JSONB entry."""
     if result.success:
-        reason_code = FetchReasonCode.SUCCESS.value
+        reason_code = (
+            FetchReasonCode.NON_CONTENT_LISTING_PAGE.value
+            if _is_non_content_listing_page(result)
+            else FetchReasonCode.SUCCESS.value
+        )
     else:
         # Synthesise a page-shape dict for the classifier so the same
         # error_message → FetchReasonCode mapping applies as for the
@@ -718,7 +979,7 @@ def _result_is_ingestable(result: CrawlResult, *, base_domain: str) -> bool:
         return False
     if not (result.fit_markdown or result.raw_markdown):
         return False
-    return urlparse(result.url).netloc.lower() == base_domain
+    return _same_site_domain(urlparse(result.url).netloc.lower(), base_domain)
 
 
 def _combine_bulk_responses(
@@ -806,24 +1067,39 @@ def _combine_bulk_responses(
                 pos_canonical = _canonicalise_url(pos_url)
                 pos_owner_idx = canonical_to_idx.get(pos_canonical)
                 pos_domain = urlparse(pos_url).netloc.lower()
-                if (pos_owner_idx is None or pos_owner_idx == i) and pos_domain == base_domain:
+                if (
+                    (pos_owner_idx is None or pos_owner_idx == i)
+                    and _same_site_domain(pos_domain, base_domain)
+                ):
                     page = positional
                     claimed_response_indices.add(i)
 
-        outcomes.append(
-            {
-                "url": url,
-                "reason_code": _classify_fetch_outcome(page),
-                "status_code": (page or {}).get("status_code"),
-                "content_length": len((page or {}).get("html", "") or ""),
-            }
-        )
-
         if page is None:
+            outcomes.append(
+                {
+                    "url": url,
+                    "reason_code": _classify_fetch_outcome(page),
+                    "status_code": None,
+                    "content_length": 0,
+                }
+            )
             continue
 
         result = _extract_result(url, page)
-        if _result_is_ingestable(result, base_domain=base_domain):
+        reason_code = _classify_fetch_outcome(page)
+        is_non_content_listing = _is_non_content_listing_page(result)
+        if reason_code == FetchReasonCode.SUCCESS.value and is_non_content_listing:
+            reason_code = FetchReasonCode.NON_CONTENT_LISTING_PAGE.value
+        outcomes.append(
+            {
+                "url": url,
+                "reason_code": reason_code,
+                "status_code": page.get("status_code"),
+                "content_length": len(page.get("html", "") or ""),
+            }
+        )
+
+        if _result_is_ingestable(result, base_domain=base_domain) and not is_non_content_listing:
             crawl_results.append(result)
 
     return crawl_results, outcomes
@@ -1103,7 +1379,7 @@ def _build_candidate_set(
     """
 
     def _same_domain(u: str) -> bool:
-        return urlparse(u).netloc.lower() == base_domain
+        return _same_site_domain(urlparse(u).netloc.lower(), base_domain)
 
     def _matches_include(u: str) -> bool:
         # ``include_patterns`` carry crawl4ai URLPatternFilter semantics: a
@@ -1137,6 +1413,7 @@ def _build_candidate_set(
             return
         if not _same_domain(u):
             return
+        u = _coerce_same_site_url_to_base_host(u, base_domain)
         if not _matches_include(u):
             return
         canonical = _canonicalise_url(u)

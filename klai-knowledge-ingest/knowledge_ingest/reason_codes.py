@@ -48,6 +48,7 @@ class FetchReasonCode(StrEnum):
     AUTH_ERROR = "auth_error"
     PARSE_ERROR = "parse_error"
     RATE_LIMITED = "rate_limited"
+    NON_CONTENT_LISTING_PAGE = "non_content_listing_page"
     UNKNOWN_EXCEPTION = "unknown_exception"
 
 
