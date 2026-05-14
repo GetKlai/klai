@@ -322,3 +322,75 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
         connector_id="conn-1",
         stale_paths=["https://getklai.com/"],
     )
+
+
+@pytest.mark.asyncio
+async def test_run_crawl_job_does_not_fail_when_stale_vector_delete_fails():
+    """Stale vector cleanup is best-effort and must not fail a completed crawl."""
+    mock_conn = _make_mock_conn()
+    mock_result = _make_crawl_result(url="https://www.getklai.com/")
+
+    async def _fake_ingest(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return {"chunks": 1}
+
+    with (
+        patch(
+            "knowledge_ingest.adapters.crawler._update_job",
+            new_callable=AsyncMock,
+        ) as mock_update_job,
+        patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg,
+        patch(
+            "knowledge_ingest.adapters.crawler.qdrant_store.delete_document",
+            new_callable=AsyncMock,
+            side_effect=TimeoutError("qdrant write timeout"),
+        ) as mock_delete_document,
+        patch(
+            "knowledge_ingest.adapters.crawler.crawl_site",
+            new_callable=AsyncMock,
+            return_value=(
+                [mock_result],
+                [
+                    {
+                        "url": mock_result.url,
+                        "reason_code": "success",
+                        "status_code": 200,
+                        "content_length": len(mock_result.html or ""),
+                    }
+                ],
+            ),
+        ),
+        patch.object(link_graph, "get_outbound_urls", new_callable=AsyncMock, return_value=[]),
+        patch.object(link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=[]),
+        patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0),
+        patch("knowledge_ingest.routes.ingest.ingest_document", side_effect=_fake_ingest),
+    ):
+        mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
+        mock_pg.upsert_crawled_page = AsyncMock()
+        mock_pg.update_crawled_page_simhash = AsyncMock()
+        mock_pg.upsert_page_links = AsyncMock()
+        mock_pg.list_stale_connector_artifact_paths = AsyncMock(
+            return_value=["https://getklai.com/"],
+        )
+        mock_pg.soft_delete_stale_connector_artifacts = AsyncMock(return_value=0)
+
+        from knowledge_ingest.adapters.crawler import run_crawl_job
+
+        await run_crawl_job(
+            mock_conn,
+            job_id="job-1",
+            org_id="org-1",
+            kb_slug="klai-web-demo",
+            start_url="https://www.getklai.com/",
+            max_depth=1,
+            rate_limit=100.0,
+            connector_id="conn-1",
+        )
+
+    mock_delete_document.assert_awaited_once_with(
+        "org-1",
+        "klai-web-demo",
+        "https://getklai.com/",
+    )
+    mock_pg.soft_delete_stale_connector_artifacts.assert_not_awaited()
+    assert any(call.kwargs.get("status") == "completed" for call in mock_update_job.await_args_list)
