@@ -79,6 +79,14 @@ def test_prompt_includes_klai_ai_identity():
     assert "Klai AI" in GROUNDED_CHAT_SYSTEM_PROMPT
 
 
+def test_grounded_prompt_includes_klai_brand_voice_guardrails():
+    text = GROUNDED_CHAT_SYSTEM_PROMPT
+    assert "senior colleague" in text
+    assert "No theatre, no hype" in text
+    assert "Back trust claims with cited source facts" in text
+    assert "Do NOT say the system understands" in text
+
+
 def test_prompt_describes_not_in_kb_fallback_multilingual():
     # The "answer isn't there" fallback must show the user's language —
     # not pin to one canonical phrase.
@@ -294,8 +302,9 @@ def test_meta_prompt_describes_klai_at_capability_level():
     # - KB selector (the chat surface UI affordance)
     # - Web Search escape hatch
     text = META_CHAT_SYSTEM_PROMPT
-    assert "organization's knowledge" in text or "organization knowledge" in text.lower()
+    assert "organisation's knowledge" in text or "organisation knowledge" in text.lower()
     assert "any language" in text.lower()
+    assert "detects questions in any language" in text
     assert "knowledge-base selector" in text.lower() or "kb selector" in text.lower()
     assert "Web Search" in text
 

@@ -40,12 +40,14 @@ def test_create_request_schema():
             allowed_origins=["https://example.com"],
             title="Help",
             welcome_message="Hi!",
+            system_prompt="Be concise.",
             css_variables={},
         ),
     )
     assert req.name == "Test Widget"
     assert len(req.kb_ids) == 2
     assert req.widget_config.title == "Help"
+    assert req.widget_config.system_prompt == "Be concise."
 
 
 def test_create_request_rejects_short_name():
@@ -81,6 +83,7 @@ def test_widget_config_defaults():
     assert config.allowed_origins == []
     assert config.title == ""
     assert config.welcome_message == ""
+    assert config.system_prompt == ""
     assert config.css_variables == {}
 
 
@@ -97,6 +100,7 @@ def test_widget_to_response_helper():
         "allowed_origins": ["https://example.com"],
         "title": "Help",
         "welcome_message": "Hi",
+        "system_prompt": "Answer briefly.",
         "css_variables": {},
     }
     widget.rate_limit_rpm = 60
@@ -108,6 +112,7 @@ def test_widget_to_response_helper():
     assert resp.name == "Help Bot"
     assert resp.widget_id == "wgt_abc123"
     assert resp.widget_config.title == "Help"
+    assert resp.widget_config.system_prompt == "Answer briefly."
     assert resp.kb_access_count == 1
 
 

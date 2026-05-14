@@ -33,6 +33,7 @@ from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services.events import emit_event
 from app.services.partner_chat import (
+    _source_urls_from_chunks,
     chat_completion_non_streaming,
     chat_completion_streaming,
     retrieve_context,
@@ -141,6 +142,23 @@ async def _resolve_kb_slugs(kb_ids: list[int], org_id: int, db: AsyncSession) ->
     return [kb.slug for kb in kbs]
 
 
+async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> str | None:
+    """Return the admin-configured widget prompt for widget JWT calls."""
+    if not str(auth.key_id).startswith("wgt_"):
+        return None
+    result = await db.execute(
+        select(Widget.widget_config).where(
+            Widget.widget_id == auth.key_id,
+            Widget.org_id == auth.org_id,
+        )
+    )
+    config = result.scalar_one_or_none() or {}
+    if not isinstance(config, dict):
+        return None
+    prompt = config.get("system_prompt")
+    return prompt.strip() if isinstance(prompt, str) and prompt.strip() else None
+
+
 @router.post("/chat/completions")
 async def chat_completions(
     request: ChatCompletionsRequest,
@@ -210,6 +228,8 @@ async def chat_completions(
         partner_user_id = f"partner:{auth.key_id}"
     except (ValueError, AttributeError, TypeError):
         partner_user_id = None
+    widget_system_prompt = await _widget_system_prompt(auth, db)
+
     try:
         chunks, system_prompt = await retrieve_context(
             org_id=auth.org_id,
@@ -218,6 +238,7 @@ async def chat_completions(
             messages=request.messages,
             settings=settings,
             partner_user_id=partner_user_id,
+            widget_system_prompt=widget_system_prompt,
         )
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
@@ -251,6 +272,8 @@ async def chat_completions(
             temperature=request.temperature,
             system_prompt=system_prompt,
             settings=settings,
+            org_id=auth.org_id,
+            allowed_source_urls=_source_urls_from_chunks(chunks),
         )
         return StreamingResponse(
             content=streaming_gen,
@@ -264,6 +287,8 @@ async def chat_completions(
         temperature=request.temperature,
         system_prompt=system_prompt,
         settings=settings,
+        org_id=auth.org_id,
+        allowed_source_urls=_source_urls_from_chunks(chunks),
     )
     return result
 

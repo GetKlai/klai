@@ -11,6 +11,7 @@ SPEC-API-001 TASK-008 + TASK-009:
 - Streaming returns text/event-stream with SSE chunks
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -237,6 +238,41 @@ async def test_kb_id_to_slug_translation():
     assert set(kb_slugs_arg) == {"kb-alpha", "kb-beta"}
 
 
+@pytest.mark.asyncio
+async def test_widget_system_prompt_loaded_for_widget_auth():
+    """Widget JWT calls load private behaviour instructions from widget_config."""
+    from app.api.partner import _widget_system_prompt
+    from app.api.partner_dependencies import PartnerAuthContext
+
+    db = AsyncMock()
+    db.execute = AsyncMock(
+        return_value=FakeResult(
+            rows=[{"system_prompt": "Be brief and friendly."}],
+        )
+    )
+    auth = PartnerAuthContext(
+        key_id="wgt_abc123",
+        org_id=42,
+        zitadel_org_id="zit-org-42",
+        permissions={"chat": True},
+        kb_access={10: "read"},
+        rate_limit_rpm=60,
+    )
+
+    assert await _widget_system_prompt(auth, db) == "Be brief and friendly."
+
+
+@pytest.mark.asyncio
+async def test_widget_system_prompt_ignored_for_partner_keys():
+    """Partner API keys do not read widget_config behaviour instructions."""
+    from app.api.partner import _widget_system_prompt
+
+    db = AsyncMock()
+
+    assert await _widget_system_prompt(make_partner_auth(), db) is None
+    db.execute.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # TASK-009: Streaming chat completions
 # ---------------------------------------------------------------------------
@@ -373,9 +409,201 @@ async def test_streaming_retrieval_log_fires():
     mock_asyncio.create_task.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_non_streaming_strips_unretrieved_links(monkeypatch):
+    """Non-streaming partner/widget completions strip invented Markdown URLs."""
+    from app.services.partner_chat import chat_completion_non_streaming
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {"message": {"content": ("Bron: [goed](https://getklai.com/) [fout](https://getklai.com/404)")}}
+                ]
+            }
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, *_, **__):
+            return _Resp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm"
+    settings.litellm_master_key = "secret"
+
+    body = await chat_completion_non_streaming(
+        messages=[{"role": "user", "content": "Is Klai open source?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=settings,
+        allowed_source_urls={"https://getklai.com/"},
+    )
+
+    content = body["choices"][0]["message"]["content"]
+    assert "[goed](https://getklai.com/)" in content
+    assert "https://getklai.com/404" not in content
+    assert "fout" in content
+
+
+@pytest.mark.asyncio
+async def test_streaming_strips_unretrieved_links(monkeypatch):
+    """Streaming partner/widget completions sanitize split Markdown links before emitting."""
+    from app.services.partner_chat import chat_completion_streaming
+
+    events = [
+        {"choices": [{"delta": {"content": "Bron: [fout](https://getklai.com/4"}}]},
+        {"choices": [{"delta": {"content": "04) en [goed](https://getklai.com/)"}}]},
+        {"choices": [{"delta": {"content": "."}}]},
+    ]
+
+    class _StreamResp:
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def aiter_lines(self):
+            for event in events:
+                yield "data: " + json.dumps(event)
+            yield "data: [DONE]"
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, *_, **__):
+            return _StreamResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm"
+    settings.litellm_master_key = "secret"
+
+    chunks = []
+    async for chunk in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Is Klai open source?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=settings,
+        allowed_source_urls={"https://getklai.com/"},
+    ):
+        chunks.append(chunk)
+
+    body = b"".join(chunks).decode()
+    assert "https://getklai.com/404" not in body
+    assert "fout" in body
+    assert "https://getklai.com/" in body
+    assert "[DONE]" in body
+
+
 # ---------------------------------------------------------------------------
 # 2026-05-05 regression-guard: SPEC-SEC-IDENTITY-ASSERT-001 caller-service
 # ---------------------------------------------------------------------------
+
+
+def test_build_system_prompt_includes_source_urls_for_widget_citations():
+    """Widget/partner prompts must expose literal source_url values.
+
+    Regression guard for widget answers inventing docs pages for [n] links
+    when the retrieved Qdrant chunks only had canonical source URLs in
+    payload metadata.
+    """
+    from app.services.partner_chat import _build_system_prompt
+
+    prompt = _build_system_prompt(
+        [
+            {
+                "title": "AI infrastructure that stays yours",
+                "source_url": "https://www.getklai.com/",
+                "source_label": "web_crawler",
+                "text": "Everything Klai runs is open source.",
+            },
+            {
+                "metadata": {"title": "Our mission"},
+                "source_url": "https://www.getklai.com/docs/company/mission",
+                "text": "Klai is steward-owned.",
+            },
+        ]
+    )
+
+    assert "source_url: https://www.getklai.com/" in prompt
+    assert "source_url: https://www.getklai.com/docs/company/mission" in prompt
+    assert "Use only literal source_url values" in prompt
+    assert "Never turn a title, heading, or documentation phrase into a URL" in prompt
+
+
+def test_build_system_prompt_includes_widget_system_prompt():
+    """Widget admin behaviour instructions are added without replacing KB grounding."""
+    from app.services.partner_chat import _build_system_prompt
+
+    prompt = _build_system_prompt(
+        [{"title": "Policy", "source_url": "https://docs.example.com/policy", "text": "Use policy text."}],
+        widget_system_prompt="Use a calm, support-oriented tone.",
+    )
+
+    assert "Widget behaviour instructions" in prompt
+    assert "Use a calm, support-oriented tone." in prompt
+    assert "source_url: https://docs.example.com/policy" in prompt
+    assert "URL rules for citations and source links" in prompt
+
+
+def test_sanitizer_removes_links_not_in_retrieved_sources():
+    """Partner/widget output cannot keep URLs absent from retrieved chunk metadata."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    sanitized, changed = _sanitize_kb_markdown_output(
+        "Good [home](https://getklai.com/) bad [fake](https://getklai.com/missing) raw https://bad.example/x",
+        allowed_source_urls={"https://getklai.com/"},
+    )
+
+    assert changed == 2
+    assert "[home](https://getklai.com/)" in sanitized
+    assert "https://getklai.com/missing" not in sanitized
+    assert "https://bad.example/x" not in sanitized
+    assert "fake" in sanitized
+
+
+def test_stream_sanitizer_holds_split_markdown_links_until_safe():
+    """Split SSE deltas cannot leak an unapproved URL before the closing ')'."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    allowed = {"https://getklai.com/"}
+    out1, pending, changed1 = _pop_sanitized_stream_text(
+        "See [fake](https://getklai.com/miss",
+        allowed_source_urls=allowed,
+        final=False,
+    )
+    out2, pending, changed2 = _pop_sanitized_stream_text(
+        pending + "ing) and [home](https://getklai.com/).",
+        allowed_source_urls=allowed,
+        final=True,
+    )
+
+    assert out1 == "See "
+    assert pending == ""
+    assert changed1 + changed2 == 1
+    assert "https://getklai.com/missing" not in out1 + out2
+    assert "[home](https://getklai.com/)" in out1 + out2
 
 
 @pytest.mark.asyncio

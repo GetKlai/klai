@@ -40,6 +40,7 @@ class WidgetConfig(BaseModel):
     allowed_origins: list[str] = Field(default_factory=list)
     title: str = ""
     welcome_message: str = ""
+    system_prompt: str = Field(default="", max_length=4000)
     css_variables: dict[str, str] = Field(default_factory=dict)
 
 
@@ -92,6 +93,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             allowed_origins=config.get("allowed_origins", []),
             title=config.get("title", ""),
             welcome_message=config.get("welcome_message", ""),
+            system_prompt=config.get("system_prompt", ""),
             css_variables=config.get("css_variables", {}),
         ),
         kb_access_count=kb_access_count,

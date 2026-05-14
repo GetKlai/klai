@@ -6,6 +6,7 @@ export interface WidgetConfig {
   allowed_origins: string[]
   title: string
   welcome_message: string
+  system_prompt: string
   css_variables: Record<string, string>
 }
 
