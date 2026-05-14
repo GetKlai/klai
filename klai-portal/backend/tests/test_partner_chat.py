@@ -310,6 +310,52 @@ async def test_streaming_returns_event_stream_content_type():
 
 
 @pytest.mark.asyncio
+async def test_widget_streaming_uses_structured_citation_mode():
+    """Widget calls render sources from backend metadata, not model-authored URLs."""
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
+    auth = make_partner_auth(kb_access={10: "read"})
+    auth.key_id = "wgt_901"
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Welke gegevens?"}],
+        model="klai-primary",
+        stream=True,
+    )
+
+    async def mock_streaming_gen():
+        yield b"data: [DONE]\n\n"
+
+    retrieved_chunks = [
+        {
+            "chunk_id": "c1",
+            "title": "Privacy policy",
+            "source_url": "https://www.getklai.com/docs/legal/privacy",
+            "text": "Privacy context",
+        }
+    ]
+
+    with (
+        patch("app.api.partner.retrieve_context", return_value=(retrieved_chunks, "prompt")),
+        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
+        patch("app.api.partner.asyncio"),
+    ):
+        await chat_completions(request=req, auth=auth, db=db)
+
+    assert chat_stream.call_args.kwargs["citation_output"] == "markers"
+    assert chat_stream.call_args.kwargs["citation_source_urls"] == {1: "https://getklai.com/docs/legal/privacy"}
+    assert chat_stream.call_args.kwargs["citation_source_metadata"] == {
+        "https://getklai.com/docs/legal/privacy": {
+            "title": "Privacy policy",
+            "url": "https://getklai.com/docs/legal/privacy",
+        }
+    }
+
+
+@pytest.mark.asyncio
 async def test_streaming_chunks_forwarded():
     """Mock LiteLLM streaming chunks are forwarded byte-for-byte."""
     from app.api.partner import ChatCompletionsRequest, chat_completions
@@ -732,6 +778,30 @@ def test_sanitizer_repairs_malformed_citation_link_text():
     assert sanitized == ("Naam en e-mailadres [1](https://getklai.com/docs/legal/privacy).")
 
 
+def test_sanitizer_can_emit_structured_citation_markers():
+    """Widget output keeps source markers in text and moves URLs to structured sources."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    emitted_order: list[str] = []
+    sanitized, changed = _sanitize_kb_markdown_output(
+        ("Naam en e-mailadres 4(https://getklai.com/docs/legal/privacy). Gebruik [4]. DPA [7]."),
+        allowed_source_urls=set(),
+        citation_source_urls={
+            4: "https://getklai.com/docs/legal/privacy",
+            7: "https://getklai.com/docs/legal/dpa",
+        },
+        emitted_source_key_order=emitted_order,
+        citation_output="markers",
+    )
+
+    assert changed >= 1
+    assert sanitized == "Naam en e-mailadres [1]. Gebruik. DPA [2]."
+    assert emitted_order == [
+        "https://getklai.com/docs/legal/privacy",
+        "https://getklai.com/docs/legal/dpa",
+    ]
+
+
 def test_sanitizer_removes_parenthesized_raw_urls_without_placeholder():
     """Raw unretrieved URLs in parentheses should not render as '(link removed)'."""
     from app.services.partner_chat import _sanitize_kb_markdown_output
@@ -914,6 +984,94 @@ def test_stream_sanitizer_repairs_malformed_citation_link_text():
     assert pending == ""
     assert changed >= 1
     assert out == "Naam en e-mailadres [1](https://getklai.com/docs/legal/privacy)."
+
+
+def test_stream_sanitizer_can_emit_structured_citation_markers():
+    """Streaming widget output keeps URLs out of assistant text."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    emitted_order: list[str] = []
+    out, pending, changed = _pop_sanitized_stream_text(
+        "Naam en e-mailadres 4(https://getklai.com/docs/legal/privacy).",
+        allowed_source_urls=set(),
+        citation_source_urls={4: "https://getklai.com/docs/legal/privacy"},
+        emitted_source_keys=set(),
+        emitted_source_key_order=emitted_order,
+        citation_output="markers",
+        final=True,
+    )
+
+    assert pending == ""
+    assert changed >= 1
+    assert out == "Naam en e-mailadres [1]."
+    assert emitted_order == ["https://getklai.com/docs/legal/privacy"]
+
+
+@pytest.mark.asyncio
+async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
+    """Widget streams receive controlled source metadata before DONE."""
+    from app.services.partner_chat import chat_completion_streaming
+
+    events = [{"choices": [{"delta": {"content": "Naam 4(https://getklai.com/docs/legal/privacy)."}}]}]
+
+    class _StreamResp:
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def aiter_lines(self):
+            for event in events:
+                yield "data: " + json.dumps(event)
+            yield "data: [DONE]"
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, *_, **__):
+            return _StreamResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm"
+    settings.litellm_master_key = "secret"
+
+    chunks = []
+    async for chunk in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Welke gegevens?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=settings,
+        allowed_source_urls=set(),
+        citation_source_urls={4: "https://getklai.com/docs/legal/privacy"},
+        citation_source_metadata={
+            "https://getklai.com/docs/legal/privacy": {
+                "title": "Privacy policy",
+                "url": "https://getklai.com/docs/legal/privacy",
+            }
+        },
+        citation_output="markers",
+    ):
+        chunks.append(chunk)
+
+    body = b"".join(chunks).decode()
+    assert '"content": "Naam [1]"' in body
+    assert '"content": "."' in body
+    assert (
+        '"sources": [{"label": "1", "title": "Privacy policy", "url": "https://getklai.com/docs/legal/privacy"}]'
+    ) in body
+    assert "4(https://getklai.com/docs/legal/privacy)" not in body
+    assert "[DONE]" in body
 
 
 def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placeholder():

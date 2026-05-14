@@ -4,10 +4,18 @@ import { fetchWidgetConfig, KlaiWidgetError } from "./widget-config";
 export interface Message {
   role: "user" | "assistant";
   content: string;
+  sources?: MessageSource[];
+}
+
+export interface MessageSource {
+  label: string;
+  title: string;
+  url: string;
 }
 
 export interface StreamCallbacks {
   onToken: (token: string) => void;
+  onSources?: (sources: MessageSource[]) => void;
   onDone: () => void;
   onError: (error: KlaiWidgetError | Error) => void;
 }
@@ -68,13 +76,17 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
           try {
             const parsed = JSON.parse(event.data) as {
               choices?: Array<{
-                delta?: { content?: string };
+                delta?: { content?: string; sources?: MessageSource[] };
                 finish_reason?: string;
               }>;
             };
-            const content = parsed.choices?.[0]?.delta?.content;
+            const delta = parsed.choices?.[0]?.delta;
+            const content = delta?.content;
             if (content) {
               callbacks.onToken(content);
+            }
+            if (Array.isArray(delta?.sources)) {
+              callbacks.onSources?.(delta.sources);
             }
             if (parsed.choices?.[0]?.finish_reason === "stop") {
               callbacks.onDone();

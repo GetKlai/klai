@@ -5,6 +5,7 @@ import {
   addUserMessage,
   startAssistantMessage,
   appendToLastMessage,
+  setLastMessageSources,
   finishStreaming,
   setError,
   clearError,
@@ -48,6 +49,9 @@ export function ChatWindow(props: ChatWindowProps) {
       callbacks: {
         onToken: (token) => {
           appendToLastMessage(token);
+        },
+        onSources: (sources) => {
+          setLastMessageSources(sources);
         },
         onDone: () => {
           finishStreaming();

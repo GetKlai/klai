@@ -198,6 +198,33 @@
 .klai-markdown li { margin-bottom: 2px; }
 .klai-markdown code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
 .klai-markdown h1, .klai-markdown h2, .klai-markdown h3 { font-size: 14px; font-weight: 600; margin: 8px 0 4px; }
+.klai-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.klai-source {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid var(--klai-border-color);
+  border-radius: 999px;
+  color: var(--klai-text-color);
+  background: rgba(255, 255, 255, 0.42);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.klai-source:hover {
+  border-color: var(--klai-primary-color);
+  background: rgba(252, 170, 45, 0.16);
+}
 
 /* Error message */
 .klai-error {
