@@ -838,6 +838,32 @@ def test_sanitizer_groups_structured_citation_markers_with_commas():
     ]
 
 
+def test_sanitizer_converts_bare_number_citation_runs_for_widget_markers():
+    """Models sometimes emit citation numbers as '3,5,8' without brackets."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    emitted_order: list[str] = []
+    sanitized, changed = _sanitize_kb_markdown_output(
+        "Klai is een Europees AI-platform. 3,5,8",
+        allowed_source_urls=set(),
+        citation_source_urls={
+            3: "https://getklai.com/",
+            5: "https://getklai.com/docs/company/steward-ownership",
+            8: "https://getklai.com/docs/legal/privacy",
+        },
+        emitted_source_key_order=emitted_order,
+        citation_output="markers",
+    )
+
+    assert changed >= 1
+    assert sanitized == "Klai is een Europees AI-platform. (1,2,3)"
+    assert emitted_order == [
+        "https://getklai.com/",
+        "https://getklai.com/docs/company/steward-ownership",
+        "https://getklai.com/docs/legal/privacy",
+    ]
+
+
 def test_sanitizer_removes_parenthesized_raw_urls_without_placeholder():
     """Raw unretrieved URLs in parentheses should not render as '(link removed)'."""
     from app.services.partner_chat import _sanitize_kb_markdown_output
@@ -1041,6 +1067,45 @@ def test_stream_sanitizer_can_emit_structured_citation_markers():
     assert changed >= 1
     assert out == "Naam en e-mailadres (1)."
     assert emitted_order == ["https://getklai.com/docs/legal/privacy"]
+
+
+def test_stream_sanitizer_converts_bare_number_citation_runs_for_widget_markers():
+    """The stream guard keeps citation-number tails long enough to normalize them."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    emitted_order: list[str] = []
+    citations = {
+        3: "https://getklai.com/",
+        5: "https://getklai.com/docs/company/steward-ownership",
+        8: "https://getklai.com/docs/legal/privacy",
+    }
+    out1, pending, changed1 = _pop_sanitized_stream_text(
+        "Klai is een Europees AI-platform. 3,",
+        allowed_source_urls=set(),
+        citation_source_urls=citations,
+        emitted_source_keys=set(),
+        emitted_source_key_order=emitted_order,
+        citation_output="markers",
+        final=False,
+    )
+    out2, pending, changed2 = _pop_sanitized_stream_text(
+        pending + "5,8",
+        allowed_source_urls=set(),
+        citation_source_urls=citations,
+        emitted_source_keys=set(),
+        emitted_source_key_order=emitted_order,
+        citation_output="markers",
+        final=True,
+    )
+
+    assert pending == ""
+    assert changed1 + changed2 >= 1
+    assert out1 + out2 == "Klai is een Europees AI-platform. (1,2,3)"
+    assert emitted_order == [
+        "https://getklai.com/",
+        "https://getklai.com/docs/company/steward-ownership",
+        "https://getklai.com/docs/legal/privacy",
+    ]
 
 
 @pytest.mark.asyncio
