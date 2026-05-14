@@ -446,22 +446,36 @@ async def run_crawl_job(
                 current_paths=current_urls,
             )
             if stale_paths:
+                stale_paths_deleted: list[str] = []
                 for path in stale_paths:
-                    await qdrant_store.delete_document(org_id, kb_slug, path)
-                retired_count = await pg_store.soft_delete_stale_connector_artifacts(
-                    conn,
-                    org_id=org_id,
-                    kb_slug=kb_slug,
-                    connector_id=connector_id,
-                    stale_paths=stale_paths,
-                )
-                logger.info(
-                    "crawl_connector_stale_artifacts_retired",
-                    job_id=job_id,
-                    connector_id=connector_id,
-                    kb_slug=kb_slug,
-                    retired_count=retired_count,
-                )
+                    try:
+                        await qdrant_store.delete_document(org_id, kb_slug, path)
+                    except Exception as exc:
+                        logger.warning(
+                            "crawl_connector_stale_vector_delete_failed",
+                            job_id=job_id,
+                            connector_id=connector_id,
+                            kb_slug=kb_slug,
+                            path=path,
+                            error=str(exc),
+                        )
+                    else:
+                        stale_paths_deleted.append(path)
+                if stale_paths_deleted:
+                    retired_count = await pg_store.soft_delete_stale_connector_artifacts(
+                        conn,
+                        org_id=org_id,
+                        kb_slug=kb_slug,
+                        connector_id=connector_id,
+                        stale_paths=stale_paths_deleted,
+                    )
+                    logger.info(
+                        "crawl_connector_stale_artifacts_retired",
+                        job_id=job_id,
+                        connector_id=connector_id,
+                        kb_slug=kb_slug,
+                        retired_count=retired_count,
+                    )
 
         logger.info(
             "crawl_job_complete",
