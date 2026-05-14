@@ -9,7 +9,10 @@ import { Toaster } from '@/components/ui/sonner'
 import { routeTree } from './routeTree.gen'
 import { initVitals } from '@/lib/vitals'
 import { registerNavigateSingleton } from '@/lib/navigate-singleton'
+import { registerStaleChunkReloadHandler } from '@/lib/stale-chunk-reload'
 import './index.css'
+
+registerStaleChunkReloadHandler()
 
 const queryClient = new QueryClient({
   defaultOptions: {
