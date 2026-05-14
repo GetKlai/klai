@@ -22,7 +22,7 @@ import json
 import re
 from collections.abc import AsyncGenerator
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 import structlog
@@ -39,6 +39,7 @@ logger = structlog.get_logger()
 
 _MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]]*)\]\(([^)]*)\)")
 _BARE_CITATION_RE = re.compile(r"(?<!!)\[(\d+)\](?!\()")
+_CITATION_LINK_RE = re.compile(r"\[(\d+)\]\(([^)]*)\)")
 _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
 _EMPTY_PARENS_RE = re.compile(r"\s*\(\s*\)")
 _STREAM_GUARD_TAIL_CHARS = 16
@@ -103,7 +104,19 @@ def _normalise_guard_url(url: object) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
-    return value
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    return urlunparse((parsed.scheme.lower(), netloc, parsed.path or "/", "", parsed.query, ""))
+
+
+def _source_url_key(url: object) -> str:
+    normalised = _normalise_guard_url(url)
+    if not normalised:
+        return ""
+    parsed = urlparse(normalised)
+    path = parsed.path.rstrip("/") or "/"
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", parsed.query, ""))
 
 
 def _chunk_source_url(chunk: dict) -> str:
@@ -140,18 +153,23 @@ def _source_urls_from_chunks(chunks: list[dict]) -> set[str]:
 
 
 def _citation_source_urls_from_chunks(chunks: list[dict]) -> dict[int, str]:
-    return {
-        index: source_url
-        for index, source_url in enumerate((_chunk_source_url(chunk) for chunk in chunks), 1)
-        if source_url
-    }
+    citation_urls: dict[int, str] = {}
+    first_url_by_key: dict[str, str] = {}
+    for index, chunk in enumerate(chunks, 1):
+        source_url = _chunk_source_url(chunk)
+        key = _source_url_key(source_url)
+        if not source_url or not key:
+            continue
+        first_url_by_key.setdefault(key, source_url)
+        citation_urls[index] = first_url_by_key[key]
+    return citation_urls
 
 
 def _citation_url_for_label(label: str, citation_source_urls: dict[int, str]) -> str:
     label = label.strip()
     if not label.isdigit():
         return ""
-    return citation_source_urls.get(int(label), "")
+    return _normalise_guard_url(citation_source_urls.get(int(label), ""))
 
 
 def _format_citation_label(label: str, citation_source_urls: dict[int, str]) -> str:
@@ -164,6 +182,85 @@ def _format_citation_label(label: str, citation_source_urls: dict[int, str]) -> 
     return f"[{label}]({url})"
 
 
+def _dedupe_adjacent_citation_links(text: str) -> str:
+    output: list[str] = []
+    pos = 0
+
+    while True:
+        match = _CITATION_LINK_RE.search(text, pos)
+        if not match:
+            output.append(text[pos:])
+            return "".join(output)
+
+        output.append(text[pos : match.start()])
+        kept: list[str] = []
+        seen_urls: set[str] = set()
+        current = match
+        run_end = match.end()
+
+        while current:
+            url_key = _source_url_key(current.group(2))
+            if url_key and url_key not in seen_urls:
+                kept.append(current.group(0))
+                seen_urls.add(url_key)
+            run_end = current.end()
+
+            separator_start = run_end
+            separator_end = separator_start
+            while separator_end < len(text) and text[separator_end] in " \t\r\n,;":
+                separator_end += 1
+            next_match = _CITATION_LINK_RE.match(text, separator_end)
+            if not next_match:
+                break
+            current = next_match
+
+        output.append(" ".join(kept))
+        pos = run_end
+
+
+def _parse_bare_citation_run(
+    buffer: str,
+    *,
+    citation_source_urls: dict[int, str],
+    final: bool,
+) -> tuple[str, str, bool] | None:
+    pos = 0
+    labels: list[str] = []
+    separators: list[str] = []
+
+    while True:
+        match = _BARE_CITATION_RE.match(buffer, pos)
+        if not match:
+            break
+        labels.append(match.group(1))
+        pos = match.end()
+        sep_start = pos
+        while pos < len(buffer) and buffer[pos] in " \t\r\n,;":
+            pos += 1
+        separators.append(buffer[sep_start:pos])
+
+    if not labels:
+        return None
+    if not final and pos >= len(buffer):
+        return "", buffer, False
+    if not final and separators and separators[-1]:
+        return "", buffer, False
+
+    kept: list[str] = []
+    seen_urls: set[str] = set()
+    changed = False
+    for label in labels:
+        url = _citation_url_for_label(label, citation_source_urls)
+        url_key = _source_url_key(url)
+        if url_key:
+            if url_key in seen_urls:
+                changed = True
+                continue
+            seen_urls.add(url_key)
+        kept.append(_format_citation_label(label, citation_source_urls))
+    return " ".join(kept), buffer[pos:], changed
+
+
 def _sanitize_kb_markdown_output(
     text: str,
     *,
@@ -172,7 +269,13 @@ def _sanitize_kb_markdown_output(
 ) -> tuple[str, int]:
     """Remove source links that were not present in retrieved chunk metadata."""
     citation_source_urls = citation_source_urls or {}
-    allowed_source_urls = allowed_source_urls | set(citation_source_urls.values())
+    allowed_source_urls = {
+        normalised
+        for normalised in (
+            _normalise_guard_url(url) for url in (*allowed_source_urls, *citation_source_urls.values())
+        )
+        if normalised
+    }
     changed = 0
 
     def _replace_link(match: re.Match[str]) -> str:
@@ -210,6 +313,10 @@ def _sanitize_kb_markdown_output(
         lambda match: _format_citation_label(match.group(1), citation_source_urls),
         sanitized,
     )
+    before_dedupe = sanitized
+    sanitized = _dedupe_adjacent_citation_links(sanitized)
+    if sanitized != before_dedupe:
+        changed += 1
     sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
     sanitized = _EMPTY_PARENS_RE.sub("", sanitized)
     return sanitized, changed
@@ -238,7 +345,13 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
 ) -> tuple[str, str, int]:
     """Return safe text to stream now, retaining incomplete link/URL tails."""
     citation_source_urls = citation_source_urls or {}
-    allowed_source_urls = allowed_source_urls | set(citation_source_urls.values())
+    allowed_source_urls = {
+        normalised
+        for normalised in (
+            _normalise_guard_url(url) for url in (*allowed_source_urls, *citation_source_urls.values())
+        )
+        if normalised
+    }
     out: list[str] = []
     changed = 0
 
@@ -313,6 +426,21 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
             continue
 
         if buffer.startswith("![") or buffer.startswith("["):
+            citation_run = _parse_bare_citation_run(
+                buffer,
+                citation_source_urls=citation_source_urls,
+                final=final,
+            )
+            if citation_run is not None:
+                replacement, buffer, citation_changed = citation_run
+                if replacement:
+                    out.append(replacement)
+                if citation_changed:
+                    changed += 1
+                if not replacement and buffer:
+                    return "".join(out), buffer, changed
+                continue
+
             end = buffer.find("]")
             if end < 0:
                 if final:
