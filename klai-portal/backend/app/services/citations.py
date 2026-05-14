@@ -75,20 +75,22 @@ def _chunk_source_url(chunk: dict) -> str:
         chunk.get("sourceUrl"),
         chunk.get("canonical_url"),
         chunk.get("page_url"),
+        chunk.get("source_ref"),
     ):
         if normalised := normalise_source_url(candidate):
             return normalised
 
     metadata = chunk.get("metadata")
     if isinstance(metadata, dict):
-        for key in ("source_url", "url", "sourceUrl", "canonical_url", "page_url"):
+        for key in ("source_url", "url", "sourceUrl", "canonical_url", "page_url", "source_ref"):
             if normalised := normalise_source_url(metadata.get(key)):
                 return normalised
 
     source = chunk.get("source")
     if isinstance(source, dict):
-        if normalised := normalise_source_url(source.get("url") or source.get("source_url")):
-            return normalised
+        for key in ("source_url", "url", "href"):
+            if normalised := normalise_source_url(source.get(key)):
+                return normalised
 
     return ""
 

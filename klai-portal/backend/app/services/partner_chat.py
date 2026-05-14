@@ -142,6 +142,7 @@ def _chunk_source_url(chunk: dict) -> str:
         chunk.get("sourceUrl"),
         chunk.get("canonical_url"),
         chunk.get("page_url"),
+        chunk.get("source_ref"),
     )
     for candidate in candidates:
         normalised = _normalise_guard_url(candidate)
@@ -150,16 +151,17 @@ def _chunk_source_url(chunk: dict) -> str:
 
     metadata = chunk.get("metadata")
     if isinstance(metadata, dict):
-        for key in ("source_url", "url", "sourceUrl", "canonical_url", "page_url"):
+        for key in ("source_url", "url", "sourceUrl", "canonical_url", "page_url", "source_ref"):
             normalised = _normalise_guard_url(metadata.get(key))
             if normalised:
                 return normalised
 
     source = chunk.get("source")
     if isinstance(source, dict):
-        normalised = _normalise_guard_url(source.get("url") or source.get("source_url"))
-        if normalised:
-            return normalised
+        for key in ("url", "source_url", "href"):
+            normalised = _normalise_guard_url(source.get(key))
+            if normalised:
+                return normalised
 
     return ""
 
@@ -1037,6 +1039,14 @@ def _sse_sources_delta(sources: list[dict[str, str]]) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
+def _no_citable_sources_message(user_query: str) -> str:
+    dutch_markers = {"wat", "waar", "welke", "hoe", "waarom", "gegevens", "bronnen", "klopt"}
+    query_tokens = {token.lower() for token in re.findall(r"[a-zA-ZÀ-ÿ]+", user_query)}
+    if query_tokens & dutch_markers:
+        return "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+    return "I cannot answer this reliably from the available knowledge sources."
+
+
 async def _chat_completion_streaming_with_composed_citations(
     *,
     augmented_messages: list[dict],
@@ -1084,6 +1094,16 @@ async def _chat_completion_streaming_with_composed_citations(
                     raw_text_parts.append(text)
 
     composed = compose_citations("".join(raw_text_parts), citation_chunks or [])
+    if not composed.sources:
+        yield _sse_content_delta(_no_citable_sources_message(user_query))
+        yield b"data: [DONE]\n\n"
+        _emit_language_correctness_log(
+            org_id=org_id,
+            query=user_query,
+            response_text=_no_citable_sources_message(user_query),
+        )
+        return
+
     if composed.sources:
         yield _sse_sources_delta(composed.sources)
     if composed.content:
@@ -1331,7 +1351,11 @@ async def chat_completion_non_streaming(
             content = message.get("content") if isinstance(message, dict) else None
             if isinstance(message, dict) and isinstance(content, str):
                 composed = compose_citations(content, citation_chunks or [])
-                message["content"] = composed.content
+                message["content"] = (
+                    composed.content
+                    if composed.sources
+                    else _no_citable_sources_message(_last_user_message(messages) or "")
+                )
                 message["sources"] = composed.sources
         stripped_links = 0
     else:
