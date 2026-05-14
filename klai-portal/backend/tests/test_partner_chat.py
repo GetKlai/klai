@@ -626,6 +626,16 @@ def test_build_system_prompt_reads_nested_chunk_source_urls():
     }
 
 
+def test_placeholder_source_paths_are_not_valid_urls():
+    """Source guards must reject browser-resolved placeholder paths like /undefined."""
+    from app.services.partner_chat import _normalise_guard_url
+
+    assert _normalise_guard_url("undefined") == ""
+    assert _normalise_guard_url("https://getklai.com/undefined") == ""
+    assert _normalise_guard_url("https://getklai.com/null") == ""
+    assert _normalise_guard_url("https://getklai.com/none?x=1") == ""
+
+
 def test_build_system_prompt_includes_widget_system_prompt():
     """Widget admin behaviour instructions are added without replacing KB grounding."""
     from app.services.partner_chat import _build_system_prompt
@@ -795,10 +805,36 @@ def test_sanitizer_can_emit_structured_citation_markers():
     )
 
     assert changed >= 1
-    assert sanitized == "Naam en e-mailadres [1]. Gebruik. DPA [2]."
+    assert sanitized == "Naam en e-mailadres (1). Gebruik. DPA (2)."
     assert emitted_order == [
         "https://getklai.com/docs/legal/privacy",
         "https://getklai.com/docs/legal/dpa",
+    ]
+
+
+def test_sanitizer_groups_structured_citation_markers_with_commas():
+    """Widget markers use one compact parenthesized group for same-position sources."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    emitted_order: list[str] = []
+    sanitized, changed = _sanitize_kb_markdown_output(
+        "Klai is public [1][3][7].",
+        allowed_source_urls=set(),
+        citation_source_urls={
+            1: "https://getklai.com/docs/company/open-source",
+            3: "https://getklai.com/docs/legal/dpa",
+            7: "https://getklai.com/docs/legal/subprocessors",
+        },
+        emitted_source_key_order=emitted_order,
+        citation_output="markers",
+    )
+
+    assert changed >= 1
+    assert sanitized == "Klai is public (1,2,3)."
+    assert emitted_order == [
+        "https://getklai.com/docs/company/open-source",
+        "https://getklai.com/docs/legal/dpa",
+        "https://getklai.com/docs/legal/subprocessors",
     ]
 
 
@@ -1003,7 +1039,7 @@ def test_stream_sanitizer_can_emit_structured_citation_markers():
 
     assert pending == ""
     assert changed >= 1
-    assert out == "Naam en e-mailadres [1]."
+    assert out == "Naam en e-mailadres (1)."
     assert emitted_order == ["https://getklai.com/docs/legal/privacy"]
 
 
@@ -1065,7 +1101,7 @@ async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
         chunks.append(chunk)
 
     body = b"".join(chunks).decode()
-    assert '"content": "Naam [1]"' in body
+    assert '"content": "Naam (1)"' in body
     assert '"content": "."' in body
     assert (
         '"sources": [{"label": "1", "title": "Privacy policy", "url": "https://getklai.com/docs/legal/privacy"}]'
