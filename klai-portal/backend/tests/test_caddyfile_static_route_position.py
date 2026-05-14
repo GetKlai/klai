@@ -154,3 +154,54 @@ def test_portal_assets_route_precedes_spa_catchall() -> None:
         f"comes AFTER the catch-all `handle {{` (line {catchall_line}). "
         "Missing Vite chunks would be served as HTML instead of returning 404."
     )
+
+
+def test_portal_assets_immutable_header_scoped_to_existing_files() -> None:
+    """The immutable Cache-Control must not be applied to 404 responses.
+
+    `file_server` returns 404 for a missing chunk. If the immutable
+    Cache-Control header is applied unconditionally, the browser caches
+    that 404 for a year — a deploy-race 404 then becomes unrecoverable
+    until the browser cache is cleared. The header must be gated on a
+    `file {path}` matcher so only existing chunks get the immutable cache.
+    """
+    if not _CADDYFILE.exists():
+        pytest.skip(f"Caddyfile not found at {_CADDYFILE}")
+
+    text = _CADDYFILE.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    in_assets_block = False
+    matcher_name: str | None = None
+    immutable_header_line: str | None = None
+
+    assets_re = re.compile(r"^\s*handle\s+/assets/\*\s*\{")
+    matcher_re = re.compile(r"^\s*(@\S+)\s+file\s+\{path\}\s*$")
+
+    for line in lines:
+        if assets_re.match(line):
+            in_assets_block = True
+            continue
+        if not in_assets_block:
+            continue
+        if re.match(r"^\s*\}\s*$", line):
+            break
+        m = matcher_re.match(line)
+        if m:
+            matcher_name = m.group(1)
+        if "Cache-Control" in line and "immutable" in line:
+            immutable_header_line = line.strip()
+
+    assert immutable_header_line is not None, (
+        "Caddyfile `handle /assets/*` block must set an immutable Cache-Control header."
+    )
+    assert matcher_name is not None, (
+        "Caddyfile `handle /assets/*` block must define a `@matcher file {path}` "
+        "matcher so the immutable header is not applied to 404s for missing chunks."
+    )
+    assert matcher_name in immutable_header_line, (
+        f"Caddyfile regression: the immutable Cache-Control header "
+        f"({immutable_header_line!r}) must be scoped to the `{matcher_name}` "
+        "file-existence matcher. Otherwise missing chunks return a 404 cached "
+        "immutably, making a deploy-race 404 unrecoverable."
+    )
