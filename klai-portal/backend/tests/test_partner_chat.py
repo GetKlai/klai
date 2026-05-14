@@ -742,6 +742,26 @@ def test_citation_composer_dedupes_www_and_non_www_sources():
     ]
 
 
+def test_citation_composer_uses_source_ref_as_url_fallback():
+    """Retrieval may expose a citable URL as source_ref instead of source_url."""
+    from app.services.citations import compose_citations
+
+    composed = compose_citations(
+        "Klai stores account data.",
+        [
+            {
+                "title": "Privacy policy",
+                "source_url": None,
+                "source_ref": "https://www.getklai.com/docs/legal/privacy",
+                "text": "Klai stores account data.",
+            }
+        ],
+    )
+
+    assert composed.content == "Klai stores account data (1)."
+    assert composed.sources[0]["url"] == "https://getklai.com/docs/legal/privacy"
+
+
 def test_sanitizer_removes_links_not_in_retrieved_sources():
     """Partner/widget output cannot keep URLs absent from retrieved chunk metadata."""
     from app.services.partner_chat import _sanitize_kb_markdown_output
@@ -1334,6 +1354,63 @@ async def test_streaming_widget_mode_composes_sources_without_model_citations(mo
     assert '"sources": [{"label": "1", "title": "Steward ownership"' in body
     assert '"content": "Klai is steward-owned and mission-led (1)."' in body
     assert body.index('"sources"') < body.index('"content"')
+
+
+@pytest.mark.asyncio
+async def test_streaming_widget_mode_refuses_uncited_answer_without_sources(monkeypatch):
+    """Widget mode should not hallucinate when retrieval yields no citable source URL."""
+    from app.services.partner_chat import chat_completion_streaming
+
+    events = [{"choices": [{"delta": {"content": "Klai is a legal search engine."}}]}]
+
+    class _StreamResp:
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def aiter_lines(self):
+            for event in events:
+                yield "data: " + json.dumps(event)
+            yield "data: [DONE]"
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, *_, **__):
+            return _StreamResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm"
+    settings.litellm_master_key = "secret"
+
+    chunks = []
+    async for chunk in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Wat is Klai?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=settings,
+        citation_chunks=[{"title": "Untitled", "text": "Klai information without URL."}],
+        citation_output="markers",
+    ):
+        chunks.append(chunk)
+
+    body = b"".join(chunks).decode()
+    assert "juridisch" not in body
+    assert "legal search" not in body
+    assert "beschikbare kennisbronnen" in body
+    assert '"sources"' not in body
 
 
 def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placeholder():
