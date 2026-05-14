@@ -27,7 +27,12 @@ type InlineWikiLink = {
 
 type InlineContent = string | InlineText | InlineLink | InlineWikiLink;
 
-type TableCell = InlineContent[];
+type TableCell =
+  | InlineContent[]
+  | {
+      type?: "tableCell";
+      content?: InlineContent[];
+    };
 type TableRow = { cells: TableCell[] };
 type TableContent = { type: "tableContent"; rows: TableRow[] };
 
@@ -164,10 +169,11 @@ function renderTable(
   if (widthCols === 0) return "";
 
   const renderCell = (cell: TableCell | undefined): string => {
-    if (!Array.isArray(cell)) return "";
+    const content = getTableCellContent(cell);
+    if (!Array.isArray(content)) return "";
     // renderInlineContent runs escapeMarkdown which already escapes `|` to `\|`
     // so we only need to flatten newlines for the single-line cell format.
-    return renderInlineContent(cell, pageIndex, kbSlug).replace(/\n/g, " ").trim();
+    return renderInlineContent(content, pageIndex, kbSlug).replace(/\n/g, " ").trim();
   };
 
   const rowToLine = (row: TableRow): string => {
@@ -270,9 +276,15 @@ function applyStyles(text: string, styles: Record<string, boolean | string>): st
   return `${leading}${value}${trailing}`;
 }
 
+function getTableCellContent(cell: TableCell | undefined): InlineContent[] | undefined {
+  return Array.isArray(cell) ? cell : cell?.content;
+}
+
 function extractPlainText(content: InlineContent[] | string | undefined | TableContent): string {
   if (isTableContent(content)) {
-    return content.rows.map(r => r.cells.map(c => extractPlainText(c)).join(" | ")).join("\n");
+    return content.rows
+      .map((r) => r.cells.map((c) => extractPlainText(getTableCellContent(c))).join(" | "))
+      .join("\n");
   }
   return extractPlainTextInner(content);
 }

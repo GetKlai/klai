@@ -135,6 +135,41 @@ describe("blockNoteJsonToMarkdown", () => {
     expect(markdown).toContain("Delete the \\| workspace");
   });
 
+  it("renders current BlockNote tableCell objects with content", () => {
+    const cell = (text: string) => ({
+      type: "tableCell",
+      content: [{ type: "text", text, styles: {} }],
+      props: {
+        colspan: 1,
+        rowspan: 1,
+        backgroundColor: "default",
+        textColor: "default",
+        textAlignment: "left",
+      },
+    });
+    const content = JSON.stringify([
+      {
+        type: "table",
+        props: { textColor: "default" },
+        content: {
+          type: "tableContent",
+          columnWidths: [null, null, null],
+          headerRows: 1,
+          rows: [
+            { cells: [cell("Symptom"), cell("What happened"), cell("Fix")] },
+            { cells: [cell("Connector turns red"), cell("OAuth token expired"), cell("Re-authenticate")] },
+          ],
+        },
+        children: [],
+      },
+    ]);
+
+    const markdown = blockNoteJsonToMarkdown(content);
+
+    expect(markdown).toContain("| Symptom | What happened | Fix |");
+    expect(markdown).toContain("| Connector turns red | OAuth token expired | Re\\-authenticate |");
+  });
+
   it("leaves all-whitespace styled runs as plain text (no empty emphasis markers)", () => {
     const content = JSON.stringify([
       {
