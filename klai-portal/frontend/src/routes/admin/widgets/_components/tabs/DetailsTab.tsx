@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
-import type { WidgetDetailResponse } from '../../-types'
+import type { WidgetDetailResponse, WidgetConfig } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
 
 interface Props {
@@ -14,22 +14,34 @@ interface Props {
 
 export function DetailsTab({ widget }: Props) {
   const updateMutation = useUpdateWidget(String(widget.id))
+  const config = widget.widget_config
   const [name, setName] = useState(widget.name)
   const [description, setDescription] = useState(widget.description ?? '')
+  const [systemPrompt, setSystemPrompt] = useState(config.system_prompt)
 
   useEffect(() => {
     setName(widget.name)
     setDescription(widget.description ?? '')
-  }, [widget.name, widget.description])
+    setSystemPrompt(config.system_prompt)
+  }, [widget.name, widget.description, config.system_prompt])
 
   const isDirty =
     name.trim() !== widget.name ||
-    (description.trim() || null) !== widget.description
+    (description.trim() || null) !== widget.description ||
+    systemPrompt.trim() !== config.system_prompt
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    const nextConfig: WidgetConfig = {
+      ...config,
+      system_prompt: systemPrompt.trim(),
+    }
     updateMutation.mutate(
-      { name: name.trim(), description: description.trim() || null },
+      {
+        name: name.trim(),
+        description: description.trim() || null,
+        widget_config: nextConfig,
+      },
       {
         onSuccess: () => toast.success(m.admin_shared_success_updated()),
       },
@@ -55,6 +67,21 @@ export function DetailsTab({ widget }: Props) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
+            className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="widget-system-prompt">{m.admin_widgets_widget_system_prompt_label()}</Label>
+          <p className="text-xs text-gray-400">
+            {m.admin_widgets_widget_system_prompt_help()}
+          </p>
+          <textarea
+            id="widget-system-prompt"
+            value={systemPrompt}
+            onChange={(e) => setSystemPrompt(e.target.value)}
+            rows={6}
+            maxLength={4000}
+            placeholder={m.admin_widgets_widget_system_prompt_placeholder()}
             className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
           />
         </div>

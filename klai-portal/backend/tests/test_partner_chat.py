@@ -580,7 +580,24 @@ def test_sanitizer_removes_links_not_in_retrieved_sources():
     assert "[home](https://getklai.com/)" in sanitized
     assert "https://getklai.com/missing" not in sanitized
     assert "https://bad.example/x" not in sanitized
+    assert "link removed" not in sanitized
     assert "fake" in sanitized
+
+
+def test_sanitizer_removes_parenthesized_raw_urls_without_placeholder():
+    """Raw unretrieved URLs in parentheses should not render as '(link removed)'."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    sanitized, changed = _sanitize_kb_markdown_output(
+        "Klai is open source [1] (https://github.com/getklai/klai).",
+        allowed_source_urls={"https://getklai.com/"},
+    )
+
+    assert changed == 1
+    assert "https://github.com/getklai/klai" not in sanitized
+    assert "link removed" not in sanitized
+    assert "()" not in sanitized
+    assert sanitized == "Klai is open source [1]."
 
 
 def test_stream_sanitizer_holds_split_markdown_links_until_safe():
@@ -604,6 +621,31 @@ def test_stream_sanitizer_holds_split_markdown_links_until_safe():
     assert changed1 + changed2 == 1
     assert "https://getklai.com/missing" not in out1 + out2
     assert "[home](https://getklai.com/)" in out1 + out2
+
+
+def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placeholder():
+    """Split parenthesized raw URLs should be removed silently, not rendered."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    allowed = {"https://getklai.com/"}
+    out1, pending, changed1 = _pop_sanitized_stream_text(
+        "Klai is open source [1] (https://github.com/get",
+        allowed_source_urls=allowed,
+        final=False,
+    )
+    out2, pending, changed2 = _pop_sanitized_stream_text(
+        pending + "klai/klai).",
+        allowed_source_urls=allowed,
+        final=True,
+    )
+
+    body = out1 + out2
+    assert pending == ""
+    assert changed1 + changed2 == 1
+    assert "https://github.com/getklai/klai" not in body
+    assert "link removed" not in body
+    assert "()" not in body
+    assert body == "Klai is open source [1]."
 
 
 @pytest.mark.asyncio
