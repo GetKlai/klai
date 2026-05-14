@@ -271,9 +271,7 @@ def _sanitize_kb_markdown_output(
     citation_source_urls = citation_source_urls or {}
     allowed_source_urls = {
         normalised
-        for normalised in (
-            _normalise_guard_url(url) for url in (*allowed_source_urls, *citation_source_urls.values())
-        )
+        for normalised in (_normalise_guard_url(url) for url in (*allowed_source_urls, *citation_source_urls.values()))
         if normalised
     }
     changed = 0
@@ -347,9 +345,7 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
     citation_source_urls = citation_source_urls or {}
     allowed_source_urls = {
         normalised
-        for normalised in (
-            _normalise_guard_url(url) for url in (*allowed_source_urls, *citation_source_urls.values())
-        )
+        for normalised in (_normalise_guard_url(url) for url in (*allowed_source_urls, *citation_source_urls.values()))
         if normalised
     }
     out: list[str] = []
