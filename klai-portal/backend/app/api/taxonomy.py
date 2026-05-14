@@ -29,6 +29,10 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/app/knowledge-bases", tags=["taxonomy"])
 
+# Coverage/top-tags are derived ingest metrics. Portal DB categories and gaps
+# should render immediately when knowledge-ingest is slow.
+_DERIVED_INGEST_READ_TIMEOUT = httpx.Timeout(1.0, connect=0.3)
+
 # -- Pydantic schemas ---------------------------------------------------------
 
 
@@ -971,7 +975,7 @@ async def _fetch_ingest_coverage(org_id: str, kb_slug: str) -> dict | None:
                 "X-Internal-Secret": settings.knowledge_ingest_secret,
                 **get_trace_headers(),
             },
-            timeout=10.0,
+            timeout=_DERIVED_INGEST_READ_TIMEOUT,
         ) as client:
             resp = await client.get(
                 "/ingest/v1/taxonomy/coverage-stats",
@@ -1131,7 +1135,7 @@ async def _fetch_ingest_top_tags(org_id: str, kb_slug: str, limit: int, taxonomy
                 "X-Internal-Secret": settings.knowledge_ingest_secret,
                 **get_trace_headers(),
             },
-            timeout=25.0,
+            timeout=_DERIVED_INGEST_READ_TIMEOUT,
         ) as client:
             resp = await client.get("/ingest/v1/taxonomy/top-tags", params=params)
             resp.raise_for_status()
