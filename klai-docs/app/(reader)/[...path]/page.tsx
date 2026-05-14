@@ -155,26 +155,26 @@ export default async function ReaderPage({
   }
 
   return (
-    <div className="flex min-h-screen bg-[var(--color-off-white)]">
+    <div className="flex min-h-screen bg-[var(--color-rl-bg)]">
       <Sidebar
         tree={navTree}
         orgSlug={orgSlug}
         kbSlug={kbSlug}
         kbName={kb.name}
       />
-      <main className="flex-1 px-16 py-12 max-w-[780px]">
+      <main className="flex-1 px-10 md:px-16 py-12 max-w-[780px]">
         {articlePath ? (
           <>
-            <h1 className="font-[family-name:var(--font-serif)] text-[2.5rem] font-bold text-[var(--color-purple-deep)] mb-6 leading-tight">{title}</h1>
+            <h1 className="text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-6">{title}</h1>
             {description && (
-              <p className="text-[rgba(26,26,26,0.6)] text-[0.9375rem] leading-relaxed mb-8">{description}</p>
+              <p className="text-[16px] text-[var(--color-rl-dark-60)] leading-[1.6] mb-10 max-w-[55ch]">{description}</p>
             )}
             <PageRenderer content={content} pageIndex={pageIndex} kbSlug={kbSlug} />
           </>
         ) : (
           <div>
-            <h1 className="font-[family-name:var(--font-serif)] text-[2rem] font-bold text-[var(--color-purple-deep)] mb-6 leading-tight">{kb.name}</h1>
-            <p className="text-[rgba(26,26,26,0.6)] text-[0.9375rem]">Select a page from the sidebar.</p>
+            <h1 className="text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-6">{kb.name}</h1>
+            <p className="text-[16px] text-[var(--color-rl-dark-60)] leading-[1.6]">Select a page from the sidebar.</p>
           </div>
         )}
       </main>
