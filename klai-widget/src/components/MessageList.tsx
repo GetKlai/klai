@@ -74,7 +74,26 @@ export function MessageList(props: MessageListProps) {
                 {message.role === "user" ? (
                   message.content
                 ) : (
-                  <div class="klai-markdown" innerHTML={renderMarkdown(message.content)} />
+                  <>
+                    <div class="klai-markdown" innerHTML={renderMarkdown(message.content)} />
+                    <Show when={message.sources && message.sources.length > 0}>
+                      <div class="klai-sources" aria-label="Sources">
+                        <For each={message.sources}>
+                          {(source) => (
+                            <a
+                              class="klai-source"
+                              href={source.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={source.title}
+                            >
+                              [{source.label}]
+                            </a>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </>
                 )}
               </div>
             </Show>

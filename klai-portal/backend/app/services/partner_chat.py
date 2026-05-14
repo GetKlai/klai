@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -45,6 +45,8 @@ _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
 _EMPTY_PARENS_RE = re.compile(r"\s*\(\s*\)")
 _STREAM_GUARD_TAIL_CHARS = 16
 
+CitationOutput = Literal["links", "markers"]
+
 
 def _last_user_message(messages: list[dict]) -> str | None:
     """Extract the last user message from the messages array."""
@@ -66,6 +68,10 @@ def _build_conversation_history(messages: list[dict]) -> list[dict]:
         if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
     ]
     return history[-6:]
+
+
+def _augment_messages_with_system_prompt(messages: list[dict], system_prompt: str) -> list[dict]:
+    return [{"role": "system", "content": system_prompt}, *(msg for msg in messages if msg.get("role") != "system")]
 
 
 def _emit_language_correctness_log(
@@ -153,6 +159,18 @@ def _source_urls_from_chunks(chunks: list[dict]) -> set[str]:
     return {normalised for normalised in (_chunk_source_url(chunk) for chunk in chunks) if normalised}
 
 
+def _chunk_source_title(chunk: dict) -> str:
+    candidates = (
+        chunk.get("title"),
+        (chunk.get("metadata") or {}).get("title") if isinstance(chunk.get("metadata"), dict) else None,
+        chunk.get("source_label"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return "Source"
+
+
 def _citation_source_urls_from_chunks(chunks: list[dict]) -> dict[int, str]:
     citation_urls: dict[int, str] = {}
     first_url_by_key: dict[str, str] = {}
@@ -164,6 +182,17 @@ def _citation_source_urls_from_chunks(chunks: list[dict]) -> dict[int, str]:
         first_url_by_key.setdefault(key, source_url)
         citation_urls[index] = first_url_by_key[key]
     return citation_urls
+
+
+def _citation_source_metadata_from_chunks(chunks: list[dict]) -> dict[str, dict[str, str]]:
+    sources: dict[str, dict[str, str]] = {}
+    for chunk in chunks:
+        source_url = _chunk_source_url(chunk)
+        key = _source_url_key(source_url)
+        if not source_url or not key or key in sources:
+            continue
+        sources[key] = {"url": source_url, "title": _chunk_source_title(chunk)}
+    return sources
 
 
 def _citation_url_for_label(label: str, citation_source_urls: dict[int, str]) -> str:
@@ -193,6 +222,8 @@ def _format_citation_label(
     label: str,
     citation_source_urls: dict[int, str],
     display_label: str | None = None,
+    *,
+    citation_output: CitationOutput = "links",
 ) -> str:
     label = label.strip()
     url = _citation_url_for_label(label, citation_source_urls)
@@ -201,7 +232,37 @@ def _format_citation_label(
             return f"[{label}]"
         return label
     visible_label = display_label or _citation_display_label(url, citation_source_urls) or label
+    if citation_output == "markers":
+        return f"[{visible_label}]"
     return f"[{visible_label}]({url})"
+
+
+def _record_emitted_source_key(
+    url_key: str,
+    emitted_source_keys: set[str],
+    emitted_source_key_order: list[str] | None = None,
+) -> bool:
+    if not url_key or url_key in emitted_source_keys:
+        return False
+    emitted_source_keys.add(url_key)
+    if emitted_source_key_order is not None:
+        emitted_source_key_order.append(url_key)
+    return True
+
+
+def _source_payload_from_keys(
+    source_keys: list[str],
+    citation_source_metadata: dict[str, dict[str, str]],
+) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    for index, source_key in enumerate(source_keys, 1):
+        metadata = citation_source_metadata.get(source_key) or {}
+        url = _normalise_guard_url(metadata.get("url") or source_key)
+        if not url:
+            continue
+        title = (metadata.get("title") or "").strip() or "Source"
+        sources.append({"label": str(index), "title": title, "url": url})
+    return sources
 
 
 def _dedupe_adjacent_citation_links(text: str) -> str:
@@ -265,6 +326,8 @@ def _parse_bare_citation_run(
     citation_source_urls: dict[int, str],
     final: bool,
     emitted_source_keys: set[str] | None = None,
+    emitted_source_key_order: list[str] | None = None,
+    citation_output: CitationOutput = "links",
 ) -> tuple[str, str, bool] | None:
     pos = 0
     labels: list[str] = []
@@ -302,8 +365,8 @@ def _parse_bare_citation_run(
                 continue
             display_label = str(len(emitted_source_keys) + 1)
             seen_urls.add(url_key)
-            emitted_source_keys.add(url_key)
-        kept.append(_format_citation_label(label, citation_source_urls, display_label))
+            _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
+        kept.append(_format_citation_label(label, citation_source_urls, display_label, citation_output=citation_output))
     return ", ".join(kept), buffer[pos:], changed
 
 
@@ -314,6 +377,8 @@ def _parse_citation_link_run(
     allowed_source_urls: set[str],
     final: bool,
     emitted_source_keys: set[str] | None = None,
+    emitted_source_key_order: list[str] | None = None,
+    citation_output: CitationOutput = "links",
 ) -> tuple[str, str, bool] | None:
     pos = 0
     links: list[re.Match[str]] = []
@@ -354,15 +419,17 @@ def _parse_citation_link_run(
                 continue
             display_label = str(len(emitted_source_keys) + 1)
             seen_urls.add(url_key)
-            emitted_source_keys.add(url_key)
+            _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
         else:
             display_label = None
         if citation_url:
             if provided_url != citation_url:
                 changed = True
-            kept.append(_format_citation_label(label, citation_source_urls, display_label))
+            kept.append(
+                _format_citation_label(label, citation_source_urls, display_label, citation_output=citation_output)
+            )
         else:
-            kept.append(f"[{label}]({output_url})")
+            kept.append(f"[{display_label or label}]" if citation_output == "markers" else f"[{label}]({output_url})")
 
     return ", ".join(kept), buffer[pos:], changed
 
@@ -374,6 +441,8 @@ def _format_provided_citation_link(
     citation_source_urls: dict[int, str],
     allowed_source_urls: set[str],
     emitted_source_keys: set[str] | None = None,
+    emitted_source_key_order: list[str] | None = None,
+    citation_output: CitationOutput = "links",
 ) -> tuple[str, bool]:
     citation_url = _citation_url_for_label(label, citation_source_urls)
     output_url = citation_url or _normalise_guard_url(provided_url)
@@ -387,12 +456,19 @@ def _format_provided_citation_link(
         return "", True
     display_label = str(len(emitted_source_keys) + 1) if url_key else None
     if url_key:
-        emitted_source_keys.add(url_key)
+        _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
     if citation_url and _normalise_guard_url(provided_url) != citation_url:
         changed = True
 
     if citation_url:
-        return _format_citation_label(label, citation_source_urls, display_label), changed
+        return _format_citation_label(
+            label,
+            citation_source_urls,
+            display_label,
+            citation_output=citation_output,
+        ), changed
+    if citation_output == "markers" and label.strip().isdigit():
+        return f"[{display_label or label.strip()}]", changed
     return f"[{label}]({output_url})", changed
 
 
@@ -402,6 +478,8 @@ def _sanitize_kb_markdown_output(  # noqa: C901 - citation/link guard has severa
     allowed_source_urls: set[str],
     citation_source_urls: dict[int, str] | None = None,
     emitted_source_keys: set[str] | None = None,
+    emitted_source_key_order: list[str] | None = None,
+    citation_output: CitationOutput = "links",
 ) -> tuple[str, int]:
     """Remove source links that were not present in retrieved chunk metadata."""
     citation_source_urls = citation_source_urls or {}
@@ -415,15 +493,18 @@ def _sanitize_kb_markdown_output(  # noqa: C901 - citation/link guard has severa
 
     def _replace_malformed_citation(match: re.Match[str]) -> str:
         nonlocal changed
-        label = match.group(1)
-        provided_url = _normalise_guard_url(match.group(2))
-        citation_url = _citation_url_for_label(label, citation_source_urls)
-        output_url = citation_url or provided_url
-        if not output_url or (not citation_url and output_url not in allowed_source_urls):
+        replacement, citation_changed = _format_provided_citation_link(
+            label=match.group(1),
+            provided_url=match.group(2),
+            citation_source_urls=citation_source_urls,
+            allowed_source_urls=allowed_source_urls,
+            emitted_source_keys=emitted_source_keys,
+            emitted_source_key_order=emitted_source_key_order,
+            citation_output=citation_output,
+        )
+        if citation_changed or replacement != match.group(0):
             changed += 1
-            return ""
-        changed += 1
-        return f"[{label}]({output_url})"
+        return replacement
 
     def _replace_link(match: re.Match[str]) -> str:
         nonlocal changed
@@ -441,15 +522,30 @@ def _sanitize_kb_markdown_output(  # noqa: C901 - citation/link guard has severa
                 return ""
             display_label = str(len(emitted_source_keys) + 1) if url_key else None
             if url_key:
-                emitted_source_keys.add(url_key)
+                _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
             if url != citation_url:
                 changed += 1
-            return _format_citation_label(label, citation_source_urls, display_label)
+            return _format_citation_label(
+                label,
+                citation_source_urls,
+                display_label,
+                citation_output=citation_output,
+            )
         if url in allowed_source_urls:
+            if citation_output == "markers" and label.strip().isdigit():
+                url_key = _source_url_key(url)
+                if url_key and url_key in emitted_source_keys:
+                    changed += 1
+                    return ""
+                display_label = str(len(emitted_source_keys) + 1) if url_key else label.strip()
+                if url_key:
+                    _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
+                changed += 1
+                return f"[{display_label}]"
             return marker
         changed += 1
         if label.strip().isdigit():
-            return _format_citation_label(label, citation_source_urls)
+            return _format_citation_label(label, citation_source_urls, citation_output=citation_output)
         return label
 
     def _replace_raw_url(match: re.Match[str]) -> str:
@@ -473,8 +569,8 @@ def _sanitize_kb_markdown_output(  # noqa: C901 - citation/link guard has severa
                 changed += 1
                 return ""
             display_label = str(len(emitted_source_keys) + 1)
-            emitted_source_keys.add(url_key)
-        return _format_citation_label(label, citation_source_urls, display_label)
+            _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
+        return _format_citation_label(label, citation_source_urls, display_label, citation_output=citation_output)
 
     sanitized = _MALFORMED_CITATION_LINK_RE.sub(_replace_malformed_citation, text)
     sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, sanitized)
@@ -487,6 +583,7 @@ def _sanitize_kb_markdown_output(  # noqa: C901 - citation/link guard has severa
     sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
     sanitized = _EMPTY_PARENS_RE.sub("", sanitized)
     sanitized = re.sub(r"(\[[^\]]+\]\([^)]*\)),\s{2,}", r"\1 ", sanitized)
+    sanitized = re.sub(r"[ \t]+([.,;:])", r"\1", sanitized)
     return sanitized, changed
 
 
@@ -510,6 +607,8 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
     allowed_source_urls: set[str],
     citation_source_urls: dict[int, str] | None = None,
     emitted_source_keys: set[str] | None = None,
+    emitted_source_key_order: list[str] | None = None,
+    citation_output: CitationOutput = "links",
     final: bool,
 ) -> tuple[str, str, int]:
     """Return safe text to stream now, retaining incomplete link/URL tails."""
@@ -555,6 +654,8 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
                             citation_source_urls=citation_source_urls,
                             allowed_source_urls=allowed_source_urls,
                             emitted_source_keys=emitted_source_keys,
+                            emitted_source_key_order=emitted_source_key_order,
+                            citation_output=citation_output,
                         )
                         out.append(buffer[:label_start])
                         if replacement:
@@ -606,6 +707,8 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
                 citation_source_urls=citation_source_urls,
                 allowed_source_urls=allowed_source_urls,
                 emitted_source_keys=emitted_source_keys,
+                emitted_source_key_order=emitted_source_key_order,
+                citation_output=citation_output,
                 final=final,
             )
             if citation_link_run is not None:
@@ -636,15 +739,40 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
                         out[-1] = out[-1].rstrip()
                     changed += 1
                 else:
-                    out.append(_format_citation_label(label, citation_source_urls))
+                    display_label = str(len(emitted_source_keys) + 1) if url_key else None
+                    out.append(
+                        _format_citation_label(
+                            label,
+                            citation_source_urls,
+                            display_label,
+                            citation_output=citation_output,
+                        )
+                    )
                     if url_key:
-                        emitted_source_keys.add(url_key)
+                        _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
                 if url != citation_url:
                     changed += 1
             elif url in allowed_source_urls:
-                out.append(marker)
+                if citation_output == "markers" and label.strip().isdigit():
+                    url_key = _source_url_key(url)
+                    if url_key and url_key in emitted_source_keys:
+                        if buffer[len(marker) : len(marker) + 1] in ".,;:" and out:
+                            out[-1] = out[-1].rstrip()
+                        changed += 1
+                    else:
+                        display_label = str(len(emitted_source_keys) + 1) if url_key else label.strip()
+                        out.append(f"[{display_label}]")
+                        if url_key:
+                            _record_emitted_source_key(url_key, emitted_source_keys, emitted_source_key_order)
+                        changed += 1
+                else:
+                    out.append(marker)
             else:
-                out.append(_format_citation_label(label, citation_source_urls) if label.strip().isdigit() else label)
+                out.append(
+                    _format_citation_label(label, citation_source_urls, citation_output=citation_output)
+                    if label.strip().isdigit()
+                    else label
+                )
                 changed += 1
             buffer = buffer[len(marker) :]
             continue
@@ -655,6 +783,8 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
                 buffer,
                 citation_source_urls=citation_source_urls,
                 emitted_source_keys=emitted_source_keys,
+                emitted_source_key_order=emitted_source_key_order,
+                citation_output=citation_output,
                 final=final,
             )
             if citation_run is not None:
@@ -682,7 +812,7 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
             if len(buffer) > end + 1 and buffer[end + 1] == "(":
                 if final:
                     label = buffer[2:end] if buffer.startswith("![") else buffer[1:end]
-                    out.append(_format_citation_label(label, citation_source_urls))
+                    out.append(_format_citation_label(label, citation_source_urls, citation_output=citation_output))
                     buffer = buffer[end + 1 :]
                     continue
                 return "".join(out), buffer, changed
@@ -690,7 +820,7 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
                 out.append(buffer[: end + 1])
             else:
                 label = buffer[1:end]
-                out.append(_format_citation_label(label, citation_source_urls))
+                out.append(_format_citation_label(label, citation_source_urls, citation_output=citation_output))
             buffer = buffer[end + 1 :]
             continue
 
@@ -723,8 +853,11 @@ def _sanitize_completion_body(
     *,
     allowed_source_urls: set[str],
     citation_source_urls: dict[int, str] | None = None,
+    emitted_source_key_order: list[str] | None = None,
+    citation_output: CitationOutput = "links",
 ) -> int:
     changed = 0
+    emitted_source_keys: set[str] = set()
     for choice in body.get("choices") or []:
         if not isinstance(choice, dict):
             continue
@@ -738,6 +871,9 @@ def _sanitize_completion_body(
             content,
             allowed_source_urls=allowed_source_urls,
             citation_source_urls=citation_source_urls,
+            emitted_source_keys=emitted_source_keys,
+            emitted_source_key_order=emitted_source_key_order,
+            citation_output=citation_output,
         )
         if content_changed:
             message["content"] = sanitized
@@ -748,6 +884,23 @@ def _sanitize_completion_body(
 def _sse_content_delta(text: str) -> bytes:
     payload = {"choices": [{"delta": {"content": text}}]}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
+def _sse_sources_delta(sources: list[dict[str, str]]) -> bytes:
+    payload = {"choices": [{"delta": {"sources": sources}}]}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
+def _maybe_sse_sources_delta(
+    *,
+    citation_output: CitationOutput,
+    emitted_source_key_order: list[str],
+    citation_source_metadata: dict[str, dict[str, str]],
+) -> bytes | None:
+    if citation_output != "markers":
+        return None
+    sources = _source_payload_from_keys(emitted_source_key_order, citation_source_metadata)
+    return _sse_sources_delta(sources) if sources else None
 
 
 def _build_system_prompt(
@@ -907,6 +1060,8 @@ async def chat_completion_non_streaming(
     org_id: int | str | None = None,
     allowed_source_urls: set[str] | None = None,
     citation_source_urls: dict[int, str] | None = None,
+    citation_source_metadata: dict[str, dict[str, str]] | None = None,
+    citation_output: CitationOutput = "links",
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -914,11 +1069,7 @@ async def chat_completion_non_streaming(
     ``chat_synthesis_complete`` log event before returning so
     cross-lingual correctness is observable on every call (REQ-07).
     """
-    # Replace/prepend system message
-    augmented_messages = [{"role": "system", "content": system_prompt}]
-    for msg in messages:
-        if msg.get("role") != "system":
-            augmented_messages.append(msg)
+    augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt)
 
     litellm_url = settings.litellm_base_url
 
@@ -941,11 +1092,21 @@ async def chat_completion_non_streaming(
 
     allowed_source_urls = allowed_source_urls or set()
     citation_source_urls = citation_source_urls or {}
+    citation_source_metadata = citation_source_metadata or {}
+    emitted_source_key_order: list[str] = []
     stripped_links = _sanitize_completion_body(
         body,
         allowed_source_urls=allowed_source_urls,
         citation_source_urls=citation_source_urls,
+        emitted_source_key_order=emitted_source_key_order,
+        citation_output=citation_output,
     )
+    if citation_output == "markers":
+        sources = _source_payload_from_keys(emitted_source_key_order, citation_source_metadata)
+        for choice in body.get("choices") or []:
+            message = choice.get("message") if isinstance(choice, dict) else None
+            if isinstance(message, dict):
+                message["sources"] = sources
     if stripped_links:
         logger.warning(
             "partner_chat_unretrieved_links_stripped",
@@ -974,6 +1135,8 @@ async def chat_completion_streaming(
     org_id: int | str | None = None,
     allowed_source_urls: set[str] | None = None,
     citation_source_urls: dict[int, str] | None = None,
+    citation_source_metadata: dict[str, dict[str, str]] | None = None,
+    citation_output: CitationOutput = "links",
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with KB-source URL sanitization.
 
@@ -983,18 +1146,18 @@ async def chat_completion_streaming(
     response text even though we never buffer it for the client.
     """
 
-    augmented_messages = [{"role": "system", "content": system_prompt}]
-    for msg in messages:
-        if msg.get("role") != "system":
-            augmented_messages.append(msg)
+    augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt)
 
     litellm_url = settings.litellm_base_url
     user_query = _last_user_message(messages) or ""
     allowed_source_urls = allowed_source_urls or set()
     citation_source_urls = citation_source_urls or {}
+    citation_source_metadata = citation_source_metadata or {}
     collected_text_parts: list[str] = []
     pending_text = ""
     emitted_source_keys: set[str] = set()
+    emitted_source_key_order: list[str] = []
+    sources_sent = False
     stripped_links = 0
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -1025,12 +1188,21 @@ async def chat_completion_streaming(
                         allowed_source_urls=allowed_source_urls,
                         citation_source_urls=citation_source_urls,
                         emitted_source_keys=emitted_source_keys,
+                        emitted_source_key_order=emitted_source_key_order,
+                        citation_output=citation_output,
                         final=True,
                     )
                     stripped_links += changed
                     if safe_text:
                         collected_text_parts.append(safe_text)
                         yield _sse_content_delta(safe_text)
+                    if source_delta := _maybe_sse_sources_delta(
+                        citation_output=citation_output,
+                        emitted_source_key_order=emitted_source_key_order,
+                        citation_source_metadata=citation_source_metadata,
+                    ):
+                        yield source_delta
+                    sources_sent = True
                     yield b"data: [DONE]\n\n"
                     continue
                 try:
@@ -1048,6 +1220,8 @@ async def chat_completion_streaming(
                     allowed_source_urls=allowed_source_urls,
                     citation_source_urls=citation_source_urls,
                     emitted_source_keys=emitted_source_keys,
+                    emitted_source_key_order=emitted_source_key_order,
+                    citation_output=citation_output,
                     final=False,
                 )
                 stripped_links += changed
@@ -1061,12 +1235,26 @@ async def chat_completion_streaming(
             allowed_source_urls=allowed_source_urls,
             citation_source_urls=citation_source_urls,
             emitted_source_keys=emitted_source_keys,
+            emitted_source_key_order=emitted_source_key_order,
+            citation_output=citation_output,
             final=True,
         )
         stripped_links += changed
         if safe_text:
             collected_text_parts.append(safe_text)
             yield _sse_content_delta(safe_text)
+
+    source_delta = (
+        None
+        if sources_sent
+        else _maybe_sse_sources_delta(
+            citation_output=citation_output,
+            emitted_source_key_order=emitted_source_key_order,
+            citation_source_metadata=citation_source_metadata,
+        )
+    )
+    if source_delta:
+        yield source_delta
 
     if stripped_links:
         logger.warning(

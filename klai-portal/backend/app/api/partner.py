@@ -33,6 +33,7 @@ from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services.events import emit_event
 from app.services.partner_chat import (
+    _citation_source_metadata_from_chunks,
     _citation_source_urls_from_chunks,
     _source_urls_from_chunks,
     chat_completion_non_streaming,
@@ -230,6 +231,7 @@ async def chat_completions(
     except (ValueError, AttributeError, TypeError):
         partner_user_id = None
     widget_system_prompt = await _widget_system_prompt(auth, db)
+    is_widget_chat = str(auth.key_id).startswith("wgt_")
 
     try:
         chunks, system_prompt = await retrieve_context(
@@ -268,6 +270,7 @@ async def chat_completions(
     # 8. Streaming or non-streaming
     if request.stream:
         citation_source_urls = _citation_source_urls_from_chunks(chunks)
+        citation_source_metadata = _citation_source_metadata_from_chunks(chunks)
         streaming_gen = chat_completion_streaming(
             messages=request.messages,
             model=request.model,
@@ -277,6 +280,8 @@ async def chat_completions(
             org_id=auth.org_id,
             allowed_source_urls=set(citation_source_urls.values()) or _source_urls_from_chunks(chunks),
             citation_source_urls=citation_source_urls,
+            citation_source_metadata=citation_source_metadata,
+            citation_output="markers" if is_widget_chat else "links",
         )
         return StreamingResponse(
             content=streaming_gen,
@@ -285,6 +290,7 @@ async def chat_completions(
 
     # Non-streaming
     citation_source_urls = _citation_source_urls_from_chunks(chunks)
+    citation_source_metadata = _citation_source_metadata_from_chunks(chunks)
     result = await chat_completion_non_streaming(
         messages=request.messages,
         model=request.model,
@@ -294,6 +300,8 @@ async def chat_completions(
         org_id=auth.org_id,
         allowed_source_urls=set(citation_source_urls.values()) or _source_urls_from_chunks(chunks),
         citation_source_urls=citation_source_urls,
+        citation_source_metadata=citation_source_metadata,
+        citation_output="markers" if is_widget_chat else "links",
     )
     return result
 
