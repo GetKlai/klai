@@ -655,6 +655,56 @@ def test_sanitizer_deduplicates_adjacent_citations_for_same_document():
     assert "www.getklai.com" not in sanitized
 
 
+def test_sanitizer_removes_repeated_same_document_citations_across_answer():
+    """A widget answer should not show the same source link after every bullet."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    sanitized, changed = _sanitize_kb_markdown_output(
+        (
+            "Klai B.V. collects:\n"
+            "- Account data [1].\n"
+            "- Usage data [1].\n"
+            "- Query data [1].\n"
+            "- Billing data [1]."
+        ),
+        allowed_source_urls=set(),
+        citation_source_urls={1: "https://www.getklai.com/docs/legal/privacy"},
+    )
+
+    assert changed >= 1
+    assert sanitized.count("https://getklai.com/docs/legal/privacy") == 1
+    assert sanitized == (
+        "Klai B.V. collects:\n"
+        "- Account data [1](https://getklai.com/docs/legal/privacy).\n"
+        "- Usage data.\n"
+        "- Query data.\n"
+        "- Billing data."
+    )
+
+
+def test_sanitizer_separates_multiple_different_citations():
+    """Adjacent different source links must not render as one glued label."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    sanitized, changed = _sanitize_kb_markdown_output(
+        "Klai is public [1][3][7].",
+        allowed_source_urls=set(),
+        citation_source_urls={
+            1: "https://getklai.com/docs/company/open-source",
+            3: "https://getklai.com/docs/legal/dpa",
+            7: "https://getklai.com/docs/legal/subprocessors",
+        },
+    )
+
+    assert changed >= 1
+    assert sanitized == (
+        "Klai is public "
+        "[1](https://getklai.com/docs/company/open-source) "
+        "[3](https://getklai.com/docs/legal/dpa) "
+        "[7](https://getklai.com/docs/legal/subprocessors)."
+    )
+
+
 def test_sanitizer_removes_parenthesized_raw_urls_without_placeholder():
     """Raw unretrieved URLs in parentheses should not render as '(link removed)'."""
     from app.services.partner_chat import _sanitize_kb_markdown_output
@@ -762,6 +812,64 @@ def test_stream_sanitizer_deduplicates_split_bare_citation_run():
     assert pending == ""
     assert changed1 + changed2 == 1
     assert out2 == "[1](https://getklai.com/docs/company/steward-ownership)."
+
+
+def test_stream_sanitizer_removes_repeated_same_document_citations_across_deltas():
+    """Streaming keeps answer-level source state, not just per-delta state."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    emitted: set[str] = set()
+    citations = {1: "https://www.getklai.com/docs/legal/privacy"}
+    out1, pending, changed1 = _pop_sanitized_stream_text(
+        "Account data [1].\nUsage data ",
+        allowed_source_urls=set(),
+        citation_source_urls=citations,
+        emitted_source_keys=emitted,
+        final=False,
+    )
+    out2, pending, changed2 = _pop_sanitized_stream_text(
+        pending + "[1].",
+        allowed_source_urls=set(),
+        citation_source_urls=citations,
+        emitted_source_keys=emitted,
+        final=True,
+    )
+
+    body = out1 + out2
+    assert pending == ""
+    assert changed1 + changed2 == 1
+    assert body == "Account data [1](https://getklai.com/docs/legal/privacy).\nUsage data."
+    assert body.count("https://getklai.com/docs/legal/privacy") == 1
+
+
+def test_stream_sanitizer_separates_explicit_citation_link_runs():
+    """Explicit Markdown citation links can also arrive glued together."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    citations = {
+        1: "https://getklai.com/docs/company/open-source",
+        3: "https://getklai.com/docs/legal/dpa",
+        7: "https://getklai.com/docs/legal/subprocessors",
+    }
+    out, pending, changed = _pop_sanitized_stream_text(
+        (
+            "[1](https://getklai.com/docs/company/open-source)"
+            "[3](https://getklai.com/docs/legal/dpa)"
+            "[7](https://getklai.com/docs/legal/subprocessors)."
+        ),
+        allowed_source_urls=set(),
+        citation_source_urls=citations,
+        emitted_source_keys=set(),
+        final=True,
+    )
+
+    assert pending == ""
+    assert changed == 0
+    assert out == (
+        "[1](https://getklai.com/docs/company/open-source) "
+        "[3](https://getklai.com/docs/legal/dpa) "
+        "[7](https://getklai.com/docs/legal/subprocessors)."
+    )
 
 
 def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placeholder():

@@ -218,11 +218,31 @@ def _dedupe_adjacent_citation_links(text: str) -> str:
         pos = run_end
 
 
+def _dedupe_repeated_citation_links(text: str, emitted_source_keys: set[str] | None = None) -> str:
+    """Keep only the first citation link per source URL in a rendered answer."""
+    emitted_source_keys = emitted_source_keys if emitted_source_keys is not None else set()
+    output: list[str] = []
+    pos = 0
+
+    for match in _CITATION_LINK_RE.finditer(text):
+        output.append(text[pos : match.start()])
+        url_key = _source_url_key(match.group(2))
+        if not url_key or url_key not in emitted_source_keys:
+            output.append(match.group(0))
+            if url_key:
+                emitted_source_keys.add(url_key)
+        pos = match.end()
+
+    output.append(text[pos:])
+    return re.sub(r"[ \t]+([.,;:])", r"\1", "".join(output))
+
+
 def _parse_bare_citation_run(
     buffer: str,
     *,
     citation_source_urls: dict[int, str],
     final: bool,
+    emitted_source_keys: set[str] | None = None,
 ) -> tuple[str, str, bool] | None:
     pos = 0
     labels: list[str] = []
@@ -249,15 +269,74 @@ def _parse_bare_citation_run(
     kept: list[str] = []
     seen_urls: set[str] = set()
     changed = False
+    emitted_source_keys = emitted_source_keys if emitted_source_keys is not None else set()
     for label in labels:
         url = _citation_url_for_label(label, citation_source_urls)
         url_key = _source_url_key(url)
         if url_key:
-            if url_key in seen_urls:
+            if url_key in seen_urls or url_key in emitted_source_keys:
                 changed = True
                 continue
             seen_urls.add(url_key)
+            emitted_source_keys.add(url_key)
         kept.append(_format_citation_label(label, citation_source_urls))
+    return " ".join(kept), buffer[pos:], changed
+
+
+def _parse_citation_link_run(
+    buffer: str,
+    *,
+    citation_source_urls: dict[int, str],
+    allowed_source_urls: set[str],
+    final: bool,
+    emitted_source_keys: set[str] | None = None,
+) -> tuple[str, str, bool] | None:
+    pos = 0
+    links: list[re.Match[str]] = []
+
+    while True:
+        match = _CITATION_LINK_RE.match(buffer, pos)
+        if not match:
+            break
+        links.append(match)
+        pos = match.end()
+        while pos < len(buffer) and buffer[pos] in " \t\r\n,;":
+            pos += 1
+
+    if not links:
+        return None
+    if not final and pos >= len(buffer):
+        return "", buffer, False
+
+    kept: list[str] = []
+    seen_urls: set[str] = set()
+    changed = False
+    emitted_source_keys = emitted_source_keys if emitted_source_keys is not None else set()
+
+    for match in links:
+        label = match.group(1)
+        provided_url = _normalise_guard_url(match.group(2))
+        citation_url = _citation_url_for_label(label, citation_source_urls)
+        output_url = citation_url or provided_url
+        url_key = _source_url_key(output_url)
+
+        marker_url_is_allowed = output_url in allowed_source_urls
+        if not citation_url and not marker_url_is_allowed:
+            changed = True
+            continue
+        if url_key:
+            if url_key in seen_urls or url_key in emitted_source_keys:
+                changed = True
+                continue
+            seen_urls.add(url_key)
+            emitted_source_keys.add(url_key)
+        if citation_url:
+            if provided_url != citation_url:
+                changed = True
+            kept.append(_format_citation_label(label, citation_source_urls))
+        else:
+            kept.append(f"[{label}]({output_url})")
+
     return " ".join(kept), buffer[pos:], changed
 
 
@@ -266,6 +345,7 @@ def _sanitize_kb_markdown_output(
     *,
     allowed_source_urls: set[str],
     citation_source_urls: dict[int, str] | None = None,
+    emitted_source_keys: set[str] | None = None,
 ) -> tuple[str, int]:
     """Remove source links that were not present in retrieved chunk metadata."""
     citation_source_urls = citation_source_urls or {}
@@ -313,6 +393,7 @@ def _sanitize_kb_markdown_output(
     )
     before_dedupe = sanitized
     sanitized = _dedupe_adjacent_citation_links(sanitized)
+    sanitized = _dedupe_repeated_citation_links(sanitized, emitted_source_keys)
     if sanitized != before_dedupe:
         changed += 1
     sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
@@ -339,10 +420,12 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
     *,
     allowed_source_urls: set[str],
     citation_source_urls: dict[int, str] | None = None,
+    emitted_source_keys: set[str] | None = None,
     final: bool,
 ) -> tuple[str, str, int]:
     """Return safe text to stream now, retaining incomplete link/URL tails."""
     citation_source_urls = citation_source_urls or {}
+    emitted_source_keys = emitted_source_keys if emitted_source_keys is not None else set()
     allowed_source_urls = {
         normalised
         for normalised in (_normalise_guard_url(url) for url in (*allowed_source_urls, *citation_source_urls.values()))
@@ -402,6 +485,28 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
 
         link_match = _MARKDOWN_LINK_RE.match(buffer)
         if link_match:
+            original_buffer = buffer
+            citation_link_run = _parse_citation_link_run(
+                buffer,
+                citation_source_urls=citation_source_urls,
+                allowed_source_urls=allowed_source_urls,
+                emitted_source_keys=emitted_source_keys,
+                final=final,
+            )
+            if citation_link_run is not None:
+                replacement, buffer, citation_changed = citation_link_run
+                if replacement:
+                    out.append(replacement)
+                elif buffer and buffer[0] in ".,;:" and out:
+                    out[-1] = out[-1].rstrip()
+                if citation_changed:
+                    changed += 1
+                if not replacement and buffer:
+                    if buffer == original_buffer:
+                        return "".join(out), buffer, changed
+                    continue
+                continue
+
             marker = link_match.group(0)
             label = link_match.group(1)
             url = _normalise_guard_url(link_match.group(2))
@@ -410,7 +515,15 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
                 out.append(label or "[image unavailable in knowledge base]")
                 changed += 1
             elif citation_url:
-                out.append(_format_citation_label(label, citation_source_urls))
+                url_key = _source_url_key(citation_url)
+                if url_key and url_key in emitted_source_keys:
+                    if buffer[len(marker) : len(marker) + 1] in ".,;:" and out:
+                        out[-1] = out[-1].rstrip()
+                    changed += 1
+                else:
+                    out.append(_format_citation_label(label, citation_source_urls))
+                    if url_key:
+                        emitted_source_keys.add(url_key)
                 if url != citation_url:
                     changed += 1
             elif url in allowed_source_urls:
@@ -422,19 +535,25 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
             continue
 
         if buffer.startswith("![") or buffer.startswith("["):
+            original_buffer = buffer
             citation_run = _parse_bare_citation_run(
                 buffer,
                 citation_source_urls=citation_source_urls,
+                emitted_source_keys=emitted_source_keys,
                 final=final,
             )
             if citation_run is not None:
                 replacement, buffer, citation_changed = citation_run
                 if replacement:
                     out.append(replacement)
+                elif buffer and buffer[0] in ".,;:" and out:
+                    out[-1] = out[-1].rstrip()
                 if citation_changed:
                     changed += 1
                 if not replacement and buffer:
-                    return "".join(out), buffer, changed
+                    if buffer == original_buffer:
+                        return "".join(out), buffer, changed
+                    continue
                 continue
 
             end = buffer.find("]")
@@ -560,6 +679,9 @@ def _build_system_prompt(
         "- Copy source_url values exactly; do not invent, rewrite, or guess URLs.\n"
         "- If a cited chunk has no source_url, cite it as [n] without adding a link.\n"
         "- Never turn a title, heading, or documentation phrase into a URL.\n"
+        "- Optimize for a clean web-widget answer: do not cite the same document repeatedly.\n"
+        "- If several facts in one paragraph or list come from the same source_url, cite that source once.\n"
+        "- If you cite multiple different documents at the same spot, separate citation numbers with spaces.\n"
     )
     return f"{base}\n\n{url_guard}\nContext:\n{context_block}"
 
@@ -757,6 +879,7 @@ async def chat_completion_streaming(
     citation_source_urls = citation_source_urls or {}
     collected_text_parts: list[str] = []
     pending_text = ""
+    emitted_source_keys: set[str] = set()
     stripped_links = 0
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -786,6 +909,7 @@ async def chat_completion_streaming(
                         pending_text,
                         allowed_source_urls=allowed_source_urls,
                         citation_source_urls=citation_source_urls,
+                        emitted_source_keys=emitted_source_keys,
                         final=True,
                     )
                     stripped_links += changed
@@ -808,6 +932,7 @@ async def chat_completion_streaming(
                     pending_text,
                     allowed_source_urls=allowed_source_urls,
                     citation_source_urls=citation_source_urls,
+                    emitted_source_keys=emitted_source_keys,
                     final=False,
                 )
                 stripped_links += changed
@@ -820,6 +945,7 @@ async def chat_completion_streaming(
             pending_text,
             allowed_source_urls=allowed_source_urls,
             citation_source_urls=citation_source_urls,
+            emitted_source_keys=emitted_source_keys,
             final=True,
         )
         stripped_links += changed
