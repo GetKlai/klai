@@ -22,6 +22,7 @@ import json
 import re
 from collections.abc import AsyncGenerator
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -37,6 +38,7 @@ from app.utils.language_detect import (
 logger = structlog.get_logger()
 
 _MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]]*)\]\(([^)]*)\)")
+_BARE_CITATION_RE = re.compile(r"(?<!!)\[(\d+)\](?!\()")
 _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
 _EMPTY_PARENS_RE = re.compile(r"\s*\(\s*\)")
 _STREAM_GUARD_TAIL_CHARS = 16
@@ -81,7 +83,6 @@ def _emit_language_correctness_log(
         correct = language_correctness(query_lang, response_lang)
         logger.info(
             "chat_synthesis_complete",
-            event="chat_synthesis_complete",
             org_id=org_id,
             query_language_detected=query_lang,
             response_language_detected=response_lang,
@@ -96,17 +97,82 @@ def _emit_language_correctness_log(
 def _normalise_guard_url(url: object) -> str:
     if not isinstance(url, str):
         return ""
-    return url.strip().strip("<>")
+    value = url.strip().strip("<>")
+    if value.lower() in {"", "undefined", "null", "none"}:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return value
+
+
+def _chunk_source_url(chunk: dict) -> str:
+    candidates = (
+        chunk.get("source_url"),
+        chunk.get("url"),
+        chunk.get("sourceUrl"),
+        chunk.get("canonical_url"),
+        chunk.get("page_url"),
+    )
+    for candidate in candidates:
+        normalised = _normalise_guard_url(candidate)
+        if normalised:
+            return normalised
+
+    metadata = chunk.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("source_url", "url", "sourceUrl", "canonical_url", "page_url"):
+            normalised = _normalise_guard_url(metadata.get(key))
+            if normalised:
+                return normalised
+
+    source = chunk.get("source")
+    if isinstance(source, dict):
+        normalised = _normalise_guard_url(source.get("url") or source.get("source_url"))
+        if normalised:
+            return normalised
+
+    return ""
 
 
 def _source_urls_from_chunks(chunks: list[dict]) -> set[str]:
+    return {normalised for normalised in (_chunk_source_url(chunk) for chunk in chunks) if normalised}
+
+
+def _citation_source_urls_from_chunks(chunks: list[dict]) -> dict[int, str]:
     return {
-        normalised for normalised in (_normalise_guard_url(chunk.get("source_url")) for chunk in chunks) if normalised
+        index: source_url
+        for index, source_url in enumerate((_chunk_source_url(chunk) for chunk in chunks), 1)
+        if source_url
     }
 
 
-def _sanitize_kb_markdown_output(text: str, *, allowed_source_urls: set[str]) -> tuple[str, int]:
+def _citation_url_for_label(label: str, citation_source_urls: dict[int, str]) -> str:
+    label = label.strip()
+    if not label.isdigit():
+        return ""
+    return citation_source_urls.get(int(label), "")
+
+
+def _format_citation_label(label: str, citation_source_urls: dict[int, str]) -> str:
+    label = label.strip()
+    url = _citation_url_for_label(label, citation_source_urls)
+    if not url:
+        if label.isdigit():
+            return f"[{label}]"
+        return label
+    return f"[{label}]({url})"
+
+
+def _sanitize_kb_markdown_output(
+    text: str,
+    *,
+    allowed_source_urls: set[str],
+    citation_source_urls: dict[int, str] | None = None,
+) -> tuple[str, int]:
     """Remove source links that were not present in retrieved chunk metadata."""
+    citation_source_urls = citation_source_urls or {}
+    allowed_source_urls = allowed_source_urls | set(citation_source_urls.values())
     changed = 0
 
     def _replace_link(match: re.Match[str]) -> str:
@@ -114,12 +180,19 @@ def _sanitize_kb_markdown_output(text: str, *, allowed_source_urls: set[str]) ->
         marker = match.group(0)
         label = match.group(1)
         url = _normalise_guard_url(match.group(2))
+        citation_url = _citation_url_for_label(label, citation_source_urls)
         if marker.startswith("!"):
             changed += 1
             return label or "[image unavailable in knowledge base]"
+        if citation_url:
+            if url != citation_url:
+                changed += 1
+            return _format_citation_label(label, citation_source_urls)
         if url in allowed_source_urls:
             return marker
         changed += 1
+        if label.strip().isdigit():
+            return _format_citation_label(label, citation_source_urls)
         return label
 
     def _replace_raw_url(match: re.Match[str]) -> str:
@@ -133,6 +206,10 @@ def _sanitize_kb_markdown_output(text: str, *, allowed_source_urls: set[str]) ->
         return suffix
 
     sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, text)
+    sanitized = _BARE_CITATION_RE.sub(
+        lambda match: _format_citation_label(match.group(1), citation_source_urls),
+        sanitized,
+    )
     sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
     sanitized = _EMPTY_PARENS_RE.sub("", sanitized)
     return sanitized, changed
@@ -156,9 +233,12 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
     buffer: str,
     *,
     allowed_source_urls: set[str],
+    citation_source_urls: dict[int, str] | None = None,
     final: bool,
 ) -> tuple[str, str, int]:
     """Return safe text to stream now, retaining incomplete link/URL tails."""
+    citation_source_urls = citation_source_urls or {}
+    allowed_source_urls = allowed_source_urls | set(citation_source_urls.values())
     out: list[str] = []
     changed = 0
 
@@ -216,13 +296,18 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
             marker = link_match.group(0)
             label = link_match.group(1)
             url = _normalise_guard_url(link_match.group(2))
+            citation_url = _citation_url_for_label(label, citation_source_urls)
             if marker.startswith("!"):
                 out.append(label or "[image unavailable in knowledge base]")
                 changed += 1
+            elif citation_url:
+                out.append(_format_citation_label(label, citation_source_urls))
+                if url != citation_url:
+                    changed += 1
             elif url in allowed_source_urls:
                 out.append(marker)
             else:
-                out.append(label)
+                out.append(_format_citation_label(label, citation_source_urls) if label.strip().isdigit() else label)
                 changed += 1
             buffer = buffer[len(marker) :]
             continue
@@ -234,13 +319,20 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
                     out.append(buffer)
                     return "".join(out), "", changed
                 return "".join(out), buffer, changed
+            if not final and len(buffer) == end + 1:
+                return "".join(out), buffer, changed
             if len(buffer) > end + 1 and buffer[end + 1] == "(":
                 if final:
-                    out.append(buffer[0])
-                    buffer = buffer[1:]
+                    label = buffer[2:end] if buffer.startswith("![") else buffer[1:end]
+                    out.append(_format_citation_label(label, citation_source_urls))
+                    buffer = buffer[end + 1 :]
                     continue
                 return "".join(out), buffer, changed
-            out.append(buffer[: end + 1])
+            if buffer.startswith("!["):
+                out.append(buffer[: end + 1])
+            else:
+                label = buffer[1:end]
+                out.append(_format_citation_label(label, citation_source_urls))
             buffer = buffer[end + 1 :]
             continue
 
@@ -268,7 +360,12 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
     return "".join(out), "", changed
 
 
-def _sanitize_completion_body(body: dict, *, allowed_source_urls: set[str]) -> int:
+def _sanitize_completion_body(
+    body: dict,
+    *,
+    allowed_source_urls: set[str],
+    citation_source_urls: dict[int, str] | None = None,
+) -> int:
     changed = 0
     for choice in body.get("choices") or []:
         if not isinstance(choice, dict):
@@ -282,6 +379,7 @@ def _sanitize_completion_body(body: dict, *, allowed_source_urls: set[str]) -> i
         sanitized, content_changed = _sanitize_kb_markdown_output(
             content,
             allowed_source_urls=allowed_source_urls,
+            citation_source_urls=citation_source_urls,
         )
         if content_changed:
             message["content"] = sanitized
@@ -324,7 +422,7 @@ def _build_system_prompt(
                 or chunk.get("source_label")
                 or "Knowledge Base"
             )
-            source_url = (chunk.get("source_url") or "").strip()
+            source_url = _chunk_source_url(chunk)
             source_line = f"\nsource_url: {source_url}" if source_url else ""
             context_parts.append(f"[{i}] title: {title}{source_line}\n{text}")
 
@@ -447,6 +545,7 @@ async def chat_completion_non_streaming(
     *,
     org_id: int | str | None = None,
     allowed_source_urls: set[str] | None = None,
+    citation_source_urls: dict[int, str] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -480,7 +579,12 @@ async def chat_completion_non_streaming(
         body = resp.json()
 
     allowed_source_urls = allowed_source_urls or set()
-    stripped_links = _sanitize_completion_body(body, allowed_source_urls=allowed_source_urls)
+    citation_source_urls = citation_source_urls or {}
+    stripped_links = _sanitize_completion_body(
+        body,
+        allowed_source_urls=allowed_source_urls,
+        citation_source_urls=citation_source_urls,
+    )
     if stripped_links:
         logger.warning(
             "partner_chat_unretrieved_links_stripped",
@@ -508,6 +612,7 @@ async def chat_completion_streaming(
     *,
     org_id: int | str | None = None,
     allowed_source_urls: set[str] | None = None,
+    citation_source_urls: dict[int, str] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with KB-source URL sanitization.
 
@@ -525,6 +630,7 @@ async def chat_completion_streaming(
     litellm_url = settings.litellm_base_url
     user_query = _last_user_message(messages) or ""
     allowed_source_urls = allowed_source_urls or set()
+    citation_source_urls = citation_source_urls or {}
     collected_text_parts: list[str] = []
     pending_text = ""
     stripped_links = 0
@@ -555,6 +661,7 @@ async def chat_completion_streaming(
                     safe_text, pending_text, changed = _pop_sanitized_stream_text(
                         pending_text,
                         allowed_source_urls=allowed_source_urls,
+                        citation_source_urls=citation_source_urls,
                         final=True,
                     )
                     stripped_links += changed
@@ -576,6 +683,7 @@ async def chat_completion_streaming(
                 safe_text, pending_text, changed = _pop_sanitized_stream_text(
                     pending_text,
                     allowed_source_urls=allowed_source_urls,
+                    citation_source_urls=citation_source_urls,
                     final=False,
                 )
                 stripped_links += changed
@@ -587,6 +695,7 @@ async def chat_completion_streaming(
         safe_text, pending_text, changed = _pop_sanitized_stream_text(
             pending_text,
             allowed_source_urls=allowed_source_urls,
+            citation_source_urls=citation_source_urls,
             final=True,
         )
         stripped_links += changed

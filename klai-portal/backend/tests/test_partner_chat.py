@@ -552,6 +552,34 @@ def test_build_system_prompt_includes_source_urls_for_widget_citations():
     assert "Never turn a title, heading, or documentation phrase into a URL" in prompt
 
 
+def test_build_system_prompt_reads_nested_chunk_source_urls():
+    """Partner chat should use chunk metadata URLs, never literal sentinel values."""
+    from app.services.partner_chat import _build_system_prompt, _citation_source_urls_from_chunks
+
+    chunks = [
+        {
+            "title": "Privacy",
+            "source_url": "undefined",
+            "metadata": {"source_url": "https://www.getklai.com/privacy"},
+            "text": "Klai collects account data and query data.",
+        },
+        {
+            "source": {"url": "https://www.getklai.com/dpa"},
+            "text": "Klai uses subprocessors for billing.",
+        },
+    ]
+
+    prompt = _build_system_prompt(chunks)
+
+    assert "source_url: https://www.getklai.com/privacy" in prompt
+    assert "source_url: https://www.getklai.com/dpa" in prompt
+    assert "source_url: undefined" not in prompt
+    assert _citation_source_urls_from_chunks(chunks) == {
+        1: "https://www.getklai.com/privacy",
+        2: "https://www.getklai.com/dpa",
+    }
+
+
 def test_build_system_prompt_includes_widget_system_prompt():
     """Widget admin behaviour instructions are added without replacing KB grounding."""
     from app.services.partner_chat import _build_system_prompt
@@ -582,6 +610,25 @@ def test_sanitizer_removes_links_not_in_retrieved_sources():
     assert "https://bad.example/x" not in sanitized
     assert "link removed" not in sanitized
     assert "fake" in sanitized
+
+
+def test_sanitizer_rewrites_citations_from_chunk_source_map():
+    """The model may choose [n]; the backend owns the actual citation URL."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    sanitized, changed = _sanitize_kb_markdown_output(
+        "Klai verwerkt accountgegevens [1](undefined) en factuurgegevens [2].",
+        allowed_source_urls=set(),
+        citation_source_urls={
+            1: "https://www.getklai.com/privacy",
+            2: "https://www.getklai.com/subprocessors",
+        },
+    )
+
+    assert changed == 1
+    assert "[1](https://www.getklai.com/privacy)" in sanitized
+    assert "[2](https://www.getklai.com/subprocessors)" in sanitized
+    assert "undefined" not in sanitized
 
 
 def test_sanitizer_removes_parenthesized_raw_urls_without_placeholder():
@@ -623,6 +670,48 @@ def test_stream_sanitizer_holds_split_markdown_links_until_safe():
     assert "[home](https://getklai.com/)" in out1 + out2
 
 
+def test_stream_sanitizer_rewrites_split_undefined_citation_to_chunk_url():
+    """A streamed [1] followed by (undefined) must not become /undefined in the widget."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    citations = {1: "https://www.getklai.com/privacy"}
+    out1, pending, changed1 = _pop_sanitized_stream_text(
+        "Klai verwerkt accountgegevens [1]",
+        allowed_source_urls=set(),
+        citation_source_urls=citations,
+        final=False,
+    )
+    out2, pending, changed2 = _pop_sanitized_stream_text(
+        pending + "(undefined).",
+        allowed_source_urls=set(),
+        citation_source_urls=citations,
+        final=True,
+    )
+
+    body = out1 + out2
+    assert out1 == "Klai verwerkt accountgegevens "
+    assert pending == ""
+    assert changed1 + changed2 == 1
+    assert body == "Klai verwerkt accountgegevens [1](https://www.getklai.com/privacy)."
+    assert "undefined" not in body
+
+
+def test_stream_sanitizer_links_bare_citation_from_chunk_url():
+    """Bare [n] citations are linked from retrieval metadata once the token is complete."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    out, pending, changed = _pop_sanitized_stream_text(
+        "Zie [1].",
+        allowed_source_urls=set(),
+        citation_source_urls={1: "https://www.getklai.com/privacy"},
+        final=True,
+    )
+
+    assert pending == ""
+    assert changed == 0
+    assert out == "Zie [1](https://www.getklai.com/privacy)."
+
+
 def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placeholder():
     """Split parenthesized raw URLs should be removed silently, not rendered."""
     from app.services.partner_chat import _pop_sanitized_stream_text
@@ -646,6 +735,28 @@ def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placehold
     assert "link removed" not in body
     assert "()" not in body
     assert body == "Klai is open source [1]."
+
+
+def test_language_correctness_log_does_not_duplicate_structlog_event(monkeypatch):
+    """Regression guard for BoundLogger.info(event, event=...) TypeError."""
+    from app.services import partner_chat
+
+    logger = MagicMock()
+    monkeypatch.setattr(partner_chat, "logger", logger)
+    monkeypatch.setattr(partner_chat, "detect_language", MagicMock(return_value="nl"))
+    monkeypatch.setattr(partner_chat, "language_correctness", MagicMock(return_value=True))
+
+    partner_chat._emit_language_correctness_log(
+        org_id=1,
+        query="Wat verzamelt Klai?",
+        response_text="Klai verzamelt accountgegevens.",
+    )
+
+    logger.info.assert_called_once()
+    args, kwargs = logger.info.call_args
+    assert args == ("chat_synthesis_complete",)
+    assert "event" not in kwargs
+    assert kwargs["org_id"] == 1
 
 
 @pytest.mark.asyncio

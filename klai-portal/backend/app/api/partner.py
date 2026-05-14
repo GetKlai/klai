@@ -33,6 +33,7 @@ from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services.events import emit_event
 from app.services.partner_chat import (
+    _citation_source_urls_from_chunks,
     _source_urls_from_chunks,
     chat_completion_non_streaming,
     chat_completion_streaming,
@@ -266,6 +267,7 @@ async def chat_completions(
 
     # 8. Streaming or non-streaming
     if request.stream:
+        citation_source_urls = _citation_source_urls_from_chunks(chunks)
         streaming_gen = chat_completion_streaming(
             messages=request.messages,
             model=request.model,
@@ -273,7 +275,8 @@ async def chat_completions(
             system_prompt=system_prompt,
             settings=settings,
             org_id=auth.org_id,
-            allowed_source_urls=_source_urls_from_chunks(chunks),
+            allowed_source_urls=set(citation_source_urls.values()) or _source_urls_from_chunks(chunks),
+            citation_source_urls=citation_source_urls,
         )
         return StreamingResponse(
             content=streaming_gen,
@@ -281,6 +284,7 @@ async def chat_completions(
         )
 
     # Non-streaming
+    citation_source_urls = _citation_source_urls_from_chunks(chunks)
     result = await chat_completion_non_streaming(
         messages=request.messages,
         model=request.model,
@@ -288,7 +292,8 @@ async def chat_completions(
         system_prompt=system_prompt,
         settings=settings,
         org_id=auth.org_id,
-        allowed_source_urls=_source_urls_from_chunks(chunks),
+        allowed_source_urls=set(citation_source_urls.values()) or _source_urls_from_chunks(chunks),
+        citation_source_urls=citation_source_urls,
     )
     return result
 
