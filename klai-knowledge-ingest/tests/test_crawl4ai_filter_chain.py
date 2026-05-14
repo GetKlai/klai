@@ -231,3 +231,58 @@ async def test_crawl_site_excludes_archive_candidates_after_discovery(
         "https://www.getklai.com/blog/article-from-sitemap",
     }
     assert captured["payload"]["urls"] == ["https://www.getklai.com/blog/article-from-sitemap"]
+
+
+@pytest.mark.asyncio
+async def test_bfs_deep_crawl_pushes_exclude_patterns_into_filter_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BFS must not fetch archive URLs that are excluded from ingest."""
+    captured: dict[str, Any] = {}
+
+    async def _fake_sleep(_seconds: float) -> None:
+        return None
+
+    async def _fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        captured["payload"] = kwargs.get("json")
+        request = httpx.Request("POST", url)
+        return httpx.Response(200, json={"task_id": "crawl_test"}, request=request)
+
+    async def _fake_get(self: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
+        request = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            json={"status": "completed", "result": {"results": []}},
+            request=request,
+        )
+
+    monkeypatch.setattr(crawl4ai_client.asyncio, "sleep", _fake_sleep)
+    with (
+        patch("httpx.AsyncClient.post", new=_fake_post),
+        patch("httpx.AsyncClient.get", new=_fake_get),
+    ):
+        await crawl4ai_client._bfs_deep_crawl(
+            start_url="https://www.getklai.com/blog",
+            crawler_config=crawl4ai_client.build_crawl_config(selector=None),
+            max_depth=3,
+            max_pages=200,
+            include_patterns=["/blog/*"],
+            exclude_patterns=["/blog/tag/*", "/blog/category/*"],
+            cookies=None,
+        )
+
+    strategy = captured["payload"]["crawler_config"]["params"]["deep_crawl_strategy"]
+    filters = strategy["params"]["filter_chain"]["params"]["filters"]
+    assert filters == [
+        {
+            "type": "URLPatternFilter",
+            "params": {"patterns": ["/blog/*"]},
+        },
+        {
+            "type": "URLPatternFilter",
+            "params": {
+                "patterns": ["/blog/tag/*", "/blog/category/*"],
+                "reverse": True,
+            },
+        },
+    ]
