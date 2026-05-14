@@ -660,13 +660,7 @@ def test_sanitizer_removes_repeated_same_document_citations_across_answer():
     from app.services.partner_chat import _sanitize_kb_markdown_output
 
     sanitized, changed = _sanitize_kb_markdown_output(
-        (
-            "Klai B.V. collects:\n"
-            "- Account data [1].\n"
-            "- Usage data [1].\n"
-            "- Query data [1].\n"
-            "- Billing data [1]."
-        ),
+        ("Klai B.V. collects:\n- Account data [1].\n- Usage data [1].\n- Query data [1].\n- Billing data [1]."),
         allowed_source_urls=set(),
         citation_source_urls={1: "https://www.getklai.com/docs/legal/privacy"},
     )
