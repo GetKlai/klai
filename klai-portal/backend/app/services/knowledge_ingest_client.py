@@ -15,7 +15,9 @@ from app.trace import get_trace_headers
 
 logger = logging.getLogger(__name__)
 
-_SOURCES_LIST_TIMEOUT = httpx.Timeout(3.0, connect=1.0)
+# These reads enrich portal-owned pages with derived ingest metrics. They must
+# never hold the primary UI hostage when knowledge-ingest is busy.
+_DERIVED_READ_TIMEOUT = httpx.Timeout(1.0, connect=0.3)
 
 
 async def get_graph_stats(org_id: str) -> dict[str, int | None]:
@@ -32,7 +34,7 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
                 "X-Caller-Service": "portal-api",
                 **get_trace_headers(),
             },
-            timeout=5.0,
+            timeout=_DERIVED_READ_TIMEOUT,
         ) as client:
             resp = await client.get(
                 "/ingest/v1/graph-stats",
@@ -55,7 +57,7 @@ async def get_source_count(org_id: str, kb_slug: str) -> int | None:
                 "X-Caller-Service": "portal-api",
                 **get_trace_headers(),
             },
-            timeout=5.0,
+            timeout=_DERIVED_READ_TIMEOUT,
         ) as client:
             resp = await client.get(
                 "/ingest/v1/source-count",
@@ -444,7 +446,7 @@ async def get_kb_sources(org_id: str, kb_slug: str) -> dict | None:
                 "X-Caller-Service": "portal-api",
                 **get_trace_headers(),
             },
-            timeout=_SOURCES_LIST_TIMEOUT,
+            timeout=_DERIVED_READ_TIMEOUT,
         ) as client:
             resp = await client.get(
                 f"/knowledge/v1/kb/{kb_slug}/sources",
@@ -636,7 +638,7 @@ async def get_chunks_summary(org_id: str, kb_slugs: list[str]) -> tuple[dict[str
                 "X-Caller-Service": "portal-api",
                 **get_trace_headers(),
             },
-            timeout=10.0,
+            timeout=_DERIVED_READ_TIMEOUT,
         ) as client:
             resp = await client.post(
                 "/knowledge/v1/kb/chunks-summary",
