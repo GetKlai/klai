@@ -497,12 +497,13 @@ async def crawl_site(
         max_depth=max_depth,
         max_pages=max_pages,
         include_patterns=include_patterns,
+        exclude_patterns=exclude_patterns,
         cookies=cookies,
     )
-    # Same-domain + explicit-exclude guard: crawl4ai may follow external
-    # links if filter_chain doesn't catch them. It also lacks a reliable
-    # exclude-pattern contract for BFS, so we apply explicit excludes here
-    # before progress counting / dirty-content decisions see the pages.
+    # Same-domain + explicit-exclude guard: keep this even though
+    # exclude_patterns are also pushed into crawl4ai's BFS filter_chain. It
+    # protects progress counting / dirty-content decisions if crawl4ai changes
+    # filter semantics or sitemap/bulk results include an excluded URL.
     bfs_results = [
         r
         for r in bfs_results
@@ -900,6 +901,7 @@ async def _bfs_deep_crawl(
     max_depth: int,
     max_pages: int,
     include_patterns: list[str] | None,
+    exclude_patterns: list[str] | None,
     cookies: list[dict[str, Any]] | None,
 ) -> tuple[list[CrawlResult], BaseException | None]:
     """Server-side BFS deep crawl via crawl4ai's ``/crawl/job`` endpoint.
@@ -925,7 +927,22 @@ async def _bfs_deep_crawl(
         "max_pages": max_pages,
         "include_external": False,
     }
+    filters: list[dict[str, Any]] = []
     if include_patterns:
+        filters.append(
+            {
+                "type": "URLPatternFilter",
+                "params": {"patterns": include_patterns},
+            }
+        )
+    if exclude_patterns:
+        filters.append(
+            {
+                "type": "URLPatternFilter",
+                "params": {"patterns": exclude_patterns, "reverse": True},
+            }
+        )
+    if filters:
         # Crawl4AI 0.8.6 only reconstructs nested objects when wrapped in
         # ``{"type": "<ClassName>", "params": {...}}`` — a bare list stays a
         # list and BFSDeepCrawlStrategy crashes with
@@ -933,14 +950,7 @@ async def _bfs_deep_crawl(
         # moment it walks past depth 0. Pinned by tests.
         deep_crawl_params["filter_chain"] = {
             "type": "FilterChain",
-            "params": {
-                "filters": [
-                    {
-                        "type": "URLPatternFilter",
-                        "params": {"patterns": include_patterns},
-                    },
-                ],
-            },
+            "params": {"filters": filters},
         }
 
     config = dict(crawler_config)
