@@ -157,7 +157,20 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
     # crawl4ai URLPatternFilter classifies '/nl/' as exact-match (fnmatch with no
     # wildcards) so '/nl/6-bubble' never matches. Appending '/*' makes it a PREFIX
     # pattern, which is the intended semantics for a path_prefix filter.
-    include_patterns = [req.path_prefix.rstrip("/") + "/*"] if req.path_prefix else None
+    #
+    # Portal may store path_prefix as either '/blog' or 'blog'. Normalize once
+    # before composing start_url; otherwise 'https://host/' + 'blog' becomes the
+    # invalid host-like URL 'https://hostblog'.
+    normalized_path_prefix = (
+        "/" + req.path_prefix.strip().lstrip("/")
+        if req.path_prefix and req.path_prefix.strip()
+        else None
+    )
+    include_patterns = (
+        [normalized_path_prefix.rstrip("/") + "/*"]
+        if normalized_path_prefix
+        else None
+    )
 
     # BFS must enter the graph at a node that links into the allowed subtree.
     # If the root page only links to sibling language paths (e.g. wiki shows
@@ -165,8 +178,8 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
     # reject every outgoing link and the crawl halts after 1 page. Starting
     # on base_url + path_prefix gives BFS a seeded entry inside the filter set.
     start_url = req.base_url
-    if req.path_prefix:
-        start_url = req.base_url.rstrip("/") + req.path_prefix
+    if normalized_path_prefix:
+        start_url = req.base_url.rstrip("/") + normalized_path_prefix
 
     from knowledge_ingest import enrichment_tasks
 

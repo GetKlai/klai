@@ -342,6 +342,32 @@ class TestCrawlSyncEndpoint:
         # user who entered /nl without slash.
         assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl"
 
+    def test_path_prefix_without_leading_slash_is_normalised(self) -> None:
+        """Portal config may store path_prefix='blog'; start_url must remain valid."""
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=6),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://www.getklai.com/",
+                    "path_prefix": "blog",
+                },
+            )
+        assert resp.status_code == 202, resp.text
+        kwargs = defer_mock.await_args.kwargs
+        assert kwargs["start_url"] == "https://www.getklai.com/blog"
+        assert kwargs["include_patterns"] == ["/blog/*"]
+
     def test_path_prefix_with_nested_base_url(self) -> None:
         """base_url with its own path + path_prefix stacks paths cleanly."""
         pool = _make_pool(

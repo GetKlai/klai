@@ -19,7 +19,7 @@ import httpx
 import structlog
 from klai_image_storage import ImageStore, download_and_upload_crawl_images
 
-from knowledge_ingest import pg_store
+from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, crawl_site
 from knowledge_ingest.models import IngestRequest
@@ -435,6 +435,33 @@ async def run_crawl_job(
         else:
             terminal_status = "completed"
             await _update_job(conn, job_id, status=terminal_status)
+
+        if connector_id and terminal_status == "completed" and pages_done > 0:
+            current_urls = [result.url for result in results]
+            stale_paths = await pg_store.list_stale_connector_artifact_paths(
+                conn,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                connector_id=connector_id,
+                current_paths=current_urls,
+            )
+            if stale_paths:
+                for path in stale_paths:
+                    await qdrant_store.delete_document(org_id, kb_slug, path)
+                retired_count = await pg_store.soft_delete_stale_connector_artifacts(
+                    conn,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    connector_id=connector_id,
+                    stale_paths=stale_paths,
+                )
+                logger.info(
+                    "crawl_connector_stale_artifacts_retired",
+                    job_id=job_id,
+                    connector_id=connector_id,
+                    kb_slug=kb_slug,
+                    retired_count=retired_count,
+                )
 
         logger.info(
             "crawl_job_complete",

@@ -252,6 +252,155 @@ async def soft_delete_artifact(
     )
 
 
+async def list_stale_connector_artifact_paths(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    current_paths: list[str],
+) -> list[str]:
+    """Return active connector artifact paths absent from the latest crawl result set.
+
+    Used by web-crawler reconciliation after a successful crawl. This handles
+    URL config edits such as ``https://getklai.com`` -> ``https://www.getklai.com``:
+    new paths are ingested, then old paths owned by the same connector are
+    retired instead of remaining as duplicate active source content.
+    """
+    if not current_paths:
+        return []
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT path
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND belief_time_end = $4
+          AND extra IS NOT NULL
+          AND extra::jsonb->>'source_connector_id' = $3
+          AND NOT (path = ANY($5::text[]))
+        ORDER BY path
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+        _SENTINEL,
+        current_paths,
+    )
+    return [str(row["path"]) for row in rows]
+
+
+async def soft_delete_stale_connector_artifacts(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    stale_paths: list[str],
+) -> int:
+    """Retire active connector artifacts for stale paths and scrub crawl metadata."""
+    if not stale_paths:
+        return 0
+
+    now = int(time.time())
+    async with conn.transaction():
+        await conn.execute(
+            """UPDATE knowledge.artifacts SET superseded_by = NULL
+               WHERE superseded_by IN (
+                 SELECT id FROM knowledge.artifacts
+                 WHERE org_id = $1 AND kb_slug = $2
+                   AND path = ANY($4::text[])
+                   AND extra IS NOT NULL
+                   AND extra::jsonb->>'source_connector_id' = $3
+               )""",
+            org_id,
+            kb_slug,
+            connector_id,
+            stale_paths,
+        )
+        await conn.execute(
+            """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
+                 SELECT id FROM knowledge.artifacts
+                 WHERE org_id = $1 AND kb_slug = $2
+                   AND path = ANY($4::text[])
+                   AND extra IS NOT NULL
+                   AND extra::jsonb->>'source_connector_id' = $3
+               )""",
+            org_id,
+            kb_slug,
+            connector_id,
+            stale_paths,
+        )
+        await conn.execute(
+            """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
+                 SELECT id FROM knowledge.artifacts
+                 WHERE org_id = $1 AND kb_slug = $2
+                   AND path = ANY($4::text[])
+                   AND extra IS NOT NULL
+                   AND extra::jsonb->>'source_connector_id' = $3
+               )""",
+            org_id,
+            kb_slug,
+            connector_id,
+            stale_paths,
+        )
+        await conn.execute(
+            """DELETE FROM knowledge.derivations WHERE child_id IN (
+                 SELECT id FROM knowledge.artifacts
+                 WHERE org_id = $1 AND kb_slug = $2
+                   AND path = ANY($4::text[])
+                   AND extra IS NOT NULL
+                   AND extra::jsonb->>'source_connector_id' = $3
+               ) OR parent_id IN (
+                 SELECT id FROM knowledge.artifacts
+                 WHERE org_id = $1 AND kb_slug = $2
+                   AND path = ANY($4::text[])
+                   AND extra IS NOT NULL
+                   AND extra::jsonb->>'source_connector_id' = $3
+               )""",
+            org_id,
+            kb_slug,
+            connector_id,
+            stale_paths,
+        )
+        await conn.execute(
+            """DELETE FROM knowledge.crawled_pages
+               WHERE org_id = $1 AND kb_slug = $2 AND url = ANY($3::text[])""",
+            org_id,
+            kb_slug,
+            stale_paths,
+        )
+        await conn.execute(
+            """DELETE FROM knowledge.page_links
+               WHERE org_id = $1 AND kb_slug = $2
+                 AND (from_url = ANY($3::text[]) OR to_url = ANY($3::text[]))""",
+            org_id,
+            kb_slug,
+            stale_paths,
+        )
+        result = await conn.fetchval(
+            """
+            WITH retired AS (
+              UPDATE knowledge.artifacts
+              SET belief_time_end = $5
+              WHERE org_id = $1
+                AND kb_slug = $2
+                AND path = ANY($4::text[])
+                AND belief_time_end = $6
+                AND extra IS NOT NULL
+                AND extra::jsonb->>'source_connector_id' = $3
+              RETURNING id
+            )
+            SELECT COUNT(*) FROM retired
+            """,
+            org_id,
+            kb_slug,
+            connector_id,
+            stale_paths,
+            now,
+            _SENTINEL,
+        )
+    return int(result or 0)
+
+
 async def get_episode_ids(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> list[str]:
     """Return Graphiti episode UUIDs for all artifacts in a KB.
 
