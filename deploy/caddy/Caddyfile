@@ -490,13 +490,23 @@
         }
     }
 
+    # Portal Vite assets. This block must stay before the SPA fallback so
+    # deleted chunks return 404 instead of /srv/portal/index.html.
+    handle /assets/* {
+        root * /srv/portal
+
+        # Only existing chunks get the immutable cache. A missing chunk
+        # returns a bare 404 — caching that 404 immutably would make a
+        # deploy-race 404 unrecoverable until the browser cache is cleared.
+        @asset_exists file {path}
+        header @asset_exists Cache-Control "public, max-age=31536000, immutable"
+
+        file_server
+    }
+
     # Portal SPA — static files (fallback for all *.${DOMAIN})
     handle {
         root * /srv/portal
-
-        # Vite hashed assets — immutable long-term cache
-        @spa-assets path /assets/*
-        header @spa-assets Cache-Control "public, max-age=31536000, immutable"
 
         # index.html and all SPA routes — always revalidate
         @spa-html not path /assets/*
