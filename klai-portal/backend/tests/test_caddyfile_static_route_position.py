@@ -120,3 +120,37 @@ def test_public_docs_reader_route_precedes_catchall_and_api_block() -> None:
         "Caddyfile order regression: /docs/* reader route must come before "
         "the portal SPA catch-all, otherwise public docs URLs hit the login wall."
     )
+
+
+def test_portal_assets_route_precedes_spa_catchall() -> None:
+    """Missing Vite chunks must 404 instead of returning SPA HTML."""
+    if not _CADDYFILE.exists():
+        pytest.skip(f"Caddyfile not found at {_CADDYFILE}")
+
+    text = _CADDYFILE.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    assets_line: int | None = None
+    catchall_line: int | None = None
+
+    assets_re = re.compile(r"^\s*handle\s+/assets/\*\s*\{")
+    catchall_re = re.compile(r"^\s*handle\s*\{")
+
+    for i, line in enumerate(lines, start=1):
+        if assets_line is None and assets_re.match(line):
+            assets_line = i
+        if catchall_line is None and catchall_re.match(line):
+            catchall_line = i
+        if assets_line and catchall_line:
+            break
+
+    assert assets_line is not None, (
+        "Caddyfile must route /assets/* before the SPA fallback. Otherwise "
+        "deleted Vite chunks are served as index.html and module imports fail with MIME errors."
+    )
+    assert catchall_line is not None, "Caddyfile must keep an explicit portal SPA catch-all."
+    assert assets_line < catchall_line, (
+        f"Caddyfile order regression: `handle /assets/*` (line {assets_line}) "
+        f"comes AFTER the catch-all `handle {{` (line {catchall_line}). "
+        "Missing Vite chunks would be served as HTML instead of returning 404."
+    )
