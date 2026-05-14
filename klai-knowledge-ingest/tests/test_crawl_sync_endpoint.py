@@ -47,6 +47,7 @@ def _make_pool(
     *,
     connector_row: dict | None = None,
     job_row: dict | None = None,
+    proc_row: dict | None = None,
 ) -> MagicMock:
     """Return a mock asyncpg pool whose fetchrow dispatches by SQL prefix."""
     pool = MagicMock()
@@ -59,6 +60,8 @@ def _make_pool(
                 return None
             # Echo the id the handler queried with so the response matches.
             return {**job_row, "id": args[0]}
+        if "procrastinate_jobs" in stmt:
+            return proc_row
         return None
 
     pool.fetchrow = AsyncMock(side_effect=_fetchrow)
@@ -450,6 +453,70 @@ class TestCrawlSyncStatusEndpoint:
             resp = client.get(f"/ingest/v1/crawl/sync/{uuid.uuid4()}/status")
         assert resp.status_code == 404
         assert resp.json()["detail"] == "job_not_found"
+
+    def test_orphaned_running_job_is_failed_on_read(self) -> None:
+        """A running crawl whose worker disappeared must not stay running forever."""
+        pool = _make_pool(
+            job_row={
+                "status": "running",
+                "pages_total": 117,
+                "pages_done": 37,
+                "error": None,
+            },
+            proc_row={
+                "status": "doing",
+                "worker_id": None,
+            },
+        )
+        job_id = str(uuid.uuid4())
+        with _client_with_patches(pool) as (client, _defer):
+            resp = client.get(f"/ingest/v1/crawl/sync/{job_id}/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["job_id"] == job_id
+        assert body["status"] == "failed"
+        assert body["pages_total"] == 117
+        assert body["pages_done"] == 37
+        assert body["error"] == "crawl_worker_lost"
+
+        update_calls = [
+            c
+            for c in pool.execute.await_args_list
+            if c.args and "UPDATE knowledge.crawl_jobs" in c.args[0]
+        ]
+        assert update_calls
+        assert update_calls[0].args[1] == job_id
+        assert update_calls[0].args[2] == "crawl_worker_lost"
+
+    def test_active_running_job_is_not_failed_on_read(self) -> None:
+        """A live worker-owned crawl remains running until the worker closes it."""
+        pool = _make_pool(
+            job_row={
+                "status": "running",
+                "pages_total": 117,
+                "pages_done": 37,
+                "error": None,
+            },
+            proc_row={
+                "status": "doing",
+                "worker_id": 503,
+            },
+        )
+        job_id = str(uuid.uuid4())
+        with _client_with_patches(pool) as (client, _defer):
+            resp = client.get(f"/ingest/v1/crawl/sync/{job_id}/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "running"
+        assert body["pages_total"] == 117
+        assert body["pages_done"] == 37
+
+        update_calls = [
+            c
+            for c in pool.execute.await_args_list
+            if c.args and "UPDATE knowledge.crawl_jobs" in c.args[0]
+        ]
+        assert update_calls == []
 
 
 class TestDecryptFromBlobs:
