@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import Mapping
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException
@@ -76,6 +78,11 @@ class CrawlSyncStatusResponse(BaseModel):
     pages_total: int | None
     pages_done: int | None
     error: str | None
+
+
+_CRAWL_WORKER_LOST_ERROR = "crawl_worker_lost"
+_RUNNABLE_CRAWL_STATUSES = {"pending", "running"}
+_TERMINAL_PROCRASTINATE_STATUSES = {"failed", "cancelled", "aborted", "succeeded"}
 
 
 async def _validate_connector(
@@ -214,6 +221,78 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
     return CrawlSyncResponse(job_id=job_id, status="queued")
 
 
+def _procrastinate_job_can_still_progress(proc_row: Mapping[str, Any] | None) -> bool:
+    """Return whether the queued worker task can still advance its crawl_job."""
+    if proc_row is None:
+        # Older/manual rows may not have a matching procrastinate row. Treat
+        # absence as unknown, not failed, so reads do not invent terminal state.
+        return True
+
+    proc_status = str(proc_row["status"])
+    worker_id = proc_row["worker_id"]
+    if proc_status in _TERMINAL_PROCRASTINATE_STATUSES:
+        return False
+    if proc_status == "doing" and worker_id is None:
+        return False
+    return True
+
+
+async def _reconcile_crawl_job_lifecycle(
+    pool: Any,
+    row: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Fail crawl_jobs whose Procrastinate task cannot still make progress.
+
+    A deploy restart can leave Procrastinate rows in ``doing`` after their
+    worker disappeared. In that state ``knowledge.crawl_jobs`` would stay
+    ``running`` forever, and klai-connector's reaper would keep trusting the
+    stale remote status. The status endpoint is the read-side reconciliation
+    point used by both the UI resolver and the reaper, so it is the right place
+    to convert an impossible-to-progress crawl into a terminal failure.
+    """
+    if row["status"] not in _RUNNABLE_CRAWL_STATUSES:
+        return row
+
+    proc_row = await pool.fetchrow(
+        """
+        SELECT status::text AS status, worker_id
+        FROM procrastinate_jobs
+        WHERE task_name = 'knowledge_ingest.crawl_tasks.run_crawl'
+          AND args->>'job_id' = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        row["id"],
+    )
+    if _procrastinate_job_can_still_progress(proc_row):
+        return row
+
+    proc_status = str(proc_row["status"])
+    worker_id = proc_row["worker_id"]
+    now = int(time.time())
+    await pool.execute(
+        """
+        UPDATE knowledge.crawl_jobs
+        SET status = 'failed', error = $2, updated_at = $3
+        WHERE id = $1 AND status IN ('pending', 'running') AND error IS DISTINCT FROM $2
+        """,
+        row["id"],
+        _CRAWL_WORKER_LOST_ERROR,
+        now,
+    )
+    logger.warning(
+        "crawl_sync_status_orphaned_job_failed",
+        job_id=row["id"],
+        proc_status=proc_status,
+        worker_id=worker_id,
+    )
+    return {
+        **dict(row),
+        "status": "failed",
+        "error": _CRAWL_WORKER_LOST_ERROR,
+    }
+
+
 @router.get(
     "/ingest/v1/crawl/sync/{job_id}/status",
     response_model=CrawlSyncStatusResponse,
@@ -231,6 +310,7 @@ async def crawl_sync_status(job_id: str) -> CrawlSyncStatusResponse:
     )
     if row is None:
         raise HTTPException(status_code=404, detail="job_not_found")
+    row = await _reconcile_crawl_job_lifecycle(pool, row)
 
     return CrawlSyncStatusResponse(
         job_id=str(row["id"]),
