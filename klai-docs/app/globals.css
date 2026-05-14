@@ -6,61 +6,132 @@
 
 @plugin "@tailwindcss/typography";
 
-@theme {
-  --color-purple-deep: #1A0F40;
-  --color-purple-primary: #2D1B69;
-  --color-purple-accent: #7C6AFF;
-  --color-purple-muted: #4A3A8A;
-  --color-sand-light: #F5F0E8;
-  --color-sand-mid: #EAE3D5;
-  --color-off-white: #FAFAF8;
+/* Klai brand fonts — self-hosted, mirrored from klai-website */
+@font-face { font-family: "Parabole Trial Regular Text"; src: url("/docs/fonts/parabole-regular.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+@font-face { font-family: "Parabole Trial Medium Text"; src: url("/docs/fonts/parabole-medium.woff2") format("woff2"); font-display: swap; font-weight: 500; }
+@font-face { font-family: "Parabole Trial Bold Text"; src: url("/docs/fonts/parabole-bold.woff2") format("woff2"); font-display: swap; font-weight: 700; }
+@font-face { font-family: "Parabole Trial Regular Display"; src: url("/docs/fonts/parabole-display.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+@font-face { font-family: "Decima Mono Pro Regular"; src: url("/docs/fonts/decima-mono.woff2") format("woff2"); font-display: swap; font-weight: 400; }
 
-  --font-serif: 'Libre Baskerville', Georgia, serif;
-  --font-sans: 'Inter', system-ui, sans-serif;
+@theme {
+  --color-rl-bg: #fffef2;
+  --color-rl-dark: #191918;
+  --color-rl-dark-60: #19191899;
+  --color-rl-dark-40: #19191866;
+  --color-rl-dark-30: #1919184d;
+  --color-rl-dark-10: #1919181a;
+  --color-rl-accent: #fcaa2d;
+  --color-rl-accent-dark: #a36404;
+  --color-rl-cream: #f3f2e7;
+  --color-rl-border: #e3e2d8;
+  --color-rl-muted: #bab9b0;
+
+  --font-display: "Parabole Trial Regular Text", system-ui, sans-serif;
+  --font-display-medium: "Parabole Trial Medium Text", system-ui, sans-serif;
+  --font-display-bold: "Parabole Trial Bold Text", system-ui, sans-serif;
+  --font-accent: "Parabole Trial Regular Display", serif;
+  --font-mono: "Decima Mono Pro Regular", ui-monospace, monospace;
+  --font-sans: "Parabole Trial Regular Text", system-ui, sans-serif;
+  --font-serif: "Parabole Trial Regular Text", system-ui, sans-serif;
 }
 
-/* Prose theme — purple brand identity */
+body {
+  background: #fffef2;
+  font-family: "Parabole Trial Regular Text", system-ui, sans-serif;
+  color: #191918;
+}
+
+/* Prose theme — Klai brand */
 .klai-prose {
-  --tw-prose-body: rgba(26, 26, 26, 0.72);
-  --tw-prose-headings: #1A0F40;
-  --tw-prose-links: #7C6AFF;
-  --tw-prose-bold: #1A0F40;
-  --tw-prose-counters: #7C6AFF;
-  --tw-prose-bullets: #7C6AFF;
-  --tw-prose-hr: rgba(45, 27, 105, 0.1);
-  --tw-prose-quotes: #2D1B69;
-  --tw-prose-quote-borders: #7C6AFF;
-  --tw-prose-captions: rgba(26, 26, 26, 0.4);
-  --tw-prose-code: #2D1B69;
-  --tw-prose-pre-code: rgba(255, 255, 255, 0.85);
-  --tw-prose-pre-bg: #1A0F40;
-  --tw-prose-th-borders: rgba(45, 27, 105, 0.15);
-  --tw-prose-td-borders: rgba(45, 27, 105, 0.08);
+  --tw-prose-body: rgba(25, 25, 24, 0.6);
+  --tw-prose-headings: #191918;
+  --tw-prose-links: #a36404;
+  --tw-prose-bold: #191918;
+  --tw-prose-counters: #fcaa2d;
+  --tw-prose-bullets: #fcaa2d;
+  --tw-prose-hr: rgba(25, 25, 24, 0.1);
+  --tw-prose-quotes: #191918;
+  --tw-prose-quote-borders: #fcaa2d;
+  --tw-prose-captions: rgba(25, 25, 24, 0.4);
+  --tw-prose-code: #191918;
+  --tw-prose-pre-code: rgba(255, 254, 242, 0.85);
+  --tw-prose-pre-bg: #191918;
+  --tw-prose-th-borders: #e3e2d8;
+  --tw-prose-td-borders: rgba(25, 25, 24, 0.06);
+}
+
+.klai-prose,
+.klai-prose p,
+.klai-prose li {
+  font-family: "Parabole Trial Regular Text", system-ui, sans-serif;
+  line-height: 1.75;
 }
 
 .klai-prose h1,
-.klai-prose h2 {
-  font-family: var(--font-serif);
+.klai-prose h2,
+.klai-prose h3,
+.klai-prose h4 {
+  font-family: "Parabole Trial Medium Text", system-ui, sans-serif;
+  letter-spacing: -0.02em;
+  font-weight: 500;
 }
 
 .klai-prose h1 {
-  font-size: 1.75rem;
+  font-family: "Parabole Trial Regular Text", system-ui, sans-serif;
+  font-size: 2rem;
+  letter-spacing: -0.04em;
+  font-weight: 400;
+}
+
+.klai-prose h2 {
+  font-size: 1.375rem;
+  margin-top: 2.5rem;
+}
+
+.klai-prose h3 {
+  font-size: 1rem;
+  margin-top: 1.75rem;
+}
+
+.klai-prose strong {
+  font-family: "Parabole Trial Medium Text", system-ui, sans-serif;
+  font-weight: 500;
 }
 
 .klai-prose a {
   text-decoration: none;
-  border-bottom: 1px solid rgba(124, 106, 255, 0.4);
-  transition: border-color 0.1s, color 0.1s;
+  border-bottom: 1px solid rgba(252, 170, 45, 0.5);
+  transition: border-color 0.15s, color 0.15s;
 }
 
 .klai-prose a:hover {
-  color: #2D1B69;
-  border-bottom-color: #2D1B69;
+  color: #191918;
+  border-bottom-color: #191918;
 }
 
 .klai-prose code:not(pre code) {
-  background: rgba(45, 27, 105, 0.06);
+  background: rgba(25, 25, 24, 0.06);
+  color: #191918;
   border-radius: 4px;
-  padding: 0.1em 0.35em;
+  padding: 0.1em 0.4em;
   font-size: 0.875em;
+  font-family: "Decima Mono Pro Regular", ui-monospace, monospace;
+}
+
+.klai-prose pre {
+  background: #191918;
+  color: rgba(255, 254, 242, 0.85);
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  overflow-x: auto;
+}
+
+.klai-prose blockquote {
+  border-left: 3px solid #fcaa2d;
+  padding-left: 1.25rem;
+}
+
+.klai-prose blockquote p {
+  font-family: "Parabole Trial Medium Text", system-ui, sans-serif;
+  font-style: italic;
 }

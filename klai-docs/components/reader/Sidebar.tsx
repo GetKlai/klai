@@ -15,10 +15,10 @@ export function Sidebar({ tree, kbSlug, kbName }: Props) {
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 shrink-0 border-r border-[rgba(45,27,105,0.08)] bg-[var(--color-sand-light)] min-h-screen px-5 py-6">
+    <aside className="w-64 shrink-0 border-r border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] min-h-screen px-5 py-8">
       <Link
         href={`/${kbSlug}`}
-        className="block text-sm font-semibold text-[var(--color-purple-deep)] mb-6 hover:text-[var(--color-purple-accent)] transition-colors"
+        className="block font-[family-name:var(--font-display-medium)] text-[15px] text-rl-dark mb-8 hover:text-[var(--color-rl-accent-dark)] transition-colors"
       >
         {kbName}
       </Link>
@@ -72,7 +72,7 @@ function NavItem({
   if (node.type === "dir") {
     return (
       <li>
-        <span className="block text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-[rgba(26,26,26,0.35)] mt-4 mb-1">
+        <span className="block text-[11px] font-[family-name:var(--font-mono)] uppercase tracking-[0.06em] text-[var(--color-rl-muted)] mt-5 mb-2">
           {node.title}
         </span>
         {isExpandable && (
@@ -91,10 +91,10 @@ function NavItem({
     <li>
       <Link
         href={href}
-        className={`block text-sm py-1 rounded px-2 -mx-2 transition-colors ${
+        className={`block text-[14px] py-1.5 rounded-md px-2 -mx-2 transition-colors ${
           isActive
-            ? "bg-[rgba(124,106,255,0.07)] text-[var(--color-purple-accent)] font-medium"
-            : "text-[rgba(26,26,26,0.6)] hover:text-[var(--color-purple-deep)] hover:bg-[rgba(45,27,105,0.04)]"
+            ? "bg-[var(--color-rl-accent)]/15 text-rl-dark font-[family-name:var(--font-display-medium)]"
+            : "text-[var(--color-rl-dark-60)] hover:text-rl-dark hover:bg-[var(--color-rl-dark-10)]"
         }`}
       >
         {node.title}
