@@ -546,8 +546,8 @@ def test_build_system_prompt_includes_source_urls_for_widget_citations():
         ]
     )
 
-    assert "source_url: https://www.getklai.com/" in prompt
-    assert "source_url: https://www.getklai.com/docs/company/mission" in prompt
+    assert "source_url: https://getklai.com/" in prompt
+    assert "source_url: https://getklai.com/docs/company/mission" in prompt
     assert "Use only literal source_url values" in prompt
     assert "Never turn a title, heading, or documentation phrase into a URL" in prompt
 
@@ -571,12 +571,12 @@ def test_build_system_prompt_reads_nested_chunk_source_urls():
 
     prompt = _build_system_prompt(chunks)
 
-    assert "source_url: https://www.getklai.com/privacy" in prompt
-    assert "source_url: https://www.getklai.com/dpa" in prompt
+    assert "source_url: https://getklai.com/privacy" in prompt
+    assert "source_url: https://getklai.com/dpa" in prompt
     assert "source_url: undefined" not in prompt
     assert _citation_source_urls_from_chunks(chunks) == {
-        1: "https://www.getklai.com/privacy",
-        2: "https://www.getklai.com/dpa",
+        1: "https://getklai.com/privacy",
+        2: "https://getklai.com/dpa",
     }
 
 
@@ -625,10 +625,34 @@ def test_sanitizer_rewrites_citations_from_chunk_source_map():
         },
     )
 
-    assert changed == 1
-    assert "[1](https://www.getklai.com/privacy)" in sanitized
-    assert "[2](https://www.getklai.com/subprocessors)" in sanitized
+    assert changed >= 1
+    assert "[1](https://getklai.com/privacy)" in sanitized
+    assert "[2](https://getklai.com/subprocessors)" in sanitized
     assert "undefined" not in sanitized
+
+
+def test_sanitizer_deduplicates_adjacent_citations_for_same_document():
+    """Multiple chunks from one document should render as one source link."""
+    from app.services.partner_chat import _sanitize_kb_markdown_output
+
+    sanitized, changed = _sanitize_kb_markdown_output(
+        "Klai is steward-owned [1][2], [3] and mission-led [4].",
+        allowed_source_urls=set(),
+        citation_source_urls={
+            1: "https://www.getklai.com/docs/company/steward-ownership",
+            2: "https://getklai.com/docs/company/steward-ownership",
+            3: "https://www.getklai.com/docs/company/steward-ownership/",
+            4: "https://www.getklai.com/docs/company/mission",
+        },
+    )
+
+    assert changed >= 1
+    assert sanitized == (
+        "Klai is steward-owned "
+        "[1](https://getklai.com/docs/company/steward-ownership) "
+        "and mission-led [4](https://getklai.com/docs/company/mission)."
+    )
+    assert "www.getklai.com" not in sanitized
 
 
 def test_sanitizer_removes_parenthesized_raw_urls_without_placeholder():
@@ -692,7 +716,7 @@ def test_stream_sanitizer_rewrites_split_undefined_citation_to_chunk_url():
     assert out1 == "Klai verwerkt accountgegevens "
     assert pending == ""
     assert changed1 + changed2 == 1
-    assert body == "Klai verwerkt accountgegevens [1](https://www.getklai.com/privacy)."
+    assert body == "Klai verwerkt accountgegevens [1](https://getklai.com/privacy)."
     assert "undefined" not in body
 
 
@@ -709,7 +733,35 @@ def test_stream_sanitizer_links_bare_citation_from_chunk_url():
 
     assert pending == ""
     assert changed == 0
-    assert out == "Zie [1](https://www.getklai.com/privacy)."
+    assert out == "Zie [1](https://getklai.com/privacy)."
+
+
+def test_stream_sanitizer_deduplicates_split_bare_citation_run():
+    """Streaming should hold citation runs long enough to avoid repeated links."""
+    from app.services.partner_chat import _pop_sanitized_stream_text
+
+    citations = {
+        1: "https://www.getklai.com/docs/company/steward-ownership",
+        2: "https://getklai.com/docs/company/steward-ownership",
+        3: "https://www.getklai.com/docs/company/steward-ownership/",
+    }
+    out1, pending, changed1 = _pop_sanitized_stream_text(
+        "Klai is steward-owned [1]",
+        allowed_source_urls=set(),
+        citation_source_urls=citations,
+        final=False,
+    )
+    out2, pending, changed2 = _pop_sanitized_stream_text(
+        pending + "[2][3].",
+        allowed_source_urls=set(),
+        citation_source_urls=citations,
+        final=True,
+    )
+
+    assert out1 == "Klai is steward-owned "
+    assert pending == ""
+    assert changed1 + changed2 == 1
+    assert out2 == "[1](https://getklai.com/docs/company/steward-ownership)."
 
 
 def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placeholder():
