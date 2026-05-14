@@ -431,6 +431,7 @@ async def crawl_site(
     max_depth: int = 2,
     max_pages: int = 200,
     include_patterns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
     login_indicator_selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
@@ -498,10 +499,16 @@ async def crawl_site(
         include_patterns=include_patterns,
         cookies=cookies,
     )
-    # Same-domain guard: crawl4ai may follow external links if filter_chain
-    # doesn't catch them (e.g. unconfigured include_patterns + permissive
-    # discovery). Drop external pages here so caller doesn't ingest them.
-    bfs_results = [r for r in bfs_results if urlparse(r.url).netloc.lower() == base_domain]
+    # Same-domain + explicit-exclude guard: crawl4ai may follow external
+    # links if filter_chain doesn't catch them. It also lacks a reliable
+    # exclude-pattern contract for BFS, so we apply explicit excludes here
+    # before progress counting / dirty-content decisions see the pages.
+    bfs_results = [
+        r
+        for r in bfs_results
+        if urlparse(r.url).netloc.lower() == base_domain
+        and not _url_matches_patterns(r.url, exclude_patterns)
+    ]
 
     # ------------------------------------------------------------------
     # Phase 2 — Sitemap supplement: pages in sitemap.xml that BFS missed
@@ -520,6 +527,8 @@ async def crawl_site(
         if canonical in seen_canonicals:
             continue
         if not _url_matches_include_patterns(u, include_patterns):
+            continue
+        if _url_matches_patterns(u, exclude_patterns):
             continue
         if urlparse(u).netloc.lower() != base_domain:
             continue
@@ -857,6 +866,25 @@ def _url_matches_include_patterns(u: str, include_patterns: list[str] | None) ->
         return True
     path_with_query = urlparse(u).path
     for p in include_patterns:
+        if "*" in p or "?" in p:
+            if fnmatch.fnmatch(path_with_query, p):
+                return True
+        elif p in u:
+            return True
+    return False
+
+
+def _url_matches_patterns(u: str, patterns: list[str] | None) -> bool:
+    """Return whether ``u`` matches any path/URL pattern.
+
+    Wildcard patterns use fnmatch against the URL path, matching
+    crawl4ai's URLPatternFilter semantics. Plain patterns keep the
+    legacy substring-on-URL behaviour.
+    """
+    if not patterns:
+        return False
+    path_with_query = urlparse(u).path
+    for p in patterns:
         if "*" in p or "?" in p:
             if fnmatch.fnmatch(path_with_query, p):
                 return True

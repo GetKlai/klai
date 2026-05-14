@@ -284,7 +284,11 @@ async def test_crawl_site_bulk_transport_failure_records_one_outcome_per_candida
         ]
 
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
-    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    async def _fake_bfs(**_kwargs: Any) -> tuple[list[CrawlResult], None]:
+        return [_seed("https://example.com")], None
+
+    monkeypatch.setattr(crawl4ai_client, "_bfs_deep_crawl", _fake_bfs)
 
     async def _fake_post(self: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
         raise httpx.ReadTimeout("simulated bulk timeout")
@@ -327,7 +331,11 @@ async def test_crawl_site_returns_one_outcome_per_candidate_on_partial_success(
         ]
 
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
-    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    async def _fake_bfs(**_kwargs: Any) -> tuple[list[CrawlResult], None]:
+        return [_seed("https://example.com")], None
+
+    monkeypatch.setattr(crawl4ai_client, "_bfs_deep_crawl", _fake_bfs)
 
     # Bulk response — start_url is NOT in the request body, so the response
     # body MUST NOT include it either.
@@ -437,18 +445,17 @@ async def test_seed_config_carries_login_indicator(monkeypatch: pytest.MonkeyPat
     "succeeded" on the login page, the BFS link list became
     login-form anchors, and the bulk ran into AUTH_ERROR on every URL.
     """
-    captured_seed_config: dict[str, Any] = {}
+    captured_bfs_config: dict[str, Any] = {}
 
-    async def _fake_seed_call(
+    async def _fake_bfs(
         *,
-        start_url: str,
         crawler_config: dict[str, Any],
-        cookies: Any,
-    ) -> CrawlResult:
-        captured_seed_config.update(crawler_config)
-        return _seed(start_url)
+        **_kwargs: Any,
+    ) -> tuple[list[CrawlResult], None]:
+        captured_bfs_config.update(crawler_config)
+        return [_seed("https://wiki.example")], None
 
-    monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed_call)
+    monkeypatch.setattr(crawl4ai_client, "_bfs_deep_crawl", _fake_bfs)
     monkeypatch.setattr(
         crawl4ai_client, "_fetch_sitemap_urls", lambda _base: _async_return([])
     )
@@ -463,9 +470,9 @@ async def test_seed_config_carries_login_indicator(monkeypatch: pytest.MonkeyPat
             login_indicator_selector="#loginForm",
         )
 
-    # The captured seed config MUST reflect the login_indicator: build_crawl_config
+    # The BFS config MUST reflect the login_indicator: build_crawl_config
     # negates the wait_for expression with the indicator selector when set.
-    wait_for = captured_seed_config.get("wait_for", "")
+    wait_for = captured_bfs_config.get("wait_for", "")
     assert "#loginForm" in wait_for, (
         f"seed config did not propagate login_indicator_selector — wait_for was {wait_for!r}"
     )

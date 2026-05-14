@@ -370,6 +370,14 @@ class TestCrawlSyncEndpoint:
         kwargs = defer_mock.await_args.kwargs
         assert kwargs["start_url"] == "https://www.getklai.com/blog"
         assert kwargs["include_patterns"] == ["/blog/*"]
+        assert kwargs["exclude_patterns"] == [
+            "/blog/tag/*",
+            "/blog/tags/*",
+            "/blog/category/*",
+            "/blog/categories/*",
+            "/blog/author/*",
+            "/blog/page/*",
+        ]
 
     def test_path_prefix_with_nested_base_url(self) -> None:
         """base_url with its own path + path_prefix stacks paths cleanly."""
