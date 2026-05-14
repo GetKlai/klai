@@ -81,6 +81,7 @@ class CrawlSyncStatusResponse(BaseModel):
 
 
 _CRAWL_WORKER_LOST_ERROR = "crawl_worker_lost"
+_FAILED_PARTIAL_STATUS = "failed_partial"
 _RUNNABLE_CRAWL_STATUSES = {"pending", "running"}
 _TERMINAL_PROCRASTINATE_STATUSES = {"failed", "cancelled", "aborted", "succeeded"}
 
@@ -237,6 +238,24 @@ def _procrastinate_job_can_still_progress(proc_row: Mapping[str, Any] | None) ->
     return True
 
 
+def _crawl_sync_error(row: Mapping[str, Any]) -> str | None:
+    """Return the stable error code exposed to polling callers."""
+    if row.get("error"):
+        return str(row["error"])
+    if row.get("status") != _FAILED_PARTIAL_STATUS:
+        return None
+
+    summary = row.get("error_summary")
+    if isinstance(summary, str):
+        try:
+            summary = json.loads(summary)
+        except json.JSONDecodeError:
+            return _FAILED_PARTIAL_STATUS
+    if isinstance(summary, Mapping) and summary.get("reason"):
+        return str(summary["reason"])
+    return _FAILED_PARTIAL_STATUS
+
+
 async def _reconcile_crawl_job_lifecycle(
     pool: Any,
     row: Mapping[str, Any],
@@ -302,7 +321,7 @@ async def crawl_sync_status(job_id: str) -> CrawlSyncStatusResponse:
     pool = await get_pool()
     row = await pool.fetchrow(
         """
-        SELECT id, status, pages_total, pages_done, error
+        SELECT id, status, pages_total, pages_done, error, error_summary
         FROM knowledge.crawl_jobs
         WHERE id = $1
         """,
@@ -317,7 +336,7 @@ async def crawl_sync_status(job_id: str) -> CrawlSyncStatusResponse:
         status=row["status"],
         pages_total=row["pages_total"],
         pages_done=row["pages_done"],
-        error=row["error"],
+        error=_crawl_sync_error(row),
     )
 
 

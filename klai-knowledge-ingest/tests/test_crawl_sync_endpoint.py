@@ -447,6 +447,24 @@ class TestCrawlSyncStatusEndpoint:
         assert body["pages_done"] == 7
         assert body["error"] is None
 
+    def test_failed_partial_returns_error_summary_reason(self) -> None:
+        pool = _make_pool(
+            job_row={
+                "status": "failed_partial",
+                "pages_total": 117,
+                "pages_done": 52,
+                "error": None,
+                "error_summary": {"reason": "boilerplate_or_authwall_dominant"},
+            },
+        )
+        job_id = str(uuid.uuid4())
+        with _client_with_patches(pool) as (client, _defer):
+            resp = client.get(f"/ingest/v1/crawl/sync/{job_id}/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed_partial"
+        assert body["error"] == "boilerplate_or_authwall_dominant"
+
     def test_unknown_job_returns_404(self) -> None:
         pool = _make_pool(job_row=None)
         with _client_with_patches(pool) as (client, _defer):
