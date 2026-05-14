@@ -494,7 +494,13 @@
     # deleted chunks return 404 instead of /srv/portal/index.html.
     handle /assets/* {
         root * /srv/portal
-        header Cache-Control "public, max-age=31536000, immutable"
+
+        # Only existing chunks get the immutable cache. A missing chunk
+        # returns a bare 404 — caching that 404 immutably would make a
+        # deploy-race 404 unrecoverable until the browser cache is cleared.
+        @asset_exists file {path}
+        header @asset_exists Cache-Control "public, max-age=31536000, immutable"
+
         file_server
     }
 
