@@ -8,6 +8,7 @@ in. These unit tests therefore construct a mock conn and assert against
 directly.
 """
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,6 +25,12 @@ def _make_conn() -> MagicMock:
     conn.fetch = AsyncMock(return_value=[])
     conn.fetchval = AsyncMock(return_value=0)
     conn.fetchrow = AsyncMock(return_value=None)
+
+    @asynccontextmanager
+    async def _tx():
+        yield None
+
+    conn.transaction = MagicMock(side_effect=_tx)
     return conn
 
 
@@ -113,6 +120,55 @@ async def test_soft_delete_only_updates_active_records():
     sql = conn.execute.call_args[0][0]
     # Must filter on sentinel to avoid touching already-deleted records
     assert str(_SENTINEL) in sql or "$5" in sql
+
+
+@pytest.mark.asyncio
+async def test_list_stale_connector_artifact_paths_excludes_current_paths():
+    """Connector reconciliation only returns active paths absent from latest crawl."""
+    conn = _make_conn()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {"path": "https://getklai.com/"},
+            {"path": "https://getklai.com/contact"},
+        ]
+    )
+
+    result = await pg_store.list_stale_connector_artifact_paths(
+        conn,
+        org_id="org",
+        kb_slug="kb",
+        connector_id="conn-1",
+        current_paths=["https://www.getklai.com/"],
+    )
+
+    assert result == ["https://getklai.com/", "https://getklai.com/contact"]
+    sql = conn.fetch.call_args[0][0]
+    assert "source_connector_id" in sql
+    assert "NOT (path = ANY($5::text[]))" in sql
+    assert conn.fetch.call_args[0][5] == ["https://www.getklai.com/"]
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_stale_connector_artifacts_scrubs_registry_and_links():
+    """Stale connector cleanup retires artifacts and removes crawl metadata."""
+    conn = _make_conn()
+    conn.fetchval = AsyncMock(return_value=2)
+
+    deleted = await pg_store.soft_delete_stale_connector_artifacts(
+        conn,
+        org_id="org",
+        kb_slug="kb",
+        connector_id="conn-1",
+        stale_paths=["https://getklai.com/", "https://getklai.com/contact"],
+    )
+
+    assert deleted == 2
+    executed_sql = "\n".join(call.args[0] for call in conn.execute.await_args_list)
+    final_sql = conn.fetchval.call_args[0][0]
+    assert "DELETE FROM knowledge.crawled_pages" in executed_sql
+    assert "DELETE FROM knowledge.page_links" in executed_sql
+    assert "source_connector_id" in final_sql
+    assert "belief_time_end = $6" in final_sql
 
 
 # -- list_personal_artifacts --------------------------------------------------
