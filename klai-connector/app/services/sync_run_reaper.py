@@ -41,6 +41,11 @@ from app.core.database import cross_org_session, tenant_scoped_session
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
+from app.services.crawl_sync_status import (
+    is_completed_remote_crawl_status,
+    is_failed_remote_crawl_status,
+    remote_crawl_failure_error,
+)
 from app.services.portal_client import PortalClient
 
 logger = get_logger(__name__)
@@ -209,15 +214,16 @@ class SyncRunReaper:
         pages_total = int(live.get("pages_total") or 0)
         pages_done = int(live.get("pages_done") or 0)
 
-        if live_status == "completed":
+        if is_completed_remote_crawl_status(live_status):
             await self._finalise_completed(row, pages_done=pages_done, pages_total=pages_total)
             return True
-        if live_status == "failed":
+        if is_failed_remote_crawl_status(live_status):
             await self._finalise_failed(
                 row,
-                error_code=str(live.get("error") or "unknown"),
+                error_code=remote_crawl_failure_error(live),
                 documents_total=pages_total,
                 documents_ok=pages_done,
+                remote_status=live_status,
             )
             return True
 
@@ -287,6 +293,7 @@ class SyncRunReaper:
         error_code: str,
         documents_total: int,
         documents_ok: int,
+        remote_status: str = "failed",
     ) -> None:
         completed_at = datetime.now(UTC)
         cursor = row.cursor_state if isinstance(row.cursor_state, dict) else {}
@@ -313,7 +320,7 @@ class SyncRunReaper:
             db_row.error_details = error_details
             db_row.quality_status = None
             existing_cursor = db_row.cursor_state if isinstance(db_row.cursor_state, dict) else {}
-            db_row.cursor_state = {**existing_cursor, "remote_status": "failed"}
+            db_row.cursor_state = {**existing_cursor, "remote_status": remote_status}
             await session.commit()
         await self._portal_client.report_sync_status(
             connector_id=row.connector_id,

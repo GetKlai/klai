@@ -172,6 +172,34 @@ class TestReaperFinalisesTerminalRemote:
         assert row.error_details[0]["service"] == "knowledge-ingest"
         portal.report_sync_status.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_failed_partial_remote_writes_failed_with_error(self) -> None:
+        old = datetime.now(UTC) - timedelta(hours=25)
+        row = _row(started_at=old)
+        reaper, _, _, portal, _ = _make_reaper(
+            candidate_rows=[row],
+            status_responses=[
+                {
+                    "job_id": "abc123",
+                    "status": "failed_partial",
+                    "pages_done": 52,
+                    "pages_total": 117,
+                    "error": "boilerplate_or_authwall_dominant",
+                },
+            ],
+        )
+
+        finalised = await reaper.tick()
+
+        assert finalised == 1
+        assert row.status == SyncStatus.FAILED
+        assert row.documents_ok == 52
+        assert row.documents_failed == 65
+        assert row.error_details
+        assert row.error_details[0]["error"] == "boilerplate_or_authwall_dominant"
+        assert row.cursor_state["remote_status"] == "failed_partial"
+        portal.report_sync_status.assert_awaited_once()
+
 
 class TestReaper404IsRemoteJobLost:
     """AC-06.2: 404 from knowledge-ingest -> remote_job_lost."""

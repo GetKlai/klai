@@ -35,6 +35,11 @@ from app.core.database import tenant_scoped_session
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
+from app.services.crawl_sync_status import (
+    is_completed_remote_crawl_status,
+    is_terminal_remote_crawl_status,
+    remote_crawl_failure_error,
+)
 from app.services.portal_client import PortalClient
 
 logger = get_logger(__name__)
@@ -129,7 +134,7 @@ class SyncRunResolver:
             return self._snapshot(sync_run, pages_done=None, pages_total=None, live_resolution_failed=True)
 
         live_status = str(live.get("status", "running"))
-        if live_status in ("completed", "failed"):
+        if is_terminal_remote_crawl_status(live_status):
             sync_run = await self._finalize(sync_run, live)
             return self._snapshot(
                 sync_run,
@@ -198,7 +203,7 @@ class SyncRunResolver:
         live_status = str(live.get("status"))
         pages_total = int(live.get("pages_total") or 0)
         pages_done = int(live.get("pages_done") or 0)
-        if live_status == "completed":
+        if is_completed_remote_crawl_status(live_status):
             new_status = SyncStatus.COMPLETED
             documents_total = pages_total
             documents_ok = pages_done
@@ -210,10 +215,10 @@ class SyncRunResolver:
             documents_total = pages_total
             documents_ok = pages_done
             documents_failed = max(0, pages_total - pages_done)
-            remote_error = live.get("error") or "unknown"
+            remote_error = remote_crawl_failure_error(live)
             error_details = [
                 {
-                    "error": str(remote_error),
+                    "error": remote_error,
                     "service": "knowledge-ingest",
                     "remote_job_id": self._extract_remote_job_id(sync_run),
                 },

@@ -244,6 +244,33 @@ class TestResolveTerminalFailed:
 
         assert snap.status == SyncStatus.FAILED
 
+    @pytest.mark.asyncio
+    async def test_failed_partial_writes_terminal_state_with_error(self) -> None:
+        resolver, _, _, portal = _make_resolver(
+            status_responses=[
+                {
+                    "job_id": "abc123",
+                    "status": "failed_partial",
+                    "pages_done": 52,
+                    "pages_total": 117,
+                    "error": "boilerplate_or_authwall_dominant",
+                },
+            ],
+        )
+        row = _row()
+        _register(resolver, row)
+
+        snap = await resolver.resolve(row)
+
+        assert row.status == SyncStatus.FAILED
+        assert row.documents_ok == 52
+        assert row.documents_failed == 65
+        assert row.error_details
+        assert row.error_details[0]["error"] == "boilerplate_or_authwall_dominant"
+        assert row.cursor_state["remote_status"] == "failed_partial"
+        portal.report_sync_status.assert_awaited_once()
+        assert snap.status == SyncStatus.FAILED
+
 
 class TestResolveUpstreamUnreachable:
     """AC-04.4: knowledge-ingest down -> degraded snapshot, no DB write."""
