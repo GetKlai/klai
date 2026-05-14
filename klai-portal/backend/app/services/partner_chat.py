@@ -38,6 +38,7 @@ logger = structlog.get_logger()
 
 _MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]]*)\]\(([^)]*)\)")
 _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
+_EMPTY_PARENS_RE = re.compile(r"\s*\(\s*\)")
 _STREAM_GUARD_TAIL_CHARS = 16
 
 
@@ -129,10 +130,11 @@ def _sanitize_kb_markdown_output(text: str, *, allowed_source_urls: set[str]) ->
         if _normalise_guard_url(url) in allowed_source_urls:
             return raw
         changed += 1
-        return f"[link removed]{suffix}"
+        return suffix
 
     sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, text)
     sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
+    sanitized = _EMPTY_PARENS_RE.sub("", sanitized)
     return sanitized, changed
 
 
@@ -174,9 +176,40 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
             return "".join(out), buffer, changed
 
         if start > 0:
-            out.append(buffer[:start])
-            buffer = buffer[start:]
-            continue
+            if start > 1 and buffer[start - 1] == "(" and _RAW_URL_RE.match(buffer[start:]):
+                prefix_end = start - 1
+                if prefix_end > 0 and buffer[prefix_end - 1].isspace():
+                    prefix_end -= 1
+                out.append(buffer[:prefix_end])
+                buffer = buffer[start - 1 :]
+                continue
+            if start == 1 and buffer.startswith("(") and _RAW_URL_RE.match(buffer[1:]):
+                pass
+            else:
+                out.append(buffer[:start])
+                buffer = buffer[start:]
+                continue
+
+        if buffer.startswith("("):
+            raw_match = _RAW_URL_RE.match(buffer[1:])
+            if raw_match:
+                raw = raw_match.group(0)
+                close_idx = 1 + len(raw)
+                if not final and close_idx >= len(buffer):
+                    return "".join(out), buffer, changed
+                if close_idx < len(buffer) and buffer[close_idx] == ")":
+                    url = raw.rstrip(".,;:")
+                    if _normalise_guard_url(url) in allowed_source_urls:
+                        out.append(buffer[: close_idx + 1])
+                    else:
+                        changed += 1
+                        if close_idx + 1 < len(buffer) and buffer[close_idx + 1] in ".,;:" and out:
+                            out[-1] = out[-1].rstrip()
+                    buffer = buffer[close_idx + 1 :]
+                    continue
+                out.append("(")
+                buffer = buffer[1:]
+                continue
 
         link_match = _MARKDOWN_LINK_RE.match(buffer)
         if link_match:
@@ -221,7 +254,7 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
             if _normalise_guard_url(url) in allowed_source_urls:
                 out.append(raw)
             else:
-                out.append(f"[link removed]{suffix}")
+                out.append(suffix)
                 changed += 1
             buffer = buffer[len(raw) :]
             continue
