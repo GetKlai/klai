@@ -28,6 +28,7 @@ from knowledge_ingest.crawl4ai_client import (
     _canonicalise_url,
     _classify_fetch_outcome,
     _combine_bulk_responses,
+    _fetch_sitemap_document,
 )
 from knowledge_ingest.reason_codes import FetchReasonCode
 
@@ -164,6 +165,18 @@ class TestBuildCandidateSet:
         assert "https://wiki.example/nl/getting-started" in candidates
         assert "https://wiki.example/nl/blog" in candidates
 
+    def test_www_and_apex_are_same_site_but_return_base_host(self) -> None:
+        candidates = _build_candidate_set(
+            start_url="https://www.example.com/blog",
+            sitemap_urls=["https://example.com/blog/post-a"],
+            bfs_seed_urls=[],
+            base_domain="www.example.com",
+            max_pages=10,
+            include_patterns=["/blog/*"],
+        )
+        assert "https://www.example.com/blog/post-a" in candidates
+        assert "https://example.com/blog/post-a" not in candidates
+
 
 # ---------------------------------------------------------------------------
 # _classify_fetch_outcome
@@ -217,6 +230,52 @@ class TestClassifyFetchOutcome:
             )
             == FetchReasonCode.DNS_ERROR.value
         )
+
+
+# ---------------------------------------------------------------------------
+# sitemap discovery
+# ---------------------------------------------------------------------------
+
+
+class _FakeSitemapClient:
+    def __init__(self, responses: dict[str, str]) -> None:
+        self.responses = responses
+
+    async def get(self, url: str, **_kwargs: Any) -> httpx.Response:
+        request = httpx.Request("GET", url)
+        body = self.responses.get(url)
+        if body is None:
+            return httpx.Response(404, text="missing", request=request)
+        return httpx.Response(200, text=body, request=request)
+
+
+@pytest.mark.asyncio
+async def test_fetch_sitemap_document_follows_index_and_coerces_apex_to_www() -> None:
+    client = _FakeSitemapClient(
+        {
+            "https://www.example.com/sitemap-index.xml": """
+            <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <sitemap><loc>https://example.com/sitemap-0.xml</loc></sitemap>
+            </sitemapindex>
+            """,
+            "https://example.com/sitemap-0.xml": """
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <url><loc>https://example.com/blog/post-a/</loc></url>
+              <url><loc>https://other.example/blog/post-b/</loc></url>
+            </urlset>
+            """,
+        }
+    )
+
+    urls = await _fetch_sitemap_document(
+        client,  # type: ignore[arg-type]
+        sitemap_url="https://www.example.com/sitemap-index.xml",
+        base_domain="www.example.com",
+        seen_sitemaps=set(),
+        depth=0,
+    )
+
+    assert urls == ["https://www.example.com/blog/post-a/"]
 
     def test_unknown_falls_through_to_unknown_exception(self) -> None:
         assert (
@@ -703,3 +762,68 @@ class TestCombineBulkResponsesPositionalGuard:
         )
         assert outcomes[0]["reason_code"] == FetchReasonCode.SUCCESS.value
         assert len(results) == 1
+
+    def test_noindex_follow_page_is_outcome_but_not_ingested(self) -> None:
+        """Robots noindex means crawl for discovery, skip as a KB document."""
+        candidates = ["https://example.com/blog/tag/AI"]
+        raw_results = [
+            {
+                "url": "https://example.com/blog/tag/AI",
+                "success": True,
+                "status_code": 200,
+                "html": (
+                    "<html><head>"
+                    '<meta name="robots" content="noindex,follow">'
+                    '<meta property="og:type" content="website">'
+                    "</head><body>Tag archive</body></html>"
+                ),
+                "markdown": "Tag archive",
+                "links": {"internal": [{"href": "https://example.com/blog/post", "text": ""}]},
+                "media": {},
+            }
+        ]
+        results, outcomes = _combine_bulk_responses(
+            candidates=candidates,
+            raw_results=raw_results,
+            transport_error=None,
+            base_domain="example.com",
+        )
+
+        assert outcomes[0]["reason_code"] == FetchReasonCode.NON_CONTENT_LISTING_PAGE.value
+        assert results == []
+
+    def test_article_metadata_overrides_link_heavy_shape(self) -> None:
+        """Article metadata keeps a real post ingestable even with many links."""
+        candidates = ["https://example.com/blog/post"]
+        raw_results = [
+            {
+                "url": "https://example.com/blog/post",
+                "success": True,
+                "status_code": 200,
+                "html": (
+                    "<html><head>"
+                    '<meta property="og:type" content="article">'
+                    '<script type="application/ld+json">'
+                    '{"@context":"https://schema.org","@type":"BlogPosting"}'
+                    "</script>"
+                    "</head><body>Real article content</body></html>"
+                ),
+                "markdown": "Real article content",
+                "links": {
+                    "internal": [
+                        {"href": f"https://example.com/blog/related-{i}", "text": ""}
+                        for i in range(25)
+                    ]
+                },
+                "media": {},
+            }
+        ]
+        results, outcomes = _combine_bulk_responses(
+            candidates=candidates,
+            raw_results=raw_results,
+            transport_error=None,
+            base_domain="example.com",
+        )
+
+        assert outcomes[0]["reason_code"] == FetchReasonCode.SUCCESS.value
+        assert [r.url for r in results] == ["https://example.com/blog/post"]
