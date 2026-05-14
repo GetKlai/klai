@@ -40,6 +40,7 @@ logger = structlog.get_logger()
 _MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]]*)\]\(([^)]*)\)")
 _BARE_CITATION_RE = re.compile(r"(?<!!)\[(\d+)\](?!\()")
 _CITATION_LINK_RE = re.compile(r"\[(\d+)\]\(([^)]*)\)")
+_MALFORMED_CITATION_LINK_RE = re.compile(r"(?<!\[)\b(\d+)\((https?://[^)\s]+)\)")
 _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
 _EMPTY_PARENS_RE = re.compile(r"\s*\(\s*\)")
 _STREAM_GUARD_TAIL_CHARS = 16
@@ -172,14 +173,35 @@ def _citation_url_for_label(label: str, citation_source_urls: dict[int, str]) ->
     return _normalise_guard_url(citation_source_urls.get(int(label), ""))
 
 
-def _format_citation_label(label: str, citation_source_urls: dict[int, str]) -> str:
+def _citation_display_label(url: str, citation_source_urls: dict[int, str]) -> str:
+    """Map a chunk citation URL to a stable document-level display number."""
+    url_key = _source_url_key(url)
+    if not url_key:
+        return ""
+
+    seen: dict[str, int] = {}
+    for source_url in citation_source_urls.values():
+        source_key = _source_url_key(source_url)
+        if source_key and source_key not in seen:
+            seen[source_key] = len(seen) + 1
+        if source_key == url_key:
+            return str(seen[source_key])
+    return ""
+
+
+def _format_citation_label(
+    label: str,
+    citation_source_urls: dict[int, str],
+    display_label: str | None = None,
+) -> str:
     label = label.strip()
     url = _citation_url_for_label(label, citation_source_urls)
     if not url:
         if label.isdigit():
             return f"[{label}]"
         return label
-    return f"[{label}]({url})"
+    visible_label = display_label or _citation_display_label(url, citation_source_urls) or label
+    return f"[{visible_label}]({url})"
 
 
 def _dedupe_adjacent_citation_links(text: str) -> str:
@@ -214,7 +236,7 @@ def _dedupe_adjacent_citation_links(text: str) -> str:
                 break
             current = next_match
 
-        output.append(" ".join(kept))
+        output.append(", ".join(kept))
         pos = run_end
 
 
@@ -273,14 +295,16 @@ def _parse_bare_citation_run(
     for label in labels:
         url = _citation_url_for_label(label, citation_source_urls)
         url_key = _source_url_key(url)
+        display_label: str | None = None
         if url_key:
             if url_key in seen_urls or url_key in emitted_source_keys:
                 changed = True
                 continue
+            display_label = str(len(emitted_source_keys) + 1)
             seen_urls.add(url_key)
             emitted_source_keys.add(url_key)
-        kept.append(_format_citation_label(label, citation_source_urls))
-    return " ".join(kept), buffer[pos:], changed
+        kept.append(_format_citation_label(label, citation_source_urls, display_label))
+    return ", ".join(kept), buffer[pos:], changed
 
 
 def _parse_citation_link_run(
@@ -328,19 +352,51 @@ def _parse_citation_link_run(
             if url_key in seen_urls or url_key in emitted_source_keys:
                 changed = True
                 continue
+            display_label = str(len(emitted_source_keys) + 1)
             seen_urls.add(url_key)
             emitted_source_keys.add(url_key)
+        else:
+            display_label = None
         if citation_url:
             if provided_url != citation_url:
                 changed = True
-            kept.append(_format_citation_label(label, citation_source_urls))
+            kept.append(_format_citation_label(label, citation_source_urls, display_label))
         else:
             kept.append(f"[{label}]({output_url})")
 
-    return " ".join(kept), buffer[pos:], changed
+    return ", ".join(kept), buffer[pos:], changed
 
 
-def _sanitize_kb_markdown_output(
+def _format_provided_citation_link(
+    *,
+    label: str,
+    provided_url: str,
+    citation_source_urls: dict[int, str],
+    allowed_source_urls: set[str],
+    emitted_source_keys: set[str] | None = None,
+) -> tuple[str, bool]:
+    citation_url = _citation_url_for_label(label, citation_source_urls)
+    output_url = citation_url or _normalise_guard_url(provided_url)
+    url_key = _source_url_key(output_url)
+    changed = False
+    emitted_source_keys = emitted_source_keys if emitted_source_keys is not None else set()
+
+    if not output_url or (not citation_url and output_url not in allowed_source_urls):
+        return "", True
+    if url_key and url_key in emitted_source_keys:
+        return "", True
+    display_label = str(len(emitted_source_keys) + 1) if url_key else None
+    if url_key:
+        emitted_source_keys.add(url_key)
+    if citation_url and _normalise_guard_url(provided_url) != citation_url:
+        changed = True
+
+    if citation_url:
+        return _format_citation_label(label, citation_source_urls, display_label), changed
+    return f"[{label}]({output_url})", changed
+
+
+def _sanitize_kb_markdown_output(  # noqa: C901 - citation/link guard has several Markdown cases
     text: str,
     *,
     allowed_source_urls: set[str],
@@ -349,12 +405,25 @@ def _sanitize_kb_markdown_output(
 ) -> tuple[str, int]:
     """Remove source links that were not present in retrieved chunk metadata."""
     citation_source_urls = citation_source_urls or {}
+    emitted_source_keys = emitted_source_keys if emitted_source_keys is not None else set()
     allowed_source_urls = {
         normalised
         for normalised in (_normalise_guard_url(url) for url in (*allowed_source_urls, *citation_source_urls.values()))
         if normalised
     }
     changed = 0
+
+    def _replace_malformed_citation(match: re.Match[str]) -> str:
+        nonlocal changed
+        label = match.group(1)
+        provided_url = _normalise_guard_url(match.group(2))
+        citation_url = _citation_url_for_label(label, citation_source_urls)
+        output_url = citation_url or provided_url
+        if not output_url or (not citation_url and output_url not in allowed_source_urls):
+            changed += 1
+            return ""
+        changed += 1
+        return f"[{label}]({output_url})"
 
     def _replace_link(match: re.Match[str]) -> str:
         nonlocal changed
@@ -366,9 +435,16 @@ def _sanitize_kb_markdown_output(
             changed += 1
             return label or "[image unavailable in knowledge base]"
         if citation_url:
+            url_key = _source_url_key(citation_url)
+            if url_key and url_key in emitted_source_keys:
+                changed += 1
+                return ""
+            display_label = str(len(emitted_source_keys) + 1) if url_key else None
+            if url_key:
+                emitted_source_keys.add(url_key)
             if url != citation_url:
                 changed += 1
-            return _format_citation_label(label, citation_source_urls)
+            return _format_citation_label(label, citation_source_urls, display_label)
         if url in allowed_source_urls:
             return marker
         changed += 1
@@ -386,18 +462,31 @@ def _sanitize_kb_markdown_output(
         changed += 1
         return suffix
 
-    sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, text)
-    sanitized = _BARE_CITATION_RE.sub(
-        lambda match: _format_citation_label(match.group(1), citation_source_urls),
-        sanitized,
-    )
+    def _replace_bare_citation(match: re.Match[str]) -> str:
+        nonlocal changed
+        label = match.group(1)
+        url = _citation_url_for_label(label, citation_source_urls)
+        url_key = _source_url_key(url)
+        display_label: str | None = None
+        if url_key:
+            if url_key in emitted_source_keys:
+                changed += 1
+                return ""
+            display_label = str(len(emitted_source_keys) + 1)
+            emitted_source_keys.add(url_key)
+        return _format_citation_label(label, citation_source_urls, display_label)
+
+    sanitized = _MALFORMED_CITATION_LINK_RE.sub(_replace_malformed_citation, text)
+    sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, sanitized)
+    sanitized = _BARE_CITATION_RE.sub(_replace_bare_citation, sanitized)
     before_dedupe = sanitized
     sanitized = _dedupe_adjacent_citation_links(sanitized)
-    sanitized = _dedupe_repeated_citation_links(sanitized, emitted_source_keys)
+    sanitized = _dedupe_repeated_citation_links(sanitized)
     if sanitized != before_dedupe:
         changed += 1
     sanitized = _RAW_URL_RE.sub(_replace_raw_url, sanitized)
     sanitized = _EMPTY_PARENS_RE.sub("", sanitized)
+    sanitized = re.sub(r"(\[[^\]]+\]\([^)]*\)),\s{2,}", r"\1 ", sanitized)
     return sanitized, changed
 
 
@@ -449,6 +538,32 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
 
         if start > 0:
             if start > 1 and buffer[start - 1] == "(" and _RAW_URL_RE.match(buffer[start:]):
+                label_start = start - 1
+                while label_start > 0 and buffer[label_start - 1].isdigit():
+                    label_start -= 1
+                if label_start < start - 1:
+                    raw_match = _RAW_URL_RE.match(buffer[start:])
+                    raw = raw_match.group(0) if raw_match else ""
+                    close_idx = start + len(raw)
+                    if not final and close_idx >= len(buffer):
+                        out.append(buffer[:label_start])
+                        return "".join(out), buffer[label_start:], changed
+                    if close_idx < len(buffer) and buffer[close_idx] == ")":
+                        replacement, citation_changed = _format_provided_citation_link(
+                            label=buffer[label_start : start - 1],
+                            provided_url=raw,
+                            citation_source_urls=citation_source_urls,
+                            allowed_source_urls=allowed_source_urls,
+                            emitted_source_keys=emitted_source_keys,
+                        )
+                        out.append(buffer[:label_start])
+                        if replacement:
+                            out.append(replacement)
+                        if citation_changed or replacement != buffer[label_start : close_idx + 1]:
+                            changed += 1
+                        buffer = buffer[close_idx + 1 :]
+                        continue
+
                 prefix_end = start - 1
                 if prefix_end > 0 and buffer[prefix_end - 1].isspace():
                     prefix_end -= 1
