@@ -28,7 +28,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
 
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project && uv cache clean
 
 COPY --chown=app:app klai-knowledge-ingest/knowledge_ingest knowledge_ingest
 # SPEC-INGEST-ALEMBIC-001: alembic migration definitions
