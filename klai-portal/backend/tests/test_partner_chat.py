@@ -339,13 +339,15 @@ async def test_widget_streaming_uses_structured_citation_mode():
     ]
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=(retrieved_chunks, "prompt")),
+        patch("app.api.partner.retrieve_context", return_value=(retrieved_chunks, "prompt")) as mock_retrieve,
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
         patch("app.api.partner.asyncio"),
     ):
         await chat_completions(request=req, auth=auth, db=db)
 
+    assert mock_retrieve.call_args.kwargs["backend_managed_citations"] is True
     assert chat_stream.call_args.kwargs["citation_output"] == "markers"
+    assert chat_stream.call_args.kwargs["citation_chunks"] == retrieved_chunks
     assert chat_stream.call_args.kwargs["citation_source_urls"] == {1: "https://getklai.com/docs/legal/privacy"}
     assert chat_stream.call_args.kwargs["citation_source_metadata"] == {
         "https://getklai.com/docs/legal/privacy": {
@@ -649,6 +651,95 @@ def test_build_system_prompt_includes_widget_system_prompt():
     assert "Use a calm, support-oriented tone." in prompt
     assert "source_url: https://docs.example.com/policy" in prompt
     assert "URL rules for citations and source links" in prompt
+
+
+def test_build_system_prompt_can_leave_citations_to_backend():
+    """Widget prompts should not invite the model to write source markers."""
+    from app.services.partner_chat import _build_system_prompt
+
+    prompt = _build_system_prompt(
+        [{"title": "Policy", "source_url": "https://docs.example.com/policy", "text": "Use policy text."}],
+        backend_managed_citations=True,
+    )
+
+    assert "source_url:" not in prompt
+    assert "the application adds citations after generation" in prompt
+    assert "Do not write URLs" in prompt
+
+
+def test_citation_composer_adds_sources_when_model_has_no_citations():
+    """Widget sources come from retrieved chunks, not from model-authored markers."""
+    from app.services.citations import compose_citations
+
+    composed = compose_citations(
+        "Klai is steward-owned and mission-led.",
+        [
+            {
+                "title": "Steward ownership",
+                "source_url": "https://www.getklai.com/docs/company/steward-ownership",
+                "text": "Klai is steward-owned and protected from external takeover.",
+            }
+        ],
+    )
+
+    assert composed.content == "Klai is steward-owned and mission-led (1)."
+    assert composed.sources == [
+        {
+            "label": "1",
+            "title": "Steward ownership",
+            "url": "https://getklai.com/docs/company/steward-ownership",
+        }
+    ]
+
+
+def test_citation_composer_ignores_model_citation_text_and_source_lists():
+    """Old model citation syntax must not control the rendered widget links."""
+    from app.services.citations import compose_citations
+
+    composed = compose_citations(
+        "Steward ownership protects Klai (1).\n\n(1)Stichting DOEN, *Wat is steward ownership?* (2023)",
+        [
+            {
+                "title": "Klai steward ownership",
+                "source_url": "https://www.getklai.com/docs/company/steward-ownership",
+                "text": "Steward ownership protects Klai from mission drift.",
+            }
+        ],
+    )
+
+    assert composed.content == "Steward ownership protects Klai (1)."
+    assert composed.sources[0]["url"] == "https://getklai.com/docs/company/steward-ownership"
+    assert "Stichting DOEN" not in composed.content
+
+
+def test_citation_composer_dedupes_www_and_non_www_sources():
+    """A document must render once even when retrieval returns several chunks."""
+    from app.services.citations import compose_citations
+
+    composed = compose_citations(
+        "Klai stores account data and query data.",
+        [
+            {
+                "title": "Privacy policy",
+                "source_url": "https://www.getklai.com/docs/legal/privacy",
+                "text": "Klai stores account data.",
+            },
+            {
+                "title": "Privacy policy duplicate",
+                "source_url": "https://getklai.com/docs/legal/privacy/",
+                "text": "Klai stores query data.",
+            },
+        ],
+    )
+
+    assert composed.content == "Klai stores account data and query data (1)."
+    assert composed.sources == [
+        {
+            "label": "1",
+            "title": "Privacy policy",
+            "url": "https://getklai.com/docs/legal/privacy",
+        }
+    ]
 
 
 def test_sanitizer_removes_links_not_in_retrieved_sources():
@@ -1161,18 +1252,88 @@ async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
                 "url": "https://getklai.com/docs/legal/privacy",
             }
         },
+        citation_chunks=[
+            {
+                "title": "Privacy policy",
+                "source_url": "https://getklai.com/docs/legal/privacy",
+                "text": "Naam en e-mailadres staan in de privacy policy.",
+            }
+        ],
         citation_output="markers",
     ):
         chunks.append(chunk)
 
     body = b"".join(chunks).decode()
-    assert '"content": "Naam (1)"' in body
-    assert '"content": "."' in body
+    assert '"content": "Naam (1)."' in body
     assert (
         '"sources": [{"label": "1", "title": "Privacy policy", "url": "https://getklai.com/docs/legal/privacy"}]'
     ) in body
     assert "4(https://getklai.com/docs/legal/privacy)" not in body
     assert "[DONE]" in body
+
+
+@pytest.mark.asyncio
+async def test_streaming_widget_mode_composes_sources_without_model_citations(monkeypatch):
+    """Production regression: a plain widget answer must still receive clickable sources."""
+    from app.services.partner_chat import chat_completion_streaming
+
+    events = [
+        {"choices": [{"delta": {"content": "Klai is steward-owned and mission-led."}}]},
+    ]
+
+    class _StreamResp:
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def aiter_lines(self):
+            for event in events:
+                yield "data: " + json.dumps(event)
+            yield "data: [DONE]"
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, *_, **__):
+            return _StreamResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm"
+    settings.litellm_master_key = "secret"
+
+    chunks = []
+    async for chunk in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Wat is Klai?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=settings,
+        citation_chunks=[
+            {
+                "title": "Steward ownership",
+                "source_url": "https://www.getklai.com/docs/company/steward-ownership",
+                "text": "Klai is steward-owned and mission-led.",
+            }
+        ],
+        citation_output="markers",
+    ):
+        chunks.append(chunk)
+
+    body = b"".join(chunks).decode()
+    assert '"sources": [{"label": "1", "title": "Steward ownership"' in body
+    assert '"content": "Klai is steward-owned and mission-led (1)."' in body
+    assert body.index('"sources"') < body.index('"content"')
 
 
 def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placeholder():

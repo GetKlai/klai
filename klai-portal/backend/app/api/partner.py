@@ -242,6 +242,7 @@ async def chat_completions(
             settings=settings,
             partner_user_id=partner_user_id,
             widget_system_prompt=widget_system_prompt,
+            backend_managed_citations=is_widget_chat,
         )
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
@@ -281,6 +282,7 @@ async def chat_completions(
             allowed_source_urls=set(citation_source_urls.values()) or _source_urls_from_chunks(chunks),
             citation_source_urls=citation_source_urls,
             citation_source_metadata=citation_source_metadata,
+            citation_chunks=chunks,
             citation_output="markers" if is_widget_chat else "links",
         )
         return StreamingResponse(
@@ -301,6 +303,7 @@ async def chat_completions(
         allowed_source_urls=set(citation_source_urls.values()) or _source_urls_from_chunks(chunks),
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
+        citation_chunks=chunks,
         citation_output="markers" if is_widget_chat else "links",
     )
     return result
