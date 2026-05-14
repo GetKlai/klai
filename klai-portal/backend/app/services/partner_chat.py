@@ -29,6 +29,7 @@ import structlog
 from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
 
 from app.core.config import Settings
+from app.services.citations import compose_citations
 from app.trace import get_trace_headers
 from app.utils.language_detect import (
     detect_language,
@@ -1036,6 +1037,65 @@ def _sse_sources_delta(sources: list[dict[str, str]]) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
+async def _chat_completion_streaming_with_composed_citations(
+    *,
+    augmented_messages: list[dict],
+    model: str,
+    temperature: float,
+    settings: Settings,
+    org_id: int | str | None,
+    user_query: str,
+    citation_chunks: list[dict] | None,
+) -> AsyncGenerator[bytes]:
+    """Collect widget text, compose deterministic citations, then stream once."""
+    raw_text_parts: list[str] = []
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        async with client.stream(
+            "POST",
+            f"{settings.litellm_base_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": augmented_messages,
+                "temperature": temperature,
+                "stream": True,
+            },
+            headers={
+                "Authorization": f"Bearer {settings.litellm_master_key}",
+                **get_trace_headers(),
+            },
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:].strip()
+                if not payload:
+                    continue
+                if payload == "[DONE]":
+                    break
+                try:
+                    evt: dict[str, Any] = json.loads(payload)
+                except json.JSONDecodeError:
+                    logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
+                    continue
+                delta = (evt.get("choices") or [{}])[0].get("delta") or {}
+                text = delta.get("content")
+                if isinstance(text, str) and text:
+                    raw_text_parts.append(text)
+
+    composed = compose_citations("".join(raw_text_parts), citation_chunks or [])
+    if composed.sources:
+        yield _sse_sources_delta(composed.sources)
+    if composed.content:
+        yield _sse_content_delta(composed.content)
+    yield b"data: [DONE]\n\n"
+    _emit_language_correctness_log(
+        org_id=org_id,
+        query=user_query,
+        response_text=composed.content,
+    )
+
+
 def _maybe_sse_sources_delta(
     *,
     citation_output: CitationOutput,
@@ -1052,6 +1112,7 @@ def _build_system_prompt(
     chunks: list[dict],
     original_system: str | None = None,
     widget_system_prompt: str | None = None,
+    backend_managed_citations: bool = False,
 ) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks."""
     base = original_system or GROUNDED_CHAT_SYSTEM_PROMPT
@@ -1078,7 +1139,7 @@ def _build_system_prompt(
                 or chunk.get("source_label")
                 or "Knowledge Base"
             )
-            source_url = _chunk_source_url(chunk)
+            source_url = "" if backend_managed_citations else _chunk_source_url(chunk)
             source_line = f"\nsource_url: {source_url}" if source_url else ""
             context_parts.append(f"[{i}] title: {title}{source_line}\n{text}")
 
@@ -1086,16 +1147,25 @@ def _build_system_prompt(
         return base
 
     context_block = "\n\n".join(context_parts)
-    url_guard = (
-        "URL rules for citations and source links:\n"
-        "- Use only literal source_url values shown in the context below.\n"
-        "- Copy source_url values exactly; do not invent, rewrite, or guess URLs.\n"
-        "- If a cited chunk has no source_url, cite it as [n] without adding a link.\n"
-        "- Never turn a title, heading, or documentation phrase into a URL.\n"
-        "- Optimize for a clean web-widget answer: do not cite the same document repeatedly.\n"
-        "- If several facts in one paragraph or list come from the same source_url, cite that source once.\n"
-        "- If you cite multiple different documents at the same spot, separate citation numbers with commas.\n"
-    )
+    if backend_managed_citations:
+        url_guard = (
+            "Source handling rules:\n"
+            "- Answer only from the context below.\n"
+            "- Do not write URLs, Markdown links, footnotes, source lists, or citation numbers.\n"
+            "- Do not write references such as [1], (1), or 1,2; the application adds citations after generation.\n"
+            "- Keep the answer clean for a small web chat widget.\n"
+        )
+    else:
+        url_guard = (
+            "URL rules for citations and source links:\n"
+            "- Use only literal source_url values shown in the context below.\n"
+            "- Copy source_url values exactly; do not invent, rewrite, or guess URLs.\n"
+            "- If a cited chunk has no source_url, cite it as [n] without adding a link.\n"
+            "- Never turn a title, heading, or documentation phrase into a URL.\n"
+            "- Optimize for a clean web-widget answer: do not cite the same document repeatedly.\n"
+            "- If several facts in one paragraph or list come from the same source_url, cite that source once.\n"
+            "- If you cite multiple different documents at the same spot, separate citation numbers with commas.\n"
+        )
     return f"{base}\n\n{url_guard}\nContext:\n{context_block}"
 
 
@@ -1108,6 +1178,7 @@ async def retrieve_context(
     *,
     partner_user_id: str | None = None,
     widget_system_prompt: str | None = None,
+    backend_managed_citations: bool = False,
 ) -> tuple[list[dict], str]:
     """Call retrieval-api and return (chunks, augmented_system_prompt).
 
@@ -1125,7 +1196,11 @@ async def retrieve_context(
     """
     query = _last_user_message(messages)
     if not query:
-        return [], _build_system_prompt([], widget_system_prompt=widget_system_prompt)
+        return [], _build_system_prompt(
+            [],
+            widget_system_prompt=widget_system_prompt,
+            backend_managed_citations=backend_managed_citations,
+        )
 
     conversation_history = _build_conversation_history(messages)
 
@@ -1152,7 +1227,12 @@ async def retrieve_context(
     retrieval_url = settings.knowledge_retrieve_url
     if not retrieval_url:
         logger.warning("partner_chat_no_retrieval_url")
-        return [], _build_system_prompt([], original_system, widget_system_prompt)
+        return [], _build_system_prompt(
+            [],
+            original_system,
+            widget_system_prompt,
+            backend_managed_citations=backend_managed_citations,
+        )
 
     # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
     # retrieval_api_internal_secret (separate from portal-api's mailer secret).
@@ -1176,7 +1256,12 @@ async def retrieve_context(
         result = resp.json()
 
     chunks = result.get("chunks", [])
-    system_prompt = _build_system_prompt(chunks, original_system, widget_system_prompt)
+    system_prompt = _build_system_prompt(
+        chunks,
+        original_system,
+        widget_system_prompt,
+        backend_managed_citations=backend_managed_citations,
+    )
 
     return chunks, system_prompt
 
@@ -1206,6 +1291,7 @@ async def chat_completion_non_streaming(
     allowed_source_urls: set[str] | None = None,
     citation_source_urls: dict[int, str] | None = None,
     citation_source_metadata: dict[str, dict[str, str]] | None = None,
+    citation_chunks: list[dict] | None = None,
     citation_output: CitationOutput = "links",
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
@@ -1239,19 +1325,23 @@ async def chat_completion_non_streaming(
     citation_source_urls = citation_source_urls or {}
     citation_source_metadata = citation_source_metadata or {}
     emitted_source_key_order: list[str] = []
-    stripped_links = _sanitize_completion_body(
-        body,
-        allowed_source_urls=allowed_source_urls,
-        citation_source_urls=citation_source_urls,
-        emitted_source_key_order=emitted_source_key_order,
-        citation_output=citation_output,
-    )
     if citation_output == "markers":
-        sources = _source_payload_from_keys(emitted_source_key_order, citation_source_metadata)
         for choice in body.get("choices") or []:
             message = choice.get("message") if isinstance(choice, dict) else None
-            if isinstance(message, dict):
-                message["sources"] = sources
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(message, dict) and isinstance(content, str):
+                composed = compose_citations(content, citation_chunks or [])
+                message["content"] = composed.content
+                message["sources"] = composed.sources
+        stripped_links = 0
+    else:
+        stripped_links = _sanitize_completion_body(
+            body,
+            allowed_source_urls=allowed_source_urls,
+            citation_source_urls=citation_source_urls,
+            emitted_source_key_order=emitted_source_key_order,
+            citation_output=citation_output,
+        )
     if stripped_links:
         logger.warning(
             "partner_chat_unretrieved_links_stripped",
@@ -1281,6 +1371,7 @@ async def chat_completion_streaming(
     allowed_source_urls: set[str] | None = None,
     citation_source_urls: dict[int, str] | None = None,
     citation_source_metadata: dict[str, dict[str, str]] | None = None,
+    citation_chunks: list[dict] | None = None,
     citation_output: CitationOutput = "links",
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with KB-source URL sanitization.
@@ -1292,9 +1383,51 @@ async def chat_completion_streaming(
     """
 
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt)
-
-    litellm_url = settings.litellm_base_url
     user_query = _last_user_message(messages) or ""
+
+    if citation_output == "markers":
+        async for chunk in _chat_completion_streaming_with_composed_citations(
+            augmented_messages=augmented_messages,
+            model=model,
+            temperature=temperature,
+            settings=settings,
+            org_id=org_id,
+            user_query=user_query,
+            citation_chunks=citation_chunks,
+        ):
+            yield chunk
+        return
+
+    async for chunk in _chat_completion_streaming_sanitized(
+        augmented_messages=augmented_messages,
+        model=model,
+        temperature=temperature,
+        settings=settings,
+        org_id=org_id,
+        user_query=user_query,
+        allowed_source_urls=allowed_source_urls,
+        citation_source_urls=citation_source_urls,
+        citation_source_metadata=citation_source_metadata,
+        citation_output=citation_output,
+    ):
+        yield chunk
+
+
+async def _chat_completion_streaming_sanitized(
+    *,
+    augmented_messages: list[dict],
+    model: str,
+    temperature: float,
+    settings: Settings,
+    org_id: int | str | None,
+    user_query: str,
+    allowed_source_urls: set[str] | None,
+    citation_source_urls: dict[int, str] | None,
+    citation_source_metadata: dict[str, dict[str, str]] | None,
+    citation_output: CitationOutput,
+) -> AsyncGenerator[bytes]:
+    """Legacy partner streaming path with URL sanitization and linked citations."""
+    litellm_url = settings.litellm_base_url
     allowed_source_urls = allowed_source_urls or set()
     citation_source_urls = citation_source_urls or {}
     citation_source_metadata = citation_source_metadata or {}
