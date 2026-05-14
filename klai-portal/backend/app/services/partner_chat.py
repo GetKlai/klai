@@ -63,18 +63,33 @@ def _last_user_message(messages: list[dict]) -> str | None:
     return None
 
 
+def _normalize_llm_message(message: dict) -> dict[str, str] | None:
+    """Keep only provider-supported chat message fields."""
+    role = message.get("role")
+    if role not in ("user", "assistant"):
+        return None
+
+    content = message.get("content")
+    if isinstance(content, str):
+        return {"role": role, "content": content}
+    if isinstance(content, list):
+        text = " ".join(
+            part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
+        ).strip()
+        if text:
+            return {"role": role, "content": text}
+    return None
+
+
 def _build_conversation_history(messages: list[dict]) -> list[dict]:
     """Return up to the last 6 turns (3 exchanges), excluding the last user message."""
-    history = [
-        {"role": m["role"], "content": m["content"]}
-        for m in messages[:-1]
-        if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
-    ]
+    history = [msg for m in messages[:-1] if (msg := _normalize_llm_message(m)) is not None]
     return history[-6:]
 
 
 def _augment_messages_with_system_prompt(messages: list[dict], system_prompt: str) -> list[dict]:
-    return [{"role": "system", "content": system_prompt}, *(msg for msg in messages if msg.get("role") != "system")]
+    normalized = [msg for m in messages if (msg := _normalize_llm_message(m)) is not None]
+    return [{"role": "system", "content": system_prompt}, *normalized]
 
 
 def _emit_language_correctness_log(
