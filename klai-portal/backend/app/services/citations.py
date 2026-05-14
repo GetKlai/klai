@@ -235,7 +235,6 @@ def compose_citations(
             output_lines.append(line)
 
     rendered_sources = [
-        {"label": str(index), "title": source.title, "url": source.url}
-        for index, source in enumerate(used_order, 1)
+        {"label": str(index), "title": source.title, "url": source.url} for index, source in enumerate(used_order, 1)
     ]
     return ComposedCitations(content="\n".join(output_lines), sources=rendered_sources)
