@@ -414,7 +414,7 @@
   "setup_mfa_email_title": "Email code",
   "setup_mfa_email_description": "We send you a code when you sign in. Simple, no app required.",
   "setup_mfa_totp_title": "Authenticator app",
-  "setup_mfa_totp_description": "Use Google Authenticator, 1Password, or Authy for time-based codes.",
+  "setup_mfa_totp_description": "Use an authenticator app for time-based codes.",
   "setup_mfa_skip": "Skip for now",
   "setup_mfa_back": "Choose a different method",
   "setup_mfa_passkey_heading": "Set up passkey",

@@ -112,7 +112,7 @@ GRANT EXECUTE ON FUNCTION public._rls_current_org_text() TO connector_api;
 
 ### Operator step
 
-1. Generate four passwords (1Password / `openssl rand`)
+1. Generate four passwords (secret generator / `openssl rand`)
 2. SOPS edit: add the four DSN env vars
 3. Run the role-creation SQL on prod as klai
 4. Push compose change + deploy

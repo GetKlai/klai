@@ -414,7 +414,7 @@
   "setup_mfa_email_title": "E-mailcode",
   "setup_mfa_email_description": "We sturen je een code als je inlogt. Eenvoudig, geen app nodig.",
   "setup_mfa_totp_title": "Authenticator-app",
-  "setup_mfa_totp_description": "Gebruik Google Authenticator, 1Password of Authy voor tijdelijke codes.",
+  "setup_mfa_totp_description": "Gebruik een authenticator-app voor tijdelijke codes.",
   "setup_mfa_skip": "Nu overslaan",
   "setup_mfa_back": "Andere methode kiezen",
   "setup_mfa_passkey_heading": "Passkey instellen",

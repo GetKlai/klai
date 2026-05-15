@@ -21,7 +21,7 @@ prefixed `e2e-{run-timestamp}-...` so cleanup never touches real user data.
 ## Run locally — isolated-tenant mode (default)
 
 ```bash
-# .env.local (gitignored; values from 1Password)
+# .env.local (gitignored; values from your chosen secret store)
 export E2E_BASE_URL=https://e2e.getklai.com
 export E2E_USER_EMAIL=e2e@getklai.com
 export E2E_USER_PASSWORD=...
@@ -30,6 +30,20 @@ export E2E_TOTP_SECRET=...
 cd klai-portal/frontend
 npm run test:e2e:prod
 ```
+
+### TOTP secret setup
+
+The e2e runner needs the raw Base32 TOTP seed in `E2E_TOTP_SECRET`.
+It generates login codes with `otplib`; it cannot use a QR code, a
+one-time recovery code, or a code currently shown in an authenticator app.
+
+During MFA setup, expand **Enter manually** and store that displayed
+secret in your chosen secret store and in the GitHub Secret
+`E2E_TOTP_SECRET`.
+
+If MFA was already completed and the seed was not stored, reset TOTP for
+the e2e user and enroll it again. Capture the new manual secret before
+confirming the setup, then update local `.env.local` and GitHub Secrets.
 
 ## Run locally — voys-attached mode
 

@@ -146,7 +146,7 @@ WebAuthn with FIDO Security Keys:
 
 One-Time Password (OTP):
 - Time-based OTP (TOTP) with authenticator apps
-- Compatible with Google Authenticator, Authy, 1Password
+- Compatible with standard authenticator apps
 - QR code enrollment
 - Backup codes for recovery
 
