@@ -4,7 +4,7 @@ Production tenant end-to-end tests. Two modes:
 
 | Mode | When to use | Login | Where it can run |
 |---|---|---|---|
-| **`isolated-tenant`** (default) | Bot user, dedicated tenant | email + password + TOTP | local + CI |
+| **`isolated-tenant`** (default) | Bot user, dedicated tenant | email + password (+ TOTP if the bot has MFA enrolled) | local + CI |
 | **`voys-attached`** | Real Voys tenant via Google SSO | one-time capture, then session-cookie reuse | local + CI (via secret-injected storage-state) |
 
 The session-cookie captured by `npm run e2e:capture-session` keeps the
@@ -21,13 +21,17 @@ prefixed `e2e-{run-timestamp}-...` so cleanup never touches real user data.
 ## Run locally — isolated-tenant mode (default)
 
 ```bash
-# .env.local (gitignored; values from 1Password)
+# klai-portal/frontend/.env.local — gitignored via *.local.
+# Get the password value from wherever the team stores bot credentials.
+# E2E_TOTP_SECRET is optional: only set it if MFA is enrolled on the bot.
+# auth.ts probes for the TOTP form and skips the step when absent.
 export E2E_BASE_URL=https://e2e.getklai.com
 export E2E_USER_EMAIL=e2e@getklai.com
 export E2E_USER_PASSWORD=...
-export E2E_TOTP_SECRET=...
+# export E2E_TOTP_SECRET=...   # base32 seed; only if the bot has MFA
 
 cd klai-portal/frontend
+source .env.local
 npm run test:e2e:prod
 ```
 

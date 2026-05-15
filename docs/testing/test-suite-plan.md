@@ -233,14 +233,16 @@ zijn als ze ooit gewijzigd worden.
 
 ## 7. Prerequisites
 
-Status geverifieerd 2026-05-14: alle prerequisites zijn gereed.
+Status geverifieerd 2026-05-15. #3 (TOTP) is intentioneel niet enrolled
+op de e2e-bot; `auth.ts` probet de TOTP-form en skipt de stap als die
+niet verschijnt, dus de MFA-off bot werkt zonder seed.
 
 | # | Prerequisite | Wie | Status |
 |---|---|---|---|
 | 1 | E2E-tenant `e2e.getklai.com` op productie aangemaakt | jij (Mark) handmatig via signup | done |
 | 2 | E2E-user `e2e@getklai.com` met password | jij (gegenereerd) | done |
-| 3 | TOTP setup voor e2e-user; secret gecaptured | jij eenmalig | done |
-| 4 | GitHub Secrets: `E2E_USER_EMAIL`, `E2E_USER_PASSWORD`, `E2E_TOTP_SECRET`, `E2E_BASE_URL` | jij | done (`gh secret list`, gezet 2026-05-13) |
+| 3 | TOTP setup voor e2e-user | jij | skipped — niet enrolled; `auth.ts` skipt de stap |
+| 4 | GitHub Secrets: `E2E_USER_EMAIL`, `E2E_USER_PASSWORD`, `E2E_BASE_URL` (+ optioneel `E2E_TOTP_SECRET` als #3 ooit wel gebeurt) | jij | done (`gh secret list`, gezet 2026-05-13) |
 | 5 | SPEC-INFRA-TENANT-DELETE-001 gemerged (zodat J03/J05/J06/J09 cleanup volledig is) | aparte sessie | done (runbook `docs/runbooks/tenant-delete.md`) |
 | 6 | `otplib` (Node) als devDep in `klai-portal/frontend/package.json` | mij | done (otplib 12.0.1) |
 | 7 | `playwright.prod.config.ts` met `baseURL = process.env.E2E_BASE_URL` | mij | done |
@@ -249,6 +251,13 @@ Status geverifieerd 2026-05-14: alle prerequisites zijn gereed.
 Prerequisite #5 (delete-tenant SPEC) is gemerged, dus de happy-path
 J03/J05/J06/J09 cleanup is volledig — die journeys laten geen residual
 KB's / templates / transcripts meer achter binnen de e2e-tenant.
+
+**Security-trade-off van #3 skipped:** zonder MFA op de bot is het
+wachtwoord de enige auth-factor. Als dat wachtwoord lekt, is het account
+direct compromised. Voor een geïsoleerde test-tenant accepteren we dat;
+mocht de bot in de toekomst toegang krijgen tot iets gevoeligers, dan
+moet #3 alsnog enrolled worden en `E2E_TOTP_SECRET` op `.env.local` /
+GitHub Secrets gezet.
 
 ---
 
@@ -312,16 +321,14 @@ hij oude code op live tenant.
 
 ## 9. Lokale ontwikkeling
 
-Credentials staan op twee plekken:
-
-- **1Password** — het e2e-bot-item. Dit is de bron waar je lokaal uit kopieert.
-- **GitHub Actions Secrets** (`E2E_BASE_URL` / `E2E_USER_EMAIL` /
-  `E2E_USER_PASSWORD` / `E2E_TOTP_SECRET`) — voor CI. GitHub Secrets zijn
-  write-only: je kunt een waarde niet teruglezen, dus dit is geen bron om
-  lokaal uit te kopiëren — gebruik 1Password.
+Credentials komen uit waar het team bot-secrets bewaart (vraag Mark als
+je het niet weet). Voor CI staan ze als **GitHub Actions Secrets**
+(`E2E_BASE_URL` / `E2E_USER_EMAIL` / `E2E_USER_PASSWORD` — plus
+`E2E_TOTP_SECRET` als #3 ooit enrolled wordt). GitHub Secrets zijn
+write-only: niet teruglezbaar, dus geen bron om lokaal uit te kopiëren.
 
 Zet de waarden in `klai-portal/frontend/.env.local` (gitignored via
-`*.local`). Een template staat in §7 / `e2e/prod-tenant/README.md`. De
+`*.local`). Een template staat in `e2e/prod-tenant/README.md`. De
 `E2E_*`-regels gebruiken `export` zodat het bestand ge-`source`d kan
 worden:
 
@@ -339,8 +346,11 @@ npx playwright test e2e/prod-tenant/J03-knowledge.spec.ts --headed
 PWDEBUG=1 npx playwright test e2e/prod-tenant/J02-chat.spec.ts
 ```
 
-> De TOTP-seed (`E2E_TOTP_SECRET`) is de MFA-seed van de bot — plak die
-> nooit in een chat, ticket of commit. Alleen in `.env.local` of 1Password.
+> `E2E_TOTP_SECRET` is alleen nodig als MFA op de bot enrolled is — dat
+> is per 2026-05-15 niet zo. `auth.ts` probet de TOTP-form en skipt de
+> stap wanneer hij niet verschijnt, dus laat de regel weg of leeg.
+> Mocht MFA later wel enrolled worden: zet de base32-seed in
+> `.env.local` (gitignored) — nooit in een chat, ticket of commit.
 
 ---
 

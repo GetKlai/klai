@@ -27,7 +27,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  *   E2E_BASE_URL          e.g. https://e2e.getklai.com
  *   E2E_USER_EMAIL        e.g. e2e@getklai.com
  *   E2E_USER_PASSWORD     password for the e2e user
- *   E2E_TOTP_SECRET       Base32-encoded TOTP secret captured during MFA setup
+ *
+ * Optional env (isolated-tenant mode):
+ *   E2E_TOTP_SECRET       Base32-encoded TOTP seed captured during MFA setup.
+ *                         Only required when MFA is enrolled on the bot user.
+ *                         auth.ts probes for the TOTP form and skips the step
+ *                         when the form does not appear.
  *
  * Required env (voys-attached mode):
  *   E2E_BASE_URL          e.g. https://voys.getklai.com
@@ -46,7 +51,10 @@ const E2E_MODE = (process.env.E2E_MODE ?? 'isolated-tenant') as
   | 'voys-attached'
 
 if (E2E_MODE === 'isolated-tenant') {
-  const requiredEnv = ['E2E_BASE_URL', 'E2E_USER_EMAIL', 'E2E_USER_PASSWORD', 'E2E_TOTP_SECRET'] as const
+  // E2E_TOTP_SECRET is OPTIONAL — only required when MFA is enrolled on
+  // the bot. The current bot has no MFA; auth.ts probes for the TOTP form
+  // at login time and skips the step when it does not appear.
+  const requiredEnv = ['E2E_BASE_URL', 'E2E_USER_EMAIL', 'E2E_USER_PASSWORD'] as const
   for (const k of requiredEnv) {
     if (!process.env[k]) {
       console.warn(`[playwright.prod.config] missing env: ${k}`)
