@@ -33,7 +33,10 @@ function requireEnv(name: string): string {
 export async function loginAsE2EBot(page: Page): Promise<void> {
   const email = requireEnv('E2E_USER_EMAIL')
   const password = requireEnv('E2E_USER_PASSWORD')
-  const totpSecret = requireEnv('E2E_TOTP_SECRET')
+  // TOTP is OPTIONAL. The bot may run without MFA enrolled (current state),
+  // in which case the seed is not set and the TOTP form never appears.
+  // If MFA IS enrolled, the seed becomes required at runtime (see below).
+  const totpSecret = process.env.E2E_TOTP_SECRET ?? ''
 
   // Always start from the canonical login page so redirects don't leak
   // half-finished auth state from prior runs.
@@ -49,20 +52,29 @@ export async function loginAsE2EBot(page: Page): Promise<void> {
   // exact button label depends on locale (NL "Inloggen" / EN "Sign in").
   await page.locator('button[type="submit"]').first().click()
 
-  // TOTP step. The form may not always appear (e.g. if MFA is disabled
-  // — which we explicitly do NOT want for the e2e bot, see plan §1).
-  // Wait up to 10s; failure here is a hard fail.
-  await page.waitForSelector('input[name="totp"], input[autocomplete="one-time-code"]', {
-    timeout: 10_000,
-  })
-
-  const code = authenticator.generate(totpSecret)
-  // Try both common selectors for the OTP input.
+  // TOTP step is conditional. Probe for the form briefly: if it appears,
+  // MFA is enrolled and we fill it; if not, the bot has no MFA and we
+  // proceed straight to /app/*. This makes the helper work in both
+  // MFA-on and MFA-off bot configurations without code changes.
   const totpInput = page.locator('input[name="totp"], input[autocomplete="one-time-code"]').first()
-  await totpInput.fill(code)
+  const totpVisible = await totpInput
+    .waitFor({ state: 'visible', timeout: 3_000 })
+    .then(() => true)
+    .catch(() => false)
 
-  // Submit TOTP. Same broad selector as above.
-  await page.locator('button[type="submit"]').first().click()
+  if (totpVisible) {
+    if (!totpSecret) {
+      throw new Error(
+        '[e2e/prod-tenant] TOTP form appeared but E2E_TOTP_SECRET is not set. ' +
+          'Either enroll TOTP for the bot AND set the seed in .env.local / GitHub ' +
+          'Secrets, or disable MFA on the bot user / tenant. See plan §7.',
+      )
+    }
+    const code = authenticator.generate(totpSecret)
+    await totpInput.fill(code)
+    // Submit TOTP. Same broad selector as the password form.
+    await page.locator('button[type="submit"]').first().click()
+  }
 
   // Land on /app/*. Allow up to 15s for any post-login redirects.
   await page.waitForURL(/\/app(\/|$)/, { timeout: 15_000 })
