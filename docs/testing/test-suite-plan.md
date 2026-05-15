@@ -237,7 +237,7 @@ zijn als ze ooit gewijzigd worden.
 |---|---|---|---|
 | 1 | E2E-tenant `e2e.getklai.com` op productie aangemaakt | jij (Mark) handmatig via signup | open |
 | 2 | E2E-user `e2e@getklai.com` met password | jij (gegenereerd) | open |
-| 3 | TOTP setup voor e2e-user; secret gecaptured | jij eenmalig | open |
+| 3 | TOTP setup voor e2e-user; handmatige Base32 secret gecaptured | jij eenmalig | open |
 | 4 | GitHub Secrets: `E2E_USER_EMAIL`, `E2E_USER_PASSWORD`, `E2E_TOTP_SECRET`, `E2E_BASE_URL` | jij | open |
 | 5 | SPEC-INFRA-TENANT-DELETE-001 gemerged (zodat J03/J05/J06/J09 cleanup volledig is) | aparte sessie | open |
 | 6 | `otplib` (Node) als devDep in `klai-portal/frontend/package.json` | mij | open |
@@ -316,8 +316,8 @@ hij oude code op live tenant.
 # .env.local (gitignored)
 export E2E_BASE_URL=https://e2e.getklai.com
 export E2E_USER_EMAIL=e2e@getklai.com
-export E2E_USER_PASSWORD=<from-1password>
-export E2E_TOTP_SECRET=<from-1password>
+export E2E_USER_PASSWORD=<from-secret-store>
+export E2E_TOTP_SECRET=<base32-secret-from-totp-setup>
 
 # Run alle journeys
 cd klai-portal/frontend
@@ -329,6 +329,13 @@ npx playwright test e2e/prod-tenant/J03-knowledge.spec.ts --headed
 # Debug-mode
 PWDEBUG=1 npx playwright test e2e/prod-tenant/J02-chat.spec.ts
 ```
+
+`E2E_TOTP_SECRET` is de raw Base32 seed die de setup-flow onder
+**Handmatig invoeren / Enter manually** toont. Een QR-code of een actuele
+6-cijferige authenticator-code is niet genoeg. Als de e2e-user al is
+enrolled maar die seed niet is opgeslagen, reset TOTP voor die user en
+doorloop MFA setup opnieuw; sla de handmatige secret op voordat je de
+setup bevestigt.
 
 ---
 
