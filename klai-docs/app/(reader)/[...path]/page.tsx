@@ -164,22 +164,34 @@ export default async function ReaderPage({
         kbSlug={kbSlug}
         kbName={kb.name}
       />
-      <main className="flex-1 w-full px-5 sm:px-8 md:px-16 py-8 md:py-12">
+      <main className="flex-1 w-full px-5 sm:px-8 md:px-16 pt-10 md:pt-14 pb-16">
         <div className="mx-auto max-w-[780px]">
           {articlePath ? (
             <>
-              {icon && (
-                <div className="text-[40px] md:text-[48px] leading-none mb-4">{icon}</div>
-              )}
-              <h1 className="text-[32px] sm:text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-6">{title}</h1>
+              {/* Kicker: the logical top anchor. Small icon + KB name in
+                  mono caps gives the spacing above the title a purpose,
+                  replacing the arbitrary py padding + floating glyph. */}
+              <div className="flex items-center gap-2 mb-4">
+                {icon && <span className="text-[15px] leading-none">{icon}</span>}
+                <span className="text-[12px] font-[family-name:var(--font-mono)] uppercase tracking-[0.06em] text-[var(--color-rl-accent-dark)]">
+                  {kb.name}
+                </span>
+              </div>
+              <h1 className="text-[32px] sm:text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-5">{title}</h1>
               {description && (
-                <p className="text-[16px] text-[var(--color-rl-dark-60)] leading-[1.6] mb-10 max-w-[55ch]">{description}</p>
+                <p className="text-[16px] text-[var(--color-rl-dark-60)] leading-[1.6] max-w-[55ch]">{description}</p>
               )}
+              <hr className="my-10 border-0 border-t border-[var(--color-rl-border)]" />
               <PageRenderer content={content} pageIndex={pageIndex} kbSlug={kbSlug} />
             </>
           ) : (
             <div>
-              <h1 className="text-[32px] sm:text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-6">{kb.name}</h1>
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-[12px] font-[family-name:var(--font-mono)] uppercase tracking-[0.06em] text-[var(--color-rl-accent-dark)]">
+                  {kb.name}
+                </span>
+              </div>
+              <h1 className="text-[32px] sm:text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-5">{kb.name}</h1>
               <p className="text-[16px] text-[var(--color-rl-dark-60)] leading-[1.6]">Select a page from the sidebar.</p>
             </div>
           )}
