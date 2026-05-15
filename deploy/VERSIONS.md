@@ -78,7 +78,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 | `tei` | `ghcr.io/huggingface/text-embeddings-inference:1.9` | BGE-M3 dense embeddings. **Output-dimension critical** — verify bge-m3 embedding parity (same vector output for same input) before any upgrade, otherwise retrieval scores silently drift. |
 | `infinity` | `michaelf34/infinity:0.0.77` | BGE reranker-v2-m3. Upstream slowing (last release Aug 2025). |
 | `transcription-worker-1`, `transcription-worker-2` | `vexaai/transcription-service:0.10.6-local-260503-0858` (locally built on gpu-01 — NOT on Docker Hub) | Vexa transcription-service (SPEC-VEXA-003 §3.4). Replaces the legacy custom `whisper-server` 146-line Python script. `faster-whisper` + Silero VAD + hallucination detection + two-tier admission (realtime/deferred) behind Nginx LB. CUDA 12.3.2 + cuDNN 9. Host port `127.0.0.1:8000` retained so `gpu-tunnel.service` and all consumer URLs stay unchanged. Bump procedure: `docs/runbooks/transcription-service-bump.md`. |
-| `transcription-api` | `nginx:1.27-alpine` | Least-connections load balancer in front of the two CUDA workers. Config at `deploy/vexa-transcription/nginx.conf`. |
+| `transcription-api` | `nginx:1.30.1-alpine` | Least-connections load balancer in front of the two CUDA workers. Config at `deploy/vexa-transcription/nginx.conf`. Bumped from 1.27 to pick up the CVE-2026-42945 fix; nginx marks 1.30.1+ as not vulnerable. |
 | `bge-m3-sparse` | built from `./bge-m3-sparse` | Local build. Sparse embeddings sidecar for hybrid retrieval. |
 
 ---
