@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { NavNode } from "@/lib/gitea";
@@ -16,10 +16,15 @@ export function Sidebar({ tree, kbSlug, kbName }: Props) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  // Close the mobile drawer whenever the route changes.
-  useEffect(() => {
+  // Close the mobile drawer whenever the route changes. Adjusting state
+  // during render (not in an effect) is the recommended pattern for
+  // resetting state in response to a prop change — no extra commit, no
+  // cascading-render lint warning.
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (pathname !== prevPathname) {
+    setPrevPathname(pathname);
     setOpen(false);
-  }, [pathname]);
+  }
 
   return (
     <>
