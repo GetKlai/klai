@@ -135,6 +135,7 @@ export default async function ReaderPage({
   let content = "";
   let title = kb.name;
   let description = "";
+  let icon = "";
 
   if (articlePath) {
     const raw = await gitea.getFileContent(kb.gitea_repo, articlePath);
@@ -152,31 +153,37 @@ export default async function ReaderPage({
     content = parsed.content;
     title = parsed.frontmatter.title ?? title;
     description = parsed.frontmatter.description ?? "";
+    icon = parsed.frontmatter.icon ?? "";
   }
 
   return (
-    <div className="flex min-h-screen bg-[var(--color-rl-bg)]">
+    <div className="flex flex-col md:flex-row min-h-screen bg-[var(--color-rl-bg)]">
       <Sidebar
         tree={navTree}
         orgSlug={orgSlug}
         kbSlug={kbSlug}
         kbName={kb.name}
       />
-      <main className="flex-1 px-10 md:px-16 py-12 max-w-[780px]">
-        {articlePath ? (
-          <>
-            <h1 className="text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-6">{title}</h1>
-            {description && (
-              <p className="text-[16px] text-[var(--color-rl-dark-60)] leading-[1.6] mb-10 max-w-[55ch]">{description}</p>
-            )}
-            <PageRenderer content={content} pageIndex={pageIndex} kbSlug={kbSlug} />
-          </>
-        ) : (
-          <div>
-            <h1 className="text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-6">{kb.name}</h1>
-            <p className="text-[16px] text-[var(--color-rl-dark-60)] leading-[1.6]">Select a page from the sidebar.</p>
-          </div>
-        )}
+      <main className="flex-1 w-full px-5 sm:px-8 md:px-16 py-8 md:py-12">
+        <div className="mx-auto max-w-[780px]">
+          {articlePath ? (
+            <>
+              {icon && (
+                <div className="text-[40px] md:text-[48px] leading-none mb-4">{icon}</div>
+              )}
+              <h1 className="text-[32px] sm:text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-6">{title}</h1>
+              {description && (
+                <p className="text-[16px] text-[var(--color-rl-dark-60)] leading-[1.6] mb-10 max-w-[55ch]">{description}</p>
+              )}
+              <PageRenderer content={content} pageIndex={pageIndex} kbSlug={kbSlug} />
+            </>
+          ) : (
+            <div>
+              <h1 className="text-[32px] sm:text-[40px] md:text-[48px] tracking-[-0.04em] leading-[110%] text-rl-dark mb-6">{kb.name}</h1>
+              <p className="text-[16px] text-[var(--color-rl-dark-60)] leading-[1.6]">Select a page from the sidebar.</p>
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );
