@@ -119,17 +119,18 @@ className="text-[var(--color-destructive)]"        // Error text — semantic to
 
 // Backgrounds
 className="bg-white"                               // Main content area
-className="bg-gray-50"                             // Icon containers, subtle surfaces, hover
-className="hover:bg-gray-50"                       // Row hover
+className="hover:bg-[var(--color-rl-cream)]"       // Dashboard list-row hover (warm)
 className="bg-black/[0.06]"                        // Active/selected layer in dash
-className="hover:bg-black/5"                       // Layer hover
+className="hover:bg-black/5"                       // Layer hover (sidebar items)
 
 // Borders
 className="border border-gray-200"                 // All borders
 className="divide-y divide-gray-200"               // Row dividers
 ```
 
-**Rule:** Use `gray-200` for borders. Use `gray-50` for subtle backgrounds. Use `gray-400` for muted text. Use `gray-900` for primary prose text. Use semantic tokens (`var(--color-*)`) for error/success/warning/ring states. Apply `bg-black/[0.06]` for active-layer surfaces and `bg-black/5` for hover wherever rest / layering is needed in the dash — not only in the sidebar.
+**Rule:** Use `gray-200` for borders. Use `gray-400` for muted text. Use `gray-900` for primary prose text. Use semantic tokens (`var(--color-*)`) for error/success/warning/ring states. Apply `bg-black/[0.06]` for active-layer surfaces and `bg-black/5` for sidebar-item hover.
+
+**Dashboard list-row hover is warm, not cold gray.** Hovered collection/list rows use `hover:bg-[var(--color-rl-cream)]` (`#f5f4ef`) — never `hover:bg-gray-50`. Cold enterprise gray is a styleguide anti-pattern ("loses warmth, use cream/ivory"). `gray-50` is no longer a sanctioned surface color in the dash; the only remaining `bg-gray-50` uses are loading skeletons (`animate-pulse`), which are exempt because they are never seen at rest.
 
 ### Amber reserve
 
@@ -315,6 +316,33 @@ Flat divider-separated rows with expand/collapse:
 
 Each row: chevron toggle, icon, name, source count, sync badge, + Add button, delete button.
 
+### Dashboard list row (canonical)
+
+The single source of truth for every clickable list/collection row in the
+dash (home, knowledge, docs, admin, sources, connectors). Calm over chaos:
+one warm hover, no decoration.
+
+```tsx
+<div className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-rl-cream)] transition-colors">
+  {/* Leading icon — bare glyph, NO background box */}
+  <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
+    <SomeIcon className="h-5 w-5" />
+  </div>
+  <span className="text-[15px] font-display text-gray-900 truncate">{name}</span>
+  <span className="text-gray-400 text-sm">{meta}</span>
+</div>
+```
+
+Hard rules for this pattern:
+
+| Aspect | Rule |
+|---|---|
+| Row hover | `hover:bg-[var(--color-rl-cream)]` — warm, full-width, the ONLY affordance |
+| Title on hover | NO `group-hover:underline`. The row bg is the affordance; underline is web-1.0 noise |
+| Leading icon | NO `bg-gray-50` / `rounded-lg` box. Bare icon, `text-gray-400`. The `h-8 w-8` flex wrapper is for alignment only — no background |
+| Active/confirm state | Sticky `bg-[var(--color-rl-cream)]` (same as hover), so overlays like the delete-confirm pill match the row and show no seam |
+| Cold gray | Never `hover:bg-gray-50` or `bg-gray-50` icon boxes anywhere a user sees at rest |
+
 ---
 
 ## Form Patterns
@@ -467,6 +495,9 @@ Standard wrapper: `inline-flex items-center justify-center transition-opacity ho
 | `uppercase` or `tracking-wider` / `tracking-[0.04em]` on prose | Sentence-case, no tracking adjustment |
 | `border-[var(--color-border)]` for table/list borders | `border-gray-200` (Tailwind literal) |
 | Gray-literal + black-alpha on the same surface | Pick one layering mechanism per surface |
+| `hover:bg-gray-50` on a list/collection row | `hover:bg-[var(--color-rl-cream)]` (warm) |
+| `rounded-lg bg-gray-50` box around a list-row icon | Bare icon `text-gray-400`, no box |
+| `group-hover:underline` on a row title | No underline; the row bg is the affordance |
 
 ---
 

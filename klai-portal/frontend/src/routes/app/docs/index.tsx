@@ -79,15 +79,15 @@ function DocsPage() {
           {accessibleKbs.map((kb) => (
             <div
               key={kb.id}
-              className="group flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors cursor-pointer"
+              className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-rl-cream)] transition-colors cursor-pointer"
               onClick={() => void navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug } })}
             >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
                 <BookMarked className="h-4 w-4" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-[15px] font-display text-gray-900 group-hover:underline truncate">
+                  <span className="text-[15px] font-display text-gray-900 truncate">
                     {kb.name}
                   </span>
                   <span className="inline-flex items-center gap-1 text-xs text-gray-400">
@@ -132,7 +132,7 @@ function DocsPage() {
           {lockedKbs.map((kb) => (
             <Tooltip key={kb.id} label={m.docs_kb_locked_tooltip()}>
               <div className="flex items-center gap-3 px-2 py-3.5 opacity-60 cursor-default">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
                   <Lock className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">

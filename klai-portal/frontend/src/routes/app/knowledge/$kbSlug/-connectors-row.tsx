@@ -60,14 +60,14 @@ export function ConnectorRow({
   const isRunning = connector.last_sync_status?.toUpperCase() === 'RUNNING'
 
   return (
-    <tr className="group border-b border-gray-200 last:border-b-0 hover:bg-gray-50 transition-colors">
+    <tr className="group border-b border-gray-200 last:border-b-0 hover:bg-[var(--color-rl-cream)] transition-colors">
       <td className="py-4 pr-2 align-top w-6">
         <Tooltip className="leading-none mt-px" label={typeLabel}>
           <Icon className="h-4 w-4 text-gray-400" />
         </Tooltip>
       </td>
       <td className="py-4 pr-4 align-top">
-        <span className="font-medium text-gray-900 group-hover:underline">{connector.name}</span>
+        <span className="font-medium text-gray-900">{connector.name}</span>
       </td>
       <td className="py-4 pr-4 align-top w-28">
         <span className="text-xs text-gray-400">{typeLabel}</span>
