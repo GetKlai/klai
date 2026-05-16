@@ -175,7 +175,7 @@ export function ChatConfigBar() {
               <button
                 type="button"
                 onClick={() => mutation.mutate({ kb_personal_enabled: !pref.kb_personal_enabled })}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-gray-50 transition-colors text-left"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-[var(--color-hover)] transition-colors text-left"
               >
                 <span
                   className={`h-2 w-2 shrink-0 rounded-full ${pref.kb_personal_enabled ? 'bg-green-500' : 'bg-gray-200'}`}
@@ -192,7 +192,7 @@ export function ChatConfigBar() {
                   key={kb.slug}
                   type="button"
                   onClick={() => toggleSlug(kb.slug)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-gray-50 transition-colors text-left"
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-[var(--color-hover)] transition-colors text-left"
                 >
                   <span
                     className={`h-2 w-2 shrink-0 rounded-full ${currentSlugs.includes(kb.slug) ? 'bg-green-500' : 'bg-gray-200'}`}
@@ -232,7 +232,7 @@ export function ChatConfigBar() {
                 }
                 aria-checked={pref.kb_narrow}
                 role="checkbox"
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-gray-50 transition-colors text-left"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-[var(--color-hover)] transition-colors text-left"
               >
                 <span
                   className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border ${
@@ -307,7 +307,7 @@ export function ChatConfigBar() {
                       key={t.id}
                       type="button"
                       onClick={() => toggleTemplate(t.id)}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-gray-50 transition-colors text-left"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-[var(--color-hover)] transition-colors text-left"
                     >
                       <span
                         className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-green-500' : 'bg-gray-200'}`}

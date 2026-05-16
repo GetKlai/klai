@@ -84,7 +84,7 @@ export function InviteSection({
                       type="button"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => onInviteGroup?.(group.id)}
-                      className="w-full px-3 py-2 text-left text-sm text-gray-900 hover:bg-gray-50 transition-colors"
+                      className="w-full px-3 py-2 text-left text-sm text-gray-900 hover:bg-[var(--color-hover)] transition-colors"
                     >
                       {group.name}
                     </button>
@@ -95,7 +95,7 @@ export function InviteSection({
                       type="button"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => onInviteUser?.(user.email)}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors"
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)] transition-colors"
                     >
                       <span className="text-gray-900">{user.display_name}</span>
                       <span className="ml-2 text-xs text-gray-400">{user.email}</span>

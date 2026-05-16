@@ -78,7 +78,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
           // Keep the row in its hovered state while the delete-confirm
           // pill is open — otherwise the pill (cream) would float
           // on a white row and the contrast looks like a bug.
-          confirmingDelete ? 'bg-[var(--color-rl-cream)]' : 'hover:bg-[var(--color-rl-cream)]',
+          confirmingDelete ? 'bg-[var(--color-rl-cream)]' : 'hover:bg-[var(--color-hover)]',
         ].join(' ')}
       >
         <div className="flex flex-1 min-w-0 items-center gap-3 px-2 py-3.5">

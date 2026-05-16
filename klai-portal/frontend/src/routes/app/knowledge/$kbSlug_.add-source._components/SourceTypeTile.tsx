@@ -15,7 +15,7 @@ export function SourceTypeTile({ meta, kbSlug, onSelectUpload }: SourceTypeTileP
   const tileClasses = [
     'flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all',
     available
-      ? 'border-gray-200 bg-white hover:bg-gray-50 cursor-pointer'
+      ? 'border-gray-200 bg-white hover:bg-[var(--color-hover)] cursor-pointer'
       : 'border-gray-200 bg-white opacity-50 cursor-default',
   ].join(' ')
 

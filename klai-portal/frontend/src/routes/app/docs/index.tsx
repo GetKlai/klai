@@ -79,7 +79,7 @@ function DocsPage() {
           {accessibleKbs.map((kb) => (
             <div
               key={kb.id}
-              className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-rl-cream)] transition-colors cursor-pointer"
+              className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-hover)] transition-colors cursor-pointer"
               onClick={() => void navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug } })}
             >
               <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
