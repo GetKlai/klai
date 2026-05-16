@@ -86,7 +86,7 @@ function AdminHome() {
           <a
             key={section.title}
             href={section.href}
-            className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-rl-cream)] transition-colors"
+            className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-hover)] transition-colors"
           >
             <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
               <section.icon className="h-4 w-4" />

@@ -108,7 +108,7 @@ export function MemberPicker({
                     ])
                     setGroupSearch('')
                   }}
-                  className="w-full px-3 py-2 text-left text-sm text-gray-900 hover:bg-gray-50 transition-colors"
+                  className="w-full px-3 py-2 text-left text-sm text-gray-900 hover:bg-[var(--color-hover)] transition-colors"
                 >
                   {g.name}
                 </button>
@@ -186,7 +186,7 @@ export function MemberPicker({
                     ])
                     setUserSearch('')
                   }}
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors"
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)] transition-colors"
                 >
                   <span className="text-gray-900">{u.display_name}</span>
                   <span className="ml-2 text-xs text-gray-400">

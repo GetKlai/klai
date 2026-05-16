@@ -78,7 +78,7 @@ Tab headers, labels, meta-text: sentence-case.
 - **Grayscale (borders, hover bg, muted text)** → Tailwind literals (`gray-50`, `gray-200`, `gray-400`, `gray-900`)
 - **Semantic / themeable** (sidebar, destructive, success, warning, focus-ring) → CSS tokens (`var(--color-sidebar)`, `var(--color-destructive)`, ...)
 - **Content background** → `bg-white`
-- **Sidebar accent (hover + active)** → `var(--color-sidebar-accent)` (warm 10% amber)
+- **Every interactive hover/active surface (list rows, sidebar items, pickers)** → `var(--color-hover)` — ONE token, identical everywhere
 - **Non-sidebar trays / subtle layering** → `bg-black/[0.06]` active, `bg-black/[0.03]` tray (NOT for list rows or sidebar)
 
 The `#191918` token (`--color-foreground`) and Tailwind's `gray-900` (`#111827`) are not identical. Both are acceptable in v1:
@@ -120,18 +120,18 @@ className="text-[var(--color-destructive)]"        // Error text — semantic to
 
 // Backgrounds
 className="bg-white"                               // Main content area
-className="hover:bg-[var(--color-rl-cream)]"       // Dashboard list-row hover (warm)
-className="bg-black/[0.06]"                        // Active/selected layer in dash
-className="bg-[var(--color-sidebar-accent)]"       // Sidebar hover + active (warm 10% amber)
+className="hover:bg-[var(--color-hover)]"          // EVERY interactive hover (rows, sidebar, pickers)
+className="bg-[var(--color-hover)]"                // active/confirm state + sidebar active
+className="bg-black/[0.06]"                        // Non-sidebar tray layering only
 
 // Borders
 className="border border-gray-200"                 // All borders
 className="divide-y divide-gray-200"               // Row dividers
 ```
 
-**Rule:** Use `gray-200` for borders. Use `gray-400` for muted text. Use `gray-900` for primary prose text. Use semantic tokens (`var(--color-*)`) for error/success/warning/ring states. Sidebar hover + active use the warm `var(--color-sidebar-accent)` (10% amber). `bg-black/[0.06]` / `bg-black/[0.03]` are for non-sidebar trays only — never list rows or sidebar.
+**Rule:** Use `gray-200` for borders. Use `gray-400` for muted text. Use `gray-900` for primary prose text. Use semantic tokens (`var(--color-*)`) for error/success/warning/ring states. `bg-black/[0.06]` / `bg-black/[0.03]` are for non-sidebar trays only — never list rows or sidebar.
 
-**Dashboard list-row hover is warm, not cold gray.** Hovered collection/list rows use `hover:bg-[var(--color-rl-cream)]` (`#f5f4ef`) — never `hover:bg-gray-50`. Cold enterprise gray is a styleguide anti-pattern ("loses warmth, use cream/ivory"). `gray-50` is no longer a sanctioned surface color in the dash; the only remaining `bg-gray-50` uses are loading skeletons (`animate-pulse`), which are exempt because they are never seen at rest.
+**One hover token, identical everywhere.** Every interactive hover and active state in the dash — list/collection rows, sidebar items, pickers, file tiles, action rows — uses `var(--color-hover)` (`#f3f2e7`, opaque warm cream). Never `hover:bg-gray-50`, never `hover:bg-black/5`, never a per-component color. `--color-sidebar-accent` is an alias of `--color-hover` so the sidebar can never drift from the rows again. It is opaque on purpose: the inline-delete-confirm pill overlays it on a hovered row and must mask the text underneath. The only remaining `bg-gray-50` uses are loading skeletons (`animate-pulse`), exempt because they are never seen at rest.
 
 ### Amber reserve
 
@@ -247,8 +247,9 @@ Pill-style wizard progress bar.
 Background:    var(--color-sidebar)            #f5f4ef  (warm cream, retained)
 Border:        var(--color-sidebar-border)     #e3e2d8
 Text:          var(--color-sidebar-foreground) #191918  (full opacity)
-Active item:   bg-[var(--color-sidebar-accent)]  #fcaa2d1a (10% amber, warm)
-Hover:         bg-[var(--color-sidebar-accent)]  (same warm amber tint)
+Active item:   bg-[var(--color-sidebar-accent)]  (alias of --color-hover, #f3f2e7)
+Hover:         bg-[var(--color-sidebar-accent)]  (same token as every list-row hover)
+Active text:   text-[var(--color-sidebar-accent-foreground)]  #191918 (the primary active affordance)
 Font:          system-ui, 14px, font-semibold (600)
 Icons:         size={18} strokeWidth={2}
 Width:         w-60 (expanded) / w-14 (collapsed)
@@ -262,19 +263,21 @@ const ITEM_ACTIVE = 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-
 const ICON_PROPS = { size: 18, strokeWidth: 2 } as const
 ```
 
-**Rule:** Every clickable sidebar item MUST use `ITEM_BASE`. No exceptions, no per-item overrides. The sidebar surface is already warm cream, so its accent uses a 10% amber tint (`--color-sidebar-accent` = `#fcaa2d1a`) rather than cold black-alpha — warm and "inline" with the dashboard list-row treatment, not a separate cold mechanism. Black-alpha layering below is for non-sidebar trays only.
+**Rule:** Every clickable sidebar item MUST use `ITEM_BASE`. No exceptions, no per-item overrides. `--color-sidebar-accent` is a hard alias of `--color-hover` (`index.css`: `--color-sidebar-accent: var(--color-hover)`) so sidebar hover/active is byte-identical to every list-row hover and cannot drift. The active item's stronger affordance is its full-dark foreground text (vs `/70` muted for inactive), not a louder background. Black-alpha layering below is for non-sidebar trays only.
 
 ---
 
-## Layering pattern (`bg-black/[0.06]` / `bg-black/5`)
+## Layering pattern (non-sidebar trays only)
 
-Use black-alpha layering wherever rest or subtle hierarchy is needed in the dash — not only in the sidebar. This is a brand-level decision for v1 to keep the UI calm.
+Black-alpha layering is ONLY for non-interactive structural trays (e.g. a
+bottom bar behind controls). It is NOT a hover or active mechanism — those
+use the single `var(--color-hover)` token. Do not use black-alpha on list
+rows, sidebar items, or any clickable surface.
 
 | Context | Class |
 |---|---|
-| Active / selected surface | `bg-black/[0.06]` |
-| Hover surface | `hover:bg-black/5` |
-| Subtle tray / bottom area | `bg-black/[0.03]` (use sparingly) |
+| Interactive hover / active (rows, sidebar, pickers) | `var(--color-hover)` — the ONLY hover token |
+| Subtle structural tray / bottom area | `bg-black/[0.03]` (use sparingly, non-interactive) |
 
 Do NOT mix black-alpha layering with gray-literal backgrounds on the same surface. Pick one per surface.
 
@@ -324,7 +327,7 @@ dash (home, knowledge, docs, admin, sources, connectors). Calm over chaos:
 one warm hover, no decoration.
 
 ```tsx
-<div className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-rl-cream)] transition-colors">
+<div className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-hover)] transition-colors">
   {/* Leading icon — bare glyph, NO background box */}
   <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
     <SomeIcon className="h-5 w-5" />
@@ -338,11 +341,11 @@ Hard rules for this pattern:
 
 | Aspect | Rule |
 |---|---|
-| Row hover | `hover:bg-[var(--color-rl-cream)]` — warm, full-width, the ONLY affordance |
+| Row hover | `hover:bg-[var(--color-hover)]` — the ONE shared hover token, identical to the sidebar and every picker |
 | Title on hover | NO `group-hover:underline`. The row bg is the affordance; underline is web-1.0 noise |
 | Leading icon | NO `bg-gray-50` / `rounded-lg` box. Bare icon, `text-gray-400`. The `h-8 w-8` flex wrapper is for alignment only — no background |
-| Active/confirm state | Sticky `bg-[var(--color-rl-cream)]` (same as hover), so overlays like the delete-confirm pill match the row and show no seam |
-| Cold gray | Never `hover:bg-gray-50` or `bg-gray-50` icon boxes anywhere a user sees at rest |
+| Active/confirm state | Sticky `bg-[var(--color-hover)]` (same token as hover), so overlays like the delete-confirm pill match the row and show no seam |
+| Cold gray | Never `hover:bg-gray-50`, `hover:bg-black/5`, or `bg-gray-50` icon boxes anywhere a user sees at rest |
 
 ---
 
@@ -496,7 +499,7 @@ Standard wrapper: `inline-flex items-center justify-center transition-opacity ho
 | `uppercase` or `tracking-wider` / `tracking-[0.04em]` on prose | Sentence-case, no tracking adjustment |
 | `border-[var(--color-border)]` for table/list borders | `border-gray-200` (Tailwind literal) |
 | Gray-literal + black-alpha on the same surface | Pick one layering mechanism per surface |
-| `hover:bg-gray-50` on a list/collection row | `hover:bg-[var(--color-rl-cream)]` (warm) |
+| `hover:bg-gray-50` / `hover:bg-black/5` / per-component hover color | `hover:bg-[var(--color-hover)]` (the ONE shared token) |
 | `rounded-lg bg-gray-50` box around a list-row icon | Bare icon `text-gray-400`, no box |
 | `group-hover:underline` on a row title | No underline; the row bg is the affordance |
 

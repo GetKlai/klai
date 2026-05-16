@@ -430,7 +430,7 @@ function KBPageEditor() {
                 .map((p) => (
                   <button
                     key={p.slug}
-                    className="w-full text-left px-3 py-2 text-sm rounded flex items-center gap-2 hover:bg-gray-50 text-gray-900"
+                    className="w-full text-left px-3 py-2 text-sm rounded flex items-center gap-2 hover:bg-[var(--color-hover)] text-gray-900"
                     onClick={() => {
                       editorRef.current?.insertWikilink(p.id ?? p.slug, p.title, p.icon)
                       setShowWikilinkPicker(false)

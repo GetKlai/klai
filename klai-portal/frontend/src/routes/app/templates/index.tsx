@@ -171,7 +171,7 @@ export function TemplatesPage() {
                       onClick={() => void navigate({ to: '/app/templates/$slug/edit', params: { slug: t.slug } })}
                       aria-label={m.templates_list_edit_label()}
                       title={m.templates_list_edit_label()}
-                      className="p-2 rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+                      className="p-2 rounded-md text-gray-400 hover:text-gray-900 hover:bg-[var(--color-hover)] transition-colors"
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
@@ -185,7 +185,7 @@ export function TemplatesPage() {
                           ? m.templates_list_delete_label()
                           : m.templates_form_scope_org_disabled_tooltip()
                       }
-                      className="p-2 rounded-md text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400"
+                      className="p-2 rounded-md text-gray-400 hover:text-[var(--color-destructive)] hover:bg-[var(--color-hover)] transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>

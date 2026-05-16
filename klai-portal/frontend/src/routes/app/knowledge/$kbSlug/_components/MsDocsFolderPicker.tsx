@@ -91,7 +91,7 @@ function ItemNode({
       <div
         className={[
           'group flex items-center gap-1 rounded-md px-1 py-1 transition-colors cursor-pointer',
-          isFolderSelected || isFileSelected ? 'bg-gray-100' : 'hover:bg-gray-50',
+          isFolderSelected || isFileSelected ? 'bg-gray-100' : 'hover:bg-[var(--color-hover)]',
         ].join(' ')}
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
         onClick={() => (isFolder ? onSelectFolder(item.id) : onToggleFile(item.id))}
@@ -273,7 +273,7 @@ export function MsDocsFolderPicker({
         <div
           className={[
             'flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer',
-            isWholeDriveSelected ? 'bg-gray-100' : 'hover:bg-gray-50',
+            isWholeDriveSelected ? 'bg-gray-100' : 'hover:bg-[var(--color-hover)]',
           ].join(' ')}
           onClick={selectWholeDrive}
         >

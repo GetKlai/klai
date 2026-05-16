@@ -97,7 +97,7 @@ export function CoverageNodeRow({
         'group/row w-full text-left rounded-lg border p-3 transition-colors cursor-pointer',
         isActive
           ? 'border-gray-200 bg-black/[0.06]'
-          : 'border-gray-200 hover:bg-gray-50',
+          : 'border-gray-200 hover:bg-[var(--color-hover)]',
       ].join(' ')}
       onClick={() => { if (!isEditing && !isConfirmingDelete) onNodeClick() }}
       role="button"
