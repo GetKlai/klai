@@ -136,14 +136,14 @@ function KbRow({
     <Link
       to="/app/knowledge/$kbSlug/sources"
       params={{ kbSlug: kb.slug }}
-      className="group flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors"
+      className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-rl-cream)] transition-colors"
     >
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
         <KbIcon ownerType={kb.owner_type} />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="text-[15px] font-display text-gray-900 group-hover:underline truncate">{kb.name}</span>
+          <span className="text-[15px] font-display text-gray-900 truncate">{kb.name}</span>
           {isMine && (
             <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
               Mijn
