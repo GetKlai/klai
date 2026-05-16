@@ -78,7 +78,8 @@ Tab headers, labels, meta-text: sentence-case.
 - **Grayscale (borders, hover bg, muted text)** → Tailwind literals (`gray-50`, `gray-200`, `gray-400`, `gray-900`)
 - **Semantic / themeable** (sidebar, destructive, success, warning, focus-ring) → CSS tokens (`var(--color-sidebar)`, `var(--color-destructive)`, ...)
 - **Content background** → `bg-white`
-- **Layering in dash** → `bg-black/[0.06]` for active/selected, `bg-black/5` for hover
+- **Sidebar accent (hover + active)** → `var(--color-sidebar-accent)` (warm 10% amber)
+- **Non-sidebar trays / subtle layering** → `bg-black/[0.06]` active, `bg-black/[0.03]` tray (NOT for list rows or sidebar)
 
 The `#191918` token (`--color-foreground`) and Tailwind's `gray-900` (`#111827`) are not identical. Both are acceptable in v1:
 - Use `--color-foreground` when theming component internals (surface, popover, card)
@@ -121,14 +122,14 @@ className="text-[var(--color-destructive)]"        // Error text — semantic to
 className="bg-white"                               // Main content area
 className="hover:bg-[var(--color-rl-cream)]"       // Dashboard list-row hover (warm)
 className="bg-black/[0.06]"                        // Active/selected layer in dash
-className="hover:bg-black/5"                       // Layer hover (sidebar items)
+className="bg-[var(--color-sidebar-accent)]"       // Sidebar hover + active (warm 10% amber)
 
 // Borders
 className="border border-gray-200"                 // All borders
 className="divide-y divide-gray-200"               // Row dividers
 ```
 
-**Rule:** Use `gray-200` for borders. Use `gray-400` for muted text. Use `gray-900` for primary prose text. Use semantic tokens (`var(--color-*)`) for error/success/warning/ring states. Apply `bg-black/[0.06]` for active-layer surfaces and `bg-black/5` for sidebar-item hover.
+**Rule:** Use `gray-200` for borders. Use `gray-400` for muted text. Use `gray-900` for primary prose text. Use semantic tokens (`var(--color-*)`) for error/success/warning/ring states. Sidebar hover + active use the warm `var(--color-sidebar-accent)` (10% amber). `bg-black/[0.06]` / `bg-black/[0.03]` are for non-sidebar trays only — never list rows or sidebar.
 
 **Dashboard list-row hover is warm, not cold gray.** Hovered collection/list rows use `hover:bg-[var(--color-rl-cream)]` (`#f5f4ef`) — never `hover:bg-gray-50`. Cold enterprise gray is a styleguide anti-pattern ("loses warmth, use cream/ivory"). `gray-50` is no longer a sanctioned surface color in the dash; the only remaining `bg-gray-50` uses are loading skeletons (`animate-pulse`), which are exempt because they are never seen at rest.
 
@@ -246,8 +247,8 @@ Pill-style wizard progress bar.
 Background:    var(--color-sidebar)            #f5f4ef  (warm cream, retained)
 Border:        var(--color-sidebar-border)     #e3e2d8
 Text:          var(--color-sidebar-foreground) #191918  (full opacity)
-Active item:   bg-black/[0.06]
-Hover:         hover:bg-black/5
+Active item:   bg-[var(--color-sidebar-accent)]  #fcaa2d1a (10% amber, warm)
+Hover:         bg-[var(--color-sidebar-accent)]  (same warm amber tint)
 Font:          system-ui, 14px, font-semibold (600)
 Icons:         size={18} strokeWidth={2}
 Width:         w-60 (expanded) / w-14 (collapsed)
@@ -256,12 +257,12 @@ Width:         w-60 (expanded) / w-14 (collapsed)
 All sidebar items (nav, admin switcher, account, logout) use the same shared classes:
 
 ```tsx
-const ITEM_BASE = 'flex items-center rounded-md py-2 mx-3 text-[14px] font-semibold transition-colors text-[var(--color-sidebar-foreground)] hover:bg-black/5'
-const ITEM_ACTIVE = 'bg-black/[0.06]'
+const ITEM_BASE = 'flex items-center rounded-md py-2 mx-3 text-[14px] font-semibold transition-colors text-[var(--color-sidebar-foreground)] hover:bg-[var(--color-sidebar-accent)]'
+const ITEM_ACTIVE = 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]'
 const ICON_PROPS = { size: 18, strokeWidth: 2 } as const
 ```
 
-**Rule:** Every clickable sidebar item MUST use `ITEM_BASE`. No exceptions, no per-item overrides.
+**Rule:** Every clickable sidebar item MUST use `ITEM_BASE`. No exceptions, no per-item overrides. The sidebar surface is already warm cream, so its accent uses a 10% amber tint (`--color-sidebar-accent` = `#fcaa2d1a`) rather than cold black-alpha — warm and "inline" with the dashboard list-row treatment, not a separate cold mechanism. Black-alpha layering below is for non-sidebar trays only.
 
 ---
 
