@@ -93,6 +93,7 @@ import { Route as AppKnowledgeKbSlugBronnenRouteImport } from './routes/app/know
 import { Route as AppKnowledgeKbSlugAdvancedRouteImport } from './routes/app/knowledge/$kbSlug/advanced'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
 import { Route as AppDocsKbSlugPageIdRouteImport } from './routes/app/docs/$kbSlug/$pageId'
+import { Route as AdminWidgetsIdTestRouteImport } from './routes/admin/widgets/$id_.test'
 import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
 import { Route as AdminTemplatesSlugEditRouteImport } from './routes/admin/templates/$slug.edit'
 import { Route as AdminProfilesProfileAddMemberRouteImport } from './routes/admin/profiles/$profile/add-member'
@@ -536,6 +537,11 @@ const AppDocsKbSlugPageIdRoute = AppDocsKbSlugPageIdRouteImport.update({
 } as any).lazy(() =>
   import('./routes/app/docs/$kbSlug/$pageId.lazy').then((d) => d.Route),
 )
+const AdminWidgetsIdTestRoute = AdminWidgetsIdTestRouteImport.update({
+  id: '/widgets/$id_/test',
+  path: '/widgets/$id/test',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminUsersUserIdEditRoute = AdminUsersUserIdEditRouteImport.update({
   id: '/users/$userId/edit',
   path: '/users/$userId/edit',
@@ -641,6 +647,7 @@ export interface FileRoutesByFullPath {
   '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
+  '/admin/widgets/$id/test': typeof AdminWidgetsIdTestRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
@@ -728,6 +735,7 @@ export interface FileRoutesByTo {
   '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
+  '/admin/widgets/$id/test': typeof AdminWidgetsIdTestRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
@@ -821,6 +829,7 @@ export interface FileRoutesById {
   '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
+  '/admin/widgets/$id_/test': typeof AdminWidgetsIdTestRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
@@ -915,6 +924,7 @@ export interface FileRouteTypes {
     | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
+    | '/admin/widgets/$id/test'
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
     | '/app/knowledge/$kbSlug/advanced'
@@ -1002,6 +1012,7 @@ export interface FileRouteTypes {
     | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
+    | '/admin/widgets/$id/test'
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
     | '/app/knowledge/$kbSlug/advanced'
@@ -1094,6 +1105,7 @@ export interface FileRouteTypes {
     | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
+    | '/admin/widgets/$id_/test'
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug_/edit'
     | '/app/knowledge/$kbSlug/advanced'
@@ -1727,6 +1739,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDocsKbSlugPageIdRouteImport
       parentRoute: typeof AppDocsKbSlugRouteRoute
     }
+    '/admin/widgets/$id_/test': {
+      id: '/admin/widgets/$id_/test'
+      path: '/widgets/$id/test'
+      fullPath: '/admin/widgets/$id/test'
+      preLoaderRoute: typeof AdminWidgetsIdTestRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/users/$userId/edit': {
       id: '/admin/users/$userId/edit'
       path: '/users/$userId/edit'
@@ -1828,6 +1847,7 @@ interface AdminRouteRouteChildren {
   AdminProfilesProfileAddMemberRoute: typeof AdminProfilesProfileAddMemberRoute
   AdminTemplatesSlugEditRoute: typeof AdminTemplatesSlugEditRoute
   AdminUsersUserIdEditRoute: typeof AdminUsersUserIdEditRoute
+  AdminWidgetsIdTestRoute: typeof AdminWidgetsIdTestRoute
   AdminGroupsGroupIdIndexRoute: typeof AdminGroupsGroupIdIndexRoute
   AdminProfilesProfileIndexRoute: typeof AdminProfilesProfileIndexRoute
 }
@@ -1860,6 +1880,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminProfilesProfileAddMemberRoute: AdminProfilesProfileAddMemberRoute,
   AdminTemplatesSlugEditRoute: AdminTemplatesSlugEditRoute,
   AdminUsersUserIdEditRoute: AdminUsersUserIdEditRoute,
+  AdminWidgetsIdTestRoute: AdminWidgetsIdTestRoute,
   AdminGroupsGroupIdIndexRoute: AdminGroupsGroupIdIndexRoute,
   AdminProfilesProfileIndexRoute: AdminProfilesProfileIndexRoute,
 }
