@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { AlertTriangle, Code2, Eye, Link2, Loader2 } from 'lucide-react'
+import { Code2, Eye, Info, Link2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -187,7 +187,7 @@ export function EmbedTab({ widget }: Props) {
           )}
           {origins.length === 0 && (
             <div className="flex items-start gap-1.5 text-xs text-gray-400">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-[var(--color-destructive)]" />
+              <Info className="h-3.5 w-3.5 shrink-0 mt-px text-gray-400" />
               {m.admin_widgets_widget_origins_empty_warning()}
             </div>
           )}
