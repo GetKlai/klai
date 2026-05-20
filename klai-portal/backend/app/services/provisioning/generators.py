@@ -143,6 +143,10 @@ OPENID_CALLBACK_URL=/oauth/openid/callback
 OPENID_USERNAME_CLAIM=preferred_username
 OPENID_REUSE_TOKENS=false
 OPENID_USE_END_SESSION_ENDPOINT=true
+# Auto-redirect to OIDC when the user lands on /login. Required so the
+# embedded chat in the portal never gets stuck on an empty welcome
+# screen if the iframe slips past the OAuth flow (2026-05-20 incident).
+OPENID_AUTO_REDIRECT=true
 ALLOW_EMAIL_LOGIN=false
 ALLOW_REGISTRATION=false
 ALLOW_SOCIAL_LOGIN=true
