@@ -5,13 +5,19 @@
 # GRAFANA_SMTP_PASSWORD lives in klai-infra/core-01/.env.sops.
 #
 # Defined here:
+#   - grafana-default-email  — fall-through receiver for alerts without a
+#                              matching notification-policy route. MUST be
+#                              provisioned (Grafana's auto-installed default
+#                              ships with a placeholder `<example@email.com>`
+#                              that bounces, causing inbox flood).
 #   - klai-dev-alerts-email  — SEC-024-R13: security/dev alerts (proxy denials)
 #   - klai-ops-alerts-email  — OBS-001-R4:  operational alerts (golden signals)
 #   - heartbeat-kuma         — OBS-001-R22: webhook to Uptime Kuma push-monitor
 #                                           on public-01 for dead-man's switch
 #
-# Both email contacts use the same SMTP backend but separate receivers so the
-# ops and security ontvangerslijsten can later diverge without rule changes.
+# All email contacts deliver to hello@getklai.com (the team mailbox at Cloud86).
+# Separate receivers exist so the rules can later diverge without rewriting,
+# but for now they share one destination.
 #
 # heartbeat-kuma posts to Uptime Kuma's push API every 5 min. If Grafana
 # stops pushing (alerter is down), Kuma fires its own SMTP alert via a
@@ -22,13 +28,29 @@
 apiVersion: 1
 
 contactPoints:
+  # Default fall-through receiver. Grafana auto-installs a "grafana-default-email"
+  # contact point with `<example@email.com>` on first boot if none is provisioned
+  # — that placeholder bounces at Cloud86 → mx84.mail.com (550 mailbox unavailable),
+  # and the bounce DSN lands in hello@getklai.com. We explicitly provision it here
+  # so the default points at a real mailbox instead.
+  - orgId: 1
+    name: grafana-default-email
+    receivers:
+      - uid: grafana-default-email-primary
+        type: email
+        settings:
+          addresses: hello@getklai.com
+          singleEmail: false
+          subject: '[KLAI-ALERT fallback] {{ .CommonLabels.alertname | default "unknown" }}'
+        disableResolveMessage: false
+
   - orgId: 1
     name: klai-dev-alerts-email
     receivers:
       - uid: klai-dev-alerts-email-primary
         type: email
         settings:
-          addresses: mark.vletter@voys.nl
+          addresses: hello@getklai.com
           singleEmail: true
           subject: "[Klai alert] {{ .GroupLabels.alertname }} — {{ .GroupLabels.service }}"
           message: |
@@ -52,7 +74,7 @@ contactPoints:
       - uid: klai-ops-alerts-email-primary
         type: email
         settings:
-          addresses: ${ALERTS_EMAIL_RECIPIENTS}
+          addresses: hello@getklai.com
           singleEmail: false
           subject: '[KLAI-ALERT-{{ .CommonLabels.severity | default "info" }}] {{ .CommonLabels.alertname }}'
           message: |
