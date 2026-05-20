@@ -66,7 +66,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_expand() : m.sidebar_collapse()}
           className={cn(
             'flex items-center justify-center rounded-lg p-1.5 transition-colors',
-            'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
           )}
         >
           {collapsed
@@ -88,7 +88,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                   title={collapsed ? item.label : undefined}
                   className={cn(
                     'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-                    'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+                    'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3 px-3'
                   )}
                 >
@@ -102,11 +102,11 @@ export function Sidebar({ navItems }: SidebarProps) {
                   title={collapsed ? item.label : undefined}
                   className={cn(
                     'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-                    'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+                    'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3 px-3'
                   )}
                   activeProps={{
-                    className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
+                    className: 'bg-[var(--color-hover)] text-[var(--color-sidebar-accent-foreground)]',
                   }}
                 >
                   <item.icon size={18} strokeWidth={1.5} />
@@ -122,11 +122,11 @@ export function Sidebar({ navItems }: SidebarProps) {
                         activeOptions={child.end ? { exact: true } : undefined}
                         className={cn(
                           'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
-                          'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+                          'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
                           'gap-2'
                         )}
                         activeProps={{
-                          className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
+                          className: 'bg-[var(--color-hover)] text-[var(--color-sidebar-accent-foreground)]',
                         }}
                       >
                         <child.icon size={15} strokeWidth={1.5} />
@@ -149,7 +149,7 @@ export function Sidebar({ navItems }: SidebarProps) {
             title={collapsed ? (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()) : undefined}
             className={cn(
               'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-              'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+              'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
               collapsed ? 'justify-center' : 'gap-3 px-3'
             )}
           >
@@ -179,11 +179,11 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_account() : undefined}
           className={cn(
             'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-            'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3 px-3'
           )}
           activeProps={{
-            className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
+            className: 'bg-[var(--color-hover)] text-[var(--color-sidebar-accent-foreground)]',
           }}
         >
           <UserCircle size={18} strokeWidth={1.5} />
@@ -200,7 +200,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_logout() : undefined}
           className={cn(
             'flex w-full items-center rounded-md py-2 mx-3 text-sm transition-colors',
-            'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3 px-3'
           )}
         >

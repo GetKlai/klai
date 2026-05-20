@@ -78,7 +78,8 @@ Tab headers, labels, meta-text: sentence-case.
 - **Grayscale (borders, hover bg, muted text)** → Tailwind literals (`gray-50`, `gray-200`, `gray-400`, `gray-900`)
 - **Semantic / themeable** (sidebar, destructive, success, warning, focus-ring) → CSS tokens (`var(--color-sidebar)`, `var(--color-destructive)`, ...)
 - **Content background** → `bg-white`
-- **Every interactive hover/active surface (list rows, sidebar items, pickers)** → `var(--color-hover)` — ONE token, identical everywhere
+- **Every interactive hover** → the `.klai-hover` utility class — ONE class, ONE definition (`index.css` `@utility klai-hover`), identical everywhere
+- **Active / sticky-confirm** → `bg-[var(--color-hover)]` (same token the utility uses)
 - **Non-sidebar trays / subtle layering** → `bg-black/[0.06]` active, `bg-black/[0.03]` tray (NOT for list rows or sidebar)
 
 The `#191918` token (`--color-foreground`) and Tailwind's `gray-900` (`#111827`) are not identical. Both are acceptable in v1:
@@ -120,8 +121,8 @@ className="text-[var(--color-destructive)]"        // Error text — semantic to
 
 // Backgrounds
 className="bg-white"                               // Main content area
-className="hover:bg-[var(--color-hover)]"          // EVERY interactive hover (rows, sidebar, pickers)
-className="bg-[var(--color-hover)]"                // active/confirm state + sidebar active
+className="klai-hover"                             // EVERY interactive hover (rows, sidebar, pickers) — ONE class
+className="bg-[var(--color-hover)]"                // active/confirm state + sidebar active sticky
 className="bg-black/[0.06]"                        // Non-sidebar tray layering only
 
 // Borders
@@ -131,7 +132,7 @@ className="divide-y divide-gray-200"               // Row dividers
 
 **Rule:** Use `gray-200` for borders. Use `gray-400` for muted text. Use `gray-900` for primary prose text. Use semantic tokens (`var(--color-*)`) for error/success/warning/ring states. `bg-black/[0.06]` / `bg-black/[0.03]` are for non-sidebar trays only — never list rows or sidebar.
 
-**One hover token, identical everywhere.** Every interactive hover and active state in the dash — list/collection rows, sidebar items, pickers, file tiles, action rows — uses `var(--color-hover)` (`#f3f2e7`, opaque warm cream). Never `hover:bg-gray-50`, never `hover:bg-black/5`, never a per-component color. `--color-sidebar-accent` is an alias of `--color-hover` so the sidebar can never drift from the rows again. It is opaque on purpose: the inline-delete-confirm pill overlays it on a hovered row and must mask the text underneath. The only remaining `bg-gray-50` uses are loading skeletons (`animate-pulse`), exempt because they are never seen at rest.
+**One hover class, identical everywhere.** Every interactive hover in the dash — list/collection rows, sidebar items, pickers, file tiles, action rows — uses the single `.klai-hover` utility (defined as `@utility klai-hover` in `index.css`). Its background is `var(--color-hover)` (`#f3f2e7`, opaque warm cream); it also handles the color/background/border transition so callers never need to add `transition-colors` separately. Never `hover:bg-gray-50`, never `hover:bg-black/5`, never a per-component hover background. Active / sticky-confirm states use the plain `bg-[var(--color-hover)]` token (same value, no `:hover` selector). It is opaque on purpose: the inline-delete-confirm pill overlays a hovered row and must mask the text underneath. The only remaining `bg-gray-50` uses are loading skeletons (`animate-pulse`), exempt because they are never seen at rest.
 
 ### Amber reserve
 
@@ -327,7 +328,7 @@ dash (home, knowledge, docs, admin, sources, connectors). Calm over chaos:
 one warm hover, no decoration.
 
 ```tsx
-<div className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-hover)] transition-colors">
+<div className="group flex items-center gap-3 px-2 py-3.5 klai-hover">
   {/* Leading icon — bare glyph, NO background box */}
   <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
     <SomeIcon className="h-5 w-5" />
@@ -341,7 +342,7 @@ Hard rules for this pattern:
 
 | Aspect | Rule |
 |---|---|
-| Row hover | `hover:bg-[var(--color-hover)]` — the ONE shared hover token, identical to the sidebar and every picker |
+| Row hover | `klai-hover` — the ONE shared utility class, identical to the sidebar and every picker (no `transition-colors` needed; the class includes it) |
 | Title on hover | NO `group-hover:underline`. The row bg is the affordance; underline is web-1.0 noise |
 | Leading icon | NO `bg-gray-50` / `rounded-lg` box. Bare icon, `text-gray-400`. The `h-8 w-8` flex wrapper is for alignment only — no background |
 | Active/confirm state | Sticky `bg-[var(--color-hover)]` (same token as hover), so overlays like the delete-confirm pill match the row and show no seam |
@@ -499,7 +500,7 @@ Standard wrapper: `inline-flex items-center justify-center transition-opacity ho
 | `uppercase` or `tracking-wider` / `tracking-[0.04em]` on prose | Sentence-case, no tracking adjustment |
 | `border-[var(--color-border)]` for table/list borders | `border-gray-200` (Tailwind literal) |
 | Gray-literal + black-alpha on the same surface | Pick one layering mechanism per surface |
-| `hover:bg-gray-50` / `hover:bg-black/5` / per-component hover color | `hover:bg-[var(--color-hover)]` (the ONE shared token) |
+| `hover:bg-gray-50` / `hover:bg-black/5` / `hover:bg-[var(--color-hover)]` / per-component hover color | `klai-hover` (the ONE shared utility class) |
 | `rounded-lg bg-gray-50` box around a list-row icon | Bare icon `text-gray-400`, no box |
 | `group-hover:underline` on a row title | No underline; the row bg is the affordance |
 
