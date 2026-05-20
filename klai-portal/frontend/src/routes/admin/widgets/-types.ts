@@ -8,6 +8,9 @@ export interface WidgetConfig {
   welcome_message: string
   system_prompt: string
   css_variables: Record<string, string>
+  conversation_starters: string[]
+  hide_disclaimer: boolean
+  template_slug: string | null
 }
 
 export interface KbAccess {

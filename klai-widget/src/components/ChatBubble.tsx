@@ -14,7 +14,13 @@ export function ChatBubble() {
   return (
     <>
       <Show when={isOpen()}>
-        <ChatWindow title={title()} onClose={close} />
+        <ChatWindow
+          title={title()}
+          onClose={close}
+          conversationStarters={chatState.config?.conversation_starters}
+          hideDisclaimer={chatState.config?.hide_disclaimer}
+          welcomeMessage={chatState.config?.welcome_message}
+        />
       </Show>
 
       <button

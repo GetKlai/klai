@@ -1791,5 +1791,14 @@
   "admin_extension_scribe_label": "Scribe — meeting transcripts",
   "admin_extension_scribe_description": "Automatic meeting transcription.",
   "admin_extension_docs_label": "Docs — shared KBs",
-  "admin_extension_docs_description": "Share documentation KBs across the organisation."
+  "admin_extension_docs_description": "Share documentation KBs across the organisation.",
+  "admin_widgets_widget_template_label": "Template (optional)",
+  "admin_widgets_widget_template_help": "Pick an existing template to fill the base prompt quickly. You can still edit afterwards.",
+  "admin_widgets_widget_template_none": "— none —",
+  "admin_widgets_widget_starters_label": "Conversation starters",
+  "admin_widgets_widget_starters_help": "Shown as clickable chips on the empty state. Max 6, one per line.",
+  "admin_widgets_widget_starters_placeholder": "What are your opening hours?\nWhat products are available?\nHow do I get in touch?",
+  "admin_widgets_widget_hide_disclaimer_label": "Hide AI disclaimer",
+  "admin_widgets_widget_hide_disclaimer_help": "White-label: hides the \"AI answers can contain mistakes…\" footer.",
+  "widget_ai_disclaimer": "AI answers can contain mistakes. Always verify important information at the source."
 }

@@ -145,7 +145,12 @@ async def _resolve_kb_slugs(kb_ids: list[int], org_id: int, db: AsyncSession) ->
 
 
 async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> str | None:
-    """Return the admin-configured widget prompt for widget JWT calls."""
+    """Return the admin-configured widget prompt for widget JWT calls.
+
+    When ``widget_config.template_slug`` is set, the linked Template's
+    ``prompt_text`` is appended after the widget-local system_prompt.
+    Lets admins reuse named prompts across widgets without copying.
+    """
     if not str(auth.key_id).startswith("wgt_"):
         return None
     result = await db.execute(
@@ -157,8 +162,28 @@ async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> s
     config = result.scalar_one_or_none() or {}
     if not isinstance(config, dict):
         return None
-    prompt = config.get("system_prompt")
-    return prompt.strip() if isinstance(prompt, str) and prompt.strip() else None
+    base = config.get("system_prompt")
+    base_str = base.strip() if isinstance(base, str) else ""
+
+    template_slug = config.get("template_slug")
+    template_text = ""
+    if isinstance(template_slug, str) and template_slug:
+        # Local import to avoid a top-level dependency between partner.py
+        # (widget runtime) and the templates module (admin domain).
+        from app.models.templates import PortalTemplate
+
+        t_result = await db.execute(
+            select(PortalTemplate.prompt_text).where(
+                PortalTemplate.slug == template_slug,
+                PortalTemplate.org_id == auth.org_id,
+            )
+        )
+        t_text = t_result.scalar_one_or_none()
+        if isinstance(t_text, str):
+            template_text = t_text.strip()
+
+    parts = [p for p in (base_str, template_text) if p]
+    return "\n\n".join(parts) if parts else None
 
 
 @router.post("/chat/completions")
@@ -609,6 +634,10 @@ async def widget_config(
         "chat_endpoint": "/partner/v1/chat/completions",
         "session_token": session_token,
         "session_expires_at": expires_at.isoformat(),
+        # TWD-style additions: chips on empty state, white-label
+        # disclaimer toggle. system_prompt stays server-side only.
+        "conversation_starters": widget_config_data.get("conversation_starters", []),
+        "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
     }
 
     return Response(
