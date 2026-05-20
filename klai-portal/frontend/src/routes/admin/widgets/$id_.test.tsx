@@ -1,18 +1,15 @@
-import { useEffect, useRef } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { X } from 'lucide-react'
+import { MessageSquare, Plus, Share2, X } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse } from './-types'
 
-// Fullscreen test environment for a widget. Loads klai-chat.js in
-// inline mode with a viewport-filling container, so the admin sees the
-// real widget UI (welcome, composer, send) exactly as a customer
-// would — but on a clean my.getklai.com canvas without needing to
-// embed the snippet on a real site. The widget's allowed_origins must
-// include https://my.getklai.com — the Test button on EmbedTab adds
-// it before opening this page.
+// Fullscreen test environment for a widget — matches the TalkWithData /
+// LibreChat layout (top bar, hero, suggestion chips, composer). Uses an
+// iframe pointing at /widget-preview.html (static asset) so klai-chat.js
+// loads from a real <script> tag where document.currentScript is the
+// snippet — the only reliable path for inline mode rendering.
 
 export const Route = createFileRoute('/admin/widgets/$id_/test')({
   component: WidgetTestPage,
@@ -24,26 +21,6 @@ function WidgetTestPage() {
     queryKey: ['admin-widget-detail', id],
     queryFn: () => apiFetch<WidgetDetailResponse>(`/api/admin/widgets/${id}`),
   })
-  const scriptMounted = useRef(false)
-
-  useEffect(() => {
-    if (!widgetQuery.data || scriptMounted.current) return
-    const w = widgetQuery.data
-    const cfg = w.widget_config
-    const s = document.createElement('script')
-    s.src = 'https://my.getklai.com/widget/klai-chat.js'
-    s.async = true
-    s.setAttribute('data-widget-id', w.widget_id)
-    s.setAttribute('data-mode', 'inline')
-    s.setAttribute('data-container', '#klai-fullscreen-chat')
-    if (cfg.title) s.setAttribute('data-title', cfg.title)
-    if (cfg.welcome_message) s.setAttribute('data-welcome', cfg.welcome_message)
-    document.body.appendChild(s)
-    scriptMounted.current = true
-    return () => {
-      s.remove()
-    }
-  }, [widgetQuery.data])
 
   if (widgetQuery.isPending) {
     return (
@@ -64,43 +41,76 @@ function WidgetTestPage() {
   }
 
   const w = widgetQuery.data
+  const cfg = w.widget_config
+  const displayTitle = cfg.title || w.name
+
+  const previewUrl = `/widget-preview.html?${new URLSearchParams({
+    widget_id: w.widget_id,
+    ...(cfg.title ? { title: cfg.title } : {}),
+    ...(cfg.welcome_message ? { welcome: cfg.welcome_message } : {}),
+  }).toString()}`
 
   return (
     <div className="fixed inset-0 flex flex-col bg-[var(--color-rl-bg)]">
-      {/* Top bar — widget name + close */}
-      <div className="flex items-center justify-between border-b border-gray-200 px-6 py-3 bg-white">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--color-rl-cream)]">
-            <span className="text-[16px]">💬</span>
+      {/* Top bar: branded title + actions (mirrors TalkWithData / LibreChat layout) */}
+      <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-rl-accent)]/15">
+            <MessageSquare className="h-4 w-4 text-[var(--color-rl-accent-dark)]" />
           </div>
           <div className="min-w-0">
-            <p className="text-[14px] font-display-medium text-gray-900 truncate">
-              {w.widget_config.title || w.name}
-            </p>
-            <p className="text-[11px] text-gray-400">
+            <p className="truncate text-[14px] font-display-medium text-gray-900">{displayTitle}</p>
+            <p className="flex items-center gap-1.5 text-[11px] text-gray-400">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />
               {m.admin_widgets_test_page_title()}
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => window.close()}
-          aria-label="Sluiten"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 klai-hover"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 klai-hover"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Nieuw gesprek
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard.writeText(window.location.href)
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 klai-hover"
+          >
+            <Share2 className="h-3.5 w-3.5" />
+            Deel link
+          </button>
+          <button
+            type="button"
+            onClick={() => window.close()}
+            aria-label="Sluiten"
+            className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 klai-hover"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {/* Notice strip */}
-      <div className="border-b border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] px-6 py-2">
-        <p className="text-[11px] text-[var(--color-rl-accent-dark)] leading-snug">
+      <div className="shrink-0 border-b border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] px-6 py-2">
+        <p className="text-[11px] leading-snug text-[var(--color-rl-accent-dark)]">
           {m.admin_widgets_test_page_note_added()}
         </p>
       </div>
 
-      {/* The widget renders into this container — fills the rest of the viewport */}
-      <div id="klai-fullscreen-chat" className="flex-1 overflow-hidden" />
+      {/* Live widget — real klai-chat.js running inline inside a static
+          HTML iframe so document.currentScript resolves correctly */}
+      <iframe
+        src={previewUrl}
+        title="Widget preview"
+        className="flex-1 w-full border-0"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+      />
     </div>
   )
 }
