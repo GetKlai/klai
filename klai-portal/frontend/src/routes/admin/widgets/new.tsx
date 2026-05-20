@@ -201,9 +201,13 @@ function NewWidgetPage() {
       },
       {
         onSuccess: (data) => {
+          // Land on the Insluiten tab so the admin immediately sees
+          // the share link, embed snippet, and Test button — the
+          // whole point of running the wizard was to ship the widget.
           void navigate({
             to: '/admin/widgets/$id',
             params: { id: String(data.id) },
+            search: { tab: 'embed' },
           })
         },
       },
