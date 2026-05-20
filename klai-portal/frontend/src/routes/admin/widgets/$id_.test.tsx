@@ -47,15 +47,30 @@ function WidgetTestPage() {
     queryKey: ['widget-public-config', widgetPublicId],
     enabled: !!widgetPublicId,
     queryFn: async () => {
-      const res = await fetch(`/partner/v1/widget-config?id=${encodeURIComponent(widgetPublicId!)}`, {
-        method: 'GET',
-        credentials: 'omit',
-      })
-      if (!res.ok) {
-        throw new Error(`widget config ${res.status}`)
+      // Force a cross-origin shape (absolute URL + mode:cors) so the
+      // browser sends an Origin header. Same-origin GET would omit it
+      // and the backend's origin gate returns 403 — leaving the page
+      // hanging on the loader (2026-05-20 incident).
+      const url = `${window.location.origin}/partner/v1/widget-config?id=${encodeURIComponent(widgetPublicId!)}`
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 8000)
+      try {
+        const res = await fetch(url, {
+          method: 'GET',
+          mode: 'cors',
+          credentials: 'omit',
+          signal: controller.signal,
+        })
+        if (!res.ok) {
+          const body = await res.text().catch(() => '')
+          throw new Error(`widget-config ${res.status}${body ? ': ' + body.slice(0, 120) : ''}`)
+        }
+        return (await res.json()) as PublicConfig
+      } finally {
+        clearTimeout(timer)
       }
-      return res.json() as Promise<PublicConfig>
     },
+    retry: false,
   })
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
