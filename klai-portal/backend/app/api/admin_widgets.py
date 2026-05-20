@@ -54,6 +54,16 @@ class WidgetConfig(BaseModel):
     # template's prompt_text is appended to system_prompt at runtime so
     # admins can re-use named prompts across widgets without copy-paste.
     template_slug: str | None = None
+    # TWD-parity appearance & chat-display fields. Stored on
+    # widget_config; widget client consumes those it knows. Unknown
+    # fields are tolerated (Pydantic-validated, but no runtime effect
+    # until the widget client adds rendering for each one).
+    primary_color: str = "#fcaa2d"
+    theme: str = "light"  # 'light' | 'dark'
+    show_sources: bool = True
+    show_meta: bool = False
+    collect_user_info: bool = False
+    widget_position: str = "right"  # 'left' | 'right'
 
 
 class CreateWidgetRequest(BaseModel):
@@ -110,6 +120,12 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             conversation_starters=config.get("conversation_starters", []),
             hide_disclaimer=config.get("hide_disclaimer", False),
             template_slug=config.get("template_slug"),
+            primary_color=config.get("primary_color", "#fcaa2d"),
+            theme=config.get("theme", "light"),
+            show_sources=config.get("show_sources", True),
+            show_meta=config.get("show_meta", False),
+            collect_user_info=config.get("collect_user_info", False),
+            widget_position=config.get("widget_position", "right"),
         ),
         kb_access_count=kb_access_count,
         rate_limit_rpm=widget.rate_limit_rpm,

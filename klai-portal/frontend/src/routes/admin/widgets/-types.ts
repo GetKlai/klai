@@ -11,6 +11,12 @@ export interface WidgetConfig {
   conversation_starters: string[]
   hide_disclaimer: boolean
   template_slug: string | null
+  primary_color: string
+  theme: 'light' | 'dark'
+  show_sources: boolean
+  show_meta: boolean
+  collect_user_info: boolean
+  widget_position: 'left' | 'right'
 }
 
 export interface KbAccess {

@@ -147,6 +147,12 @@ function NewWidgetPage() {
       conversation_starters: [],
       hide_disclaimer: false,
       template_slug: null,
+      primary_color: "#fcaa2d",
+      theme: "light",
+      show_sources: true,
+      show_meta: false,
+      collect_user_info: false,
+      widget_position: "right",
     }
 
     createMutation.mutate(
