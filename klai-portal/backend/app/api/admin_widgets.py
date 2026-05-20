@@ -338,9 +338,7 @@ async def widget_preview_session(
     if not settings.widget_jwt_secret:
         raise HTTPException(status_code=503, detail="Widget auth not configured")
 
-    kb_rows = await db.execute(
-        select(WidgetKbAccess.kb_id).where(WidgetKbAccess.widget_id == widget.id)
-    )
+    kb_rows = await db.execute(select(WidgetKbAccess.kb_id).where(WidgetKbAccess.widget_id == widget.id))
     kb_ids = [row[0] for row in kb_rows.all()]
 
     token = generate_session_token(
