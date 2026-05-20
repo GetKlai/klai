@@ -22,9 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least, require_platform_unlocked
+from app.core.config import settings
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess, generate_widget_id
 from app.services.events import emit_event
+from app.services.widget_auth import generate_session_token
+
+from datetime import UTC, datetime, timedelta
 
 logger = structlog.get_logger()
 
@@ -303,6 +308,54 @@ async def get_widget_detail(
 
     response = _widget_to_response(widget, len(kb_access_list))
     return WidgetDetailResponse(**response.model_dump(), kb_access=kb_access_list)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/widgets/{id}/preview-session
+# ---------------------------------------------------------------------------
+
+
+class PreviewSessionResponse(BaseModel):
+    session_token: str
+    chat_endpoint: str
+    session_expires_at: str
+
+
+@router.get("/{widget_id}/preview-session", response_model=PreviewSessionResponse)
+async def widget_preview_session(
+    widget_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> PreviewSessionResponse:
+    """Issue a short-lived session token for the admin's own widget,
+    no Origin check. Powers the test page chat without touching
+    allowed_origins. Auth is the admin's portal cookie + ownership.
+    """
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    org = await db.get(PortalOrg, perms.org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Org not found")
+    if not settings.widget_jwt_secret:
+        raise HTTPException(status_code=503, detail="Widget auth not configured")
+
+    kb_rows = await db.execute(
+        select(WidgetKbAccess.kb_id).where(WidgetKbAccess.widget_id == widget.id)
+    )
+    kb_ids = [row[0] for row in kb_rows.all()]
+
+    token = generate_session_token(
+        wgt_id=widget.widget_id,
+        org_id=widget.org_id,
+        kb_ids=kb_ids,
+        secret=settings.widget_jwt_secret,
+        tenant_slug=org.slug,
+    )
+    return PreviewSessionResponse(
+        session_token=token,
+        chat_endpoint="/partner/v1/chat/completions",
+        session_expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+    )
 
 
 # ---------------------------------------------------------------------------
