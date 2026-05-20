@@ -128,7 +128,7 @@ export function UserActions({
             <DropdownMenuTrigger asChild>
               <button
                 aria-label={m.admin_users_col_actions()}
-                className="inline-flex items-center justify-center rounded text-gray-400 transition-colors hover:bg-[var(--color-hover)]"
+                className="inline-flex items-center justify-center rounded text-gray-400 transition-colors klai-hover"
               >
                 <MoreHorizontal className="h-4 w-4" />
               </button>

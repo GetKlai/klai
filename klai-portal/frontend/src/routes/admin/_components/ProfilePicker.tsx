@@ -52,7 +52,7 @@ export function ProfilePicker({
                 compact ? 'p-2' : 'p-3',
                 isSelected
                   ? 'border-gray-900 bg-black/[0.06]'
-                  : 'border-gray-200 hover:bg-[var(--color-hover)]',
+                  : 'border-gray-200 klai-hover',
                 disabled ? 'opacity-50 cursor-not-allowed' : '',
               ].join(' ')}
             >

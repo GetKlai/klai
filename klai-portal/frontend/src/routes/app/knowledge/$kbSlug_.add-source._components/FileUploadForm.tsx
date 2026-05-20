@@ -320,7 +320,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
         className={`cursor-pointer rounded-xl border-2 border-dashed py-14 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] ${
           isDragOver
             ? 'border-gray-400 bg-gray-50'
-            : 'border-gray-200 hover:border-gray-300 hover:bg-[var(--color-hover)]/50'
+            : 'border-gray-200 hover:border-gray-300 klai-hover/50'
         }`}
       >
         <Upload className="h-8 w-8 text-gray-300 mx-auto mb-3" />

@@ -248,3 +248,16 @@ body {
   position: relative;
   z-index: 10001;
 }
+
+/* The ONE shared hover utility for the whole portal.
+   Every interactive surface (list rows, sidebar items, pickers,
+   tiles, action rows) uses this single class. Cannot drift across
+   components because there is exactly one definition. */
+@utility klai-hover {
+  transition-property: color, background-color, border-color, fill, stroke;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
+  &:hover {
+    background-color: var(--color-hover);
+  }
+}

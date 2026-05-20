@@ -136,7 +136,7 @@ function KbRow({
     <Link
       to="/app/knowledge/$kbSlug/sources"
       params={{ kbSlug: kb.slug }}
-      className="group flex items-center gap-3 px-2 py-3.5 hover:bg-[var(--color-hover)] transition-colors"
+      className="group flex items-center gap-3 px-2 py-3.5 klai-hover"
     >
       <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
         <KbIcon ownerType={kb.owner_type} />
