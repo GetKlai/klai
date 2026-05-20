@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -7,6 +7,8 @@ import * as m from '@/paraglide/messages'
 import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
 import { EmbedSnippet } from '../EmbedSnippet'
+
+const PORTAL_ORIGIN = 'https://my.getklai.com'
 
 function parseOrigins(raw: string): string[] {
   return raw
@@ -93,6 +95,44 @@ export function EmbedTab({ widget }: Props) {
           title={config.title || undefined}
           welcomeMessage={config.welcome_message || undefined}
         />
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              // Auto-add my.getklai.com to allowed_origins (idempotent)
+              // BEFORE opening the test tab — the widget's origin check
+              // would otherwise reject the test page on my.getklai.com.
+              const hasPortal = origins.includes(PORTAL_ORIGIN)
+              const openTest = () => {
+                window.open(`/admin/widgets/${widget.id}/test`, '_blank', 'noopener,noreferrer')
+              }
+              if (hasPortal) {
+                openTest()
+                return
+              }
+              const next: WidgetConfig = {
+                ...config,
+                allowed_origins: [...origins, PORTAL_ORIGIN],
+              }
+              updateMutation.mutate(
+                { widget_config: next },
+                {
+                  onSuccess: () => {
+                    setOriginsRaw([...origins, PORTAL_ORIGIN].join('\n'))
+                    openTest()
+                  },
+                  onError: () => toast.error(m.admin_shared_error_generic()),
+                },
+              )
+            }}
+            disabled={updateMutation.isPending || origins.length === 0}
+          >
+            {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {!updateMutation.isPending && <ExternalLink className="mr-2 h-4 w-4" />}
+            {m.admin_widgets_test_button()}
+          </Button>
+        </div>
       </section>
 
       {updateMutation.error && (
