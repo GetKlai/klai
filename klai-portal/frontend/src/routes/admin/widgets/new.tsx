@@ -438,6 +438,7 @@ function NewWidgetPage() {
                   onChange={(e) =>
                     setForm((p) => ({ ...p, welcome_message: e.target.value }))
                   }
+                  placeholder="Hoi! Waarmee kan ik je helpen?"
                 />
               </div>
             </div>

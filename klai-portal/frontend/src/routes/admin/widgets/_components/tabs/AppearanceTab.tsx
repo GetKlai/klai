@@ -142,7 +142,12 @@ export function AppearanceTab({ widget }: Props) {
         <div className="space-y-1.5">
           <Label htmlFor="widget-welcome">{m.admin_widgets_welcome_label()}</Label>
           <p className="text-xs text-gray-400">{m.admin_widgets_welcome_help()}</p>
-          <Input id="widget-welcome" value={welcome} onChange={(e) => setWelcome(e.target.value)} />
+          <Input
+            id="widget-welcome"
+            value={welcome}
+            onChange={(e) => setWelcome(e.target.value)}
+            placeholder="Hoi! Waarmee kan ik je helpen?"
+          />
         </div>
       </section>
 
