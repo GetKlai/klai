@@ -4,7 +4,7 @@ Covers the core flow:
 - GET /partner/v1/widget-config with valid wgt_id + allowed origin → 200 + JWT
 - Unknown wgt_id → 404
 - Disallowed origin → 403
-- Empty allowed_origins list → 403 (fail-closed)
+- Empty allowed_origins list → 200 (open by default; admin opt-in lockdown)
 - Missing JWT secret in settings → 503
 """
 
@@ -146,8 +146,14 @@ async def test_widget_config_disallowed_origin():
 
 
 @pytest.mark.asyncio
-async def test_widget_config_empty_allowed_origins_fail_closed():
-    """403 when allowed_origins is an empty list (fail-closed)."""
+async def test_widget_config_empty_allowed_origins_open_by_default():
+    """200 when allowed_origins is an empty list — open by default.
+
+    The widget loads on any origin until the admin opts into a lockdown
+    via the Insluiten tab. Real security boundary is the per-tenant
+    HS256 session_token, not this UX gate.
+    """
+    org = FakeOrg(slug="acme")
     widget = FakeWidget(
         widget_config={
             "allowed_origins": [],
@@ -157,14 +163,14 @@ async def test_widget_config_empty_allowed_origins_fail_closed():
             "css_variables": {},
         },
     )
-    db = _make_db_chain(widget, None, [])
+    db = _make_db_chain(widget, org, [])
     request = _make_request("https://example.com")
 
     with patch("app.api.partner.settings") as mock_settings:
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------

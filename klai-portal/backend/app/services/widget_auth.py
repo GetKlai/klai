@@ -141,7 +141,9 @@ def origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
     """Validate origin against allowed list.
 
     # @MX:ANCHOR: [AUTO] CORS origin gate — called for every widget request
-    # @MX:REASON: Security boundary; must remain fail-closed (empty list → False)
+    # @MX:REASON: UX gate (lock to specific sites once admin configures it).
+    #             Defaults open because the widget_id is the real bearer
+    #             credential; locking-by-origin is optional hardening.
     # @MX:SPEC: SPEC-WIDGET-002
 
     Supports two formats:
@@ -151,17 +153,22 @@ def origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
       the bare domain (https://example.com). List both if you need both.
 
     Trailing slashes are stripped before comparison.
-    An empty allowed list always returns False (fail-closed).
+    An empty allowed list means "no restriction" — the widget loads on
+    any origin. This is the default for newly created widgets so the
+    embed "just works" everywhere; admins can lock it down later on
+    the Insluiten tab by listing the hosts they trust. Downstream
+    security (chat completions, append, etc.) is the HS256 session
+    token bound to the widget_id, not this origin check.
 
     Args:
         origin: The Origin header value from the request
         allowed_origins: List of allowed origin strings from widget_config
 
     Returns:
-        True if origin is in the allowed list, False otherwise
+        True if the list is empty (open) OR origin is in the list.
     """
     if not allowed_origins:
-        return False
+        return True
 
     normalised_origin = origin.rstrip("/")
 
