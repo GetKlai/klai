@@ -17,15 +17,10 @@ export const Route = createFileRoute('/admin/widgets/$id_/test')({
   component: WidgetTestPage,
 })
 
-interface PublicConfig {
-  title: string
-  welcome_message: string
-  chat_endpoint: string
+interface PreviewSession {
   session_token: string
+  chat_endpoint: string
   session_expires_at: string
-  css_variables?: Record<string, string>
-  conversation_starters?: string[]
-  hide_disclaimer?: boolean
 }
 
 interface ChatMessage {
@@ -41,35 +36,12 @@ function WidgetTestPage() {
     queryFn: () => apiFetch<WidgetDetailResponse>(`/api/admin/widgets/${id}`),
   })
 
-  const widgetPublicId = widgetQuery.data?.widget_id
-
-  const configQuery = useQuery<PublicConfig>({
-    queryKey: ['widget-public-config', widgetPublicId],
-    enabled: !!widgetPublicId,
-    queryFn: async () => {
-      // Force a cross-origin shape (absolute URL + mode:cors) so the
-      // browser sends an Origin header. Same-origin GET would omit it
-      // and the backend's origin gate returns 403 — leaving the page
-      // hanging on the loader (2026-05-20 incident).
-      const url = `${window.location.origin}/partner/v1/widget-config?id=${encodeURIComponent(widgetPublicId!)}`
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 8000)
-      try {
-        const res = await fetch(url, {
-          method: 'GET',
-          mode: 'cors',
-          credentials: 'omit',
-          signal: controller.signal,
-        })
-        if (!res.ok) {
-          const body = await res.text().catch(() => '')
-          throw new Error(`widget-config ${res.status}${body ? ': ' + body.slice(0, 120) : ''}`)
-        }
-        return (await res.json()) as PublicConfig
-      } finally {
-        clearTimeout(timer)
-      }
-    },
+  // Use the admin preview-session endpoint — admin cookie auth, no
+  // Origin gate. The widget detail (admin auth) carries all the layout
+  // config; we only need a chat session_token from here.
+  const sessionQuery = useQuery<PreviewSession>({
+    queryKey: ['widget-preview-session', id],
+    queryFn: () => apiFetch<PreviewSession>(`/api/admin/widgets/${id}/preview-session`),
     retry: false,
   })
 
@@ -91,7 +63,7 @@ function WidgetTestPage() {
     return () => { style.remove() }
   }, [])
 
-  if (widgetQuery.isPending || configQuery.isPending) {
+  if (widgetQuery.isPending || sessionQuery.isPending) {
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
@@ -108,17 +80,13 @@ function WidgetTestPage() {
       </div>
     )
   }
-  if (configQuery.error || !configQuery.data) {
+  if (sessionQuery.error || !sessionQuery.data) {
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white px-6">
         <div className="max-w-md text-center">
-          <p className="text-sm font-medium text-gray-900">Kon widget-config niet laden</p>
+          <p className="text-sm font-medium text-gray-900">Kon preview-sessie niet starten</p>
           <p className="mt-1 text-xs text-gray-400">
-            {configQuery.error instanceof Error ? configQuery.error.message : 'Onbekende fout'}
-          </p>
-          <p className="mt-3 text-xs text-gray-400">
-            Tip: voeg <code className="font-mono">{window.location.origin}</code> toe aan
-            de toegestane websites op de Insluiten-tab van de widget.
+            {sessionQuery.error instanceof Error ? sessionQuery.error.message : 'Onbekende fout'}
           </p>
         </div>
       </div>
@@ -126,12 +94,13 @@ function WidgetTestPage() {
   }
 
   const widget = widgetQuery.data
-  const cfg = configQuery.data
+  const session = sessionQuery.data
   const primary = widget.widget_config.primary_color || '#fcaa2d'
-  const botName = cfg.title || widget.name
+  const botName = widget.widget_config.title || widget.name
   const description = widget.description || ''
-  const starters = (cfg.conversation_starters ?? []).filter(Boolean).slice(0, 6)
-  const hideDisclaimer = cfg.hide_disclaimer ?? false
+  const starters = (widget.widget_config.conversation_starters ?? []).filter(Boolean).slice(0, 6)
+  const hideDisclaimer = widget.widget_config.hide_disclaimer ?? false
+  const welcomeMessage = widget.widget_config.welcome_message
 
   function autoResize() {
     const el = textareaRef.current
@@ -159,11 +128,11 @@ function WidgetTestPage() {
     setIsStreaming(true)
 
     try {
-      const res = await fetch(cfg.chat_endpoint, {
+      const res = await fetch(session.chat_endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${cfg.session_token}`,
+          Authorization: `Bearer ${session.session_token}`,
         },
         body: JSON.stringify({
           messages: [...messages, userMsg].map(({ role, content }) => ({ role, content })),
@@ -275,7 +244,7 @@ function WidgetTestPage() {
               </div>
               <h3 className="text-lg font-semibold text-gray-900">{botName}</h3>
               <p className="mt-1 max-w-md text-sm text-gray-500">
-                {description || cfg.welcome_message || 'Stel je vraag en ik help je verder.'}
+                {description || welcomeMessage || 'Stel je vraag en ik help je verder.'}
               </p>
               {starters.length > 0 && (
                 <div className="mt-8 flex max-w-lg flex-wrap justify-center gap-2">
