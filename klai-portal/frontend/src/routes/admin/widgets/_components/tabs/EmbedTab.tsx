@@ -8,7 +8,10 @@ import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
 import { EmbedSnippet } from '../EmbedSnippet'
 
-const PORTAL_ORIGIN = 'https://my.getklai.com'
+// Use the user's current portal origin (could be my.getklai.com OR a
+// tenant subdomain like nerds-37376105.getklai.com). The widget's
+// allowed_origins gate is exact-match, so adding a different host
+// would not unblock the test page on the host the user is actually on.
 
 function parseOrigins(raw: string): string[] {
   return raw
@@ -100,10 +103,15 @@ export function EmbedTab({ widget }: Props) {
             type="button"
             variant="outline"
             onClick={() => {
-              // Auto-add my.getklai.com to allowed_origins (idempotent)
-              // BEFORE opening the test tab — the widget's origin check
-              // would otherwise reject the test page on my.getklai.com.
-              const hasPortal = origins.includes(PORTAL_ORIGIN)
+              // Auto-add the current portal origin to allowed_origins
+              // (idempotent) before opening the test tab. The widget's
+              // origin check is exact-match — adding the wrong host
+              // would not unblock the test page where the user actually
+              // lands. Use window.location.origin so this works on
+              // my.getklai.com AND tenant subdomains like
+              // nerds-37376105.getklai.com.
+              const portalOrigin = window.location.origin
+              const hasPortal = origins.includes(portalOrigin)
               const openTest = () => {
                 window.open(`/admin/widgets/${widget.id}/test`, '_blank', 'noopener,noreferrer')
               }
@@ -113,13 +121,13 @@ export function EmbedTab({ widget }: Props) {
               }
               const next: WidgetConfig = {
                 ...config,
-                allowed_origins: [...origins, PORTAL_ORIGIN],
+                allowed_origins: [...origins, portalOrigin],
               }
               updateMutation.mutate(
                 { widget_config: next },
                 {
                   onSuccess: () => {
-                    setOriginsRaw([...origins, PORTAL_ORIGIN].join('\n'))
+                    setOriginsRaw([...origins, portalOrigin].join('\n'))
                     openTest()
                   },
                   onError: () => toast.error(m.admin_shared_error_generic()),
