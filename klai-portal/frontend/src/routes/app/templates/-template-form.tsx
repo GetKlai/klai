@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
+import { toast } from 'sonner'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -109,7 +110,10 @@ export function TemplateFormPage({
         method: 'POST',
         body: JSON.stringify(body),
       }),
-    onSuccess: () => invalidateAndLeave(),
+    onSuccess: () => {
+      toast.success(m.templates_form_created_toast())
+      void invalidateAndLeave()
+    },
     onError: (err: unknown) => setErrorKey(asErrorMessage(err)),
   })
 
@@ -119,14 +123,23 @@ export function TemplateFormPage({
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
-    onSuccess: () => invalidateAndLeave(),
+    onSuccess: () => {
+      toast.success(m.templates_form_updated_toast())
+      void invalidateAndLeave()
+    },
     onError: (err: unknown) => setErrorKey(asErrorMessage(err)),
   })
 
-  function invalidateAndLeave() {
-    void queryClient.invalidateQueries({ queryKey: ['app-templates'] })
-    void queryClient.invalidateQueries({ queryKey: ['app-templates-for-bar'] })
-    void queryClient.invalidateQueries({ queryKey: ['kb-preference'] })
+  async function invalidateAndLeave() {
+    // Await invalidation BEFORE navigating so the templates list page
+    // mounts with fresh data. Without the await the user landed on
+    // /app/templates with the stale cached list — "ik zie de template
+    // niet gelijk" (2026-05-20).
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['app-templates'] }),
+      queryClient.invalidateQueries({ queryKey: ['app-templates-for-bar'] }),
+      queryClient.invalidateQueries({ queryKey: ['kb-preference'] }),
+    ])
     void navigate({ to: backPath })
   }
 
