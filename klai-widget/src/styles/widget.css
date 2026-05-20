@@ -8,7 +8,7 @@
   --klai-primary-text-color: var(--klai-text-color);
   --klai-text-color: #191918;             /* rl-dark */
   --klai-text-muted: #19191899;           /* rl-dark-60 */
-  --klai-user-text-color: var(--klai-text-color);
+  --klai-user-text-color: var(--klai-primary-text-color);
   --klai-background-color: #fffef2;       /* rl-bg (warm ivory) */
   --klai-card-color: #f3f2e7;             /* rl-cream */
   --klai-border-color: #e3e2d8;           /* rl-border */
