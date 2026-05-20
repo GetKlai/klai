@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Info } from 'lucide-react'
 
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
@@ -240,7 +240,6 @@ export function ChatConfigBar() {
             onClick={() => { if (pref.kb_narrow) mutation.mutate({ kb_narrow: false }) }}
             role="radio"
             aria-checked={!pref.kb_narrow}
-            title={m.chatbar_mode_broad_description()}
             className={
               !pref.kb_narrow
                 ? 'rounded-full bg-gray-900 px-3 py-1 text-[12px] font-medium text-white transition-colors'
@@ -254,7 +253,6 @@ export function ChatConfigBar() {
             onClick={() => { if (!pref.kb_narrow) mutation.mutate({ kb_narrow: true }) }}
             role="radio"
             aria-checked={pref.kb_narrow}
-            title={m.chatbar_mode_narrow_description()}
             className={
               pref.kb_narrow
                 ? 'rounded-full bg-gray-900 px-3 py-1 text-[12px] font-medium text-white transition-colors'
@@ -264,6 +262,19 @@ export function ChatConfigBar() {
             {m.chatbar_mode_narrow_on()}
           </button>
         </div>
+        {/* Inline info-icon. Native title attribute carries the multi-
+            line explanation; browser-default tooltip handles newlines
+            via \n and shows on hover. Keeps the chatbar calm — one
+            "more info here" affordance instead of dual tooltips on the
+            pills themselves. */}
+        <button
+          type="button"
+          aria-label={`${m.chatbar_mode_label()} — uitleg`}
+          title={`${m.chatbar_mode_narrow_off()}: ${m.chatbar_mode_broad_description()}\n\n${m.chatbar_mode_narrow_on()}: ${m.chatbar_mode_narrow_description()}`}
+          className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 hover:text-gray-900 klai-hover"
+        >
+          <Info className="h-3.5 w-3.5" strokeWidth={1.75} />
+        </button>
       </div>
 
       {/* Templates: multi-select. Hidden when backend has no templates yet. */}
