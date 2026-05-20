@@ -133,9 +133,7 @@ export function ChatWindow(props: ChatWindowProps) {
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <rect x="3" y="4" width="18" height="13" rx="2" />
-                <path d="M8 21h8" />
-                <path d="M12 17v4" />
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               </svg>
             </span>
             <div class="klai-header-text">
