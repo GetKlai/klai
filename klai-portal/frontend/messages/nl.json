@@ -1566,7 +1566,7 @@
   "chatbar_collections_manage": "Kennisbanken beheren →",
   "chatbar_mode_label": "Modus",
   "chatbar_mode_narrow_on": "Strikt",
-  "chatbar_mode_narrow_off": "Breed",
+  "chatbar_mode_narrow_off": "Open",
   "chatbar_mode_narrow_tooltip_on": "Aan: model antwoordt uitsluitend op basis van de kennisbank. Klik om uit te schakelen.",
   "chatbar_mode_narrow_tooltip_off": "Uit: model gebruikt kennisbank als context én eigen algemene kennis. Klik voor strikt-modus (alleen kennisbank).",
   "chatbar_mode_narrow_description": "Model antwoordt uitsluitend uit de kennisbank. Staat het er niet in, dan zegt het model dat eerlijk.",
