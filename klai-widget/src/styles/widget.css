@@ -116,7 +116,7 @@
   height: 32px;
   border-radius: 8px;
   background-color: var(--klai-primary-color);
-  color: #ffffff;
+  color: var(--klai-primary-text-color);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -434,31 +434,37 @@
   background-color: var(--klai-primary-color);
 }
 
-/* ── TWD-style empty-state chips ────────────────────────────────── */
+/* ── TWD-style empty-state chips ──────────────────────────────────
+   Render the chips left-aligned so each chip starts under the
+   welcome message (which itself sits flush-left as an assistant
+   bubble). Stack chips on their own row so each suggestion reads
+   as its own line, not a wrapped chip-row floating somewhere in
+   the middle of the chat area. */
 .klai-starters {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 24px 4px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 16px 8px;
 }
 
 .klai-starter {
   font-family: inherit;
   font-size: 13px;
   line-height: 1.4;
-  color: #191918;
-  background: #f3f2e7;
-  border: 1px solid #e3e2d8;
+  color: var(--klai-text-color);
+  background: var(--klai-card-color);
+  border: 1px solid var(--klai-border-color);
   border-radius: 999px;
-  padding: 8px 14px;
+  padding: 7px 13px;
   cursor: pointer;
+  text-align: left;
   transition: background-color 150ms ease, border-color 150ms ease;
 }
 
 .klai-starter:hover:not(:disabled) {
-  background: #fcaa2d1a;
-  border-color: #fcaa2d;
+  background: color-mix(in srgb, var(--klai-primary-color) 12%, transparent);
+  border-color: var(--klai-primary-color);
 }
 
 .klai-starter:disabled {
