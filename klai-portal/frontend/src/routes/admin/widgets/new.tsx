@@ -42,8 +42,7 @@ interface FormState {
   system_prompt: string
   // Kennisbanken
   kb_ids: number[]
-  // Vormgeving
-  widget_title: string
+  // Vormgeving (widget titel = bot naam; geen apart veld)
   primary_color: string
   theme: 'light' | 'dark'
   welcome_message: string
@@ -63,7 +62,6 @@ const INITIAL_FORM: FormState = {
   template_slug: '',
   system_prompt: '',
   kb_ids: [],
-  widget_title: '',
   primary_color: '#fcaa2d',
   theme: 'light',
   welcome_message: '',
@@ -176,7 +174,7 @@ function NewWidgetPage() {
 
     const widgetConfig: WidgetConfig = {
       allowed_origins: parseOrigins(form.allowed_origins_raw),
-      title: form.widget_title.trim() || form.name.trim(),
+      title: form.name.trim(),
       welcome_message: form.welcome_message.trim(),
       system_prompt: form.system_prompt.trim(),
       css_variables: {},
@@ -354,55 +352,37 @@ function NewWidgetPage() {
               <SectionHeading>
                 {m.admin_widgets_appearance_section_brand()}
               </SectionHeading>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-1.5">
-                  <Label htmlFor="widget-title">
-                    {m.admin_widgets_widget_title_label()}
-                  </Label>
-                  <p className="text-xs text-gray-400">
-                    {m.admin_widgets_widget_title_help()}
-                  </p>
-                  <Input
-                    id="widget-title"
-                    value={form.widget_title}
+              <div className="space-y-1.5 max-w-sm">
+                <Label htmlFor="widget-primary-color">
+                  {m.admin_widgets_brand_color_label()}
+                </Label>
+                <p className="text-xs text-gray-400">
+                  {m.admin_widgets_brand_color_help()}
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={form.primary_color}
                     onChange={(e) =>
-                      setForm((p) => ({ ...p, widget_title: e.target.value }))
+                      setForm((p) => ({
+                        ...p,
+                        primary_color: e.target.value,
+                      }))
                     }
-                    placeholder="Klai Help"
+                    className="h-10 w-12 cursor-pointer rounded-md border border-gray-200 p-1"
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="widget-primary-color">
-                    {m.admin_widgets_brand_color_label()}
-                  </Label>
-                  <p className="text-xs text-gray-400">
-                    {m.admin_widgets_brand_color_help()}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={form.primary_color}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          primary_color: e.target.value,
-                        }))
-                      }
-                      className="h-10 w-12 cursor-pointer rounded-md border border-gray-200 p-1"
-                    />
-                    <Input
-                      value={form.primary_color}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          primary_color: e.target.value,
-                        }))
-                      }
-                      pattern="^#[0-9a-fA-F]{6}$"
-                      placeholder="#fcaa2d"
-                      className="font-mono text-sm"
-                    />
-                  </div>
+                  <Input
+                    value={form.primary_color}
+                    onChange={(e) =>
+                      setForm((p) => ({
+                        ...p,
+                        primary_color: e.target.value,
+                      }))
+                    }
+                    pattern="^#[0-9a-fA-F]{6}$"
+                    placeholder="#fcaa2d"
+                    className="font-mono text-sm"
+                  />
                 </div>
               </div>
 
