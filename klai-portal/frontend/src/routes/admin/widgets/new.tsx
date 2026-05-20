@@ -164,6 +164,14 @@ function NewWidgetPage() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    // Pressing Enter inside any input inside the form fires onSubmit
+    // even when the focused button is type="button". Guard: never
+    // create the widget until the admin is actually on the Insluiten
+    // step — earlier steps advance instead.
+    if (!isLastStep) {
+      handleNext()
+      return
+    }
     if (currentStepError) return
 
     const widgetConfig: WidgetConfig = {
