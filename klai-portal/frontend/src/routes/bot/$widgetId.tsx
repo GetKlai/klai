@@ -262,9 +262,17 @@ function PublicBotPage() {
                       <MessageSquare className="h-4 w-4" style={{ color: primary }} strokeWidth={2} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="whitespace-pre-line break-words text-[14px] leading-[1.75] text-gray-900">
-                        {msg.content || (isStreaming && i === messages.length - 1 ? '…' : '')}
-                      </div>
+                      {msg.content ? (
+                        <div className="whitespace-pre-line break-words text-[14px] leading-[1.75] text-gray-900">
+                          {msg.content}
+                        </div>
+                      ) : isStreaming && i === messages.length - 1 ? (
+                        <div className="flex items-center gap-1 pt-2">
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '0ms' }} />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '150ms' }} />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '300ms' }} />
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 )
