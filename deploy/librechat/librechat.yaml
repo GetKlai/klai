@@ -24,8 +24,13 @@ interface:
 
   # Disabled surfaces — keep in this list even if the key appeared in a later
   # LibreChat version; explicit false survives schema evolutions.
+  #
+  # agents.use MUST be true on LibreChat 0.8.5+ — the frontend fetches
+  # /api/agents on chat-screen mount; a 403 leaves the UI stuck on
+  # "Welkom terug" with no composer (incident 2026-05-20). agents.create
+  # and agents.share stay false: users can chat but not author/share agents.
   agents:
-    use: false
+    use: true
     create: false
     share: false
   prompts:
