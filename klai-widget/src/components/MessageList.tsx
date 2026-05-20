@@ -170,8 +170,11 @@ export function MessageList(props: MessageListProps) {
     >
       <For each={props.messages}>
         {(message) => {
-          // Skip empty assistant messages that are still being streamed
-          const isEmpty = message.role === "assistant" && message.content === "" && props.isStreaming;
+          // Skip ANY empty assistant message (streaming placeholder OR
+          // an empty welcome_message seeded by the store). Renders the
+          // pre-content small empty bubble the user reported as weird.
+          const isEmpty =
+            message.role === "assistant" && message.content.trim() === "";
           return (
             <Show when={!isEmpty}>
               <div

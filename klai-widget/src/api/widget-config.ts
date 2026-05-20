@@ -9,6 +9,10 @@ export interface WidgetConfig {
   conversation_starters?: string[];
   // White-label flag to hide the AI-disclaimer footer.
   hide_disclaimer?: boolean;
+  // TWD-pattern: header avatar + empty-state hero need the bot name
+  // and a short description ("Assistent voor X — informatie over Y").
+  name?: string;
+  description?: string;
 }
 
 export type KlaiWidgetErrorCode =

@@ -84,6 +84,7 @@ async function bootstrap(): Promise<void> {
     render(
       () => ChatWindow({
         title: config.title,
+        description: config.description,
         onClose: () => {},
         inline: true,
         conversationStarters: config.conversation_starters,

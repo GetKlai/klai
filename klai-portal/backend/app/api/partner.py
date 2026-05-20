@@ -694,7 +694,7 @@ async def widget_config(
     expires_at = datetime.now(UTC) + timedelta(hours=1)
 
     body = {
-        "title": widget_config_data.get("title", ""),
+        "title": widget_config_data.get("title", "") or widget_row.name,
         "welcome_message": widget_config_data.get("welcome_message", ""),
         "css_variables": _merge_css_variables(widget_config_data),
         "chat_endpoint": "/partner/v1/chat/completions",
@@ -704,6 +704,11 @@ async def widget_config(
         # disclaimer toggle. system_prompt stays server-side only.
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
+        # Name + description drive the TWD-pattern header (avatar +
+        # title + subtitle) and the empty-state hero.
+        "name": widget_row.name,
+        "description": widget_row.description or "",
+        "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
     }
 
     return Response(
