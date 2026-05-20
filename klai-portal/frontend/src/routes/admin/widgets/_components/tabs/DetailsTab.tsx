@@ -49,6 +49,11 @@ export function DetailsTab({ widget }: Props) {
     e.preventDefault()
     const next: WidgetConfig = {
       ...config,
+      // Widget titel = bot naam — single source of truth. Keep the
+      // legacy ``title`` field in widget_config synced with the bot
+      // name so existing widgets (and the chat-header on the embed
+      // share-link) keep displaying the right label.
+      title: name.trim(),
       system_prompt: systemPrompt.trim(),
       template_slug: templateSlug || null,
     }

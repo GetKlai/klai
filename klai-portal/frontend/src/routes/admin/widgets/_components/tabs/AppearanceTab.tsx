@@ -23,7 +23,6 @@ export function AppearanceTab({ widget }: Props) {
   const updateMutation = useUpdateWidget(String(widget.id))
   const config = widget.widget_config
 
-  const [title, setTitle] = useState(config.title)
   const [welcome, setWelcome] = useState(config.welcome_message)
   const [primaryColor, setPrimaryColor] = useState(config.primary_color || '#fcaa2d')
   const [theme, setTheme] = useState<'light' | 'dark'>(config.theme || 'light')
@@ -35,7 +34,6 @@ export function AppearanceTab({ widget }: Props) {
   const [widgetPosition, setWidgetPosition] = useState<'left' | 'right'>(config.widget_position || 'right')
 
   useEffect(() => {
-    setTitle(config.title)
     setWelcome(config.welcome_message)
     setPrimaryColor(config.primary_color || '#fcaa2d')
     setTheme(config.theme || 'light')
@@ -50,7 +48,6 @@ export function AppearanceTab({ widget }: Props) {
   const starters = startersRaw.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, MAX_STARTERS)
 
   const isDirty =
-    title.trim() !== config.title ||
     welcome.trim() !== config.welcome_message ||
     primaryColor !== (config.primary_color || '#fcaa2d') ||
     theme !== (config.theme || 'light') ||
@@ -65,7 +62,6 @@ export function AppearanceTab({ widget }: Props) {
     e.preventDefault()
     const next: WidgetConfig = {
       ...config,
-      title: title.trim(),
       welcome_message: welcome.trim(),
       primary_color: primaryColor,
       theme,
@@ -87,30 +83,23 @@ export function AppearanceTab({ widget }: Props) {
       {/* Brand & Theme */}
       <section>
         <SectionHeading>{m.admin_widgets_appearance_section_brand()}</SectionHeading>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-1.5">
-            <Label htmlFor="widget-title">{m.admin_widgets_widget_title_label()}</Label>
-            <p className="text-xs text-gray-400">{m.admin_widgets_widget_title_help()}</p>
-            <Input id="widget-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Klai Help" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="widget-primary-color">{m.admin_widgets_brand_color_label()}</Label>
-            <p className="text-xs text-gray-400">{m.admin_widgets_brand_color_help()}</p>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={primaryColor}
-                onChange={(e) => setPrimaryColor(e.target.value)}
-                className="h-10 w-12 cursor-pointer rounded-md border border-gray-200 p-1"
-              />
-              <Input
-                value={primaryColor}
-                onChange={(e) => setPrimaryColor(e.target.value)}
-                pattern="^#[0-9a-fA-F]{6}$"
-                placeholder="#fcaa2d"
-                className="font-mono text-sm"
-              />
-            </div>
+        <div className="space-y-1.5 max-w-sm">
+          <Label htmlFor="widget-primary-color">{m.admin_widgets_brand_color_label()}</Label>
+          <p className="text-xs text-gray-400">{m.admin_widgets_brand_color_help()}</p>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={primaryColor}
+              onChange={(e) => setPrimaryColor(e.target.value)}
+              className="h-10 w-12 cursor-pointer rounded-md border border-gray-200 p-1"
+            />
+            <Input
+              value={primaryColor}
+              onChange={(e) => setPrimaryColor(e.target.value)}
+              pattern="^#[0-9a-fA-F]{6}$"
+              placeholder="#fcaa2d"
+              className="font-mono text-sm"
+            />
           </div>
         </div>
 
