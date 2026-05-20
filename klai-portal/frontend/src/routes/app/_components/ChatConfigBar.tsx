@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { ChevronDown } from 'lucide-react'
 
 import { apiFetch } from '@/lib/apiFetch'
@@ -133,7 +134,7 @@ export function ChatConfigBar() {
   }
 
   return (
-    <div className="flex shrink-0 items-start gap-6 bg-[var(--color-sidebar)] border-b border-[var(--color-sidebar-border)] pl-4 pr-4 pt-5 pb-4">
+    <div className="flex shrink-0 items-center gap-6 bg-[var(--color-sidebar)] border-b border-[var(--color-sidebar-border)] pl-4 pr-4 pt-3 pb-3">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
       {tmplOpen && <div className="fixed inset-0 z-40" onClick={() => setTmplOpen(false)} />}
 
@@ -156,13 +157,13 @@ export function ChatConfigBar() {
           {collOpen && (
             <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg">
               <div className="flex items-center justify-between px-3 py-1.5">
-                <span className="text-[10px] font-semibold tracking-wide text-gray-400">Collecties</span>
+                <span className="text-[10px] font-semibold tracking-wide text-gray-400">{m.chatbar_collections_label()}</span>
                 <button
                   type="button"
                   onClick={toggleAll}
                   className="text-[10px] font-semibold tracking-wide text-gray-500 hover:text-gray-900 transition-colors"
                 >
-                  {anythingActive ? 'Alles uit' : 'Alles aan'}
+                  {anythingActive ? m.chatbar_collections_all_off() : m.chatbar_collections_all_on()}
                 </button>
               </div>
               {/* Personal */}
@@ -203,6 +204,15 @@ export function ChatConfigBar() {
                 </button>
               ))}
 
+              <div className="mt-1 border-t border-gray-100 pt-1">
+                <Link
+                  to="/app/knowledge"
+                  onClick={() => setCollOpen(false)}
+                  className="block px-3 py-2 text-[12px] text-[var(--color-rl-accent-dark)] hover:underline"
+                >
+                  {m.chatbar_collections_manage()}
+                </Link>
+              </div>
             </div>
           )}
         </div>
@@ -216,9 +226,9 @@ export function ChatConfigBar() {
           the same kb_narrow boolean — the LiteLLM hook
           (deploy/litellm/klai_knowledge.py) reads it per-request and
           injects the corresponding system-prompt header. */}
-      <div className="flex flex-col gap-1.5 min-w-0">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">
-          {m.chatbar_mode_label()}
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-[13px] text-gray-400 whitespace-nowrap">
+          {m.chatbar_mode_label()}:
         </span>
         <div
           role="radiogroup"
@@ -230,10 +240,11 @@ export function ChatConfigBar() {
             onClick={() => { if (pref.kb_narrow) mutation.mutate({ kb_narrow: false }) }}
             role="radio"
             aria-checked={!pref.kb_narrow}
+            title={m.chatbar_mode_broad_description()}
             className={
               !pref.kb_narrow
-                ? 'min-w-[88px] rounded-full bg-gray-900 px-5 py-1.5 text-[13px] font-medium text-white transition-colors'
-                : 'min-w-[88px] rounded-full px-5 py-1.5 text-[13px] text-gray-500 hover:text-gray-900 klai-hover'
+                ? 'rounded-full bg-gray-900 px-3 py-1 text-[12px] font-medium text-white transition-colors'
+                : 'rounded-full px-3 py-1 text-[12px] text-gray-500 hover:text-gray-900 klai-hover'
             }
           >
             {m.chatbar_mode_narrow_off()}
@@ -243,18 +254,16 @@ export function ChatConfigBar() {
             onClick={() => { if (!pref.kb_narrow) mutation.mutate({ kb_narrow: true }) }}
             role="radio"
             aria-checked={pref.kb_narrow}
+            title={m.chatbar_mode_narrow_description()}
             className={
               pref.kb_narrow
-                ? 'min-w-[88px] rounded-full bg-gray-900 px-5 py-1.5 text-[13px] font-medium text-white transition-colors'
-                : 'min-w-[88px] rounded-full px-5 py-1.5 text-[13px] text-gray-500 hover:text-gray-900 klai-hover'
+                ? 'rounded-full bg-gray-900 px-3 py-1 text-[12px] font-medium text-white transition-colors'
+                : 'rounded-full px-3 py-1 text-[12px] text-gray-500 hover:text-gray-900 klai-hover'
             }
           >
             {m.chatbar_mode_narrow_on()}
           </button>
         </div>
-        <span className="text-[12px] text-gray-400 leading-snug">
-          {pref.kb_narrow ? m.chatbar_mode_narrow_description() : m.chatbar_mode_broad_description()}
-        </span>
       </div>
 
       {/* Templates: multi-select. Hidden when backend has no templates yet. */}
@@ -310,6 +319,15 @@ export function ChatConfigBar() {
                     </button>
                   )
                 })}
+                <div className="mt-1 border-t border-gray-100 pt-1">
+                  <Link
+                    to="/app/templates"
+                    onClick={() => setTmplOpen(false)}
+                    className="block px-3 py-2 text-[12px] text-[var(--color-rl-accent-dark)] hover:underline"
+                  >
+                    {m.chatbar_templates_manage()}
+                  </Link>
+                </div>
               </div>
             )}
           </div>
