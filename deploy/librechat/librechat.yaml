@@ -50,7 +50,11 @@ interface:
   fileSearch: false
   fileCitations: false
   runCode: false
-  modelSelect: false
+  # modelSelect MUST be true on 0.8.5+ even with a default modelSpec.
+  # When false, the auto-selected model is not "attached" to the new
+  # conversation and the composer refuses to render — only "Welkom
+  # terug" shows. Confirmed live 2026-05-20 incident.
+  modelSelect: true
   endpointsMenu: false
   parameters: false
   sidePanel: false
