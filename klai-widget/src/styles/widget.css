@@ -484,28 +484,30 @@
   margin-top: 18px;
 }
 
-/* Starter chips — TWD pattern. Centered stack of full-width-feel
-   pills inside the hero, left-aligned when used elsewhere. */
+/* Starter chips — TWD pattern. Content-width pills that wrap onto
+   multiple lines when they exceed the chat width. Hover tint
+   follows the brand colour. */
 .klai-starters {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  width: 100%;
-  max-width: 280px;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px 8px;
+  max-width: 100%;
 }
 
 .klai-starter {
   font-family: inherit;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 12.5px;
+  line-height: 1.35;
   color: var(--klai-text-color);
   background: var(--klai-card-color);
   border: 1px solid var(--klai-border-color);
   border-radius: 999px;
-  padding: 9px 14px;
+  padding: 7px 12px;
   cursor: pointer;
   text-align: center;
+  max-width: 100%;
   transition: background-color 150ms ease, border-color 150ms ease;
 }
 
