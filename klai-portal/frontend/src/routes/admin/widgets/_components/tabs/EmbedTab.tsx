@@ -104,12 +104,12 @@ export function EmbedTab({ widget }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Deelbare link — TWD-style green card. Public bot URL works for
-          anyone with the link, no auth required, no origin gymnastics. */}
-      <section className="rounded-xl border border-[var(--color-success)]/30 bg-[var(--color-success-bg)]/40 p-4">
+      {/* Deelbare link — Klai-brand cream card with amber link icon.
+          Public bot URL works for anyone with the link, no auth required. */}
+      <section className="rounded-xl border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] p-4">
         <div className="flex items-center gap-2 mb-3">
-          <Link2 className="h-4 w-4 text-[var(--color-success)]" />
-          <span className="text-sm font-medium text-gray-900">
+          <Link2 className="h-4 w-4 text-[var(--color-rl-accent-dark)]" />
+          <span className="text-sm font-medium text-[var(--color-rl-dark)]">
             Deelbare link
           </span>
         </div>
@@ -119,41 +119,41 @@ export function EmbedTab({ widget }: Props) {
             readOnly
             value={shareUrl}
             onFocus={(e) => e.currentTarget.select()}
-            className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-xs text-gray-700 outline-none focus:ring-2 focus:ring-[var(--color-success)]/30"
+            className="flex-1 rounded-md border border-[var(--color-rl-border)] bg-white px-3 py-2 font-mono text-xs text-[var(--color-rl-dark)] outline-none focus:ring-2 focus:ring-[var(--color-rl-accent)]/40"
           />
           <button
             type="button"
             onClick={copyShareLink}
-            className="inline-flex items-center justify-center rounded-full bg-[var(--color-success)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+            className="inline-flex items-center justify-center rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
           >
             Kopieer
           </button>
         </div>
       </section>
 
-      {/* Embed code (widget script) — TWD-style cream card. */}
-      <section className="rounded-xl border border-gray-200 bg-[var(--color-rl-cream)] p-4">
+      {/* Embed code (widget script) — Klai-brand cream card. */}
+      <section className="rounded-xl border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] p-4">
         <div className="flex items-center gap-2 mb-3">
-          <Code2 className="h-4 w-4 text-gray-500" />
-          <span className="text-sm font-medium text-gray-900">
+          <Code2 className="h-4 w-4 text-[var(--color-rl-accent-dark)]" />
+          <span className="text-sm font-medium text-[var(--color-rl-dark)]">
             Embed code (widget script)
           </span>
         </div>
-        <pre className="rounded-md border border-gray-200 bg-white px-4 py-3 text-xs font-mono text-gray-900 overflow-x-auto whitespace-pre">
+        <pre className="rounded-md border border-[var(--color-rl-border)] bg-white px-4 py-3 text-xs font-mono text-[var(--color-rl-dark)] overflow-x-auto whitespace-pre">
           {snippet}
         </pre>
         <div className="mt-3 flex items-stretch gap-2">
           <button
             type="button"
             onClick={copyEmbedCode}
-            className="flex-1 inline-flex items-center justify-center rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-50"
+            className="flex-1 inline-flex items-center justify-center rounded-full border border-[var(--color-rl-border)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-bg)]"
           >
             Kopieer embed code
           </button>
           <button
             type="button"
             onClick={openTest}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-success)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-rl-accent)] px-4 py-2 text-sm font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-accent-hover)]"
           >
             <Eye className="h-4 w-4" />
             Test
