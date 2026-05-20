@@ -37,6 +37,7 @@ export function ChatConfigBar() {
   const queryClient = useQueryClient()
   const [collOpen, setCollOpen] = useState(false)
   const [tmplOpen, setTmplOpen] = useState(false)
+  const [modeInfoOpen, setModeInfoOpen] = useState(false)
 
   const { data: pref } = useQuery<KBPref>({
     queryKey: ['kb-preference'],
@@ -262,19 +263,36 @@ export function ChatConfigBar() {
             {m.chatbar_mode_narrow_on()}
           </button>
         </div>
-        {/* Inline info-icon. Native title attribute carries the multi-
-            line explanation; browser-default tooltip handles newlines
-            via \n and shows on hover. Keeps the chatbar calm — one
-            "more info here" affordance instead of dual tooltips on the
-            pills themselves. */}
-        <button
-          type="button"
-          aria-label={`${m.chatbar_mode_label()} — uitleg`}
-          title={`${m.chatbar_mode_narrow_off()}: ${m.chatbar_mode_broad_description()}\n\n${m.chatbar_mode_narrow_on()}: ${m.chatbar_mode_narrow_description()}`}
-          className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 hover:text-gray-900 klai-hover"
-        >
-          <Info className="h-3.5 w-3.5" strokeWidth={1.75} />
-        </button>
+        {/* Inline info-icon with click-popover. Native title was too
+            subtle (500ms delay + browser-default styling); a real
+            Klai-styled popover that opens on click is the visible
+            affordance the user expects when they see an info icon. */}
+        <div className="relative">
+          {modeInfoOpen && (
+            <div className="fixed inset-0 z-40" onClick={() => setModeInfoOpen(false)} />
+          )}
+          <button
+            type="button"
+            onClick={() => setModeInfoOpen((v) => !v)}
+            aria-label={`${m.chatbar_mode_label()} — uitleg`}
+            aria-expanded={modeInfoOpen}
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 hover:text-gray-900 klai-hover"
+          >
+            <Info className="h-3.5 w-3.5" strokeWidth={1.75} />
+          </button>
+          {modeInfoOpen && (
+            <div className="absolute left-1/2 top-full z-50 mt-2 w-80 -translate-x-1/2 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
+              <div className="mb-3">
+                <p className="text-[13px] font-semibold text-gray-900">{m.chatbar_mode_narrow_off()}</p>
+                <p className="text-[12px] text-gray-500 leading-snug mt-0.5">{m.chatbar_mode_broad_description()}</p>
+              </div>
+              <div>
+                <p className="text-[13px] font-semibold text-gray-900">{m.chatbar_mode_narrow_on()}</p>
+                <p className="text-[12px] text-gray-500 leading-snug mt-0.5">{m.chatbar_mode_narrow_description()}</p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Templates: multi-select. Hidden when backend has no templates yet. */}

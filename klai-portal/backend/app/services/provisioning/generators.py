@@ -150,7 +150,7 @@ OPENID_AUTO_REDIRECT=true
 ALLOW_EMAIL_LOGIN=false
 ALLOW_REGISTRATION=false
 ALLOW_SOCIAL_LOGIN=true
-ALLOW_SOCIAL_REGISTRATION=false
+ALLOW_SOCIAL_REGISTRATION=true
 
 # Login rate limiting -- raised from the default (7) because LibreChat's
 # loginLimiter counts every OAuth route hit (redirect + callback = 2 per OIDC
