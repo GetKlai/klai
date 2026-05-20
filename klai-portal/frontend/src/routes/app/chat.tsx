@@ -61,7 +61,11 @@ function useChatBaseUrl(workspaceUrl: string | null): string | null {
 function getIframeSrc(baseUrl: string): string {
   const stored = localStorage.getItem(LC_AUTH_KEY)
   const isFresh = stored !== null && Date.now() - parseInt(stored, 10) < LC_AUTH_TTL_MS
-  return isFresh ? baseUrl : `${baseUrl}/oauth/openid`
+  // Always land on /c/new so the composer renders. LibreChat 0.8.5's root
+  // route is a "Welkom terug" welcome screen that never shows the input
+  // when modelSelect/sidePanel are locked down — only /c/new starts a
+  // fresh conversation with the default modelSpec auto-selected.
+  return isFresh ? `${baseUrl}/c/new` : `${baseUrl}/oauth/openid`
 }
 
 function getErrorMessage(reason: string | null): string {
