@@ -68,10 +68,6 @@ export function DetailsTab({ widget }: Props) {
     if (t && !systemPrompt.trim()) setSystemPrompt(t.prompt_text)
   }
 
-  const SectionHeading = ({ children }: { children: React.ReactNode }) => (
-    <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">{children}</h3>
-  )
-
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
       {/* Basis Informatie */}
@@ -146,5 +142,11 @@ export function DetailsTab({ widget }: Props) {
         </Button>
       </div>
     </form>
+  )
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">{children}</h3>
   )
 }
