@@ -2,6 +2,7 @@ import { For, Show } from "solid-js";
 import DOMPurify from "dompurify";
 import snarkdown from "snarkdown";
 import { TypingIndicator } from "./TypingIndicator";
+import { chatState } from "../store/chat";
 import { t } from "../i18n/labels";
 import type { Message, MessageSource } from "../api/chat-stream";
 import { normalizeSourceUrl } from "../api/chat-stream";
@@ -171,10 +172,13 @@ export function MessageList(props: MessageListProps) {
       <For each={props.messages}>
         {(message) => {
           // Skip ANY empty assistant message (streaming placeholder OR
-          // an empty welcome_message seeded by the store). Renders the
-          // pre-content small empty bubble the user reported as weird.
+          // an empty welcome_message seeded by the store).
           const isEmpty =
             message.role === "assistant" && message.content.trim() === "";
+          const showSources =
+            chatState.config?.show_sources !== false; // default on
+          const showMeta = chatState.config?.show_meta === true;
+          const sources = message.sources ?? [];
           return (
             <Show when={!isEmpty}>
               <div
@@ -187,6 +191,48 @@ export function MessageList(props: MessageListProps) {
                   <div class="klai-markdown" innerHTML={renderMarkdown(message.content, message.sources)} />
                 )}
               </div>
+              <Show
+                when={
+                  message.role === "assistant" &&
+                  showSources &&
+                  sources.length > 0
+                }
+              >
+                <div class="klai-sources" aria-label="Bronnen">
+                  <span class="klai-sources-label">Bronnen</span>
+                  <ol class="klai-sources-list">
+                    <For each={sources}>
+                      {(s) => (
+                        <li class="klai-sources-item">
+                          <a
+                            class="klai-sources-link"
+                            href={s.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={s.title}
+                          >
+                            <span class="klai-sources-number">{s.label}</span>
+                            <span class="klai-sources-title">{s.title}</span>
+                          </a>
+                        </li>
+                      )}
+                    </For>
+                  </ol>
+                </div>
+              </Show>
+              <Show
+                when={
+                  message.role === "assistant" &&
+                  showMeta &&
+                  sources.length > 0
+                }
+              >
+                <p class="klai-meta">
+                  Antwoord gebaseerd op {sources.length}{" "}
+                  {sources.length === 1 ? "bron" : "bronnen"} uit de
+                  kennisbank.
+                </p>
+              </Show>
             </Show>
           );
         }}

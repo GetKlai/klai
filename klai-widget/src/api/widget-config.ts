@@ -13,6 +13,10 @@ export interface WidgetConfig {
   // and a short description ("Assistent voor X — informatie over Y").
   name?: string;
   description?: string;
+  // Display toggles: show citation list / meta block under each
+  // assistant message. Admin-controlled in the Vormgeving tab.
+  show_sources?: boolean;
+  show_meta?: boolean;
 }
 
 export type KlaiWidgetErrorCode =
