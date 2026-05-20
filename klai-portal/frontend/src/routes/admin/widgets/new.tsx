@@ -1,12 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import {
-  ArrowLeft,
-  ArrowRight,
-  AlertTriangle,
-  Loader2,
-} from 'lucide-react'
+import { ArrowLeft, ArrowRight, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -133,9 +128,10 @@ function NewWidgetPage() {
         return m.admin_shared_wizard_error_no_kb_selected()
     }
     if (s === 'embed') {
+      // Origins are optional — empty list = widget loads anywhere.
+      // Only block if something was typed AND it doesn't parse.
       const origins = parseOrigins(form.allowed_origins_raw)
-      if (origins.length === 0) return m.admin_widgets_wizard_error_no_origins()
-      if (origins.some((o) => !isValidOrigin(o)))
+      if (origins.length > 0 && origins.some((o) => !isValidOrigin(o)))
         return m.admin_widgets_wizard_error_invalid_origins()
     }
     return null
@@ -552,15 +548,17 @@ function NewWidgetPage() {
         {step === 'embed' && (
           <section className="space-y-4">
             <p className="text-sm text-gray-400">
-              {m.admin_widgets_wizard_embed_intro()}
+              Standaard werkt je widget overal. Wil je hem alleen op
+              specifieke domeinen laten laden? Vul ze hieronder in — één
+              per regel. Laat leeg om overal toe te staan.
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="widget-origins">
                 {m.admin_widgets_widget_origins_label()}
+                <span className="ml-2 text-xs font-normal text-gray-400">
+                  (optioneel)
+                </span>
               </Label>
-              <p className="text-xs text-gray-400">
-                {m.admin_widgets_widget_origins_help()}
-              </p>
               <textarea
                 id="widget-origins"
                 value={form.allowed_origins_raw}
@@ -574,16 +572,11 @@ function NewWidgetPage() {
                 placeholder={m.admin_widgets_widget_origins_placeholder()}
                 className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm font-mono text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
               />
-              {parseOrigins(form.allowed_origins_raw).length === 0 && (
-                <div className="flex items-start gap-1.5 text-xs text-gray-400">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-[var(--color-destructive)]" />
-                  {m.admin_widgets_widget_origins_empty_warning()}
-                </div>
-              )}
             </div>
             <p className="text-xs text-gray-400 pt-2">
               Na aanmaken vind je de share-link, embed-code en testknop op
-              de Insluiten-tab van je widget.
+              de Insluiten-tab van je widget — daar kun je deze lijst ook
+              later nog aanpassen.
             </p>
           </section>
         )}
