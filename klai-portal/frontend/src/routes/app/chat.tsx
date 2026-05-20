@@ -11,14 +11,11 @@ import * as m from '@/paraglide/messages'
 import { ChatConfigBar } from './_components/ChatConfigBar'
 
 // Threshold: 25 days (conservative — LibreChat refresh tokens are 30d)
+// Bookkeeping only — used by the OAuth-success handler to remember the
+// last successful auth, and cleared on detected SSO failure. The iframe
+// URL no longer reads it; every visit always goes through /oauth/openid
+// because the freshness check could drift past the LC server cookie.
 const LC_AUTH_KEY = 'lc_authed_at'
-// Short window — well below LibreChat's server-side cookie TTL. The
-// previous 25-day value drifted past the LC cookie expiry, leaving the
-// portal convinced the user was authenticated while LC silently failed
-// with "Token is not present. User is not authenticated." and rendered
-// the empty "Welkom terug" screen. 1h forces a cheap OAuth refresh
-// before the LC cookie can stale, every chat-tab visit at worst.
-const LC_AUTH_TTL_MS = 60 * 60 * 1000
 
 // If the iframe hasn't signaled a usable state within this window, assume stuck.
 const STUCK_TIMEOUT_MS = 20_000
@@ -65,13 +62,14 @@ function useChatBaseUrl(workspaceUrl: string | null): string | null {
 }
 
 function getIframeSrc(baseUrl: string): string {
-  const stored = localStorage.getItem(LC_AUTH_KEY)
-  const isFresh = stored !== null && Date.now() - parseInt(stored, 10) < LC_AUTH_TTL_MS
-  // Always land on /c/new so the composer renders. LibreChat 0.8.5's root
-  // route is a "Welkom terug" welcome screen that never shows the input
-  // when modelSelect/sidePanel are locked down — only /c/new starts a
-  // fresh conversation with the default modelSpec auto-selected.
-  return isFresh ? `${baseUrl}/c/new` : `${baseUrl}/oauth/openid`
+  // ALWAYS go through /oauth/openid. The earlier localStorage-freshness
+  // optimization caused 2026-05-20: localStorage TTL drifted past LC's
+  // server-side cookie, the iframe loaded the chat directly without
+  // re-auth, and "Token is not present" left the user stuck on an empty
+  // "Welkom terug" screen. /oauth/openid is idempotent: if the LC session
+  // is still valid it redirects immediately; if expired it triggers OIDC
+  // with the user's still-valid Zitadel session and completes in ~100ms.
+  return `${baseUrl}/oauth/openid`
 }
 
 function getErrorMessage(reason: string | null): string {
