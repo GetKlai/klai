@@ -13,6 +13,7 @@ Widgets are a first-class domain separate from partner API keys:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,16 +21,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least, require_platform_unlocked
-from app.core.config import settings
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess, generate_widget_id
 from app.services.events import emit_event
 from app.services.widget_auth import generate_session_token
-
-from datetime import UTC, datetime, timedelta
 
 logger = structlog.get_logger()
 

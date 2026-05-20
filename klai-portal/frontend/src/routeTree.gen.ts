@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WidgetTestRouteImport } from './routes/widget-test'
 import { Route as VerifyRouteImport } from './routes/verify'
 import { Route as TenantDeletedRouteImport } from './routes/tenant-deleted'
 import { Route as SignupRouteImport } from './routes/signup'
@@ -102,6 +103,11 @@ import { Route as AdminGroupsGroupIdEditRouteImport } from './routes/admin/group
 import { Route as AdminGroupsGroupIdAddMemberRouteImport } from './routes/admin/groups/$groupId/add-member'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
 
+const WidgetTestRoute = WidgetTestRouteImport.update({
+  id: '/widget-test',
+  path: '/widget-test',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const VerifyRoute = VerifyRouteImport.update({
   id: '/verify',
   path: '/verify',
@@ -597,6 +603,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/tenant-deleted': typeof TenantDeletedRoute
   '/verify': typeof VerifyRoute
+  '/widget-test': typeof WidgetTestRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
   '/admin/danger-zone': typeof AdminDangerZoneRoute
@@ -689,6 +696,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/tenant-deleted': typeof TenantDeletedRoute
   '/verify': typeof VerifyRoute
+  '/widget-test': typeof WidgetTestRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/danger-zone': typeof AdminDangerZoneRoute
   '/admin/deprovisioning-status': typeof AdminDeprovisioningStatusRoute
@@ -781,6 +789,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/tenant-deleted': typeof TenantDeletedRoute
   '/verify': typeof VerifyRoute
+  '/widget-test': typeof WidgetTestRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
   '/admin/danger-zone': typeof AdminDangerZoneRoute
@@ -877,6 +886,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/tenant-deleted'
     | '/verify'
+    | '/widget-test'
     | '/$locale/signup'
     | '/admin/billing'
     | '/admin/danger-zone'
@@ -969,6 +979,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/tenant-deleted'
     | '/verify'
+    | '/widget-test'
     | '/admin/billing'
     | '/admin/danger-zone'
     | '/admin/deprovisioning-status'
@@ -1060,6 +1071,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/tenant-deleted'
     | '/verify'
+    | '/widget-test'
     | '/$locale/signup'
     | '/admin/billing'
     | '/admin/danger-zone'
@@ -1155,6 +1167,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   TenantDeletedRoute: typeof TenantDeletedRoute
   VerifyRoute: typeof VerifyRoute
+  WidgetTestRoute: typeof WidgetTestRoute
   BotWidgetIdRoute: typeof BotWidgetIdRoute
   PasswordForgotRoute: typeof PasswordForgotRoute
   PasswordSetRoute: typeof PasswordSetRoute
@@ -1164,6 +1177,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/widget-test': {
+      id: '/widget-test'
+      path: '/widget-test'
+      fullPath: '/widget-test'
+      preLoaderRoute: typeof WidgetTestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/verify': {
       id: '/verify'
       path: '/verify'
@@ -2044,6 +2064,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   TenantDeletedRoute: TenantDeletedRoute,
   VerifyRoute: VerifyRoute,
+  WidgetTestRoute: WidgetTestRoute,
   BotWidgetIdRoute: BotWidgetIdRoute,
   PasswordForgotRoute: PasswordForgotRoute,
   PasswordSetRoute: PasswordSetRoute,
