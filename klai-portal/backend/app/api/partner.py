@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -486,6 +487,37 @@ async def append_knowledge(
 # ---------------------------------------------------------------------------
 
 
+_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _merge_css_variables(widget_config: dict) -> dict[str, str]:
+    """Translate stored widget-config fields into CSS custom properties
+    the embed script (klai-chat.js) applies inside its Shadow DOM.
+
+    The admin "Brand kleur" field is stored as ``primary_color`` (a hex
+    string). The widget script only reads ``css_variables`` for per-widget
+    overrides — without this translation step the configured brand colour
+    silently never reaches the widget. Any keys already in
+    ``css_variables`` win over the derived ones so a power-user can still
+    override granularly.
+
+    Validation: ``primary_color`` must match ``#RRGGBB`` or ``#RGB``.
+    Anything else (empty, invalid, attempted CSS injection) is dropped
+    silently so a malformed admin field can never poison the stylesheet.
+    """
+    css_vars: dict[str, str] = {}
+    primary = widget_config.get("primary_color")
+    if isinstance(primary, str) and _HEX_COLOR_RE.match(primary):
+        css_vars["--klai-primary-color"] = primary
+
+    overrides = widget_config.get("css_variables") or {}
+    if isinstance(overrides, dict):
+        for key, value in overrides.items():
+            if isinstance(key, str) and isinstance(value, str):
+                css_vars[key] = value
+    return css_vars
+
+
 def _widget_cors_headers(origin: str, *, preflight: bool) -> dict[str, str]:
     """Build the CORS response headers for /partner/v1/widget-config.
 
@@ -630,7 +662,7 @@ async def widget_config(
     body = {
         "title": widget_config_data.get("title", ""),
         "welcome_message": widget_config_data.get("welcome_message", ""),
-        "css_variables": widget_config_data.get("css_variables", {}),
+        "css_variables": _merge_css_variables(widget_config_data),
         "chat_endpoint": "/partner/v1/chat/completions",
         "session_token": session_token,
         "session_expires_at": expires_at.isoformat(),
@@ -695,7 +727,7 @@ async def public_bot_config(
     body = {
         "title": widget_config_data.get("title", ""),
         "welcome_message": widget_config_data.get("welcome_message", ""),
-        "css_variables": widget_config_data.get("css_variables", {}),
+        "css_variables": _merge_css_variables(widget_config_data),
         "chat_endpoint": "/partner/v1/chat/completions",
         "session_token": session_token,
         "session_expires_at": expires_at.isoformat(),
