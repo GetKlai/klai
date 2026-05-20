@@ -42,6 +42,18 @@ class WidgetConfig(BaseModel):
     welcome_message: str = ""
     system_prompt: str = Field(default="", max_length=4000)
     css_variables: dict[str, str] = Field(default_factory=dict)
+    # TWD-style starter chips shown on the empty state. Max 6 per
+    # TalkWithData convention. Each entry is rendered as a clickable
+    # pill that submits the text as the first user message.
+    conversation_starters: list[str] = Field(default_factory=list, max_length=6)
+    # When true, the widget hides the "AI-antwoorden kunnen fouten
+    # bevatten…" footer (white-label / power-user flag, matches the
+    # "Verberg 'Powered by'" pattern in the TWD editor).
+    hide_disclaimer: bool = False
+    # Optional reference to a Template (app/templates) — when set, the
+    # template's prompt_text is appended to system_prompt at runtime so
+    # admins can re-use named prompts across widgets without copy-paste.
+    template_slug: str | None = None
 
 
 class CreateWidgetRequest(BaseModel):
@@ -95,6 +107,9 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             welcome_message=config.get("welcome_message", ""),
             system_prompt=config.get("system_prompt", ""),
             css_variables=config.get("css_variables", {}),
+            conversation_starters=config.get("conversation_starters", []),
+            hide_disclaimer=config.get("hide_disclaimer", False),
+            template_slug=config.get("template_slug"),
         ),
         kb_access_count=kb_access_count,
         rate_limit_rpm=widget.rate_limit_rpm,

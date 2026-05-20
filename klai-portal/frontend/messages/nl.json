@@ -1791,5 +1791,14 @@
   "admin_extension_scribe_label": "Scribe — meeting-transcripties",
   "admin_extension_scribe_description": "Automatische meeting-transcriptie.",
   "admin_extension_docs_label": "Docs — gedeelde KBs",
-  "admin_extension_docs_description": "Documentatie-KBs delen binnen de organisatie."
+  "admin_extension_docs_description": "Documentatie-KBs delen binnen de organisatie.",
+  "admin_widgets_widget_template_label": "Template (optioneel)",
+  "admin_widgets_widget_template_help": "Kies een bestaande template om snel een basisprompt in te vullen. Je kunt het daarna nog aanpassen.",
+  "admin_widgets_widget_template_none": "— geen —",
+  "admin_widgets_widget_starters_label": "Conversatiestarters",
+  "admin_widgets_widget_starters_help": "Verschijnen als klikbare chips bij een leeg gesprek. Maximaal 6, één per regel.",
+  "admin_widgets_widget_starters_placeholder": "Wat zijn jullie openingstijden?\nWelke producten zijn er beschikbaar?\nHoe neem ik contact op?",
+  "admin_widgets_widget_hide_disclaimer_label": "Verberg AI-disclaimer",
+  "admin_widgets_widget_hide_disclaimer_help": "White-label: verbergt de \"AI-antwoorden kunnen fouten bevatten…\" voettekst.",
+  "widget_ai_disclaimer": "AI-antwoorden kunnen fouten bevatten. Verifieer belangrijke informatie altijd bij de bron."
 }

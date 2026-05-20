@@ -13,6 +13,7 @@ export interface WidgetLabels {
   messagesLabel: string
   errorGeneric: string
   errorSessionExpired: string
+  disclaimer: string
 }
 
 const nl: WidgetLabels = {
@@ -25,6 +26,7 @@ const nl: WidgetLabels = {
   messagesLabel: "Chatberichten",
   errorGeneric: "Er ging iets mis. Probeer het opnieuw.",
   errorSessionExpired: "Sessie verlopen. Herlaad de pagina.",
+  disclaimer: "AI-antwoorden kunnen fouten bevatten. Verifieer belangrijke informatie altijd bij de bron.",
 }
 
 const en: WidgetLabels = {
@@ -37,6 +39,7 @@ const en: WidgetLabels = {
   messagesLabel: "Chat messages",
   errorGeneric: "Something went wrong. Please try again.",
   errorSessionExpired: "Session expired. Reload the page.",
+  disclaimer: "AI answers can contain mistakes. Always verify important information at the source.",
 }
 
 const locales: Record<string, WidgetLabels> = { nl, en }

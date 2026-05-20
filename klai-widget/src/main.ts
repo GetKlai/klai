@@ -82,7 +82,14 @@ async function bootstrap(): Promise<void> {
     target.classList.add("klai-inline-root");
 
     render(
-      () => ChatWindow({ title: config.title, onClose: () => {}, inline: true }),
+      () => ChatWindow({
+        title: config.title,
+        onClose: () => {},
+        inline: true,
+        conversationStarters: config.conversation_starters,
+        hideDisclaimer: config.hide_disclaimer,
+        welcomeMessage: config.welcome_message,
+      }),
       target as HTMLElement,
     );
   } else {

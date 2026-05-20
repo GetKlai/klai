@@ -17,6 +17,9 @@ interface ChatWindowProps {
   title: string;
   onClose: () => void;
   inline?: boolean;
+  conversationStarters?: string[];
+  hideDisclaimer?: boolean;
+  welcomeMessage?: string;
 }
 
 export function ChatWindow(props: ChatWindowProps) {
@@ -24,8 +27,14 @@ export function ChatWindow(props: ChatWindowProps) {
   let abortController: AbortController | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
 
-  const handleSend = async () => {
-    const content = inputValue().trim();
+  const handleStarterClick = (text: string) => {
+    if (chatState.isStreaming) return;
+    setInputValue(text);
+    void handleSend(text);
+  };
+
+  const handleSend = async (override?: string) => {
+    const content = (override ?? inputValue()).trim();
     if (!content || chatState.isStreaming) return;
 
     clearError();
@@ -117,6 +126,25 @@ export function ChatWindow(props: ChatWindowProps) {
         error={chatState.error}
       />
 
+      {/* Empty-state chips: shown only when no messages yet (excluding
+          the welcome placeholder), and only if the admin configured at
+          least one conversation starter. Click submits as the first user
+          message. */}
+      <Show when={chatState.messages.length <= 1 && (props.conversationStarters?.length ?? 0) > 0}>
+        <div class="klai-starters">
+          {props.conversationStarters!.map((s) => (
+            <button
+              type="button"
+              class="klai-starter"
+              onClick={() => handleStarterClick(s)}
+              disabled={chatState.isStreaming}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </Show>
+
       <div class="klai-input-area">
         <textarea
           ref={textareaRef}
@@ -155,6 +183,10 @@ export function ChatWindow(props: ChatWindowProps) {
           </button>
         </Show>
       </div>
+
+      <Show when={!props.hideDisclaimer}>
+        <p class="klai-disclaimer">{t().disclaimer}</p>
+      </Show>
     </div>
   );
 }

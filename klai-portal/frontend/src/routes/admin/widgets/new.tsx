@@ -144,6 +144,9 @@ function NewWidgetPage() {
       welcome_message: form.widget_welcome.trim(),
       system_prompt: form.widget_system_prompt.trim(),
       css_variables: cssVarsToRecord(form.css_var_rows),
+      conversation_starters: [],
+      hide_disclaimer: false,
+      template_slug: null,
     }
 
     createMutation.mutate(

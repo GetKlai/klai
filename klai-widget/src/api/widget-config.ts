@@ -5,6 +5,10 @@ export interface WidgetConfig {
   chat_endpoint: string;
   session_token: string;
   session_expires_at: string;
+  // TWD-style empty-state chips. Admin-configured, 0-6 entries.
+  conversation_starters?: string[];
+  // White-label flag to hide the AI-disclaimer footer.
+  hide_disclaimer?: boolean;
 }
 
 export type KlaiWidgetErrorCode =

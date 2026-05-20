@@ -378,3 +378,50 @@
 .klai-window--inline .klai-message--user {
   background-color: var(--klai-primary-color);
 }
+
+/* ── TWD-style empty-state chips ────────────────────────────────── */
+.klai-starters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px 4px;
+}
+
+.klai-starter {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #191918;
+  background: #f3f2e7;
+  border: 1px solid #e3e2d8;
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.klai-starter:hover:not(:disabled) {
+  background: #fcaa2d1a;
+  border-color: #fcaa2d;
+}
+
+.klai-starter:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── AI-disclaimer footer ───────────────────────────────────────── */
+.klai-disclaimer {
+  margin: 0;
+  padding: 8px 24px 12px;
+  text-align: center;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(25, 25, 24, 0.4);
+}
+
+.klai-window--inline .klai-disclaimer {
+  border-top: none;
+}
