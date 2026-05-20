@@ -36,6 +36,7 @@ export function ChatConfigBar() {
   const queryClient = useQueryClient()
   const [collOpen, setCollOpen] = useState(false)
   const [tmplOpen, setTmplOpen] = useState(false)
+  const [modeOpen, setModeOpen] = useState(false)
 
   const { data: pref } = useQuery<KBPref>({
     queryKey: ['kb-preference'],
@@ -132,12 +133,6 @@ export function ChatConfigBar() {
     mutation.mutate({ active_template_ids: null })
   }
 
-  function toggleNarrow() {
-    // The early-return guard below ensures `pref` is defined when this is
-    // invoked from the rendered toggle button.
-    mutation.mutate({ kb_narrow: !pref!.kb_narrow })
-  }
-
   return (
     <div className="flex shrink-0 items-center gap-4 bg-[var(--color-sidebar)] border-b border-[var(--color-sidebar-border)] pl-4 pr-4 pt-5 pb-4">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
@@ -209,55 +204,88 @@ export function ChatConfigBar() {
                 </button>
               ))}
 
-              {/* Modus: kb_narrow checkbox row, separated from collections
-                  by a divider. When ON, the LiteLLM hook prepends a strict
-                  "answer ONLY from KB" prompt; OFF means KB chunks are
-                  additional context and the model may supplement with
-                  general knowledge. Logically a SCOPE setting (filtering
-                  the answer source), so it lives in the same dropdown as
-                  the collection scope toggles. */}
-              <div className="my-1 border-t border-gray-100" />
-              <div className="flex items-center justify-between px-3 py-1.5">
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Modus: single-select picker. Two options, each with a 1-line
+          explanation. Sits between Collecties and Templates because it
+          modifies HOW the chat consumes the KB chunks (strict vs broad).
+          Backed by the same kb_narrow boolean; LiteLLM hook
+          (deploy/litellm/klai_knowledge.py) reads it per-request and
+          injects a different system-prompt header. */}
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-[13px] text-gray-400 whitespace-nowrap">
+          {m.chatbar_mode_label()}:
+        </span>
+
+        <div className="relative z-50 min-w-0">
+          {modeOpen && <div className="fixed inset-0 z-40" onClick={() => setModeOpen(false)} />}
+          <button
+            type="button"
+            onClick={() => setModeOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-700 hover:text-gray-900 transition-colors truncate"
+          >
+            <span className="truncate">
+              {pref.kb_narrow ? m.chatbar_mode_narrow_on() : m.chatbar_mode_narrow_off()}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-40" />
+          </button>
+
+          {modeOpen && (
+            <div className="absolute left-0 top-full z-50 mt-2 w-80 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg">
+              <div className="px-3 py-1.5">
                 <span className="text-[10px] font-semibold tracking-wide text-gray-400">
                   {m.chatbar_mode_label()}
                 </span>
               </div>
               <button
                 type="button"
-                onClick={toggleNarrow}
-                title={
-                  pref.kb_narrow
-                    ? m.chatbar_mode_narrow_tooltip_on()
-                    : m.chatbar_mode_narrow_tooltip_off()
-                }
-                aria-checked={pref.kb_narrow}
-                role="checkbox"
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] klai-hover text-left"
+                onClick={() => {
+                  if (pref.kb_narrow) mutation.mutate({ kb_narrow: false })
+                  setModeOpen(false)
+                }}
+                aria-checked={!pref.kb_narrow}
+                role="radio"
+                className="w-full flex items-start gap-2.5 px-3 py-2 text-left klai-hover"
               >
                 <span
-                  className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border ${
-                    pref.kb_narrow
-                      ? 'bg-green-500 border-green-500'
-                      : 'border-gray-300 bg-white'
-                  }`}
-                  aria-hidden="true"
-                >
-                  {pref.kb_narrow && (
-                    <svg
-                      viewBox="0 0 12 12"
-                      className="h-2.5 w-2.5 text-white"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                    >
-                      <polyline points="2 6 5 9 10 3" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
+                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${!pref.kb_narrow ? 'bg-green-500' : 'bg-gray-200'}`}
+                />
+                <span className="flex-1 min-w-0">
+                  <span
+                    className={`block text-[13px] ${!pref.kb_narrow ? 'text-gray-900 font-medium' : 'text-gray-400'}`}
+                  >
+                    {m.chatbar_mode_narrow_off()}
+                  </span>
+                  <span className="block text-[12px] text-gray-400 mt-0.5 leading-snug">
+                    {m.chatbar_mode_broad_description()}
+                  </span>
                 </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!pref.kb_narrow) mutation.mutate({ kb_narrow: true })
+                  setModeOpen(false)
+                }}
+                aria-checked={pref.kb_narrow}
+                role="radio"
+                className="w-full flex items-start gap-2.5 px-3 py-2 text-left klai-hover"
+              >
                 <span
-                  className={pref.kb_narrow ? 'text-gray-900 font-medium' : 'text-gray-400'}
-                >
-                  {m.chatbar_mode_narrow_on()}
+                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${pref.kb_narrow ? 'bg-green-500' : 'bg-gray-200'}`}
+                />
+                <span className="flex-1 min-w-0">
+                  <span
+                    className={`block text-[13px] ${pref.kb_narrow ? 'text-gray-900 font-medium' : 'text-gray-400'}`}
+                  >
+                    {m.chatbar_mode_narrow_on()}
+                  </span>
+                  <span className="block text-[12px] text-gray-400 mt-0.5 leading-snug">
+                    {m.chatbar_mode_narrow_description()}
+                  </span>
                 </span>
               </button>
             </div>

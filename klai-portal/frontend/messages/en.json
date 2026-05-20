@@ -1564,6 +1564,8 @@
   "chatbar_mode_narrow_off": "KB + general knowledge",
   "chatbar_mode_narrow_tooltip_on": "On: model answers strictly from the knowledge base. Click to disable.",
   "chatbar_mode_narrow_tooltip_off": "Off: model uses the knowledge base as context plus its general knowledge. Click for strict mode (KB only).",
+  "chatbar_mode_narrow_description": "Model answers strictly from the knowledge base. If the answer is not in the sources, it will say so.",
+  "chatbar_mode_broad_description": "Model uses the knowledge base as context and may complement with its general knowledge.",
   "chatbar_rules_active": "{count} rule(s) active",
   "rules_page_title": "Rules (Guardrails)",
   "rules_empty_title": "No rules yet",

@@ -1564,6 +1564,8 @@
   "chatbar_mode_narrow_off": "KB + algemene kennis",
   "chatbar_mode_narrow_tooltip_on": "Aan: model antwoordt uitsluitend op basis van de kennisbank. Klik om uit te schakelen.",
   "chatbar_mode_narrow_tooltip_off": "Uit: model gebruikt kennisbank als context én eigen algemene kennis. Klik voor strikt-modus (alleen kennisbank).",
+  "chatbar_mode_narrow_description": "Model antwoordt uitsluitend uit de kennisbank. Staat het er niet in, dan zegt het model dat eerlijk.",
+  "chatbar_mode_broad_description": "Model gebruikt de kennisbank als context en mag aanvullen met eigen algemene kennis.",
   "chatbar_rules_active": "{count} regel(s) actief",
   "rules_page_title": "Rules (Guardrails)",
   "rules_empty_title": "Nog geen regels",
