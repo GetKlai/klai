@@ -180,17 +180,12 @@ async def create_widget(
 
     await db.flush()  # Promote widget_row to persistent so refresh() can run.
     await db.refresh(widget_row)  # Pre-commit refresh to load server_default columns while tenant context is still set.
-    await db.commit()
 
-    emit_event(
-        "widget.created",
-        org_id=perms.org_id,
-        user_id=perms.user_id,
-        properties={"widget_id": internal_id, "widget_public_id": widget_id_str, "name": body.name},
-    )
-    logger.info("Widget created", widget_id=internal_id, public_id=widget_id_str, org_id=perms.org_id)
-
-    # Build detail response with KB names
+    # Load KB names for the response BEFORE commit. PortalKnowledgeBase is
+    # RLS-protected — after commit, the transaction-scoped tenant GUC is
+    # cleared and the next query raises InsufficientPrivilegeError "RLS:
+    # app.current_org_id is not set" (2026-05-20 incident on Nerds widget
+    # create returned 500 even though the widget itself persisted).
     kb_access_list: list[dict] = []
     if body.kb_ids:
         kb_result = await db.execute(select(PortalKnowledgeBase).where(PortalKnowledgeBase.id.in_(body.kb_ids)))
@@ -200,6 +195,16 @@ async def create_widget(
             for kb_id in body.kb_ids
             if kb_id in kbs
         ]
+
+    await db.commit()
+
+    emit_event(
+        "widget.created",
+        org_id=perms.org_id,
+        user_id=perms.user_id,
+        properties={"widget_id": internal_id, "widget_public_id": widget_id_str, "name": body.name},
+    )
+    logger.info("Widget created", widget_id=internal_id, public_id=widget_id_str, org_id=perms.org_id)
 
     response = _widget_to_response(widget_row, len(body.kb_ids))
     return WidgetDetailResponse(**response.model_dump(), kb_access=kb_access_list)
