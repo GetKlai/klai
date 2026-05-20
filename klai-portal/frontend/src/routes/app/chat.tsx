@@ -12,7 +12,13 @@ import { ChatConfigBar } from './_components/ChatConfigBar'
 
 // Threshold: 25 days (conservative — LibreChat refresh tokens are 30d)
 const LC_AUTH_KEY = 'lc_authed_at'
-const LC_AUTH_TTL_MS = 25 * 24 * 60 * 60 * 1000
+// Short window — well below LibreChat's server-side cookie TTL. The
+// previous 25-day value drifted past the LC cookie expiry, leaving the
+// portal convinced the user was authenticated while LC silently failed
+// with "Token is not present. User is not authenticated." and rendered
+// the empty "Welkom terug" screen. 1h forces a cheap OAuth refresh
+// before the LC cookie can stale, every chat-tab visit at worst.
+const LC_AUTH_TTL_MS = 60 * 60 * 1000
 
 // If the iframe hasn't signaled a usable state within this window, assume stuck.
 const STUCK_TIMEOUT_MS = 20_000
