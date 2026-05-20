@@ -166,7 +166,11 @@ async def test_widget_config_empty_allowed_origins_open_by_default():
     db = _make_db_chain(widget, org, [])
     request = _make_request("https://example.com")
 
-    with patch("app.api.partner.settings") as mock_settings:
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -207,11 +211,13 @@ def test_origin_allowed_combined():
     assert not origin_allowed("https://evil.com", origins)
 
 
-def test_origin_allowed_empty_list():
-    """Empty list always returns False (fail-closed)."""
+def test_origin_allowed_empty_list_open_by_default():
+    """Empty list returns True — widget loads anywhere until admin
+    opts into a lockdown by listing trusted origins."""
     from app.services.widget_auth import origin_allowed
 
-    assert not origin_allowed("https://example.com", [])
+    assert origin_allowed("https://example.com", [])
+    assert origin_allowed("https://anything.else.com", [])
 
 
 def test_origin_allowed_trailing_slash():
