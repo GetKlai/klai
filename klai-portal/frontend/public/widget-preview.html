@@ -6,9 +6,44 @@
   <meta name="robots" content="noindex,nofollow">
   <title>Widget preview</title>
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: #fffef2; font-family: system-ui, -apple-system, sans-serif; }
-    #klai-fullscreen-chat { position: fixed; inset: 0; }
+    html, body { margin: 0; padding: 0; height: 100%; background: #fffef2; font-family: "Parabole Trial Regular Text", system-ui, -apple-system, sans-serif; color: #191918; }
+    #klai-fullscreen-chat { position: fixed; inset: 0; display: flex; flex-direction: column; }
     .klai-preview-error { padding: 24px; color: #C0392B; font-size: 14px; }
+
+    /* Polish klai-chat.js inline mode to feel closer to TWD/ChatGPT.
+       The widget renders its own DOM via solid-js into the container;
+       we override its outer classes here without touching the widget
+       source so prod tenants are unaffected. */
+    .klai-inline-root { background: #fffef2 !important; }
+    .klai-window--inline {
+      max-width: 760px !important;
+      margin: 0 auto !important;
+      width: 100% !important;
+      height: 100% !important;
+      border: none !important;
+      box-shadow: none !important;
+      background: transparent !important;
+    }
+    .klai-window--inline .klai-messages {
+      padding: 32px 24px !important;
+    }
+    .klai-window--inline .klai-input-area {
+      border-top: 1px solid #e3e2d8 !important;
+      padding: 16px 24px 24px !important;
+      background: #fffef2 !important;
+    }
+    .klai-window--inline .klai-textarea {
+      border-radius: 999px !important;
+      border: 1px solid #e3e2d8 !important;
+      padding: 12px 20px !important;
+      background: #fff !important;
+      font-size: 15px !important;
+    }
+    .klai-window--inline .klai-textarea:focus {
+      outline: none !important;
+      border-color: #fcaa2d !important;
+      box-shadow: 0 0 0 3px rgba(252, 170, 45, 0.15) !important;
+    }
   </style>
 </head>
 <body>
@@ -16,8 +51,7 @@
   <script>
     // Read widget params from URL — set by the portal test page that
     // iframes this file. Static HTML means klai-chat.js sees its own
-    // <script> tag as document.currentScript (works reliably; the React
-    // dynamic-createElement path made it null and inline mode failed).
+    // <script> tag as document.currentScript and inline mode engages.
     (function () {
       var p = new URLSearchParams(location.search);
       var widgetId = p.get('widget_id');
