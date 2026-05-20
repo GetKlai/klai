@@ -6,7 +6,7 @@ import {
   createColumnHelper,
 } from '@tanstack/react-table'
 import { useState } from 'react'
-import { Plus, Loader2, Eye, Trash2 } from 'lucide-react'
+import { Plus, Loader2, Eye, MessageSquare, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
@@ -90,6 +90,14 @@ function WidgetsPage() {
             onCancel={() => setConfirmDeleteId(null)}
           >
             <div className="flex items-start justify-end gap-2 mt-px">
+              <button
+                onClick={() => window.open(`/bot/${row.original.widget_id}`, '_blank', 'noopener,noreferrer')}
+                aria-label={`Test ${row.original.name}`}
+                title="Test bot"
+                className="inline-flex items-center justify-center text-gray-500 transition-opacity hover:opacity-70 hover:text-gray-900"
+              >
+                <MessageSquare className="h-4 w-4" />
+              </button>
               <button
                 onClick={() => setConfirmDeleteId(String(row.original.id))}
                 aria-label={`Delete ${row.original.name}`}

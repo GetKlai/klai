@@ -56,6 +56,24 @@ function PublicBotPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isStreaming])
 
+  // Hide the global Klai Help widget (klai-chat.js floating bubble loaded
+  // site-wide in index.html) while this page is mounted — it would visually
+  // collide with the embedded bot's own UI.
+  useEffect(() => {
+    const styleId = 'klai-public-bot-hide-help-widget'
+    let style = document.getElementById(styleId) as HTMLStyleElement | null
+    if (!style) {
+      style = document.createElement('style')
+      style.id = styleId
+      style.textContent =
+        '.klai-bubble, #klai-widget-root { display: none !important; }'
+      document.head.appendChild(style)
+    }
+    return () => {
+      style?.remove()
+    }
+  }, [])
+
   if (configQuery.isPending) {
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white">
