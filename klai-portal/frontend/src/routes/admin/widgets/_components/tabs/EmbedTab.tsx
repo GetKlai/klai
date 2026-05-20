@@ -98,48 +98,42 @@ export function EmbedTab({ widget }: Props) {
           title={config.title || undefined}
           welcomeMessage={config.welcome_message || undefined}
         />
-        <div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              // Auto-add the current portal origin to allowed_origins
-              // (idempotent) before opening the test tab. The widget's
-              // origin check is exact-match — adding the wrong host
-              // would not unblock the test page where the user actually
-              // lands. Use window.location.origin so this works on
-              // my.getklai.com AND tenant subdomains like
-              // nerds-37376105.getklai.com.
-              const portalOrigin = window.location.origin
-              const hasPortal = origins.includes(portalOrigin)
-              const openTest = () => {
-                window.open(`/admin/widgets/${widget.id}/test`, '_blank', 'noopener,noreferrer')
-              }
-              if (hasPortal) {
-                openTest()
-                return
-              }
-              const next: WidgetConfig = {
-                ...config,
-                allowed_origins: [...origins, portalOrigin],
-              }
-              updateMutation.mutate(
-                { widget_config: next },
-                {
-                  onSuccess: () => {
-                    setOriginsRaw([...origins, portalOrigin].join('\n'))
-                    openTest()
-                  },
-                  onError: () => toast.error(m.admin_shared_error_generic()),
-                },
-              )
-            }}
-            disabled={updateMutation.isPending || origins.length === 0}
-          >
-            {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {!updateMutation.isPending && <ExternalLink className="mr-2 h-4 w-4" />}
-            {m.admin_widgets_test_button()}
-          </Button>
+        {/* Public share-link — TWD-style. The bot URL works for anyone
+            with the link, no auth required, no origin gymnastics. The
+            widget_id is the access key. */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-900">Deelbare link</label>
+          <p className="text-xs text-gray-400">
+            Stuur deze link naar wie je je bot wilt laten testen. Geen login nodig.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              readOnly
+              value={`${window.location.origin}/bot/${widget.widget_id}`}
+              onFocus={(e) => e.currentTarget.select()}
+              className="flex-1 rounded-md border border-gray-200 bg-[var(--color-rl-cream)] px-3 py-2 font-mono text-xs text-gray-700 outline-none"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                void navigator.clipboard.writeText(`${window.location.origin}/bot/${widget.widget_id}`)
+                toast.success('Link gekopieerd')
+              }}
+            >
+              Kopieer
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                window.open(`/bot/${widget.widget_id}`, '_blank', 'noopener,noreferrer')
+              }}
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              {m.admin_widgets_test_button()}
+            </Button>
+          </div>
         </div>
       </section>
 

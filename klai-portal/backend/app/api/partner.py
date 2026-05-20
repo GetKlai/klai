@@ -648,6 +648,70 @@ async def widget_config(
     )
 
 
+@router.get("/public-bot-config")
+async def public_bot_config(
+    id: str,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Public bot share-link endpoint — no Origin check.
+
+    Powers the share-link bot page at /bot/{widget_id}. Anyone with the
+    widget_id (a public, opaque identifier) can fetch the same payload
+    as /widget-config without going through the browser-embed origin
+    gate. Downstream security is the HS256 JWT session_token, identical
+    to the embed flow.
+    """
+    if not settings.widget_jwt_secret:
+        return Response(
+            content='{"detail":"Widget authentication not configured"}',
+            status_code=503,
+            media_type="application/json",
+        )
+
+    result = await db.execute(select(Widget).where(Widget.widget_id == id))
+    widget_row = result.scalar_one_or_none()
+    if widget_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
+
+    widget_config_data = widget_row.widget_config or {}
+
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == widget_row.org_id))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
+    await set_tenant(db, org.id)
+
+    kb_result = await db.execute(select(WidgetKbAccess).where(WidgetKbAccess.widget_id == widget_row.id))
+    kb_ids = [row.kb_id for row in kb_result.scalars().all()]
+
+    session_token = generate_session_token(
+        wgt_id=widget_row.widget_id,
+        org_id=widget_row.org_id,
+        kb_ids=kb_ids,
+        secret=settings.widget_jwt_secret,
+        tenant_slug=org.slug,
+    )
+    expires_at = datetime.now(UTC) + timedelta(hours=1)
+    body = {
+        "title": widget_config_data.get("title", ""),
+        "welcome_message": widget_config_data.get("welcome_message", ""),
+        "css_variables": widget_config_data.get("css_variables", {}),
+        "chat_endpoint": "/partner/v1/chat/completions",
+        "session_token": session_token,
+        "session_expires_at": expires_at.isoformat(),
+        "conversation_starters": widget_config_data.get("conversation_starters", []),
+        "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
+        "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
+        "name": widget_row.name,
+        "description": widget_row.description or "",
+    }
+    return Response(
+        content=json.dumps(body),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
 @router.options("/widget-config")
 async def widget_config_preflight(
     id: str,
