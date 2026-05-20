@@ -106,7 +106,20 @@ export function ChatWindow(props: ChatWindowProps) {
     <div class={props.inline ? "klai-window klai-window--inline" : "klai-window"} role={props.inline ? "region" : "dialog"} aria-label={props.title} aria-modal={props.inline ? undefined : "false"}>
       {!props.inline && (
         <div class="klai-header">
-          <span class="klai-header-title">{props.title}</span>
+          <div class="klai-header-id">
+            <span class="klai-header-avatar" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </span>
+            <div class="klai-header-text">
+              <span class="klai-header-title">{props.title}</span>
+              <span class="klai-header-status">
+                <span class="klai-header-status-dot" aria-hidden="true" />
+                Online
+              </span>
+            </div>
+          </div>
           <button
             class="klai-close-btn"
             aria-label={t().closeChat}

@@ -90,12 +90,12 @@
   color: var(--klai-text-color);
 }
 
-/* Window header — Klai brand: warm cream surface with dark text, no
-   loud amber bar. Amber stays reserved for accents (bubble, send,
-   focus, user-message). */
+/* Window header — Klai brand: warm cream surface, amber bot avatar,
+   bot name + green "Online" pill. Mirrors the /bot/$widgetId page
+   pattern so the embed and share-link feel like one product. */
 .klai-header {
-  padding: 14px 16px;
-  background-color: var(--klai-card-color);
+  padding: 12px 14px;
+  background-color: var(--klai-background-color);
   color: var(--klai-text-color);
   display: flex;
   align-items: center;
@@ -104,11 +104,62 @@
   border-bottom: 1px solid var(--klai-border-color);
 }
 
+.klai-header-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.klai-header-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background-color: var(--klai-primary-color);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.klai-header-avatar svg {
+  width: 16px;
+  height: 16px;
+}
+
+.klai-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .klai-header-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
-  line-height: 1.3;
+  line-height: 1.2;
   color: var(--klai-text-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.klai-header-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--klai-text-muted);
+}
+
+.klai-header-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #27ae60;
+  flex-shrink: 0;
 }
 
 .klai-close-btn {
