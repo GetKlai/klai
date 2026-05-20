@@ -77,7 +77,15 @@ export function EmbedTab({ widget }: Props) {
   }
 
   function openTest() {
-    window.open(`/bot/${widget.widget_id}`, '_blank', 'noopener,noreferrer')
+    // Embedded widget test (floating bubble preview) — TWD's
+    // /widget-test?bot=...&w=... equivalent. Use the id query
+    // param so the widget-test page loads the public-bot-config
+    // and injects /widget/klai-chat.js with this widget_id.
+    window.open(
+      `/widget-test?id=${encodeURIComponent(widget.widget_id)}`,
+      '_blank',
+      'noopener,noreferrer',
+    )
   }
 
   function handleSubmit(e: React.FormEvent) {
