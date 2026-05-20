@@ -709,6 +709,10 @@ async def widget_config(
         "name": widget_row.name,
         "description": widget_row.description or "",
         "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
+        # Display toggles: widget renders the sources block / meta line
+        # under each assistant message based on these flags.
+        "show_sources": widget_config_data.get("show_sources", True),
+        "show_meta": widget_config_data.get("show_meta", False),
     }
 
     return Response(
@@ -773,6 +777,8 @@ async def public_bot_config(
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
         "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
+        "show_sources": widget_config_data.get("show_sources", True),
+        "show_meta": widget_config_data.get("show_meta", False),
         "name": widget_row.name,
         "description": widget_row.description or "",
     }

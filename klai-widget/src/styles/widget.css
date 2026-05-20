@@ -255,6 +255,93 @@
 .klai-markdown code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
 .klai-markdown h1, .klai-markdown h2, .klai-markdown h3 { font-size: 14px; font-weight: 600; margin: 8px 0 4px; }
 
+/* Sources block — shown inline under an assistant message when
+   show_sources is on AND the bot returned citations. Each item is
+   a clickable pill with the citation number + source title. */
+.klai-sources {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: -4px 0 2px;
+  max-width: 100%;
+}
+
+.klai-sources-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--klai-text-muted);
+}
+
+.klai-sources-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.klai-sources-item {
+  margin: 0;
+}
+
+.klai-sources-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 10px 6px 6px;
+  border-radius: 999px;
+  background-color: var(--klai-card-color);
+  border: 1px solid var(--klai-border-color);
+  color: var(--klai-text-color);
+  text-decoration: none;
+  font-size: 12px;
+  line-height: 1.3;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.klai-sources-link:hover {
+  background-color: color-mix(in srgb, var(--klai-primary-color) 12%, transparent);
+  border-color: var(--klai-primary-color);
+}
+
+.klai-sources-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: var(--klai-primary-color);
+  color: var(--klai-primary-text-color);
+  font-size: 10.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.klai-sources-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Meta line — small subtitle under an assistant message when
+   show_meta is on. Currently shows source-count summary; future
+   data (model, retrieval depth) can extend this line. */
+.klai-meta {
+  align-self: flex-start;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--klai-text-muted);
+  margin: -2px 2px 2px;
+  max-width: 100%;
+}
+
 /* Error message */
 .klai-error {
   align-self: center;
