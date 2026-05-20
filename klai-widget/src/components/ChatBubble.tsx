@@ -16,6 +16,7 @@ export function ChatBubble() {
       <Show when={isOpen()}>
         <ChatWindow
           title={title()}
+          description={chatState.config?.description}
           onClose={close}
           conversationStarters={chatState.config?.conversation_starters}
           hideDisclaimer={chatState.config?.hide_disclaimer}

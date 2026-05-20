@@ -15,6 +15,7 @@ import { t } from "../i18n/labels";
 
 interface ChatWindowProps {
   title: string;
+  description?: string;
   onClose: () => void;
   inline?: boolean;
   conversationStarters?: string[];
@@ -22,6 +23,12 @@ interface ChatWindowProps {
   welcomeMessage?: string;
 }
 
+// TWD-pattern widget chrome:
+//   header  → primary-color bg, avatar + title + description, close
+//   hero    → centered icon + welcome line + starter chips (only when
+//             the conversation hasn't started yet)
+//   input   → pill textarea + small primary-color send button
+//   footer  → AI disclaimer (white-label toggle hides it)
 export function ChatWindow(props: ChatWindowProps) {
   const [inputValue, setInputValue] = createSignal("");
   let abortController: AbortController | null = null;
@@ -53,7 +60,7 @@ export function ChatWindow(props: ChatWindowProps) {
       endpoint: chatState.config!.chat_endpoint,
       token: chatState.sessionToken,
       widgetId: chatState.widgetId,
-      messages: chatState.messages.slice(0, -1), // Exclude the empty assistant placeholder
+      messages: chatState.messages.slice(0, -1),
       abortController,
       callbacks: {
         onToken: (token) => {
@@ -97,27 +104,45 @@ export function ChatWindow(props: ChatWindowProps) {
   const handleTextareaInput = (e: InputEvent) => {
     const target = e.target as HTMLTextAreaElement;
     setInputValue(target.value);
-    // Auto-resize textarea
     target.style.height = "auto";
     target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
   };
 
+  // A conversation has started once the user has sent any message. The
+  // welcome message that ships from the store does NOT count — until
+  // the first user turn we show the hero, not the welcome bubble.
+  const hasUserTurn = () =>
+    chatState.messages.some((m) => m.role === "user");
+
   return (
-    <div class={props.inline ? "klai-window klai-window--inline" : "klai-window"} role={props.inline ? "region" : "dialog"} aria-label={props.title} aria-modal={props.inline ? undefined : "false"}>
+    <div
+      class={props.inline ? "klai-window klai-window--inline" : "klai-window"}
+      role={props.inline ? "region" : "dialog"}
+      aria-label={props.title}
+      aria-modal={props.inline ? undefined : "false"}
+    >
       {!props.inline && (
         <div class="klai-header">
           <div class="klai-header-id">
             <span class="klai-header-avatar" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="3" y="4" width="18" height="13" rx="2" />
+                <path d="M8 21h8" />
+                <path d="M12 17v4" />
               </svg>
             </span>
             <div class="klai-header-text">
               <span class="klai-header-title">{props.title}</span>
-              <span class="klai-header-status">
-                <span class="klai-header-status-dot" aria-hidden="true" />
-                Online
-              </span>
+              <Show when={props.description}>
+                <span class="klai-header-description">{props.description}</span>
+              </Show>
             </div>
           </div>
           <button
@@ -133,29 +158,52 @@ export function ChatWindow(props: ChatWindowProps) {
         </div>
       )}
 
-      <MessageList
-        messages={chatState.messages}
-        isStreaming={chatState.isStreaming}
-        error={chatState.error}
-      />
-
-      {/* Empty-state chips: shown only when no messages yet (excluding
-          the welcome placeholder), and only if the admin configured at
-          least one conversation starter. Click submits as the first user
-          message. */}
-      <Show when={chatState.messages.length <= 1 && (props.conversationStarters?.length ?? 0) > 0}>
-        <div class="klai-starters">
-          {props.conversationStarters!.map((s) => (
-            <button
-              type="button"
-              class="klai-starter"
-              onClick={() => handleStarterClick(s)}
-              disabled={chatState.isStreaming}
+      {/* Empty-state hero — TWD pattern. Shows the bot identity + a
+          row of starter chips. The instant the user sends a message
+          we drop the hero and switch to the regular message list. */}
+      <Show when={!hasUserTurn()}>
+        <div class="klai-hero">
+          <div class="klai-hero-icon" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
             >
-              {s}
-            </button>
-          ))}
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </div>
+          <p class="klai-hero-title">
+            {props.welcomeMessage?.trim() || props.title}
+          </p>
+          <Show when={props.description}>
+            <p class="klai-hero-subtitle">{props.description}</p>
+          </Show>
+          <Show when={(props.conversationStarters?.length ?? 0) > 0}>
+            <div class="klai-starters">
+              {props.conversationStarters!.map((s) => (
+                <button
+                  type="button"
+                  class="klai-starter"
+                  onClick={() => handleStarterClick(s)}
+                  disabled={chatState.isStreaming}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </Show>
         </div>
+      </Show>
+
+      <Show when={hasUserTurn()}>
+        <MessageList
+          messages={chatState.messages}
+          isStreaming={chatState.isStreaming}
+          error={chatState.error}
+        />
       </Show>
 
       <div class="klai-input-area">
