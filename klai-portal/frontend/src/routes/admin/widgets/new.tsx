@@ -1,77 +1,190 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  ArrowLeft,
+  ArrowRight,
+  AlertTriangle,
+  Loader2,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
+import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
+import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { useCreateWidget } from './-hooks'
 import type { WidgetConfig } from './-types'
 import { KbAccessEditor } from './_components/KbAccessEditor'
 
-// TWD-style minimal create flow: just collect the bare minimum
-// (name + description + KB access) needed to provision a row,
-// then drop the admin on the detail page where the 5-tab editor
-// (Algemeen / Kennisbanken / Vormgeving / Insluiten / Gevarenzone)
-// handles every other field with live save and proper visual
-// design. Removes the old 4-step wizard whose Appearance step
-// missed brand color / theme / starters / position / disclaimer
-// and whose Embed step missed the share-link + test button.
+// Create flow walks through the SAME sections the edit page exposes
+// (Algemeen / Kennisbanken / Vormgeving / Insluiten) so the admin
+// can configure every TWD field in one go. Each step mirrors the
+// corresponding tab in /admin/widgets/$id; after the last step we
+// POST once and land the admin on the detail page where the same
+// fields are available for further refinement.
 
 export const Route = createFileRoute('/admin/widgets/new')({
   component: NewWidgetPage,
 })
 
+interface Template {
+  slug: string
+  name: string
+  prompt_text: string
+}
+
+type Step = 'details' | 'kbs' | 'appearance' | 'embed'
+const STEPS: Step[] = ['details', 'kbs', 'appearance', 'embed']
+const MAX_STARTERS = 6
+
 interface FormState {
+  // Algemeen
   name: string
   description: string
+  template_slug: string
+  system_prompt: string
+  // Kennisbanken
   kb_ids: number[]
+  // Vormgeving
+  widget_title: string
+  primary_color: string
+  theme: 'light' | 'dark'
+  welcome_message: string
+  starters_raw: string
+  show_sources: boolean
+  show_meta: boolean
+  collect_user_info: boolean
+  hide_disclaimer: boolean
+  widget_position: 'left' | 'right'
+  // Insluiten
+  allowed_origins_raw: string
 }
 
 const INITIAL_FORM: FormState = {
   name: '',
   description: '',
+  template_slug: '',
+  system_prompt: '',
   kb_ids: [],
+  widget_title: '',
+  primary_color: '#fcaa2d',
+  theme: 'light',
+  welcome_message: '',
+  starters_raw: '',
+  show_sources: true,
+  show_meta: false,
+  collect_user_info: false,
+  hide_disclaimer: false,
+  widget_position: 'right',
+  allowed_origins_raw: '',
+}
+
+function parseOrigins(raw: string): string[] {
+  return raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+}
+
+function isValidOrigin(o: string): boolean {
+  try {
+    const url = new URL(o)
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
 }
 
 function NewWidgetPage() {
   const navigate = useNavigate()
   const createMutation = useCreateWidget()
+  const [step, setStep] = useState<Step>('details')
   const [form, setForm] = useState<FormState>(INITIAL_FORM)
 
-  function validate(): string | null {
-    if (form.name.trim().length < 3) {
-      return m.admin_shared_wizard_error_name_too_short()
+  const templatesQuery = useQuery<Template[]>({
+    queryKey: ['app-templates'],
+    queryFn: () => apiFetch<Template[]>('/api/app/templates'),
+  })
+
+  const currentIndex = STEPS.indexOf(step)
+  const isLastStep = currentIndex === STEPS.length - 1
+  const starters = form.starters_raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, MAX_STARTERS)
+
+  const stepLabels: StepItem[] = [
+    { label: m.admin_shared_wizard_step_details(), onClick: () => setStep('details') },
+    { label: m.admin_shared_wizard_step_kb_access(), onClick: () => setStep('kbs') },
+    { label: m.admin_widgets_wizard_step_appearance(), onClick: () => setStep('appearance') },
+    { label: m.admin_widgets_wizard_step_embed(), onClick: () => setStep('embed') },
+  ]
+
+  function validateStep(s: Step): string | null {
+    if (s === 'details') {
+      if (form.name.trim().length < 3)
+        return m.admin_shared_wizard_error_name_too_short()
     }
-    if (form.kb_ids.length === 0) {
-      return m.admin_shared_wizard_error_no_kb_selected()
+    if (s === 'kbs') {
+      if (form.kb_ids.length === 0)
+        return m.admin_shared_wizard_error_no_kb_selected()
+    }
+    if (s === 'embed') {
+      const origins = parseOrigins(form.allowed_origins_raw)
+      if (origins.length === 0) return m.admin_widgets_wizard_error_no_origins()
+      if (origins.some((o) => !isValidOrigin(o)))
+        return m.admin_widgets_wizard_error_invalid_origins()
     }
     return null
   }
 
-  const validationError = validate()
+  const currentStepError = validateStep(step)
+
+  function handleNext() {
+    if (currentStepError) return
+    const next = currentIndex + 1
+    if (next < STEPS.length) setStep(STEPS[next])
+  }
+
+  function handlePrevious() {
+    const prev = currentIndex - 1
+    if (prev >= 0) setStep(STEPS[prev])
+  }
+
+  function fillFromTemplate(slug: string) {
+    setForm((p) => {
+      const t = templatesQuery.data?.find((x) => x.slug === slug)
+      return {
+        ...p,
+        template_slug: slug,
+        system_prompt:
+          t && !p.system_prompt.trim() ? t.prompt_text : p.system_prompt,
+      }
+    })
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (validationError) return
+    if (currentStepError) return
 
-    // Sensible defaults — the user refines everything on the detail
-    // page tabs (brand color, starters, theme, position, etc.)
     const widgetConfig: WidgetConfig = {
-      allowed_origins: [],
-      title: form.name.trim(),
-      welcome_message: '',
-      system_prompt: '',
+      allowed_origins: parseOrigins(form.allowed_origins_raw),
+      title: form.widget_title.trim() || form.name.trim(),
+      welcome_message: form.welcome_message.trim(),
+      system_prompt: form.system_prompt.trim(),
       css_variables: {},
-      conversation_starters: [],
-      hide_disclaimer: false,
-      template_slug: null,
-      primary_color: '#fcaa2d',
-      theme: 'light',
-      show_sources: true,
-      show_meta: false,
-      collect_user_info: false,
-      widget_position: 'right',
+      conversation_starters: starters,
+      hide_disclaimer: form.hide_disclaimer,
+      template_slug: form.template_slug || null,
+      primary_color: form.primary_color,
+      theme: form.theme,
+      show_sources: form.show_sources,
+      show_meta: form.show_meta,
+      collect_user_info: form.collect_user_info,
+      widget_position: form.widget_position,
     }
 
     createMutation.mutate(
@@ -94,17 +207,11 @@ function NewWidgetPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-10">
+    <div className="mx-auto max-w-3xl px-6 py-10">
       <div className="flex items-start justify-between mb-6">
-        <div>
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.admin_widgets_create()}
-          </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Geef je widget een naam en kies de kennisbanken. Vormgeving,
-            starters en deelinstellingen regel je op de volgende pagina.
-          </p>
-        </div>
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          {m.admin_widgets_create()}
+        </h1>
         <Button
           type="button"
           variant="ghost"
@@ -116,50 +223,374 @@ function NewWidgetPage() {
         </Button>
       </div>
 
+      <div className="mb-8">
+        <StepIndicator steps={stepLabels} currentIndex={currentIndex} />
+      </div>
+
       <form onSubmit={handleSubmit} className="space-y-6">
-        <section className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="widget-name">{m.admin_shared_field_name()}</Label>
-            <Input
-              id="widget-name"
-              value={form.name}
-              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-              placeholder="bv. Klantenservice bot"
-              required
-              autoFocus
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="widget-description">
-              {m.admin_shared_field_description()}
-            </Label>
-            <textarea
-              id="widget-description"
-              value={form.description}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, description: e.target.value }))
-              }
-              rows={3}
-              placeholder="Korte omschrijving — alleen zichtbaar in admin."
-              className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
-            />
-          </div>
-        </section>
+        {step === 'details' && (
+          <section className="space-y-8">
+            {/* Basis Informatie */}
+            <div>
+              <SectionHeading>
+                {m.admin_widgets_details_section_basics()}
+              </SectionHeading>
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="widget-name">
+                    {m.admin_shared_field_name()}
+                  </Label>
+                  <Input
+                    id="widget-name"
+                    value={form.name}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, name: e.target.value }))
+                    }
+                    placeholder="bv. Klantenservice bot"
+                    required
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="widget-description">
+                    {m.admin_widgets_details_role_scope_label()}
+                  </Label>
+                  <p className="text-xs text-gray-400">
+                    {m.admin_widgets_details_role_scope_help()}
+                  </p>
+                  <textarea
+                    id="widget-description"
+                    value={form.description}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, description: e.target.value }))
+                    }
+                    rows={3}
+                    className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+                  />
+                </div>
+              </div>
+            </div>
 
-        <section className="space-y-2 pt-4 border-t border-gray-200">
-          <Label>{m.admin_shared_wizard_step_kb_access()}</Label>
-          <p className="text-xs text-gray-400">
-            {m.admin_widgets_wizard_kb_access_intro_widget()}
-          </p>
-          <KbAccessEditor
-            value={form.kb_ids}
-            onChange={(kb_ids) => setForm((p) => ({ ...p, kb_ids }))}
-          />
-        </section>
+            {/* AI Configuratie */}
+            <div className="border-t border-gray-200 pt-6">
+              <SectionHeading>
+                {m.admin_widgets_details_section_ai()}
+              </SectionHeading>
+              <div className="space-y-4">
+                {templatesQuery.data && templatesQuery.data.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="widget-template">
+                      {m.admin_widgets_widget_template_label()}
+                    </Label>
+                    <p className="text-xs text-gray-400">
+                      {m.admin_widgets_widget_template_help()}
+                    </p>
+                    <Select
+                      id="widget-template"
+                      value={form.template_slug}
+                      onChange={(e) => fillFromTemplate(e.target.value)}
+                      className="max-w-md"
+                    >
+                      <option value="">
+                        {m.admin_widgets_widget_template_none()}
+                      </option>
+                      {templatesQuery.data.map((t) => (
+                        <option key={t.slug} value={t.slug}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="widget-system-prompt">
+                    {m.admin_widgets_widget_system_prompt_label()}
+                  </Label>
+                  <p className="text-xs text-gray-400">
+                    {m.admin_widgets_widget_system_prompt_help()}
+                  </p>
+                  <textarea
+                    id="widget-system-prompt"
+                    value={form.system_prompt}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, system_prompt: e.target.value }))
+                    }
+                    rows={6}
+                    maxLength={4000}
+                    placeholder={m.admin_widgets_widget_system_prompt_placeholder()}
+                    className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
-        {validationError && form.name.length > 0 && (
+        {step === 'kbs' && (
+          <section className="space-y-4">
+            <p className="text-sm text-gray-400">
+              {m.admin_widgets_wizard_kb_access_intro_widget()}
+            </p>
+            <KbAccessEditor
+              value={form.kb_ids}
+              onChange={(kb_ids) => setForm((p) => ({ ...p, kb_ids }))}
+            />
+          </section>
+        )}
+
+        {step === 'appearance' && (
+          <section className="space-y-8">
+            {/* Brand & Theme */}
+            <div>
+              <SectionHeading>
+                {m.admin_widgets_appearance_section_brand()}
+              </SectionHeading>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-1.5">
+                  <Label htmlFor="widget-title">
+                    {m.admin_widgets_widget_title_label()}
+                  </Label>
+                  <p className="text-xs text-gray-400">
+                    {m.admin_widgets_widget_title_help()}
+                  </p>
+                  <Input
+                    id="widget-title"
+                    value={form.widget_title}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, widget_title: e.target.value }))
+                    }
+                    placeholder="Klai Help"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="widget-primary-color">
+                    {m.admin_widgets_brand_color_label()}
+                  </Label>
+                  <p className="text-xs text-gray-400">
+                    {m.admin_widgets_brand_color_help()}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={form.primary_color}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          primary_color: e.target.value,
+                        }))
+                      }
+                      className="h-10 w-12 cursor-pointer rounded-md border border-gray-200 p-1"
+                    />
+                    <Input
+                      value={form.primary_color}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          primary_color: e.target.value,
+                        }))
+                      }
+                      pattern="^#[0-9a-fA-F]{6}$"
+                      className="font-mono text-sm"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-1.5">
+                <Label>{m.admin_widgets_theme_label()}</Label>
+                <div
+                  role="radiogroup"
+                  className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-0.5"
+                >
+                  {(['light', 'dark'] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setForm((p) => ({ ...p, theme: t }))}
+                      role="radio"
+                      aria-checked={form.theme === t}
+                      className={
+                        form.theme === t
+                          ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
+                          : 'rounded-full px-4 py-1.5 text-[12px] text-gray-500 hover:text-gray-900 klai-hover'
+                      }
+                    >
+                      {t === 'light'
+                        ? m.admin_widgets_theme_light()
+                        : m.admin_widgets_theme_dark()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Welkomstbericht */}
+            <div className="border-t border-gray-200 pt-6">
+              <SectionHeading>
+                {m.admin_widgets_appearance_section_welcome()}
+              </SectionHeading>
+              <div className="space-y-1.5">
+                <Label htmlFor="widget-welcome">
+                  {m.admin_widgets_welcome_label()}
+                </Label>
+                <p className="text-xs text-gray-400">
+                  {m.admin_widgets_welcome_help()}
+                </p>
+                <Input
+                  id="widget-welcome"
+                  value={form.welcome_message}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, welcome_message: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+
+            {/* Conversatie starters */}
+            <div className="border-t border-gray-200 pt-6">
+              <SectionHeading>
+                {m.admin_widgets_appearance_section_starters()}
+              </SectionHeading>
+              <div className="space-y-1.5">
+                <Label htmlFor="widget-starters">
+                  {m.admin_widgets_widget_starters_label()}
+                </Label>
+                <p className="text-xs text-gray-400">
+                  {m.admin_widgets_widget_starters_help()}
+                </p>
+                <textarea
+                  id="widget-starters"
+                  value={form.starters_raw}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, starters_raw: e.target.value }))
+                  }
+                  rows={4}
+                  placeholder={m.admin_widgets_widget_starters_placeholder()}
+                  className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+                />
+                <p className="text-xs text-gray-400">
+                  {starters.length}/{MAX_STARTERS}
+                </p>
+              </div>
+            </div>
+
+            {/* Chat Weergave */}
+            <div className="border-t border-gray-200 pt-6">
+              <SectionHeading>
+                {m.admin_widgets_appearance_section_chat_display()}
+              </SectionHeading>
+              <div className="space-y-3">
+                <Toggle
+                  id="show-sources"
+                  checked={form.show_sources}
+                  onChange={(v) => setForm((p) => ({ ...p, show_sources: v }))}
+                  label={m.admin_widgets_show_sources_label()}
+                  help={m.admin_widgets_show_sources_help()}
+                />
+                <Toggle
+                  id="show-meta"
+                  checked={form.show_meta}
+                  onChange={(v) => setForm((p) => ({ ...p, show_meta: v }))}
+                  label={m.admin_widgets_show_meta_label()}
+                  help={m.admin_widgets_show_meta_help()}
+                />
+                <Toggle
+                  id="collect-user-info"
+                  checked={form.collect_user_info}
+                  onChange={(v) =>
+                    setForm((p) => ({ ...p, collect_user_info: v }))
+                  }
+                  label={m.admin_widgets_collect_user_info_label()}
+                  help={m.admin_widgets_collect_user_info_help()}
+                />
+                <Toggle
+                  id="hide-disclaimer"
+                  checked={form.hide_disclaimer}
+                  onChange={(v) =>
+                    setForm((p) => ({ ...p, hide_disclaimer: v }))
+                  }
+                  label={m.admin_widgets_widget_hide_disclaimer_label()}
+                  help={m.admin_widgets_widget_hide_disclaimer_help()}
+                />
+              </div>
+            </div>
+
+            {/* Widget positie */}
+            <div className="border-t border-gray-200 pt-6">
+              <SectionHeading>
+                {m.admin_widgets_appearance_section_position()}
+              </SectionHeading>
+              <div
+                role="radiogroup"
+                className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-0.5"
+              >
+                {(['left', 'right'] as const).map((pos) => (
+                  <button
+                    key={pos}
+                    type="button"
+                    onClick={() =>
+                      setForm((p) => ({ ...p, widget_position: pos }))
+                    }
+                    role="radio"
+                    aria-checked={form.widget_position === pos}
+                    className={
+                      form.widget_position === pos
+                        ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
+                        : 'rounded-full px-4 py-1.5 text-[12px] text-gray-500 hover:text-gray-900 klai-hover'
+                    }
+                  >
+                    {pos === 'left'
+                      ? m.admin_widgets_position_left()
+                      : m.admin_widgets_position_right()}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {step === 'embed' && (
+          <section className="space-y-4">
+            <p className="text-sm text-gray-400">
+              {m.admin_widgets_wizard_embed_intro()}
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="widget-origins">
+                {m.admin_widgets_widget_origins_label()}
+              </Label>
+              <p className="text-xs text-gray-400">
+                {m.admin_widgets_widget_origins_help()}
+              </p>
+              <textarea
+                id="widget-origins"
+                value={form.allowed_origins_raw}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    allowed_origins_raw: e.target.value,
+                  }))
+                }
+                rows={4}
+                placeholder={m.admin_widgets_widget_origins_placeholder()}
+                className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm font-mono text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+              />
+              {parseOrigins(form.allowed_origins_raw).length === 0 && (
+                <div className="flex items-start gap-1.5 text-xs text-gray-400">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-[var(--color-destructive)]" />
+                  {m.admin_widgets_widget_origins_empty_warning()}
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-gray-400 pt-2">
+              Na aanmaken vind je de share-link, embed-code en testknop op
+              de Insluiten-tab van je widget.
+            </p>
+          </section>
+        )}
+
+        {currentStepError && form.name.length > 0 && (
           <p className="text-sm text-[var(--color-destructive)]">
-            {validationError}
+            {currentStepError}
           </p>
         )}
 
@@ -171,25 +602,80 @@ function NewWidgetPage() {
           </p>
         )}
 
-        <div className="flex items-center gap-3 pt-2">
+        <div className="flex items-center justify-between pt-2 border-t border-gray-200 pt-4">
           <Button
-            type="submit"
-            disabled={createMutation.isPending || !!validationError}
-          >
-            {createMutation.isPending && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}
-            {m.admin_shared_wizard_create()}
-          </Button>
-          <button
             type="button"
-            onClick={() => navigate({ to: '/admin/widgets' })}
-            className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
+            variant="ghost"
+            size="sm"
+            onClick={handlePrevious}
+            disabled={currentIndex === 0}
           >
-            {m.admin_shared_wizard_cancel()}
-          </button>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {m.admin_shared_wizard_previous()}
+          </Button>
+          {isLastStep ? (
+            <Button
+              type="submit"
+              disabled={createMutation.isPending || !!currentStepError}
+            >
+              {createMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              {m.admin_shared_wizard_create()}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={handleNext}
+              disabled={!!currentStepError}
+            >
+              {m.admin_shared_wizard_next()}
+              <ArrowRight className="h-4 w-4 ml-2" />
+            </Button>
+          )}
         </div>
       </form>
     </div>
+  )
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
+      {children}
+    </h3>
+  )
+}
+
+function Toggle({
+  id,
+  checked,
+  onChange,
+  label,
+  help,
+}: {
+  id: string
+  checked: boolean
+  onChange: (next: boolean) => void
+  label: string
+  help: string
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className="flex items-start gap-3 rounded-md border border-gray-200 p-3 cursor-pointer klai-hover"
+    >
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-4 w-4 accent-[var(--color-rl-accent)]"
+      />
+      <div>
+        <p className="text-sm font-medium text-gray-900">{label}</p>
+        <p className="text-xs text-gray-400">{help}</p>
+      </div>
+    </label>
   )
 }
