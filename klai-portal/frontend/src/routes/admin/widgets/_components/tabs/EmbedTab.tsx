@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react'
-import { AlertTriangle, ExternalLink, Loader2 } from 'lucide-react'
+import { AlertTriangle, Code2, Eye, Link2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
-import { EmbedSnippet } from '../EmbedSnippet'
 
 // Use the user's current portal origin (could be my.getklai.com OR a
 // tenant subdomain like nerds-37376105.getklai.com). The widget's
@@ -29,6 +28,18 @@ function isValidOrigin(origin: string): boolean {
   }
 }
 
+function buildSnippet(
+  widgetId: string,
+  title?: string,
+  welcomeMessage?: string,
+): string {
+  const attrs: string[] = [`  src="https://my.getklai.com/widget/klai-chat.js"`]
+  attrs.push(`  data-widget-id="${widgetId}"`)
+  if (title) attrs.push(`  data-title="${title}"`)
+  if (welcomeMessage) attrs.push(`  data-welcome="${welcomeMessage}"`)
+  return `<script\n${attrs.join('\n')}\n></script>`
+}
+
 interface Props {
   widget: WidgetDetailResponse
 }
@@ -37,7 +48,9 @@ export function EmbedTab({ widget }: Props) {
   const updateMutation = useUpdateWidget(String(widget.id))
   const config = widget.widget_config
 
-  const [originsRaw, setOriginsRaw] = useState(config.allowed_origins.join('\n'))
+  const [originsRaw, setOriginsRaw] = useState(
+    config.allowed_origins.join('\n'),
+  )
 
   useEffect(() => {
     setOriginsRaw(config.allowed_origins.join('\n'))
@@ -45,6 +58,27 @@ export function EmbedTab({ widget }: Props) {
 
   const origins = parseOrigins(originsRaw)
   const invalidOrigins = origins.filter((o) => !isValidOrigin(o))
+
+  const shareUrl = `${window.location.origin}/bot/${widget.widget_id}`
+  const snippet = buildSnippet(
+    widget.widget_id,
+    config.title || undefined,
+    config.welcome_message || undefined,
+  )
+
+  function copyShareLink() {
+    void navigator.clipboard.writeText(shareUrl)
+    toast.success('Link gekopieerd')
+  }
+
+  function copyEmbedCode() {
+    void navigator.clipboard.writeText(snippet)
+    toast.success('Embed code gekopieerd')
+  }
+
+  function openTest() {
+    window.open(`/bot/${widget.widget_id}`, '_blank', 'noopener,noreferrer')
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -62,7 +96,65 @@ export function EmbedTab({ widget }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <section className="space-y-4">
+      {/* Deelbare link — TWD-style green card. Public bot URL works for
+          anyone with the link, no auth required, no origin gymnastics. */}
+      <section className="rounded-xl border border-[var(--color-success)]/30 bg-[var(--color-success-bg)]/40 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Link2 className="h-4 w-4 text-[var(--color-success)]" />
+          <span className="text-sm font-medium text-gray-900">
+            Deelbare link
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            readOnly
+            value={shareUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-xs text-gray-700 outline-none focus:ring-2 focus:ring-[var(--color-success)]/30"
+          />
+          <button
+            type="button"
+            onClick={copyShareLink}
+            className="inline-flex items-center justify-center rounded-full bg-[var(--color-success)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+          >
+            Kopieer
+          </button>
+        </div>
+      </section>
+
+      {/* Embed code (widget script) — TWD-style cream card. */}
+      <section className="rounded-xl border border-gray-200 bg-[var(--color-rl-cream)] p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Code2 className="h-4 w-4 text-gray-500" />
+          <span className="text-sm font-medium text-gray-900">
+            Embed code (widget script)
+          </span>
+        </div>
+        <pre className="rounded-md border border-gray-200 bg-white px-4 py-3 text-xs font-mono text-gray-900 overflow-x-auto whitespace-pre">
+          {snippet}
+        </pre>
+        <div className="mt-3 flex items-stretch gap-2">
+          <button
+            type="button"
+            onClick={copyEmbedCode}
+            className="flex-1 inline-flex items-center justify-center rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-50"
+          >
+            Kopieer embed code
+          </button>
+          <button
+            type="button"
+            onClick={openTest}
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-success)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+          >
+            <Eye className="h-4 w-4" />
+            Test
+          </button>
+        </div>
+      </section>
+
+      {/* Advanced — allowed origins. */}
+      <section className="space-y-4 pt-4 border-t border-gray-200">
         <div className="space-y-1.5">
           <Label htmlFor="widget-origins">
             {m.admin_widgets_widget_origins_label()}
@@ -80,7 +172,9 @@ export function EmbedTab({ widget }: Props) {
           />
           {invalidOrigins.length > 0 && (
             <p className="text-xs text-[var(--color-destructive)]">
-              {m.admin_widgets_widget_invalid_origins({ origins: invalidOrigins.join(', ') })}
+              {m.admin_widgets_widget_invalid_origins({
+                origins: invalidOrigins.join(', '),
+              })}
             </p>
           )}
           {origins.length === 0 && (
@@ -89,51 +183,6 @@ export function EmbedTab({ widget }: Props) {
               {m.admin_widgets_widget_origins_empty_warning()}
             </div>
           )}
-        </div>
-      </section>
-
-      <section className="space-y-4 pt-4 border-t border-gray-200">
-        <EmbedSnippet
-          widgetId={widget.widget_id}
-          title={config.title || undefined}
-          welcomeMessage={config.welcome_message || undefined}
-        />
-        {/* Public share-link — TWD-style. The bot URL works for anyone
-            with the link, no auth required, no origin gymnastics. The
-            widget_id is the access key. */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-900">Deelbare link</label>
-          <p className="text-xs text-gray-400">
-            Stuur deze link naar wie je je bot wilt laten testen. Geen login nodig.
-          </p>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              readOnly
-              value={`${window.location.origin}/bot/${widget.widget_id}`}
-              onFocus={(e) => e.currentTarget.select()}
-              className="flex-1 rounded-md border border-gray-200 bg-[var(--color-rl-cream)] px-3 py-2 font-mono text-xs text-gray-700 outline-none"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                void navigator.clipboard.writeText(`${window.location.origin}/bot/${widget.widget_id}`)
-                toast.success('Link gekopieerd')
-              }}
-            >
-              Kopieer
-            </Button>
-            <Button
-              type="button"
-              onClick={() => {
-                window.open(`/bot/${widget.widget_id}`, '_blank', 'noopener,noreferrer')
-              }}
-            >
-              <ExternalLink className="mr-2 h-4 w-4" />
-              {m.admin_widgets_test_button()}
-            </Button>
-          </div>
         </div>
       </section>
 
