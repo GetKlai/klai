@@ -107,6 +107,7 @@ export function AppearanceTab({ widget }: Props) {
                 value={primaryColor}
                 onChange={(e) => setPrimaryColor(e.target.value)}
                 pattern="^#[0-9a-fA-F]{6}$"
+                placeholder="#fcaa2d"
                 className="font-mono text-sm"
               />
             </div>

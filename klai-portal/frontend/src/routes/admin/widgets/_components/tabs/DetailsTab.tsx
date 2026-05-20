@@ -76,7 +76,13 @@ export function DetailsTab({ widget }: Props) {
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="widget-name">{m.admin_shared_field_name()}</Label>
-            <Input id="widget-name" value={name} onChange={(e) => setName(e.target.value)} required />
+            <Input
+              id="widget-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="bv. Klantenservice bot"
+              required
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="widget-description">{m.admin_widgets_details_role_scope_label()}</Label>
@@ -86,6 +92,7 @@ export function DetailsTab({ widget }: Props) {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
+              placeholder="bv. Beantwoordt vragen over openingstijden, prijzen en leveringen van Klai. Stuur off-topic vragen door naar support@getklai.com."
               className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
             />
           </div>

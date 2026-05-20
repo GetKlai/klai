@@ -269,6 +269,7 @@ function NewWidgetPage() {
                       setForm((p) => ({ ...p, description: e.target.value }))
                     }
                     rows={3}
+                    placeholder="bv. Beantwoordt vragen over openingstijden, prijzen en leveringen van Klai. Stuur off-topic vragen door naar support@getklai.com."
                     className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
                   />
                 </div>
@@ -394,6 +395,7 @@ function NewWidgetPage() {
                         }))
                       }
                       pattern="^#[0-9a-fA-F]{6}$"
+                      placeholder="#fcaa2d"
                       className="font-mono text-sm"
                     />
                   </div>
