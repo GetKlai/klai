@@ -31,20 +31,6 @@ function formatRelativeTime(isoString: string | null): string {
   })
 }
 
-// Pure luminance check so the avatar foreground stays legible on any
-// brand colour the admin sets. Matches the backend WCAG cutoff used
-// in partner.py::_readable_text_color (0.179 threshold).
-function readableForegroundOn(hex: string): string {
-  const cleaned = hex.replace('#', '').padStart(6, '0')
-  const r = parseInt(cleaned.slice(0, 2), 16) / 255
-  const g = parseInt(cleaned.slice(2, 4), 16) / 255
-  const b = parseInt(cleaned.slice(4, 6), 16) / 255
-  const ch = (c: number) =>
-    c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
-  const lum = 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
-  return lum > 0.179 ? '#191918' : '#ffffff'
-}
-
 function WidgetsPage() {
   const navigate = useNavigate()
   const { data, isLoading, error, refetch } = useWidgets()
@@ -88,120 +74,102 @@ function WidgetsPage() {
           </p>
         </div>
       ) : (
-        <ul className="space-y-3">
+        <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
           {widgets.map((w) => {
             const isConfirming = confirmDeleteId === String(w.id)
-            const primary = w.widget_config?.primary_color || '#fcaa2d'
-            const fg = readableForegroundOn(primary)
             return (
-              <li key={w.id}>
-                <InlineDeleteConfirm
-                  isConfirming={isConfirming}
-                  isPending={deleteMutation.isPending}
-                  label={m.admin_widgets_delete_confirm({ name: w.name })}
-                  cancelLabel={m.admin_users_cancel()}
-                  onConfirm={() => {
-                    deleteMutation.mutate(String(w.id))
-                    setConfirmDeleteId(null)
-                  }}
-                  onCancel={() => setConfirmDeleteId(null)}
-                >
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() =>
+              <InlineDeleteConfirm
+                key={w.id}
+                isConfirming={isConfirming}
+                isPending={deleteMutation.isPending}
+                label={m.admin_widgets_delete_confirm({ name: w.name })}
+                cancelLabel={m.admin_users_cancel()}
+                onConfirm={() => {
+                  deleteMutation.mutate(String(w.id))
+                  setConfirmDeleteId(null)
+                }}
+                onCancel={() => setConfirmDeleteId(null)}
+              >
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() =>
+                    void navigate({
+                      to: '/admin/widgets/$id',
+                      params: { id: String(w.id) },
+                    })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
                       void navigate({
                         to: '/admin/widgets/$id',
                         params: { id: String(w.id) },
                       })
                     }
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
+                  }}
+                  className="group flex items-center gap-3 px-2 py-3.5 cursor-pointer klai-hover"
+                >
+                  {/* Leading icon — bare glyph, no background box */}
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
+                    <MessageSquare className="h-5 w-5" strokeWidth={1.75} />
+                  </div>
+                  <span className="flex-1 min-w-0 text-[15px] font-display text-gray-900 truncate">
+                    {w.name}
+                  </span>
+                  <span className="hidden sm:inline text-gray-400 text-sm whitespace-nowrap">
+                    {w.kb_access_count}{' '}
+                    {w.kb_access_count === 1 ? 'kennisbank' : 'kennisbanken'}
+                  </span>
+                  <span className="hidden md:inline text-gray-400 text-sm whitespace-nowrap tabular-nums">
+                    {formatRelativeTime(w.last_used_at)}
+                  </span>
+                  <div
+                    className="flex items-center gap-2 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        window.open(
+                          `/bot/${w.widget_id}`,
+                          '_blank',
+                          'noopener,noreferrer',
+                        )
+                      }
+                      aria-label={`Test ${w.name}`}
+                      title="Test bot"
+                      className="inline-flex items-center justify-center text-gray-500 transition-opacity hover:opacity-70"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(String(w.id))}
+                      aria-label={`Delete ${w.name}`}
+                      className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
                         void navigate({
                           to: '/admin/widgets/$id',
                           params: { id: String(w.id) },
                         })
                       }
-                    }}
-                    className="group flex items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3.5 cursor-pointer klai-hover"
-                  >
-                    <span
-                      aria-hidden
-                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
-                      style={{ backgroundColor: primary, color: fg }}
+                      aria-label={w.name}
+                      className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
                     >
-                      <MessageSquare className="h-5 w-5" strokeWidth={1.75} />
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="truncate text-[15px] font-display-medium text-gray-900">
-                        {w.name}
-                      </p>
-                      {w.description && (
-                        <p className="truncate text-[13px] text-gray-400">
-                          {w.description}
-                        </p>
-                      )}
-                      <p className="mt-1 flex items-center gap-2 text-xs text-gray-400">
-                        <span>
-                          {w.kb_access_count}{' '}
-                          {w.kb_access_count === 1
-                            ? 'kennisbank'
-                            : 'kennisbanken'}
-                        </span>
-                        <span>·</span>
-                        <span>
-                          Laatst gebruikt {formatRelativeTime(w.last_used_at)}
-                        </span>
-                      </p>
-                    </div>
-                    <div
-                      className="flex items-center gap-2 pt-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          window.open(
-                            `/bot/${w.widget_id}`,
-                            '_blank',
-                            'noopener,noreferrer',
-                          )
-                        }
-                        aria-label={`Test ${w.name}`}
-                        title="Test bot"
-                        className="inline-flex items-center justify-center text-gray-500 transition-opacity hover:opacity-70"
-                      >
-                        <MessageSquare className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(String(w.id))}
-                        aria-label={`Delete ${w.name}`}
-                        className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          navigate({
-                            to: '/admin/widgets/$id',
-                            params: { id: String(w.id) },
-                          })
-                        }
-                        aria-label={w.name}
-                        className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </div>
+                      <Eye className="h-4 w-4" />
+                    </button>
                   </div>
-                </InlineDeleteConfirm>
-              </li>
+                </div>
+              </InlineDeleteConfirm>
             )
           })}
-        </ul>
+        </div>
       )}
     </div>
   )
