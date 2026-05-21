@@ -20,6 +20,15 @@ from fastapi import HTTPException
 from helpers import FakeKB, FakeResult, make_partner_auth
 
 
+def _http_request_stub() -> MagicMock:
+    """Minimal Request stub for chat_completions; widget-only audit
+    helpers read headers + client.host, so set both."""
+    req = MagicMock()
+    req.headers = {}
+    req.client = MagicMock(host="127.0.0.1")
+    return req
+
+
 @pytest.fixture(autouse=True)
 def _mock_retrieval_log(monkeypatch):
     """Prevent orphaned coroutines when asyncio.create_task is mocked.
@@ -76,7 +85,7 @@ async def test_invalid_model_returns_400():
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await chat_completions(request=req, auth=make_partner_auth(), db=AsyncMock())
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(), db=AsyncMock())
     assert exc_info.value.status_code == 400
 
 
@@ -107,7 +116,7 @@ async def test_messages_only_system_role_returns_400():
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await chat_completions(request=req, auth=make_partner_auth(), db=AsyncMock())
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(), db=AsyncMock())
     assert exc_info.value.status_code == 400
 
 
@@ -124,7 +133,7 @@ async def test_kb_out_of_scope_returns_403():
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await chat_completions(request=req, auth=make_partner_auth(kb_access={10: "read"}), db=AsyncMock())
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=AsyncMock())
     assert exc_info.value.status_code == 403
 
 
@@ -147,7 +156,7 @@ async def test_retrieval_timeout_returns_502():
         patch("app.api.partner.retrieve_context", side_effect=httpx.ReadTimeout("timeout")),
         pytest.raises(HTTPException) as exc_info,
     ):
-        await chat_completions(request=req, auth=make_partner_auth(kb_access={10: "read"}), db=db)
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db)
     assert exc_info.value.status_code == 502
 
 
@@ -184,7 +193,7 @@ async def test_happy_path_non_streaming():
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio"),
     ):
-        result = await chat_completions(request=req, auth=make_partner_auth(kb_access={10: "read"}), db=db)
+        result = await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db)
 
     assert result["id"] == "chatcmpl-123"
     assert result["choices"][0]["message"]["content"] == "Hi there!"
@@ -220,7 +229,7 @@ async def test_retrieval_log_scheduled():
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio") as mock_asyncio,
     ):
-        await chat_completions(request=req, auth=make_partner_auth(kb_access={10: "read"}), db=db)
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db)
 
     mock_asyncio.create_task.assert_called_once()
 
@@ -256,7 +265,7 @@ async def test_kb_id_to_slug_translation():
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio"),
     ):
-        await chat_completions(request=req, auth=make_partner_auth(), db=db)
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(), db=db)
 
     call_kwargs = mock_retrieve.call_args
     kb_slugs_arg = call_kwargs[1].get("kb_slugs") or call_kwargs[0][2]
@@ -329,7 +338,7 @@ async def test_streaming_returns_event_stream_content_type():
     ):
         from starlette.responses import StreamingResponse
 
-        result = await chat_completions(request=req, auth=make_partner_auth(kb_access={10: "read"}), db=db)
+        result = await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db)
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "text/event-stream"
 
@@ -368,7 +377,7 @@ async def test_widget_streaming_uses_structured_citation_mode():
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
         patch("app.api.partner.asyncio"),
     ):
-        await chat_completions(request=req, auth=auth, db=db)
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
     assert mock_retrieve.call_args.kwargs["backend_managed_citations"] is True
     assert chat_stream.call_args.kwargs["citation_output"] == "markers"
@@ -411,7 +420,7 @@ async def test_streaming_chunks_forwarded():
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):
-        result = await chat_completions(request=req, auth=make_partner_auth(kb_access={10: "read"}), db=db)
+        result = await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db)
 
         received = []
         async for chunk in result.body_iterator:
@@ -445,7 +454,7 @@ async def test_streaming_done_terminator():
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):
-        result = await chat_completions(request=req, auth=make_partner_auth(kb_access={10: "read"}), db=db)
+        result = await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db)
 
         all_bytes = b""
         async for chunk in result.body_iterator:
@@ -477,7 +486,7 @@ async def test_streaming_retrieval_log_fires():
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio") as mock_asyncio,
     ):
-        await chat_completions(request=req, auth=make_partner_auth(kb_access={10: "read"}), db=db)
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db)
 
     mock_asyncio.create_task.assert_called_once()
 
