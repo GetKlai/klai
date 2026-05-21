@@ -4,7 +4,7 @@ import {
   Plus,
   Loader2,
   Pencil,
-  Play,
+  ExternalLink,
   MessageSquare,
   Trash2,
 } from 'lucide-react'
@@ -143,12 +143,12 @@ function WidgetsPage() {
                           'noopener,noreferrer',
                         )
                       }
-                      aria-label={`Praat met ${w.name}`}
-                      title="Praat met de bot"
-                      className="inline-flex h-7 items-center gap-1 rounded-full border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] px-2.5 text-[12px] font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-accent)]/15 hover:border-[var(--color-rl-accent)]"
+                      aria-label={`Open ${w.name}`}
+                      title="Open bot in nieuw tabblad"
+                      className="inline-flex h-7 items-center gap-1.5 rounded-full border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] px-3 text-[12px] font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-accent)]/15 hover:border-[var(--color-rl-accent)]"
                     >
-                      <Play className="h-3 w-3 fill-current" strokeWidth={0} />
-                      <span>Praat</span>
+                      <span>Open</span>
+                      <ExternalLink className="h-3 w-3" strokeWidth={2} />
                     </button>
                     <button
                       type="button"
