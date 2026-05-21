@@ -2,35 +2,26 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import {
   Plus,
-  Loader2,
   Pencil,
   ExternalLink,
-  MessageSquare,
   Trash2,
+  MessageSquare,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
-import { getLocale } from '@/paraglide/runtime'
-import { datetime } from '@/paraglide/registry'
 import { useWidgets, useDeleteWidget } from './-hooks'
 import type { WidgetResponse } from './-types'
+
+// Matches the canonical admin-list pattern used by /admin/templates:
+// divider-rows, no leading icon, name + optional badge inline, optional
+// description below, action icons right-aligned with gray-400 idle and
+// semantic-colour hover. Same paddings, same dividers, same hover.
 
 export const Route = createFileRoute('/admin/widgets/')({
   component: WidgetsPage,
 })
-
-function formatRelativeTime(isoString: string | null): string | null {
-  if (!isoString) return null
-  return datetime(getLocale(), isoString, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
 
 function WidgetsPage() {
   const navigate = useNavigate()
@@ -41,99 +32,108 @@ function WidgetsPage() {
   const widgets: WidgetResponse[] = Array.isArray(data) ? data : []
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
-      <div className="flex items-start justify-between">
+    <div className="mx-auto max-w-3xl px-6 py-10">
+      <div className="flex items-center justify-between mb-2">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_widgets_title()}
         </h1>
-        <Button
-          size="sm"
+        <button
+          type="button"
           onClick={() => void navigate({ to: '/admin/widgets/new' })}
+          className="flex items-center gap-1.5 rounded-full bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
         >
-          <Plus className="h-4 w-4 mr-2" />
+          <Plus className="h-4 w-4" />
           {m.admin_widgets_create()}
-        </Button>
+        </button>
       </div>
+      <p className="text-sm text-gray-400 mb-6">
+        Beheer de chat-widgets die je website-bezoekers kunnen openen.
+      </p>
 
-      {error ? (
+      {error && (
         <QueryErrorState
           error={error instanceof Error ? error : new Error(String(error))}
           onRetry={() => void refetch()}
         />
-      ) : isLoading ? (
-        <p className="py-8 text-sm text-gray-400">
-          <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-          {m.admin_widgets_loading()}
-        </p>
-      ) : widgets.length === 0 ? (
-        <div className="py-12 text-center space-y-3">
-          <p className="text-sm font-medium text-gray-900">
+      )}
+
+      {isLoading && !error && (
+        <div className="space-y-3" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-14 rounded-lg bg-gray-50 animate-pulse" />
+          ))}
+        </div>
+      )}
+
+      {!isLoading && !error && widgets.length === 0 && (
+        <div className="rounded-lg border border-dashed border-gray-200 py-16 text-center">
+          <MessageSquare className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+          <p className="text-base font-medium text-gray-900">
             {m.admin_widgets_empty()}
           </p>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-400 mt-1 max-w-md mx-auto">
             {m.admin_widgets_empty_description()}
           </p>
+          <button
+            type="button"
+            onClick={() => void navigate({ to: '/admin/widgets/new' })}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            {m.admin_widgets_create()}
+          </button>
         </div>
-      ) : (
+      )}
+
+      {!isLoading && !error && widgets.length > 0 && (
         <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
           {widgets.map((w) => {
             const isConfirming = confirmDeleteId === String(w.id)
+            const goToDetail = () =>
+              void navigate({
+                to: '/admin/widgets/$id',
+                params: { id: String(w.id) },
+              })
+
             return (
-              <InlineDeleteConfirm
+              <div
                 key={w.id}
-                isConfirming={isConfirming}
-                isPending={deleteMutation.isPending}
-                label={m.admin_widgets_delete_confirm({ name: w.name })}
-                cancelLabel={m.admin_users_cancel()}
-                onConfirm={() => {
-                  deleteMutation.mutate(String(w.id))
-                  setConfirmDeleteId(null)
-                }}
-                onCancel={() => setConfirmDeleteId(null)}
+                className="flex items-start gap-4 py-3.5 px-2 klai-hover"
               >
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() =>
-                    void navigate({
-                      to: '/admin/widgets/$id',
-                      params: { id: String(w.id) },
-                    })
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      void navigate({
-                        to: '/admin/widgets/$id',
-                        params: { id: String(w.id) },
-                      })
-                    }
-                  }}
-                  className="group flex items-center gap-3 px-2 py-3.5 cursor-pointer klai-hover"
+                <button
+                  type="button"
+                  onClick={goToDetail}
+                  className="flex-1 min-w-0 text-left"
                 >
-                  {/* Leading icon — bare glyph, no background box */}
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
-                    <MessageSquare className="h-5 w-5" strokeWidth={1.75} />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-gray-900 truncate">
+                      {w.name}
+                    </span>
+                    <Badge variant="secondary">
+                      {w.kb_access_count === 1
+                        ? '1 kennisbank'
+                        : `${w.kb_access_count} kennisbanken`}
+                    </Badge>
                   </div>
-                  <span className="flex-1 min-w-0 text-[15px] font-display text-gray-900 truncate">
-                    {w.name}
-                  </span>
-                  <span className="hidden sm:inline text-gray-400 text-sm whitespace-nowrap">
-                    {w.kb_access_count}{' '}
-                    {w.kb_access_count === 1 ? 'kennisbank' : 'kennisbanken'}
-                  </span>
-                  {(() => {
-                    const formatted = formatRelativeTime(w.last_used_at)
-                    return formatted ? (
-                      <span className="hidden md:inline text-gray-400 text-sm whitespace-nowrap tabular-nums">
-                        {formatted}
-                      </span>
-                    ) : null
-                  })()}
-                  <div
-                    className="flex items-center gap-2 shrink-0"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+                  {w.description && (
+                    <p className="mt-1 text-sm text-gray-400 truncate">
+                      {w.description}
+                    </p>
+                  )}
+                </button>
+
+                <InlineDeleteConfirm
+                  isConfirming={isConfirming}
+                  isPending={deleteMutation.isPending && isConfirming}
+                  label={m.admin_widgets_delete_confirm({ name: w.name })}
+                  cancelLabel={m.admin_users_cancel()}
+                  onConfirm={() => {
+                    deleteMutation.mutate(String(w.id))
+                    setConfirmDeleteId(null)
+                  }}
+                  onCancel={() => setConfirmDeleteId(null)}
+                >
+                  <div className="flex items-center justify-end gap-1">
                     <button
                       type="button"
                       onClick={() =>
@@ -145,36 +145,31 @@ function WidgetsPage() {
                       }
                       aria-label={`Open ${w.name}`}
                       title="Open bot in nieuw tabblad"
-                      className="inline-flex h-7 items-center gap-1.5 rounded-full border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] px-3 text-[12px] font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-accent)]/15 hover:border-[var(--color-rl-accent)]"
+                      className="p-2 rounded-md text-gray-400 hover:text-gray-900 klai-hover"
                     >
-                      <span>Open</span>
-                      <ExternalLink className="h-3 w-3" strokeWidth={2} />
+                      <ExternalLink className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={goToDetail}
+                      aria-label={`Bewerk ${w.name}`}
+                      title="Bewerken"
+                      className="p-2 rounded-md text-gray-400 hover:text-gray-900 klai-hover"
+                    >
+                      <Pencil className="h-4 w-4" />
                     </button>
                     <button
                       type="button"
                       onClick={() => setConfirmDeleteId(String(w.id))}
-                      aria-label={`Delete ${w.name}`}
-                      className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                      aria-label={`Verwijder ${w.name}`}
+                      title="Verwijderen"
+                      className="p-2 rounded-md text-gray-400 hover:text-[var(--color-destructive)] klai-hover"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void navigate({
-                          to: '/admin/widgets/$id',
-                          params: { id: String(w.id) },
-                        })
-                      }
-                      aria-label={`Bewerk ${w.name}`}
-                      title="Bewerk widget"
-                      className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
                   </div>
-                </div>
-              </InlineDeleteConfirm>
+                </InlineDeleteConfirm>
+              </div>
             )
           })}
         </div>
