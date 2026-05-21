@@ -187,7 +187,17 @@ function UsersPage() {
             <p className="py-8 text-sm text-gray-400">
               {m.admin_users_empty()}
             </p>
-          ) : <UsersTable table={table} />}
+          ) : (
+            <UsersTable
+              table={table}
+              onRowClick={(user) =>
+                void navigate({
+                  to: '/admin/users/$userId/edit',
+                  params: { userId: user.zitadel_user_id },
+                })
+              }
+            />
+          )}
 
           {offboardTarget && currentUserId && (
             <OffboardWizard
