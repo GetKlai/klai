@@ -1825,5 +1825,5 @@
   "admin_widgets_collect_user_info_help": "Capture name and email for follow-up.",
   "admin_widgets_position_left": "Bottom left",
   "admin_widgets_position_right": "Bottom right",
-  "admin_widgets_subtitle": "Build AI agents that help your website visitors with questions about your organisation. Every agent draws answers from your knowledge bases and always cites the source."
+  "admin_widgets_subtitle": "Build AI agents that help your website visitors with questions about your organisation. Every agent uses your knowledge bases, templates and styling, always cites the source, and can be shared as a link or embedded on any site with one click."
 }
