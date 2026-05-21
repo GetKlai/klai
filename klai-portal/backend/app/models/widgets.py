@@ -13,7 +13,18 @@ Design decisions (see SPEC-WIDGET-002):
 import secrets
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -72,3 +83,74 @@ class WidgetKbAccess(Base):
         ForeignKey("portal_knowledge_bases.id", ondelete="CASCADE"),
         primary_key=True,
     )
+
+
+class WidgetConversation(Base):
+    """Audit-trail row per widget chat session (one widget-load).
+
+    Keyed on (widget_id, session_key) where session_key is the JWT
+    JTI from the widget's session token — one browser session =
+    one row. RLS Cat-D enforced via post_deploy SQL.
+    """
+
+    __tablename__ = "widget_conversations"
+    __table_args__ = (
+        UniqueConstraint(
+            "widget_id",
+            "session_key",
+            name="uq_widget_conversations_widget_session",
+        ),
+        Index("ix_widget_conversations_widget_started", "widget_id", "started_at"),
+        Index("ix_widget_conversations_org_started", "org_id", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("portal_orgs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    widget_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("widgets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    session_key: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_message_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_user_query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language_detected: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+
+class WidgetMessage(Base):
+    """One turn (user or assistant) inside a WidgetConversation.
+
+    ``org_id`` is denormalised so the RLS Cat-D policy can scope by
+    tenant without a join. ``sources`` carries the citation list
+    that came back on the assistant turn (NULL on user turns).
+    """
+
+    __tablename__ = "widget_messages"
+    __table_args__ = (
+        CheckConstraint("role IN ('user','assistant')", name="ck_widget_messages_role"),
+        Index("ix_widget_messages_conv_seq", "conversation_id", "sequence"),
+        Index("ix_widget_messages_org_created", "org_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("widget_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    org_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    sources: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
