@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -431,3 +432,237 @@ async def delete_widget(
         properties={"widget_id": widget.id, "name": widget.name},
     )
     logger.info("Widget deleted", widget_id=widget.id, org_id=perms.org_id)
+
+
+# ---------------------------------------------------------------------------
+# Audit-trail endpoints — SPEC-WIDGET-ACTIVITY-001
+# ---------------------------------------------------------------------------
+
+
+class ConversationListItem(BaseModel):
+    id: int
+    started_at: datetime
+    last_message_at: datetime
+    message_count: int
+    first_user_query: str | None
+    language_detected: str | None
+
+
+class WidgetMessageItem(BaseModel):
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    sources: list[dict] | None
+    created_at: datetime
+    sequence: int
+
+
+class ConversationDetail(ConversationListItem):
+    messages: list[WidgetMessageItem]
+
+
+class TopQuery(BaseModel):
+    query: str
+    count: int
+
+
+class WidgetStats(BaseModel):
+    period: Literal["7d", "30d", "all"]
+    total_conversations: int
+    total_messages: int
+    avg_messages_per_conversation: float
+    top_queries: list[TopQuery]
+    # 24 buckets, hour-of-day. Aggregated across all days in window.
+    hourly_activity: list[int]
+
+
+def _period_cutoff(period: str) -> datetime | None:
+    """Translate period string to a SQL ``started_at >= cutoff`` value.
+
+    ``all`` returns None so the caller skips the time filter."""
+    now = datetime.now(UTC)
+    if period == "7d":
+        return now - timedelta(days=7)
+    if period == "30d":
+        return now - timedelta(days=30)
+    return None
+
+
+@router.get("/{widget_id}/conversations", response_model=list[ConversationListItem])
+async def list_widget_conversations(
+    widget_id: str,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> list[ConversationListItem]:
+    """Paginated list of conversations for one widget, newest first.
+
+    Cursor = ISO timestamp of the last row returned. Pass it to
+    ``cursor`` to fetch the next page (``started_at < cursor``).
+    """
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+
+    params: dict[str, object] = {"widget_id": widget.id, "limit": limit}
+    cursor_clause = ""
+    if cursor:
+        try:
+            cursor_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
+            params["cursor"] = cursor_dt
+            cursor_clause = "AND started_at < :cursor"
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid cursor") from exc
+
+    # cursor_clause is a hardcoded string literal ("" or fixed SQL),
+    # never user-controlled — every dynamic value is a bound :param.
+    sql = (
+        "SELECT id, started_at, last_message_at, message_count, "  # noqa: S608
+        "first_user_query, language_detected "
+        "FROM widget_conversations "
+        "WHERE widget_id = CAST(:widget_id AS uuid) "
+        f"{cursor_clause} "
+        "ORDER BY started_at DESC LIMIT :limit"
+    )
+    result = await db.execute(text(sql), params)
+    rows = result.all()
+    return [
+        ConversationListItem(
+            id=row.id,
+            started_at=row.started_at,
+            last_message_at=row.last_message_at,
+            message_count=row.message_count,
+            first_user_query=row.first_user_query,
+            language_detected=row.language_detected,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/{widget_id}/conversations/{conv_id}", response_model=ConversationDetail)
+async def get_widget_conversation(
+    widget_id: str,
+    conv_id: int,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationDetail:
+    """Full transcript of one conversation, messages in chronological order."""
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+
+    conv_result = await db.execute(
+        text(
+            """
+            SELECT id, started_at, last_message_at, message_count,
+                   first_user_query, language_detected
+              FROM widget_conversations
+             WHERE id = :conv_id
+               AND widget_id = CAST(:widget_id AS uuid)
+            """
+        ),
+        {"conv_id": conv_id, "widget_id": widget.id},
+    )
+    conv_row = conv_result.first()
+    if conv_row is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+
+    msg_result = await db.execute(
+        text(
+            """
+            SELECT id, role, content, sources, created_at, sequence
+              FROM widget_messages
+             WHERE conversation_id = :conv_id
+             ORDER BY sequence ASC
+            """
+        ),
+        {"conv_id": conv_id},
+    )
+    messages = [
+        WidgetMessageItem(
+            id=m.id,
+            role=m.role,  # type: ignore[arg-type]
+            content=m.content,
+            sources=m.sources,
+            created_at=m.created_at,
+            sequence=m.sequence,
+        )
+        for m in msg_result.all()
+    ]
+
+    return ConversationDetail(
+        id=conv_row.id,
+        started_at=conv_row.started_at,
+        last_message_at=conv_row.last_message_at,
+        message_count=conv_row.message_count,
+        first_user_query=conv_row.first_user_query,
+        language_detected=conv_row.language_detected,
+        messages=messages,
+    )
+
+
+@router.get("/{widget_id}/stats", response_model=WidgetStats)
+async def widget_activity_stats(
+    widget_id: str,
+    period: Literal["7d", "30d", "all"] = "7d",
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> WidgetStats:
+    """Aggregate metrics for the Activiteit tab.
+
+    Three queries: totals, top 10 first-user-queries, and 24 hourly
+    buckets. The ``period`` filter scopes everything to a rolling
+    window of 7 / 30 days, or all-time."""
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    cutoff = _period_cutoff(period)
+
+    params: dict[str, object] = {"widget_id": widget.id}
+    cutoff_clause = ""
+    if cutoff is not None:
+        params["cutoff"] = cutoff
+        cutoff_clause = "AND started_at >= :cutoff"
+
+    # cutoff_clause is a hardcoded literal — see comment above.
+    totals_sql = (
+        "SELECT COUNT(*) AS total_conversations, "  # noqa: S608
+        "COALESCE(SUM(message_count), 0) AS total_messages "
+        "FROM widget_conversations "
+        "WHERE widget_id = CAST(:widget_id AS uuid) "
+        f"{cutoff_clause}"
+    )
+    totals_result = await db.execute(text(totals_sql), params)
+    totals = totals_result.first()
+    total_conversations = totals.total_conversations if totals else 0
+    total_messages = totals.total_messages if totals else 0
+    avg = round(total_messages / total_conversations, 2) if total_conversations else 0.0
+
+    top_sql = (
+        "SELECT first_user_query AS q, COUNT(*) AS c "  # noqa: S608
+        "FROM widget_conversations "
+        "WHERE widget_id = CAST(:widget_id AS uuid) "
+        "AND first_user_query IS NOT NULL "
+        f"{cutoff_clause} "
+        "GROUP BY first_user_query "
+        "ORDER BY c DESC, q ASC LIMIT 10"
+    )
+    top_result = await db.execute(text(top_sql), params)
+    top_queries = [TopQuery(query=row.q, count=row.c) for row in top_result.all()]
+
+    hourly_sql = (
+        "SELECT EXTRACT(HOUR FROM started_at)::int AS hour, COUNT(*) AS c "  # noqa: S608
+        "FROM widget_conversations "
+        "WHERE widget_id = CAST(:widget_id AS uuid) "
+        f"{cutoff_clause} "
+        "GROUP BY hour"
+    )
+    hourly_result = await db.execute(text(hourly_sql), params)
+    hourly = [0] * 24
+    for row in hourly_result.all():
+        if 0 <= row.hour <= 23:
+            hourly[row.hour] = row.c
+
+    return WidgetStats(
+        period=period,
+        total_conversations=total_conversations,
+        total_messages=total_messages,
+        avg_messages_per_conversation=avg,
+        top_queries=top_queries,
+        hourly_activity=hourly,
+    )
