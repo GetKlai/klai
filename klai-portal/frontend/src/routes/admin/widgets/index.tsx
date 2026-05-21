@@ -1,6 +1,13 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Plus, Loader2, Pencil, MessageSquare, Trash2 } from 'lucide-react'
+import {
+  Plus,
+  Loader2,
+  Pencil,
+  Play,
+  MessageSquare,
+  Trash2,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
@@ -136,11 +143,12 @@ function WidgetsPage() {
                           'noopener,noreferrer',
                         )
                       }
-                      aria-label={`Test ${w.name}`}
-                      title="Test bot"
-                      className="inline-flex items-center justify-center text-gray-500 transition-opacity hover:opacity-70"
+                      aria-label={`Praat met ${w.name}`}
+                      title="Praat met de bot"
+                      className="inline-flex h-7 items-center gap-1 rounded-full border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] px-2.5 text-[12px] font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-accent)]/15 hover:border-[var(--color-rl-accent)]"
                     >
-                      <MessageSquare className="h-4 w-4" />
+                      <Play className="h-3 w-3 fill-current" strokeWidth={0} />
+                      <span>Praat</span>
                     </button>
                     <button
                       type="button"
