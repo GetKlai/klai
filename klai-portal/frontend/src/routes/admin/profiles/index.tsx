@@ -154,16 +154,28 @@ function AdminProfiles() {
             {table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
-                className="border-b border-gray-200 last:border-b-0"
+                onClick={() =>
+                  void navigate({
+                    to: '/admin/profiles/$profile',
+                    params: { profile: row.original.role },
+                  })
+                }
+                className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
               >
-                {row.getVisibleCells().map((cell) => (
-                  <td
-                    key={cell.id}
-                    className="py-4 pr-4 align-top text-gray-900"
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
+                {row.getVisibleCells().map((cell) => {
+                  const isActionCell = cell.column.id === 'actions'
+                  return (
+                    <td
+                      key={cell.id}
+                      className="py-4 pr-4 align-top text-gray-900"
+                      onClick={
+                        isActionCell ? (e) => e.stopPropagation() : undefined
+                      }
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  )
+                })}
               </tr>
             ))}
           </tbody>

@@ -98,13 +98,18 @@ function WidgetsPage() {
             return (
               <div
                 key={w.id}
-                className="flex items-start gap-4 py-3.5 px-2 klai-hover"
+                role="button"
+                tabIndex={0}
+                onClick={goToDetail}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    goToDetail()
+                  }
+                }}
+                className="flex items-start gap-4 py-3.5 px-2 cursor-pointer klai-hover"
               >
-                <button
-                  type="button"
-                  onClick={goToDetail}
-                  className="flex-1 min-w-0 text-left"
-                >
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-medium text-gray-900 truncate">
                       {w.name}
@@ -120,8 +125,9 @@ function WidgetsPage() {
                       {w.description}
                     </p>
                   )}
-                </button>
+                </div>
 
+                <div onClick={(e) => e.stopPropagation()}>
                 <InlineDeleteConfirm
                   isConfirming={isConfirming}
                   isPending={deleteMutation.isPending && isConfirming}
@@ -169,6 +175,7 @@ function WidgetsPage() {
                     </button>
                   </div>
                 </InlineDeleteConfirm>
+                </div>
               </div>
             )
           })}

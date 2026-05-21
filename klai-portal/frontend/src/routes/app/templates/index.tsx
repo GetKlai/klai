@@ -136,8 +136,25 @@ export function TemplatesPage() {
             const isPending = deleteMutation.isPending && confirmingDeleteId === t.id
             const active = activeIds.has(t.id)
 
+            const openDetail = () =>
+              void navigate({
+                to: '/app/templates/$slug/edit',
+                params: { slug: t.slug },
+              })
             return (
-              <div key={t.id} className="flex items-start gap-4 py-3.5 px-2">
+              <div
+                key={t.id}
+                role="button"
+                tabIndex={0}
+                onClick={openDetail}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    openDetail()
+                  }
+                }}
+                className="flex items-start gap-4 py-3.5 px-2 cursor-pointer klai-hover"
+              >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-medium text-gray-900 truncate">{t.name}</span>
@@ -157,6 +174,7 @@ export function TemplatesPage() {
                   )}
                 </div>
 
+                <div onClick={(e) => e.stopPropagation()}>
                 <InlineDeleteConfirm
                   isConfirming={isConfirming}
                   isPending={isPending}
@@ -191,6 +209,7 @@ export function TemplatesPage() {
                     </button>
                   </div>
                 </InlineDeleteConfirm>
+                </div>
               </div>
             )
           })}

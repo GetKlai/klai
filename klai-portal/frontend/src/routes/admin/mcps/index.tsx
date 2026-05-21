@@ -92,7 +92,23 @@ function McpsListPage() {
                 deactivateMutation.variables?.id === server.id
 
               return (
-                <tr key={server.id} className="border-b border-gray-200 last:border-b-0">
+                <tr
+                  key={server.id}
+                  onClick={
+                    server.managed
+                      ? undefined
+                      : () =>
+                          void navigate({
+                            to: '/admin/mcps/$serverId',
+                            params: { serverId: server.id },
+                          })
+                  }
+                  className={
+                    server.managed
+                      ? 'border-b border-gray-200 last:border-b-0'
+                      : 'border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover'
+                  }
+                >
                   <td className="py-4 pr-4 align-top">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{displayName}</span>
@@ -106,7 +122,10 @@ function McpsListPage() {
                   <td className="py-4 pr-4 align-top text-gray-400">
                     {server.description}
                   </td>
-                  <td className="py-4 align-top text-right w-28">
+                  <td
+                    className="py-4 align-top text-right w-28"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     {server.managed ? (
                       <div className="flex items-start justify-end gap-2 mt-px" />
                     ) : (
