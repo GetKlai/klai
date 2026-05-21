@@ -1,5 +1,14 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { ArrowLeft, Info, Shield, Palette, Code2, AlertTriangle, Loader2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  Info,
+  Shield,
+  Palette,
+  Code2,
+  Activity,
+  AlertTriangle,
+  Loader2,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
@@ -8,11 +17,19 @@ import { DetailsTab } from './_components/tabs/DetailsTab'
 import { KnowledgeBasesTab } from './_components/tabs/KnowledgeBasesTab'
 import { AppearanceTab } from './_components/tabs/AppearanceTab'
 import { EmbedTab } from './_components/tabs/EmbedTab'
+import { ActivityTab } from './_components/tabs/ActivityTab'
 import { DangerTab } from './_components/tabs/DangerTab'
 
-type TabId = 'details' | 'kbs' | 'appearance' | 'embed' | 'danger'
+type TabId = 'details' | 'kbs' | 'appearance' | 'embed' | 'activity' | 'danger'
 
-const VALID_TABS = new Set<TabId>(['details', 'kbs', 'appearance', 'embed', 'danger'])
+const VALID_TABS = new Set<TabId>([
+  'details',
+  'kbs',
+  'appearance',
+  'embed',
+  'activity',
+  'danger',
+])
 
 type DetailSearch = {
   tab?: TabId
@@ -65,6 +82,7 @@ function WidgetDetailPage() {
     { id: 'kbs', label: m.admin_shared_wizard_step_kb_access(), icon: Shield },
     { id: 'appearance', label: m.admin_widgets_wizard_step_appearance(), icon: Palette },
     { id: 'embed', label: m.admin_widgets_wizard_step_embed(), icon: Code2 },
+    { id: 'activity', label: 'Activiteit', icon: Activity },
     { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
   ]
 
@@ -128,6 +146,7 @@ function WidgetDetailPage() {
       {activeTab === 'kbs' && <KnowledgeBasesTab widget={widget} />}
       {activeTab === 'appearance' && <AppearanceTab widget={widget} />}
       {activeTab === 'embed' && <EmbedTab widget={widget} />}
+      {activeTab === 'activity' && <ActivityTab widget={widget} />}
       {activeTab === 'danger' && <DangerTab widget={widget} />}
     </div>
   )

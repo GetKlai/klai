@@ -8,6 +8,10 @@ import type {
   CreateWidgetRequest,
   UpdateWidgetRequest,
   OrgKnowledgeBase,
+  ConversationListItem,
+  ConversationDetail,
+  WidgetStats,
+  StatsPeriod,
 } from './-types'
 
 export function useWidgets() {
@@ -72,6 +76,49 @@ export function useDeleteWidget() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-widgets'] })
     },
+  })
+}
+
+// ──────────────────────────────────────────────────────────────
+// Activity / audit-trail (SPEC-WIDGET-ACTIVITY-001)
+// ──────────────────────────────────────────────────────────────
+
+export function useWidgetConversations(widgetId: string) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['admin-widget-conversations', widgetId],
+    queryFn: async () =>
+      apiFetch<ConversationListItem[]>(
+        `/api/admin/widgets/${widgetId}/conversations?limit=50`,
+      ),
+    enabled: auth.isAuthenticated && !!widgetId,
+  })
+}
+
+export function useWidgetConversation(
+  widgetId: string,
+  convId: string | number | null,
+) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['admin-widget-conversation', widgetId, convId],
+    queryFn: async () =>
+      apiFetch<ConversationDetail>(
+        `/api/admin/widgets/${widgetId}/conversations/${convId}`,
+      ),
+    enabled: auth.isAuthenticated && !!widgetId && convId !== null,
+  })
+}
+
+export function useWidgetStats(widgetId: string, period: StatsPeriod) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['admin-widget-stats', widgetId, period],
+    queryFn: async () =>
+      apiFetch<WidgetStats>(
+        `/api/admin/widgets/${widgetId}/stats?period=${period}`,
+      ),
+    enabled: auth.isAuthenticated && !!widgetId,
   })
 }
 
