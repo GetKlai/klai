@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Sliders, Skull, ShieldCheck, type LucideIcon } from 'lucide-react'
+import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Skull, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
@@ -37,7 +37,10 @@ const ADMIN_NAV_ITEMS: Array<{
   { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard, minRole: 'admin' },
   { to: '/admin/api-keys', label: m.admin_nav_api_keys(), icon: Key, minRole: 'admin', requiresFeature: 'partner_api' },
   { to: '/admin/widgets', label: m.admin_nav_widgets(), icon: MessageSquare, minRole: 'admin', requiresFeature: 'widgets' },
-  { to: '/admin/templates', label: m.admin_nav_templates(), icon: Sliders, minRole: 'kb_manager' },
+  // Templates is samengevoegd met /app/templates (één pagina, scope-tabs,
+  // per-rij edit-rechten via canMutate). De /admin/templates routes
+  // redirecten naar de /app variant. Admins zien Templates voortaan in
+  // het /app sidebar.
   { to: '/admin/mcps', label: m.admin_nav_mcps(), icon: Puzzle, minRole: 'admin', requiresFeature: 'custom_mcps' },
   { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings, minRole: 'admin' },
   { to: '/admin/danger-zone', label: m.admin_nav_danger_zone(), icon: Skull, minRole: 'admin' },

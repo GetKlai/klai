@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
-import { MessageSquare, Mic, BookMarked, Brain } from 'lucide-react'
+import { MessageSquare, Mic, BookMarked, Brain, Sliders } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
@@ -13,6 +13,11 @@ const PRODUCT_ROUTES: Record<string, string[]> = {
   '/app/transcribe': ['scribe'],
   '/app/knowledge': ['knowledge'],
   '/app/docs': ['docs'],
+  // Templates is permission-gated per-row (admin can edit org-wide,
+  // anyone can edit their own personal), so we don't tie the nav
+  // entry to a product flag — every authenticated user can land
+  // here. SPEC-PORTAL-IA-2026.
+  '/app/templates': [],
 }
 
 export const Route = createFileRoute('/app')({
@@ -27,6 +32,7 @@ function AppLayout() {
     { to: '/app/transcribe', label: m.app_tool_transcribe_title(), icon: Mic },
     { to: '/app/knowledge', label: m.app_tool_knowledge_title(), icon: Brain },
     { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
+    { to: '/app/templates', label: m.templates_page_title(), icon: Sliders },
   ]
 
   const products = user?.products ?? []
