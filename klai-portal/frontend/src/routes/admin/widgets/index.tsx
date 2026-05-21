@@ -46,8 +46,8 @@ function WidgetsPage() {
           {m.admin_widgets_create()}
         </button>
       </div>
-      <p className="text-sm text-gray-400 mb-6">
-        Beheer de chat-widgets die je website-bezoekers kunnen openen.
+      <p className="text-sm text-gray-400 mb-6 max-w-2xl">
+        {m.admin_widgets_subtitle()}
       </p>
 
       {error && (
