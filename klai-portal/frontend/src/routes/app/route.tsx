@@ -13,11 +13,10 @@ const PRODUCT_ROUTES: Record<string, string[]> = {
   '/app/transcribe': ['scribe'],
   '/app/knowledge': ['knowledge'],
   '/app/docs': ['docs'],
-  // Templates is permission-gated per-row (admin can edit org-wide,
-  // anyone can edit their own personal), so we don't tie the nav
-  // entry to a product flag — every authenticated user can land
-  // here. SPEC-PORTAL-IA-2026.
-  '/app/templates': [],
+  // Templates is intentionally NOT in this map — every authenticated
+  // user sees it. Permission gating happens per-row via canMutate()
+  // on /app/templates (admins can edit org-wide; everyone can edit
+  // their own personal). SPEC-PORTAL-IA-2026.
 }
 
 export const Route = createFileRoute('/app')({
