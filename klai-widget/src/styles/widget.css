@@ -45,19 +45,17 @@
   height: var(--klai-bubble-size);
   border-radius: 50%;
   background-color: var(--klai-primary-color);
-  border: none;
+  border: 1px solid var(--klai-border-color);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   z-index: var(--klai-z-index);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease;
 }
 
 .klai-bubble:hover {
   transform: scale(1.05);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
 }
 
 .klai-bubble:focus-visible {
@@ -81,7 +79,6 @@
   background-color: var(--klai-background-color);
   border-radius: var(--klai-border-radius);
   border: 1px solid var(--klai-border-color);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
   display: flex;
   flex-direction: column;
   z-index: var(--klai-z-index);

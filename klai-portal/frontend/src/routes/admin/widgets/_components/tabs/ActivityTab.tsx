@@ -274,7 +274,7 @@ function ConversationDrawer({
         onClick={onClose}
         aria-hidden
       />
-      <div className="relative h-full w-full max-w-lg bg-white shadow-xl overflow-y-auto">
+      <div className="relative h-full w-full max-w-lg bg-white overflow-y-auto">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-gray-200 bg-white px-5 py-3.5">
           <div className="min-w-0">
             <p className="text-sm font-medium text-gray-900 truncate">

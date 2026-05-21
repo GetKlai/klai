@@ -243,7 +243,7 @@ function PublicBotPage() {
         <div className={`mx-auto max-w-3xl px-4 sm:px-6 ${messages.length === 0 ? 'h-full flex flex-col' : 'py-6'}`}>
           {messages.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center px-4 pb-8 text-center">
-              <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl shadow-sm" style={{ backgroundColor: primaryFaint }}>
+              <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl" style={{ backgroundColor: primaryFaint }}>
                 <MessageSquare className="h-8 w-8" style={{ color: primary }} strokeWidth={1.5} />
               </div>
               <h3 className="text-lg font-semibold text-gray-900">{botName}</h3>
@@ -267,34 +267,45 @@ function PublicBotPage() {
             </div>
           ) : (
             <div className="space-y-6">
-              {messages.map((msg, i) => (
+              {messages.map((msg, i) =>
                 msg.role === 'user' ? (
                   <div key={i} className="flex justify-end">
-                    <div className="max-w-[75%] rounded-2xl rounded-br-md px-5 py-3 text-white shadow-sm" style={{ backgroundColor: primary }}>
-                      <p className="whitespace-pre-line break-words text-[14px] leading-relaxed">{msg.content}</p>
+                    <div
+                      className="max-w-[75%] rounded-2xl rounded-br-md px-4 py-2.5 text-white"
+                      style={{ backgroundColor: primary }}
+                    >
+                      <p className="whitespace-pre-line break-words text-[14px] leading-relaxed">
+                        {msg.content}
+                      </p>
                     </div>
                   </div>
                 ) : (
-                  <div key={i} className="flex gap-4">
-                    <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl shadow-sm" style={{ backgroundColor: primaryFaint }}>
-                      <MessageSquare className="h-4 w-4" style={{ color: primary }} strokeWidth={2} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      {msg.content ? (
-                        <div className="whitespace-pre-line break-words text-[14px] leading-[1.75] text-gray-900">
+                  <div key={i} className="flex justify-start">
+                    {msg.content ? (
+                      <div className="max-w-[75%] rounded-2xl rounded-bl-md bg-[var(--color-rl-cream)] px-4 py-2.5">
+                        <div className="whitespace-pre-line break-words text-[14px] leading-[1.6] text-gray-900">
                           {msg.content}
                         </div>
-                      ) : isStreaming && i === messages.length - 1 ? (
-                        <div className="flex items-center gap-1 pt-2">
-                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '0ms' }} />
-                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '150ms' }} />
-                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '300ms' }} />
-                        </div>
-                      ) : null}
-                    </div>
+                      </div>
+                    ) : isStreaming && i === messages.length - 1 ? (
+                      <div className="inline-flex items-center gap-1 rounded-2xl rounded-bl-md bg-[var(--color-rl-cream)] px-4 py-3">
+                        <span
+                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400"
+                          style={{ animationDelay: '0ms' }}
+                        />
+                        <span
+                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400"
+                          style={{ animationDelay: '150ms' }}
+                        />
+                        <span
+                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400"
+                          style={{ animationDelay: '300ms' }}
+                        />
+                      </div>
+                    ) : null}
                   </div>
-                )
-              ))}
+                ),
+              )}
               <div ref={messagesEndRef} />
             </div>
           )}
@@ -306,7 +317,7 @@ function PublicBotPage() {
         <div className="mx-auto max-w-3xl px-4 pb-4 pt-2 sm:px-6">
           <form
             onSubmit={(e) => { e.preventDefault(); void sendMessage() }}
-            className="flex items-end gap-2 rounded-3xl border border-gray-200 bg-white py-2 pl-5 pr-2 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_-8px_rgba(16,24,40,0.08)] transition-all focus-within:border-transparent"
+            className="flex items-end gap-2 rounded-3xl border border-gray-200 bg-white py-2 pl-5 pr-2 transition-colors focus-within:border-gray-300"
           >
             <textarea
               ref={textareaRef}
