@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import {
-  useReactTable,
-  getCoreRowModel,
-  flexRender,
-  createColumnHelper,
-} from '@tanstack/react-table'
 import { useState } from 'react'
-import { Plus, Loader2, Eye, MessageSquare, Trash2 } from 'lucide-react'
+import {
+  Plus,
+  Loader2,
+  Eye,
+  MessageSquare,
+  Trash2,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
@@ -21,7 +21,7 @@ export const Route = createFileRoute('/admin/widgets/')({
 })
 
 function formatRelativeTime(isoString: string | null): string {
-  if (!isoString) return '\u2014'
+  if (!isoString) return '—'
   return datetime(getLocale(), isoString, {
     day: 'numeric',
     month: 'short',
@@ -31,7 +31,19 @@ function formatRelativeTime(isoString: string | null): string {
   })
 }
 
-const columnHelper = createColumnHelper<WidgetResponse>()
+// Pure luminance check so the avatar foreground stays legible on any
+// brand colour the admin sets. Matches the backend WCAG cutoff used
+// in partner.py::_readable_text_color (0.179 threshold).
+function readableForegroundOn(hex: string): string {
+  const cleaned = hex.replace('#', '').padStart(6, '0')
+  const r = parseInt(cleaned.slice(0, 2), 16) / 255
+  const g = parseInt(cleaned.slice(2, 4), 16) / 255
+  const b = parseInt(cleaned.slice(4, 6), 16) / 255
+  const ch = (c: number) =>
+    c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+  const lum = 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
+  return lum > 0.179 ? '#191918' : '#ffffff'
+}
 
 function WidgetsPage() {
   const navigate = useNavigate()
@@ -39,97 +51,7 @@ function WidgetsPage() {
   const deleteMutation = useDeleteWidget()
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
-  const widgets = Array.isArray(data) ? data : []
-
-  const columns = [
-    columnHelper.accessor('name', {
-      header: () => m.admin_widgets_col_name(),
-      cell: (info) => (
-        <button
-          onClick={() =>
-            navigate({
-              to: '/admin/widgets/$id',
-              params: { id: String(info.row.original.id) },
-            })
-          }
-          className="font-medium text-gray-900 hover:text-gray-900 transition-colors text-left"
-        >
-          {info.getValue()}
-        </button>
-      ),
-    }),
-    columnHelper.accessor('kb_access_count', {
-      header: () => m.admin_widgets_col_kb_access(),
-      cell: (info) => (
-        <span className="text-sm tabular-nums">{info.getValue()}</span>
-      ),
-    }),
-    columnHelper.accessor('last_used_at', {
-      header: () => m.admin_widgets_col_last_used(),
-      cell: (info) => (
-        <span className="text-sm text-gray-400 whitespace-nowrap tabular-nums">
-          {formatRelativeTime(info.getValue())}
-        </span>
-      ),
-    }),
-    columnHelper.display({
-      id: 'actions',
-      header: () => '',
-      cell: ({ row }) => {
-        const isConfirming = confirmDeleteId === String(row.original.id)
-        return (
-          <InlineDeleteConfirm
-            isConfirming={isConfirming}
-            isPending={deleteMutation.isPending}
-            label={m.admin_widgets_delete_confirm({ name: row.original.name })}
-            cancelLabel={m.admin_users_cancel()}
-            onConfirm={() => {
-              deleteMutation.mutate(String(row.original.id))
-              setConfirmDeleteId(null)
-            }}
-            onCancel={() => setConfirmDeleteId(null)}
-          >
-            <div className="flex items-start justify-end gap-2 mt-px">
-              <button
-                onClick={() => window.open(`/bot/${row.original.widget_id}`, '_blank', 'noopener,noreferrer')}
-                aria-label={`Test ${row.original.name}`}
-                title="Test bot"
-                className="inline-flex items-center justify-center text-gray-500 transition-opacity hover:opacity-70 hover:text-gray-900"
-              >
-                <MessageSquare className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => setConfirmDeleteId(String(row.original.id))}
-                aria-label={`Delete ${row.original.name}`}
-                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() =>
-                  navigate({
-                    to: '/admin/widgets/$id',
-                    params: { id: String(row.original.id) },
-                  })
-                }
-                aria-label={row.original.name}
-                className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
-              >
-                <Eye className="h-4 w-4" />
-              </button>
-            </div>
-          </InlineDeleteConfirm>
-        )
-      },
-    }),
-  ]
-
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const table = useReactTable({
-    data: widgets,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  })
+  const widgets: WidgetResponse[] = Array.isArray(data) ? data : []
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
@@ -166,45 +88,120 @@ function WidgetsPage() {
           </p>
         </div>
       ) : (
-        <table className="w-full text-sm border-t border-b border-gray-200">
-          <thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr
-                key={headerGroup.id}
-                className="border-b border-gray-200"
-              >
-                {headerGroup.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide"
+        <ul className="space-y-3">
+          {widgets.map((w) => {
+            const isConfirming = confirmDeleteId === String(w.id)
+            const primary = w.widget_config?.primary_color || '#fcaa2d'
+            const fg = readableForegroundOn(primary)
+            return (
+              <li key={w.id}>
+                <InlineDeleteConfirm
+                  isConfirming={isConfirming}
+                  isPending={deleteMutation.isPending}
+                  label={m.admin_widgets_delete_confirm({ name: w.name })}
+                  cancelLabel={m.admin_users_cancel()}
+                  onConfirm={() => {
+                    deleteMutation.mutate(String(w.id))
+                    setConfirmDeleteId(null)
+                  }}
+                  onCancel={() => setConfirmDeleteId(null)}
+                >
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() =>
+                      void navigate({
+                        to: '/admin/widgets/$id',
+                        params: { id: String(w.id) },
+                      })
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void navigate({
+                          to: '/admin/widgets/$id',
+                          params: { id: String(w.id) },
+                        })
+                      }
+                    }}
+                    className="group flex items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3.5 cursor-pointer klai-hover"
                   >
-                    {flexRender(
-                      header.column.columnDef.header,
-                      header.getContext(),
-                    )}
-                  </th>
-                ))}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr
-                key={row.id}
-                className="border-b border-gray-200 last:border-b-0"
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <td
-                    key={cell.id}
-                    className="py-4 pr-4 align-top text-gray-900"
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                    <span
+                      aria-hidden
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
+                      style={{ backgroundColor: primary, color: fg }}
+                    >
+                      <MessageSquare className="h-5 w-5" strokeWidth={1.75} />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate text-[15px] font-display-medium text-gray-900">
+                        {w.name}
+                      </p>
+                      {w.description && (
+                        <p className="truncate text-[13px] text-gray-400">
+                          {w.description}
+                        </p>
+                      )}
+                      <p className="mt-1 flex items-center gap-2 text-xs text-gray-400">
+                        <span>
+                          {w.kb_access_count}{' '}
+                          {w.kb_access_count === 1
+                            ? 'kennisbank'
+                            : 'kennisbanken'}
+                        </span>
+                        <span>·</span>
+                        <span>
+                          Laatst gebruikt {formatRelativeTime(w.last_used_at)}
+                        </span>
+                      </p>
+                    </div>
+                    <div
+                      className="flex items-center gap-2 pt-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          window.open(
+                            `/bot/${w.widget_id}`,
+                            '_blank',
+                            'noopener,noreferrer',
+                          )
+                        }
+                        aria-label={`Test ${w.name}`}
+                        title="Test bot"
+                        className="inline-flex items-center justify-center text-gray-500 transition-opacity hover:opacity-70"
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(String(w.id))}
+                        aria-label={`Delete ${w.name}`}
+                        className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          navigate({
+                            to: '/admin/widgets/$id',
+                            params: { id: String(w.id) },
+                          })
+                        }
+                        aria-label={w.name}
+                        className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </InlineDeleteConfirm>
+              </li>
+            )
+          })}
+        </ul>
       )}
     </div>
   )

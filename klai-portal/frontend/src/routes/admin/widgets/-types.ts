@@ -64,3 +64,48 @@ export interface OrgKnowledgeBase {
   slug: string
   owner_type: string
 }
+
+// SPEC-WIDGET-ACTIVITY-001 — audit-trail types.
+export type StatsPeriod = '7d' | '30d' | 'all'
+
+export interface ConversationListItem {
+  id: number
+  started_at: string
+  last_message_at: string
+  message_count: number
+  first_user_query: string | null
+  language_detected: string | null
+}
+
+export interface MessageSourceItem {
+  label: string
+  title: string
+  url: string
+}
+
+export interface WidgetMessageItem {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  sources: MessageSourceItem[] | null
+  created_at: string
+  sequence: number
+}
+
+export interface ConversationDetail extends ConversationListItem {
+  messages: WidgetMessageItem[]
+}
+
+export interface TopQuery {
+  query: string
+  count: number
+}
+
+export interface WidgetStats {
+  period: StatsPeriod
+  total_conversations: number
+  total_messages: number
+  avg_messages_per_conversation: number
+  top_queries: TopQuery[]
+  hourly_activity: number[]
+}
