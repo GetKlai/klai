@@ -1,14 +1,9 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { EMPTY_TEMPLATE_FORM, TemplateFormPage } from '@/routes/app/templates/-template-form'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-// Admin-only new template page. Guarded by /admin/route.tsx (requireAdmin: true),
-// so the admin-gate on scope="org" is always satisfied here.
+// Templates is samengevoegd met /app/templates — zie ./index.tsx voor
+// rationale. /admin/templates/new redirect naar /app/templates/new.
 export const Route = createFileRoute('/admin/templates/new')({
-  component: () => (
-    <TemplateFormPage
-      mode="new"
-      initialForm={EMPTY_TEMPLATE_FORM}
-      backPath="/admin/templates"
-    />
-  ),
+  beforeLoad: () => {
+    throw redirect({ to: '/app/templates/new' })
+  },
 })
