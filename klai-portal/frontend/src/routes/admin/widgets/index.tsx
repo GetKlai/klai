@@ -1,12 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import {
-  Plus,
-  Loader2,
-  Eye,
-  MessageSquare,
-  Trash2,
-} from 'lucide-react'
+import { Plus, Loader2, Pencil, MessageSquare, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
@@ -20,8 +14,8 @@ export const Route = createFileRoute('/admin/widgets/')({
   component: WidgetsPage,
 })
 
-function formatRelativeTime(isoString: string | null): string {
-  if (!isoString) return '—'
+function formatRelativeTime(isoString: string | null): string | null {
+  if (!isoString) return null
   return datetime(getLocale(), isoString, {
     day: 'numeric',
     month: 'short',
@@ -121,9 +115,14 @@ function WidgetsPage() {
                     {w.kb_access_count}{' '}
                     {w.kb_access_count === 1 ? 'kennisbank' : 'kennisbanken'}
                   </span>
-                  <span className="hidden md:inline text-gray-400 text-sm whitespace-nowrap tabular-nums">
-                    {formatRelativeTime(w.last_used_at)}
-                  </span>
+                  {(() => {
+                    const formatted = formatRelativeTime(w.last_used_at)
+                    return formatted ? (
+                      <span className="hidden md:inline text-gray-400 text-sm whitespace-nowrap tabular-nums">
+                        {formatted}
+                      </span>
+                    ) : null
+                  })()}
                   <div
                     className="flex items-center gap-2 shrink-0"
                     onClick={(e) => e.stopPropagation()}
@@ -159,10 +158,11 @@ function WidgetsPage() {
                           params: { id: String(w.id) },
                         })
                       }
-                      aria-label={w.name}
-                      className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
+                      aria-label={`Bewerk ${w.name}`}
+                      title="Bewerk widget"
+                      className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                     >
-                      <Eye className="h-4 w-4" />
+                      <Pencil className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
