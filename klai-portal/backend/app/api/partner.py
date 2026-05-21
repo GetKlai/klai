@@ -10,8 +10,9 @@ import asyncio
 import json
 import re
 import uuid
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 import structlog
@@ -44,6 +45,11 @@ from app.services.partner_chat import (
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.retrieval_log import find_correlated_log, write_retrieval_log
+from app.services.widget_audit import (
+    hash_audit_value,
+    record_widget_turn,
+    session_key_from_token,
+)
 from app.services.widget_auth import generate_session_token, origin_allowed
 
 logger = structlog.get_logger()
@@ -187,9 +193,101 @@ async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> s
     return "\n\n".join(parts) if parts else None
 
 
+async def _audit_streaming_wrapper(
+    inner: AsyncGenerator[bytes],
+    *,
+    widget_id: str,
+    org_id: int,
+    session_key: str,
+) -> AsyncGenerator[bytes]:
+    """Tee the SSE stream, capture composed text + sources, log the
+    assistant turn once the generator completes.
+
+    Parsing is best-effort — anything we can't decode is just yielded
+    through. The audit never blocks or alters the user's response.
+    """
+    composed_text: list[str] = []
+    composed_sources: list[dict] = []
+    try:
+        async for chunk in inner:
+            try:
+                text_part, src_part = _parse_audit_sse_chunk(chunk)
+                if text_part:
+                    composed_text.append(text_part)
+                if src_part:
+                    composed_sources = src_part
+            except Exception:
+                # Best-effort audit parsing — never break the user's chat.
+                logger.debug("widget_audit_sse_parse_skipped", exc_info=True)
+            yield chunk
+    finally:
+        final_text = "".join(composed_text).strip()
+        if final_text:
+            task = asyncio.create_task(
+                record_widget_turn(
+                    widget_id=widget_id,
+                    org_id=org_id,
+                    session_key=session_key,
+                    role="assistant",
+                    content=final_text,
+                    sources=composed_sources or None,
+                )
+            )
+            _pending.add(task)
+            task.add_done_callback(_pending.discard)
+
+
+def _parse_audit_sse_chunk(chunk: bytes) -> tuple[str | None, list[dict] | None]:
+    """Pull ``delta.content`` text and ``delta.sources`` list out of one
+    SSE ``data: …\\n\\n`` block. Returns (text, sources) — either side
+    may be None when the chunk doesn't carry that field."""
+    text_part: str | None = None
+    src_part: list[dict] | None = None
+    for raw in chunk.split(b"\n"):
+        if not raw.startswith(b"data: "):
+            continue
+        payload = raw[6:].strip()
+        if payload in (b"", b"[DONE]"):
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        delta = (event.get("choices") or [{}])[0].get("delta") or {}
+        if isinstance(delta.get("content"), str):
+            text_part = (text_part or "") + delta["content"]
+        srcs = delta.get("sources")
+        if isinstance(srcs, list):
+            src_part = [s for s in srcs if isinstance(s, dict)]
+    return text_part, src_part
+
+
+def _extract_assistant_text_and_sources(
+    result: Any,
+) -> tuple[str, list[dict] | None]:
+    """Pull the assistant message + sources out of a non-streaming
+    chat-completions result (a dict or Pydantic-shaped object)."""
+    payload: dict[str, Any]
+    if hasattr(result, "model_dump"):
+        payload = result.model_dump()
+    elif isinstance(result, dict):
+        payload = result
+    else:
+        return "", None
+    choices = payload.get("choices") or []
+    if not choices:
+        return "", None
+    message = choices[0].get("message") or {}
+    content = str(message.get("content") or "")
+    sources_raw = message.get("sources")
+    sources = [s for s in sources_raw if isinstance(s, dict)] if isinstance(sources_raw, list) else None
+    return content, sources
+
+
 @router.post("/chat/completions")
 async def chat_completions(
     request: ChatCompletionsRequest,
+    http_request: Request,
     auth: PartnerAuthContext = Depends(get_partner_key),
     db: AsyncSession = Depends(get_db),
 ):
@@ -294,6 +392,45 @@ async def chat_completions(
     _pending.add(task)
     task.add_done_callback(_pending.discard)
 
+    # 7b. Widget audit-trail: log the user turn immediately, and the
+    # assistant turn once the response is composed. Fire-and-forget so
+    # an audit hiccup never breaks the chat. SPEC-WIDGET-ACTIVITY-001.
+    audit_widget_id: str | None = None
+    audit_session_key: str | None = None
+    audit_ip_hash: str | None = None
+    audit_ua_hash: str | None = None
+    if is_widget_chat:
+        widget_uuid_row = (
+            await db.execute(select(Widget.id).where(Widget.widget_id == str(auth.key_id)))
+        ).scalar_one_or_none()
+        if widget_uuid_row is not None:
+            audit_widget_id = str(widget_uuid_row)
+            bearer = http_request.headers.get("authorization", "")
+            raw_token = bearer.removeprefix("Bearer ").strip()
+            audit_session_key = session_key_from_token(raw_token)
+            audit_ip_hash = hash_audit_value(http_request.client.host if http_request.client else None)
+            audit_ua_hash = hash_audit_value(http_request.headers.get("user-agent"))
+            last_user_msg = next(
+                (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
+                "",
+            )
+            if audit_session_key and last_user_msg:
+                task = asyncio.create_task(
+                    record_widget_turn(
+                        widget_id=audit_widget_id,
+                        org_id=auth.org_id,
+                        session_key=audit_session_key,
+                        role="user",
+                        content=last_user_msg,
+                        ip_hash=audit_ip_hash,
+                        user_agent_hash=audit_ua_hash,
+                    )
+                )
+                _pending.add(task)
+                task.add_done_callback(_pending.discard)
+
+    audit_ready = is_widget_chat and audit_widget_id is not None and audit_session_key is not None
+
     # 8. Streaming or non-streaming
     if request.stream:
         citation_source_urls = _citation_source_urls_from_chunks(chunks)
@@ -311,6 +448,13 @@ async def chat_completions(
             citation_chunks=chunks,
             citation_output="markers" if is_widget_chat else "links",
         )
+        if audit_ready:
+            streaming_gen = _audit_streaming_wrapper(
+                streaming_gen,
+                widget_id=audit_widget_id,  # type: ignore[arg-type]
+                org_id=auth.org_id,
+                session_key=audit_session_key,  # type: ignore[arg-type]
+            )
         return StreamingResponse(
             content=streaming_gen,
             media_type="text/event-stream",
@@ -332,6 +476,21 @@ async def chat_completions(
         citation_chunks=chunks,
         citation_output="markers" if is_widget_chat else "links",
     )
+    if audit_ready:
+        assistant_text, assistant_sources = _extract_assistant_text_and_sources(result)
+        if assistant_text:
+            task = asyncio.create_task(
+                record_widget_turn(
+                    widget_id=audit_widget_id,  # type: ignore[arg-type]
+                    org_id=auth.org_id,
+                    session_key=audit_session_key,  # type: ignore[arg-type]
+                    role="assistant",
+                    content=assistant_text,
+                    sources=assistant_sources,
+                )
+            )
+            _pending.add(task)
+            task.add_done_callback(_pending.discard)
     return result
 
 
