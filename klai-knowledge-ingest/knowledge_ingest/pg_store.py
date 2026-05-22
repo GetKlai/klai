@@ -1305,7 +1305,13 @@ async def list_kb_sources(
         SELECT
             a.id::text AS id,
             a.path AS path,
-            COALESCE(NULLIF(a.extra::jsonb->>'display_name', ''), a.path) AS display_name,
+            COALESCE(
+                NULLIF(a.extra::jsonb->>'display_name', ''),
+                NULLIF(a.extra::jsonb->>'original_filename', ''),
+                NULLIF(a.extra::jsonb->>'original_title', ''),
+                NULLIF(a.extra::jsonb->>'title', ''),
+                a.path
+            ) AS display_name,
             NULLIF(a.extra::jsonb->>'source_url', '') AS source_url,
             a.content_type AS content_type,
             a.created_at AS created_at,
