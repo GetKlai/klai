@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Loader2, Plus, RotateCw, Search } from 'lucide-react'
+import { Activity, ExternalLink, Loader2, Plus, RotateCw, Search } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -14,6 +14,7 @@ import {
   usePlatformChatErrors,
   usePlatformKnowledgeBases,
   usePlatformTemplates,
+  usePortalHealth,
 } from './-hooks'
 import type { PlatformTab } from './-types'
 
@@ -40,6 +41,7 @@ const TABS: { id: PlatformTab; label: string }[] = [
   { id: 'subscriptions', label: 'Abonnementen' },
   { id: 'bots', label: 'Bots' },
   { id: 'chat-errors', label: 'Chat errors' },
+  { id: 'status', label: 'Status' },
 ]
 
 function PlatformConsole() {
@@ -186,6 +188,65 @@ function PlatformConsole() {
       )}
       {tab === 'bots' && <BotsTab search={search} fmtDate={fmtDate} />}
       {tab === 'chat-errors' && <ChatErrorsTab fmtDate={fmtDate} />}
+      {tab === 'status' && <StatusTab />}
+    </div>
+  )
+}
+
+function StatusTab() {
+  const health = usePortalHealth()
+  const portalUp = health.isSuccess && health.data.status === 'ok'
+
+  return (
+    <div className="space-y-4">
+      {/* Live liveness-check on portal-api */}
+      <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Activity className="h-5 w-5 shrink-0 text-gray-400" />
+            <div>
+              <p className="text-[15px] font-display text-gray-900">Portal API</p>
+              <p className="text-sm text-gray-400">
+                Live check via /api/health, ververst elke 30s.
+              </p>
+            </div>
+          </div>
+          {health.isLoading ? (
+            <span className="inline-flex items-center gap-1.5 text-sm text-gray-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Controleren…
+            </span>
+          ) : portalUp ? (
+            <Badge variant="success">Operationeel</Badge>
+          ) : (
+            <Badge variant="destructive">Niet bereikbaar</Badge>
+          )}
+        </div>
+      </div>
+
+      {/* Link to the full, multi-service status page (Uptime Kuma) */}
+      <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-[15px] font-display text-gray-900">
+              Volledige service-status
+            </p>
+            <p className="mt-0.5 text-sm text-gray-400">
+              Realtime monitoring van alle Klai-services (retrieval, ingest,
+              connector, scribe, mailer, chat) draait in Uptime Kuma.
+            </p>
+          </div>
+          <a
+            href="https://status.getklai.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 klai-hover"
+          >
+            status.getklai.com
+            <ExternalLink className="h-4 w-4" />
+          </a>
+        </div>
+      </div>
     </div>
   )
 }

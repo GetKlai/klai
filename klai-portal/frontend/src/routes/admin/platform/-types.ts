@@ -121,3 +121,4 @@ export type PlatformTab =
   | 'subscriptions'
   | 'bots'
   | 'chat-errors'
+  | 'status'
