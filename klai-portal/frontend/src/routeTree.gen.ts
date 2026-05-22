@@ -68,6 +68,7 @@ import { Route as AdminWidgetsNewRouteImport } from './routes/admin/widgets/new'
 import { Route as AdminWidgetsIdRouteImport } from './routes/admin/widgets/$id'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminTemplatesNewRouteImport } from './routes/admin/templates/new'
+import { Route as AdminPlatformNewRouteImport } from './routes/admin/platform/new'
 import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
 import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
@@ -402,6 +403,11 @@ const AdminTemplatesNewRoute = AdminTemplatesNewRouteImport.update({
   path: '/templates/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminPlatformNewRoute = AdminPlatformNewRouteImport.update({
+  id: '/platform/new',
+  path: '/platform/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminMcpsNewRoute = AdminMcpsNewRouteImport.update({
   id: '/mcps/new',
   path: '/mcps/new',
@@ -643,6 +649,7 @@ export interface FileRoutesByFullPath {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
+  '/admin/platform/new': typeof AdminPlatformNewRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -735,6 +742,7 @@ export interface FileRoutesByTo {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
+  '/admin/platform/new': typeof AdminPlatformNewRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -833,6 +841,7 @@ export interface FileRoutesById {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
+  '/admin/platform/new': typeof AdminPlatformNewRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -932,6 +941,7 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
+    | '/admin/platform/new'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -1024,6 +1034,7 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
+    | '/admin/platform/new'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -1121,6 +1132,7 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
+    | '/admin/platform/new'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -1614,6 +1626,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminTemplatesNewRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/platform/new': {
+      id: '/admin/platform/new'
+      path: '/platform/new'
+      fullPath: '/admin/platform/new'
+      preLoaderRoute: typeof AdminPlatformNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/mcps/new': {
       id: '/admin/mcps/new'
       path: '/mcps/new'
@@ -1909,6 +1928,7 @@ interface AdminRouteRouteChildren {
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
   AdminMcpsServerIdRoute: typeof AdminMcpsServerIdRoute
   AdminMcpsNewRoute: typeof AdminMcpsNewRoute
+  AdminPlatformNewRoute: typeof AdminPlatformNewRoute
   AdminTemplatesNewRoute: typeof AdminTemplatesNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminWidgetsIdRoute: typeof AdminWidgetsIdRoute
@@ -1944,6 +1964,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminGroupsNewRoute: AdminGroupsNewRoute,
   AdminMcpsServerIdRoute: AdminMcpsServerIdRoute,
   AdminMcpsNewRoute: AdminMcpsNewRoute,
+  AdminPlatformNewRoute: AdminPlatformNewRoute,
   AdminTemplatesNewRoute: AdminTemplatesNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminWidgetsIdRoute: AdminWidgetsIdRoute,
