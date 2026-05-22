@@ -85,11 +85,18 @@ async def test_invite_user_does_not_send_default_zitadel_mail():
         "invite_user MUST use the v2 AddHumanUser endpoint; the v1 _import "
         "path leaves users stuck in USER_STATE_INITIAL on Zitadel 6.x"
     )
-    assert kwargs["json"]["email"]["verification"] == {"returnCode": {}}, (
-        "invite_user MUST pass email.verification.returnCode so Zitadel "
-        "returns the code instead of mailing it; the activation mail is "
-        "issued separately via send_invite_code with a Klai urlTemplate"
+    # invite_user pre-verifies the email (isVerified) and generates NO
+    # email-verification code. returnCode was tried but only suppresses
+    # Zitadel's own SMTP — the email.code.added event still fired and the Klai
+    # mailer sent a second "Confirm your email" mail whose code collided with
+    # the invite code (2026-05-22 onboarding incident). The single activation
+    # mail is issued by send_invite_code with a Klai urlTemplate.
+    assert kwargs["json"]["email"]["isVerified"] is True, (
+        "invite_user MUST pre-verify the email and emit no verification code; "
+        "otherwise email.code.added fires a duplicate mail that breaks the "
+        "invite-code onboarding flow"
     )
+    assert "verification" not in kwargs["json"]["email"]
 
 
 @pytest.mark.asyncio

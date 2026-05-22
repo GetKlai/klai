@@ -129,10 +129,12 @@ class TestInviteUserUsernameLowercased:
 
     @pytest.mark.asyncio
     async def test_invite_user_does_not_trigger_zitadel_mail(self) -> None:
-        """invite_user MUST NOT trigger a Zitadel-default invite mail. The flow
-        is split — invite_user creates the user via v2 AddHumanUser with
-        email.verification.returnCode (Zitadel returns the code, sends no mail),
-        then send_invite_code mails the link with an explicit Klai urlTemplate."""
+        """invite_user MUST NOT trigger any verification mail. The flow is
+        split — invite_user creates the user via v2 AddHumanUser with the email
+        pre-verified (isVerified) and NO verification code, then send_invite_code
+        mails the single activation link with an explicit Klai urlTemplate.
+        (returnCode was tried but still fired email.code.added → the Klai mailer
+        sent a duplicate mail whose code broke onboarding; 2026-05-22.)"""
         client, mock_http = _zitadel_client_with_mocked_http()
 
         await client.invite_user(
@@ -143,7 +145,8 @@ class TestInviteUserUsernameLowercased:
         )
 
         _args, kwargs = mock_http.post.call_args
-        assert kwargs["json"]["email"]["verification"] == {"returnCode": {}}
+        assert kwargs["json"]["email"]["isVerified"] is True
+        assert "verification" not in kwargs["json"]["email"]
 
 
 class TestCreateZitadelUserFromIdpUsernameLowercased:
