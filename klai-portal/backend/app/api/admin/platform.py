@@ -46,6 +46,8 @@ class PlatformStats(BaseModel):
     active_subscriptions: int
     total_bots: int
     new_bots_today: int
+    total_kbs: int
+    total_documents: int
     mrr_cents: int
     arr_cents: int
 
@@ -76,6 +78,8 @@ class PlatformOrg(BaseModel):
     provisioning_status: str
     user_count: int
     bot_count: int
+    kb_count: int
+    document_count: int
     created_at: datetime
 
 
@@ -150,7 +154,9 @@ async def platform_stats(
                            AND billing_status IN ('active','trialing')) AS active_subs,
                       (SELECT COUNT(*) FROM widgets) AS total_bots,
                       (SELECT COUNT(*) FROM widgets
-                         WHERE created_at >= date_trunc('day', NOW())) AS new_bots_today
+                         WHERE created_at >= date_trunc('day', NOW())) AS new_bots_today,
+                      (SELECT COUNT(*) FROM portal_knowledge_bases) AS total_kbs,
+                      (SELECT COUNT(*) FROM knowledge.artifacts) AS total_docs
                     """
                 )
             )
@@ -164,6 +170,8 @@ async def platform_stats(
         active_subscriptions=row.active_subs,
         total_bots=row.total_bots,
         new_bots_today=row.new_bots_today,
+        total_kbs=row.total_kbs,
+        total_documents=row.total_docs,
         mrr_cents=0,
         arr_cents=0,
     )
@@ -238,9 +246,14 @@ async def platform_organizations(
                 text(
                     "SELECT o.id, o.name, o.slug, o.plan, o.billing_status, "  # noqa: S608
                     "o.billing_cycle, o.seats, o.provisioning_status, o.created_at, "
+                    "o.zitadel_org_id, "
                     "(SELECT COUNT(*) FROM portal_users u "
                     "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
-                    "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count "
+                    "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count, "
+                    "(SELECT COUNT(*) FROM portal_knowledge_bases kb "
+                    "  WHERE kb.org_id = o.id) AS kb_count, "
+                    "(SELECT COUNT(*) FROM knowledge.artifacts a "
+                    "  WHERE a.org_id = o.zitadel_org_id) AS document_count "
                     "FROM portal_orgs o "
                     f"{where} "
                     "ORDER BY o.created_at DESC"
@@ -261,6 +274,8 @@ async def platform_organizations(
             provisioning_status=r.provisioning_status,
             user_count=r.user_count,
             bot_count=r.bot_count,
+            kb_count=r.kb_count,
+            document_count=r.document_count,
             created_at=r.created_at,
         )
         for r in rows
@@ -282,7 +297,11 @@ async def platform_org_detail(
                     "o.billing_cycle, o.seats, o.provisioning_status, o.created_at, "
                     "(SELECT COUNT(*) FROM portal_users u "
                     "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
-                    "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count "
+                    "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count, "
+                    "(SELECT COUNT(*) FROM portal_knowledge_bases kb "
+                    "  WHERE kb.org_id = o.id) AS kb_count, "
+                    "(SELECT COUNT(*) FROM knowledge.artifacts a "
+                    "  WHERE a.org_id = o.zitadel_org_id) AS document_count "
                     "FROM portal_orgs o WHERE o.id = :org_id AND o.deleted_at IS NULL"
                 ),
                 {"org_id": org_id},
@@ -327,6 +346,8 @@ async def platform_org_detail(
         provisioning_status=org_row.provisioning_status,
         user_count=org_row.user_count,
         bot_count=org_row.bot_count,
+        kb_count=org_row.kb_count,
+        document_count=org_row.document_count,
         created_at=org_row.created_at,
     )
     onboarded = org_row.provisioning_status == "complete"
