@@ -80,9 +80,11 @@ function PlatformOrgDetailPage() {
           </div>
 
           {/* Subscription summary */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             <Stat label="Gebruikers" value={data.org.user_count} />
             <Stat label="Bots" value={data.org.bot_count} />
+            <Stat label="Kennisbanken" value={data.org.kb_count} />
+            <Stat label="Documenten" value={data.org.document_count} />
             <Stat label="Seats" value={data.org.seats} />
             <Stat label="Billing" value={data.org.billing_status} />
           </div>

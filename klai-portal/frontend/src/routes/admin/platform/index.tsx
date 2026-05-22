@@ -67,7 +67,7 @@ function PlatformConsole() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <StatCard
           label="Gebruikers"
           value={stats?.total_users}
@@ -77,15 +77,30 @@ function PlatformConsole() {
           loading={statsQuery.isLoading}
         />
         <StatCard
-          label="Actieve abonnementen"
-          value={stats?.active_subscriptions}
-          sub={stats ? `${stats.total_orgs} organisaties` : undefined}
+          label="Organisaties"
+          value={stats?.total_orgs}
+          sub={
+            stats
+              ? `${stats.active_subscriptions} actief abonnement`
+              : undefined
+          }
           loading={statsQuery.isLoading}
         />
         <StatCard
           label="Bots"
           value={stats?.total_bots}
           sub={stats ? `+${stats.new_bots_today} vandaag` : undefined}
+          loading={statsQuery.isLoading}
+        />
+        <StatCard
+          label="Kennisbanken"
+          value={stats?.total_kbs}
+          loading={statsQuery.isLoading}
+        />
+        <StatCard
+          label="Documenten"
+          value={stats?.total_documents}
+          sub="over alle tenants"
           loading={statsQuery.isLoading}
         />
         <StatCard
@@ -310,6 +325,8 @@ function OrgsTab({
           <th className={TH}>Plan</th>
           <th className={TH}>Gebruikers</th>
           <th className={TH}>Bots</th>
+          <th className={TH}>KB's</th>
+          <th className={TH}>Docs</th>
           <th className={TH}>Status</th>
           <th className={TH}>Aangemaakt</th>
         </tr>
@@ -335,6 +352,8 @@ function OrgsTab({
             </td>
             <td className={`${TD} tabular-nums`}>{o.user_count}</td>
             <td className={`${TD} tabular-nums`}>{o.bot_count}</td>
+            <td className={`${TD} tabular-nums`}>{o.kb_count}</td>
+            <td className={`${TD} tabular-nums`}>{o.document_count}</td>
             <td className={TD}>
               <Badge
                 variant={

@@ -8,6 +8,8 @@ export interface PlatformStats {
   active_subscriptions: number
   total_bots: number
   new_bots_today: number
+  total_kbs: number
+  total_documents: number
   mrr_cents: number
   arr_cents: number
 }
@@ -38,6 +40,8 @@ export interface PlatformOrg {
   provisioning_status: string
   user_count: number
   bot_count: number
+  kb_count: number
+  document_count: number
   created_at: string
 }
 
