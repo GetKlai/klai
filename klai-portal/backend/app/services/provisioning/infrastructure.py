@@ -366,10 +366,23 @@ def _start_librechat_container(
         "klai.kind": "librechat",
     }
 
-    container = client.containers.run(  # type: ignore[call-overload]  # nosemgrep: docker-arbitrary-container-run
+    # @MX:WARN: [AUTO] CREATE (not run) → connect all networks while stopped →
+    #   START. The container MUST boot exactly once with every network already
+    #   attached and settled.
+    # @MX:REASON: LibreChat configures its OpenID (OIDC) passport strategy ONCE
+    #   at boot by fetching the discovery doc from OPENID_ISSUER
+    #   (https://auth.getklai.com). Connecting a network to a *running*
+    #   container briefly reconfigures its networking; a discovery fetch during
+    #   that window fails ("[openidStrategy] fetch failed -> strategy not
+    #   registered"), leaving chat login dead ("Unknown authentication strategy
+    #   'openid'") until a manual restart. The earlier "run then restart after
+    #   connect" attempt made it worse — the restart landed inside that very
+    #   window and broke an otherwise-successful first boot. Booting once with
+    #   all networks pre-attached avoids the disruption entirely.
+    #   (2026-05-22 onboarding/chat incident.)
+    container = client.containers.create(  # type: ignore[call-overload]  # nosemgrep: docker-arbitrary-container-run
         image=settings.librechat_image,
         name=container_name,
-        detach=True,
         restart_policy={"Name": "unless-stopped"},  # type: ignore[arg-type]
         labels=container_labels,
         environment=container_environment,
@@ -377,24 +390,12 @@ def _start_librechat_container(
         network="klai-net",
     )
 
-    # Connect to additional networks. Fail-loud: LibreChat can't reach MongoDB /
-    # Meilisearch / Redis without these, so a silent skip leaves the tenant with
-    # a broken container. Let the exception bubble to the orchestrator's outer
-    # handler which rolls back provisioning.
+    # Connect the extra networks while the container is still STOPPED, so the
+    # single boot below sees a stable multi-network config. Fail-loud: LibreChat
+    # can't reach MongoDB / Meilisearch / Redis without these; let the exception
+    # bubble to the orchestrator's outer handler which rolls back provisioning.
     for net_name in ["klai-net-mongodb", "klai-net-meilisearch", "klai-net-redis"]:
         net = client.networks.get(net_name)
         net.connect(container_name)
 
-    # @MX:WARN: [AUTO] Restart once after all networks are attached.
-    # @MX:REASON: LibreChat configures its OpenID (OIDC) passport strategy ONCE
-    #   during boot by fetching the discovery doc from settings OPENID_ISSUER
-    #   (https://auth.getklai.com). The container boots above on klai-net only,
-    #   BEFORE the extra networks are connected, and that first discovery fetch
-    #   fails deterministically with "[openidStrategy] fetch failed -> strategy
-    #   not registered". The strategy is never re-registered, so every chat
-    #   login on the fresh tenant returns 500 ("Unknown authentication strategy
-    #   'openid'") until someone restarts the container by hand. Restarting here,
-    #   after networking is fully set up, makes discovery succeed so a
-    #   newly-provisioned tenant has working chat login on first use.
-    #   (2026-05-22 incident: every freshly-provisioned tenant's chat was dead.)
-    container.restart(timeout=10)
+    container.start()
