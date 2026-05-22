@@ -11,7 +11,6 @@ import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { MultiSelect } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
@@ -30,7 +29,6 @@ import type {
   WebCrawlerConfig,
 } from './-connector-types'
 import {
-  ASSERTION_MODE_OPTIONS,
   joinSeedUrl,
   MARKDOWN_PROSE_CLASSES,
   VALID_PRESELECT_TYPES,
@@ -80,7 +78,6 @@ function AddConnectorPage() {
 
   const [selectedType, setSelectedType] = useState<ConnectorType | null>(preselectType ?? null)
   const [name, setName] = useState('')
-  const [allowedAssertionModes, setAllowedAssertionModes] = useState<string[]>([])
   const [githubConfig, setGithubConfig] = useState<GitHubConfig>({
     installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
   })
@@ -106,6 +103,10 @@ function AddConnectorPage() {
   const [msSiteUrl, setMsSiteUrl] = useState('')
   const [msDriveId, setMsDriveId] = useState('')
   const [msSiteUrlError, setMsSiteUrlError] = useState<string | null>(null)
+  // ms_docs: site_url + drive_id are power-user fields. Hidden behind an
+  // "Advanced" disclosure so a normal user just sees name + Connect (both
+  // empty = sync the personal OneDrive, the common case).
+  const [showMsAdvanced, setShowMsAdvanced] = useState(false)
 
   // Webcrawler wizard state
   const [wcStep, setWcStep] = useState<WcStep>('details')
@@ -212,7 +213,6 @@ function AddConnectorPage() {
           connector_type: selectedType,
           config,
           schedule: null,
-          allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
         }),
       })
     },
@@ -237,7 +237,6 @@ function AddConnectorPage() {
           connector_type: connectorType,
           config,
           schedule: null,
-          allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
         }),
       })
       // Fetch the OAuth authorize URL (authenticated call sets the state cookie).
@@ -273,7 +272,6 @@ function AddConnectorPage() {
           connector_type: 'ms_docs',
           config,
           schedule: null,
-          allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
         }),
       })
       const { authorize_url } = await apiFetch<{ authorize_url: string }>(`/api/oauth/ms_docs/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(result.id)}`, )
@@ -467,12 +465,7 @@ function AddConnectorPage() {
                 <div className="space-y-1.5">
                   <Label htmlFor="conn-branch">{m.admin_connectors_github_branch()}</Label>
                   <Input id="conn-branch" required placeholder={m.admin_connectors_github_branch_placeholder()} value={githubConfig.branch} onChange={(e) => setGithubConfig((p) => ({ ...p, branch: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                  <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                </div>
-                {createMutation.error && (
+                </div>                {createMutation.error && (
                   <p className="text-sm text-[var(--color-destructive)]">
                     {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
                   </p>
@@ -539,12 +532,7 @@ function AddConnectorPage() {
                 )}
                 {/* Step 2: Settings */}
                 {notionStep === 'settings' && (
-                  <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                      <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                    </div>
-                    <div className="space-y-1.5">
+                  <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">                    <div className="space-y-1.5">
                       <Label htmlFor="notion-max-pages">{m.admin_connectors_notion_max_pages()}</Label>
                       <Input id="notion-max-pages" type="number" min="1" max="2000" value={notionConfig.max_pages} onChange={(e) => setNotionConfig((p) => ({ ...p, max_pages: e.target.value }))} />
                     </div>
@@ -586,12 +574,7 @@ function AddConnectorPage() {
                   <Label htmlFor="gd-folder-id">{m.admin_connectors_google_drive_folder_id()}</Label>
                   <Input id="gd-folder-id" placeholder={m.admin_connectors_google_drive_folder_id_placeholder()} value={folderId} onChange={(e) => setFolderId(e.target.value)} />
                   <p className="text-xs text-gray-400">{m.admin_connectors_google_drive_folder_id_help()}</p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                  <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                </div>
-                {createGoogleDriveMutation.error && (
+                </div>                {createGoogleDriveMutation.error && (
                   <p className="text-sm text-[var(--color-destructive)]">
                     {createGoogleDriveMutation.error instanceof Error ? createGoogleDriveMutation.error.message : m.admin_connectors_error_create_generic()}
                   </p>
@@ -614,33 +597,42 @@ function AddConnectorPage() {
                   <Label htmlFor="ms-name">{m.admin_connectors_field_name()}</Label>
                   <Input id="ms-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="ms-site-url">{m.admin_connectors_ms_docs_site_url()}</Label>
-                  <Input
-                    id="ms-site-url"
-                    placeholder="https://contoso.sharepoint.com/sites/marketing"
-                    value={msSiteUrl}
-                    onChange={(e) => { setMsSiteUrl(e.target.value); setMsSiteUrlError(null) }}
-                  />
-                  <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_site_url_help()}</p>
-                  {msSiteUrlError && (
-                    <p className="text-xs text-[var(--color-destructive)]">{msSiteUrlError}</p>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="ms-drive-id">{m.admin_connectors_ms_docs_drive_id()}</Label>
-                  <Input
-                    id="ms-drive-id"
-                    placeholder="b!xyz..."
-                    value={msDriveId}
-                    onChange={(e) => setMsDriveId(e.target.value)}
-                  />
-                  <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_drive_id_help()}</p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                  <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                </div>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors"
+                  onClick={() => setShowMsAdvanced((p) => !p)}
+                >
+                  <Settings className="h-3 w-3" />
+                  {m.knowledge_detail_tab_advanced()}
+                  {showMsAdvanced ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                </button>
+                {showMsAdvanced && (
+                  <div className="pl-4 border-l-2 border-gray-200 space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="ms-site-url">{m.admin_connectors_ms_docs_site_url()}</Label>
+                      <Input
+                        id="ms-site-url"
+                        placeholder="https://contoso.sharepoint.com/sites/marketing"
+                        value={msSiteUrl}
+                        onChange={(e) => { setMsSiteUrl(e.target.value); setMsSiteUrlError(null) }}
+                      />
+                      <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_site_url_help()}</p>
+                      {msSiteUrlError && (
+                        <p className="text-xs text-[var(--color-destructive)]">{msSiteUrlError}</p>
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="ms-drive-id">{m.admin_connectors_ms_docs_drive_id()}</Label>
+                      <Input
+                        id="ms-drive-id"
+                        placeholder="b!xyz..."
+                        value={msDriveId}
+                        onChange={(e) => setMsDriveId(e.target.value)}
+                      />
+                      <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_drive_id_help()}</p>
+                    </div>
+                  </div>
+                )}
                 {createMsDocsMutation.error && createMsDocsMutation.error instanceof Error && createMsDocsMutation.error.message !== 'invalid_site_url' && (
                   <p className="text-sm text-[var(--color-destructive)]">
                     {createMsDocsMutation.error.message}
@@ -679,12 +671,7 @@ function AddConnectorPage() {
                 <div className="space-y-1.5">
                   <Label htmlFor="at-view">{m.admin_connectors_airtable_view_name_label()}</Label>
                   <Input id="at-view" placeholder={m.admin_connectors_airtable_view_name_hint()} value={airtableConfig.view_name} onChange={(e) => setAirtableConfig((p) => ({ ...p, view_name: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                  <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                </div>
-                {createMutation.error && (
+                </div>                {createMutation.error && (
                   <p className="text-sm text-[var(--color-destructive)]">
                     {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
                   </p>
@@ -722,12 +709,7 @@ function AddConnectorPage() {
                 <div className="space-y-1.5">
                   <Label htmlFor="cf-spaces">{m.admin_connectors_confluence_space_keys_label()}</Label>
                   <Input id="cf-spaces" placeholder={m.admin_connectors_confluence_space_keys_hint()} value={confluenceConfig.space_keys} onChange={(e) => setConfluenceConfig((p) => ({ ...p, space_keys: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                  <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                </div>
-                {createMutation.error && (
+                </div>                {createMutation.error && (
                   <p className="text-sm text-[var(--color-destructive)]">
                     {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
                   </p>
@@ -1202,12 +1184,7 @@ function AddConnectorPage() {
 
                 {/* Step 6: Settings */}
                 {wcStep === 'settings' && (
-                  <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                      <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                    </div>
-                    <div className="space-y-1.5">
+                  <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">                    <div className="space-y-1.5">
                       <Label htmlFor="wc-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
                       <Input id="wc-max-pages" type="number" min="1" max="2000" placeholder={m.admin_connectors_webcrawler_max_pages_placeholder()} value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
                     </div>

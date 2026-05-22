@@ -46,6 +46,26 @@ router = APIRouter(prefix="/api/oauth", tags=["oauth"])
 # Supported provider identifiers (connector_type values).
 _SUPPORTED_PROVIDERS = {"google_drive", "ms_docs"}
 
+# Connector-type aliases that reuse another provider's OAuth flow. The
+# google_docs / google_sheets / google_slides connectors are thin filters over
+# the same Google Drive OAuth app (identical scopes + token endpoint); the add
+# flow already authorizes them via /api/oauth/google_drive/authorize. Without
+# this map the per-source "Reconnect" affordance (sources tab) and the
+# connectors-tab reconnect button 404 for those types, because the frontend
+# passes the raw connector_type. Normalising here is the single source of truth
+# so neither caller has to know the alias→provider mapping.
+_PROVIDER_ALIASES = {
+    "google_docs": "google_drive",
+    "google_sheets": "google_drive",
+    "google_slides": "google_drive",
+}
+
+
+def _canonical_provider(provider: str) -> str:
+    """Map a connector-type alias to the OAuth provider that backs it."""
+    return _PROVIDER_ALIASES.get(provider, provider)
+
+
 # Google Drive OAuth endpoints (constants -- never secrets).
 _GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -209,6 +229,11 @@ async def authorize_provider(
     A signed state token is set as an HttpOnly cookie AND embedded in the ?state=
     query parameter of the returned URL. The callback requires both to match.
     """
+    # Resolve google_docs/google_sheets/google_slides → google_drive so the
+    # state, redirect_uri, and provider-specific branch below all use the real
+    # OAuth provider. The callback path is built from this canonical value, so
+    # the whole round-trip stays consistent.
+    provider = _canonical_provider(provider)
     if provider not in _SUPPORTED_PROVIDERS or not _provider_enabled(provider):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not enabled")
 
@@ -302,6 +327,11 @@ async def callback_provider(
       4. Token exchange failure → emit connector.reconnect_failed if
          reconnect-flow, then 502
     """
+    # Mirror the authorize-side alias normalisation. In practice the callback
+    # path is always the canonical provider (authorize built the redirect_uri),
+    # but normalise defensively so a direct alias hit still resolves + matches
+    # the state's provider field.
+    provider = _canonical_provider(provider)
     if provider not in _SUPPORTED_PROVIDERS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not enabled")
 

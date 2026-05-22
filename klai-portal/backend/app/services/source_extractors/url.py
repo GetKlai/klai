@@ -60,7 +60,16 @@ def _crawl_config() -> dict[str, Any]:
         "params": {
             "cache_mode": "bypass",
             "word_count_threshold": 10,
-            "wait_for": ("js:() => document.body.innerText.trim().split(/\\s+/).length > 50"),
+            # @MX:NOTE: [AUTO] Single-page URL-add is interactive — the user is
+            # waiting on this exact fetch. The connector full-crawl pipeline uses
+            # a stricter ``>50 words`` wait_for to skip thin pages, but here that
+            # gate caused small/visual sites (e.g. one-page portfolios) to hang
+            # the full 30s page_timeout and then return success=False → empty →
+            # 502 "Pagina onbereikbaar". A low threshold lets any real page
+            # resolve fast; truly empty pages still surface as a clean 502 via
+            # the empty-content check in extract_url. Deliberately diverges from
+            # knowledge_ingest.build_crawl_config — do NOT "sync" this back up.
+            "wait_for": ("js:() => document.body.innerText.trim().split(/\\s+/).length > 3"),
             "js_code_before_wait": JS_REMOVE_CHROME,
             "js_code": JS_EXPAND_TOGGLES,
             "remove_consent_popups": True,
@@ -94,10 +103,13 @@ def _extract_markdown_from_response(payload: dict[str, Any]) -> str:
         return ""
 
     page = results[0]
-    if not page.get("success", True):
-        # success=False from crawl4ai is an upstream failure signal.
-        return ""
-
+    # @MX:NOTE: [AUTO] Do NOT bail on success=False here. crawl4ai reports
+    # success=False when a wait_for predicate or page_timeout elapses, yet it
+    # often still captured usable markdown from the last DOM state. Returning ""
+    # on success=False threw that content away and produced a 502. Trust the
+    # markdown if it's there; the empty-content check in extract_url is the real
+    # gate. (Hard network failures never reach this branch — they raise
+    # SourceFetchError earlier via httpx.)
     md = page.get("markdown", "")
     if isinstance(md, dict):
         fit = md.get("fit_markdown") or ""

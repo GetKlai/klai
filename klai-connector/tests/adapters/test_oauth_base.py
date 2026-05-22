@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.adapters.oauth_base import OAuthAdapterBase
+from app.adapters.oauth_base import OAuthAdapterBase, OAuthReconnectRequiredError
 
 
 class _FakeOAuthAdapter(OAuthAdapterBase):
@@ -93,7 +93,14 @@ async def test_ensure_token_writeback_access_token_only_when_no_rotation(
 async def test_ensure_token_missing_refresh_token_raises(
     portal_client: AsyncMock, settings: SimpleNamespace,
 ) -> None:
-    """No refresh_token in config → ValueError on first refresh attempt."""
+    """No refresh_token in config → OAuthReconnectRequiredError on first refresh.
+
+    A missing refresh_token means the OAuth consent was never completed (or the
+    connector predates offline-access). The sync engine maps
+    OAuthReconnectRequiredError to AUTH_ERROR so the portal can surface a
+    "Reconnect" affordance — a plain ValueError would land in the generic
+    failure branch with no recovery path for the user.
+    """
     adapter = _FakeOAuthAdapter(
         settings=settings,
         portal_client=portal_client,
@@ -101,7 +108,7 @@ async def test_ensure_token_missing_refresh_token_raises(
     )
     connector = SimpleNamespace(id="conn-3", config={})
 
-    with pytest.raises(ValueError, match="missing refresh_token"):
+    with pytest.raises(OAuthReconnectRequiredError, match="missing refresh_token"):
         await adapter.ensure_token(connector)
 
 

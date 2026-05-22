@@ -193,10 +193,26 @@ class TestFailureModes:
         with pytest.raises(SourceFetchError):
             await extract_url("https://example.com/page")
 
-    async def test_raises_on_crawl4ai_success_false(self, mock_httpx_factory) -> None:
+    async def test_extracts_content_even_when_success_false(self, mock_httpx_factory) -> None:
+        """success=False but markdown present → use it (no raise).
+
+        crawl4ai reports success=False when a wait_for predicate or page_timeout
+        elapses, yet it often still captured usable markdown from the last DOM
+        state. Bailing on success=False threw that away and produced a spurious
+        502 "Pagina onbereikbaar" for small/slow pages (jantinedoornbos.nl
+        regression). The empty-content check below is the real gate.
+        """
         from app.services.source_extractors.url import extract_url
 
-        mock_httpx_factory(_crawl_response("some content", success=False))
+        mock_httpx_factory(_crawl_response("# Heading\n\nsome content", success=False))
+        _title, content, _ref = await extract_url("https://example.com/page")
+        assert "some content" in content
+
+    async def test_raises_on_success_false_and_empty_markdown(self, mock_httpx_factory) -> None:
+        """success=False AND no markdown → genuine failure, still raises."""
+        from app.services.source_extractors.url import extract_url
+
+        mock_httpx_factory(_crawl_response("", success=False))
         with pytest.raises(SourceFetchError):
             await extract_url("https://example.com/page")
 
