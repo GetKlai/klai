@@ -188,6 +188,7 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
             kb_slug = None
             kb_name = None
             org_zitadel_id = None
+            kb_owner_type = None
         else:
             # Copy ORM-backed values while the session is still open. The
             # session context commits on exit, which expires attributes; using
@@ -195,6 +196,7 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
             kb_slug = kb.slug
             kb_name = kb.name
             org_zitadel_id = org.zitadel_org_id
+            kb_owner_type = kb.owner_type
 
     if kb_slug is None or kb_name is None or org_zitadel_id is None:
         logger.error(
@@ -235,6 +237,15 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
     if result.chunks is not None:
         payload["skip_chunking"] = True
         payload["chunks"] = list(result.chunks)
+
+    # Personal KBs: knowledge-ingest verifies the caller owns the personal KB
+    # and rejects with `personal_kb_owner_mismatch` (HTTP 403) when no
+    # claimed_user_id is supplied. The request-path ingest (_forward_ingest in
+    # app_knowledge_sources) passes user_id for owner_type=="user"; this async
+    # poller must do the same or every personal-KB PDF/docling upload hangs at
+    # `ingesting` forever. The uploader's id is persisted on the row.
+    if kb_owner_type == "user":
+        payload["user_id"] = view.created_by
 
     try:
         artifact_id = await knowledge_ingest_client.ingest_document(payload)
