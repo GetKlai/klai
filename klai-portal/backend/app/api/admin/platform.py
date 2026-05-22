@@ -28,6 +28,7 @@ from sqlalchemy import text
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
 from app.services.audit import log_event
+from app.services.zitadel import zitadel
 
 logger = structlog.get_logger()
 
@@ -153,6 +154,37 @@ async def _audit(perms: UserPermissions, tab: str, search: str | None) -> None:
     )
 
 
+async def _zitadel_identity_map() -> dict[str, tuple[str | None, str | None]]:
+    """Map ``zitadel_user_id -> (display_name, email)`` for every human in the
+    single portal org. ``portal_users`` is mapping-only (no live identity), so
+    the console must resolve names from Zitadel — same pattern as
+    ``admin/users.py``. Best-effort: on Zitadel failure returns ``{}`` so the
+    console still renders (callers fall back to the id)."""
+    from app.core.config import settings
+
+    try:
+        zusers = await zitadel.list_org_users(settings.zitadel_portal_org_id)
+    except Exception:
+        logger.warning("platform_identity_lookup_failed", exc_info=True)
+        return {}
+
+    out: dict[str, tuple[str | None, str | None]] = {}
+    for z in zusers:
+        uid = z.get("id", "")
+        if not uid:
+            continue
+        human = z.get("human", {})
+        profile = human.get("profile", {})
+        name = (
+            profile.get("displayName")
+            or " ".join(p for p in (profile.get("firstName"), profile.get("lastName")) if p).strip()
+            or None
+        )
+        email = human.get("email", {}).get("email") or None
+        out[uid] = (name, email)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -237,11 +269,13 @@ async def platform_users(
             )
         ).all()
 
+    identity = await _zitadel_identity_map()
+
     return [
         PlatformUser(
             zitadel_user_id=r.zitadel_user_id,
-            email=r.email,
-            display_name=r.display_name,
+            email=identity.get(r.zitadel_user_id, (None, None))[1] or r.email,
+            display_name=identity.get(r.zitadel_user_id, (None, None))[0] or r.display_name,
             role=r.role,
             is_admin=r.role == "admin",
             status=r.status,
@@ -400,11 +434,12 @@ async def platform_org_detail(
         created_at=org_row.created_at,
     )
     onboarded = org_row.provisioning_status == "ready"
+    identity = await _zitadel_identity_map()
     users = [
         PlatformUser(
             zitadel_user_id=u.zitadel_user_id,
-            email=u.email,
-            display_name=u.display_name,
+            email=identity.get(u.zitadel_user_id, (None, None))[1] or u.email,
+            display_name=identity.get(u.zitadel_user_id, (None, None))[0] or u.display_name,
             role=u.role,
             is_admin=u.role == "admin",
             status=u.status,
