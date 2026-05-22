@@ -394,5 +394,10 @@ app.mount(
 
 
 @app.get("/health")
+@app.get("/api/health")
 async def health() -> dict:
+    # /health: container liveness probe (localhost, Docker healthcheck).
+    # /api/health: public edge liveness — Caddy routes /api/* to portal-api,
+    # while the SPA owns the bare /health path. Both already sit on the
+    # no-auth + no-tenant allowlists (session.py, tenant_host.py).
     return {"status": "ok"}
