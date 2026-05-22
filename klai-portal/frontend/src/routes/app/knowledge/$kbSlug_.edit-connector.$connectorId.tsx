@@ -10,7 +10,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { MultiSelect } from '@/components/ui/multi-select'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
@@ -36,7 +35,6 @@ import type {
   WebCrawlerConfig,
 } from './-connector-types'
 import {
-  ASSERTION_MODE_OPTIONS,
   joinSeedUrl,
   MARKDOWN_PROSE_CLASSES,
   VALID_STEPS,
@@ -89,7 +87,6 @@ function EditConnectorPage() {
   const connector = connectors.find((c) => c.id === connectorId)
 
   const [name, setName] = useState('')
-  const [allowedAssertionModes, setAllowedAssertionModes] = useState<string[]>([])
   const [webcrawlerConfig, setWebcrawlerConfig] = useState<WebCrawlerConfig>({
     base_url: '', path_prefix: '', max_pages: '200', content_selector: '',
   })
@@ -192,7 +189,6 @@ function EditConnectorPage() {
   useEffect(() => {
     if (!connector) return
     setName(connector.name)
-    setAllowedAssertionModes(connector.allowed_assertion_modes ?? [])
     if (connector.connector_type === 'web_crawler') {
       const cfg = connector.config as {
         base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string
@@ -362,7 +358,6 @@ function EditConnectorPage() {
         body: JSON.stringify({
           name,
           config,
-          allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
         }),
       })
     },
@@ -939,12 +934,7 @@ function EditConnectorPage() {
                   <div className="space-y-1.5">
                     <Label htmlFor="edit-wc-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
                     <Input id="edit-wc-max-pages" type="number" min="1" max="2000" value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                    <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                  </div>
-                  {renderError()}
+                  </div>                  {renderError()}
                   <div className="flex gap-2 pt-1">
                     <Button
                       type="submit"
@@ -990,12 +980,7 @@ function EditConnectorPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-branch">{m.admin_connectors_github_branch()}</Label>
                 <Input id="edit-conn-branch" required value={githubConfig.branch} onChange={(e) => setGithubConfig((p) => ({ ...p, branch: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
+              </div>              {renderError()}
               <div className="pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
               </div>
@@ -1041,12 +1026,7 @@ function EditConnectorPage() {
                   value={notionConfig.max_pages}
                   onChange={(e) => setNotionConfig((p) => ({ ...p, max_pages: e.target.value }))}
                 />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
+              </div>              {renderError()}
               <div className="pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
               </div>
@@ -1064,12 +1044,7 @@ function EditConnectorPage() {
                 <Label htmlFor="edit-conn-folder-id">{m.admin_connectors_google_drive_folder_id()}</Label>
                 <Input id="edit-conn-folder-id" placeholder={m.admin_connectors_google_drive_folder_id_placeholder()} value={folderId} onChange={(e) => setFolderId(e.target.value)} />
                 <p className="text-xs text-gray-400">{m.admin_connectors_google_drive_folder_id_help()}</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
+              </div>              {renderError()}
               <div className="flex gap-2 pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
                 <Button
@@ -1159,12 +1134,7 @@ function EditConnectorPage() {
                     }}
                   />
                 )}
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
+              </div>              {renderError()}
               <div className="flex gap-2 pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
                 <Button
@@ -1195,12 +1165,7 @@ function EditConnectorPage() {
               )}
               {connector.connector_type === 'google_slides' && (
                 <p className="text-sm text-gray-400">{m.admin_connectors_google_slides_subtitle()}</p>
-              )}
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
+              )}              {renderError()}
               <div className="flex gap-2 pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
                 <Button
@@ -1239,12 +1204,7 @@ function EditConnectorPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="edit-at-view">{m.admin_connectors_airtable_view_name_label()}</Label>
                 <Input id="edit-at-view" placeholder={m.admin_connectors_airtable_view_name_hint()} value={airtableConfig.view_name} onChange={(e) => setAirtableConfig((p) => ({ ...p, view_name: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
+              </div>              {renderError()}
               <div className="pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
               </div>
@@ -1273,12 +1233,7 @@ function EditConnectorPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="edit-cf-spaces">{m.admin_connectors_confluence_space_keys_label()}</Label>
                 <Input id="edit-cf-spaces" placeholder={m.admin_connectors_confluence_space_keys_hint()} value={confluenceConfig.space_keys} onChange={(e) => setConfluenceConfig((p) => ({ ...p, space_keys: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
+              </div>              {renderError()}
               <div className="pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
               </div>
@@ -1291,12 +1246,7 @@ function EditConnectorPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
                 <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
+              </div>              {renderError()}
               <div className="pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
               </div>

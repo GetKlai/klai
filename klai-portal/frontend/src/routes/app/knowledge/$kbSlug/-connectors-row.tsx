@@ -18,8 +18,12 @@ const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
   ms_docs:      { label: m.admin_connectors_type_ms_docs,      IconComponent: FileText },
 }
 
-/** OAuth-backed connector types that support the /api/oauth/{provider}/authorize reconnect flow. */
-const OAUTH_RECONNECTABLE = new Set<string>(['google_drive', 'ms_docs'])
+/** OAuth-backed connector types that support the /api/oauth/{provider}/authorize reconnect flow.
+ *  google_docs/sheets/slides are Google Drive aliases — the backend normalises
+ *  them to the google_drive provider, so reconnect works for them too. */
+const OAUTH_RECONNECTABLE = new Set<string>([
+  'google_drive', 'google_docs', 'google_sheets', 'google_slides', 'ms_docs',
+])
 
 export interface ConnectorLiveProgress {
   pagesDone: number | null

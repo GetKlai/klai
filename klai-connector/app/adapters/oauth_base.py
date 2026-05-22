@@ -179,10 +179,12 @@ class OAuthAdapterBase(ABC):
             A non-empty access_token string suitable for Bearer auth.
 
         Raises:
-            ValueError: If the connector config lacks a refresh_token AND the
-                cached access_token is expired (or absent).
-            OAuthReconnectRequiredError: Provider rejected the refresh_token as
-                permanently invalid (propagated from ``_refresh_oauth_token``).
+            OAuthReconnectRequiredError: Either the connector config lacks a
+                refresh_token (consent never completed) AND the cached
+                access_token is expired/absent, OR the provider rejected the
+                refresh_token as permanently invalid (propagated from
+                ``_refresh_oauth_token``). Both require user-driven re-consent;
+                the sync engine maps this to AUTH_ERROR.
         """
         connector_id = str(connector.id)
         cached = self._token_cache.get(connector_id)
@@ -208,7 +210,14 @@ class OAuthAdapterBase(ABC):
                 refresh_token_raw if isinstance(refresh_token_raw, str) else ""
             )
             if not refresh_token:
-                raise ValueError(
+                # No refresh_token stored at all. This happens when the OAuth
+                # consent was never completed (connector row created, user
+                # abandoned the provider redirect) or a pre-offline-access
+                # connector. Raise the typed reconnect error — NOT a plain
+                # ValueError — so the sync engine maps it to AUTH_ERROR and the
+                # portal shows a "Reconnect" affordance instead of a dead-end
+                # "failed" status the user can't act on.
+                raise OAuthReconnectRequiredError(
                     "OAuth connector missing refresh_token — reconnect required "
                     f"(connector_id={connector_id})"
                 )
