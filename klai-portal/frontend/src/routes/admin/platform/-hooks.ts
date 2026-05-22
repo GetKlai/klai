@@ -116,6 +116,24 @@ export function usePlatformChatErrors() {
   })
 }
 
+// Live liveness-probe against portal-api's /api/health (unauthenticated allowlist
+// endpoint). Raw fetch — not apiFetch — so a transient 5xx surfaces as a plain
+// query error instead of triggering apiFetch's auth-refresh/redirect path.
+export function usePortalHealth() {
+  return useQuery({
+    queryKey: ['platform-portal-health'],
+    queryFn: async () => {
+      const res = await fetch('/api/health', {
+        headers: { Accept: 'application/json' },
+      })
+      if (!res.ok) throw new Error(`health ${res.status}`)
+      return (await res.json()) as { status: string }
+    },
+    refetchInterval: 30_000,
+    retry: false,
+  })
+}
+
 // ── Create a brand-new tenant (fase C) ──────────────────────────
 
 export function usePlatformCreateTenant() {
