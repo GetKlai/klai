@@ -13,6 +13,7 @@ import {
   usePlatformBots,
   usePlatformChatErrors,
   usePlatformKnowledgeBases,
+  usePlatformTemplates,
 } from './-hooks'
 import type { PlatformTab } from './-types'
 
@@ -35,6 +36,7 @@ const TABS: { id: PlatformTab; label: string }[] = [
   { id: 'users', label: 'Gebruikers' },
   { id: 'organizations', label: 'Organisaties' },
   { id: 'knowledge-bases', label: 'Kennisbanken' },
+  { id: 'templates', label: 'Templates' },
   { id: 'subscriptions', label: 'Abonnementen' },
   { id: 'bots', label: 'Bots' },
   { id: 'chat-errors', label: 'Chat errors' },
@@ -54,6 +56,8 @@ function PlatformConsole() {
     void queryClient.invalidateQueries({ queryKey: ['platform-users'] })
     void queryClient.invalidateQueries({ queryKey: ['platform-orgs'] })
     void queryClient.invalidateQueries({ queryKey: ['platform-bots'] })
+    void queryClient.invalidateQueries({ queryKey: ['platform-kbs'] })
+    void queryClient.invalidateQueries({ queryKey: ['platform-templates'] })
     void queryClient.invalidateQueries({ queryKey: ['platform-chat-errors'] })
   }
 
@@ -108,6 +112,11 @@ function PlatformConsole() {
         <StatCard
           label="Kennisbanken"
           value={stats?.total_kbs}
+          loading={statsQuery.isLoading}
+        />
+        <StatCard
+          label="Templates"
+          value={stats?.total_templates}
           loading={statsQuery.isLoading}
         />
         <StatCard
@@ -172,6 +181,9 @@ function PlatformConsole() {
       )}
       {tab === 'subscriptions' && <SubsTab search={search} />}
       {tab === 'knowledge-bases' && <KbTab search={search} fmtDate={fmtDate} />}
+      {tab === 'templates' && (
+        <TemplatesTab search={search} fmtDate={fmtDate} />
+      )}
       {tab === 'bots' && <BotsTab search={search} fmtDate={fmtDate} />}
       {tab === 'chat-errors' && <ChatErrorsTab fmtDate={fmtDate} />}
     </div>
@@ -482,6 +494,67 @@ function KbTab({
             <td className={TD}>{kb.visibility}</td>
             <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
               {fmtDate(kb.created_at)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </TableShell>
+  )
+}
+
+function TemplatesTab({
+  search,
+  fmtDate,
+}: {
+  search: string
+  fmtDate: (s: string | null) => string
+}) {
+  const navigate = useNavigate()
+  const { data, isLoading } = usePlatformTemplates(search)
+  const rows = data ?? []
+  return (
+    <TableShell
+      loading={isLoading}
+      empty={rows.length === 0}
+      emptyText="Geen templates gevonden."
+    >
+      <thead>
+        <tr className="border-b border-gray-200">
+          <th className={TH}>Template</th>
+          <th className={TH}>Organisatie</th>
+          <th className={TH}>Scope</th>
+          <th className={TH}>Gemaakt door</th>
+          <th className={TH}>Aangemaakt</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((t) => (
+          <tr
+            key={t.id}
+            onClick={() =>
+              void navigate({
+                to: '/admin/platform/orgs/$orgId',
+                params: { orgId: String(t.org_id) },
+              })
+            }
+            className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
+          >
+            <td className={TD}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium">{t.name}</span>
+                {!t.is_active && <Badge variant="outline">Inactief</Badge>}
+              </div>
+              <p className="text-xs text-gray-400 font-mono">{t.slug}</p>
+            </td>
+            <td className={TD}>{t.org_name}</td>
+            <td className={TD}>
+              <Badge variant={t.scope === 'org' ? 'success' : 'outline'}>
+                {t.scope === 'org' ? 'Organisatie' : 'Persoonlijk'}
+              </Badge>
+            </td>
+            <td className={TD}>{t.created_by_name ?? t.created_by}</td>
+            <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
+              {fmtDate(t.created_at)}
             </td>
           </tr>
         ))}
