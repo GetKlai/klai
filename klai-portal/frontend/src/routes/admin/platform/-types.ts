@@ -82,6 +82,21 @@ export interface PlatformOrgDetail {
   knowledge_bases: PlatformKB[]
 }
 
+export interface CreateTenantPayload {
+  company_name: string
+  owner_email: string
+  owner_first_name: string
+  owner_last_name: string
+  preferred_language: 'nl' | 'en'
+}
+
+export interface CreateTenantResult {
+  org_id: number
+  slug: string
+  owner_user_id: string
+  message: string
+}
+
 export type PlatformTab =
   | 'users'
   | 'organizations'

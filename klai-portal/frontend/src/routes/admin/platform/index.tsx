@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Loader2, RotateCw, Search } from 'lucide-react'
+import { Loader2, Plus, RotateCw, Search } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -42,6 +42,7 @@ const TABS: { id: PlatformTab; label: string }[] = [
 
 function PlatformConsole() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [tab, setTab] = useState<PlatformTab>('users')
   const [search, setSearch] = useState('')
 
@@ -58,14 +59,24 @@ function PlatformConsole() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
-      <div>
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          Platform
-        </h1>
-        <p className="text-sm text-gray-400 mt-1">
-          Beheer gebruikers, organisaties en bots over alle tenants. Alleen
-          zichtbaar voor Klai-staff.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+            Platform
+          </h1>
+          <p className="text-sm text-gray-400 mt-1">
+            Beheer gebruikers, organisaties en bots over alle tenants. Alleen
+            zichtbaar voor Klai-staff.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void navigate({ to: '/admin/platform/new' })}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
+        >
+          <Plus className="h-4 w-4" />
+          Nieuwe tenant
+        </button>
       </div>
 
       {/* Stat cards */}

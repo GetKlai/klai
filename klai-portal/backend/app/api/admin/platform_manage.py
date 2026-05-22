@@ -23,22 +23,41 @@ an arbitrary target_org_id.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Literal
 from urllib.parse import urlparse
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import tenant_scoped_session
+from app.core.database import get_db, set_tenant, tenant_scoped_session
 from app.core.permissions import UserPermissions, require_platform_admin
 from app.core.seats import suggest_seat
 from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
 from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.default_knowledge_bases import create_default_personal_kb
+from app.services.provisioning import provision_tenant
 from app.services.zitadel import zitadel
+
+
+def _slugify(name: str) -> str:
+    name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    name = re.sub(r"[^a-zA-Z0-9\s-]", "", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name[:60] if name else "org"
+
+
+def _to_slug(name: str, suffix: str = "") -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", _slugify(name).lower()).strip("-") or "org"
+    if suffix:
+        base = f"{base}-{suffix[:8]}"
+    return base[:64]
+
 
 logger = structlog.get_logger()
 
@@ -333,6 +352,136 @@ async def platform_invite(
         user_id=zitadel_user_id,
         message=f"Uitnodiging verstuurd naar {body.email}.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Create a brand-new tenant + owner
+# ---------------------------------------------------------------------------
+
+
+class CreateTenantRequest(BaseModel):
+    company_name: str = Field(min_length=2, max_length=128)
+    owner_email: str
+    owner_first_name: str = Field(min_length=1)
+    owner_last_name: str = Field(min_length=1)
+    preferred_language: Literal["nl", "en"] = "nl"
+
+
+class CreateTenantResponse(BaseModel):
+    org_id: int
+    slug: str
+    owner_user_id: str
+    message: str
+
+
+@router.post(
+    "/organizations",
+    response_model=CreateTenantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def platform_create_tenant(
+    body: CreateTenantRequest,
+    background_tasks: BackgroundTasks,
+    perms: UserPermissions = Depends(require_platform_admin()),
+    db: AsyncSession = Depends(get_db),
+) -> CreateTenantResponse:
+    """Create a new tenant + its first admin (owner) from the platform
+    console. Mirrors the public signup flow but: (a) gated on
+    platform-admin, (b) the owner is invited (no password — gets an
+    activation mail), (c) provisioning is queued as a background task.
+    """
+    # 1. Zitadel org.
+    try:
+        org_data = await zitadel.create_org(_slugify(body.company_name))
+    except Exception as exc:
+        logger.exception("platform_create_tenant_org_failed", name=body.company_name)
+        raise HTTPException(status_code=502, detail=f"Org-creatie mislukt: {exc}") from exc
+    zitadel_org_id: str = org_data["id"]
+
+    # 2. Owner user via invite (no password; activation mail).
+    try:
+        user_data = await zitadel.invite_user(
+            org_id=settings_zitadel_portal_org_id(),
+            email=body.owner_email,
+            first_name=body.owner_first_name,
+            last_name=body.owner_last_name,
+            preferred_language=body.preferred_language,
+        )
+    except Exception as exc:
+        logger.exception("platform_create_tenant_owner_failed", email=body.owner_email)
+        raise HTTPException(status_code=502, detail=f"Owner-creatie mislukt: {exc}") from exc
+    owner_user_id: str = user_data["userId"]
+
+    invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
+    try:
+        await zitadel.send_invite_code(owner_user_id, url_template=invite_url_template)
+        await zitadel.grant_user_role(
+            org_id=settings_zitadel_portal_org_id(),
+            user_id=owner_user_id,
+            role="org:owner",
+        )
+    except Exception as exc:
+        logger.exception("platform_create_tenant_owner_setup_failed", email=body.owner_email)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Owner-setup mislukt (org bestaat al in Zitadel): {exc}",
+        ) from exc
+
+    # 3. PortalOrg + owner PortalUser. Org insert needs no tenant; the
+    # user insert needs set_tenant for the portal_users RLS check.
+    owner_email_domain = body.owner_email.split("@")[-1].strip().lower()
+    org_row = PortalOrg(
+        zitadel_org_id=zitadel_org_id,
+        name=body.company_name,
+        slug=_to_slug(body.company_name, zitadel_org_id),
+        primary_domain=owner_email_domain,
+        auto_accept_same_domain=False,
+    )
+    db.add(org_row)
+    await db.flush()
+    await set_tenant(db, org_row.id)
+    db.add(
+        PortalUser(
+            zitadel_user_id=owner_user_id,
+            org_id=org_row.id,
+            role="admin",
+            seat_type=str(suggest_seat("admin")),
+            preferred_language=body.preferred_language,
+        )
+    )
+    await db.commit()
+
+    # 4. Cache + provisioning. Local import avoids an auth.py import cycle.
+    from app.api.auth import invalidate_tenant_slug_cache
+
+    invalidate_tenant_slug_cache()
+    background_tasks.add_task(provision_tenant, org_row.id)
+
+    await log_event(
+        org_id=perms.org_id,
+        actor=perms.user_id,
+        action="platform_admin.tenant_created",
+        resource_type="organization",
+        resource_id=str(org_row.id),
+        details={
+            "slug": org_row.slug,
+            "company_name": body.company_name,
+            "owner_email": body.owner_email,
+        },
+    )
+    return CreateTenantResponse(
+        org_id=org_row.id,
+        slug=org_row.slug,
+        owner_user_id=owner_user_id,
+        message=f"Tenant '{body.company_name}' aangemaakt. Provisioning gestart.",
+    )
+
+
+def settings_zitadel_portal_org_id() -> str:
+    """Lazy settings access (avoids a top-level config import cycle)."""
+    from app.core.config import settings
+
+    return settings.zitadel_portal_org_id
 
 
 __all__ = ["router"]

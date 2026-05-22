@@ -10,6 +10,8 @@ import type {
   PlatformChatError,
   PlatformOrgDetail,
   PlatformKB,
+  CreateTenantPayload,
+  CreateTenantResult,
 } from './-types'
 
 export function usePlatformStats() {
@@ -96,6 +98,23 @@ export function usePlatformChatErrors() {
     queryFn: async () =>
       apiFetch<PlatformChatError[]>('/api/admin/platform/chat-errors?limit=100'),
     enabled: auth.isAuthenticated,
+  })
+}
+
+// ── Create a brand-new tenant (fase C) ──────────────────────────
+
+export function usePlatformCreateTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: CreateTenantPayload) =>
+      apiFetch<CreateTenantResult>('/api/admin/platform/organizations', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-orgs'] })
+      void qc.invalidateQueries({ queryKey: ['platform-stats'] })
+    },
   })
 }
 
