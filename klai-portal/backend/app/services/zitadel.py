@@ -235,9 +235,12 @@ class ZitadelClient:
 
         No password is set here — the user picks one via the
         :meth:`send_invite_code` link to ``my.getklai.com/password/set``.
-        ``email.verification.returnCode`` suppresses Zitadel's own mail (we
-        send the Klai-branded invite ourselves), so there is no duplicate
-        init-code mail.
+        The email is created pre-verified (``isVerified``) and NO verification
+        code is generated, so the only onboarding mail is the invite issued by
+        :meth:`send_invite_code`. (``returnCode`` was tried first but still
+        fires ``user.human.email.code.added``; the Klai mailer sends on that
+        event, producing a duplicate "Confirm your email" mail whose code
+        collided with the invite code and broke onboarding — 2026-05-22.)
 
         ``username`` is lowercased; the display ``email`` keeps its case so
         the invite mail addresses the user the way the admin typed it.
@@ -255,9 +258,25 @@ class ZitadelClient:
                 },
                 "email": {
                     "email": email,
-                    # returnCode => Zitadel returns the code instead of mailing
-                    # it; the caller's send_invite_code issues the real mail.
-                    "verification": {"returnCode": {}},
+                    # isVerified => create the user with the email already
+                    # verified and generate NO email-verification code.
+                    #
+                    # Why NOT returnCode: returnCode only suppresses Zitadel's
+                    # OWN SMTP, but the `user.human.email.code.added` HTTP-
+                    # notification event STILL fires, and the Klai mailer sends
+                    # a "Confirm your email" mail on it (same gotcha as v1's
+                    # `sendCodes:false`). That second mail + its code collided
+                    # with the invite-code flow, so every invited owner got
+                    # "Code is invalid" on verify/set-password (2026-05-22
+                    # onboarding incident). The mailer cannot drop that event
+                    # because self-signup uses the same `email.code.added`.
+                    #
+                    # invite_user is admin-invite-only (always paired with
+                    # send_invite_code). The invite link goes solely to the
+                    # email owner, who proves ownership by accepting it and
+                    # setting a password — so pre-verifying the address here is
+                    # safe and leaves exactly ONE code (the invite code).
+                    "isVerified": True,
                 },
             },
         )
