@@ -249,7 +249,7 @@ async def platform_users(
             org_name=r.org_name,
             org_slug=r.org_slug,
             org_plan=r.org_plan,
-            org_onboarded=r.prov == "complete",
+            org_onboarded=r.prov == "ready",
             created_at=r.created_at,
         )
         for r in rows
@@ -399,7 +399,7 @@ async def platform_org_detail(
         kb_count=org_row.kb_count,
         created_at=org_row.created_at,
     )
-    onboarded = org_row.provisioning_status == "complete"
+    onboarded = org_row.provisioning_status == "ready"
     users = [
         PlatformUser(
             zitadel_user_id=u.zitadel_user_id,

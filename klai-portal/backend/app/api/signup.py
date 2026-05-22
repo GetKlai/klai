@@ -20,6 +20,7 @@ import json
 import logging
 import re
 import unicodedata
+from contextlib import suppress
 from typing import Any
 
 import httpx
@@ -219,6 +220,14 @@ async def signup(
     zitadel_org_id: str = org_data["id"]
     logger.info("Org created in Zitadel: name=%s, org_id=%s", body.company_name, zitadel_org_id)
 
+    # Orphan-prevention: any failure AFTER create_org must cascade-delete the
+    # Zitadel org, else a half-built tenant leaks and the user cannot retry
+    # (the org name 409s on "already exists"). delete_org is idempotent and
+    # cascades users + grants.
+    async def _rollback_zitadel_org() -> None:
+        with suppress(Exception):
+            await zitadel.delete_org(zitadel_org_id)
+
     # 2. Create human user via Zitadel v2, atomically firing a Klai-branded
     # email-verification mail. The link lands on /verify, not Zitadel's hosted
     # init UI.
@@ -234,6 +243,7 @@ async def signup(
             url_template=verify_url_template,
         )
     except httpx.HTTPStatusError as exc:
+        await _rollback_zitadel_org()
         if exc.response.status_code == 409:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -245,6 +255,7 @@ async def signup(
             detail="Creation failed, please try again later",
         ) from exc
     except Exception as exc:
+        await _rollback_zitadel_org()
         logger.exception("User creation failed during signup for org %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -261,6 +272,7 @@ async def signup(
             role="org:owner",
         )
     except Exception as exc:
+        await _rollback_zitadel_org()
         logger.exception("Role grant failed during signup for user %s: %s", body.email, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -292,6 +304,7 @@ async def signup(
         await db.commit()
     except Exception as exc:
         await db.rollback()
+        await _rollback_zitadel_org()
         logger.exception("DB commit failed during signup for org %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -486,6 +499,13 @@ async def signup_social(
         zitadel_user_id,
     )
 
+    # Orphan-prevention: any failure AFTER create_org must cascade-delete the
+    # Zitadel org (the social-login user is pre-existing and is NOT ours to
+    # delete). delete_org is idempotent.
+    async def _rollback_zitadel_org() -> None:
+        with suppress(Exception):
+            await zitadel.delete_org(zitadel_org_id)
+
     # 3. Assign org:owner role in the portal org's project
     try:
         await zitadel.grant_user_role(
@@ -498,12 +518,14 @@ async def signup_social(
             # Grant already exists from a previous partial attempt — safe to continue.
             logger.warning("Social signup: role grant already exists for user %s, continuing", zitadel_user_id)
         else:
+            await _rollback_zitadel_org()
             logger.exception("Social signup: role grant failed for user %s: %s", zitadel_user_id, exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Creation failed, please try again later",
             ) from exc
     except Exception as exc:
+        await _rollback_zitadel_org()
         logger.exception("Social signup: role grant failed for user %s: %s", zitadel_user_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -534,6 +556,7 @@ async def signup_social(
         await db.commit()
     except Exception as exc:
         await db.rollback()
+        await _rollback_zitadel_org()
         logger.exception("Social signup: DB commit failed for org %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

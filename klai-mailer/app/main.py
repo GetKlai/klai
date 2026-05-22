@@ -121,30 +121,44 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-# SPEC-INFRA-TENANT-DELETE-003 Bug 4 — reverted the SPEC-MAILER-DROP-INITCODE-001
-# blanket drop of `user.human.initialization.code.added`.
+# Re-drop `user.human.initialization.code.added` — verified against prod
+# 2026-05-22 (SPEC-PORTAL-AUTH-EMAIL-LINKS dedup). This reverses the
+# 2026-05-13 revert (SPEC-INFRA-TENANT-DELETE-003 Bug 4), because the
+# two assumptions that revert relied on are BOTH outdated now:
 #
-# Original rationale (SPEC-MAILER-DROP-INITCODE-001): admin-invite flow
-# was assumed to fire BOTH `initialization.code.added` AND `invite.code.added`,
-# producing a duplicate mail; dropping init-code was meant to suppress the
-# duplicate. That assumption was wrong.
+# Actual Zitadel behaviour (live-captured 2026-05-22, every event-type
+# in the prod mailer logs traced to its source flow):
+#   - Admin invite (`zitadel.invite_user` → `/management/v1/users/human/
+#     _import` with `sendCodes: false`) STILL fires `initialization.code
+#     .added` — `sendCodes: false` suppresses Zitadel's own SMTP but NOT
+#     the HTTP-notification-provider event Klai consumes. The follow-up
+#     `zitadel.send_invite_code` then fires `invite.code.added`. So
+#     admin-invite produces TWO mails: an init-code mail pointing at
+#     Zitadel's hosted UI (`auth.getklai.com/ui/login/user/init`, the
+#     WRONG link) and an invite-code mail pointing at the Klai-branded
+#     `my.getklai.com/password/set` (the RIGHT link). Dropping init-code
+#     removes the wrong-link duplicate and keeps the correct invite mail.
+#   - Regular signup uses `create_human_user_v2_with_verify` →
+#     `user.human.email.code.added` (NOT init-code). Verified: real
+#     signup lars.houben@nerds.nl 2026-05-20 fired email.code.added and
+#     reached ACTIVE+verified. So the 2026-05-13 failure mode (drop kills
+#     signup verify-mail) CANNOT recur — signup no longer touches init-code.
+#   - `create_human_user` (`sendCodes: true`, the only other init-code
+#     source) has ZERO production callers (grep 2026-05-22). If a future
+#     flow adds one expecting an init-code mail, it must use the v2
+#     verify path or its own template — do NOT remove this drop to
+#     "fix" it.
 #
-# Actual Zitadel behaviour (verified against prod 2026-05-13):
-#   - Admin invite (`zitadel.invite_user`)  → sends `sendCodes: false` →
-#     Zitadel does NOT fire init-code. Then `zitadel.send_invite_code`
-#     fires `invite.code.added`. ONE event, ONE mail. No duplicate.
-#   - Regular signup (`zitadel.create_human_user`) → default `sendCodes: true`
-#     → Zitadel fires `initialization.code.added`. ONE event.
+# Every `invite_user` caller pairs with `send_invite_code` (admin/users.py,
+# admin/platform_manage.py — verified 2026-05-22), so no invited user is
+# left mail-less by this drop.
 #
-# The drop did nothing for admin-invite (which never fires init-code) and
-# silently killed the verify-mail for every regular signup, leaving new
-# tenants in USER_STATE_INITIAL with no way to activate. Production
-# incident 2026-05-13 17:30 UTC: e2e@getklai.com signup left in INITIAL
-# state, no mail received.
-#
-# `_DROPPED_EVENT_TYPES` is now empty. Kept as an extension point: a
-# future event-type that genuinely IS a no-op duplicate can be added here.
-_DROPPED_EVENT_TYPES: frozenset[str] = frozenset()
+# Before changing this set again: capture EVERY notify event-type in prod
+# and trace each to its source flow (`docker logs klai-core-klai-mailer-1
+# | grep -oE 'type=user[^ ]*' | sort | uniq -c`). This area has flip-flopped
+# (drop → revert → drop); guesses re-break onboarding. See pitfall
+# `playwright-mcp-config-cycle`-style discipline.
+_DROPPED_EVENT_TYPES: frozenset[str] = frozenset({"user.human.initialization.code.added"})
 
 
 @app.post("/notify")
