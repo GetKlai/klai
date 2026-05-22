@@ -98,8 +98,13 @@ async def _load_org_or_404(org_id: int) -> PortalOrg:
         org = (
             await db.execute(select(PortalOrg).where(PortalOrg.id == org_id, PortalOrg.deleted_at.is_(None)))
         ).scalar_one_or_none()
-    if org is None:
-        raise HTTPException(status_code=404, detail="Organisatie niet gevonden")
+        if org is None:
+            raise HTTPException(status_code=404, detail="Organisatie niet gevonden")
+        # Detach while every column is still loaded so callers can read
+        # attributes (e.g. org.slug) after the session closes. Without this the
+        # instance is detached on session exit and the first attribute access
+        # triggers a refresh -> DetachedInstanceError (500 on platform invite).
+        db.expunge(org)
     return org
 
 
