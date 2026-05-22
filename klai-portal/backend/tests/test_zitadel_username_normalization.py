@@ -111,7 +111,7 @@ class TestInviteUserUsernameLowercased:
 
         _args, kwargs = mock_http.post.call_args
         body = kwargs["json"]
-        assert body["userName"] == "newhire@acme.io"
+        assert body["username"] == "newhire@acme.io"
 
     @pytest.mark.asyncio
     async def test_email_field_preserves_original_case(self) -> None:
@@ -128,11 +128,11 @@ class TestInviteUserUsernameLowercased:
         assert kwargs["json"]["email"]["email"] == "NewHire@Acme.IO"
 
     @pytest.mark.asyncio
-    async def test_send_codes_disabled_per_split_invite_flow(self) -> None:
-        """SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2: invite_user MUST NOT trigger
-        a Zitadel-default invite mail. The flow is split — invite_user creates
-        the user with sendCodes=False, then send_invite_code mails the link
-        with an explicit Klai urlTemplate."""
+    async def test_invite_user_does_not_trigger_zitadel_mail(self) -> None:
+        """invite_user MUST NOT trigger a Zitadel-default invite mail. The flow
+        is split — invite_user creates the user via v2 AddHumanUser with
+        email.verification.returnCode (Zitadel returns the code, sends no mail),
+        then send_invite_code mails the link with an explicit Klai urlTemplate."""
         client, mock_http = _zitadel_client_with_mocked_http()
 
         await client.invite_user(
@@ -143,7 +143,7 @@ class TestInviteUserUsernameLowercased:
         )
 
         _args, kwargs = mock_http.post.call_args
-        assert kwargs["json"]["sendCodes"] is False
+        assert kwargs["json"]["email"]["verification"] == {"returnCode": {}}
 
 
 class TestCreateZitadelUserFromIdpUsernameLowercased:

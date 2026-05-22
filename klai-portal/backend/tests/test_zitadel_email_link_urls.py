@@ -80,9 +80,14 @@ async def test_invite_user_does_not_send_default_zitadel_mail():
         last_name="Doe",
     )
 
-    _args, kwargs = mock_http.post.call_args
-    assert kwargs["json"]["sendCodes"] is False, (
-        "invite_user MUST pass sendCodes=False so the activation mail is "
+    args, kwargs = mock_http.post.call_args
+    assert args[0] == "/v2/users/human", (
+        "invite_user MUST use the v2 AddHumanUser endpoint; the v1 _import "
+        "path leaves users stuck in USER_STATE_INITIAL on Zitadel 6.x"
+    )
+    assert kwargs["json"]["email"]["verification"] == {"returnCode": {}}, (
+        "invite_user MUST pass email.verification.returnCode so Zitadel "
+        "returns the code instead of mailing it; the activation mail is "
         "issued separately via send_invite_code with a Klai urlTemplate"
     )
 
