@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Skull, ShieldCheck, type LucideIcon } from 'lucide-react'
+import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Skull, ShieldCheck, Globe2, type LucideIcon } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
@@ -28,8 +28,12 @@ const ADMIN_NAV_ITEMS: Array<{
   minRole: ProfileRole
   end?: boolean
   requiresFeature?: string
+  platformAdminOnly?: boolean
 }> = [
   { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, minRole: 'kb_manager', end: true },
+  // SPEC-PLATFORM-ADMIN-001: cross-tenant console, alleen voor Klai-staff
+  // (is_platform_admin). Bovenaan zodat het opvalt voor wie het mag zien.
+  { to: '/admin/platform', label: 'Platform', icon: Globe2, minRole: 'admin', platformAdminOnly: true },
   { to: '/admin/users', label: m.admin_nav_users(), icon: Users, minRole: 'admin' },
   // SPEC-PORTAL-ADMIN-UI-001 REQ-11: Profiles between Users and Groups.
   { to: '/admin/profiles', label: m.admin_nav_profiles(), icon: ShieldCheck, minRole: 'admin' },
@@ -71,6 +75,9 @@ function AdminLayout() {
 
   const adminNav = ADMIN_NAV_ITEMS.filter((item) => {
     if (!meetsMinRole(effectiveRole, item.minRole)) return false
+    // Platform-admin-only items (cross-tenant console) hidden for
+    // everyone except Klai staff in the platform org.
+    if (item.platformAdminOnly && !me?.is_platform_admin) return false
     if (item.requiresFeature) {
       // While /api/me is loading, keep the item visible to avoid a flash of
       // missing nav.

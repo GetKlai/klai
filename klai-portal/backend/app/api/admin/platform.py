@@ -21,7 +21,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -97,6 +97,12 @@ class PlatformChatError(BaseModel):
     event_type: str
     detail: str | None
     created_at: datetime
+
+
+class PlatformOrgDetail(BaseModel):
+    org: PlatformOrg
+    users: list[PlatformUser]
+    bots: list[PlatformBot]
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +265,102 @@ async def platform_organizations(
         )
         for r in rows
     ]
+
+
+@router.get("/organizations/{org_id}", response_model=PlatformOrgDetail)
+async def platform_org_detail(
+    org_id: int,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> PlatformOrgDetail:
+    """One org with its users + bots — drill-down from the console."""
+    await _audit(perms, f"organization:{org_id}", None)
+    async with cross_org_session() as db:
+        org_row = (
+            await db.execute(
+                text(
+                    "SELECT o.id, o.name, o.slug, o.plan, o.billing_status, "
+                    "o.billing_cycle, o.seats, o.provisioning_status, o.created_at, "
+                    "(SELECT COUNT(*) FROM portal_users u "
+                    "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
+                    "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count "
+                    "FROM portal_orgs o WHERE o.id = :org_id AND o.deleted_at IS NULL"
+                ),
+                {"org_id": org_id},
+            )
+        ).first()
+        if org_row is None:
+            raise HTTPException(status_code=404, detail="Organisatie niet gevonden")
+
+        user_rows = (
+            await db.execute(
+                text(
+                    "SELECT u.zitadel_user_id, u.email, u.display_name, u.role, "
+                    "u.status, u.created_at FROM portal_users u "
+                    "WHERE u.org_id = :org_id AND u.status <> 'offboarded' "
+                    "ORDER BY u.created_at DESC"
+                ),
+                {"org_id": org_id},
+            )
+        ).all()
+
+        bot_rows = (
+            await db.execute(
+                text(
+                    "SELECT w.id, w.name, w.widget_id, w.created_at, "
+                    "(SELECT COUNT(*) FROM widget_kb_access k "
+                    "  WHERE k.widget_id = w.id) AS kb_count "
+                    "FROM widgets w WHERE w.org_id = :org_id "
+                    "ORDER BY w.created_at DESC"
+                ),
+                {"org_id": org_id},
+            )
+        ).all()
+
+    org = PlatformOrg(
+        id=org_row.id,
+        name=org_row.name,
+        slug=org_row.slug,
+        plan=org_row.plan,
+        billing_status=org_row.billing_status,
+        billing_cycle=org_row.billing_cycle,
+        seats=org_row.seats,
+        provisioning_status=org_row.provisioning_status,
+        user_count=org_row.user_count,
+        bot_count=org_row.bot_count,
+        created_at=org_row.created_at,
+    )
+    onboarded = org_row.provisioning_status == "complete"
+    users = [
+        PlatformUser(
+            zitadel_user_id=u.zitadel_user_id,
+            email=u.email,
+            display_name=u.display_name,
+            role=u.role,
+            is_admin=u.role == "admin",
+            status=u.status,
+            org_id=org.id,
+            org_name=org.name,
+            org_slug=org.slug,
+            org_plan=org.plan,
+            org_onboarded=onboarded,
+            created_at=u.created_at,
+        )
+        for u in user_rows
+    ]
+    bots = [
+        PlatformBot(
+            id=str(b.id),
+            name=b.name,
+            widget_id=b.widget_id,
+            org_id=org.id,
+            org_name=org.name,
+            org_slug=org.slug,
+            kb_count=b.kb_count,
+            created_at=b.created_at,
+        )
+        for b in bot_rows
+    ]
+    return PlatformOrgDetail(org=org, users=users, bots=bots)
 
 
 @router.get("/bots", response_model=list[PlatformBot])
