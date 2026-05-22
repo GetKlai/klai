@@ -100,11 +100,10 @@ function PlatformOrgDetailPage() {
           </div>
 
           {/* Subscription summary */}
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <Stat label="Gebruikers" value={data.org.user_count} />
             <Stat label="Bots" value={data.org.bot_count} />
             <Stat label="Kennisbanken" value={data.org.kb_count} />
-            <Stat label="Documenten" value={data.org.document_count} />
             <Stat label="Seats" value={data.org.seats} />
             <Stat label="Billing" value={data.org.billing_status} />
           </div>
@@ -150,6 +149,57 @@ function PlatformOrgDetailPage() {
                           className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}
                         >
                           {fmtDate(b.created_at)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* Knowledge bases */}
+          <section>
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
+              Kennisbanken ({data.knowledge_bases.length})
+            </h2>
+            {data.knowledge_bases.length === 0 ? (
+              <p className="text-sm text-gray-400">Geen kennisbanken.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-t border-b border-gray-200">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className={TH}>Kennisbank</th>
+                      <th className={TH}>Type</th>
+                      <th className={TH}>Zichtbaarheid</th>
+                      <th className={TH}>Aangemaakt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.knowledge_bases.map((kb) => (
+                      <tr
+                        key={kb.id}
+                        className="border-b border-gray-200 last:border-b-0"
+                      >
+                        <td className={TD}>
+                          <span className="font-medium">{kb.name}</span>
+                          <p className="text-xs text-gray-400 font-mono">
+                            {kb.slug}
+                          </p>
+                        </td>
+                        <td className={TD}>
+                          <Badge variant="outline">
+                            {kb.owner_type === 'org'
+                              ? 'Organisatie'
+                              : 'Persoonlijk'}
+                          </Badge>
+                        </td>
+                        <td className={TD}>{kb.visibility}</td>
+                        <td
+                          className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}
+                        >
+                          {fmtDate(kb.created_at)}
                         </td>
                       </tr>
                     ))}

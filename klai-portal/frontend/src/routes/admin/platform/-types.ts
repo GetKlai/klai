@@ -9,7 +9,6 @@ export interface PlatformStats {
   total_bots: number
   new_bots_today: number
   total_kbs: number
-  total_documents: number
   mrr_cents: number
   arr_cents: number
 }
@@ -41,7 +40,18 @@ export interface PlatformOrg {
   user_count: number
   bot_count: number
   kb_count: number
-  document_count: number
+  created_at: string
+}
+
+export interface PlatformKB {
+  id: number
+  name: string
+  slug: string
+  org_id: number
+  org_name: string
+  org_slug: string
+  owner_type: string
+  visibility: string
   created_at: string
 }
 
@@ -69,6 +79,7 @@ export interface PlatformOrgDetail {
   org: PlatformOrg
   users: PlatformUser[]
   bots: PlatformBot[]
+  knowledge_bases: PlatformKB[]
 }
 
 export type PlatformTab =
@@ -76,4 +87,5 @@ export type PlatformTab =
   | 'organizations'
   | 'subscriptions'
   | 'bots'
+  | 'knowledge-bases'
   | 'chat-errors'
