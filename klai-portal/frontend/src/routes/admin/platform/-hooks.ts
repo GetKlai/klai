@@ -9,6 +9,7 @@ import type {
   PlatformBot,
   PlatformChatError,
   PlatformOrgDetail,
+  PlatformKB,
 } from './-types'
 
 export function usePlatformStats() {
@@ -71,6 +72,20 @@ export function usePlatformOrgDetail(orgId: string) {
         `/api/admin/platform/organizations/${orgId}`,
       ),
     enabled: auth.isAuthenticated && !!orgId,
+  })
+}
+
+export function usePlatformKnowledgeBases(search: string) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-kbs', search],
+    queryFn: async () =>
+      apiFetch<PlatformKB[]>(
+        `/api/admin/platform/knowledge-bases${
+          search ? `?search=${encodeURIComponent(search)}` : ''
+        }`,
+      ),
+    enabled: auth.isAuthenticated,
   })
 }
 

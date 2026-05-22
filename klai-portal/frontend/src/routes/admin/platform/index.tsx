@@ -12,6 +12,7 @@ import {
   usePlatformOrgs,
   usePlatformBots,
   usePlatformChatErrors,
+  usePlatformKnowledgeBases,
 } from './-hooks'
 import type { PlatformTab } from './-types'
 
@@ -33,6 +34,7 @@ function fmtDate(iso: string | null): string {
 const TABS: { id: PlatformTab; label: string }[] = [
   { id: 'users', label: 'Gebruikers' },
   { id: 'organizations', label: 'Organisaties' },
+  { id: 'knowledge-bases', label: 'Kennisbanken' },
   { id: 'subscriptions', label: 'Abonnementen' },
   { id: 'bots', label: 'Bots' },
   { id: 'chat-errors', label: 'Chat errors' },
@@ -98,12 +100,6 @@ function PlatformConsole() {
           loading={statsQuery.isLoading}
         />
         <StatCard
-          label="Documenten"
-          value={stats?.total_documents}
-          sub="over alle tenants"
-          loading={statsQuery.isLoading}
-        />
-        <StatCard
           label="MRR"
           value={stats ? `€${(stats.mrr_cents / 100).toFixed(2)}` : undefined}
           sub={
@@ -164,6 +160,7 @@ function PlatformConsole() {
         <OrgsTab search={search} fmtDate={fmtDate} />
       )}
       {tab === 'subscriptions' && <SubsTab search={search} />}
+      {tab === 'knowledge-bases' && <KbTab search={search} fmtDate={fmtDate} />}
       {tab === 'bots' && <BotsTab search={search} fmtDate={fmtDate} />}
       {tab === 'chat-errors' && <ChatErrorsTab fmtDate={fmtDate} />}
     </div>
@@ -326,7 +323,6 @@ function OrgsTab({
           <th className={TH}>Gebruikers</th>
           <th className={TH}>Bots</th>
           <th className={TH}>KB's</th>
-          <th className={TH}>Docs</th>
           <th className={TH}>Status</th>
           <th className={TH}>Aangemaakt</th>
         </tr>
@@ -353,7 +349,6 @@ function OrgsTab({
             <td className={`${TD} tabular-nums`}>{o.user_count}</td>
             <td className={`${TD} tabular-nums`}>{o.bot_count}</td>
             <td className={`${TD} tabular-nums`}>{o.kb_count}</td>
-            <td className={`${TD} tabular-nums`}>{o.document_count}</td>
             <td className={TD}>
               <Badge
                 variant={
@@ -418,6 +413,64 @@ function SubsTab({ search }: { search: string }) {
               >
                 {o.billing_status}
               </Badge>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </TableShell>
+  )
+}
+
+function KbTab({
+  search,
+  fmtDate,
+}: {
+  search: string
+  fmtDate: (s: string | null) => string
+}) {
+  const navigate = useNavigate()
+  const { data, isLoading } = usePlatformKnowledgeBases(search)
+  const rows = data ?? []
+  return (
+    <TableShell
+      loading={isLoading}
+      empty={rows.length === 0}
+      emptyText="Geen kennisbanken gevonden."
+    >
+      <thead>
+        <tr className="border-b border-gray-200">
+          <th className={TH}>Kennisbank</th>
+          <th className={TH}>Organisatie</th>
+          <th className={TH}>Type</th>
+          <th className={TH}>Zichtbaarheid</th>
+          <th className={TH}>Aangemaakt</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((kb) => (
+          <tr
+            key={kb.id}
+            onClick={() =>
+              void navigate({
+                to: '/admin/platform/orgs/$orgId',
+                params: { orgId: String(kb.org_id) },
+              })
+            }
+            className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
+          >
+            <td className={TD}>
+              <span className="font-medium">{kb.name}</span>
+              <p className="text-xs text-gray-400 font-mono">{kb.slug}</p>
+            </td>
+            <td className={TD}>{kb.org_name}</td>
+            <td className={TD}>
+              <Badge variant="outline">
+                {kb.owner_type === 'org' ? 'Organisatie' : 'Persoonlijk'}
+              </Badge>
+            </td>
+            <td className={TD}>{kb.visibility}</td>
+            <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
+              {fmtDate(kb.created_at)}
             </td>
           </tr>
         ))}

@@ -47,7 +47,6 @@ class PlatformStats(BaseModel):
     total_bots: int
     new_bots_today: int
     total_kbs: int
-    total_documents: int
     mrr_cents: int
     arr_cents: int
 
@@ -79,7 +78,6 @@ class PlatformOrg(BaseModel):
     user_count: int
     bot_count: int
     kb_count: int
-    document_count: int
     created_at: datetime
 
 
@@ -103,10 +101,23 @@ class PlatformChatError(BaseModel):
     created_at: datetime
 
 
+class PlatformKB(BaseModel):
+    id: int
+    name: str
+    slug: str
+    org_id: int
+    org_name: str
+    org_slug: str
+    owner_type: str
+    visibility: str
+    created_at: datetime
+
+
 class PlatformOrgDetail(BaseModel):
     org: PlatformOrg
     users: list[PlatformUser]
     bots: list[PlatformBot]
+    knowledge_bases: list[PlatformKB]
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +166,7 @@ async def platform_stats(
                       (SELECT COUNT(*) FROM widgets) AS total_bots,
                       (SELECT COUNT(*) FROM widgets
                          WHERE created_at >= date_trunc('day', NOW())) AS new_bots_today,
-                      (SELECT COUNT(*) FROM portal_knowledge_bases) AS total_kbs,
-                      (SELECT COUNT(*) FROM knowledge.artifacts) AS total_docs
+                      (SELECT COUNT(*) FROM portal_knowledge_bases) AS total_kbs
                     """
                 )
             )
@@ -171,7 +181,6 @@ async def platform_stats(
         total_bots=row.total_bots,
         new_bots_today=row.new_bots_today,
         total_kbs=row.total_kbs,
-        total_documents=row.total_docs,
         mrr_cents=0,
         arr_cents=0,
     )
@@ -246,14 +255,11 @@ async def platform_organizations(
                 text(
                     "SELECT o.id, o.name, o.slug, o.plan, o.billing_status, "  # noqa: S608
                     "o.billing_cycle, o.seats, o.provisioning_status, o.created_at, "
-                    "o.zitadel_org_id, "
                     "(SELECT COUNT(*) FROM portal_users u "
                     "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
                     "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count, "
                     "(SELECT COUNT(*) FROM portal_knowledge_bases kb "
-                    "  WHERE kb.org_id = o.id) AS kb_count, "
-                    "(SELECT COUNT(*) FROM knowledge.artifacts a "
-                    "  WHERE a.org_id = o.zitadel_org_id) AS document_count "
+                    "  WHERE kb.org_id = o.id) AS kb_count "
                     "FROM portal_orgs o "
                     f"{where} "
                     "ORDER BY o.created_at DESC"
@@ -275,7 +281,6 @@ async def platform_organizations(
             user_count=r.user_count,
             bot_count=r.bot_count,
             kb_count=r.kb_count,
-            document_count=r.document_count,
             created_at=r.created_at,
         )
         for r in rows
@@ -299,9 +304,7 @@ async def platform_org_detail(
                     "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
                     "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count, "
                     "(SELECT COUNT(*) FROM portal_knowledge_bases kb "
-                    "  WHERE kb.org_id = o.id) AS kb_count, "
-                    "(SELECT COUNT(*) FROM knowledge.artifacts a "
-                    "  WHERE a.org_id = o.zitadel_org_id) AS document_count "
+                    "  WHERE kb.org_id = o.id) AS kb_count "
                     "FROM portal_orgs o WHERE o.id = :org_id AND o.deleted_at IS NULL"
                 ),
                 {"org_id": org_id},
@@ -335,6 +338,18 @@ async def platform_org_detail(
             )
         ).all()
 
+        kb_rows = (
+            await db.execute(
+                text(
+                    "SELECT kb.id, kb.name, kb.slug, kb.owner_type, "
+                    "kb.visibility, kb.created_at "
+                    "FROM portal_knowledge_bases kb WHERE kb.org_id = :org_id "
+                    "ORDER BY kb.created_at DESC"
+                ),
+                {"org_id": org_id},
+            )
+        ).all()
+
     org = PlatformOrg(
         id=org_row.id,
         name=org_row.name,
@@ -347,7 +362,6 @@ async def platform_org_detail(
         user_count=org_row.user_count,
         bot_count=org_row.bot_count,
         kb_count=org_row.kb_count,
-        document_count=org_row.document_count,
         created_at=org_row.created_at,
     )
     onboarded = org_row.provisioning_status == "complete"
@@ -381,7 +395,21 @@ async def platform_org_detail(
         )
         for b in bot_rows
     ]
-    return PlatformOrgDetail(org=org, users=users, bots=bots)
+    kbs = [
+        PlatformKB(
+            id=k.id,
+            name=k.name,
+            slug=k.slug,
+            org_id=org.id,
+            org_name=org.name,
+            org_slug=org.slug,
+            owner_type=k.owner_type,
+            visibility=k.visibility,
+            created_at=k.created_at,
+        )
+        for k in kb_rows
+    ]
+    return PlatformOrgDetail(org=org, users=users, bots=bots, knowledge_bases=kbs)
 
 
 @router.get("/bots", response_model=list[PlatformBot])
@@ -422,6 +450,51 @@ async def platform_bots(
             org_name=r.org_name,
             org_slug=r.org_slug,
             kb_count=r.kb_count,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/knowledge-bases", response_model=list[PlatformKB])
+async def platform_knowledge_bases(
+    search: str | None = Query(default=None),
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> list[PlatformKB]:
+    """Cross-tenant list of all knowledge bases."""
+    await _audit(perms, "knowledge-bases", search)
+    params: dict[str, object] = {}
+    where = ""
+    if search:
+        where = "WHERE (kb.name ILIKE :q OR o.name ILIKE :q)"
+        params["q"] = f"%{search}%"
+
+    async with cross_org_session() as db:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT kb.id, kb.name, kb.slug, kb.owner_type, "  # noqa: S608
+                    "kb.visibility, kb.created_at, "
+                    "o.id AS org_id, o.name AS org_name, o.slug AS org_slug "
+                    "FROM portal_knowledge_bases kb "
+                    "JOIN portal_orgs o ON o.id = kb.org_id "
+                    f"{where} "
+                    "ORDER BY kb.created_at DESC"
+                ),
+                params,
+            )
+        ).all()
+
+    return [
+        PlatformKB(
+            id=r.id,
+            name=r.name,
+            slug=r.slug,
+            org_id=r.org_id,
+            org_name=r.org_name,
+            org_slug=r.org_slug,
+            owner_type=r.owner_type,
+            visibility=r.visibility,
             created_at=r.created_at,
         )
         for r in rows
