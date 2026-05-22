@@ -87,7 +87,7 @@ function PlatformOrgDetailPage() {
               <Badge variant="outline">{data.org.plan}</Badge>
               <Badge
                 variant={
-                  data.org.provisioning_status === 'complete'
+                  data.org.provisioning_status === 'ready'
                     ? 'success'
                     : 'outline'
                 }

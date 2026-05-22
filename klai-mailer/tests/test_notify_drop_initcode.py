@@ -1,18 +1,24 @@
-"""SPEC-INFRA-TENANT-DELETE-003 Bug 4 — InitCode events MUST be delivered.
+"""InitCode events are DROPPED — verified against prod 2026-05-22.
 
-Reverts SPEC-MAILER-DROP-INITCODE-001's blanket drop. The drop was based
-on a wrong assumption that admin-invite fired both `initialization.code.added`
-AND `invite.code.added` (producing duplicate mails). In production Zitadel
-behaviour, admin-invite explicitly sends ``sendCodes: false`` so init-code
-is NOT fired — there was never a duplicate to suppress.
+Re-applies the drop of ``user.human.initialization.code.added`` after the
+2026-05-13 revert (SPEC-INFRA-TENANT-DELETE-003 Bug 4). The revert assumed
+(a) admin-invite never fires init-code (``sendCodes: false``) and (b) regular
+signup relies on init-code. BOTH are outdated:
 
-The drop's only effect was killing the verify-mail for every REGULAR
-signup (which uses ``sendCodes: true`` by default), leaving new tenants
-stuck in USER_STATE_INITIAL with no way to activate.
+  - ``sendCodes: false`` on ``/management/v1/users/human/_import`` suppresses
+    Zitadel's own SMTP but NOT the HTTP-notification event Klai consumes —
+    so admin-invite DOES fire init-code (live-captured 2026-05-22), pointing
+    at Zitadel's hosted UI (the WRONG link), on top of the correct
+    ``invite.code.added`` mail. Init-code is the duplicate.
+  - Regular signup uses ``create_human_user_v2_with_verify`` →
+    ``email.code.added`` (NOT init-code). Real signup lars.houben@nerds.nl
+    2026-05-20 fired email.code.added and reached ACTIVE+verified. So the
+    2026-05-13 failure mode cannot recur.
+  - ``create_human_user`` (the only other init-code source) has zero
+    production callers.
 
-These tests now enforce the correct contract: InitCode events render and
-mail like any other event-type. The legacy tests for InviteUser /
-PasswordChange remain unchanged — they were never affected by the drop.
+These tests enforce: init-code is dropped (204, no SMTP); invite-code and
+password-changed still mail (targeted drop, regression guards).
 """
 
 from __future__ import annotations
@@ -60,14 +66,12 @@ def _signed_post(client: TestClient, body: dict, secret: str):
     )
 
 
-def test_initcode_event_renders_and_sends(client, settings_env, stub_smtp):
-    """SPEC-INFRA-TENANT-DELETE-003 Bug 4 — InitCode events fire on every
-    regular signup (where Zitadel's default ``sendCodes: true`` triggers
-    the activation mail). The mailer must render + send these, not drop
-    them. Without this the entire regular-signup flow is silently broken:
-    user lands in USER_STATE_INITIAL, mailer drops the event, no mail.
-
-    Verified against production incident 2026-05-13 17:30 UTC.
+def test_initcode_event_is_dropped(client, settings_env, stub_smtp):
+    """InitCode is the wrong-link duplicate of the admin-invite flow and is
+    dropped: 204, no SMTP send. Admin-invite's correct mail is
+    ``invite.code.added`` (Klai-branded /password/set link); init-code points
+    at Zitadel's hosted UI. Signup uses ``email.code.added``, not init-code,
+    so this drop does not touch signup. Verified against prod 2026-05-22.
     """
     body = {
         "contextInfo": {
@@ -83,14 +87,11 @@ def test_initcode_event_renders_and_sends(client, settings_env, stub_smtp):
         },
     }
     resp = _signed_post(client, body, settings_env["WEBHOOK_SECRET"])
-    assert resp.status_code == 200, f"expected 200 (rendered), got {resp.status_code}: {resp.text}"
-    assert len(stub_smtp.sent) == 1, (
-        "InitCode event MUST trigger exactly one SMTP send — regression of "
-        "SPEC-MAILER-DROP-INITCODE-001 would re-introduce the silent-mail bug."
+    assert resp.status_code == 204, f"expected 204 (dropped), got {resp.status_code}: {resp.text}"
+    assert len(stub_smtp.sent) == 0, (
+        "InitCode event MUST be dropped (no SMTP) — it is the wrong-link "
+        "duplicate of the admin-invite invite.code.added mail."
     )
-    sent = stub_smtp.sent[0]
-    assert sent["to_address"] == "alice@example.com"
-    assert "Activeer je Klai-account" in sent["subject"]
 
 
 def test_invite_event_still_sends(client, settings_env, stub_smtp):

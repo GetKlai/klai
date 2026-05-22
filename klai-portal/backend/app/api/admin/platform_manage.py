@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from contextlib import suppress
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -398,6 +399,14 @@ async def platform_create_tenant(
         raise HTTPException(status_code=502, detail=f"Org-creatie mislukt: {exc}") from exc
     zitadel_org_id: str = org_data["id"]
 
+    # Orphan-prevention: every failure AFTER create_org must cascade-delete
+    # the Zitadel org, else a half-built tenant leaks (and retry with the same
+    # email/company 409s on "already exists"). delete_org is idempotent and
+    # cascades users + grants.
+    async def _rollback_zitadel_org() -> None:
+        with suppress(Exception):
+            await zitadel.delete_org(zitadel_org_id)
+
     # 2. Owner user via invite (no password; activation mail).
     try:
         user_data = await zitadel.invite_user(
@@ -409,6 +418,7 @@ async def platform_create_tenant(
         )
     except Exception as exc:
         logger.exception("platform_create_tenant_owner_failed", email=body.owner_email)
+        await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Owner-creatie mislukt: {exc}") from exc
     owner_user_id: str = user_data["userId"]
 
@@ -422,10 +432,8 @@ async def platform_create_tenant(
         )
     except Exception as exc:
         logger.exception("platform_create_tenant_owner_setup_failed", email=body.owner_email)
-        raise HTTPException(
-            status_code=502,
-            detail=f"Owner-setup mislukt (org bestaat al in Zitadel): {exc}",
-        ) from exc
+        await _rollback_zitadel_org()
+        raise HTTPException(status_code=502, detail=f"Owner-setup mislukt: {exc}") from exc
 
     # 3. PortalOrg + owner PortalUser. Org insert needs no tenant; the
     # user insert needs set_tenant for the portal_users RLS check.
@@ -437,19 +445,25 @@ async def platform_create_tenant(
         primary_domain=owner_email_domain,
         auto_accept_same_domain=False,
     )
-    db.add(org_row)
-    await db.flush()
-    await set_tenant(db, org_row.id)
-    db.add(
-        PortalUser(
-            zitadel_user_id=owner_user_id,
-            org_id=org_row.id,
-            role="admin",
-            seat_type=str(suggest_seat("admin")),
-            preferred_language=body.preferred_language,
+    try:
+        db.add(org_row)
+        await db.flush()
+        await set_tenant(db, org_row.id)
+        db.add(
+            PortalUser(
+                zitadel_user_id=owner_user_id,
+                org_id=org_row.id,
+                role="admin",
+                seat_type=str(suggest_seat("admin")),
+                preferred_language=body.preferred_language,
+            )
         )
-    )
-    await db.commit()
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("platform_create_tenant_db_failed", email=body.owner_email)
+        await _rollback_zitadel_org()
+        raise HTTPException(status_code=502, detail=f"Opslaan mislukt: {exc}") from exc
 
     # 4. Cache + provisioning. Local import avoids an auth.py import cycle.
     from app.api.auth import invalidate_tenant_slug_cache

@@ -436,7 +436,7 @@ function OrgsTab({
             <td className={TD}>
               <Badge
                 variant={
-                  o.provisioning_status === 'complete'
+                  o.provisioning_status === 'ready'
                     ? 'success'
                     : 'outline'
                 }
