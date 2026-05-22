@@ -420,16 +420,16 @@ class TestCharacterizeStartLibrechatContainer:
 
             _start_librechat_container("acme", "/opt/klai/librechat-data/acme/.env")
 
-            mock_client.containers.run.assert_called_once()
-            call_kwargs = mock_client.containers.run.call_args
+            mock_client.containers.create.assert_called_once()
+            call_kwargs = mock_client.containers.create.call_args
             assert call_kwargs[1]["name"] == "librechat-acme"
-            assert call_kwargs[1]["detach"] is True
             assert call_kwargs[1]["network"] == "klai-net"
-            # OIDC boot-race fix (2026-05-22): the container must be restarted
-            # once after all networks are attached so LibreChat re-runs OpenID
-            # discovery successfully — otherwise fresh tenants have dead chat
-            # login until a manual restart.
-            mock_client.containers.run.return_value.restart.assert_called_once_with(timeout=10)
+            # OIDC boot-race fix (2026-05-22): create → connect all networks
+            # while stopped → start, so the container boots ONCE with stable
+            # networking and LibreChat's OpenID discovery succeeds. No `detach`
+            # kwarg on create; no post-start restart (that earlier landed inside
+            # the network-reconfig window and broke the working first boot).
+            mock_client.containers.create.return_value.start.assert_called_once()
 
     def test_passes_tenant_env_as_process_environment(self, tmp_path):
         from app.services.provisioning import _start_librechat_container
@@ -450,7 +450,7 @@ class TestCharacterizeStartLibrechatContainer:
 
             _start_librechat_container("acme", "/opt/klai/librechat-data/acme/.env")
 
-        environment = mock_client.containers.run.call_args[1]["environment"]
+        environment = mock_client.containers.create.call_args[1]["environment"]
         assert environment["MONGO_URI"] == "mongodb://example"
         assert environment["JWT_SECRET"] == "keep-me"
         assert environment["ALLOW_SHARED_LINKS"] == "true"
@@ -478,7 +478,7 @@ class TestCharacterizeStartLibrechatContainer:
 
             _start_librechat_container("acme", "/opt/klai/librechat-data/acme/.env")
 
-        volumes = mock_client.containers.run.call_args[1]["volumes"]
+        volumes = mock_client.containers.create.call_args[1]["volumes"]
         assert volumes["/opt/klai/librechat-data/patches/format.cjs"] == {
             "bind": "/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs",
             "mode": "ro",
@@ -526,7 +526,7 @@ class TestCharacterizeStartLibrechatContainer:
 
             _start_librechat_container("voys", "/opt/klai/librechat-data/voys/.env")
 
-            call_kwargs = mock_client.containers.run.call_args
+            call_kwargs = mock_client.containers.create.call_args
             labels = call_kwargs[1]["labels"]
             assert labels["klai.managed_by"] == "portal-api-provisioning"
             assert labels["klai.tenant_slug"] == "voys"
@@ -557,7 +557,7 @@ class TestCharacterizeStartLibrechatContainer:
             mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
 
             for tenant_slug in ("voys", "acme-corp", "klai-internal"):
-                mock_client.containers.run.reset_mock()
+                mock_client.containers.create.reset_mock()
                 _start_librechat_container(tenant_slug, f"/opt/klai/librechat-data/{tenant_slug}/.env")
-                labels = mock_client.containers.run.call_args[1]["labels"]
+                labels = mock_client.containers.create.call_args[1]["labels"]
                 assert labels["klai.tenant_slug"] == tenant_slug
