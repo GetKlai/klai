@@ -1,6 +1,14 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Activity, ExternalLink, Loader2, Plus, RotateCw, Search } from 'lucide-react'
+import {
+  Activity,
+  Bug,
+  ExternalLink,
+  Loader2,
+  Plus,
+  RotateCw,
+  Search,
+} from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -221,6 +229,33 @@ function StatusTab() {
           ) : (
             <Badge variant="destructive">Niet bereikbaar</Badge>
           )}
+        </div>
+      </div>
+
+      {/* Frontend errors users hit (GlitchTip / Sentry) */}
+      <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Bug className="h-5 w-5 shrink-0 text-gray-400" />
+            <div>
+              <p className="text-[15px] font-display text-gray-900">
+                Errors van users
+              </p>
+              <p className="mt-0.5 text-sm text-gray-400">
+                Frontend-crashes en exceptions die users in de browser raken,
+                verzameld in GlitchTip.
+              </p>
+            </div>
+          </div>
+          <a
+            href="https://errors.getklai.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 klai-hover"
+          >
+            errors.getklai.com
+            <ExternalLink className="h-4 w-4" />
+          </a>
         </div>
       </div>
 
