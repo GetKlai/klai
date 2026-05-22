@@ -88,17 +88,40 @@ Layout = TWD admin panel:
 
 ## 6. Acceptatiecriteria
 
-- [ ] AC1: Een gewone tenant-admin krijgt 403 op elke
-      `/api/admin/platform/*` endpoint.
-- [ ] AC2: Een platform-admin ziet users/orgs/bots van MEERDERE
-      tenants in één lijst.
-- [ ] AC3: Stat-cards tellen cross-tenant correct.
-- [ ] AC4: Zoeken op naam/email filtert cross-tenant.
-- [ ] AC5: Elke platform-read schrijft een audit-event.
-- [ ] AC6: Sidebar-entry "Platform" verschijnt alleen bij
-      is_platform_admin; gewone admins zien 'm niet.
-- [ ] AC7: Geen RLS-regressie — `cross_org_session` alleen achter de
-      platform-admin gate.
+- [x] AC1: Een gewone tenant-admin krijgt 403 op elke
+      `/api/admin/platform/*` endpoint. (require_platform_admin op elk
+      endpoint; ongeauth → 401, niet-platform-admin → 403.)
+- [x] AC2: Een platform-admin ziet users/orgs/bots van MEERDERE
+      tenants in één lijst. (cross_org_session reads; geverifieerd:
+      20 users / 7 orgs / 4 bots cross-tenant.)
+- [x] AC3: Stat-cards tellen cross-tenant correct. (stats-SQL tegen
+      prod: users/orgs/subs/bots/KBs/docs.)
+- [x] AC4: Zoeken op naam/email filtert cross-tenant. (ILIKE op
+      email/display_name/org-naam.)
+- [x] AC5: Elke platform-read + write schrijft een audit-event.
+      (platform_admin.viewed + .user_role_changed / _suspended /
+      _reactivated / _invited.)
+- [x] AC6: Sidebar-entry "Platform" verschijnt alleen bij
+      is_platform_admin. (platformAdminOnly filter in admin/route.tsx.)
+- [x] AC7: Geen RLS-regressie — reads via cross_org_session achter de
+      gate; writes via tenant_scoped_session(target_org) zodat RLS de
+      write naar exact één tenant afdwingt.
+
+## 8. Geleverd (fase A/B/C)
+
+- Fase A: KB + document counts cross-tenant (stats, org-lijst,
+  org-detail). knowledge.artifacts join op zitadel_org_id.
+- Fase B: cross-tenant rol-wijziging + suspend/reactivate met
+  last-admin-invariant.
+- Fase C: cross-tenant onboarden (invite) direct in een doel-tenant
+  — Zitadel user + activatie-mail + portal_user + personal-KB in
+  tenant_scoped_session(target).
+- Frontend: /admin/platform console (6 stat-cards, 5 tabs, zoek +
+  refresh) + /admin/platform/orgs/{id} drill-down met invite-form +
+  per-user rol-dropdown + suspend/reactivate.
+
+Niet geverifieerd: de ingelogde UI-render (testbrowser uitgelogd).
+Routing, gating, audit en alle SQL bevestigd tegen productie.
 
 ## 7. Niet in scope (v1)
 
