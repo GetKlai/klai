@@ -1,5 +1,5 @@
 // SPEC-PLATFORM-ADMIN-001 — data hooks for the cross-tenant console.
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/lib/auth'
 import { apiFetch } from '@/lib/apiFetch'
 import type {
@@ -81,5 +81,63 @@ export function usePlatformChatErrors() {
     queryFn: async () =>
       apiFetch<PlatformChatError[]>('/api/admin/platform/chat-errors?limit=100'),
     enabled: auth.isAuthenticated,
+  })
+}
+
+// ── Cross-tenant write mutations (fase B+C) ─────────────────────
+
+interface InvitePayload {
+  email: string
+  first_name: string
+  last_name: string
+  role: string
+  preferred_language: 'nl' | 'en'
+}
+
+export function usePlatformInvite(orgId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: InvitePayload) =>
+      apiFetch(`/api/admin/platform/organizations/${orgId}/users/invite`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-org-detail', orgId] })
+      void qc.invalidateQueries({ queryKey: ['platform-users'] })
+      void qc.invalidateQueries({ queryKey: ['platform-stats'] })
+    },
+  })
+}
+
+export function usePlatformChangeRole(orgId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (vars: { zid: string; role: string }) =>
+      apiFetch(
+        `/api/admin/platform/organizations/${orgId}/users/${vars.zid}/role`,
+        { method: 'PATCH', body: JSON.stringify({ role: vars.role }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-org-detail', orgId] })
+      void qc.invalidateQueries({ queryKey: ['platform-users'] })
+    },
+  })
+}
+
+export function usePlatformSuspend(orgId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (vars: { zid: string; reactivate: boolean }) =>
+      apiFetch(
+        `/api/admin/platform/organizations/${orgId}/users/${vars.zid}/${
+          vars.reactivate ? 'reactivate' : 'suspend'
+        }`,
+        { method: 'POST' },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-org-detail', orgId] })
+      void qc.invalidateQueries({ queryKey: ['platform-users'] })
+    },
   })
 }

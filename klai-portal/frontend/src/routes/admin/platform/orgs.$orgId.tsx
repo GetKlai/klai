@@ -1,14 +1,34 @@
 import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowLeft, Loader2, Plus, UserPlus } from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
-import { usePlatformOrgDetail } from './-hooks'
+import {
+  usePlatformOrgDetail,
+  usePlatformInvite,
+  usePlatformChangeRole,
+  usePlatformSuspend,
+} from './-hooks'
+import type { PlatformUser } from './-types'
 
 export const Route = createFileRoute('/admin/platform/orgs/$orgId')({
   component: PlatformOrgDetailPage,
 })
+
+const ROLE_OPTIONS = [
+  { value: 'personal', label: 'Personal' },
+  { value: 'company', label: 'Company' },
+  { value: 'kb_manager', label: 'KB manager' },
+  { value: 'group_manager', label: 'Group manager' },
+  { value: 'admin', label: 'Admin' },
+]
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—'
@@ -90,53 +110,7 @@ function PlatformOrgDetailPage() {
           </div>
 
           {/* Users */}
-          <section>
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
-              Gebruikers ({data.users.length})
-            </h2>
-            {data.users.length === 0 ? (
-              <p className="text-sm text-gray-400">Geen gebruikers.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border-t border-b border-gray-200">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className={TH}>Gebruiker</th>
-                      <th className={TH}>Rol</th>
-                      <th className={TH}>Status</th>
-                      <th className={TH}>Aangemaakt</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.users.map((u) => (
-                      <tr
-                        key={u.zitadel_user_id}
-                        className="border-b border-gray-200 last:border-b-0"
-                      >
-                        <td className={TD}>
-                          <span className="font-medium">
-                            {u.display_name || u.email || u.zitadel_user_id}
-                          </span>
-                          {u.email && (
-                            <p className="text-xs text-gray-400">{u.email}</p>
-                          )}
-                        </td>
-                        <td className={TD}>
-                          <Badge variant="outline">{u.role}</Badge>
-                        </td>
-                        <td className={TD}>{u.status}</td>
-                        <td
-                          className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}
-                        >
-                          {fmtDate(u.created_at)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+          <UsersSection orgId={orgId} users={data.users} />
 
           {/* Bots */}
           <section>
@@ -187,6 +161,259 @@ function PlatformOrgDetailPage() {
         </>
       )}
     </div>
+  )
+}
+
+function UsersSection({
+  orgId,
+  users,
+}: {
+  orgId: string
+  users: PlatformUser[]
+}) {
+  const [showInvite, setShowInvite] = useState(false)
+  const changeRole = usePlatformChangeRole(orgId)
+  const suspend = usePlatformSuspend(orgId)
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
+          Gebruikers ({users.length})
+        </h2>
+        <button
+          type="button"
+          onClick={() => setShowInvite((v) => !v)}
+          className="inline-flex items-center gap-1.5 rounded-full bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+        >
+          <UserPlus className="h-4 w-4" />
+          Gebruiker uitnodigen
+        </button>
+      </div>
+
+      {showInvite && (
+        <InviteForm orgId={orgId} onClose={() => setShowInvite(false)} />
+      )}
+
+      {users.length === 0 ? (
+        <p className="text-sm text-gray-400">Nog geen gebruikers.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border-t border-b border-gray-200">
+            <thead>
+              <tr className="border-b border-gray-200">
+                <th className={TH}>Gebruiker</th>
+                <th className={TH}>Rol</th>
+                <th className={TH}>Status</th>
+                <th className={TH}>Acties</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => {
+                const busy =
+                  (changeRole.isPending &&
+                    changeRole.variables?.zid === u.zitadel_user_id) ||
+                  (suspend.isPending &&
+                    suspend.variables?.zid === u.zitadel_user_id)
+                return (
+                  <tr
+                    key={u.zitadel_user_id}
+                    className="border-b border-gray-200 last:border-b-0"
+                  >
+                    <td className={TD}>
+                      <span className="font-medium">
+                        {u.display_name || u.email || u.zitadel_user_id}
+                      </span>
+                      {u.email && (
+                        <p className="text-xs text-gray-400">{u.email}</p>
+                      )}
+                    </td>
+                    <td className={TD}>
+                      <Select
+                        value={u.role}
+                        disabled={busy}
+                        onChange={(e) =>
+                          changeRole.mutate(
+                            { zid: u.zitadel_user_id, role: e.target.value },
+                            {
+                              onSuccess: () => toast.success('Rol bijgewerkt'),
+                              onError: (err) =>
+                                toast.error(
+                                  err instanceof Error
+                                    ? err.message
+                                    : 'Mislukt',
+                                ),
+                            },
+                          )
+                        }
+                        className="max-w-[10rem] text-xs"
+                      >
+                        {ROLE_OPTIONS.map((r) => (
+                          <option key={r.value} value={r.value}>
+                            {r.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                    <td className={TD}>
+                      <Badge
+                        variant={
+                          u.status === 'active' ? 'success' : 'outline'
+                        }
+                      >
+                        {u.status}
+                      </Badge>
+                    </td>
+                    <td className={TD}>
+                      {u.status === 'suspended' ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            suspend.mutate(
+                              { zid: u.zitadel_user_id, reactivate: true },
+                              {
+                                onSuccess: () =>
+                                  toast.success('Geheractiveerd'),
+                              },
+                            )
+                          }
+                          className="text-xs font-medium text-[var(--color-success)] hover:opacity-70 disabled:opacity-40"
+                        >
+                          Heractiveren
+                        </button>
+                      ) : u.status === 'active' ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            suspend.mutate(
+                              { zid: u.zitadel_user_id, reactivate: false },
+                              {
+                                onSuccess: () =>
+                                  toast.success('Gesuspendeerd'),
+                              },
+                            )
+                          }
+                          className="text-xs font-medium text-[var(--color-destructive)] hover:opacity-70 disabled:opacity-40"
+                        >
+                          Suspend
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function InviteForm({
+  orgId,
+  onClose,
+}: {
+  orgId: string
+  onClose: () => void
+}) {
+  const invite = usePlatformInvite(orgId)
+  const [email, setEmail] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [role, setRole] = useState('personal')
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    invite.mutate(
+      {
+        email: email.trim(),
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        role,
+        preferred_language: 'nl',
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Uitnodiging verstuurd naar ${email.trim()}`)
+          onClose()
+        },
+        onError: (err) =>
+          toast.error(err instanceof Error ? err.message : 'Uitnodigen mislukt'),
+      },
+    )
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="mb-4 rounded-xl border border-gray-200 bg-[var(--color-rl-cream)] p-4 space-y-3"
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="inv-email">E-mail</Label>
+          <Input
+            id="inv-email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="naam@bedrijf.nl"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="inv-role">Rol</Label>
+          <Select
+            id="inv-role"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+          >
+            {ROLE_OPTIONS.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="inv-first">Voornaam</Label>
+          <Input
+            id="inv-first"
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="inv-last">Achternaam</Label>
+          <Input
+            id="inv-last"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            required
+          />
+        </div>
+      </div>
+      <div className="flex items-center gap-3 pt-1">
+        <Button type="submit" disabled={invite.isPending}>
+          {invite.isPending && (
+            <Plus className="mr-2 h-4 w-4 animate-spin" />
+          )}
+          Uitnodiging versturen
+        </Button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
+        >
+          Annuleren
+        </button>
+      </div>
+    </form>
   )
 }
 
