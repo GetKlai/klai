@@ -222,40 +222,43 @@ class ZitadelClient:
     ) -> dict:
         """Create a human user WITHOUT sending the activation email.
 
-        SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2 — formerly this method passed
-        ``sendCodes: True`` so Zitadel auto-mailed an init-code link to its
-        own hosted UI. The split is now:
+        Uses the v2 ``/v2/users/human`` (AddHumanUser) endpoint. The legacy
+        v1 ``/management/v1/users/human/_import`` path is broken on Zitadel
+        6.x: it leaves every user permanently in ``USER_STATE_INITIAL``
+        (``isEmailVerified`` is ignored and ``invite_code/verify`` never
+        clears INITIAL). An INITIAL user's project grant is not effective, so
+        OIDC login fails with ``Errors.User.ProjectRequired`` — i.e. every
+        invited user was unable to log in. Verified end-to-end on 6.1.6:
+        v1 import → INITIAL forever; v2 AddHumanUser → ``USER_STATE_ACTIVE``
+        immediately, and the downstream invite_code + set-password flow then
+        works unchanged.
 
-          1. This method imports the user with ``sendCodes: False`` — no mail.
-          2. The caller follows up with :meth:`send_invite_code` which uses
-             the v2 ``/v2/users/{id}/invite_code`` endpoint with a Klai
-             ``urlTemplate``, sending the activation mail with a link to
-             ``my.getklai.com/password/set``.
+        No password is set here — the user picks one via the
+        :meth:`send_invite_code` link to ``my.getklai.com/password/set``.
+        ``email.verification.returnCode`` suppresses Zitadel's own mail (we
+        send the Klai-branded invite ourselves), so there is no duplicate
+        init-code mail.
 
-        ``userName`` is lowercased before submission — see
-        ``create_human_user`` for rationale. The display ``email`` field
-        keeps its original case so the invite mail addresses the user
-        the way the inviting admin typed it.
+        ``username`` is lowercased; the display ``email`` keeps its case so
+        the invite mail addresses the user the way the admin typed it.
         """
         resp = await self._http.post(
-            "/management/v1/users/human/_import",
-            headers={"x-zitadel-orgid": org_id},
+            "/v2/users/human",
             json={
-                "userName": email.lower(),
+                "username": email.lower(),
+                "organization": {"orgId": org_id},
                 "profile": {
-                    "firstName": first_name,
-                    "lastName": last_name,
+                    "givenName": first_name,
+                    "familyName": last_name,
                     "displayName": f"{first_name} {last_name}",
                     "preferredLanguage": preferred_language,
                 },
                 "email": {
                     "email": email,
-                    "isEmailVerified": False,
+                    # returnCode => Zitadel returns the code instead of mailing
+                    # it; the caller's send_invite_code issues the real mail.
+                    "verification": {"returnCode": {}},
                 },
-                # REQ-2: never let Zitadel mail an init-code with a default
-                # hosted-UI URL. The caller issues a follow-up send_invite_code
-                # call with an explicit Klai urlTemplate.
-                "sendCodes": False,
             },
         )
         resp.raise_for_status()
