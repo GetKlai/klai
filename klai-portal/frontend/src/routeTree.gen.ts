@@ -51,6 +51,7 @@ import { Route as AdminWidgetsIndexRouteImport } from './routes/admin/widgets/in
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AdminTemplatesIndexRouteImport } from './routes/admin/templates/index'
 import { Route as AdminProfilesIndexRouteImport } from './routes/admin/profiles/index'
+import { Route as AdminPlatformIndexRouteImport } from './routes/admin/platform/index'
 import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
 import { Route as AdminApiKeysIndexRouteImport } from './routes/admin/api-keys/index'
@@ -99,6 +100,7 @@ import { Route as AdminWidgetsIdTestRouteImport } from './routes/admin/widgets/$
 import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
 import { Route as AdminTemplatesSlugEditRouteImport } from './routes/admin/templates/$slug.edit'
 import { Route as AdminProfilesProfileAddMemberRouteImport } from './routes/admin/profiles/$profile/add-member'
+import { Route as AdminPlatformOrgsOrgIdRouteImport } from './routes/admin/platform/orgs.$orgId'
 import { Route as AdminGroupsGroupIdEditRouteImport } from './routes/admin/groups/$groupId/edit'
 import { Route as AdminGroupsGroupIdAddMemberRouteImport } from './routes/admin/groups/$groupId/add-member'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
@@ -312,6 +314,11 @@ const AdminTemplatesIndexRoute = AdminTemplatesIndexRouteImport.update({
 const AdminProfilesIndexRoute = AdminProfilesIndexRouteImport.update({
   id: '/profiles/',
   path: '/profiles/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminPlatformIndexRoute = AdminPlatformIndexRouteImport.update({
+  id: '/platform/',
+  path: '/platform/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminMcpsIndexRoute = AdminMcpsIndexRouteImport.update({
@@ -570,6 +577,11 @@ const AdminProfilesProfileAddMemberRoute =
     path: '/profiles/$profile/add-member',
     getParentRoute: () => AdminRouteRoute,
   } as any)
+const AdminPlatformOrgsOrgIdRoute = AdminPlatformOrgsOrgIdRouteImport.update({
+  id: '/platform/orgs/$orgId',
+  path: '/platform/orgs/$orgId',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminGroupsGroupIdEditRoute = AdminGroupsGroupIdEditRouteImport.update({
   id: '/groups/$groupId/edit',
   path: '/groups/$groupId/edit',
@@ -647,6 +659,7 @@ export interface FileRoutesByFullPath {
   '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
+  '/admin/platform/': typeof AdminPlatformIndexRoute
   '/admin/profiles/': typeof AdminProfilesIndexRoute
   '/admin/templates/': typeof AdminTemplatesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
@@ -658,6 +671,7 @@ export interface FileRoutesByFullPath {
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/platform/orgs/$orgId': typeof AdminPlatformOrgsOrgIdRoute
   '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
@@ -737,6 +751,7 @@ export interface FileRoutesByTo {
   '/admin/api-keys': typeof AdminApiKeysIndexRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
   '/admin/mcps': typeof AdminMcpsIndexRoute
+  '/admin/platform': typeof AdminPlatformIndexRoute
   '/admin/profiles': typeof AdminProfilesIndexRoute
   '/admin/templates': typeof AdminTemplatesIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
@@ -748,6 +763,7 @@ export interface FileRoutesByTo {
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/platform/orgs/$orgId': typeof AdminPlatformOrgsOrgIdRoute
   '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
@@ -833,6 +849,7 @@ export interface FileRoutesById {
   '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
+  '/admin/platform/': typeof AdminPlatformIndexRoute
   '/admin/profiles/': typeof AdminProfilesIndexRoute
   '/admin/templates/': typeof AdminTemplatesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
@@ -844,6 +861,7 @@ export interface FileRoutesById {
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/platform/orgs/$orgId': typeof AdminPlatformOrgsOrgIdRoute
   '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
   '/admin/templates/$slug/edit': typeof AdminTemplatesSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
@@ -930,6 +948,7 @@ export interface FileRouteTypes {
     | '/admin/api-keys/'
     | '/admin/groups/'
     | '/admin/mcps/'
+    | '/admin/platform/'
     | '/admin/profiles/'
     | '/admin/templates/'
     | '/admin/users/'
@@ -941,6 +960,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/platform/orgs/$orgId'
     | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
@@ -1020,6 +1040,7 @@ export interface FileRouteTypes {
     | '/admin/api-keys'
     | '/admin/groups'
     | '/admin/mcps'
+    | '/admin/platform'
     | '/admin/profiles'
     | '/admin/templates'
     | '/admin/users'
@@ -1031,6 +1052,7 @@ export interface FileRouteTypes {
     | '/app/transcribe'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/platform/orgs/$orgId'
     | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
@@ -1115,6 +1137,7 @@ export interface FileRouteTypes {
     | '/admin/api-keys/'
     | '/admin/groups/'
     | '/admin/mcps/'
+    | '/admin/platform/'
     | '/admin/profiles/'
     | '/admin/templates/'
     | '/admin/users/'
@@ -1126,6 +1149,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/platform/orgs/$orgId'
     | '/admin/profiles/$profile/add-member'
     | '/admin/templates/$slug/edit'
     | '/admin/users/$userId/edit'
@@ -1471,6 +1495,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProfilesIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/platform/': {
+      id: '/admin/platform/'
+      path: '/platform'
+      fullPath: '/admin/platform/'
+      preLoaderRoute: typeof AdminPlatformIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/mcps/': {
       id: '/admin/mcps/'
       path: '/mcps'
@@ -1807,6 +1838,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProfilesProfileAddMemberRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/platform/orgs/$orgId': {
+      id: '/admin/platform/orgs/$orgId'
+      path: '/platform/orgs/$orgId'
+      fullPath: '/admin/platform/orgs/$orgId'
+      preLoaderRoute: typeof AdminPlatformOrgsOrgIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/groups/$groupId/edit': {
       id: '/admin/groups/$groupId/edit'
       path: '/groups/$groupId/edit'
@@ -1878,12 +1916,14 @@ interface AdminRouteRouteChildren {
   AdminApiKeysIndexRoute: typeof AdminApiKeysIndexRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
   AdminMcpsIndexRoute: typeof AdminMcpsIndexRoute
+  AdminPlatformIndexRoute: typeof AdminPlatformIndexRoute
   AdminProfilesIndexRoute: typeof AdminProfilesIndexRoute
   AdminTemplatesIndexRoute: typeof AdminTemplatesIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminWidgetsIndexRoute: typeof AdminWidgetsIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
   AdminGroupsGroupIdEditRoute: typeof AdminGroupsGroupIdEditRoute
+  AdminPlatformOrgsOrgIdRoute: typeof AdminPlatformOrgsOrgIdRoute
   AdminProfilesProfileAddMemberRoute: typeof AdminProfilesProfileAddMemberRoute
   AdminTemplatesSlugEditRoute: typeof AdminTemplatesSlugEditRoute
   AdminUsersUserIdEditRoute: typeof AdminUsersUserIdEditRoute
@@ -1911,12 +1951,14 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminApiKeysIndexRoute: AdminApiKeysIndexRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
   AdminMcpsIndexRoute: AdminMcpsIndexRoute,
+  AdminPlatformIndexRoute: AdminPlatformIndexRoute,
   AdminProfilesIndexRoute: AdminProfilesIndexRoute,
   AdminTemplatesIndexRoute: AdminTemplatesIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminWidgetsIndexRoute: AdminWidgetsIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
   AdminGroupsGroupIdEditRoute: AdminGroupsGroupIdEditRoute,
+  AdminPlatformOrgsOrgIdRoute: AdminPlatformOrgsOrgIdRoute,
   AdminProfilesProfileAddMemberRoute: AdminProfilesProfileAddMemberRoute,
   AdminTemplatesSlugEditRoute: AdminTemplatesSlugEditRoute,
   AdminUsersUserIdEditRoute: AdminUsersUserIdEditRoute,
