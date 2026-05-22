@@ -208,6 +208,7 @@ class _SessionBoundKB:
     def __init__(self, closed: dict[str, bool]) -> None:
         self._slug = _SessionBoundValue("chemie", closed)
         self._name = _SessionBoundValue("Chemie", closed)
+        self._owner_type = _SessionBoundValue("user", closed)
 
     @property
     def slug(self) -> str:
@@ -216,6 +217,10 @@ class _SessionBoundKB:
     @property
     def name(self) -> str:
         return self._name.get()
+
+    @property
+    def owner_type(self) -> str:
+        return self._owner_type.get()
 
 
 class _SessionBoundOrg:
@@ -442,6 +447,10 @@ class TestIngestingState:
         assert payload["org_id"] == "zitadel-org-1"
         assert payload["kb_slug"] == "chemie"
         assert payload["kb_name"] == "Chemie"
+        # Personal KB (owner_type="user") must forward the uploader's id, else
+        # knowledge-ingest rejects with personal_kb_owner_mismatch (403) and the
+        # upload hangs at `ingesting` forever (2026-05-22 PDF-upload incident).
+        assert payload["user_id"] == "user-abc"
         patches.mock_mark_done.assert_called_once()  # type: ignore[union-attr]
 
 
