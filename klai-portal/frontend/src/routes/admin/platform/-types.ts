@@ -9,6 +9,7 @@ export interface PlatformStats {
   total_bots: number
   new_bots_today: number
   total_kbs: number
+  total_templates: number
   mrr_cents: number
   arr_cents: number
 }
@@ -55,6 +56,20 @@ export interface PlatformKB {
   created_at: string
 }
 
+export interface PlatformTemplate {
+  id: number
+  name: string
+  slug: string
+  org_id: number
+  org_name: string
+  org_slug: string
+  scope: string
+  created_by: string
+  created_by_name: string | null
+  is_active: boolean
+  created_at: string
+}
+
 export interface PlatformBot {
   id: string
   name: string
@@ -80,6 +95,7 @@ export interface PlatformOrgDetail {
   users: PlatformUser[]
   bots: PlatformBot[]
   knowledge_bases: PlatformKB[]
+  templates: PlatformTemplate[]
 }
 
 export interface CreateTenantPayload {
@@ -100,7 +116,8 @@ export interface CreateTenantResult {
 export type PlatformTab =
   | 'users'
   | 'organizations'
+  | 'knowledge-bases'
+  | 'templates'
   | 'subscriptions'
   | 'bots'
-  | 'knowledge-bases'
   | 'chat-errors'

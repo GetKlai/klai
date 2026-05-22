@@ -47,6 +47,7 @@ class PlatformStats(BaseModel):
     total_bots: int
     new_bots_today: int
     total_kbs: int
+    total_templates: int
     mrr_cents: int
     arr_cents: int
 
@@ -113,11 +114,26 @@ class PlatformKB(BaseModel):
     created_at: datetime
 
 
+class PlatformTemplate(BaseModel):
+    id: int
+    name: str
+    slug: str
+    org_id: int
+    org_name: str
+    org_slug: str
+    scope: str  # "org" | "personal"
+    created_by: str
+    created_by_name: str | None  # resolved display name / email of creator
+    is_active: bool
+    created_at: datetime
+
+
 class PlatformOrgDetail(BaseModel):
     org: PlatformOrg
     users: list[PlatformUser]
     bots: list[PlatformBot]
     knowledge_bases: list[PlatformKB]
+    templates: list[PlatformTemplate]
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +182,9 @@ async def platform_stats(
                       (SELECT COUNT(*) FROM widgets) AS total_bots,
                       (SELECT COUNT(*) FROM widgets
                          WHERE created_at >= date_trunc('day', NOW())) AS new_bots_today,
-                      (SELECT COUNT(*) FROM portal_knowledge_bases) AS total_kbs
+                      (SELECT COUNT(*) FROM portal_knowledge_bases) AS total_kbs,
+                      (SELECT COUNT(*) FROM portal_templates
+                         WHERE is_active) AS total_templates
                     """
                 )
             )
@@ -181,6 +199,7 @@ async def platform_stats(
         total_bots=row.total_bots,
         new_bots_today=row.new_bots_today,
         total_kbs=row.total_kbs,
+        total_templates=row.total_templates,
         mrr_cents=0,
         arr_cents=0,
     )
@@ -350,6 +369,22 @@ async def platform_org_detail(
             )
         ).all()
 
+        template_rows = (
+            await db.execute(
+                text(
+                    "SELECT t.id, t.name, t.slug, t.scope, t.created_by, "
+                    "t.is_active, t.created_at, "
+                    "COALESCE(u.display_name, u.email) AS created_by_name "
+                    "FROM portal_templates t "
+                    "LEFT JOIN portal_users u "
+                    "  ON u.zitadel_user_id = t.created_by AND u.org_id = t.org_id "
+                    "WHERE t.org_id = :org_id "
+                    "ORDER BY t.created_at DESC"
+                ),
+                {"org_id": org_id},
+            )
+        ).all()
+
     org = PlatformOrg(
         id=org_row.id,
         name=org_row.name,
@@ -409,7 +444,29 @@ async def platform_org_detail(
         )
         for k in kb_rows
     ]
-    return PlatformOrgDetail(org=org, users=users, bots=bots, knowledge_bases=kbs)
+    templates = [
+        PlatformTemplate(
+            id=t.id,
+            name=t.name,
+            slug=t.slug,
+            org_id=org.id,
+            org_name=org.name,
+            org_slug=org.slug,
+            scope=t.scope,
+            created_by=t.created_by,
+            created_by_name=t.created_by_name,
+            is_active=t.is_active,
+            created_at=t.created_at,
+        )
+        for t in template_rows
+    ]
+    return PlatformOrgDetail(
+        org=org,
+        users=users,
+        bots=bots,
+        knowledge_bases=kbs,
+        templates=templates,
+    )
 
 
 @router.get("/bots", response_model=list[PlatformBot])
@@ -495,6 +552,56 @@ async def platform_knowledge_bases(
             org_slug=r.org_slug,
             owner_type=r.owner_type,
             visibility=r.visibility,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/templates", response_model=list[PlatformTemplate])
+async def platform_templates(
+    search: str | None = Query(default=None),
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> list[PlatformTemplate]:
+    """Cross-tenant list of all chat templates (org + personal)."""
+    await _audit(perms, "templates", search)
+    params: dict[str, object] = {}
+    where = ""
+    if search:
+        where = "WHERE (t.name ILIKE :q OR o.name ILIKE :q)"
+        params["q"] = f"%{search}%"
+
+    async with cross_org_session() as db:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT t.id, t.name, t.slug, t.scope, t.created_by, "  # noqa: S608
+                    "t.is_active, t.created_at, "
+                    "o.id AS org_id, o.name AS org_name, o.slug AS org_slug, "
+                    "COALESCE(u.display_name, u.email) AS created_by_name "
+                    "FROM portal_templates t "
+                    "JOIN portal_orgs o ON o.id = t.org_id "
+                    "LEFT JOIN portal_users u "
+                    "  ON u.zitadel_user_id = t.created_by AND u.org_id = t.org_id "
+                    f"{where} "
+                    "ORDER BY t.created_at DESC"
+                ),
+                params,
+            )
+        ).all()
+
+    return [
+        PlatformTemplate(
+            id=r.id,
+            name=r.name,
+            slug=r.slug,
+            org_id=r.org_id,
+            org_name=r.org_name,
+            org_slug=r.org_slug,
+            scope=r.scope,
+            created_by=r.created_by,
+            created_by_name=r.created_by_name,
+            is_active=r.is_active,
             created_at=r.created_at,
         )
         for r in rows

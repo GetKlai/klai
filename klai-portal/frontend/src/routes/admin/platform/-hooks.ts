@@ -10,6 +10,7 @@ import type {
   PlatformChatError,
   PlatformOrgDetail,
   PlatformKB,
+  PlatformTemplate,
   CreateTenantPayload,
   CreateTenantResult,
 } from './-types'
@@ -84,6 +85,20 @@ export function usePlatformKnowledgeBases(search: string) {
     queryFn: async () =>
       apiFetch<PlatformKB[]>(
         `/api/admin/platform/knowledge-bases${
+          search ? `?search=${encodeURIComponent(search)}` : ''
+        }`,
+      ),
+    enabled: auth.isAuthenticated,
+  })
+}
+
+export function usePlatformTemplates(search: string) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-templates', search],
+    queryFn: async () =>
+      apiFetch<PlatformTemplate[]>(
+        `/api/admin/platform/templates${
           search ? `?search=${encodeURIComponent(search)}` : ''
         }`,
       ),

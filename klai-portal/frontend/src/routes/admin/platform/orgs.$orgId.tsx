@@ -100,10 +100,11 @@ function PlatformOrgDetailPage() {
           </div>
 
           {/* Subscription summary */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             <Stat label="Gebruikers" value={data.org.user_count} />
             <Stat label="Bots" value={data.org.bot_count} />
             <Stat label="Kennisbanken" value={data.org.kb_count} />
+            <Stat label="Templates" value={data.templates.length} />
             <Stat label="Seats" value={data.org.seats} />
             <Stat label="Billing" value={data.org.billing_status} />
           </div>
@@ -200,6 +201,64 @@ function PlatformOrgDetailPage() {
                           className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}
                         >
                           {fmtDate(kb.created_at)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* Templates */}
+          <section>
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
+              Templates ({data.templates.length})
+            </h2>
+            {data.templates.length === 0 ? (
+              <p className="text-sm text-gray-400">Geen templates.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-t border-b border-gray-200">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className={TH}>Template</th>
+                      <th className={TH}>Scope</th>
+                      <th className={TH}>Gemaakt door</th>
+                      <th className={TH}>Aangemaakt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.templates.map((t) => (
+                      <tr
+                        key={t.id}
+                        className="border-b border-gray-200 last:border-b-0"
+                      >
+                        <td className={TD}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium">{t.name}</span>
+                            {!t.is_active && (
+                              <Badge variant="outline">Inactief</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-400 font-mono">
+                            {t.slug}
+                          </p>
+                        </td>
+                        <td className={TD}>
+                          <Badge
+                            variant={t.scope === 'org' ? 'success' : 'outline'}
+                          >
+                            {t.scope === 'org' ? 'Organisatie' : 'Persoonlijk'}
+                          </Badge>
+                        </td>
+                        <td className={TD}>
+                          {t.created_by_name ?? t.created_by}
+                        </td>
+                        <td
+                          className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}
+                        >
+                          {fmtDate(t.created_at)}
                         </td>
                       </tr>
                     ))}
