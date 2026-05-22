@@ -366,7 +366,7 @@ def _start_librechat_container(
         "klai.kind": "librechat",
     }
 
-    client.containers.run(  # type: ignore[call-overload]  # nosemgrep: docker-arbitrary-container-run
+    container = client.containers.run(  # type: ignore[call-overload]  # nosemgrep: docker-arbitrary-container-run
         image=settings.librechat_image,
         name=container_name,
         detach=True,
@@ -384,3 +384,17 @@ def _start_librechat_container(
     for net_name in ["klai-net-mongodb", "klai-net-meilisearch", "klai-net-redis"]:
         net = client.networks.get(net_name)
         net.connect(container_name)
+
+    # @MX:WARN: [AUTO] Restart once after all networks are attached.
+    # @MX:REASON: LibreChat configures its OpenID (OIDC) passport strategy ONCE
+    #   during boot by fetching the discovery doc from settings OPENID_ISSUER
+    #   (https://auth.getklai.com). The container boots above on klai-net only,
+    #   BEFORE the extra networks are connected, and that first discovery fetch
+    #   fails deterministically with "[openidStrategy] fetch failed -> strategy
+    #   not registered". The strategy is never re-registered, so every chat
+    #   login on the fresh tenant returns 500 ("Unknown authentication strategy
+    #   'openid'") until someone restarts the container by hand. Restarting here,
+    #   after networking is fully set up, makes discovery succeed so a
+    #   newly-provisioned tenant has working chat login on first use.
+    #   (2026-05-22 incident: every freshly-provisioned tenant's chat was dead.)
+    container.restart(timeout=10)

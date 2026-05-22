@@ -425,6 +425,11 @@ class TestCharacterizeStartLibrechatContainer:
             assert call_kwargs[1]["name"] == "librechat-acme"
             assert call_kwargs[1]["detach"] is True
             assert call_kwargs[1]["network"] == "klai-net"
+            # OIDC boot-race fix (2026-05-22): the container must be restarted
+            # once after all networks are attached so LibreChat re-runs OpenID
+            # discovery successfully — otherwise fresh tenants have dead chat
+            # login until a manual restart.
+            mock_client.containers.run.return_value.restart.assert_called_once_with(timeout=10)
 
     def test_passes_tenant_env_as_process_environment(self, tmp_path):
         from app.services.provisioning import _start_librechat_container
