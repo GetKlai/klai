@@ -31,58 +31,40 @@ _TITLE_MAX_CHARS = 120
 # First ATX-style H1 in the markdown — greedy match on the heading line only.
 _H1_PATTERN = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
 
-# Keep these in sync with knowledge_ingest.crawl4ai_client's no-selector
-# web-crawl pipeline. Single-page URL sources and website crawls should strip
-# the same page chrome before markdown extraction.
-JS_REMOVE_CHROME = """
-[
-  'nav', 'header', 'footer', 'aside',
-  '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
-  '[role="search"]',
-].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
-"""
-
-JS_EXPAND_TOGGLES = """
-document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
-document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
-await new Promise(r => setTimeout(r, 300));
-"""
-
 
 def _crawl_config() -> dict[str, Any]:
-    """Default crawler config for untrusted user-supplied URLs.
+    """Crawler config for a single user-supplied URL source.
 
-    Matches the no-selector "full pipeline" from knowledge-ingest's
-    build_crawl_config. Login-indicator selectors remain connector-only.
+    Deliberately LEAN — and deliberately different from the connector
+    full-crawl pipeline (knowledge_ingest.build_crawl_config). Do NOT "sync"
+    this back up to that config.
+
+    Single-page URL-add is interactive (the user waits on this exact fetch),
+    and every heavy crawl-pipeline knob broke real sites on 2026-05-22:
+      - ``wait_for: >N words`` + default ``networkidle`` hung the full
+        page_timeout (32s) on small/visual one-pagers → success=False → empty
+        → 502 "Pagina onbereikbaar".
+      - ``js_code`` chrome-stripping injection 500'd crawl4ai on some sites.
+      - ``excluded_tags`` (nav/header/aside) + ``PruningContentFilter`` stripped
+        one-pagers (whose content lives inside those semantic tags) to nothing.
+
+    ``wait_until=domcontentloaded`` + a page_timeout BELOW _CRAWL4AI_TIMEOUT is
+    what makes it fast and reliable. Verified: 200 + content in <1s on
+    jantinedoornbos.nl, example.com, and a large Wikipedia page. Page chrome
+    ends up in the markdown — acceptable for a single page; downstream chunking
+    handles it.
     """
     return {
         "type": "CrawlerRunConfig",
         "params": {
             "cache_mode": "bypass",
-            "word_count_threshold": 10,
-            # @MX:NOTE: [AUTO] Single-page URL-add is interactive — the user is
-            # waiting on this exact fetch. The connector full-crawl pipeline uses
-            # a stricter ``>50 words`` wait_for to skip thin pages, but here that
-            # gate caused small/visual sites (e.g. one-page portfolios) to hang
-            # the full 30s page_timeout and then return success=False → empty →
-            # 502 "Pagina onbereikbaar". A low threshold lets any real page
-            # resolve fast; truly empty pages still surface as a clean 502 via
-            # the empty-content check in extract_url. Deliberately diverges from
-            # knowledge_ingest.build_crawl_config — do NOT "sync" this back up.
-            "wait_for": ("js:() => document.body.innerText.trim().split(/\\s+/).length > 3"),
-            "js_code_before_wait": JS_REMOVE_CHROME,
-            "js_code": JS_EXPAND_TOGGLES,
-            "remove_consent_popups": True,
-            "remove_overlay_elements": True,
-            "page_timeout": 30_000,
-            "excluded_tags": ["nav", "footer", "header", "aside", "script", "style"],
+            "wait_until": "domcontentloaded",
+            # Keep below _CRAWL4AI_TIMEOUT so crawl4ai answers before the httpx
+            # client gives up (otherwise portal-api 502s with "unreachable").
+            "page_timeout": 20_000,
             "markdown_generator": {
                 "type": "DefaultMarkdownGenerator",
                 "params": {
-                    "content_filter": {
-                        "type": "PruningContentFilter",
-                        "params": {"threshold": 0.45, "threshold_type": "dynamic"},
-                    },
                     "options": {"type": "dict", "value": {"ignore_links": False, "body_width": 0}},
                 },
             },

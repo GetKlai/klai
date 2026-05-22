@@ -106,11 +106,15 @@ class TestHappyPath:
         body = _json.loads(str(sent["json"]))
         assert body["urls"] == ["https://example.com/page"]
 
-    async def test_single_page_uses_same_no_selector_sanitization_as_crawler(
+    async def test_single_page_uses_lean_crawl_config(
         self,
         mock_httpx_factory,
     ) -> None:
-        from app.services.source_extractors.url import extract_url
+        """Single-page URL-add uses a LEAN config: domcontentloaded, no wait_for
+        JS predicate, no js_code injection, no excluded_tags, no aggressive
+        content filter. Each heavy connector-pipeline knob broke real sites
+        (hang / 500 / over-prune) — see _crawl_config docstring (2026-05-22)."""
+        from app.services.source_extractors.url import _CRAWL4AI_TIMEOUT, extract_url
 
         sent = mock_httpx_factory(_crawl_response("# Hello"))
         await extract_url("https://example.com/page")
@@ -120,13 +124,15 @@ class TestHappyPath:
         body = _json.loads(str(sent["json"]))
         params = body["crawler_config"]["params"]
 
-        assert params["excluded_tags"] == ["nav", "footer", "header", "aside", "script", "style"]
-        assert "document.querySelectorAll(sel).forEach(el => el.remove())" in params["js_code_before_wait"]
-        assert "details:not([open])" in params["js_code"]
-        assert params["markdown_generator"]["params"]["content_filter"] == {
-            "type": "PruningContentFilter",
-            "params": {"threshold": 0.45, "threshold_type": "dynamic"},
-        }
+        assert params["wait_until"] == "domcontentloaded"
+        assert "wait_for" not in params
+        assert "js_code" not in params
+        assert "js_code_before_wait" not in params
+        assert "excluded_tags" not in params
+        assert "content_filter" not in params["markdown_generator"]["params"]
+        # page_timeout MUST stay below the httpx client timeout so crawl4ai
+        # answers before portal-api gives up (else 502 "unreachable").
+        assert params["page_timeout"] < _CRAWL4AI_TIMEOUT * 1000
 
 
 class TestTitleDerivation:
