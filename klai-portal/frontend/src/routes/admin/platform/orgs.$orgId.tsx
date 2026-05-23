@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
 import { useState } from 'react'
-import { ArrowLeft, Loader2, Plus, UserPlus } from 'lucide-react'
+import { ArrowLeft, Loader2, Plus, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,8 +15,10 @@ import {
   usePlatformInvite,
   usePlatformChangeRole,
   usePlatformSuspend,
+  usePlatformDeleteUser,
+  usePlatformDeprovisionTenant,
 } from './-hooks'
-import type { PlatformUser } from './-types'
+import type { PlatformOrg, PlatformUser } from './-types'
 
 export const Route = createFileRoute('/admin/platform/orgs/$orgId')({
   component: PlatformOrgDetailPage,
@@ -267,9 +269,91 @@ function PlatformOrgDetailPage() {
               </div>
             )}
           </section>
+
+          {/* Danger zone — delete the whole tenant */}
+          <TenantDangerZone org={data.org} />
         </>
       )}
     </div>
+  )
+}
+
+function TenantDangerZone({ org }: { org: PlatformOrg }) {
+  const navigate = useNavigate()
+  const deprovision = usePlatformDeprovisionTenant()
+  const [open, setOpen] = useState(false)
+  const [confirmText, setConfirmText] = useState('')
+
+  return (
+    <section className="rounded-xl border border-[var(--color-destructive)]/30 bg-white p-5">
+      <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-destructive)] mb-1">
+        Danger zone
+      </h2>
+      <p className="text-sm text-gray-500">
+        Verwijder de hele tenant: alle gebruikers, bots, kennisbanken,
+        containers en Zitadel-org worden definitief opgeruimd. Onomkeerbaar.
+      </p>
+
+      {!open ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-[var(--color-destructive)] px-4 py-2 text-sm font-medium text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+        >
+          <Trash2 className="h-4 w-4" />
+          Tenant verwijderen
+        </button>
+      ) : (
+        <div className="mt-4 space-y-2">
+          <Label htmlFor="confirm-slug">
+            Typ de slug{' '}
+            <span className="font-mono text-gray-900">{org.slug}</span> om te
+            bevestigen
+          </Label>
+          <div className="flex items-center gap-3">
+            <Input
+              id="confirm-slug"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder={org.slug}
+              className="max-w-xs"
+              autoComplete="off"
+            />
+            <Button
+              variant="destructive"
+              disabled={confirmText !== org.slug || deprovision.isPending}
+              onClick={() =>
+                deprovision.mutate(org.slug, {
+                  onSuccess: () => {
+                    toast.success('Tenant wordt verwijderd…')
+                    void navigate({ to: '/admin/platform' })
+                  },
+                  onError: (err) =>
+                    toast.error(
+                      err instanceof Error ? err.message : 'Verwijderen mislukt',
+                    ),
+                })
+              }
+            >
+              {deprovision.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Definitief verwijderen
+            </Button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                setConfirmText('')
+              }}
+              className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
+            >
+              Annuleren
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -281,8 +365,10 @@ function UsersSection({
   users: PlatformUser[]
 }) {
   const [showInvite, setShowInvite] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const changeRole = usePlatformChangeRole(orgId)
   const suspend = usePlatformSuspend(orgId)
+  const del = usePlatformDeleteUser(orgId)
 
   return (
     <section>
@@ -323,7 +409,8 @@ function UsersSection({
                   (changeRole.isPending &&
                     changeRole.variables?.zid === u.zitadel_user_id) ||
                   (suspend.isPending &&
-                    suspend.variables?.zid === u.zitadel_user_id)
+                    suspend.variables?.zid === u.zitadel_user_id) ||
+                  (del.isPending && del.variables === u.zitadel_user_id)
                 return (
                   <tr
                     key={u.zitadel_user_id}
@@ -374,43 +461,91 @@ function UsersSection({
                       </Badge>
                     </td>
                     <td className={TD}>
-                      {u.status === 'suspended' ? (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() =>
-                            suspend.mutate(
-                              { zid: u.zitadel_user_id, reactivate: true },
-                              {
-                                onSuccess: () =>
-                                  toast.success('Geheractiveerd'),
-                              },
-                            )
-                          }
-                          className="text-xs font-medium text-[var(--color-success)] hover:opacity-70 disabled:opacity-40"
-                        >
-                          Heractiveren
-                        </button>
-                      ) : u.status === 'active' ? (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() =>
-                            suspend.mutate(
-                              { zid: u.zitadel_user_id, reactivate: false },
-                              {
-                                onSuccess: () =>
-                                  toast.success('Gesuspendeerd'),
-                              },
-                            )
-                          }
-                          className="text-xs font-medium text-[var(--color-destructive)] hover:opacity-70 disabled:opacity-40"
-                        >
-                          Suspend
-                        </button>
-                      ) : (
-                        <span className="text-xs text-gray-400">—</span>
-                      )}
+                      <div className="flex items-center gap-3">
+                        {u.status === 'suspended' ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              suspend.mutate(
+                                { zid: u.zitadel_user_id, reactivate: true },
+                                {
+                                  onSuccess: () =>
+                                    toast.success('Geheractiveerd'),
+                                },
+                              )
+                            }
+                            className="text-xs font-medium text-[var(--color-success)] hover:opacity-70 disabled:opacity-40"
+                          >
+                            Heractiveren
+                          </button>
+                        ) : u.status === 'active' ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              suspend.mutate(
+                                { zid: u.zitadel_user_id, reactivate: false },
+                                {
+                                  onSuccess: () =>
+                                    toast.success('Gesuspendeerd'),
+                                },
+                              )
+                            }
+                            className="text-xs font-medium text-[var(--color-destructive)] hover:opacity-70 disabled:opacity-40"
+                          >
+                            Suspend
+                          </button>
+                        ) : null}
+
+                        {confirmDelete === u.zitadel_user_id ? (
+                          <span className="inline-flex items-center gap-2 text-xs whitespace-nowrap">
+                            <span className="text-gray-500">Zeker?</span>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                del.mutate(u.zitadel_user_id, {
+                                  onSuccess: () => {
+                                    toast.success('Gebruiker verwijderd')
+                                    setConfirmDelete(null)
+                                  },
+                                  onError: (err) => {
+                                    toast.error(
+                                      err instanceof Error
+                                        ? err.message
+                                        : 'Verwijderen mislukt',
+                                    )
+                                    setConfirmDelete(null)
+                                  },
+                                })
+                              }
+                              className="font-medium text-[var(--color-destructive)] hover:opacity-70 disabled:opacity-40"
+                            >
+                              {busy ? 'Bezig…' : 'Ja, verwijder'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDelete(null)}
+                              className="text-gray-400 hover:text-gray-900"
+                            >
+                              Nee
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              setConfirmDelete(u.zitadel_user_id)
+                            }
+                            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-destructive)] hover:opacity-70 disabled:opacity-40"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Verwijderen
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )

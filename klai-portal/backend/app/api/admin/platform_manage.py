@@ -256,6 +256,94 @@ async def platform_reactivate(
 
 
 # ---------------------------------------------------------------------------
+# Hard-delete a user (everything)
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/organizations/{org_id}/users/{zitadel_user_id}",
+    response_model=MessageResponse,
+)
+async def platform_delete_user(
+    org_id: int,
+    zitadel_user_id: str,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> MessageResponse:
+    """Hard-delete a user from a tenant — everything that is theirs.
+
+    Purges their KBs (personal + solely-owned org KBs), revokes partner API
+    keys + MCP tokens, deletes the Zitadel identity (frees the email), and
+    removes the ``portal_users`` row. Irreversible. Platform-admin only.
+
+    Deleting the sole owner of a tenant leaves an empty org — use the
+    tenant-deprovision endpoint to remove the whole tenant instead.
+    """
+    from app.core.config import settings  # local import avoids cycle
+    from app.services.kb_offboarding import (
+        KbDisposition,
+        apply_dispositions,
+        compute_offboard_preview,
+        revoke_user_credentials,
+    )
+
+    async with tenant_scoped_session(org_id) as db:
+        org = (await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))).scalar_one_or_none()
+        if org is None:
+            raise HTTPException(status_code=404, detail="Organisatie niet gevonden")
+        user = (
+            await db.execute(
+                select(PortalUser).where(
+                    PortalUser.zitadel_user_id == zitadel_user_id,
+                    PortalUser.org_id == org_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
+
+        # 1. Purge KBs: personal + solely-owned org KBs (complete delete).
+        preview = await compute_offboard_preview(zitadel_user_id, org_id, db)
+        dispositions = [
+            KbDisposition(kb_id=kb.kb_id, action="delete")
+            for kb in (*preview.personal_kbs, *preview.org_kbs_solely_owned)
+        ]
+        if dispositions:
+            await apply_dispositions(zitadel_user_id, dispositions, perms.user_id, org, db)
+
+        # 2. Revoke partner API keys + MCP tokens.
+        api_keys, mcp_tokens = await revoke_user_credentials(zitadel_user_id, org_id, db)
+
+        # 3. Delete the Zitadel identity (frees the email). External call first:
+        #    a failure here aborts before any DB commit (session rolls back).
+        try:
+            await zitadel.remove_user(
+                org_id=settings.zitadel_portal_org_id,
+                zitadel_user_id=zitadel_user_id,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Zitadel-verwijdering mislukt: {exc}") from exc
+
+        # 4. Delete the portal_users row (cascades memberships/capabilities).
+        await db.delete(user)
+        await db.commit()
+
+    await log_event(
+        org_id=perms.org_id,
+        actor=perms.user_id,
+        action="platform_admin.user_deleted",
+        resource_type="user",
+        resource_id=zitadel_user_id,
+        details={
+            "target_org_id": org_id,
+            "kbs_deleted": len(dispositions),
+            "api_keys_revoked": api_keys,
+            "mcp_tokens_revoked": mcp_tokens,
+        },
+    )
+    return MessageResponse(message="Gebruiker volledig verwijderd.")
+
+
+# ---------------------------------------------------------------------------
 # Invite / onboard into a target tenant
 # ---------------------------------------------------------------------------
 
