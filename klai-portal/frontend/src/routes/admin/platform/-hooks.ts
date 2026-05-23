@@ -208,3 +208,34 @@ export function usePlatformSuspend(orgId: string) {
     },
   })
 }
+
+// Hard-delete a user (everything): Zitadel identity, personal + solely-owned
+// KBs, API keys + MCP tokens, and the portal_users row. Irreversible.
+export function usePlatformDeleteUser(orgId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (zid: string) =>
+      apiFetch(`/api/admin/platform/organizations/${orgId}/users/${zid}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-org-detail', orgId] })
+      void qc.invalidateQueries({ queryKey: ['platform-users'] })
+      void qc.invalidateQueries({ queryKey: ['platform-stats'] })
+    },
+  })
+}
+
+// Deprovision (delete) an entire tenant by slug — runs the 16-step
+// orchestrator in the background. Returns 202 {status: "queued"}.
+export function usePlatformDeprovisionTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (slug: string) =>
+      apiFetch(`/api/admin/orgs/${slug}/deprovision`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-orgs'] })
+      void qc.invalidateQueries({ queryKey: ['platform-stats'] })
+    },
+  })
+}
