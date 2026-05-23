@@ -68,6 +68,7 @@ import { Route as AdminWidgetsNewRouteImport } from './routes/admin/widgets/new'
 import { Route as AdminWidgetsIdRouteImport } from './routes/admin/widgets/$id'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminTemplatesNewRouteImport } from './routes/admin/templates/new'
+import { Route as AdminPlatformOnboardingHowtoRouteImport } from './routes/admin/platform/onboarding-howto'
 import { Route as AdminPlatformNewRouteImport } from './routes/admin/platform/new'
 import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
 import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
@@ -403,6 +404,12 @@ const AdminTemplatesNewRoute = AdminTemplatesNewRouteImport.update({
   path: '/templates/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminPlatformOnboardingHowtoRoute =
+  AdminPlatformOnboardingHowtoRouteImport.update({
+    id: '/platform/onboarding-howto',
+    path: '/platform/onboarding-howto',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
 const AdminPlatformNewRoute = AdminPlatformNewRouteImport.update({
   id: '/platform/new',
   path: '/platform/new',
@@ -650,6 +657,7 @@ export interface FileRoutesByFullPath {
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/platform/new': typeof AdminPlatformNewRoute
+  '/admin/platform/onboarding-howto': typeof AdminPlatformOnboardingHowtoRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -743,6 +751,7 @@ export interface FileRoutesByTo {
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/platform/new': typeof AdminPlatformNewRoute
+  '/admin/platform/onboarding-howto': typeof AdminPlatformOnboardingHowtoRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -842,6 +851,7 @@ export interface FileRoutesById {
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/platform/new': typeof AdminPlatformNewRoute
+  '/admin/platform/onboarding-howto': typeof AdminPlatformOnboardingHowtoRoute
   '/admin/templates/new': typeof AdminTemplatesNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
@@ -942,6 +952,7 @@ export interface FileRouteTypes {
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/platform/new'
+    | '/admin/platform/onboarding-howto'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -1035,6 +1046,7 @@ export interface FileRouteTypes {
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/platform/new'
+    | '/admin/platform/onboarding-howto'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -1133,6 +1145,7 @@ export interface FileRouteTypes {
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/platform/new'
+    | '/admin/platform/onboarding-howto'
     | '/admin/templates/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
@@ -1626,6 +1639,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminTemplatesNewRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/platform/onboarding-howto': {
+      id: '/admin/platform/onboarding-howto'
+      path: '/platform/onboarding-howto'
+      fullPath: '/admin/platform/onboarding-howto'
+      preLoaderRoute: typeof AdminPlatformOnboardingHowtoRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/platform/new': {
       id: '/admin/platform/new'
       path: '/platform/new'
@@ -1929,6 +1949,7 @@ interface AdminRouteRouteChildren {
   AdminMcpsServerIdRoute: typeof AdminMcpsServerIdRoute
   AdminMcpsNewRoute: typeof AdminMcpsNewRoute
   AdminPlatformNewRoute: typeof AdminPlatformNewRoute
+  AdminPlatformOnboardingHowtoRoute: typeof AdminPlatformOnboardingHowtoRoute
   AdminTemplatesNewRoute: typeof AdminTemplatesNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminWidgetsIdRoute: typeof AdminWidgetsIdRoute
@@ -1965,6 +1986,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminMcpsServerIdRoute: AdminMcpsServerIdRoute,
   AdminMcpsNewRoute: AdminMcpsNewRoute,
   AdminPlatformNewRoute: AdminPlatformNewRoute,
+  AdminPlatformOnboardingHowtoRoute: AdminPlatformOnboardingHowtoRoute,
   AdminTemplatesNewRoute: AdminTemplatesNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminWidgetsIdRoute: AdminWidgetsIdRoute,

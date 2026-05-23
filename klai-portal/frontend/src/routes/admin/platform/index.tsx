@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import {
   Activity,
+  BookOpen,
   Bug,
   ExternalLink,
   Loader2,
@@ -83,14 +84,26 @@ function PlatformConsole() {
             zichtbaar voor Klai-staff.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void navigate({ to: '/admin/platform/new' })}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
-        >
-          <Plus className="h-4 w-4" />
-          Nieuwe tenant
-        </button>
+        <div className="flex shrink-0 items-center gap-3">
+          <button
+            type="button"
+            onClick={() =>
+              void navigate({ to: '/admin/platform/onboarding-howto' })
+            }
+            className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 klai-hover"
+          >
+            <BookOpen className="h-4 w-4" />
+            Onboarding how-to
+          </button>
+          <button
+            type="button"
+            onClick={() => void navigate({ to: '/admin/platform/new' })}
+            className="inline-flex items-center gap-1.5 rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
+          >
+            <Plus className="h-4 w-4" />
+            Nieuwe tenant
+          </button>
+        </div>
       </div>
 
       {/* Stat cards */}
