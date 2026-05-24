@@ -114,7 +114,7 @@ services:
     # is recognised by `deploy/check-image-pullable.sh` as locally-built and
     # skipped from the registry-manifest check. Bumping = `git clone v0.10.x`
     # + `docker build` on gpu-01; runbook in `docs/runbooks/transcription-service-bump.md`.
-    image: vexaai/transcription-service:0.10.6-local-260503-0858
+    image: vexaai/transcription-service:0.10.6.2-local-260524-1610
     restart: unless-stopped
     environment:
       WORKER_ID: "1"
@@ -145,7 +145,7 @@ services:
 
   transcription-worker-2:
     # See note on transcription-worker-1 — locally-built, not on Docker Hub.
-    image: vexaai/transcription-service:0.10.6-local-260503-0858
+    image: vexaai/transcription-service:0.10.6.2-local-260524-1610
     restart: unless-stopped
     environment:
       WORKER_ID: "2"

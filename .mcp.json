@@ -23,10 +23,10 @@
       "env": {}
     },
     "codeindex": {
-      "$comment": "Graph-powered code intelligence. Install: npm i -g klai-private/tools/codeindex-1.3.56.tgz && codeindex analyze",
+      "$comment": "Graph-powered code intelligence. Launcher repairs stale canonical index/serve locks before starting stdio MCP. Manual fix: scripts/codeindex-health.sh --repair --restart-mcp",
       "type": "stdio",
-      "command": "codeindex",
-      "args": ["mcp"],
+      "command": "bash",
+      "args": [".claude/scripts/codeindex-mcp-launcher.sh"],
       "env": {}
     },
     "grafana": {

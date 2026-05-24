@@ -23,7 +23,7 @@ across upstream minor versions; mixed-version is fine.
 
 ```bash
 # 1. Verify upstream has the tag with the service.
-gh api repos/Vexa-ai/vexa/contents/services/transcription-service?ref=v0.10.6 --jq '.[] | .name'
+gh api repos/Vexa-ai/vexa/contents/services/transcription-service?ref=v0.10.6.2 --jq '.[] | .name'
 # Expect: Dockerfile, main.py, nginx.conf, requirements.txt, …
 
 # 2. Verify gpu-01 has headroom.
@@ -39,13 +39,13 @@ ssh core-01 "ssh -i /opt/klai/gpu-tunnel-key root@5.9.10.215 '
 ## Build (gpu-01, leaves running workers untouched)
 
 ```bash
-TAG="0.10.6-local-$(date +%y%m%d-%H%M)"   # local convention; check-image-pullable.sh accepts this
+TAG="0.10.6.2-local-$(date +%y%m%d-%H%M)"   # local convention; check-image-pullable.sh accepts this
 
 ssh core-01 "ssh -i /opt/klai/gpu-tunnel-key root@5.9.10.215 '
   set -e
   cd /opt
   [ -d vexa-src ] && rm -rf vexa-src
-  git clone --depth 1 --branch v0.10.6 https://github.com/Vexa-ai/vexa.git vexa-src
+  git clone --depth 1 --branch v0.10.6.2 https://github.com/Vexa-ai/vexa.git vexa-src
   cd vexa-src/services/transcription-service
   docker build -t vexaai/transcription-service:$TAG .
   docker images vexaai/transcription-service
