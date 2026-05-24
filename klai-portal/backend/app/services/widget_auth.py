@@ -138,14 +138,20 @@ def decode_session_token(token: str, master_secret: str, tenant_slug: str) -> di
     return jwt.decode(token, derived_key, algorithms=["HS256"])
 
 
-def origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
+def origin_allowed(
+    origin: str,
+    allowed_origins: list[str],
+    *,
+    allow_any_origin: bool = False,
+) -> bool:
     """Validate origin against allowed list.
 
     # @MX:ANCHOR: [AUTO] CORS origin gate — called for every widget request
-    # @MX:REASON: UX gate (lock to specific sites once admin configures it).
-    #             Defaults open because the widget_id is the real bearer
-    #             credential; locking-by-origin is optional hardening.
-    # @MX:SPEC: SPEC-WIDGET-002
+    # @MX:REASON: Default-deny since REQ-2 (SPEC-SEC-CROSS-TENANT-FOLLOWUP-001):
+    #             empty allowed_origins no longer grants open access. Callers
+    #             must pass allow_any_origin=True (from widget_row.allow_any_origin)
+    #             to restore open-world behaviour for explicitly opted-in widgets.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
 
     Supports two formats:
     - Exact match: "https://example.com" matches only that origin.
@@ -154,22 +160,27 @@ def origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
       the bare domain (https://example.com). List both if you need both.
 
     Trailing slashes are stripped before comparison.
-    An empty allowed list means "no restriction" — the widget loads on
-    any origin. This is the default for newly created widgets so the
-    embed "just works" everywhere; admins can lock it down later on
-    the Insluiten tab by listing the hosts they trust. Downstream
-    security (chat completions, append, etc.) is the HS256 session
-    token bound to the widget_id, not this origin check.
+
+    An empty allowed_origins list denies ALL origins unless allow_any_origin=True.
+    Admins can either list specific domains in allowed_origins (lock-down mode) or
+    set allow_any_origin=True (open mode — explicitly opted-in).  This replaces the
+    pre-REQ-2 "empty list = open world" behaviour which silently defaulted every
+    newly-created widget to a universal phishing vector.
 
     Args:
         origin: The Origin header value from the request
         allowed_origins: List of allowed origin strings from widget_config
+        allow_any_origin: When True, bypass origin checking entirely (widget DB column)
 
     Returns:
-        True if the list is empty (open) OR origin is in the list.
+        True if allow_any_origin is True OR origin is in the allowed list.
+        False when allowed_origins is empty and allow_any_origin is False.
     """
-    if not allowed_origins:
+    if allow_any_origin:
         return True
+
+    if not allowed_origins:
+        return False
 
     origin_parts = _parse_origin(origin)
     if origin_parts is None:

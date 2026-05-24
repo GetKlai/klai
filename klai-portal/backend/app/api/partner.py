@@ -200,6 +200,7 @@ async def _audit_streaming_wrapper(
     widget_id: str,
     org_id: int,
     session_key: str,
+    loaded_origin: str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Tee the SSE stream, capture composed text + sources, log the
     assistant turn once the generator completes.
@@ -232,6 +233,7 @@ async def _audit_streaming_wrapper(
                     role="assistant",
                     content=final_text,
                     sources=composed_sources or None,
+                    loaded_origin=loaded_origin,
                 )
             )
             _pending.add(task)
@@ -425,6 +427,7 @@ async def chat_completions(
                         content=last_user_msg,
                         ip_hash=audit_ip_hash,
                         user_agent_hash=audit_ua_hash,
+                        loaded_origin=http_request.headers.get("origin") or None,
                     )
                 )
                 _pending.add(task)
@@ -455,6 +458,7 @@ async def chat_completions(
                 widget_id=audit_widget_id,  # type: ignore[arg-type]
                 org_id=auth.org_id,
                 session_key=audit_session_key,  # type: ignore[arg-type]
+                loaded_origin=http_request.headers.get("origin") or None,
             )
         return StreamingResponse(
             content=streaming_gen,
@@ -488,6 +492,7 @@ async def chat_completions(
                     role="assistant",
                     content=assistant_text,
                     sources=assistant_sources,
+                    loaded_origin=http_request.headers.get("origin") or None,
                 )
             )
             _pending.add(task)
@@ -821,7 +826,7 @@ async def widget_config(
     widget_config_data = widget_row.widget_config or {}
     allowed_origins = widget_config_data.get("allowed_origins", [])
 
-    if not origin or not origin_allowed(origin, allowed_origins):
+    if not origin or not origin_allowed(origin, allowed_origins, allow_any_origin=widget_row.allow_any_origin):
         return Response(
             content='{"detail":"Origin not allowed"}',
             status_code=403,
@@ -1005,7 +1010,7 @@ async def widget_config_preflight(
     widget_config_data = widget_row.widget_config or {}
     allowed_origins = widget_config_data.get("allowed_origins", [])
 
-    if not origin or not origin_allowed(origin, allowed_origins):
+    if not origin or not origin_allowed(origin, allowed_origins, allow_any_origin=widget_row.allow_any_origin):
         return Response(status_code=204)
 
     return Response(

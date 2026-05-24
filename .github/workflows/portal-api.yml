@@ -411,6 +411,23 @@ jobs:
           strip_components: 2
           overwrite: true
 
+      # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2: cohort gate.
+      # Runs before the deploy to ensure the allow_any_origin data-migration
+      # only affects internal widgets. Aborts if impacted_widgets > 5 or any
+      # external tenant would be affected. The script exits 0 if safe.
+      - name: REQ-2 widget cohort impact gate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            cd /opt/klai
+            PLATFORM_ORG_SLUG="${{ vars.PLATFORM_ORG_SLUG || 'getklai' }}" \
+              bash klai-portal/backend/scripts/verify_widget_cohort.sh
+
       # 2026-05-05 mailer-incident class: this step previously had no `if:`
       # gate, so PR builds also auto-deployed `:latest` to prod. Same
       # pattern that bit klai-mailer post PR #319 → hotfix #322.

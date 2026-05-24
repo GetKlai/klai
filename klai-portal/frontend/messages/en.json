@@ -1510,6 +1510,8 @@
   "admin_widgets_widget_system_prompt_help": "Optional private base prompt for how this agent should answer. These instructions are sent to the model, but not exposed in the embed config.",
   "admin_widgets_widget_system_prompt_placeholder": "Answer in the organisation's voice: direct, concise, and evidence-led. Start with the answer. Do not use hype, emoji, or closing pleasantries. If the knowledge base does not say it, say so plainly.",
   "admin_widgets_widget_origins_help": "Optional. By default the agent loads on any site that embeds the script. To restrict it to specific domains, list them here — one per line, starting with https:// (for example: https://mybusiness.com). This prevents others from copying your snippet and using the agent on their own site.",
+  "admin_widgets_allow_any_origin_label": "Allow any origin",
+  "admin_widgets_allow_any_origin_warning": "Conversations from any website will be attributed to this widget — only enable for public chatbots.",
   "admin_widgets_wizard_embed_preview_label": "Embed code",
   "admin_widgets_wizard_embed_preview_help": "After you create the integration, you'll get a unique agent ID. Paste the final snippet into any HTML page on an allowed origin.",
   "admin_widgets_wizard_step_embed": "Embed",
