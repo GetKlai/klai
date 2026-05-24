@@ -133,6 +133,13 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     if org is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
+    # REQ-1 (Finding B-1): chat path — 403 (JWT identifies widget so existence is moot).
+    # @MX:ANCHOR: [AUTO] Platform-unlock gate on widget chat-completions JWT path
+    # @MX:REASON: Admin disabling 'widgets' must block chat, not just the embed mint;
+    # 403 is correct here because the JWT proves the widget exists.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1
+    assert_platform_unlocked(org, "widgets")
+
     # Verified decode using the per-tenant derived key.
     try:
         payload = decode_session_token(
