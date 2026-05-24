@@ -42,7 +42,9 @@ from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
 from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.default_knowledge_bases import create_default_personal_kb
+from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.provisioning import provision_tenant
+from app.services.user_memberships import get_user_membership_summary
 from app.services.zitadel import zitadel
 
 
@@ -108,6 +110,14 @@ async def _load_org_or_404(org_id: int) -> PortalOrg:
     return org
 
 
+async def _rollback_zitadel_user(zitadel_user_id: str) -> None:
+    with suppress(Exception):
+        await zitadel.remove_user(
+            org_id=settings_zitadel_portal_org_id(),
+            zitadel_user_id=zitadel_user_id,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Role change
 # ---------------------------------------------------------------------------
@@ -161,6 +171,7 @@ async def platform_update_role(
         user.role = body.role
         await db.commit()
 
+    fire_role_change_notification(zitadel_user_id)
     await log_event(
         org_id=perms.org_id,
         actor=perms.user_id,
@@ -205,6 +216,7 @@ async def platform_suspend(
         user.status = "suspended"
         await db.commit()
 
+    fire_role_change_notification(zitadel_user_id)
     await log_event(
         org_id=perms.org_id,
         actor=perms.user_id,
@@ -244,6 +256,7 @@ async def platform_reactivate(
         user.status = "active"
         await db.commit()
 
+    fire_role_change_notification(zitadel_user_id)
     await log_event(
         org_id=perms.org_id,
         actor=perms.user_id,
@@ -278,13 +291,15 @@ async def platform_delete_user(
     Deleting the sole owner of a tenant leaves an empty org — use the
     tenant-deprovision endpoint to remove the whole tenant instead.
     """
-    from app.core.config import settings  # local import avoids cycle
     from app.services.kb_offboarding import (
         KbDisposition,
         apply_dispositions,
         compute_offboard_preview,
         revoke_user_credentials,
     )
+
+    if zitadel_user_id == perms.user_id:
+        raise HTTPException(status_code=409, detail="Platform-admin kan zichzelf niet verwijderen.")
 
     async with tenant_scoped_session(org_id) as db:
         org = (await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))).scalar_one_or_none()
@@ -301,6 +316,17 @@ async def platform_delete_user(
         if user is None:
             raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
 
+        membership_summary = await get_user_membership_summary(
+            zitadel_user_id,
+            excluding_org_id=org_id,
+        )
+        if membership_summary.is_platform_admin:
+            raise HTTPException(
+                status_code=409,
+                detail="Platform-admin identities kunnen niet via tenant-delete worden verwijderd.",
+            )
+        delete_global_identity = membership_summary.remaining_count == 0
+
         # 1. Purge KBs: personal + solely-owned org KBs (complete delete).
         preview = await compute_offboard_preview(zitadel_user_id, org_id, db)
         dispositions = [
@@ -313,20 +339,22 @@ async def platform_delete_user(
         # 2. Revoke partner API keys + MCP tokens.
         api_keys, mcp_tokens = await revoke_user_credentials(zitadel_user_id, org_id, db)
 
-        # 3. Delete the Zitadel identity (frees the email). External call first:
-        #    a failure here aborts before any DB commit (session rolls back).
-        try:
-            await zitadel.remove_user(
-                org_id=settings.zitadel_portal_org_id,
-                zitadel_user_id=zitadel_user_id,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Zitadel-verwijdering mislukt: {exc}") from exc
+        # 3. Delete the global Zitadel identity only when this was the last
+        # tenant membership. Multi-tenant users keep their login elsewhere.
+        if delete_global_identity:
+            try:
+                await zitadel.remove_user(
+                    org_id=settings_zitadel_portal_org_id(),
+                    zitadel_user_id=zitadel_user_id,
+                )
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"Zitadel-verwijdering mislukt: {exc}") from exc
 
         # 4. Delete the portal_users row (cascades memberships/capabilities).
         await db.delete(user)
         await db.commit()
 
+    fire_role_change_notification(zitadel_user_id)
     await log_event(
         org_id=perms.org_id,
         actor=perms.user_id,
@@ -338,9 +366,12 @@ async def platform_delete_user(
             "kbs_deleted": len(dispositions),
             "api_keys_revoked": api_keys,
             "mcp_tokens_revoked": mcp_tokens,
+            "global_identity_deleted": delete_global_identity,
+            "remaining_membership_count": membership_summary.remaining_count,
         },
     )
-    return MessageResponse(message="Gebruiker volledig verwijderd.")
+    message = "Gebruiker volledig verwijderd." if delete_global_identity else "Gebruiker uit tenant verwijderd."
+    return MessageResponse(message=message)
 
 
 # ---------------------------------------------------------------------------
@@ -388,22 +419,7 @@ async def platform_invite(
         raise HTTPException(status_code=502, detail=f"Zitadel invite mislukt: {exc}") from exc
     zitadel_user_id: str = user_data["userId"]
 
-    # 2. Send the activation mail with the Klai url-template.
-    invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
-    try:
-        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
-    except Exception as exc:
-        logger.exception("platform_invite_mail_failed", zitadel_user_id=zitadel_user_id)
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "invite_partial_failure",
-                "user_id": zitadel_user_id,
-                "message": "User aangemaakt maar invite-mail mislukt.",
-            },
-        ) from exc
-
-    # 3. Admin-only Zitadel grant.
+    # 2. Admin-only Zitadel grant.
     zitadel_role = _ZITADEL_ROLE_BY_PORTAL_ROLE.get(body.role)
     if zitadel_role is not None:
         try:
@@ -414,20 +430,36 @@ async def platform_invite(
             )
         except Exception as exc:
             logger.exception("platform_invite_grant_failed", zitadel_user_id=zitadel_user_id)
+            await _rollback_zitadel_user(zitadel_user_id)
             raise HTTPException(status_code=502, detail=f"Rol-grant mislukt: {exc}") from exc
 
-    # 4. portal_user row + personal KB in the TARGET tenant context.
-    async with tenant_scoped_session(org_id) as db:
-        user_row = PortalUser(
-            zitadel_user_id=zitadel_user_id,
-            org_id=org_id,
-            role=body.role,
-            seat_type=str(suggest_seat(body.role)),
-            preferred_language=body.preferred_language,
-        )
-        db.add(user_row)
-        await create_default_personal_kb(zitadel_user_id, org_id, db)
-        await db.commit()
+    # 3. portal_user row + personal KB in the TARGET tenant context.
+    try:
+        async with tenant_scoped_session(org_id) as db:
+            user_row = PortalUser(
+                zitadel_user_id=zitadel_user_id,
+                org_id=org_id,
+                role=body.role,
+                seat_type=str(suggest_seat(body.role)),
+                preferred_language=body.preferred_language,
+            )
+            db.add(user_row)
+            await create_default_personal_kb(zitadel_user_id, org_id, db)
+            await db.commit()
+    except Exception:
+        logger.exception("platform_invite_db_failed", zitadel_user_id=zitadel_user_id)
+        await _rollback_zitadel_user(zitadel_user_id)
+        raise
+
+    # 4. Send the activation mail after the portal row exists. If mail fails,
+    # keep the valid portal account so support can retry delivery.
+    invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
+    mail_sent = True
+    try:
+        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
+    except Exception:
+        logger.exception("platform_invite_mail_failed", zitadel_user_id=zitadel_user_id)
+        mail_sent = False
 
     await log_event(
         org_id=perms.org_id,
@@ -440,11 +472,17 @@ async def platform_invite(
             "target_org_slug": org.slug,
             "role": body.role,
             "url_template_host": urlparse(invite_url_template).netloc,
+            "invite_mail_sent": mail_sent,
         },
+    )
+    message = (
+        f"Uitnodiging verstuurd naar {body.email}."
+        if mail_sent
+        else f"User aangemaakt voor {body.email}, maar invite-mail kon niet worden verstuurd."
     )
     return PlatformInviteResponse(
         user_id=zitadel_user_id,
-        message=f"Uitnodiging verstuurd naar {body.email}.",
+        message=message,
     )
 
 
@@ -492,10 +530,9 @@ async def platform_create_tenant(
         raise HTTPException(status_code=502, detail=f"Org-creatie mislukt: {exc}") from exc
     zitadel_org_id: str = org_data["id"]
 
-    # Orphan-prevention: every failure AFTER create_org must cascade-delete
-    # the Zitadel org, else a half-built tenant leaks (and retry with the same
-    # email/company 409s on "already exists"). delete_org is idempotent and
-    # cascades users + grants.
+    # Orphan-prevention: every failure AFTER create_org must delete both the
+    # new tenant org and, once created below, the owner user in the central
+    # portal org.
     async def _rollback_zitadel_org() -> None:
         with suppress(Exception):
             await zitadel.delete_org(zitadel_org_id)
@@ -515,9 +552,7 @@ async def platform_create_tenant(
         raise HTTPException(status_code=502, detail=f"Owner-creatie mislukt: {exc}") from exc
     owner_user_id: str = user_data["userId"]
 
-    invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
     try:
-        await zitadel.send_invite_code(owner_user_id, url_template=invite_url_template)
         await zitadel.grant_user_role(
             org_id=settings_zitadel_portal_org_id(),
             user_id=owner_user_id,
@@ -525,6 +560,7 @@ async def platform_create_tenant(
         )
     except Exception as exc:
         logger.exception("platform_create_tenant_owner_setup_failed", email=body.owner_email)
+        await _rollback_zitadel_user(owner_user_id)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Owner-setup mislukt: {exc}") from exc
 
@@ -555,8 +591,17 @@ async def platform_create_tenant(
     except Exception as exc:
         await db.rollback()
         logger.exception("platform_create_tenant_db_failed", email=body.owner_email)
+        await _rollback_zitadel_user(owner_user_id)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Opslaan mislukt: {exc}") from exc
+
+    invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
+    mail_sent = True
+    try:
+        await zitadel.send_invite_code(owner_user_id, url_template=invite_url_template)
+    except Exception:
+        logger.exception("platform_create_tenant_owner_mail_failed", email=body.owner_email)
+        mail_sent = False
 
     # 4. Cache + provisioning. Local import avoids an auth.py import cycle.
     from app.api.auth import invalidate_tenant_slug_cache
@@ -574,13 +619,19 @@ async def platform_create_tenant(
             "slug": org_row.slug,
             "company_name": body.company_name,
             "owner_email": body.owner_email,
+            "invite_mail_sent": mail_sent,
         },
+    )
+    message = (
+        f"Tenant '{body.company_name}' aangemaakt. Provisioning gestart."
+        if mail_sent
+        else f"Tenant '{body.company_name}' aangemaakt, maar owner invite-mail kon niet worden verstuurd."
     )
     return CreateTenantResponse(
         org_id=org_row.id,
         slug=org_row.slug,
         owner_user_id=owner_user_id,
-        message=f"Tenant '{body.company_name}' aangemaakt. Provisioning gestart.",
+        message=message,
     )
 
 

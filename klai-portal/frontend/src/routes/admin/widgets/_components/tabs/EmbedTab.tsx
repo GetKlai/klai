@@ -51,10 +51,14 @@ export function EmbedTab({ widget }: Props) {
   const [originsRaw, setOriginsRaw] = useState(
     config.allowed_origins.join('\n'),
   )
+  const [publicShareEnabled, setPublicShareEnabled] = useState(
+    widget.public_share_enabled ?? false,
+  )
 
   useEffect(() => {
     setOriginsRaw(config.allowed_origins.join('\n'))
-  }, [config.allowed_origins])
+    setPublicShareEnabled(widget.public_share_enabled ?? false)
+  }, [config.allowed_origins, widget.public_share_enabled])
 
   const origins = parseOrigins(originsRaw)
   const invalidOrigins = origins.filter((o) => !isValidOrigin(o))
@@ -67,6 +71,7 @@ export function EmbedTab({ widget }: Props) {
   )
 
   function copyShareLink() {
+    if (!publicShareEnabled) return
     void navigator.clipboard.writeText(shareUrl)
     toast.success('Link gekopieerd')
   }
@@ -77,6 +82,7 @@ export function EmbedTab({ widget }: Props) {
   }
 
   function openTest() {
+    if (!publicShareEnabled) return
     // Embedded widget test (floating bubble preview) — TWD's
     // /widget-test?bot=...&w=... equivalent. Use the id query
     // param so the widget-test page loads the public-bot-config
@@ -95,7 +101,7 @@ export function EmbedTab({ widget }: Props) {
       allowed_origins: origins,
     }
     updateMutation.mutate(
-      { widget_config: next },
+      { widget_config: next, public_share_enabled: publicShareEnabled },
       {
         onSuccess: () => toast.success(m.admin_shared_success_updated()),
       },
@@ -113,18 +119,37 @@ export function EmbedTab({ widget }: Props) {
             Deelbare link
           </span>
         </div>
+        <label htmlFor="widget-public-share" className="mb-3 flex items-start gap-3 rounded-md border border-[var(--color-rl-border)] bg-white p-3 cursor-pointer">
+          <input
+            id="widget-public-share"
+            type="checkbox"
+            checked={publicShareEnabled}
+            onChange={(e) => setPublicShareEnabled(e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[var(--color-rl-accent)]"
+          />
+          <div>
+            <p className="text-sm font-medium text-[var(--color-rl-dark)]">
+              Publiceer deelbare bot-link
+            </p>
+            <p className="text-xs text-gray-500">
+              Iedereen met deze link kan chatten met de gekoppelde kennisbanken.
+            </p>
+          </div>
+        </label>
         <div className="flex items-center gap-2">
           <input
             type="text"
             readOnly
             value={shareUrl}
+            disabled={!publicShareEnabled}
             onFocus={(e) => e.currentTarget.select()}
-            className="flex-1 rounded-md border border-[var(--color-rl-border)] bg-white px-3 py-2 font-mono text-xs text-[var(--color-rl-dark)] outline-none focus:ring-2 focus:ring-[var(--color-rl-accent)]/40"
+            className="flex-1 rounded-md border border-[var(--color-rl-border)] bg-white px-3 py-2 font-mono text-xs text-[var(--color-rl-dark)] outline-none focus:ring-2 focus:ring-[var(--color-rl-accent)]/40 disabled:opacity-50"
           />
           <button
             type="button"
             onClick={copyShareLink}
-            className="inline-flex items-center justify-center rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+            disabled={!publicShareEnabled}
+            className="inline-flex items-center justify-center rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Kopieer
           </button>
@@ -153,7 +178,8 @@ export function EmbedTab({ widget }: Props) {
           <button
             type="button"
             onClick={openTest}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-rl-accent)] px-4 py-2 text-sm font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-accent-hover)]"
+            disabled={!publicShareEnabled}
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-rl-accent)] px-4 py-2 text-sm font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-accent-hover)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Eye className="h-4 w-4" />
             Test

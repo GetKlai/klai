@@ -31,6 +31,7 @@ export interface WidgetResponse {
   description: string | null
   widget_id: string
   widget_config: WidgetConfig
+  public_share_enabled: boolean
   rate_limit_rpm: number
   kb_access_count: number
   last_used_at: string | null
@@ -48,6 +49,7 @@ export interface CreateWidgetRequest {
   kb_ids: number[]
   rate_limit_rpm: number
   widget_config: WidgetConfig | null
+  public_share_enabled?: boolean
 }
 
 export interface UpdateWidgetRequest {
@@ -56,6 +58,7 @@ export interface UpdateWidgetRequest {
   kb_ids?: number[]
   rate_limit_rpm?: number
   widget_config?: WidgetConfig
+  public_share_enabled?: boolean
 }
 
 export interface OrgKnowledgeBase {
