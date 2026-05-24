@@ -223,3 +223,128 @@ async def test_platform_create_tenant_owner_setup_failure_rolls_back_org_and_use
     assert exc_info.value.status_code == 502
     zitadel.remove_user.assert_awaited_once()
     zitadel.delete_org.assert_awaited_once_with("zitadel-org-new")
+
+
+# ---------------------------------------------------------------------------
+# REQ-6 (Finding A-7): partial-failure paths emit audit events
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_platform_invite_zitadel_invite_failure_emits_audit_event() -> None:
+    """AC6.1 — invite Zitadel-failure emits platform_admin.invite_zitadel_invite_failed."""
+    from app.api.admin.platform_manage import PlatformInviteRequest, platform_invite
+
+    org = _org()
+    log_calls: list[dict] = []
+
+    async def _capture_log_event(**kwargs: object) -> None:
+        log_calls.append(kwargs)
+
+    with (
+        patch("app.api.admin.platform_manage._load_org_or_404", new=AsyncMock(return_value=org)),
+        patch("app.api.admin.platform_manage.log_event", side_effect=_capture_log_event),
+        patch("app.api.admin.platform_manage.zitadel") as mock_zitadel,
+    ):
+        mock_zitadel.invite_user = AsyncMock(side_effect=RuntimeError("zitadel 502"))
+        mock_zitadel.remove_user = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await platform_invite(
+                org_id=42,
+                body=PlatformInviteRequest(
+                    email="probe@attacker.example",
+                    first_name="Probe",
+                    last_name="Attacker",
+                    role="personal",
+                ),
+                perms=_platform_perms(),
+            )
+
+    assert exc_info.value.status_code == 502
+    assert len(log_calls) == 1, "Exactly one audit event should be emitted on Zitadel-invite failure"
+    evt = log_calls[0]
+    assert evt["action"] == "platform_admin.invite_zitadel_invite_failed"
+    assert evt["details"]["target_email"] == "probe@attacker.example"
+    assert evt["details"]["target_org_id"] == 42
+    assert "zitadel 502" in evt["details"]["error"]
+    assert len(evt["details"]["error"]) <= 200
+
+
+@pytest.mark.asyncio
+async def test_platform_create_tenant_grant_role_failure_emits_audit_event() -> None:
+    """AC6.2 — create-tenant grant_role failure emits platform_admin.create_tenant_grant_role_failed."""
+    from app.api.admin.platform_manage import CreateTenantRequest, platform_create_tenant
+
+    db = AsyncMock()
+    background_tasks = MagicMock()
+    log_calls: list[dict] = []
+
+    async def _capture_log_event(**kwargs: object) -> None:
+        log_calls.append(kwargs)
+
+    with (
+        patch("app.api.admin.platform_manage.log_event", side_effect=_capture_log_event),
+        patch("app.api.admin.platform_manage.zitadel") as mock_zitadel,
+    ):
+        mock_zitadel.create_org = AsyncMock(return_value={"id": "zitadel-org-new"})
+        mock_zitadel.invite_user = AsyncMock(return_value={"userId": "owner-user"})
+        mock_zitadel.grant_user_role = AsyncMock(side_effect=RuntimeError("grant 502"))
+        mock_zitadel.remove_user = AsyncMock()
+        mock_zitadel.delete_org = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await platform_create_tenant(
+                body=CreateTenantRequest(
+                    company_name="Acme BV",
+                    owner_email="owner@acme.example",
+                    owner_first_name="Owner",
+                    owner_last_name="User",
+                ),
+                background_tasks=background_tasks,
+                perms=_platform_perms(),
+                db=db,
+            )
+
+    assert exc_info.value.status_code == 502
+    assert len(log_calls) == 1
+    evt = log_calls[0]
+    assert evt["action"] == "platform_admin.create_tenant_grant_role_failed"
+    assert evt["details"]["target_email"] == "owner@acme.example"
+    assert "grant 502" in evt["details"]["error"]
+    assert len(evt["details"]["error"]) <= 200
+
+
+@pytest.mark.asyncio
+async def test_audit_emit_failure_falls_back_to_structlog() -> None:
+    """AC6.3 — when log_event itself raises, structlog platform_admin_audit_emit_failed is logged."""
+    import structlog.testing
+
+    from app.api.admin.platform_manage import PlatformInviteRequest, platform_invite
+
+    org = _org()
+
+    with (
+        patch("app.api.admin.platform_manage._load_org_or_404", new=AsyncMock(return_value=org)),
+        patch("app.api.admin.platform_manage.log_event", side_effect=Exception("DB aborted")),
+        patch("app.api.admin.platform_manage.zitadel") as mock_zitadel,
+    ):
+        mock_zitadel.invite_user = AsyncMock(side_effect=RuntimeError("zitadel 502"))
+        mock_zitadel.remove_user = AsyncMock()
+
+        with structlog.testing.capture_logs() as log_output:
+            with pytest.raises(HTTPException):
+                await platform_invite(
+                    org_id=42,
+                    body=PlatformInviteRequest(
+                        email="probe@attacker.example",
+                        first_name="Probe",
+                        last_name="Attacker",
+                        role="personal",
+                    ),
+                    perms=_platform_perms(),
+                )
+
+    # Must have logged platform_admin_audit_emit_failed with structlog
+    audit_fail_logs = [e for e in log_output if e.get("event") == "platform_admin_audit_emit_failed"]
+    assert len(audit_fail_logs) == 1, f"Expected exactly 1 audit-emit-failed log, got: {log_output}"

@@ -66,6 +66,31 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/platform", tags=["platform-admin"])
 
+
+async def _emit_audit_safe(action: str, details: dict, perms: UserPermissions) -> None:
+    """Emit an audit event; fall back to structlog on DB failure (REQ-6 AC6.3).
+
+    # @MX:NOTE: [AUTO] Used for partial-failure audit paths where the primary session
+    # may be aborted. Mirrors the fallback pattern in kb_offboarding._do_delete.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-6
+    """
+    try:
+        await log_event(
+            org_id=perms.org_id,
+            actor=perms.user_id,
+            action=action,
+            resource_type="user",
+            resource_id="",
+            details=details,
+        )
+    except Exception:
+        logger.exception(
+            "platform_admin_audit_emit_failed",
+            original_action=action,
+            original_details=details,
+        )
+
+
 PortalRole = Literal["personal", "company", "kb_manager", "group_manager", "admin"]
 
 # Mirror of users.py::_ZITADEL_ROLE_BY_PORTAL_ROLE — only admin gets a
@@ -416,6 +441,17 @@ async def platform_invite(
         )
     except Exception as exc:
         logger.exception("platform_invite_zitadel_failed", email=body.email)
+        # REQ-6 (Finding A-7): emit audit event for permanent trail even though
+        # VictoriaLogs captures the exception above (30-day retention only).
+        await _emit_audit_safe(
+            action="platform_admin.invite_zitadel_invite_failed",
+            details={
+                "target_email": body.email,
+                "target_org_id": org_id,
+                "error": str(exc)[:200],
+            },
+            perms=perms,
+        )
         raise HTTPException(status_code=502, detail=f"Zitadel invite mislukt: {exc}") from exc
     zitadel_user_id: str = user_data["userId"]
 
@@ -430,6 +466,15 @@ async def platform_invite(
             )
         except Exception as exc:
             logger.exception("platform_invite_grant_failed", zitadel_user_id=zitadel_user_id)
+            await _emit_audit_safe(
+                action="platform_admin.invite_grant_role_failed",
+                details={
+                    "target_email": body.email,
+                    "target_org_id": org_id,
+                    "error": str(exc)[:200],
+                },
+                perms=perms,
+            )
             await _rollback_zitadel_user(zitadel_user_id)
             raise HTTPException(status_code=502, detail=f"Rol-grant mislukt: {exc}") from exc
 
@@ -560,6 +605,17 @@ async def platform_create_tenant(
         )
     except Exception as exc:
         logger.exception("platform_create_tenant_owner_setup_failed", email=body.owner_email)
+        # REQ-6 (Finding A-7): permanent audit trail for grant failure.
+        await _emit_audit_safe(
+            action="platform_admin.create_tenant_grant_role_failed",
+            details={
+                "target_email": body.owner_email,
+                "target_org_id": None,
+                "target_zitadel_org_id": zitadel_org_id,
+                "error": str(exc)[:200],
+            },
+            perms=perms,
+        )
         await _rollback_zitadel_user(owner_user_id)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Owner-setup mislukt: {exc}") from exc
