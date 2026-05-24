@@ -22,6 +22,7 @@ SPEC-SEC-HYGIENE-001 REQ-24:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlparse
 
 import jwt
 import structlog
@@ -170,24 +171,73 @@ def origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
     if not allowed_origins:
         return True
 
-    normalised_origin = origin.rstrip("/")
+    origin_parts = _parse_origin(origin)
+    if origin_parts is None:
+        return False
 
     for allowed in allowed_origins:
-        allowed = allowed.rstrip("/")
+        allowed_parts = _parse_origin(allowed)
+        if allowed_parts is None:
+            continue
 
         # Wildcard subdomain: https://*.example.com
-        if "://*." in allowed:
-            # Extract the suffix after the wildcard (e.g. ".example.com")
-            scheme_end = allowed.index("://")
-            scheme = allowed[: scheme_end + 3]  # "https://"
-            suffix = allowed[scheme_end + 4 :]  # "example.com" (after "*.")
-
-            if normalised_origin.startswith(scheme) and normalised_origin.endswith(suffix):
-                # Verify there's actually a subdomain (not just the bare domain)
-                host_part = normalised_origin[len(scheme) :]
-                if host_part != suffix and host_part.endswith(suffix):
-                    return True
-        elif normalised_origin == allowed:
+        if allowed_parts.host.startswith("*."):
+            suffix = allowed_parts.host[2:]
+            if (
+                origin_parts.scheme == allowed_parts.scheme
+                and _ports_match(origin_parts, allowed_parts)
+                and origin_parts.host != suffix
+                and origin_parts.host.endswith("." + suffix)
+            ):
+                return True
+        elif (
+            origin_parts.scheme == allowed_parts.scheme
+            and origin_parts.host == allowed_parts.host
+            and _ports_match(origin_parts, allowed_parts)
+        ):
             return True
 
     return False
+
+
+class _OriginParts:
+    def __init__(self, *, scheme: str, host: str, port: int | None, explicit_port: bool) -> None:
+        self.scheme = scheme
+        self.host = host
+        self.port = port
+        self.explicit_port = explicit_port
+
+
+def _parse_origin(value: str) -> _OriginParts | None:
+    parsed = urlparse(value.rstrip("/"))
+    if not parsed.scheme or not parsed.hostname:
+        return None
+    if parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    explicit_port = ":" in parsed.netloc.rsplit("@", 1)[-1]
+    return _OriginParts(
+        scheme=parsed.scheme.lower(),
+        host=parsed.hostname.lower(),
+        port=port,
+        explicit_port=explicit_port,
+    )
+
+
+def _ports_match(origin: _OriginParts, allowed: _OriginParts) -> bool:
+    if not origin.explicit_port and not allowed.explicit_port:
+        return True
+    return _effective_port(origin) == _effective_port(allowed)
+
+
+def _effective_port(parts: _OriginParts) -> int | None:
+    if parts.port is not None:
+        return parts.port
+    if parts.scheme == "https":
+        return 443
+    if parts.scheme == "http":
+        return 80
+    return None

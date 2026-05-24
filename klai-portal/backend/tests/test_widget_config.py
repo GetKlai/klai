@@ -37,6 +37,7 @@ class FakeWidget:
             "css_variables": {},
         }
     )
+    public_share_enabled: bool = False
     rate_limit_rpm: int = 60
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
@@ -197,6 +198,8 @@ def test_origin_allowed_wildcard_subdomain():
     assert origin_allowed("https://app.example.com", ["https://*.example.com"])
     assert origin_allowed("https://test.example.com", ["https://*.example.com"])
     assert not origin_allowed("https://example.com", ["https://*.example.com"])
+    assert not origin_allowed("https://evil-example.com", ["https://*.example.com"])
+    assert not origin_allowed("https://example.com.evil.test", ["https://*.example.com"])
     assert not origin_allowed("https://evil.com", ["https://*.example.com"])
 
 
@@ -226,3 +229,58 @@ def test_origin_allowed_trailing_slash():
 
     assert origin_allowed("https://example.com/", ["https://example.com"])
     assert origin_allowed("https://example.com", ["https://example.com/"])
+
+
+def test_origin_allowed_rejects_scheme_and_port_mismatch():
+    """Origin matching must preserve scheme and explicit port boundaries."""
+    from app.services.widget_auth import origin_allowed
+
+    assert not origin_allowed("http://app.example.com", ["https://*.example.com"])
+    assert origin_allowed("https://app.example.com:8443", ["https://*.example.com:8443"])
+    assert not origin_allowed("https://app.example.com:9443", ["https://*.example.com:8443"])
+
+
+@pytest.mark.asyncio
+async def test_public_bot_config_rejects_when_share_disabled():
+    """Public bot config is off by default, even if the widget exists."""
+    from app.api.partner import public_bot_config
+
+    widget = FakeWidget()
+    db = _make_db_chain(widget, None, [])
+
+    with patch("app.api.partner.settings") as mock_settings:
+        mock_settings.widget_jwt_secret = "shared-secret"
+        with pytest.raises(Exception) as exc_info:
+            await public_bot_config(id=widget.widget_id, db=db)
+
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_bot_config_returns_token_when_share_enabled():
+    """Public bot config returns a session token only after explicit enablement."""
+    from app.api.partner import public_bot_config
+
+    org = FakeOrg()
+    widget = FakeWidget(
+        public_share_enabled=True,
+        widget_config={
+            "allowed_origins": [],
+            "title": "Public",
+            "welcome_message": "",
+            "system_prompt": "",
+            "css_variables": {},
+        },
+    )
+    db = _make_db_chain(widget, org, [10])
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+        response = await public_bot_config(id=widget.widget_id, db=db)
+
+    assert response.status_code == 200
+    assert '"session_token": "public.jwt.token"' in response.body.decode()

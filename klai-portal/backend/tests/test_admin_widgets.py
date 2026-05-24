@@ -85,6 +85,14 @@ def test_widget_config_defaults():
     assert config.welcome_message == ""
     assert config.system_prompt == ""
     assert config.css_variables == {}
+    assert "public_share_enabled" not in WidgetConfig.model_fields
+
+
+def test_widget_model_has_public_share_column():
+    """Public share state is a first-class widgets column, not JSON config."""
+    from app.models.widgets import Widget
+
+    assert "public_share_enabled" in Widget.__table__.c
 
 
 def test_widget_to_response_helper():
@@ -103,6 +111,7 @@ def test_widget_to_response_helper():
         "system_prompt": "Answer briefly.",
         "css_variables": {},
     }
+    widget.public_share_enabled = True
     widget.rate_limit_rpm = 60
     widget.last_used_at = None
     widget.created_at = "2026-01-01"
@@ -113,6 +122,7 @@ def test_widget_to_response_helper():
     assert resp.widget_id == "wgt_abc123"
     assert resp.widget_config.title == "Help"
     assert resp.widget_config.system_prompt == "Answer briefly."
+    assert resp.public_share_enabled is True
     assert resp.kb_access_count == 1
 
 

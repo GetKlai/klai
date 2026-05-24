@@ -191,6 +191,79 @@ async def test_invite_user_grants_portal_role_to_zitadel(
         )
 
 
+@pytest.mark.asyncio
+async def test_remove_user_keeps_global_identity_when_other_memberships_exist() -> None:
+    """Tenant admin delete must only remove the local membership for multi-org users."""
+    from app.api.admin.users import remove_user
+    from app.services.user_memberships import UserMembershipSummary
+
+    target_user = MagicMock()
+    target_user.zitadel_user_id = "user-U"
+    target_user.org_id = 101
+
+    mock_db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = target_user
+    mock_db.execute.return_value = result
+    mock_db.delete = AsyncMock()
+
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101)
+
+    with (
+        patch(
+            "app.api.admin.users.get_user_membership_summary",
+            new=AsyncMock(
+                return_value=UserMembershipSummary(total_count=2, remaining_count=1, is_platform_admin=False)
+            ),
+        ),
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch("app.api.admin.users.fire_role_change_notification") as notify,
+    ):
+        mock_zitadel.remove_user = AsyncMock()
+        response = await remove_user(zitadel_user_id="user-U", perms=perms, db=mock_db)
+
+    mock_zitadel.remove_user.assert_not_awaited()
+    mock_db.delete.assert_awaited_once_with(target_user)
+    mock_db.commit.assert_awaited_once()
+    notify.assert_called_once_with("user-U")
+    assert response.message == "User removed from organization."
+
+
+@pytest.mark.asyncio
+async def test_remove_user_deletes_global_identity_for_last_membership() -> None:
+    """Global Zitadel delete is reserved for the final portal membership."""
+    from app.api.admin.users import remove_user
+    from app.services.user_memberships import UserMembershipSummary
+
+    target_user = MagicMock()
+    target_user.zitadel_user_id = "user-U"
+    target_user.org_id = 101
+
+    mock_db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = target_user
+    mock_db.execute.return_value = result
+    mock_db.delete = AsyncMock()
+
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101)
+
+    with (
+        patch(
+            "app.api.admin.users.get_user_membership_summary",
+            new=AsyncMock(
+                return_value=UserMembershipSummary(total_count=1, remaining_count=0, is_platform_admin=False)
+            ),
+        ),
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch("app.api.admin.users.fire_role_change_notification"),
+    ):
+        mock_zitadel.remove_user = AsyncMock()
+        response = await remove_user(zitadel_user_id="user-U", perms=perms, db=mock_db)
+
+    mock_zitadel.remove_user.assert_awaited_once()
+    assert response.message == "User deleted."
+
+
 # @MX:ANCHOR — must remain coupled to invite_user's commit shape.
 # @MX:REASON: regression guard for the 2026-05-07 incident where the personal
 # KB was created AFTER `db.commit()`. The first commit cleared the
