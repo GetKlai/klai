@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import sqlalchemy as sa
 from sqlalchemy import (
@@ -15,6 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -204,6 +205,13 @@ class PortalUser(Base):
     # SPEC-CHAT-TEMPLATES-001: active prompt-template IDs the user has toggled on.
     # NULL means no active templates. Validated at PATCH time to belong to caller's org.
     active_template_ids: Mapped[list[int] | None] = mapped_column(ARRAY(Integer), nullable=True)
+
+    # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-4: user-delete state machine columns.
+    # NULL = no deletion attempt. 'failed_partial' = one step failed; use
+    # POST .../retry-delete to restart the sequence.
+    deletion_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    failure_reason: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    last_attempted_step: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     org: Mapped["PortalOrg"] = relationship(back_populates="users")
 

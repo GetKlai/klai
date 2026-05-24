@@ -74,13 +74,17 @@ async def test_platform_role_change_notifies_active_sessions() -> None:
 
 @pytest.mark.asyncio
 async def test_platform_delete_keeps_global_identity_when_other_memberships_exist() -> None:
+    """Endpoint delegates to delete_user_with_state_machine with delete_global_identity=False
+    when remaining_count > 0. The orchestrator handles the actual deletion."""
     from app.api.admin.platform_manage import platform_delete_user
     from app.services.user_memberships import UserMembershipSummary
 
     db = AsyncMock()
-    db.delete = AsyncMock()
+    db.add = MagicMock()
     setup_db(db, [FakeResult([_org()]), FakeResult([_user()])])
     preview = MagicMock(personal_kbs=[], org_kbs_solely_owned=[])
+
+    orchestrator_mock = AsyncMock(return_value=True)  # True = success
 
     with (
         patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(db)),
@@ -92,19 +96,19 @@ async def test_platform_delete_keeps_global_identity_when_other_memberships_exis
         ),
         patch("app.services.kb_offboarding.compute_offboard_preview", new=AsyncMock(return_value=preview)),
         patch("app.services.kb_offboarding.revoke_user_credentials", new=AsyncMock(return_value=(0, 0))),
-        patch("app.api.admin.platform_manage.zitadel") as zitadel,
+        patch(
+            "app.api.admin.platform_manage.delete_user_with_state_machine",
+            new=orchestrator_mock,
+        ),
         patch("app.api.admin.platform_manage.fire_role_change_notification"),
-        patch("app.api.admin.platform_manage.log_event", new=AsyncMock()) as log_event,
     ):
-        zitadel.remove_user = AsyncMock()
         response = await platform_delete_user(org_id=42, zitadel_user_id="target-user", perms=_platform_perms())
 
-    zitadel.remove_user.assert_not_awaited()
-    db.delete.assert_awaited_once()
+    orchestrator_mock.assert_awaited_once()
+    call_kwargs = orchestrator_mock.await_args.kwargs
+    # Multi-tenant user: delete_global_identity must be False
+    assert call_kwargs["delete_global_identity"] is False
     assert response.message == "Gebruiker uit tenant verwijderd."
-    details = log_event.await_args.kwargs["details"]
-    assert details["global_identity_deleted"] is False
-    assert details["remaining_membership_count"] == 1
 
 
 @pytest.mark.asyncio
