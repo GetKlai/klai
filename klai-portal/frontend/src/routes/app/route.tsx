@@ -28,10 +28,10 @@ function AppLayout() {
 
   const allNavItems = [
     { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
+    { to: '/app/templates', label: m.templates_page_title(), icon: Sliders },
     { to: '/app/transcribe', label: m.app_tool_transcribe_title(), icon: Mic },
     { to: '/app/knowledge', label: m.app_tool_knowledge_title(), icon: Brain },
     { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
-    { to: '/app/templates', label: m.templates_page_title(), icon: Sliders },
   ]
 
   const products = user?.products ?? []
