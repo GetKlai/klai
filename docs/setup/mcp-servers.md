@@ -60,8 +60,8 @@ It is **cross-platform** — all platform-specific settings live in local config
     },
     "codeindex": {
       "type": "stdio",
-      "command": "codeindex",
-      "args": ["mcp"],
+      "command": "bash",
+      "args": [".claude/scripts/codeindex-mcp-launcher.sh"],
       "env": {}
     },
     "grafana": {
@@ -94,6 +94,38 @@ It is **cross-platform** — all platform-specific settings live in local config
 | **codeindex** | Graph-powered code intelligence — call graphs, impact analysis, semantic search, communities, and enrichment queries (git hotspots, SPEC links, test coverage, PageRank). |
 | **grafana** | Read-only access to Grafana dashboards, Prometheus/VictoriaMetrics queries, and alerts. Cannot query VictoriaLogs — use the `victorialogs` MCP for log queries instead. |
 | **victorialogs** | Production log queries via LogsQL against VictoriaLogs. Requires SSH tunnel (`./scripts/victorialogs-tunnel.sh`) and `VICTORIALOGS_BASIC_AUTH_B64` env var. Preferred over `docker logs` for investigating issues. |
+
+### CodeIndex stale-index prevention
+
+The CodeIndex MCP server starts through `.claude/scripts/codeindex-mcp-launcher.sh`
+instead of calling `codeindex mcp` directly. The launcher runs
+`scripts/codeindex-health.sh --repair --quiet` before handing stdout to MCP.
+This prevents the recurring failure mode where an old `codeindex serve` process
+holds the local database open and every Conductor workspace starts reporting a
+stale index.
+
+Important details:
+
+- CodeIndex stores one canonical repo path for `klai`, currently
+  `/Users/mvletter/Developer/Klai`. Conductor worktrees may be on different
+  branches, but the stale check compares against that canonical path.
+- The launcher writes preflight output to
+  `.context/codeindex-mcp-launcher.log`, not stdout, because MCP uses stdout for
+  JSON-RPC.
+- The launcher does not kill existing `codeindex mcp` processes. That would be
+  unsafe while starting an MCP server.
+
+Manual recovery, if an already-running agent still sees stale CodeIndex context:
+
+```bash
+scripts/codeindex-health.sh --repair --restart-mcp
+```
+
+For diagnosis only:
+
+```bash
+scripts/codeindex-health.sh
+```
 
 ## 3. Set up Playwright
 
