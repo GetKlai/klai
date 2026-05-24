@@ -91,14 +91,14 @@ function Wrapper({ children }: { children: ReactNode }) {
 
 function makeWidget(allow_any_origin = false): WidgetDetailResponse {
   return {
-    id: 1,
-    org_id: 1,
+    id: 'widget-uuid-1',
     name: 'Test Widget',
     widget_id: 'wgt_test',
     description: null,
     allow_any_origin,
     public_share_enabled: false,
     rate_limit_rpm: 60,
+    kb_access_count: 0,
     last_used_at: null,
     created_at: '2026-01-01T00:00:00Z',
     created_by: 'user-1',
@@ -118,7 +118,7 @@ function makeWidget(allow_any_origin = false): WidgetDetailResponse {
       collect_user_info: false,
       widget_position: 'right',
     },
-    kb_ids: [],
+    kb_access: [],
   }
 }
 
