@@ -30,6 +30,7 @@ from app.api.partner_dependencies import (
 )
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
+from app.core.permissions import assert_platform_unlocked
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
@@ -199,6 +200,7 @@ async def _audit_streaming_wrapper(
     widget_id: str,
     org_id: int,
     session_key: str,
+    loaded_origin: str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Tee the SSE stream, capture composed text + sources, log the
     assistant turn once the generator completes.
@@ -231,6 +233,7 @@ async def _audit_streaming_wrapper(
                     role="assistant",
                     content=final_text,
                     sources=composed_sources or None,
+                    loaded_origin=loaded_origin,
                 )
             )
             _pending.add(task)
@@ -424,6 +427,7 @@ async def chat_completions(
                         content=last_user_msg,
                         ip_hash=audit_ip_hash,
                         user_agent_hash=audit_ua_hash,
+                        loaded_origin=http_request.headers.get("origin") or None,
                     )
                 )
                 _pending.add(task)
@@ -454,6 +458,7 @@ async def chat_completions(
                 widget_id=audit_widget_id,  # type: ignore[arg-type]
                 org_id=auth.org_id,
                 session_key=audit_session_key,  # type: ignore[arg-type]
+                loaded_origin=http_request.headers.get("origin") or None,
             )
         return StreamingResponse(
             content=streaming_gen,
@@ -487,6 +492,7 @@ async def chat_completions(
                     role="assistant",
                     content=assistant_text,
                     sources=assistant_sources,
+                    loaded_origin=http_request.headers.get("origin") or None,
                 )
             )
             _pending.add(task)
@@ -820,7 +826,7 @@ async def widget_config(
     widget_config_data = widget_row.widget_config or {}
     allowed_origins = widget_config_data.get("allowed_origins", [])
 
-    if not origin or not origin_allowed(origin, allowed_origins):
+    if not origin or not origin_allowed(origin, allowed_origins, allow_any_origin=widget_row.allow_any_origin):
         return Response(
             content='{"detail":"Origin not allowed"}',
             status_code=403,
@@ -832,6 +838,17 @@ async def widget_config(
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
+
+    # REQ-1 (Finding B-1): existence-non-disclosure — surface as 404 not 403.
+    # @MX:ANCHOR: [AUTO] Platform-unlock gate on widget_config public endpoint
+    # @MX:REASON: Fencing 'widgets' in enabled_addons must also block the public mint path;
+    # admin-UI gate alone leaves deployed widgets draining LLM tokens for locked tenants.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1
+    try:
+        assert_platform_unlocked(org, "widgets")
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found") from None
+
     await set_tenant(db, org.id)
 
     # Load KB access for this widget (after RLS tenant is set)
@@ -915,6 +932,17 @@ async def public_bot_config(
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
+
+    # REQ-1 (Finding B-1): existence-non-disclosure — surface as 404 not 403.
+    # @MX:ANCHOR: [AUTO] Platform-unlock gate on public_bot_config endpoint
+    # @MX:REASON: Same as widget_config — disabled tenant still has live share links;
+    # 404 avoids leaking widget existence for locked tenants.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1
+    try:
+        assert_platform_unlocked(org, "widgets")
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found") from None
+
     await set_tenant(db, org.id)
 
     kb_result = await db.execute(select(WidgetKbAccess).where(WidgetKbAccess.widget_id == widget_row.id))
@@ -982,7 +1010,7 @@ async def widget_config_preflight(
     widget_config_data = widget_row.widget_config or {}
     allowed_origins = widget_config_data.get("allowed_origins", [])
 
-    if not origin or not origin_allowed(origin, allowed_origins):
+    if not origin or not origin_allowed(origin, allowed_origins, allow_any_origin=widget_row.allow_any_origin):
         return Response(status_code=204)
 
     return Response(

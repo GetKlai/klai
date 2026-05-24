@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Code2, Eye, Info, Link2, Loader2 } from 'lucide-react'
+import { AlertTriangle, Code2, Eye, Info, Link2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -31,11 +31,17 @@ export function EmbedTab({ widget }: Props) {
   const [publicShareEnabled, setPublicShareEnabled] = useState(
     widget.public_share_enabled ?? false,
   )
+  // REQ-2 (Finding B-2): allow_any_origin bypasses the allowed_origins gate.
+  // @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
+  const [allowAnyOrigin, setAllowAnyOrigin] = useState(
+    widget.allow_any_origin ?? false,
+  )
 
   useEffect(() => {
     setOriginsRaw(config.allowed_origins.join('\n'))
     setPublicShareEnabled(widget.public_share_enabled ?? false)
-  }, [config.allowed_origins, widget.public_share_enabled])
+    setAllowAnyOrigin(widget.allow_any_origin ?? false)
+  }, [config.allowed_origins, widget.public_share_enabled, widget.allow_any_origin])
 
   const origins = parseOrigins(originsRaw)
   const invalidOrigins = origins.filter((o) => !isValidOrigin(o))
@@ -78,7 +84,11 @@ export function EmbedTab({ widget }: Props) {
       allowed_origins: origins,
     }
     updateMutation.mutate(
-      { widget_config: next, public_share_enabled: publicShareEnabled },
+      {
+        widget_config: next,
+        public_share_enabled: publicShareEnabled,
+        allow_any_origin: allowAnyOrigin,
+      },
       {
         onSuccess: () => toast.success(m.admin_shared_success_updated()),
       },
@@ -161,6 +171,30 @@ export function EmbedTab({ widget }: Props) {
       </section>
 
       <section className="space-y-4 pt-4 border-t border-gray-200">
+        {/* REQ-2 (Finding B-2): allow_any_origin toggle — bypasses the origin gate entirely.
+            @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2 */}
+        <div className="flex items-start gap-3 rounded-md border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] p-3">
+          <Checkbox
+            id="widget-allow-any-origin"
+            checked={allowAnyOrigin}
+            onChange={(e) => setAllowAnyOrigin(e.target.checked)}
+          />
+          <div className="space-y-1">
+            <label
+              htmlFor="widget-allow-any-origin"
+              className="block cursor-pointer text-sm font-medium text-[var(--color-rl-dark)]"
+            >
+              {m.admin_widgets_allow_any_origin_label()}
+            </label>
+            {allowAnyOrigin && (
+              <div className="flex items-start gap-1.5 text-xs text-[var(--color-warning)]">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                {m.admin_widgets_allow_any_origin_warning()}
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="space-y-1.5">
           <Label htmlFor="widget-origins">
             {m.admin_widgets_widget_origins_label()}
@@ -175,15 +209,16 @@ export function EmbedTab({ widget }: Props) {
             rows={4}
             placeholder={m.admin_widgets_widget_origins_placeholder()}
             className="font-mono"
+            disabled={allowAnyOrigin}
           />
-          {invalidOrigins.length > 0 && (
+          {invalidOrigins.length > 0 && !allowAnyOrigin && (
             <p className="text-xs text-[var(--color-destructive)]">
               {m.admin_widgets_widget_invalid_origins({
                 origins: invalidOrigins.join(', '),
               })}
             </p>
           )}
-          {origins.length === 0 && (
+          {origins.length === 0 && !allowAnyOrigin && (
             <div className="flex items-start gap-1.5 text-xs text-gray-400">
               <Info className="h-3.5 w-3.5 shrink-0 mt-px text-gray-400" />
               {m.admin_widgets_widget_origins_empty_warning()}

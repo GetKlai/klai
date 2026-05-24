@@ -411,6 +411,23 @@ jobs:
           strip_components: 2
           overwrite: true
 
+      # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2: cohort gate.
+      # Runs before the deploy to ensure the allow_any_origin data-migration
+      # only affects internal widgets. Aborts if impacted_widgets > 5 or any
+      # external tenant would be affected. The script exits 0 if safe.
+      - name: REQ-2 widget cohort impact gate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            cd /opt/klai
+            PLATFORM_ORG_SLUG="${{ vars.PLATFORM_ORG_SLUG || 'getklai' }}" \
+              bash klai-portal/backend/scripts/verify_widget_cohort.sh
+
       # 2026-05-05 mailer-incident class: this step previously had no `if:`
       # gate, so PR builds also auto-deployed `:latest` to prod. Same
       # pattern that bit klai-mailer post PR #319 → hotfix #322.
@@ -431,3 +448,42 @@ jobs:
             set -e
             chmod +x /opt/klai/scripts/deploy-portal-api.sh
             /opt/klai/scripts/deploy-portal-api.sh
+
+      # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2 + REQ-3: post-deploy SQL.
+      #
+      # These two SQL files require the klai superuser — portal_api cannot
+      # DROP/CREATE POLICY on portal_templates (Cat-D RLS) and cannot UPDATE
+      # rows in widgets without bound tenant context (REQ-2 data-migration
+      # runs across all orgs). The alembic upgrade (run by portal-api's
+      # entrypoint as portal_api) handles only additive DDL (ADD COLUMN);
+      # the row-write + policy work is delegated here.
+      #
+      # Idempotency: REQ-2 UPDATE branches use selective WHERE clauses
+      # (empty origins AND public_share_enabled = X) so a re-run is a no-op
+      # once allow_any_origin has been set. REQ-3 uses DROP POLICY IF EXISTS
+      # + CREATE POLICY so re-runs reset to the same state. Safe to run on
+      # every deploy.
+      - name: REQ-2 + REQ-3 post-deploy SQL (klai superuser)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            PG_USER=$(docker exec klai-core-postgres-1 printenv POSTGRES_USER)
+            PG_DB=$(docker exec klai-core-postgres-1 printenv POSTGRES_DB)
+            for sql_file in \
+              post_deploy_a1c2d3e4f5b6.sql \
+              post_deploy_b2d3e4f5a6c7_portal_templates_rls_with_check.sql; do
+              echo "::group::Applying $sql_file"
+              docker cp "klai-core-portal-api-1:/app/alembic/versions/$sql_file" "/tmp/$sql_file"
+              docker cp "/tmp/$sql_file" "klai-core-postgres-1:/tmp/$sql_file"
+              docker exec klai-core-postgres-1 psql \
+                -U "$PG_USER" \
+                -d "$PG_DB" \
+                -v ON_ERROR_STOP=1 \
+                -f "/tmp/$sql_file"
+              echo "::endgroup::"
+            done

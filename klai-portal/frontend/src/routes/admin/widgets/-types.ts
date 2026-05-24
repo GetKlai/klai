@@ -32,6 +32,9 @@ export interface WidgetResponse {
   widget_id: string
   widget_config: WidgetConfig
   public_share_enabled: boolean
+  // REQ-2 (Finding B-2): allow_any_origin bypasses the allowed_origins gate.
+  // @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
+  allow_any_origin: boolean
   rate_limit_rpm: number
   kb_access_count: number
   last_used_at: string | null
@@ -50,6 +53,7 @@ export interface CreateWidgetRequest {
   rate_limit_rpm: number
   widget_config: WidgetConfig | null
   public_share_enabled?: boolean
+  allow_any_origin?: boolean
 }
 
 export interface UpdateWidgetRequest {
@@ -59,6 +63,7 @@ export interface UpdateWidgetRequest {
   rate_limit_rpm?: number
   widget_config?: WidgetConfig
   public_share_enabled?: boolean
+  allow_any_origin?: boolean
 }
 
 export interface OrgKnowledgeBase {

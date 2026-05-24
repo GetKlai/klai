@@ -37,6 +37,7 @@ class FakeWidget:
             "css_variables": {},
         }
     )
+    allow_any_origin: bool = False
     public_share_enabled: bool = False
     rate_limit_rpm: int = 60
     last_used_at: datetime | None = None
@@ -53,6 +54,11 @@ class FakeOrg:
     # generate_session_token directly, so the actual value here is not
     # signature-relevant — but it must exist to satisfy the call site.
     slug: str = "test"
+    # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1 (Finding B-1): partner endpoints
+    # call assert_platform_unlocked(org, "widgets"). Default the fake to
+    # "widgets unlocked" so happy-path tests still pass; tests that exercise
+    # the locked-tenant path override this field per-instance.
+    platform_unlocked_features: list = field(default_factory=lambda: ["widgets"])
 
 
 def _make_request(origin: str | None = "https://example.com") -> MagicMock:
@@ -147,12 +153,13 @@ async def test_widget_config_disallowed_origin():
 
 
 @pytest.mark.asyncio
-async def test_widget_config_empty_allowed_origins_open_by_default():
-    """200 when allowed_origins is an empty list — open by default.
+async def test_widget_config_empty_allowed_origins_denied_by_default():
+    """403 when allowed_origins is empty AND allow_any_origin is False.
 
-    The widget loads on any origin until the admin opts into a lockdown
-    via the Insluiten tab. Real security boundary is the per-tenant
-    HS256 session_token, not this UX gate.
+    SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2 (Finding B-2) flipped the
+    default from open-to-the-world to deny. The previous behavior was a
+    CRIT: any newly-created widget was embeddable on any phishing site.
+    Admins opt into open-origin mode explicitly via allow_any_origin=True.
     """
     org = FakeOrg(slug="acme")
     widget = FakeWidget(
@@ -163,6 +170,41 @@ async def test_widget_config_empty_allowed_origins_open_by_default():
             "system_prompt": "",
             "css_variables": {},
         },
+        # allow_any_origin defaults to False — explicit for readability.
+        allow_any_origin=False,
+    )
+    db = _make_db_chain(widget, org, [])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_widget_config_empty_allowed_origins_allowed_when_allow_any_origin_true():
+    """200 when allowed_origins is empty AND allow_any_origin is True.
+
+    Counterpart to test_widget_config_empty_allowed_origins_denied_by_default:
+    the explicit opt-in restores the "load anywhere" behavior for widgets
+    that legitimately need it (public chatbots embedded on third-party sites).
+    """
+    org = FakeOrg(slug="acme")
+    widget = FakeWidget(
+        widget_config={
+            "allowed_origins": [],
+            "title": "",
+            "welcome_message": "",
+            "system_prompt": "",
+            "css_variables": {},
+        },
+        allow_any_origin=True,
     )
     db = _make_db_chain(widget, org, [])
     request = _make_request("https://example.com")
@@ -214,13 +256,21 @@ def test_origin_allowed_combined():
     assert not origin_allowed("https://evil.com", origins)
 
 
-def test_origin_allowed_empty_list_open_by_default():
-    """Empty list returns True — widget loads anywhere until admin
-    opts into a lockdown by listing trusted origins."""
+def test_origin_allowed_empty_list_denied_by_default():
+    """Empty list returns False unless allow_any_origin=True.
+
+    SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2 (Finding B-2): the pre-2026-05-24
+    behavior (empty = open) was a CRIT — any new widget was a CSRF/exfil target
+    on phishing sites. Default is now deny; admins must opt in via the
+    allow_any_origin kwarg (backed by the widgets.allow_any_origin column).
+    """
     from app.services.widget_auth import origin_allowed
 
-    assert origin_allowed("https://example.com", [])
-    assert origin_allowed("https://anything.else.com", [])
+    assert not origin_allowed("https://example.com", [])
+    assert not origin_allowed("https://anything.else.com", [])
+    # Explicit opt-in flips the default back for legitimate use cases.
+    assert origin_allowed("https://example.com", [], allow_any_origin=True)
+    assert origin_allowed("https://anything.else.com", [], allow_any_origin=True)
 
 
 def test_origin_allowed_trailing_slash():

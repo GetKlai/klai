@@ -66,6 +66,12 @@ class Widget(Base):
         server_default='{"allowed_origins": [], "title": "", "welcome_message": "", "css_variables": {}}',
     )
     public_share_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", default=False)
+    # REQ-2 (Finding B-2): explicit "allow any origin" flag. When True, bypasses the
+    # allowed_origins list entirely so the widget is embeddable on any site.
+    # Default False so new rows require explicit opt-in.
+    # @MX:NOTE: [AUTO] Replaces the old "empty list = open world" behaviour in origin_allowed().
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
+    allow_any_origin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", default=False)
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, nullable=False, server_default="60")
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -127,6 +133,10 @@ class WidgetConversation(Base):
     user_agent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     first_user_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     language_detected: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # REQ-2 (Finding B-2): record origin of each conversation for audit visibility.
+    # Truncated to 200 chars. NULL when Origin header was absent (e.g. direct API call).
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
+    loaded_origin: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
 class WidgetMessage(Base):

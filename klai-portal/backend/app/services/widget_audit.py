@@ -71,6 +71,10 @@ async def record_widget_turn(
     ip_hash: str | None = None,
     user_agent_hash: str | None = None,
     language_detected: str | None = None,
+    # REQ-2 (Finding B-2): persist the Origin header for audit visibility.
+    # Truncated to 200 chars. NULL when Origin was absent.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
+    loaded_origin: str | None = None,
 ) -> None:
     """Append one turn to a widget conversation, creating the
     conversation row on first call.
@@ -92,11 +96,11 @@ async def record_widget_turn(
                     INSERT INTO widget_conversations
                         (org_id, widget_id, session_key, first_user_query,
                          ip_hash, user_agent_hash, language_detected,
-                         last_message_at)
+                         loaded_origin, last_message_at)
                     VALUES
                         (:org_id, CAST(:widget_id AS uuid), :session_key,
                          :first_user_query, :ip_hash, :user_agent_hash,
-                         :language_detected, NOW())
+                         :language_detected, :loaded_origin, NOW())
                     ON CONFLICT (widget_id, session_key) DO UPDATE
                         SET last_message_at = NOW(),
                             -- never overwrite an existing first_user_query
@@ -119,6 +123,7 @@ async def record_widget_turn(
                     "ip_hash": ip_hash,
                     "user_agent_hash": user_agent_hash,
                     "language_detected": language_detected,
+                    "loaded_origin": loaded_origin[:200] if loaded_origin else None,
                 },
             )
             row = upsert.first()
