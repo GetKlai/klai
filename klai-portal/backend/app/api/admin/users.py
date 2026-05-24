@@ -39,6 +39,7 @@ from app.services.kb_offboarding import (
     revoke_user_credentials,
 )
 from app.services.mcp_role_notifier import fire_role_change_notification
+from app.services.user_memberships import get_user_membership_summary
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -584,6 +585,12 @@ async def remove_user(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
+    if zitadel_user_id == perms.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use leave workspace instead of deleting your own account.",
+        )
+
     # Verify user belongs to this org before deleting
     result = await db.execute(
         select(PortalUser).where(
@@ -595,19 +602,33 @@ async def remove_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    try:
-        await zitadel.remove_user(org_id=settings.zitadel_portal_org_id, zitadel_user_id=zitadel_user_id)
-    except Exception as exc:
-        logger.exception("User removal failed for user %s: %s", zitadel_user_id, exc)
+    membership_summary = await get_user_membership_summary(
+        zitadel_user_id,
+        excluding_org_id=perms.org_id,
+    )
+    if membership_summary.is_platform_admin:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to delete user: {exc}",
-        ) from exc
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Platform-admin identities cannot be deleted from a tenant admin surface.",
+        )
+
+    delete_global_identity = membership_summary.remaining_count == 0
+    if delete_global_identity:
+        try:
+            await zitadel.remove_user(org_id=settings.zitadel_portal_org_id, zitadel_user_id=zitadel_user_id)
+        except Exception as exc:
+            logger.exception("User removal failed for user %s: %s", zitadel_user_id, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to delete user: {exc}",
+            ) from exc
 
     await db.delete(user)
     await db.commit()
+    fire_role_change_notification(zitadel_user_id)
 
-    return MessageResponse(message="User deleted.")
+    message = "User deleted." if delete_global_identity else "User removed from organization."
+    return MessageResponse(message=message)
 
 
 @router.post("/users/{zitadel_user_id}/suspend", response_model=MessageResponse)

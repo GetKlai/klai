@@ -908,6 +908,8 @@ async def public_bot_config(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
 
     widget_config_data = widget_row.widget_config or {}
+    if not widget_row.public_share_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
 
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == widget_row.org_id))
     org = org_result.scalar_one_or_none()

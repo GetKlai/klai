@@ -246,28 +246,42 @@ async def platform_users(
 ) -> list[PlatformUser]:
     await _audit(perms, "users", search)
     params: dict[str, object] = {"limit": limit, "offset": offset}
-    where = "WHERE u.status <> 'offboarded'"
     if search:
-        where += " AND (u.email ILIKE :q OR u.display_name ILIKE :q OR o.name ILIKE :q)"
         params["q"] = f"%{search}%"
 
     async with cross_org_session() as db:
-        rows = (
-            await db.execute(
+        if search:
+            result = await db.execute(
                 text(
-                    "SELECT u.zitadel_user_id, u.email, u.display_name, u.role, "  # noqa: S608
+                    "SELECT u.zitadel_user_id, u.email, u.display_name, u.role, "
                     "u.status, u.created_at, o.id AS org_id, o.name AS org_name, "
                     "o.slug AS org_slug, o.plan AS org_plan, "
                     "o.provisioning_status AS prov "
                     "FROM portal_users u "
                     "JOIN portal_orgs o ON o.id = u.org_id "
-                    f"{where} "
+                    "WHERE u.status <> 'offboarded' "
+                    "AND (u.email ILIKE :q OR u.display_name ILIKE :q OR o.name ILIKE :q) "
                     "ORDER BY u.created_at DESC "
                     "LIMIT :limit OFFSET :offset"
                 ),
                 params,
             )
-        ).all()
+        else:
+            result = await db.execute(
+                text(
+                    "SELECT u.zitadel_user_id, u.email, u.display_name, u.role, "
+                    "u.status, u.created_at, o.id AS org_id, o.name AS org_name, "
+                    "o.slug AS org_slug, o.plan AS org_plan, "
+                    "o.provisioning_status AS prov "
+                    "FROM portal_users u "
+                    "JOIN portal_orgs o ON o.id = u.org_id "
+                    "WHERE u.status <> 'offboarded' "
+                    "ORDER BY u.created_at DESC "
+                    "LIMIT :limit OFFSET :offset"
+                ),
+                params,
+            )
+        rows = result.all()
 
     identity = await _zitadel_identity_map()
 
@@ -297,16 +311,14 @@ async def platform_organizations(
 ) -> list[PlatformOrg]:
     await _audit(perms, "organizations", search)
     params: dict[str, object] = {}
-    where = "WHERE o.deleted_at IS NULL"
     if search:
-        where += " AND (o.name ILIKE :q OR o.slug ILIKE :q)"
         params["q"] = f"%{search}%"
 
     async with cross_org_session() as db:
-        rows = (
-            await db.execute(
+        if search:
+            result = await db.execute(
                 text(
-                    "SELECT o.id, o.name, o.slug, o.plan, o.billing_status, "  # noqa: S608
+                    "SELECT o.id, o.name, o.slug, o.plan, o.billing_status, "
                     "o.billing_cycle, o.seats, o.provisioning_status, o.created_at, "
                     "(SELECT COUNT(*) FROM portal_users u "
                     "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
@@ -314,12 +326,29 @@ async def platform_organizations(
                     "(SELECT COUNT(*) FROM portal_knowledge_bases kb "
                     "  WHERE kb.org_id = o.id) AS kb_count "
                     "FROM portal_orgs o "
-                    f"{where} "
+                    "WHERE o.deleted_at IS NULL "
+                    "AND (o.name ILIKE :q OR o.slug ILIKE :q) "
                     "ORDER BY o.created_at DESC"
                 ),
                 params,
             )
-        ).all()
+        else:
+            result = await db.execute(
+                text(
+                    "SELECT o.id, o.name, o.slug, o.plan, o.billing_status, "
+                    "o.billing_cycle, o.seats, o.provisioning_status, o.created_at, "
+                    "(SELECT COUNT(*) FROM portal_users u "
+                    "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
+                    "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count, "
+                    "(SELECT COUNT(*) FROM portal_knowledge_bases kb "
+                    "  WHERE kb.org_id = o.id) AS kb_count "
+                    "FROM portal_orgs o "
+                    "WHERE o.deleted_at IS NULL "
+                    "ORDER BY o.created_at DESC"
+                ),
+                params,
+            )
+        rows = result.all()
 
     return [
         PlatformOrg(
@@ -511,27 +540,38 @@ async def platform_bots(
 ) -> list[PlatformBot]:
     await _audit(perms, "bots", search)
     params: dict[str, object] = {}
-    where = ""
     if search:
-        where = "WHERE (w.name ILIKE :q OR o.name ILIKE :q)"
         params["q"] = f"%{search}%"
 
     async with cross_org_session() as db:
-        rows = (
-            await db.execute(
+        if search:
+            result = await db.execute(
                 text(
-                    "SELECT w.id, w.name, w.widget_id, w.created_at, "  # noqa: S608
+                    "SELECT w.id, w.name, w.widget_id, w.created_at, "
                     "o.id AS org_id, o.name AS org_name, o.slug AS org_slug, "
                     "(SELECT COUNT(*) FROM widget_kb_access k "
                     "  WHERE k.widget_id = w.id) AS kb_count "
                     "FROM widgets w "
                     "JOIN portal_orgs o ON o.id = w.org_id "
-                    f"{where} "
+                    "WHERE (w.name ILIKE :q OR o.name ILIKE :q) "
                     "ORDER BY w.created_at DESC"
                 ),
                 params,
             )
-        ).all()
+        else:
+            result = await db.execute(
+                text(
+                    "SELECT w.id, w.name, w.widget_id, w.created_at, "
+                    "o.id AS org_id, o.name AS org_name, o.slug AS org_slug, "
+                    "(SELECT COUNT(*) FROM widget_kb_access k "
+                    "  WHERE k.widget_id = w.id) AS kb_count "
+                    "FROM widgets w "
+                    "JOIN portal_orgs o ON o.id = w.org_id "
+                    "ORDER BY w.created_at DESC"
+                ),
+                params,
+            )
+        rows = result.all()
 
     return [
         PlatformBot(
@@ -556,26 +596,36 @@ async def platform_knowledge_bases(
     """Cross-tenant list of all knowledge bases."""
     await _audit(perms, "knowledge-bases", search)
     params: dict[str, object] = {}
-    where = ""
     if search:
-        where = "WHERE (kb.name ILIKE :q OR o.name ILIKE :q)"
         params["q"] = f"%{search}%"
 
     async with cross_org_session() as db:
-        rows = (
-            await db.execute(
+        if search:
+            result = await db.execute(
                 text(
-                    "SELECT kb.id, kb.name, kb.slug, kb.owner_type, "  # noqa: S608
+                    "SELECT kb.id, kb.name, kb.slug, kb.owner_type, "
                     "kb.visibility, kb.created_at, "
                     "o.id AS org_id, o.name AS org_name, o.slug AS org_slug "
                     "FROM portal_knowledge_bases kb "
                     "JOIN portal_orgs o ON o.id = kb.org_id "
-                    f"{where} "
+                    "WHERE (kb.name ILIKE :q OR o.name ILIKE :q) "
                     "ORDER BY kb.created_at DESC"
                 ),
                 params,
             )
-        ).all()
+        else:
+            result = await db.execute(
+                text(
+                    "SELECT kb.id, kb.name, kb.slug, kb.owner_type, "
+                    "kb.visibility, kb.created_at, "
+                    "o.id AS org_id, o.name AS org_name, o.slug AS org_slug "
+                    "FROM portal_knowledge_bases kb "
+                    "JOIN portal_orgs o ON o.id = kb.org_id "
+                    "ORDER BY kb.created_at DESC"
+                ),
+                params,
+            )
+        rows = result.all()
 
     return [
         PlatformKB(
@@ -601,16 +651,14 @@ async def platform_templates(
     """Cross-tenant list of all chat templates (org + personal)."""
     await _audit(perms, "templates", search)
     params: dict[str, object] = {}
-    where = ""
     if search:
-        where = "WHERE (t.name ILIKE :q OR o.name ILIKE :q)"
         params["q"] = f"%{search}%"
 
     async with cross_org_session() as db:
-        rows = (
-            await db.execute(
+        if search:
+            result = await db.execute(
                 text(
-                    "SELECT t.id, t.name, t.slug, t.scope, t.created_by, "  # noqa: S608
+                    "SELECT t.id, t.name, t.slug, t.scope, t.created_by, "
                     "t.is_active, t.created_at, "
                     "o.id AS org_id, o.name AS org_name, o.slug AS org_slug, "
                     "COALESCE(u.display_name, u.email) AS created_by_name "
@@ -618,12 +666,27 @@ async def platform_templates(
                     "JOIN portal_orgs o ON o.id = t.org_id "
                     "LEFT JOIN portal_users u "
                     "  ON u.zitadel_user_id = t.created_by AND u.org_id = t.org_id "
-                    f"{where} "
+                    "WHERE (t.name ILIKE :q OR o.name ILIKE :q) "
                     "ORDER BY t.created_at DESC"
                 ),
                 params,
             )
-        ).all()
+        else:
+            result = await db.execute(
+                text(
+                    "SELECT t.id, t.name, t.slug, t.scope, t.created_by, "
+                    "t.is_active, t.created_at, "
+                    "o.id AS org_id, o.name AS org_name, o.slug AS org_slug, "
+                    "COALESCE(u.display_name, u.email) AS created_by_name "
+                    "FROM portal_templates t "
+                    "JOIN portal_orgs o ON o.id = t.org_id "
+                    "LEFT JOIN portal_users u "
+                    "  ON u.zitadel_user_id = t.created_by AND u.org_id = t.org_id "
+                    "ORDER BY t.created_at DESC"
+                ),
+                params,
+            )
+        rows = result.all()
 
     return [
         PlatformTemplate(
