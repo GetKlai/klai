@@ -7,6 +7,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
+import { Textarea } from '@/components/ui/textarea'
+import { WidgetToggleCard } from '@/features/widgets/components/WidgetToggleCard'
+import { isValidOrigin, parseOrigins } from '@/features/widgets/config/origins'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { useCreateWidget } from './-hooks'
@@ -74,22 +77,6 @@ const INITIAL_FORM: FormState = {
   widget_position: 'right',
   public_share_enabled: false,
   allowed_origins_raw: '',
-}
-
-function parseOrigins(raw: string): string[] {
-  return raw
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-}
-
-function isValidOrigin(o: string): boolean {
-  try {
-    const url = new URL(o)
-    return url.protocol === 'https:' || url.protocol === 'http:'
-  } catch {
-    return false
-  }
 }
 
 function NewWidgetPage() {
@@ -255,7 +242,7 @@ function NewWidgetPage() {
                     onChange={(e) =>
                       setForm((p) => ({ ...p, name: e.target.value }))
                     }
-                    placeholder="bv. Klantenservice bot"
+                    placeholder={m.admin_widgets_name_placeholder()}
                     required
                     autoFocus
                   />
@@ -267,15 +254,14 @@ function NewWidgetPage() {
                   <p className="text-xs text-gray-400">
                     {m.admin_widgets_details_role_scope_help()}
                   </p>
-                  <textarea
+                  <Textarea
                     id="widget-description"
                     value={form.description}
                     onChange={(e) =>
                       setForm((p) => ({ ...p, description: e.target.value }))
                     }
                     rows={3}
-                    placeholder="bv. Beantwoordt vragen over openingstijden, prijzen en leveringen van Klai. Stuur off-topic vragen door naar support@getklai.com."
-                    className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+                    placeholder={m.admin_widgets_role_scope_placeholder()}
                   />
                 </div>
               </div>
@@ -319,7 +305,7 @@ function NewWidgetPage() {
                   <p className="text-xs text-gray-400">
                     {m.admin_widgets_widget_system_prompt_help()}
                   </p>
-                  <textarea
+                  <Textarea
                     id="widget-system-prompt"
                     value={form.system_prompt}
                     onChange={(e) =>
@@ -328,7 +314,6 @@ function NewWidgetPage() {
                     rows={6}
                     maxLength={4000}
                     placeholder={m.admin_widgets_widget_system_prompt_placeholder()}
-                    className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
                   />
                 </div>
               </div>
@@ -363,7 +348,8 @@ function NewWidgetPage() {
                   {m.admin_widgets_brand_color_help()}
                 </p>
                 <div className="flex items-center gap-2">
-                  <input
+                  <Input
+                    id="widget-primary-color"
                     type="color"
                     value={form.primary_color}
                     onChange={(e) =>
@@ -383,7 +369,7 @@ function NewWidgetPage() {
                       }))
                     }
                     pattern="^#[0-9a-fA-F]{6}$"
-                    placeholder="#fcaa2d"
+                    placeholder={m.admin_widgets_brand_color_placeholder()}
                     className="font-mono text-sm"
                   />
                 </div>
@@ -396,12 +382,14 @@ function NewWidgetPage() {
                   className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-0.5"
                 >
                   {(['light', 'dark'] as const).map((t) => (
-                    <button
+                    <Button
                       key={t}
                       type="button"
                       onClick={() => setForm((p) => ({ ...p, theme: t }))}
                       role="radio"
                       aria-checked={form.theme === t}
+                      variant="ghost"
+                      size="sm"
                       className={
                         form.theme === t
                           ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
@@ -411,7 +399,7 @@ function NewWidgetPage() {
                       {t === 'light'
                         ? m.admin_widgets_theme_light()
                         : m.admin_widgets_theme_dark()}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -435,7 +423,7 @@ function NewWidgetPage() {
                   onChange={(e) =>
                     setForm((p) => ({ ...p, welcome_message: e.target.value }))
                   }
-                  placeholder="Hoi! Waarmee kan ik je helpen?"
+                  placeholder={m.admin_widgets_widget_welcome_placeholder()}
                 />
               </div>
             </div>
@@ -452,7 +440,7 @@ function NewWidgetPage() {
                 <p className="text-xs text-gray-400">
                   {m.admin_widgets_widget_starters_help()}
                 </p>
-                <textarea
+                <Textarea
                   id="widget-starters"
                   value={form.starters_raw}
                   onChange={(e) =>
@@ -460,7 +448,6 @@ function NewWidgetPage() {
                   }
                   rows={4}
                   placeholder={m.admin_widgets_widget_starters_placeholder()}
-                  className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
                 />
                 <p className="text-xs text-gray-400">
                   {starters.length}/{MAX_STARTERS}
@@ -474,21 +461,21 @@ function NewWidgetPage() {
                 {m.admin_widgets_appearance_section_chat_display()}
               </SectionHeading>
               <div className="space-y-3">
-                <Toggle
+                <WidgetToggleCard
                   id="show-sources"
                   checked={form.show_sources}
                   onChange={(v) => setForm((p) => ({ ...p, show_sources: v }))}
                   label={m.admin_widgets_show_sources_label()}
                   help={m.admin_widgets_show_sources_help()}
                 />
-                <Toggle
+                <WidgetToggleCard
                   id="show-meta"
                   checked={form.show_meta}
                   onChange={(v) => setForm((p) => ({ ...p, show_meta: v }))}
                   label={m.admin_widgets_show_meta_label()}
                   help={m.admin_widgets_show_meta_help()}
                 />
-                <Toggle
+                <WidgetToggleCard
                   id="collect-user-info"
                   checked={form.collect_user_info}
                   onChange={(v) =>
@@ -497,7 +484,7 @@ function NewWidgetPage() {
                   label={m.admin_widgets_collect_user_info_label()}
                   help={m.admin_widgets_collect_user_info_help()}
                 />
-                <Toggle
+                <WidgetToggleCard
                   id="hide-disclaimer"
                   checked={form.hide_disclaimer}
                   onChange={(v) =>
@@ -519,7 +506,7 @@ function NewWidgetPage() {
                 className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-0.5"
               >
                 {(['left', 'right'] as const).map((pos) => (
-                  <button
+                  <Button
                     key={pos}
                     type="button"
                     onClick={() =>
@@ -527,6 +514,8 @@ function NewWidgetPage() {
                     }
                     role="radio"
                     aria-checked={form.widget_position === pos}
+                    variant="ghost"
+                    size="sm"
                     className={
                       form.widget_position === pos
                         ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
@@ -536,7 +525,7 @@ function NewWidgetPage() {
                     {pos === 'left'
                       ? m.admin_widgets_position_left()
                       : m.admin_widgets_position_right()}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -557,7 +546,7 @@ function NewWidgetPage() {
                   (optioneel)
                 </span>
               </Label>
-              <textarea
+              <Textarea
                 id="widget-origins"
                 value={form.allowed_origins_raw}
                 onChange={(e) =>
@@ -568,7 +557,7 @@ function NewWidgetPage() {
                 }
                 rows={4}
                 placeholder={m.admin_widgets_widget_origins_placeholder()}
-                className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm font-mono text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="font-mono"
               />
             </div>
             <p className="text-xs text-gray-400 pt-2">
@@ -635,38 +624,5 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
     <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
       {children}
     </h3>
-  )
-}
-
-function Toggle({
-  id,
-  checked,
-  onChange,
-  label,
-  help,
-}: {
-  id: string
-  checked: boolean
-  onChange: (next: boolean) => void
-  label: string
-  help: string
-}) {
-  return (
-    <label
-      htmlFor={id}
-      className="flex items-start gap-3 rounded-md border border-gray-200 p-3 cursor-pointer klai-hover"
-    >
-      <input
-        id={id}
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-4 w-4 accent-[var(--color-rl-accent)]"
-      />
-      <div>
-        <p className="text-sm font-medium text-gray-900">{label}</p>
-        <p className="text-xs text-gray-400">{help}</p>
-      </div>
-    </label>
   )
 }

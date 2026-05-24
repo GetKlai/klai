@@ -123,12 +123,13 @@ function WidgetDetailPage() {
           {tabs.map(({ id: tabId, label, icon: TabIcon }) => {
             const isActive = tabId === activeTab
             return (
-              <button
+              <Button
                 key={tabId}
                 type="button"
+                variant="link"
                 onClick={() => setTab(tabId)}
                 className={[
-                  'flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors',
+                  'h-auto rounded-none px-0 pb-3 text-sm font-medium no-underline border-b-2 transition-colors hover:no-underline',
                   isActive
                     ? 'border-gray-200 text-gray-900'
                     : 'border-transparent text-gray-400 hover:text-gray-900',
@@ -136,7 +137,7 @@ function WidgetDetailPage() {
               >
                 <TabIcon className="h-4 w-4" />
                 {label}
-              </button>
+              </Button>
             )
           })}
         </nav>
