@@ -82,6 +82,22 @@ jobs:
       - name: Alembic integrity (single head, no duplicate rev ids)
         run: uv run python scripts/validate_alembic.py
 
+      - name: Alembic post-deploy guard
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -e
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --depth=1 origin main
+            BASE_SHA="origin/main"
+          fi
+          CHANGED="$(git diff --name-only "$BASE_SHA" "$GITHUB_SHA" -- 'klai-portal/backend/alembic/versions/*.py' | sed 's#^klai-portal/backend/##')"
+          if [ -z "$CHANGED" ]; then
+            echo "No changed Alembic Python migrations."
+            exit 0
+          fi
+          uv run python scripts/check_migration_post_deploy.py $CHANGED
+
       - name: Test (pytest)
         run: uv run pytest -q --tb=short
 
@@ -350,6 +366,8 @@ jobs:
     needs: [build-push, scan]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+
       # Audit 2026-05-05: defence-in-depth gate. The deploy job is gated
       # via `needs: build-push` (build-push is itself gated), but the
       # Pre-deploy env check step has no `if:` — if a future change
@@ -381,9 +399,27 @@ jobs:
             fi
             echo "Pre-flight OK — all critical vars present."
 
+      - name: Install portal-api deploy script on core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          source: deploy/scripts/deploy-portal-api.sh
+          target: /opt/klai/scripts
+          strip_components: 2
+          overwrite: true
+
       # 2026-05-05 mailer-incident class: this step previously had no `if:`
       # gate, so PR builds also auto-deployed `:latest` to prod. Same
       # pattern that bit klai-mailer post PR #319 → hotfix #322.
+      #
+      # 2026-05-24 portal-api incident class: do NOT let the app container be
+      # the first process that discovers a broken Alembic/post-deploy path. Run
+      # schema work from the freshly pulled image while the old API is still
+      # serving traffic, then recreate the app container only after the DB is at
+      # the expected shape.
       - name: Deploy to core-01
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
@@ -393,8 +429,5 @@ jobs:
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
             set -e
-            source /opt/klai/.env
-            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
-            docker pull ghcr.io/getklai/portal-api:latest
-            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
-            /opt/klai/scripts/compose-up.sh portal-api
+            chmod +x /opt/klai/scripts/deploy-portal-api.sh
+            /opt/klai/scripts/deploy-portal-api.sh
