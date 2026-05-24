@@ -33,7 +33,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_user_id
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
+from app.core.permissions import UserPermissions, get_caller
 from app.models.connectors import PortalConnector
+from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalUser
 from app.services.connector_credentials import credential_store
 from app.services.events import emit_event
@@ -119,6 +121,79 @@ def _provider_enabled(provider: str) -> bool:
     if provider == "ms_docs":
         return bool(settings.ms_docs_client_id)
     return False
+
+
+async def _user_has_membership(db: AsyncSession, user_id: str, org_id: int) -> bool:
+    user_pk = await db.scalar(
+        select(PortalUser.id).where(
+            PortalUser.zitadel_user_id == user_id,
+            PortalUser.org_id == org_id,
+        )
+    )
+    return user_pk is not None
+
+
+async def _resolve_state_org_id(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    org_id: int,
+    kb_slug: str,
+    connector_id: str | None,
+) -> int:
+    await set_tenant(db, org_id)
+
+    if connector_id:
+        connector = await db.get(PortalConnector, connector_id)
+        if connector is None or connector.org_id != org_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+        if not await _user_has_membership(db, user_id, org_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+        return org_id
+
+    result = await db.execute(
+        select(PortalKnowledgeBase.org_id).where(
+            PortalKnowledgeBase.slug == kb_slug,
+            PortalKnowledgeBase.org_id == org_id,
+        )
+    )
+    org_ids = list(dict.fromkeys(result.scalars().all()))
+    if not org_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
+    if len(org_ids) > 1:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Knowledge base slug is ambiguous")
+    return int(org_ids[0])
+
+
+async def _resolve_callback_connector(
+    db: AsyncSession,
+    *,
+    payload: dict[str, Any],
+    user_id: str,
+) -> tuple[PortalConnector, str]:
+    connector_id = payload.get("connector_id")
+    if not connector_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing connector_id")
+
+    connector = await db.get(PortalConnector, connector_id)
+    if connector is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+
+    state_org_id = payload.get("org_id")
+    if state_org_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
+    try:
+        org_id = int(state_org_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state") from exc
+
+    if connector.org_id != org_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    if not await _user_has_membership(db, user_id, org_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+
+    await set_tenant(db, org_id)
+    return connector, str(connector_id)
 
 
 def _emit_reconnect_failed(
@@ -221,7 +296,8 @@ async def authorize_provider(
     provider: str,
     kb_slug: str = Query(..., description="Knowledge base slug the new connector will sync into"),
     connector_id: str | None = Query(None, description="Existing connector UUID (reconnect flow)"),
-    user_id: str = Depends(get_current_user_id),
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Return the provider consent URL and set the HttpOnly state cookie.
 
@@ -237,10 +313,19 @@ async def authorize_provider(
     if provider not in _SUPPORTED_PROVIDERS or not _provider_enabled(provider):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not enabled")
 
+    org_id = await _resolve_state_org_id(
+        db,
+        user_id=perms.user_id,
+        org_id=perms.org_id,
+        kb_slug=kb_slug,
+        connector_id=connector_id,
+    )
+
     # Build signed state. nonce defends against replay even if state TTL is within window.
     state_payload: dict[str, Any] = {
         "provider": provider,
-        "user_id": user_id,
+        "user_id": perms.user_id,
+        "org_id": org_id,
         "kb_slug": kb_slug,
         "nonce": secrets.token_urlsafe(16),
     }
@@ -345,20 +430,7 @@ async def callback_provider(
         logger.warning("oauth_callback_state_invalid: provider=%s", provider)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
 
-    # 2. Resolve portal user and ensure the target connector belongs to their org.
-    user_row = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == user_id))
-    if user_row is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not found")
-
-    connector_id = payload.get("connector_id")
-    if not connector_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing connector_id")
-
-    connector = await db.get(PortalConnector, connector_id)
-    if connector is None or connector.org_id != user_row.org_id:
-        # 404 (not 403) to avoid leaking existence across tenants.
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
-    await set_tenant(db, connector.org_id)
+    connector, connector_id = await _resolve_callback_connector(db, payload=payload, user_id=user_id)
 
     # Detect reconnect-flow: connector already had encrypted credentials AND
     # was in auth_error. Used below to emit connector.reconnected /

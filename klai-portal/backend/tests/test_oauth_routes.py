@@ -16,6 +16,8 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
+from tests.conftest import make_perms
+
 # Test-only placeholder literals (NOT credentials)
 _PLACEHOLDER_COOKIE_KEY = "R1c1-s96uO9Yz7k1E0kN6qz52gzd9PwNbAeZaks_PIc="
 _PLACEHOLDER_INTERNAL = "placeholder-internal-value"  # nosec
@@ -54,6 +56,16 @@ def _mock_httpx_client(post_response: MagicMock) -> MagicMock:
     return cls
 
 
+class _ScalarListResult:
+    def __init__(self, values: list) -> None:
+        self._values = values
+
+    def scalars(self) -> MagicMock:
+        scalars = MagicMock()
+        scalars.all.return_value = self._values
+        return scalars
+
+
 # ---------------------------------------------------------------------------
 # GET /api/oauth/providers
 # ---------------------------------------------------------------------------
@@ -67,7 +79,10 @@ class TestProvidersEndpoint:
         """google_drive_client_id set -> google_drive enabled=True."""
         from app.api.oauth import list_providers
 
-        with patch("app.api.oauth.settings") as mock_settings:
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.set_tenant", new=AsyncMock()),
+        ):
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
             mock_settings.ms_docs_client_id = ""
@@ -81,7 +96,10 @@ class TestProvidersEndpoint:
         """google_drive_client_id empty -> google_drive enabled=False."""
         from app.api.oauth import list_providers
 
-        with patch("app.api.oauth.settings") as mock_settings:
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.set_tenant", new=AsyncMock()),
+        ):
             mock_settings.google_drive_client_id = ""
             mock_settings.google_drive_client_secret = ""
             mock_settings.ms_docs_client_id = ""
@@ -103,8 +121,12 @@ class TestAuthorizeEndpoint:
     async def test_authorize_returns_authorize_url(self) -> None:
         """Returns 200 JSON with authorize_url pointing to accounts.google.com."""
         import json
+        from urllib.parse import parse_qs, urlparse
 
-        from app.api.oauth import authorize_provider
+        from app.api.oauth import _verify_state, authorize_provider
+
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_ScalarListResult([42]))
 
         with patch("app.api.oauth.settings") as mock_settings:
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
@@ -116,19 +138,31 @@ class TestAuthorizeEndpoint:
             response = await authorize_provider(
                 provider="google_drive",
                 kb_slug="main",
-                user_id="zitadel-user-1",
+                connector_id=None,
+                perms=make_perms(user_id="zitadel-user-1", org_id=42),
+                db=db,
             )
 
             assert response.status_code == 200
             body = json.loads(response.body)
             assert body["authorize_url"].startswith("https://accounts.google.com/")
+            state = parse_qs(urlparse(body["authorize_url"]).query)["state"][0]
+            payload = _verify_state(state)
+            assert payload is not None
+            assert payload["org_id"] == 42
 
     @pytest.mark.asyncio
     async def test_authorize_sets_state_cookie(self) -> None:
         """Redirect response must set a signed klai_oauth_state cookie."""
         from app.api.oauth import authorize_provider
 
-        with patch("app.api.oauth.settings") as mock_settings:
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_ScalarListResult([42]))
+
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.set_tenant", new=AsyncMock()),
+        ):
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
             mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
@@ -138,7 +172,9 @@ class TestAuthorizeEndpoint:
             response = await authorize_provider(
                 provider="google_drive",
                 kb_slug="main",
-                user_id="zitadel-user-1",
+                connector_id=None,
+                perms=make_perms(user_id="zitadel-user-1", org_id=42),
+                db=db,
             )
 
             set_cookie = response.headers.get("set-cookie", "")
@@ -158,7 +194,8 @@ class TestAuthorizeEndpoint:
                 await authorize_provider(
                     provider="google_drive",
                     kb_slug="main",
-                    user_id="zitadel-user-1",
+                    connector_id=None,
+                    perms=make_perms(user_id="zitadel-user-1", org_id=42),
                 )
 
             assert exc_info.value.status_code == 404
@@ -239,7 +276,12 @@ class TestCallbackEndpoint:
             mock_settings.domain = "getklai.com"
 
             state_token = _sign_state(
-                {"connector_id": "conn-uuid-1", "user_id": "zitadel-user-1", "provider": "google_drive"}
+                {
+                    "connector_id": "conn-uuid-1",
+                    "user_id": "zitadel-user-1",
+                    "provider": "google_drive",
+                    "org_id": 42,
+                }
             )
 
             db.scalar = AsyncMock(return_value=mock_portal_user)
@@ -265,6 +307,92 @@ class TestCallbackEndpoint:
             mock_store.encrypt_credentials.assert_called_once()
             db.commit.assert_awaited()
             assert mock_connector.encrypted_credentials == b"ENCRYPTED_BLOB"
+
+    @pytest.mark.asyncio
+    async def test_callback_rejects_state_without_org_id(self) -> None:
+        """OAuth callback state must carry the exact tenant id."""
+        from app.api.oauth import _sign_state, callback_provider
+
+        db = AsyncMock()
+
+        mock_connector = MagicMock()
+        mock_connector.id = "conn-uuid-1"
+        mock_connector.org_id = 42
+        mock_connector.connector_type = "google_drive"
+        mock_connector.config = {}
+        mock_connector.encrypted_credentials = None
+
+        with patch("app.api.oauth.settings") as mock_settings:
+            mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
+            mock_settings.portal_url = "https://portal.getklai.com"
+
+            state_token = _sign_state(
+                {"connector_id": "conn-uuid-1", "user_id": "zitadel-user-1", "provider": "google_drive"}
+            )
+
+            db.get = AsyncMock(return_value=mock_connector)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await callback_provider(
+                    provider="google_drive",
+                    code="auth-code-xyz",
+                    state=state_token,
+                    error=None,
+                    error_description=None,
+                    klai_oauth_state=state_token,
+                    user_id="zitadel-user-1",
+                    db=db,
+                )
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_callback_rejects_connector_org_mismatch_in_state(self) -> None:
+        """Signed org_id must match the connector's tenant."""
+        from app.api.oauth import _sign_state, callback_provider
+
+        db = AsyncMock()
+
+        mock_connector = MagicMock()
+        mock_connector.id = "conn-uuid-1"
+        mock_connector.org_id = 42
+        mock_connector.connector_type = "google_drive"
+        mock_connector.config = {}
+        mock_connector.encrypted_credentials = None
+
+        with patch("app.api.oauth.settings") as mock_settings:
+            mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
+            mock_settings.portal_url = "https://portal.getklai.com"
+
+            state_token = _sign_state(
+                {
+                    "connector_id": "conn-uuid-1",
+                    "user_id": "zitadel-user-1",
+                    "provider": "google_drive",
+                    "org_id": 77,
+                }
+            )
+
+            db.get = AsyncMock(return_value=mock_connector)
+            db.scalar = AsyncMock(return_value=object())
+
+            with pytest.raises(HTTPException) as exc_info:
+                await callback_provider(
+                    provider="google_drive",
+                    code="auth-code-xyz",
+                    state=state_token,
+                    error=None,
+                    error_description=None,
+                    klai_oauth_state=state_token,
+                    user_id="zitadel-user-1",
+                    db=db,
+                )
+
+        assert exc_info.value.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +633,9 @@ class TestMsDocsProvider:
 
         from app.api.oauth import authorize_provider
 
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_ScalarListResult([77]))
+
         with patch("app.api.oauth.settings") as mock_settings:
             mock_settings.google_drive_client_id = ""
             mock_settings.ms_docs_client_id = _PLACEHOLDER_CLIENT_ID
@@ -517,7 +648,9 @@ class TestMsDocsProvider:
             response = await authorize_provider(
                 provider="ms_docs",
                 kb_slug="main",
-                user_id="zitadel-user-1",
+                connector_id=None,
+                perms=make_perms(user_id="zitadel-user-1", org_id=77),
+                db=db,
             )
 
             assert response.status_code == 200
@@ -544,7 +677,8 @@ class TestMsDocsProvider:
                 await authorize_provider(
                     provider="ms_docs",
                     kb_slug="main",
-                    user_id="zitadel-user-1",
+                    connector_id=None,
+                    perms=make_perms(user_id="zitadel-user-1", org_id=77),
                 )
 
             assert exc_info.value.status_code == 404
@@ -587,6 +721,7 @@ class TestMsDocsProvider:
                     "user_id": "zitadel-user-1",
                     "kb_slug": "main",
                     "connector_id": "conn-uuid-ms-1",
+                    "org_id": 77,
                     "nonce": "nonce",
                 }
             )
@@ -682,6 +817,7 @@ class TestCallbackReconnectFailed:
                     "user_id": "zitadel-user-1",
                     "kb_slug": "main",
                     "connector_id": "conn-uuid-reconnect-denied",
+                    "org_id": 77,
                     "nonce": "nonce",
                 }
             )
@@ -760,6 +896,7 @@ class TestCallbackReconnectFailed:
                     "user_id": "zitadel-user-1",
                     "kb_slug": "main",
                     "connector_id": "conn-uuid-first-time",
+                    "org_id": 77,
                     "nonce": "nonce",
                 }
             )
@@ -824,6 +961,7 @@ class TestCallbackReconnectFailed:
                     "provider": "google_drive",
                     "user_id": "zitadel-user-1",
                     "connector_id": "conn-uuid-reconnect-tx-fail",
+                    "org_id": 77,
                 }
             )
 
@@ -895,6 +1033,7 @@ class TestCallbackReconnectFailed:
                     "provider": "google_drive",
                     "user_id": "zitadel-user-1",
                     "connector_id": "conn-uuid-first-time-tx-fail",
+                    "org_id": 77,
                 }
             )
 

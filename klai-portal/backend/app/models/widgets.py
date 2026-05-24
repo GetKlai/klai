@@ -15,6 +15,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -64,6 +65,7 @@ class Widget(Base):
         nullable=False,
         server_default='{"allowed_origins": [], "title": "", "welcome_message": "", "css_variables": {}}',
     )
+    public_share_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", default=False)
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, nullable=False, server_default="60")
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

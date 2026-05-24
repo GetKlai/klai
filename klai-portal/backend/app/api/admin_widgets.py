@@ -77,6 +77,7 @@ class CreateWidgetRequest(BaseModel):
     kb_ids: list[int] = Field(default_factory=list)
     rate_limit_rpm: int = Field(default=60, ge=10, le=600)
     widget_config: WidgetConfig | None = None
+    public_share_enabled: bool = False
 
 
 class WidgetResponse(BaseModel):
@@ -85,6 +86,7 @@ class WidgetResponse(BaseModel):
     description: str | None
     widget_id: str
     widget_config: WidgetConfig
+    public_share_enabled: bool
     kb_access_count: int
     rate_limit_rpm: int
     last_used_at: str | None
@@ -102,6 +104,7 @@ class UpdateWidgetRequest(BaseModel):
     kb_ids: list[int] | None = None
     rate_limit_rpm: int | None = None
     widget_config: WidgetConfig | None = None
+    public_share_enabled: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +135,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             collect_user_info=config.get("collect_user_info", False),
             widget_position=config.get("widget_position", "right"),
         ),
+        public_share_enabled=widget.public_share_enabled,
         kb_access_count=kb_access_count,
         rate_limit_rpm=widget.rate_limit_rpm,
         last_used_at=str(widget.last_used_at) if widget.last_used_at else None,
@@ -206,6 +210,7 @@ async def create_widget(
         description=body.description,
         widget_id=widget_id_str,
         widget_config=config,
+        public_share_enabled=body.public_share_enabled,
         rate_limit_rpm=body.rate_limit_rpm,
         created_by=perms.user_id,
     )
@@ -380,6 +385,8 @@ async def update_widget(
         widget.rate_limit_rpm = body.rate_limit_rpm
     if body.widget_config is not None:
         widget.widget_config = body.widget_config.model_dump()
+    if body.public_share_enabled is not None:
+        widget.public_share_enabled = body.public_share_enabled
 
     if body.kb_ids is not None:
         await _validate_kb_ids(body.kb_ids, perms.org_id, db)
@@ -504,26 +511,36 @@ async def list_widget_conversations(
     widget = await _get_widget_or_404(widget_id, perms.org_id, db)
 
     params: dict[str, object] = {"widget_id": widget.id, "limit": limit}
-    cursor_clause = ""
     if cursor:
         try:
             cursor_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
             params["cursor"] = cursor_dt
-            cursor_clause = "AND started_at < :cursor"
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="invalid cursor") from exc
 
-    # cursor_clause is a hardcoded string literal ("" or fixed SQL),
-    # never user-controlled — every dynamic value is a bound :param.
-    sql = (
-        "SELECT id, started_at, last_message_at, message_count, "  # noqa: S608
-        "first_user_query, language_detected "
-        "FROM widget_conversations "
-        "WHERE widget_id = CAST(:widget_id AS uuid) "
-        f"{cursor_clause} "
-        "ORDER BY started_at DESC LIMIT :limit"
-    )
-    result = await db.execute(text(sql), params)
+    if cursor:
+        result = await db.execute(
+            text(
+                "SELECT id, started_at, last_message_at, message_count, "
+                "first_user_query, language_detected "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND started_at < :cursor "
+                "ORDER BY started_at DESC LIMIT :limit"
+            ),
+            params,
+        )
+    else:
+        result = await db.execute(
+            text(
+                "SELECT id, started_at, last_message_at, message_count, "
+                "first_user_query, language_detected "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "ORDER BY started_at DESC LIMIT :limit"
+            ),
+            params,
+        )
     rows = result.all()
     return [
         ConversationListItem(
@@ -614,45 +631,83 @@ async def widget_activity_stats(
     cutoff = _period_cutoff(period)
 
     params: dict[str, object] = {"widget_id": widget.id}
-    cutoff_clause = ""
     if cutoff is not None:
         params["cutoff"] = cutoff
-        cutoff_clause = "AND started_at >= :cutoff"
 
-    # cutoff_clause is a hardcoded literal — see comment above.
-    totals_sql = (
-        "SELECT COUNT(*) AS total_conversations, "  # noqa: S608
-        "COALESCE(SUM(message_count), 0) AS total_messages "
-        "FROM widget_conversations "
-        "WHERE widget_id = CAST(:widget_id AS uuid) "
-        f"{cutoff_clause}"
-    )
-    totals_result = await db.execute(text(totals_sql), params)
+    if cutoff is not None:
+        totals_result = await db.execute(
+            text(
+                "SELECT COUNT(*) AS total_conversations, "
+                "COALESCE(SUM(message_count), 0) AS total_messages "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND started_at >= :cutoff"
+            ),
+            params,
+        )
+    else:
+        totals_result = await db.execute(
+            text(
+                "SELECT COUNT(*) AS total_conversations, "
+                "COALESCE(SUM(message_count), 0) AS total_messages "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid)"
+            ),
+            params,
+        )
     totals = totals_result.first()
     total_conversations = totals.total_conversations if totals else 0
     total_messages = totals.total_messages if totals else 0
     avg = round(total_messages / total_conversations, 2) if total_conversations else 0.0
 
-    top_sql = (
-        "SELECT first_user_query AS q, COUNT(*) AS c "  # noqa: S608
-        "FROM widget_conversations "
-        "WHERE widget_id = CAST(:widget_id AS uuid) "
-        "AND first_user_query IS NOT NULL "
-        f"{cutoff_clause} "
-        "GROUP BY first_user_query "
-        "ORDER BY c DESC, q ASC LIMIT 10"
-    )
-    top_result = await db.execute(text(top_sql), params)
+    if cutoff is not None:
+        top_result = await db.execute(
+            text(
+                "SELECT first_user_query AS q, COUNT(*) AS c "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND first_user_query IS NOT NULL "
+                "AND started_at >= :cutoff "
+                "GROUP BY first_user_query "
+                "ORDER BY c DESC, q ASC LIMIT 10"
+            ),
+            params,
+        )
+    else:
+        top_result = await db.execute(
+            text(
+                "SELECT first_user_query AS q, COUNT(*) AS c "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND first_user_query IS NOT NULL "
+                "GROUP BY first_user_query "
+                "ORDER BY c DESC, q ASC LIMIT 10"
+            ),
+            params,
+        )
     top_queries = [TopQuery(query=row.q, count=row.c) for row in top_result.all()]
 
-    hourly_sql = (
-        "SELECT EXTRACT(HOUR FROM started_at)::int AS hour, COUNT(*) AS c "  # noqa: S608
-        "FROM widget_conversations "
-        "WHERE widget_id = CAST(:widget_id AS uuid) "
-        f"{cutoff_clause} "
-        "GROUP BY hour"
-    )
-    hourly_result = await db.execute(text(hourly_sql), params)
+    if cutoff is not None:
+        hourly_result = await db.execute(
+            text(
+                "SELECT EXTRACT(HOUR FROM started_at)::int AS hour, COUNT(*) AS c "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND started_at >= :cutoff "
+                "GROUP BY hour"
+            ),
+            params,
+        )
+    else:
+        hourly_result = await db.execute(
+            text(
+                "SELECT EXTRACT(HOUR FROM started_at)::int AS hour, COUNT(*) AS c "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "GROUP BY hour"
+            ),
+            params,
+        )
     hourly = [0] * 24
     for row in hourly_result.all():
         if 0 <= row.hour <= 23:

@@ -31,6 +31,7 @@ class FakeWidgetRow:
             "css_variables": {},
         }
     )
+    public_share_enabled: bool = False
     rate_limit_rpm: int = 60
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
@@ -74,6 +75,7 @@ async def test_create_widget_returns_wgt_id_no_api_key():
     assert not hasattr(result, "api_key")
     assert result.name == "Help Bot"
     assert result.widget_config.title == "Help"
+    assert result.public_share_enabled is False
     db.add.assert_called()
     db.commit.assert_awaited_once()
 
@@ -124,6 +126,7 @@ async def test_update_widget_patches_config():
             title="Updated",
             welcome_message="Hello!",
         ),
+        public_share_enabled=True,
     )
 
     with patch("app.api.admin_widgets.emit_event"):
@@ -136,6 +139,7 @@ async def test_update_widget_patches_config():
 
     assert result.widget_config.title == "Updated"
     assert result.widget_config.allowed_origins == ["https://new.example.com"]
+    assert result.public_share_enabled is True
     db.commit.assert_awaited_once()
 
 

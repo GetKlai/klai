@@ -43,9 +43,6 @@ down_revision: str | None = "a4f72e913c8b"
 branch_labels: tuple[str, ...] | None = None
 depends_on: str | None = None
 
-_HELPER = "(_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id())"
-_INLINE = "(org_id = NULLIF(current_setting('app.current_org_id', true), '')::int)"
-
 
 def upgrade() -> None:
     # ENABLE/FORCE are idempotent; the policy needs DROP+CREATE because
@@ -53,9 +50,15 @@ def upgrade() -> None:
     op.execute("ALTER TABLE portal_templates ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE portal_templates FORCE ROW LEVEL SECURITY")
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON portal_templates")
-    op.execute(f"CREATE POLICY tenant_isolation ON portal_templates USING {_HELPER}")
+    op.execute(
+        "CREATE POLICY tenant_isolation ON portal_templates "
+        "USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id())"
+    )
 
 
 def downgrade() -> None:
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON portal_templates")
-    op.execute(f"CREATE POLICY tenant_isolation ON portal_templates USING {_INLINE}")
+    op.execute(
+        "CREATE POLICY tenant_isolation ON portal_templates "
+        "USING (org_id = NULLIF(current_setting('app.current_org_id', true), '')::int)"
+    )

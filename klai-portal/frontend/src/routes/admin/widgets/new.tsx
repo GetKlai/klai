@@ -52,6 +52,7 @@ interface FormState {
   collect_user_info: boolean
   hide_disclaimer: boolean
   widget_position: 'left' | 'right'
+  public_share_enabled: boolean
   // Insluiten
   allowed_origins_raw: string
 }
@@ -71,6 +72,7 @@ const INITIAL_FORM: FormState = {
   collect_user_info: false,
   hide_disclaimer: false,
   widget_position: 'right',
+  public_share_enabled: false,
   allowed_origins_raw: '',
 }
 
@@ -196,6 +198,7 @@ function NewWidgetPage() {
         kb_ids: form.kb_ids,
         rate_limit_rpm: 60,
         widget_config: widgetConfig,
+        public_share_enabled: form.public_share_enabled,
       },
       {
         onSuccess: (data) => {
