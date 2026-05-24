@@ -1,28 +1,24 @@
 """widget allow_any_origin and loaded_origin columns — SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
 
-Adds:
-  - widgets.allow_any_origin BOOLEAN NOT NULL DEFAULT false
-    Explicit opt-in flag for open-world origin policy. When True, the
-    origin_allowed() gate is bypassed entirely. Replaces the old
-    "empty allowed_origins = open to the world" behaviour.
-  - widget_conversations.loaded_origin VARCHAR(200) NULL
-    Records the Origin header from each conversation start for audit
-    visibility. NULL when Origin header was absent (e.g. direct API call).
+Per `alembic-cannot-drop-non-portal_api-tables` pitfall: `widgets` is owned
+by the `klai` superuser (created via post-deploy SQL in earlier work), not
+by `portal_api`. ALTER TABLE on the widgets table fails with
+`InsufficientPrivilegeError: must be owner of table widgets` when run from
+the entrypoint's `alembic upgrade head` (which runs as `portal_api`).
 
-Both columns are additive DDL — no per-row writes in upgrade() so this
-migration is safe on Cat-B (widgets) and Cat-D (widget_conversations)
-RLS tables per the rls-with-check-blocks-migration-update pitfall.
+`widget_conversations` is in the same boat (Cat-D RLS, klai-owned per
+post_deploy_a4f72e913c8b_widget_conversations_rls.sql).
 
-Data migration (3-branch per-row UPDATE for existing widgets) lives in
-post_deploy_a1c2d3e4f5b6.sql and must be applied as the klai superuser.
+So this alembic revision is intentionally a no-op marker — its only job is
+to occupy the migration chain so a single head is preserved. The actual
+ADD COLUMN statements live in the sibling post_deploy_a1c2d3e4f5b6.sql,
+which the portal-api.yml deploy job applies as the klai superuser after
+the alembic upgrade succeeds.
 
 Revision ID: a1c2d3e4f5b6
 Revises: 5b7c9d1e2f3a
 Create Date: 2026-05-24
 """
-
-import sqlalchemy as sa
-from alembic import op
 
 revision = "a1c2d3e4f5b6"
 down_revision = "5b7c9d1e2f3a"
@@ -31,29 +27,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add widgets.allow_any_origin — DDL only, no per-row write.
-    op.add_column(
-        "widgets",
-        sa.Column(
-            "allow_any_origin",
-            sa.Boolean(),
-            nullable=False,
-            server_default="false",
-        ),
-    )
-
-    # Add widget_conversations.loaded_origin — DDL only, nullable so
-    # existing rows stay valid without a backfill.
-    op.add_column(
-        "widget_conversations",
-        sa.Column(
-            "loaded_origin",
-            sa.String(200),
-            nullable=True,
-        ),
-    )
+    # No-op: schema work delegated to post_deploy_a1c2d3e4f5b6.sql (klai role).
+    pass
 
 
 def downgrade() -> None:
-    op.drop_column("widget_conversations", "loaded_origin")
-    op.drop_column("widgets", "allow_any_origin")
+    # No-op: schema work delegated to post_deploy_a1c2d3e4f5b6.sql (klai role).
+    pass
