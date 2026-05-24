@@ -12,7 +12,6 @@ import ast
 import sys
 from pathlib import Path
 
-
 OWNER_SENSITIVE_TABLES = frozenset({"widgets", "widget_kb_access"})
 OWNER_SENSITIVE_OPS = frozenset({"add_column", "drop_column", "alter_column", "create_index", "drop_index"})
 RLS_SQL_MARKERS = (
