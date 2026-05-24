@@ -1,35 +1,40 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
-import {
-  Activity,
-  BookOpen,
-  Bug,
-  ExternalLink,
-  Loader2,
-  Plus,
-  RotateCw,
-  Search,
-} from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Badge } from '@/components/ui/badge'
+import { useState } from 'react'
+import { BookOpen, Plus, RotateCw, Search } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
+import * as m from '@/paraglide/messages'
+import { usePlatformStats } from './-hooks'
 import {
-  usePlatformStats,
-  usePlatformUsers,
-  usePlatformOrgs,
-  usePlatformBots,
-  usePlatformChatErrors,
-  usePlatformKnowledgeBases,
-  usePlatformTemplates,
-  usePortalHealth,
-} from './-hooks'
+  BotsTab,
+  ChatErrorsTab,
+  KbTab,
+  OrgsTab,
+  StatusTab,
+  SubsTab,
+  TemplatesTab,
+  UsersTab,
+} from './-components/PlatformDashboardTabs'
+import { PlatformStatCard } from './-components/PlatformShell'
 import type { PlatformTab } from './-types'
 
 export const Route = createFileRoute('/admin/platform/')({
   component: PlatformConsole,
 })
+
+const TABS: { id: PlatformTab; label: () => string }[] = [
+  { id: 'users', label: m.platform_tab_users },
+  { id: 'organizations', label: m.platform_tab_organizations },
+  { id: 'knowledge-bases', label: m.platform_tab_knowledge_bases },
+  { id: 'templates', label: m.platform_tab_templates },
+  { id: 'subscriptions', label: m.platform_tab_subscriptions },
+  { id: 'bots', label: m.platform_tab_bots },
+  { id: 'chat-errors', label: m.platform_tab_chat_errors },
+  { id: 'status', label: m.platform_tab_status },
+]
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—'
@@ -41,17 +46,6 @@ function fmtDate(iso: string | null): string {
     minute: '2-digit',
   })
 }
-
-const TABS: { id: PlatformTab; label: string }[] = [
-  { id: 'users', label: 'Gebruikers' },
-  { id: 'organizations', label: 'Organisaties' },
-  { id: 'knowledge-bases', label: 'Kennisbanken' },
-  { id: 'templates', label: 'Templates' },
-  { id: 'subscriptions', label: 'Abonnementen' },
-  { id: 'bots', label: 'Bots' },
-  { id: 'chat-errors', label: 'Chat errors' },
-  { id: 'status', label: 'Status' },
-]
 
 function PlatformConsole() {
   const queryClient = useQueryClient()
@@ -73,131 +67,128 @@ function PlatformConsole() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
+    <div className="mx-auto max-w-6xl space-y-8 px-6 py-10">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            Platform
+            {m.platform_title()}
           </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Beheer gebruikers, organisaties en bots over alle tenants. Alleen
-            zichtbaar voor Klai-staff.
+          <p className="mt-1 text-sm text-gray-400">
+            {m.platform_description()}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          <button
+          <Button
             type="button"
             onClick={() =>
               void navigate({ to: '/admin/platform/onboarding-howto' })
             }
-            className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 klai-hover"
+            variant="secondary"
           >
             <BookOpen className="h-4 w-4" />
-            Onboarding how-to
-          </button>
-          <button
+            {m.platform_onboarding_howto()}
+          </Button>
+          <Button
             type="button"
             onClick={() => void navigate({ to: '/admin/platform/new' })}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
           >
             <Plus className="h-4 w-4" />
-            Nieuwe tenant
-          </button>
+            {m.platform_new_tenant()}
+          </Button>
         </div>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard
-          label="Gebruikers"
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+        <PlatformStatCard
+          label={m.platform_stat_users()}
           value={stats?.total_users}
           sub={
-            stats ? `+${stats.new_users_this_month} deze maand` : undefined
-          }
-          loading={statsQuery.isLoading}
-        />
-        <StatCard
-          label="Organisaties"
-          value={stats?.total_orgs}
-          sub={
             stats
-              ? `${stats.active_subscriptions} actief abonnement`
+              ? m.platform_stat_new_users_this_month({
+                  count: stats.new_users_this_month,
+                })
               : undefined
           }
           loading={statsQuery.isLoading}
         />
-        <StatCard
-          label="Bots"
-          value={stats?.total_bots}
-          sub={stats ? `+${stats.new_bots_today} vandaag` : undefined}
+        <PlatformStatCard
+          label={m.platform_stat_organizations()}
+          value={stats?.total_orgs}
+          sub={
+            stats
+              ? m.platform_stat_active_subscriptions({
+                  count: stats.active_subscriptions,
+                })
+              : undefined
+          }
           loading={statsQuery.isLoading}
         />
-        <StatCard
-          label="Kennisbanken"
+        <PlatformStatCard
+          label={m.platform_stat_bots()}
+          value={stats?.total_bots}
+          sub={
+            stats ? m.platform_stat_new_bots_today({ count: stats.new_bots_today }) : undefined
+          }
+          loading={statsQuery.isLoading}
+        />
+        <PlatformStatCard
+          label={m.platform_stat_knowledge_bases()}
           value={stats?.total_kbs}
           loading={statsQuery.isLoading}
         />
-        <StatCard
-          label="Templates"
+        <PlatformStatCard
+          label={m.platform_stat_templates()}
           value={stats?.total_templates}
           loading={statsQuery.isLoading}
         />
-        <StatCard
+        <PlatformStatCard
           label="MRR"
           value={stats ? `€${(stats.mrr_cents / 100).toFixed(2)}` : undefined}
-          sub={
-            stats ? `€${(stats.arr_cents / 100).toFixed(0)} ARR` : undefined
-          }
+          sub={stats ? `€${(stats.arr_cents / 100).toFixed(0)} ARR` : undefined}
           loading={statsQuery.isLoading}
         />
       </div>
 
-      {/* Tabs */}
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex gap-6 overflow-x-auto">
           {TABS.map((t) => {
             const active = t.id === tab
             return (
-              <button
+              <Button
                 key={t.id}
                 type="button"
+                variant="link"
                 onClick={() => setTab(t.id)}
                 className={[
-                  'whitespace-nowrap pb-3 text-sm font-medium border-b-2 transition-colors',
+                  'h-auto rounded-none border-b-2 px-0 pb-3 text-sm font-medium no-underline transition-colors hover:no-underline',
                   active
                     ? 'border-gray-900 text-gray-900'
                     : 'border-transparent text-gray-400 hover:text-gray-900',
                 ].join(' ')}
               >
-                {t.label}
-              </button>
+                {t.label()}
+              </Button>
             )
           })}
         </nav>
       </div>
 
-      {/* Search + refresh */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Zoek op naam of email…"
+            placeholder={m.platform_search_placeholder()}
             className="pl-9"
           />
         </div>
-        <button
-          type="button"
-          onClick={refresh}
-          className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 klai-hover"
-        >
+        <Button type="button" onClick={refresh} variant="secondary">
           <RotateCw className="h-4 w-4" />
-          Refresh
-        </button>
+          {m.platform_refresh()}
+        </Button>
       </div>
 
-      {/* Tab content */}
       {tab === 'users' && <UsersTab search={search} fmtDate={fmtDate} />}
       {tab === 'organizations' && (
         <OrgsTab search={search} fmtDate={fmtDate} />
@@ -211,555 +202,5 @@ function PlatformConsole() {
       {tab === 'chat-errors' && <ChatErrorsTab fmtDate={fmtDate} />}
       {tab === 'status' && <StatusTab />}
     </div>
-  )
-}
-
-function StatusTab() {
-  const health = usePortalHealth()
-  const portalUp = health.isSuccess && health.data.status === 'ok'
-
-  return (
-    <div className="space-y-4">
-      {/* Live liveness-check on portal-api */}
-      <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Activity className="h-5 w-5 shrink-0 text-gray-400" />
-            <div>
-              <p className="text-[15px] font-display text-gray-900">Portal API</p>
-              <p className="text-sm text-gray-400">
-                Live check via /api/health, ververst elke 30s.
-              </p>
-            </div>
-          </div>
-          {health.isLoading ? (
-            <span className="inline-flex items-center gap-1.5 text-sm text-gray-400">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Controleren…
-            </span>
-          ) : portalUp ? (
-            <Badge variant="success">Operationeel</Badge>
-          ) : (
-            <Badge variant="destructive">Niet bereikbaar</Badge>
-          )}
-        </div>
-      </div>
-
-      {/* Frontend errors users hit (GlitchTip / Sentry) */}
-      <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Bug className="h-5 w-5 shrink-0 text-gray-400" />
-            <div>
-              <p className="text-[15px] font-display text-gray-900">
-                Errors van users
-              </p>
-              <p className="mt-0.5 text-sm text-gray-400">
-                Frontend-crashes en exceptions die users in de browser raken,
-                verzameld in GlitchTip.
-              </p>
-            </div>
-          </div>
-          <a
-            href="https://errors.getklai.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 klai-hover"
-          >
-            errors.getklai.com
-            <ExternalLink className="h-4 w-4" />
-          </a>
-        </div>
-      </div>
-
-      {/* Link to the full, multi-service status page (Uptime Kuma) */}
-      <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-[15px] font-display text-gray-900">
-              Volledige service-status
-            </p>
-            <p className="mt-0.5 text-sm text-gray-400">
-              Realtime monitoring van alle Klai-services (retrieval, ingest,
-              connector, scribe, mailer, chat) draait in Uptime Kuma.
-            </p>
-          </div>
-          <a
-            href="https://status.getklai.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 klai-hover"
-          >
-            status.getklai.com
-            <ExternalLink className="h-4 w-4" />
-          </a>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function StatCard({
-  label,
-  value,
-  sub,
-  loading,
-}: {
-  label: string
-  value: number | string | undefined
-  sub?: string
-  loading: boolean
-}) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white px-4 py-4">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
-        {label}
-      </p>
-      <p className="mt-1 text-3xl font-display-bold text-gray-900 tabular-nums">
-        {loading ? (
-          <Loader2 className="inline h-5 w-5 animate-spin text-gray-400" />
-        ) : value === undefined ? (
-          '—'
-        ) : (
-          value
-        )}
-      </p>
-      {sub && <p className="mt-1 text-xs text-gray-400">{sub}</p>}
-    </div>
-  )
-}
-
-function TableShell({
-  loading,
-  empty,
-  emptyText,
-  children,
-}: {
-  loading: boolean
-  empty: boolean
-  emptyText: string
-  children: React.ReactNode
-}) {
-  if (loading) {
-    return (
-      <p className="py-8 text-sm text-gray-400">
-        <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-        Laden…
-      </p>
-    )
-  }
-  if (empty) {
-    return <p className="py-8 text-sm text-gray-400">{emptyText}</p>
-  }
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm border-t border-b border-gray-200">
-        {children}
-      </table>
-    </div>
-  )
-}
-
-const TH =
-  'py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide whitespace-nowrap'
-const TD = 'py-3.5 pr-4 align-top text-gray-900'
-
-function UsersTab({
-  search,
-  fmtDate,
-}: {
-  search: string
-  fmtDate: (s: string | null) => string
-}) {
-  const navigate = useNavigate()
-  const { data, isLoading } = usePlatformUsers(search)
-  const rows = data ?? []
-  return (
-    <TableShell
-      loading={isLoading}
-      empty={rows.length === 0}
-      emptyText="Geen gebruikers gevonden."
-    >
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className={TH}>Gebruiker</th>
-          <th className={TH}>Organisatie</th>
-          <th className={TH}>Plan</th>
-          <th className={TH}>Aangemaakt</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((u) => (
-          <tr
-            key={u.zitadel_user_id}
-            onClick={() =>
-              void navigate({
-                to: '/admin/platform/orgs/$orgId',
-                params: { orgId: String(u.org_id) },
-              })
-            }
-            className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
-          >
-            <td className={TD}>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium">
-                  {u.display_name || u.email || u.zitadel_user_id}
-                </span>
-                {u.is_admin && <Badge variant="secondary">Admin</Badge>}
-              </div>
-              {u.email && (
-                <p className="text-xs text-gray-400">{u.email}</p>
-              )}
-            </td>
-            <td className={TD}>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span>{u.org_name}</span>
-                {!u.org_onboarded && (
-                  <Badge variant="outline">Niet onboarded</Badge>
-                )}
-              </div>
-            </td>
-            <td className={TD}>
-              <Badge variant="outline">{u.org_plan}</Badge>
-            </td>
-            <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-              {fmtDate(u.created_at)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </TableShell>
-  )
-}
-
-function OrgsTab({
-  search,
-  fmtDate,
-}: {
-  search: string
-  fmtDate: (s: string | null) => string
-}) {
-  const navigate = useNavigate()
-  const { data, isLoading } = usePlatformOrgs(search)
-  const rows = data ?? []
-  return (
-    <TableShell
-      loading={isLoading}
-      empty={rows.length === 0}
-      emptyText="Geen organisaties gevonden."
-    >
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className={TH}>Organisatie</th>
-          <th className={TH}>Plan</th>
-          <th className={TH}>Gebruikers</th>
-          <th className={TH}>Bots</th>
-          <th className={TH}>KB's</th>
-          <th className={TH}>Status</th>
-          <th className={TH}>Aangemaakt</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((o) => (
-          <tr
-            key={o.id}
-            onClick={() =>
-              void navigate({
-                to: '/admin/platform/orgs/$orgId',
-                params: { orgId: String(o.id) },
-              })
-            }
-            className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
-          >
-            <td className={TD}>
-              <span className="font-medium">{o.name}</span>
-              <p className="text-xs text-gray-400 font-mono">{o.slug}</p>
-            </td>
-            <td className={TD}>
-              <Badge variant="outline">{o.plan}</Badge>
-            </td>
-            <td className={`${TD} tabular-nums`}>{o.user_count}</td>
-            <td className={`${TD} tabular-nums`}>{o.bot_count}</td>
-            <td className={`${TD} tabular-nums`}>{o.kb_count}</td>
-            <td className={TD}>
-              <Badge
-                variant={
-                  o.provisioning_status === 'ready'
-                    ? 'success'
-                    : 'outline'
-                }
-              >
-                {o.provisioning_status}
-              </Badge>
-            </td>
-            <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-              {fmtDate(o.created_at)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </TableShell>
-  )
-}
-
-function SubsTab({ search }: { search: string }) {
-  const { data, isLoading } = usePlatformOrgs(search)
-  const rows = data ?? []
-  return (
-    <TableShell
-      loading={isLoading}
-      empty={rows.length === 0}
-      emptyText="Geen abonnementen gevonden."
-    >
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className={TH}>Organisatie</th>
-          <th className={TH}>Plan</th>
-          <th className={TH}>Cyclus</th>
-          <th className={TH}>Seats</th>
-          <th className={TH}>Billing-status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((o) => (
-          <tr
-            key={o.id}
-            className="border-b border-gray-200 last:border-b-0"
-          >
-            <td className={TD}>
-              <span className="font-medium">{o.name}</span>
-            </td>
-            <td className={TD}>
-              <Badge variant="outline">{o.plan}</Badge>
-            </td>
-            <td className={TD}>{o.billing_cycle}</td>
-            <td className={`${TD} tabular-nums`}>{o.seats}</td>
-            <td className={TD}>
-              <Badge
-                variant={
-                  o.billing_status === 'active' ||
-                  o.billing_status === 'trialing'
-                    ? 'success'
-                    : 'outline'
-                }
-              >
-                {o.billing_status}
-              </Badge>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </TableShell>
-  )
-}
-
-function KbTab({
-  search,
-  fmtDate,
-}: {
-  search: string
-  fmtDate: (s: string | null) => string
-}) {
-  const navigate = useNavigate()
-  const { data, isLoading } = usePlatformKnowledgeBases(search)
-  const rows = data ?? []
-  return (
-    <TableShell
-      loading={isLoading}
-      empty={rows.length === 0}
-      emptyText="Geen kennisbanken gevonden."
-    >
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className={TH}>Kennisbank</th>
-          <th className={TH}>Organisatie</th>
-          <th className={TH}>Type</th>
-          <th className={TH}>Zichtbaarheid</th>
-          <th className={TH}>Aangemaakt</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((kb) => (
-          <tr
-            key={kb.id}
-            onClick={() =>
-              void navigate({
-                to: '/admin/platform/orgs/$orgId',
-                params: { orgId: String(kb.org_id) },
-              })
-            }
-            className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
-          >
-            <td className={TD}>
-              <span className="font-medium">{kb.name}</span>
-              <p className="text-xs text-gray-400 font-mono">{kb.slug}</p>
-            </td>
-            <td className={TD}>{kb.org_name}</td>
-            <td className={TD}>
-              <Badge variant="outline">
-                {kb.owner_type === 'org' ? 'Organisatie' : 'Persoonlijk'}
-              </Badge>
-            </td>
-            <td className={TD}>{kb.visibility}</td>
-            <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-              {fmtDate(kb.created_at)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </TableShell>
-  )
-}
-
-function TemplatesTab({
-  search,
-  fmtDate,
-}: {
-  search: string
-  fmtDate: (s: string | null) => string
-}) {
-  const navigate = useNavigate()
-  const { data, isLoading } = usePlatformTemplates(search)
-  const rows = data ?? []
-  return (
-    <TableShell
-      loading={isLoading}
-      empty={rows.length === 0}
-      emptyText="Geen templates gevonden."
-    >
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className={TH}>Template</th>
-          <th className={TH}>Organisatie</th>
-          <th className={TH}>Scope</th>
-          <th className={TH}>Gemaakt door</th>
-          <th className={TH}>Aangemaakt</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((t) => (
-          <tr
-            key={t.id}
-            onClick={() =>
-              void navigate({
-                to: '/admin/platform/orgs/$orgId',
-                params: { orgId: String(t.org_id) },
-              })
-            }
-            className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
-          >
-            <td className={TD}>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium">{t.name}</span>
-                {!t.is_active && <Badge variant="outline">Inactief</Badge>}
-              </div>
-              <p className="text-xs text-gray-400 font-mono">{t.slug}</p>
-            </td>
-            <td className={TD}>{t.org_name}</td>
-            <td className={TD}>
-              <Badge variant={t.scope === 'org' ? 'success' : 'outline'}>
-                {t.scope === 'org' ? 'Organisatie' : 'Persoonlijk'}
-              </Badge>
-            </td>
-            <td className={TD}>{t.created_by_name ?? t.created_by}</td>
-            <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-              {fmtDate(t.created_at)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </TableShell>
-  )
-}
-
-function BotsTab({
-  search,
-  fmtDate,
-}: {
-  search: string
-  fmtDate: (s: string | null) => string
-}) {
-  const { data, isLoading } = usePlatformBots(search)
-  const rows = data ?? []
-  return (
-    <TableShell
-      loading={isLoading}
-      empty={rows.length === 0}
-      emptyText="Geen bots gevonden."
-    >
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className={TH}>Bot</th>
-          <th className={TH}>Organisatie</th>
-          <th className={TH}>Kennisbanken</th>
-          <th className={TH}>Aangemaakt</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((b) => (
-          <tr
-            key={b.id}
-            onClick={() =>
-              window.open(
-                `/bot/${b.widget_id}`,
-                '_blank',
-                'noopener,noreferrer',
-              )
-            }
-            className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
-          >
-            <td className={TD}>
-              <span className="font-medium">{b.name}</span>
-            </td>
-            <td className={TD}>{b.org_name}</td>
-            <td className={`${TD} tabular-nums`}>{b.kb_count}</td>
-            <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-              {fmtDate(b.created_at)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </TableShell>
-  )
-}
-
-function ChatErrorsTab({
-  fmtDate,
-}: {
-  fmtDate: (s: string | null) => string
-}) {
-  const { data, isLoading } = usePlatformChatErrors()
-  const rows = data ?? []
-  return (
-    <TableShell
-      loading={isLoading}
-      empty={rows.length === 0}
-      emptyText="Geen chat-errors gevonden."
-    >
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className={TH}>Type</th>
-          <th className={TH}>Organisatie</th>
-          <th className={TH}>Detail</th>
-          <th className={TH}>Tijd</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((e) => (
-          <tr key={e.id} className="border-b border-gray-200 last:border-b-0">
-            <td className={TD}>
-              <Badge variant="destructive">{e.event_type}</Badge>
-            </td>
-            <td className={TD}>{e.org_name ?? `#${e.org_id}`}</td>
-            <td className={`${TD} max-w-md truncate text-gray-400`}>
-              {e.detail ?? '—'}
-            </td>
-            <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-              {fmtDate(e.created_at)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </TableShell>
   )
 }

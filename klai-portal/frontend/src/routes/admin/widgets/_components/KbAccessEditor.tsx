@@ -1,4 +1,5 @@
 import { Loader2 } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
 import * as m from '@/paraglide/messages'
 import { useOrgKnowledgeBases } from '../-hooks'
 import type { OrgKnowledgeBase } from '../-types'
@@ -66,12 +67,10 @@ export function KbAccessEditor({ value, onChange, disabled = false }: Props) {
               {kb.name}
             </td>
             <td className="py-3 text-center align-middle">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={value.includes(kb.id)}
                 onChange={(e) => toggle(kb.id, e.target.checked)}
                 disabled={disabled}
-                className="accent-[var(--color-accent)]"
               />
             </td>
           </tr>

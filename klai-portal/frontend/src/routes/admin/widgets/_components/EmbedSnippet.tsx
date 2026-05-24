@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { buildWidgetEmbedSnippet } from '@/features/widgets/embed/snippet'
 import * as m from '@/paraglide/messages'
 
 interface EmbedSnippetProps {
@@ -9,18 +10,10 @@ interface EmbedSnippetProps {
   welcomeMessage?: string
 }
 
-function buildSnippet(widgetId: string, title?: string, welcomeMessage?: string): string {
-  const attrs: string[] = [`  src="https://my.getklai.com/widget/klai-chat.js"`]
-  attrs.push(`  data-widget-id="${widgetId}"`)
-  if (title) attrs.push(`  data-title="${title}"`)
-  if (welcomeMessage) attrs.push(`  data-welcome="${welcomeMessage}"`)
-  return `<script\n${attrs.join('\n')}\n></script>`
-}
-
 export function EmbedSnippet({ widgetId, title, welcomeMessage }: EmbedSnippetProps) {
   const [copied, setCopied] = useState(false)
 
-  const snippet = buildSnippet(widgetId, title, welcomeMessage)
+  const snippet = buildWidgetEmbedSnippet(widgetId, title, welcomeMessage)
 
   function handleCopy() {
     void navigator.clipboard.writeText(snippet).then(() => {

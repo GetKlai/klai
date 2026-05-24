@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Loader2, MessageSquare, X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import {
   useWidgetConversations,
@@ -44,9 +45,11 @@ export function ActivityTab({ widget }: Props) {
       {/* Period picker */}
       <div role="radiogroup" className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-0.5">
         {PERIOD_OPTIONS.map((opt) => (
-          <button
+          <Button
             key={opt.value}
             type="button"
+            variant="ghost"
+            size="sm"
             role="radio"
             aria-checked={period === opt.value}
             onClick={() => setPeriod(opt.value)}
@@ -57,7 +60,7 @@ export function ActivityTab({ widget }: Props) {
             }
           >
             {opt.label}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -86,17 +89,17 @@ export function ActivityTab({ widget }: Props) {
 
       {/* Hourly activity sparkline */}
       <div>
-        <SectionHeading>Druktespiegel — gesprekken per uur</SectionHeading>
+        <SectionHeading>{m.admin_widgets_activity_hourly_title()}</SectionHeading>
         <HourlySparkline data={statsQuery.data?.hourly_activity} />
       </div>
 
       {/* Top queries */}
       <div>
-        <SectionHeading>Meest gestelde vragen</SectionHeading>
+        <SectionHeading>{m.admin_widgets_activity_top_questions_title()}</SectionHeading>
         {statsQuery.isLoading ? (
-          <p className="text-sm text-gray-400">Laden…</p>
+          <p className="text-sm text-gray-400">{m.admin_shared_loading()}</p>
         ) : (statsQuery.data?.top_queries ?? []).length === 0 ? (
-          <p className="text-sm text-gray-400">Nog geen vragen.</p>
+          <p className="text-sm text-gray-400">{m.admin_widgets_activity_no_questions()}</p>
         ) : (
           <ol className="space-y-2">
             {(statsQuery.data?.top_queries ?? []).map((q, idx) => (
@@ -116,7 +119,7 @@ export function ActivityTab({ widget }: Props) {
 
       {/* Recent conversations */}
       <div>
-        <SectionHeading>Recente gesprekken</SectionHeading>
+        <SectionHeading>{m.admin_widgets_activity_recent_conversations_title()}</SectionHeading>
         {convsQuery.isLoading ? (
           <p className="text-sm text-gray-400">
             <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
@@ -131,10 +134,11 @@ export function ActivityTab({ widget }: Props) {
           <ul className="divide-y divide-gray-200 border-t border-b border-gray-200">
             {conversations.map((c) => (
               <li key={c.id}>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => setOpenConvId(c.id)}
-                  className="w-full text-left flex items-start gap-3 py-3.5 px-2 klai-hover"
+                  className="h-auto w-full justify-start rounded-none px-2 py-3.5 text-left"
                 >
                   <MessageSquare className="h-4 w-4 mt-0.5 text-gray-400 shrink-0" />
                   <div className="flex-1 min-w-0">
@@ -163,7 +167,7 @@ export function ActivityTab({ widget }: Props) {
                       )}
                     </p>
                   </div>
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -289,14 +293,16 @@ function ConversationDrawer({
               </p>
             )}
           </div>
-          <button
+          <Button
             type="button"
             onClick={onClose}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 klai-hover"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-gray-500"
             aria-label="Sluiten"
           >
             <X className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
 
         <div className="px-5 py-4 space-y-3">
