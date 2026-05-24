@@ -148,8 +148,7 @@ def main(argv: list[str]) -> int:
         matches = list(versions_dir.glob(f"post_deploy_{revision}*.sql"))
         if not matches:
             failures.append(
-                f"{path}: touches owner/RLS-sensitive DDL but has no "
-                f"alembic/versions/post_deploy_{revision}*.sql"
+                f"{path}: touches owner/RLS-sensitive DDL but has no alembic/versions/post_deploy_{revision}*.sql"
             )
 
     if failures:
