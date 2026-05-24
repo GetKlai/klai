@@ -40,7 +40,7 @@ from app.services.kb_offboarding import (
 )
 from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.user_memberships import get_user_membership_summary
-from app.services.zitadel import zitadel
+from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 
 logger = logging.getLogger(__name__)
 # Structured-event logger for VictoriaLogs queryability — follows the
@@ -148,6 +148,12 @@ class SeatUpdateRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class RoleUpdateResponse(MessageResponse):
+    """Response for role-change endpoints; carries zitadel_sync_failed flag (REQ-5)."""
+
+    zitadel_sync_failed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -406,13 +412,13 @@ async def update_user(
     return MessageResponse(message="User updated.")
 
 
-@router.patch("/users/{zitadel_user_id}/role", response_model=MessageResponse)
+@router.patch("/users/{zitadel_user_id}/role", response_model=RoleUpdateResponse)
 async def update_user_role(
     zitadel_user_id: str,
     body: RoleUpdateRequest,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
+) -> RoleUpdateResponse:
     """SPEC-PORTAL-ADMIN-UI-001 REQ-2: unified change-profile endpoint.
 
     Serialises role changes per-org and refuses to demote the last admin so
@@ -461,6 +467,7 @@ async def update_user_role(
                 detail="Cannot change profile: this is the last admin. Promote another user first.",
             )
 
+    old_role = user.role
     user.role = body.role
     await db.commit()
     logger.info("Role changed: user_id=%s, new_role=%s, org_id=%d", zitadel_user_id, body.role, perms.org_id)
@@ -472,7 +479,33 @@ async def update_user_role(
     # role-change response never waits on the cross-service hop.
     fire_role_change_notification(zitadel_user_id)
 
-    return MessageResponse(message="Rol bijgewerkt.")
+    # REQ-5 (Finding A-4): sync Zitadel org:owner grant after DB commit.
+    # @MX:NOTE: [AUTO] Failure is non-fatal — DB already committed.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-5
+    zitadel_sync_failed = False
+    try:
+        await _sync_zitadel_role_grant(zitadel_user_id, old_role=old_role, new_role=body.role)
+    except Exception:
+        zitadel_sync_failed = True
+        _slog.exception(
+            "users_role_change_zitadel_sync_failed",
+            zitadel_user_id=zitadel_user_id,
+            org_id=perms.org_id,
+        )
+        await log_event(
+            org_id=perms.org_id,
+            actor=perms.user_id,
+            action="platform_admin.role_change_zitadel_desync",
+            resource_type="user",
+            resource_id=zitadel_user_id,
+            details={
+                "db_role": body.role,
+                "target_zitadel_role": "org:owner",
+                "zitadel_sync_failed": True,
+            },
+        )
+
+    return RoleUpdateResponse(message="Rol bijgewerkt.", zitadel_sync_failed=zitadel_sync_failed)
 
 
 @router.patch("/users/{zitadel_user_id}/seat", response_model=MessageResponse)

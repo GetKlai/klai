@@ -45,7 +45,7 @@ from app.services.default_knowledge_bases import create_default_personal_kb
 from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.provisioning import provision_tenant
 from app.services.user_memberships import get_user_membership_summary
-from app.services.zitadel import zitadel
+from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 
 
 def _slugify(name: str) -> str:
@@ -108,6 +108,12 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class RoleUpdateResponse(MessageResponse):
+    """Response for role-change endpoints; carries zitadel_sync_failed flag (REQ-5)."""
+
+    zitadel_sync_failed: bool = False
+
+
 class RoleUpdateRequest(BaseModel):
     role: PortalRole
 
@@ -150,14 +156,14 @@ async def _rollback_zitadel_user(zitadel_user_id: str) -> None:
 
 @router.patch(
     "/organizations/{org_id}/users/{zitadel_user_id}/role",
-    response_model=MessageResponse,
+    response_model=RoleUpdateResponse,
 )
 async def platform_update_role(
     org_id: int,
     zitadel_user_id: str,
     body: RoleUpdateRequest,
     perms: UserPermissions = Depends(require_platform_admin()),
-) -> MessageResponse:
+) -> RoleUpdateResponse:
     """Change a user's role inside a target tenant. Refuses to demote the
     last admin (mirrors the per-tenant invariant)."""
     async with tenant_scoped_session(org_id) as db:
@@ -193,6 +199,7 @@ async def platform_update_role(
                     detail="Kan rol niet wijzigen: dit is de laatste admin.",
                 )
 
+        old_role = user.role
         user.role = body.role
         await db.commit()
 
@@ -205,7 +212,29 @@ async def platform_update_role(
         resource_id=zitadel_user_id,
         details={"target_org_id": org_id, "new_role": body.role},
     )
-    return MessageResponse(message="Rol bijgewerkt.")
+
+    # REQ-5 (Finding A-4): sync Zitadel org:owner grant after DB commit.
+    # @MX:NOTE: [AUTO] Failure is non-fatal: DB is already committed; we emit
+    # a desync audit event and surface zitadel_sync_failed in the response.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-5
+    zitadel_sync_failed = False
+    try:
+        await _sync_zitadel_role_grant(zitadel_user_id, old_role=old_role, new_role=body.role)
+    except Exception:
+        zitadel_sync_failed = True
+        logger.exception("platform_role_change_zitadel_sync_failed", zitadel_user_id=zitadel_user_id)
+        await _emit_audit_safe(
+            action="platform_admin.role_change_zitadel_desync",
+            details={
+                "db_role": body.role,
+                "target_zitadel_role": "org:owner",
+                "zitadel_sync_failed": True,
+                "target_org_id": org_id,
+            },
+            perms=perms,
+        )
+
+    return RoleUpdateResponse(message="Rol bijgewerkt.", zitadel_sync_failed=zitadel_sync_failed)
 
 
 # ---------------------------------------------------------------------------

@@ -202,6 +202,37 @@ class ZitadelClient:
         )
         resp.raise_for_status()
 
+    async def list_user_grants(self, org_id: str, user_id: str) -> list[dict]:
+        """List all project grants for a user in a specific org."""
+        resp = await self._http.post(
+            f"/management/v1/users/{user_id}/grants/_search",
+            headers={"x-zitadel-orgid": org_id},
+            json={},
+        )
+        resp.raise_for_status()
+        return resp.json().get("result", [])
+
+    async def remove_user_role(self, org_id: str, user_id: str, role: str) -> None:
+        """Remove a project role grant from a user.
+
+        Looks up the grant ID for the project and role, then deletes it.
+        No-op if no matching grant is found (idempotent).
+
+        # @MX:NOTE: [AUTO] Called on admin→non-admin demotion to revoke org:owner JWT claim.
+        # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-5
+        """
+        grants = await self.list_user_grants(org_id=org_id, user_id=user_id)
+        for grant in grants:
+            if grant.get("projectId") == settings.zitadel_project_id and role in (grant.get("roles") or []):
+                grant_id = grant["id"]
+                resp = await self._http.delete(
+                    f"/management/v1/users/{user_id}/grants/{grant_id}",
+                    headers={"x-zitadel-orgid": org_id},
+                )
+                resp.raise_for_status()
+                return
+        # No matching grant found — already removed or never granted. Treat as success.
+
     async def list_org_users(self, org_id: str) -> list[dict]:
         """List all human users in a Zitadel org."""
         resp = await self._http.post(
@@ -933,3 +964,53 @@ class ZitadelClient:
 
 # Singleton — reused across requests
 zitadel = ZitadelClient()
+
+# ---------------------------------------------------------------------------
+# Shared role-sync helper (REQ-5)
+# ---------------------------------------------------------------------------
+
+# Mirror of _ZITADEL_ROLE_BY_PORTAL_ROLE in platform_manage.py and users.py.
+# Only admin maps to a Zitadel grant; all other portal roles have no grant.
+_ZITADEL_ROLE_FOR_PORTAL_ADMIN = "org:owner"
+_PORTAL_ADMIN_ROLE = "admin"
+
+
+async def _sync_zitadel_role_grant(
+    zitadel_user_id: str,
+    old_role: str,
+    new_role: str,
+) -> None:
+    """Sync the Zitadel org:owner grant when a portal role transitions to or from admin.
+
+    Called AFTER the DB commit — does NOT rollback on failure.
+
+    - promotion to admin  → grant_user_role(org:owner)
+    - demotion from admin → remove_user_role(org:owner)
+    - no admin transition  → no-op
+
+    Callers must catch exceptions and emit a desync audit event without
+    propagating (DB commit must not be undone).
+
+    # @MX:NOTE: [AUTO] Shared between platform_manage.platform_update_role and
+    # users.update_user_role. Single source of truth for the admin↔Zitadel
+    # grant relationship.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-5
+    """
+    from app.core.config import settings as _settings  # local import to avoid circular
+
+    portal_org_id = _settings.zitadel_portal_org_id
+
+    if old_role != _PORTAL_ADMIN_ROLE and new_role == _PORTAL_ADMIN_ROLE:
+        # Promotion to admin → grant org:owner
+        await zitadel.grant_user_role(
+            org_id=portal_org_id,
+            user_id=zitadel_user_id,
+            role=_ZITADEL_ROLE_FOR_PORTAL_ADMIN,
+        )
+    elif old_role == _PORTAL_ADMIN_ROLE and new_role != _PORTAL_ADMIN_ROLE:
+        # Demotion from admin → remove org:owner
+        await zitadel.remove_user_role(
+            org_id=portal_org_id,
+            user_id=zitadel_user_id,
+            role=_ZITADEL_ROLE_FOR_PORTAL_ADMIN,
+        )
