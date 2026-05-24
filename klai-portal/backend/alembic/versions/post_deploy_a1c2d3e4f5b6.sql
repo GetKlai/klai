@@ -50,13 +50,16 @@ WHERE jsonb_array_length(COALESCE(widget_config->'allowed_origins', '[]'::jsonb)
   AND public_share_enabled = true;
 
 -- Emit audit events for Branch 2 migrations.
-INSERT INTO portal_audit_log (org_id, event_type, actor_type, properties, created_at)
+-- portal_audit_log schema (app/models/audit.py): org_id, actor_user_id, action,
+-- resource_type, resource_id, details, created_at.
+INSERT INTO portal_audit_log (org_id, actor_user_id, action, resource_type, resource_id, details, created_at)
 SELECT
     org_id,
-    'widget.allow_any_origin_migrated',
     'system',
+    'widget.allow_any_origin_migrated',
+    'widget',
+    id::text,
     jsonb_build_object(
-        'widget_id', id,
         'reason', 'public_share_enabled',
         'migration_revision', 'a1c2d3e4f5b6'
     ),
@@ -80,15 +83,15 @@ WHERE w.org_id = o.id
   AND w.allow_any_origin = false;
 
 -- Emit audit events for Branch 3 migrations.
--- Note: portal_audit_log.org_id is INT; w.org_id is the right field
--- (w.id is the widget UUID).
-INSERT INTO portal_audit_log (org_id, event_type, actor_type, properties, created_at)
+-- Same column order as Branch 2 (see portal_audit_log schema in app/models/audit.py).
+INSERT INTO portal_audit_log (org_id, actor_user_id, action, resource_type, resource_id, details, created_at)
 SELECT
     w.org_id,
-    'widget.allow_any_origin_migrated',
     'system',
+    'widget.allow_any_origin_migrated',
+    'widget',
+    w.id::text,
     jsonb_build_object(
-        'widget_id', w.id,
         'reason', 'tenant_subdomain_default',
         'tenant_slug', o.slug,
         'migration_revision', 'a1c2d3e4f5b6'
