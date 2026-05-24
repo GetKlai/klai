@@ -41,6 +41,7 @@ class FakeWidget:
         }
     )
     public_share_enabled: bool = True
+    allow_any_origin: bool = False
     rate_limit_rpm: int = 60
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))

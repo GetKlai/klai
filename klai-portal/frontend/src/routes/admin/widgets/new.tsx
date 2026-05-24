@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ArrowRight, Loader2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -58,6 +59,7 @@ interface FormState {
   public_share_enabled: boolean
   // Insluiten
   allowed_origins_raw: string
+  allow_any_origin: boolean
 }
 
 const INITIAL_FORM: FormState = {
@@ -77,6 +79,7 @@ const INITIAL_FORM: FormState = {
   widget_position: 'right',
   public_share_enabled: false,
   allowed_origins_raw: '',
+  allow_any_origin: false,
 }
 
 function NewWidgetPage() {
@@ -186,6 +189,7 @@ function NewWidgetPage() {
         rate_limit_rpm: 60,
         widget_config: widgetConfig,
         public_share_enabled: form.public_share_enabled,
+        allow_any_origin: form.allow_any_origin,
       },
       {
         onSuccess: (data) => {
@@ -539,6 +543,31 @@ function NewWidgetPage() {
               specifieke domeinen laten laden? Vul ze hieronder in — één
               per regel. Laat leeg om overal toe te staan.
             </p>
+            {/* REQ-2 (Finding B-2): allow_any_origin toggle — bypasses the origin gate entirely.
+                @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2 */}
+            <div className="flex items-start gap-3 rounded-md border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] p-3">
+              <Checkbox
+                id="widget-allow-any-origin"
+                checked={form.allow_any_origin}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, allow_any_origin: e.target.checked }))
+                }
+              />
+              <div className="space-y-1">
+                <label
+                  htmlFor="widget-allow-any-origin"
+                  className="block cursor-pointer text-sm font-medium text-[var(--color-rl-dark)]"
+                >
+                  {m.admin_widgets_allow_any_origin_label()}
+                </label>
+                {form.allow_any_origin && (
+                  <div className="flex items-start gap-1.5 text-xs text-[var(--color-warning)]">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                    {m.admin_widgets_allow_any_origin_warning()}
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="space-y-1.5">
               <Label htmlFor="widget-origins">
                 {m.admin_widgets_widget_origins_label()}
