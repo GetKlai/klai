@@ -415,6 +415,12 @@ jobs:
       # Runs before the deploy to ensure the allow_any_origin data-migration
       # only affects internal widgets. Aborts if impacted_widgets > 5 or any
       # external tenant would be affected. The script exits 0 if safe.
+      # REQ-2 widget cohort impact gate.
+      # SQL is inlined here (not via `scripts/verify_widget_cohort.sh`) because
+      # /opt/klai on core-01 has a sparse-checkout that does NOT include
+      # klai-portal/backend/scripts/. The script-file remains in the repo as
+      # a runbook entry / local-dev tool — its logic is mirrored here.
+      # SPEC-DEPLOY-AUTO-MIGRATE-001 may consolidate this into a synced script.
       - name: REQ-2 widget cohort impact gate
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
@@ -423,10 +429,27 @@ jobs:
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
-            set -e
-            cd /opt/klai
-            PLATFORM_ORG_SLUG="${{ vars.PLATFORM_ORG_SLUG || 'getklai' }}" \
-              bash klai-portal/backend/scripts/verify_widget_cohort.sh
+            set -euo pipefail
+            PLATFORM_ORG_SLUG="${{ vars.PLATFORM_ORG_SLUG || 'getklai' }}"
+            MAX_IMPACTED="${{ vars.MAX_IMPACTED_WIDGETS || 5 }}"
+            QUERY="SELECT \
+              COUNT(*) FILTER (WHERE jsonb_array_length(COALESCE(widget_config->'allowed_origins', '[]'::jsonb)) = 0 AND public_share_enabled = false) AS impacted, \
+              COUNT(DISTINCT w.org_id) FILTER (WHERE jsonb_array_length(COALESCE(widget_config->'allowed_origins', '[]'::jsonb)) = 0 AND public_share_enabled = false AND o.slug != '${PLATFORM_ORG_SLUG}') AS external \
+              FROM widgets w JOIN portal_orgs o ON o.id = w.org_id;"
+            RESULT=$(docker exec klai-core-postgres-1 sh -c "psql -U \$POSTGRES_USER -d \$POSTGRES_DB -t -A -F'|' -c \"$QUERY\"")
+            echo "[cohort-gate] raw result: $RESULT"
+            IMPACTED=$(echo "$RESULT" | cut -d'|' -f1 | tr -d ' ')
+            EXTERNAL=$(echo "$RESULT" | cut -d'|' -f2 | tr -d ' ')
+            echo "[cohort-gate] impacted=$IMPACTED external=$EXTERNAL platform_slug=$PLATFORM_ORG_SLUG threshold=$MAX_IMPACTED"
+            if [ "$EXTERNAL" -gt 0 ]; then
+              echo "::error::REQ-2 cohort gate: $EXTERNAL external tenant(s) impacted — abort. Open a follow-up SPEC with the 7-day customer-communication protocol."
+              exit 1
+            fi
+            if [ "$IMPACTED" -gt "$MAX_IMPACTED" ]; then
+              echo "::error::REQ-2 cohort gate: $IMPACTED widgets impacted (threshold $MAX_IMPACTED). Review the cohort and either bump MAX_IMPACTED_WIDGETS via repo vars or open a follow-up SPEC."
+              exit 1
+            fi
+            echo "[cohort-gate] OK — $IMPACTED internal widget(s) impacted, safe to proceed."
 
       # 2026-05-05 mailer-incident class: this step previously had no `if:`
       # gate, so PR builds also auto-deployed `:latest` to prod. Same
