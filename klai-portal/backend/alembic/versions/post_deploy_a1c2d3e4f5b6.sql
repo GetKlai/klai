@@ -2,7 +2,16 @@
 -- Revision: a1c2d3e4f5b6
 --
 -- Run as klai superuser AFTER `alembic upgrade head` completes.
--- Applies the 3-branch data migration for existing widget rows:
+--
+-- Schema work (ALTER TABLE) is delegated here because `widgets` and
+-- `widget_conversations` are klai-owned (created via earlier post-deploy
+-- SQL); portal_api cannot ALTER them. Per the
+-- `alembic-cannot-drop-non-portal_api-tables` pitfall. The sibling
+-- alembic revision a1c2d3e4f5b6_widget_allow_any_origin_and_loaded_origin.py
+-- is intentionally a no-op marker.
+--
+-- After the ALTER TABLE statements, applies the 3-branch data migration for
+-- existing widget rows:
 --
 --   Branch 1: widgets with a non-empty allowed_origins list → keep as-is.
 --             allow_any_origin stays false (default); no changes needed.
@@ -20,8 +29,19 @@
 --
 -- The audit events in the INSERT below use the portal_audit_log table (Cat-C
 -- RLS: INSERT permissive, so no GUC needed).
+--
+-- Idempotency: ADD COLUMN IF NOT EXISTS, UPDATE branches use selective WHERE
+-- (no-op on re-run after first apply), audit INSERTs may duplicate on re-run
+-- but that's accepted as cheap append-only noise.
 
 BEGIN;
+
+-- Schema additions (klai-only — see header).
+ALTER TABLE widgets
+    ADD COLUMN IF NOT EXISTS allow_any_origin BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE widget_conversations
+    ADD COLUMN IF NOT EXISTS loaded_origin VARCHAR(200);
 
 -- Branch 2: empty origins + public_share_enabled → set allow_any_origin.
 UPDATE widgets
@@ -60,9 +80,11 @@ WHERE w.org_id = o.id
   AND w.allow_any_origin = false;
 
 -- Emit audit events for Branch 3 migrations.
+-- Note: portal_audit_log.org_id is INT; w.org_id is the right field
+-- (w.id is the widget UUID).
 INSERT INTO portal_audit_log (org_id, event_type, actor_type, properties, created_at)
 SELECT
-    w.id,
+    w.org_id,
     'widget.allow_any_origin_migrated',
     'system',
     jsonb_build_object(
@@ -75,7 +97,7 @@ SELECT
 FROM widgets w
 JOIN portal_orgs o ON o.id = w.org_id
 WHERE jsonb_array_length(COALESCE(w.widget_config->'allowed_origins', '[]'::jsonb)) = 1
-  AND w.widget_config->'allowed_origins'->0 LIKE 'https://%.getklai.com'
+  AND w.widget_config->'allowed_origins'->>0 LIKE 'https://%.getklai.com'
   AND w.allow_any_origin = false
   AND w.public_share_enabled = false;
 
