@@ -4,6 +4,8 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { WidgetToggleCard } from '@/features/widgets/components/WidgetToggleCard'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse, WidgetConfig } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
@@ -87,7 +89,8 @@ export function AppearanceTab({ widget }: Props) {
           <Label htmlFor="widget-primary-color">{m.admin_widgets_brand_color_label()}</Label>
           <p className="text-xs text-gray-400">{m.admin_widgets_brand_color_help()}</p>
           <div className="flex items-center gap-2">
-            <input
+            <Input
+              id="widget-primary-color"
               type="color"
               value={primaryColor}
               onChange={(e) => setPrimaryColor(e.target.value)}
@@ -97,7 +100,7 @@ export function AppearanceTab({ widget }: Props) {
               value={primaryColor}
               onChange={(e) => setPrimaryColor(e.target.value)}
               pattern="^#[0-9a-fA-F]{6}$"
-              placeholder="#fcaa2d"
+              placeholder={m.admin_widgets_brand_color_placeholder()}
               className="font-mono text-sm"
             />
           </div>
@@ -107,12 +110,14 @@ export function AppearanceTab({ widget }: Props) {
           <Label>{m.admin_widgets_theme_label()}</Label>
           <div role="radiogroup" className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-0.5">
             {(['light', 'dark'] as const).map((t) => (
-              <button
+              <Button
                 key={t}
                 type="button"
                 onClick={() => setTheme(t)}
                 role="radio"
                 aria-checked={theme === t}
+                variant="ghost"
+                size="sm"
                 className={
                   theme === t
                     ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
@@ -120,7 +125,7 @@ export function AppearanceTab({ widget }: Props) {
                 }
               >
                 {t === 'light' ? m.admin_widgets_theme_light() : m.admin_widgets_theme_dark()}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -136,7 +141,7 @@ export function AppearanceTab({ widget }: Props) {
             id="widget-welcome"
             value={welcome}
             onChange={(e) => setWelcome(e.target.value)}
-            placeholder="Hoi! Waarmee kan ik je helpen?"
+            placeholder={m.admin_widgets_widget_welcome_placeholder()}
           />
         </div>
       </section>
@@ -147,13 +152,12 @@ export function AppearanceTab({ widget }: Props) {
         <div className="space-y-1.5">
           <Label htmlFor="widget-starters">{m.admin_widgets_widget_starters_label()}</Label>
           <p className="text-xs text-gray-400">{m.admin_widgets_widget_starters_help()}</p>
-          <textarea
+          <Textarea
             id="widget-starters"
             value={startersRaw}
             onChange={(e) => setStartersRaw(e.target.value)}
             rows={4}
             placeholder={m.admin_widgets_widget_starters_placeholder()}
-            className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
           />
           <p className="text-xs text-gray-400">{starters.length}/{MAX_STARTERS}</p>
         </div>
@@ -163,13 +167,13 @@ export function AppearanceTab({ widget }: Props) {
       <section className="border-t border-gray-200 pt-6">
         <SectionHeading>{m.admin_widgets_appearance_section_chat_display()}</SectionHeading>
         <div className="space-y-3">
-          <Toggle id="show-sources" checked={showSources} onChange={setShowSources}
+          <WidgetToggleCard id="show-sources" checked={showSources} onChange={setShowSources}
             label={m.admin_widgets_show_sources_label()} help={m.admin_widgets_show_sources_help()} />
-          <Toggle id="show-meta" checked={showMeta} onChange={setShowMeta}
+          <WidgetToggleCard id="show-meta" checked={showMeta} onChange={setShowMeta}
             label={m.admin_widgets_show_meta_label()} help={m.admin_widgets_show_meta_help()} />
-          <Toggle id="collect-user-info" checked={collectUserInfo} onChange={setCollectUserInfo}
+          <WidgetToggleCard id="collect-user-info" checked={collectUserInfo} onChange={setCollectUserInfo}
             label={m.admin_widgets_collect_user_info_label()} help={m.admin_widgets_collect_user_info_help()} />
-          <Toggle id="hide-disclaimer" checked={hideDisclaimer} onChange={setHideDisclaimer}
+          <WidgetToggleCard id="hide-disclaimer" checked={hideDisclaimer} onChange={setHideDisclaimer}
             label={m.admin_widgets_widget_hide_disclaimer_label()} help={m.admin_widgets_widget_hide_disclaimer_help()} />
         </div>
       </section>
@@ -179,12 +183,14 @@ export function AppearanceTab({ widget }: Props) {
         <SectionHeading>{m.admin_widgets_appearance_section_position()}</SectionHeading>
         <div role="radiogroup" className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-0.5">
           {(['left', 'right'] as const).map((p) => (
-            <button
+            <Button
               key={p}
               type="button"
               onClick={() => setWidgetPosition(p)}
               role="radio"
               aria-checked={widgetPosition === p}
+              variant="ghost"
+              size="sm"
               className={
                 widgetPosition === p
                   ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
@@ -192,7 +198,7 @@ export function AppearanceTab({ widget }: Props) {
               }
             >
               {p === 'left' ? m.admin_widgets_position_left() : m.admin_widgets_position_right()}
-            </button>
+            </Button>
           ))}
         </div>
       </section>
@@ -216,31 +222,5 @@ export function AppearanceTab({ widget }: Props) {
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
     <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">{children}</h3>
-  )
-}
-
-function Toggle({
-  id, checked, onChange, label, help,
-}: {
-  id: string
-  checked: boolean
-  onChange: (next: boolean) => void
-  label: string
-  help: string
-}) {
-  return (
-    <label htmlFor={id} className="flex items-start gap-3 rounded-md border border-gray-200 p-3 cursor-pointer klai-hover">
-      <input
-        id={id}
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-4 w-4 accent-[var(--color-rl-accent)]"
-      />
-      <div>
-        <p className="text-sm font-medium text-gray-900">{label}</p>
-        <p className="text-xs text-gray-400">{help}</p>
-      </div>
-    </label>
   )
 }

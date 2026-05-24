@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse, WidgetConfig } from '../../-types'
@@ -85,20 +86,19 @@ export function DetailsTab({ widget }: Props) {
               id="widget-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="bv. Klantenservice bot"
+              placeholder={m.admin_widgets_name_placeholder()}
               required
             />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="widget-description">{m.admin_widgets_details_role_scope_label()}</Label>
             <p className="text-xs text-gray-400">{m.admin_widgets_details_role_scope_help()}</p>
-            <textarea
+            <Textarea
               id="widget-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              placeholder="bv. Beantwoordt vragen over openingstijden, prijzen en leveringen van Klai. Stuur off-topic vragen door naar support@getklai.com."
-              className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+              placeholder={m.admin_widgets_role_scope_placeholder()}
             />
           </div>
         </div>
@@ -128,14 +128,13 @@ export function DetailsTab({ widget }: Props) {
           <div className="space-y-1.5">
             <Label htmlFor="widget-system-prompt">{m.admin_widgets_widget_system_prompt_label()}</Label>
             <p className="text-xs text-gray-400">{m.admin_widgets_widget_system_prompt_help()}</p>
-            <textarea
+            <Textarea
               id="widget-system-prompt"
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
               rows={6}
               maxLength={4000}
               placeholder={m.admin_widgets_widget_system_prompt_placeholder()}
-              className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
             />
           </div>
         </div>

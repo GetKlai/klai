@@ -2,7 +2,12 @@ import { useState, useEffect } from 'react'
 import { Code2, Eye, Info, Link2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { isValidOrigin, parseOrigins } from '@/features/widgets/config/origins'
+import { buildWidgetEmbedSnippet } from '@/features/widgets/embed/snippet'
 import * as m from '@/paraglide/messages'
 import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
@@ -11,34 +16,6 @@ import { useUpdateWidget } from '../../-hooks'
 // tenant subdomain like nerds-37376105.getklai.com). The widget's
 // allowed_origins gate is exact-match, so adding a different host
 // would not unblock the test page on the host the user is actually on.
-
-function parseOrigins(raw: string): string[] {
-  return raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-}
-
-function isValidOrigin(origin: string): boolean {
-  try {
-    const url = new URL(origin)
-    return url.protocol === 'https:' || url.protocol === 'http:'
-  } catch {
-    return false
-  }
-}
-
-function buildSnippet(
-  widgetId: string,
-  title?: string,
-  welcomeMessage?: string,
-): string {
-  const attrs: string[] = [`  src="https://my.getklai.com/widget/klai-chat.js"`]
-  attrs.push(`  data-widget-id="${widgetId}"`)
-  if (title) attrs.push(`  data-title="${title}"`)
-  if (welcomeMessage) attrs.push(`  data-welcome="${welcomeMessage}"`)
-  return `<script\n${attrs.join('\n')}\n></script>`
-}
 
 interface Props {
   widget: WidgetDetailResponse
@@ -64,7 +41,7 @@ export function EmbedTab({ widget }: Props) {
   const invalidOrigins = origins.filter((o) => !isValidOrigin(o))
 
   const shareUrl = `${window.location.origin}/bot/${widget.widget_id}`
-  const snippet = buildSnippet(
+  const snippet = buildWidgetEmbedSnippet(
     widget.widget_id,
     config.title || undefined,
     config.welcome_message || undefined,
@@ -73,12 +50,12 @@ export function EmbedTab({ widget }: Props) {
   function copyShareLink() {
     if (!publicShareEnabled) return
     void navigator.clipboard.writeText(shareUrl)
-    toast.success('Link gekopieerd')
+    toast.success(m.admin_widgets_share_link_copied())
   }
 
   function copyEmbedCode() {
     void navigator.clipboard.writeText(snippet)
-    toast.success('Embed code gekopieerd')
+    toast.success(m.admin_widgets_embed_code_copied())
   }
 
   function openTest() {
@@ -110,84 +87,79 @@ export function EmbedTab({ widget }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Deelbare link — Klai-brand cream card with amber link icon.
-          Public bot URL works for anyone with the link, no auth required. */}
       <section className="rounded-xl border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] p-4">
         <div className="flex items-center gap-2 mb-3">
           <Link2 className="h-4 w-4 text-[var(--color-rl-accent-dark)]" />
           <span className="text-sm font-medium text-[var(--color-rl-dark)]">
-            Deelbare link
+            {m.admin_widgets_share_link_title()}
           </span>
         </div>
-        <label htmlFor="widget-public-share" className="mb-3 flex items-start gap-3 rounded-md border border-[var(--color-rl-border)] bg-white p-3 cursor-pointer">
-          <input
+        <div className="mb-3 flex items-start gap-3 rounded-md border border-[var(--color-rl-border)] bg-white p-3">
+          <Checkbox
             id="widget-public-share"
-            type="checkbox"
             checked={publicShareEnabled}
             onChange={(e) => setPublicShareEnabled(e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-[var(--color-rl-accent)]"
           />
           <div>
-            <p className="text-sm font-medium text-[var(--color-rl-dark)]">
-              Publiceer deelbare bot-link
-            </p>
+            <label htmlFor="widget-public-share" className="block cursor-pointer text-sm font-medium text-[var(--color-rl-dark)]">
+              {m.admin_widgets_share_link_publish()}
+            </label>
             <p className="text-xs text-gray-500">
-              Iedereen met deze link kan chatten met de gekoppelde kennisbanken.
+              {m.admin_widgets_share_link_help()}
             </p>
           </div>
-        </label>
+        </div>
         <div className="flex items-center gap-2">
-          <input
+          <Input
             type="text"
             readOnly
             value={shareUrl}
             disabled={!publicShareEnabled}
             onFocus={(e) => e.currentTarget.select()}
-            className="flex-1 rounded-md border border-[var(--color-rl-border)] bg-white px-3 py-2 font-mono text-xs text-[var(--color-rl-dark)] outline-none focus:ring-2 focus:ring-[var(--color-rl-accent)]/40 disabled:opacity-50"
+            className="flex-1 border-[var(--color-rl-border)] bg-white font-mono text-xs text-[var(--color-rl-dark)] focus:ring-[var(--color-rl-accent)]/40"
           />
-          <button
+          <Button
             type="button"
             onClick={copyShareLink}
             disabled={!publicShareEnabled}
-            className="inline-flex items-center justify-center rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            size="sm"
           >
-            Kopieer
-          </button>
+            {m.admin_widgets_share_link_copy()}
+          </Button>
         </div>
       </section>
 
-      {/* Embed code (widget script) — Klai-brand cream card. */}
       <section className="rounded-xl border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] p-4">
         <div className="flex items-center gap-2 mb-3">
           <Code2 className="h-4 w-4 text-[var(--color-rl-accent-dark)]" />
           <span className="text-sm font-medium text-[var(--color-rl-dark)]">
-            Embed code (widget script)
+            {m.admin_widgets_embed_code_title()}
           </span>
         </div>
         <pre className="rounded-md border border-[var(--color-rl-border)] bg-white px-4 py-3 text-xs font-mono text-[var(--color-rl-dark)] overflow-x-auto whitespace-pre">
           {snippet}
         </pre>
         <div className="mt-3 flex items-stretch gap-2">
-          <button
+          <Button
             type="button"
             onClick={copyEmbedCode}
-            className="flex-1 inline-flex items-center justify-center rounded-full border border-[var(--color-rl-border)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-bg)]"
+            variant="secondary"
+            className="flex-1 border-[var(--color-rl-border)] text-[var(--color-rl-dark)] hover:bg-[var(--color-rl-bg)]"
           >
-            Kopieer embed code
-          </button>
-          <button
+            {m.admin_widgets_embed_code_copy()}
+          </Button>
+          <Button
             type="button"
             onClick={openTest}
             disabled={!publicShareEnabled}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-rl-accent)] px-4 py-2 text-sm font-medium text-[var(--color-rl-dark)] transition-colors hover:bg-[var(--color-rl-accent-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+            className="bg-[var(--color-rl-accent)] text-[var(--color-rl-dark)] hover:bg-[var(--color-rl-accent-hover)]"
           >
             <Eye className="h-4 w-4" />
-            Test
-          </button>
+            {m.admin_widgets_test()}
+          </Button>
         </div>
       </section>
 
-      {/* Advanced — allowed origins. */}
       <section className="space-y-4 pt-4 border-t border-gray-200">
         <div className="space-y-1.5">
           <Label htmlFor="widget-origins">
@@ -196,13 +168,13 @@ export function EmbedTab({ widget }: Props) {
           <p className="text-xs text-gray-400">
             {m.admin_widgets_widget_origins_help()}
           </p>
-          <textarea
+          <Textarea
             id="widget-origins"
             value={originsRaw}
             onChange={(e) => setOriginsRaw(e.target.value)}
             rows={4}
             placeholder={m.admin_widgets_widget_origins_placeholder()}
-            className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm font-mono text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+            className="font-mono"
           />
           {invalidOrigins.length > 0 && (
             <p className="text-xs text-[var(--color-destructive)]">

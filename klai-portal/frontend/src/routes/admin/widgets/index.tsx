@@ -8,6 +8,7 @@ import {
   MessageSquare,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
@@ -37,14 +38,14 @@ function WidgetsPage() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_widgets_title()}
         </h1>
-        <button
+        <Button
           type="button"
           onClick={() => void navigate({ to: '/admin/widgets/new' })}
-          className="flex items-center gap-1.5 rounded-full bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+          size="sm"
         >
           <Plus className="h-4 w-4" />
           {m.admin_widgets_create()}
-        </button>
+        </Button>
       </div>
       <p className="text-sm text-gray-400 mb-6 max-w-2xl">
         {m.admin_widgets_subtitle()}
@@ -74,14 +75,15 @@ function WidgetsPage() {
           <p className="text-sm text-gray-400 mt-1 max-w-md mx-auto">
             {m.admin_widgets_empty_description()}
           </p>
-          <button
+          <Button
             type="button"
             onClick={() => void navigate({ to: '/admin/widgets/new' })}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+            size="sm"
+            className="mt-4"
           >
             <Plus className="h-4 w-4" />
             {m.admin_widgets_create()}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -140,7 +142,7 @@ function WidgetsPage() {
                   onCancel={() => setConfirmDeleteId(null)}
                 >
                   <div className="flex items-center justify-end gap-1">
-                    <button
+                    <Button
                       type="button"
                       onClick={() =>
                         window.open(
@@ -151,28 +153,34 @@ function WidgetsPage() {
                       }
                       aria-label={`Open ${w.name}`}
                       title="Open bot in nieuw tabblad"
-                      className="p-2 rounded-md text-gray-400 hover:text-gray-900 klai-hover"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
                     >
                       <ExternalLink className="h-4 w-4" />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
                       onClick={goToDetail}
                       aria-label={`Bewerk ${w.name}`}
                       title="Bewerken"
-                      className="p-2 rounded-md text-gray-400 hover:text-gray-900 klai-hover"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
                     >
                       <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
                       onClick={() => setConfirmDeleteId(String(w.id))}
                       aria-label={`Verwijder ${w.name}`}
                       title="Verwijderen"
-                      className="p-2 rounded-md text-gray-400 hover:text-[var(--color-destructive)] klai-hover"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-md text-gray-400 hover:text-[var(--color-destructive)]"
                     >
                       <Trash2 className="h-4 w-4" />
-                    </button>
+                    </Button>
                   </div>
                 </InlineDeleteConfirm>
                 </div>

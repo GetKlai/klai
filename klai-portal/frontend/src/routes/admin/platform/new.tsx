@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import * as m from '@/paraglide/messages'
 import { usePlatformCreateTenant } from './-hooks'
 
 export const Route = createFileRoute('/admin/platform/new')({
@@ -43,7 +44,7 @@ function NewTenantPage() {
           })
         },
         onError: (err) => {
-          const msg = err instanceof Error ? err.message : 'Aanmaken mislukt'
+          const msg = err instanceof Error ? err.message : m.platform_create_failed()
           setError(msg)
           toast.error(msg)
         },
@@ -55,51 +56,50 @@ function NewTenantPage() {
     <div className="mx-auto max-w-lg px-6 py-10">
       <div className="flex items-center justify-between mb-2">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          Nieuwe tenant
+          {m.platform_new_tenant_title()}
         </h1>
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
           onClick={() => void navigate({ to: '/admin/platform' })}
-          className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 klai-hover"
         >
           <ArrowLeft className="h-4 w-4" />
-          Annuleren
-        </button>
+          {m.admin_users_cancel()}
+        </Button>
       </div>
       <p className="text-sm text-gray-400 mb-6">
-        Maakt een nieuwe organisatie aan met een eerste admin (eigenaar). De
-        eigenaar krijgt een activatiemail om een wachtwoord in te stellen.
-        Provisioning (chat, kennisbank) start automatisch op de achtergrond.
+        {m.platform_new_tenant_description()}
       </p>
 
       <form onSubmit={submit} className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="company-name">Bedrijfsnaam</Label>
+          <Label htmlFor="company-name">{m.platform_company_name()}</Label>
           <Input
             id="company-name"
             value={companyName}
             onChange={(e) => setCompanyName(e.target.value)}
-            placeholder="Acme B.V."
+            placeholder={m.platform_company_name_placeholder()}
             required
             minLength={2}
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="owner-email">E-mail eigenaar</Label>
+          <Label htmlFor="owner-email">{m.platform_owner_email()}</Label>
           <Input
             id="owner-email"
             type="email"
             value={ownerEmail}
             onChange={(e) => setOwnerEmail(e.target.value)}
-            placeholder="eigenaar@acme.nl"
+            placeholder={m.platform_owner_email_placeholder()}
             required
           />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label htmlFor="owner-first">Voornaam eigenaar</Label>
+            <Label htmlFor="owner-first">{m.platform_owner_first_name()}</Label>
             <Input
               id="owner-first"
               value={ownerFirstName}
@@ -108,7 +108,7 @@ function NewTenantPage() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="owner-last">Achternaam eigenaar</Label>
+            <Label htmlFor="owner-last">{m.platform_owner_last_name()}</Label>
             <Input
               id="owner-last"
               value={ownerLastName}
@@ -119,15 +119,15 @@ function NewTenantPage() {
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="owner-language">Taal eigenaar</Label>
+          <Label htmlFor="owner-language">{m.platform_owner_language()}</Label>
           <Select
             id="owner-language"
             value={language}
             onChange={(e) => setLanguage(e.target.value as 'nl' | 'en')}
             className="max-w-xs"
           >
-            <option value="nl">Nederlands</option>
-            <option value="en">Engels</option>
+            <option value="nl">{m.platform_language_nl()}</option>
+            <option value="en">{m.platform_language_en()}</option>
           </Select>
         </div>
 
@@ -140,7 +140,7 @@ function NewTenantPage() {
             {create.isPending && (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             )}
-            Tenant aanmaken
+            {m.platform_create_tenant()}
           </Button>
         </div>
       </form>
