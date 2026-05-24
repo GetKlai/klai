@@ -54,7 +54,12 @@ class FakeOrg:
 
     def __post_init__(self):
         if self.platform_unlocked_features is None:
-            self.platform_unlocked_features = ["partner_api"]
+            # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1 (Finding B-1): chat-path
+            # `_auth_via_session_token` calls assert_platform_unlocked(org, "widgets").
+            # Default both features unlocked so partner_api + widget chat-flow
+            # happy-paths pass; tests that exercise the locked-tenant path
+            # override per-instance.
+            self.platform_unlocked_features = ["partner_api", "widgets"]
 
 
 def _make_request(token: str | None = None) -> MagicMock:

@@ -19,6 +19,34 @@ import type {
 // recent-conversations list opens a side drawer with the full
 // transcript.
 
+/**
+ * REQ-9 (Finding B-9): URL scheme allowlist for conversation source links.
+ *
+ * An LLM-controlled source URL could contain a `javascript:` URI. React 18+
+ * still navigates on javascript: hrefs, enabling stored-XSS in the admin
+ * session on my.getklai.com (CC-2 exploit chain).
+ *
+ * Only http: and https: schemes are allowed as clickable anchors. All other
+ * schemes (javascript:, data:, vbscript:, file:, mailto:, scheme-less, etc.)
+ * render as plain text without an href.
+ *
+ * Leading whitespace is stripped before the check to block bypass attempts
+ * like "  javascript:alert(1)". Case is normalised by URL() itself.
+ *
+ * @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-9
+ */
+export function _isSafeHttpUrl(url: string): boolean {
+  const trimmed = url.trim()
+  if (!trimmed) return false
+  try {
+    const parsed = new URL(trimmed)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    // URL() throws on relative paths, scheme-less, and malformed inputs.
+    return false
+  }
+}
+
 interface Props {
   widget: WidgetDetailResponse
 }
@@ -331,16 +359,27 @@ function ConversationDrawer({
                 <ul className="mt-2 flex flex-wrap gap-1.5">
                   {msg.sources.map((s) => (
                     <li key={`${msg.id}-${s.label}`}>
-                      <a
-                        href={s.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={s.title}
-                        className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 klai-hover"
-                      >
-                        <span className="font-medium">({s.label})</span>
-                        <span className="truncate max-w-[12rem]">{s.title}</span>
-                      </a>
+                      {/* REQ-9: only http/https schemes render as anchors */}
+                      {_isSafeHttpUrl(s.url) ? (
+                        <a
+                          href={s.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={s.title}
+                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 klai-hover"
+                        >
+                          <span className="font-medium">({s.label})</span>
+                          <span className="truncate max-w-[12rem]">{s.title}</span>
+                        </a>
+                      ) : (
+                        <span
+                          title={s.title}
+                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700"
+                        >
+                          <span className="font-medium">({s.label})</span>
+                          <span className="truncate max-w-[12rem]">{s.title}</span>
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

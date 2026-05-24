@@ -42,6 +42,7 @@ class FakeWidget:
         }
     )
     rate_limit_rpm: int = 60
+    allow_any_origin: bool = False
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
     created_by: str = "test-user"
@@ -56,6 +57,10 @@ class FakeOrg:
     # this test so the actual signing never happens — the field just needs
     # to satisfy the call site.
     slug: str = "test"
+    # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1 (Finding B-1): partner endpoints
+    # call assert_platform_unlocked(org, "widgets"); default to unlocked so
+    # CORS tests focus on origin gating, not the platform-unlock surface.
+    platform_unlocked_features: list = field(default_factory=lambda: ["widgets"])
 
 
 def _make_request(

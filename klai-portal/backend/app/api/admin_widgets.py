@@ -78,6 +78,9 @@ class CreateWidgetRequest(BaseModel):
     rate_limit_rpm: int = Field(default=60, ge=10, le=600)
     widget_config: WidgetConfig | None = None
     public_share_enabled: bool = False
+    # REQ-2 (Finding B-2): explicit opt-in for open-world origin policy.
+    # When False (default), allowed_origins is auto-filled with the tenant subdomain.
+    allow_any_origin: bool = False
 
 
 class WidgetResponse(BaseModel):
@@ -87,6 +90,8 @@ class WidgetResponse(BaseModel):
     widget_id: str
     widget_config: WidgetConfig
     public_share_enabled: bool
+    # REQ-2 (Finding B-2): expose allow_any_origin flag so the UI toggle can bind to it.
+    allow_any_origin: bool
     kb_access_count: int
     rate_limit_rpm: int
     last_used_at: str | None
@@ -105,6 +110,8 @@ class UpdateWidgetRequest(BaseModel):
     rate_limit_rpm: int | None = None
     widget_config: WidgetConfig | None = None
     public_share_enabled: bool | None = None
+    # REQ-2 (Finding B-2): allow toggling the allow_any_origin flag via update.
+    allow_any_origin: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +143,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             widget_position=config.get("widget_position", "right"),
         ),
         public_share_enabled=widget.public_share_enabled,
+        allow_any_origin=getattr(widget, "allow_any_origin", False),
         kb_access_count=kb_access_count,
         rate_limit_rpm=widget.rate_limit_rpm,
         last_used_at=str(widget.last_used_at) if widget.last_used_at else None,
@@ -203,6 +211,13 @@ async def create_widget(
     internal_id = str(uuid.uuid4())
     config = (body.widget_config or WidgetConfig()).model_dump()
 
+    # REQ-2 (Finding B-2): when allow_any_origin=False and no allowed_origins
+    # provided, auto-fill the tenant subdomain so the widget is locked to the
+    # org's own portal domain instead of denying all traffic on first use.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
+    if not body.allow_any_origin and not config.get("allowed_origins"):
+        config["allowed_origins"] = [f"https://{perms.org_slug}.getklai.com"]
+
     widget_row = Widget(
         id=internal_id,
         org_id=perms.org_id,
@@ -211,6 +226,7 @@ async def create_widget(
         widget_id=widget_id_str,
         widget_config=config,
         public_share_enabled=body.public_share_enabled,
+        allow_any_origin=body.allow_any_origin,
         rate_limit_rpm=body.rate_limit_rpm,
         created_by=perms.user_id,
     )
@@ -387,6 +403,10 @@ async def update_widget(
         widget.widget_config = body.widget_config.model_dump()
     if body.public_share_enabled is not None:
         widget.public_share_enabled = body.public_share_enabled
+    # REQ-2 (Finding B-2): allow toggling the allow_any_origin flag via PATCH.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
+    if body.allow_any_origin is not None:
+        widget.allow_any_origin = body.allow_any_origin
 
     if body.kb_ids is not None:
         await _validate_kb_ids(body.kb_ids, perms.org_id, db)
