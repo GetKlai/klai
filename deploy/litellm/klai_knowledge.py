@@ -52,7 +52,6 @@ from klai_chat_prompts import (
 from klai_citations import (
     compose_answer_with_trusted_sources,
     evidence_pack_items_as_chunks,
-    format_sources_markdown,
     render_evidence_context,
     trusted_sources_from_evidence_pack,
 )
@@ -1467,6 +1466,13 @@ def _set_message_content(message: object, content: object) -> None:
         setattr(message, "content", content)
 
 
+def _set_message_field(message: object, key: str, value: object) -> None:
+    if isinstance(message, dict):
+        message[key] = value
+    else:
+        setattr(message, key, value)
+
+
 def _no_citable_sources_message(user_query: object) -> str:
     query = user_query if isinstance(user_query, str) else ""
     dutch_markers = {"wat", "waar", "welke", "hoe", "waarom", "gegevens", "bronnen", "klopt"}
@@ -1524,9 +1530,9 @@ def _render_kb_citation_content(
     user_query: object,
     trusted_sources: list[dict[str, Any]],
     evidence_chunks: list[dict],
-) -> tuple[str, int, bool, dict[str, Any]]:
+) -> tuple[str, list[dict[str, str]], bool, dict[str, Any]]:
     if not trusted_sources:
-        return _no_citable_sources_message(user_query), 0, True, {
+        return _no_citable_sources_message(user_query), [], True, {
             "mode": "document_level_supported_sources",
             "candidate_count": 0,
             "selected": [],
@@ -1540,12 +1546,11 @@ def _render_kb_citation_content(
         allowed_image_urls=allowed_image_urls,
         evidence_chunks=evidence_chunks,
     )
-    sources_markdown = format_sources_markdown(composed.sources)
-    if not composed.content or not sources_markdown:
+    if not composed.content or not composed.sources:
         decision = dict(composed.decision)
         decision["no_citable_reason"] = "selector_rejected_all_sources"
-        return _no_citable_sources_message(user_query), 0, True, decision
-    return f"{composed.content}\n\n{sources_markdown}", len(composed.sources), False, composed.decision
+        return _no_citable_sources_message(user_query), [], True, decision
+    return composed.content, composed.sources, False, composed.decision
 
 
 def _log_kb_citation_render(
@@ -1557,11 +1562,7 @@ def _log_kb_citation_render(
     if not stats.rendered_messages:
         return
 
-    event = (
-        "kb_citations_no_citable_sources"
-        if stats.no_citable_sources
-        else "kb_citations_rendered_markdown"
-    )
+    event = "kb_citations_no_citable_sources" if stats.no_citable_sources else "kb_citations_rendered_structured"
     logger.warning(
         "%s org_id=%s user_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_decisions=%s",
         event,
@@ -1595,7 +1596,7 @@ def _flush_citation_stream_buffer(
         trusted_sources = []
     if not trusted_sources and not force_no_citable and not citation_chunks:
         return stats
-    rendered_content, rendered_sources, no_citable_sources, decision = _render_kb_citation_content(
+    rendered_content, sources, no_citable_sources, decision = _render_kb_citation_content(
         full_text,
         allowed_image_urls=allowed_image_urls,
         user_query=kb_meta.get("user_query"),
@@ -1608,10 +1609,11 @@ def _flush_citation_stream_buffer(
         if delta is None:
             continue
         _set_message_content(delta, rendered_content)
+        _set_message_field(delta, "sources", sources)
         stream_parts.clear()
         stats.mutated_messages += 1
         stats.rendered_messages += 1
-        stats.rendered_sources = rendered_sources
+        stats.rendered_sources = len(sources)
         stats.no_citable_sources = no_citable_sources
         stats.citation_decisions.append(decision)
         return stats
@@ -1635,18 +1637,19 @@ def _compose_non_streaming_kb_response(
             continue
         content = _get_message_content(message)
         if isinstance(content, str):
-            rendered_content, rendered_sources, no_citable_sources, decision = _render_kb_citation_content(
+            rendered_content, sources, no_citable_sources, decision = _render_kb_citation_content(
                 content,
                 allowed_image_urls=allowed_image_urls,
                 user_query=kb_meta.get("user_query"),
                 trusted_sources=trusted_sources,
                 evidence_chunks=citation_chunks,
             )
-            if rendered_content != content:
+            if rendered_content != content or sources:
                 _set_message_content(message, rendered_content)
+                _set_message_field(message, "sources", sources)
                 stats.mutated_messages += 1
                 stats.rendered_messages += 1
-                stats.rendered_sources = max(stats.rendered_sources, rendered_sources)
+                stats.rendered_sources = max(stats.rendered_sources, len(sources))
                 stats.no_citable_sources = stats.no_citable_sources or no_citable_sources
                 stats.citation_decisions.append(decision)
     return stats

@@ -65,7 +65,9 @@ _BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?
 _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
 _SOURCE_HEADING_RE = re.compile(r"^\s*(?:bronnen?|sources?|references?)\s*:?\s*$", re.IGNORECASE)
 _SOURCE_LIST_LINE_RE = re.compile(r"^\s*(?:\(\s*\d{1,3}\s*\)|\[\s*\d{1,3}\s*\]|\d{1,3}[.)])\s*(.+)$")
+_BULLET_LINE_RE = re.compile(r"^\s*[-*+•]\s+(.+?)\s*$")
 _DEFAULT_MAX_SOURCES = 3
+_SUPPORTED_SOURCE_KEEP_RATIO = 0.70
 _SOURCE_RELEVANCE_STOPWORDS = {
     "aan",
     "als",
@@ -376,6 +378,22 @@ def _looks_like_source_list_line(line: str) -> bool:
     return bool(re.search(r"\b(?:bron|source|stichting|privacy|policy|docs?)\b", rest, re.IGNORECASE))
 
 
+def _normalise_title_text(value: str) -> str:
+    text = _MARKDOWN_LINK_RE.sub(r"\1", value)
+    text = re.sub(r"[*_`]+", "", text)
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return text
+
+
+def _looks_like_model_source_title_line(line: str, source_titles: set[str]) -> bool:
+    if not source_titles:
+        return False
+    match = _BULLET_LINE_RE.match(line) or _SOURCE_LIST_LINE_RE.match(line)
+    if not match:
+        return False
+    return _normalise_title_text(match.group(1)) in source_titles
+
+
 def _renumber_ordered_list_runs(text: str) -> str:
     """Renumber copied mid-document ordered-list excerpts to clean local lists."""
     lines = text.splitlines()
@@ -415,11 +433,17 @@ def _renumber_ordered_list_runs(text: str) -> str:
     return "\n".join(output)
 
 
-def strip_model_citation_artifacts(text: str, *, allowed_image_urls: set[str] | None = None) -> str:
+def strip_model_citation_artifacts(
+    text: str,
+    *,
+    allowed_image_urls: set[str] | None = None,
+    source_titles: set[str] | None = None,
+) -> str:
     """Remove model-authored citations/source lists before composing our own."""
     allowed_image_urls = {
         normalised for normalised in (normalise_source_url(url) for url in (allowed_image_urls or set())) if normalised
     }
+    normalised_source_titles = {_normalise_title_text(title) for title in (source_titles or set()) if title.strip()}
     image_placeholders: dict[str, str] = {}
 
     def _replace_image(match: re.Match[str]) -> str:
@@ -440,7 +464,7 @@ def strip_model_citation_artifacts(text: str, *, allowed_image_urls: set[str] | 
             if not line.strip():
                 skipping_source_section = False
             continue
-        if _looks_like_source_list_line(line):
+        if _looks_like_source_list_line(line) or _looks_like_model_source_title_line(line, normalised_source_titles):
             continue
         kept_lines.append(line)
 
@@ -490,6 +514,10 @@ def _source_support_tokens(source: CitationSource) -> set[str]:
     for chunk_text in source.chunk_texts:
         tokens |= _tokens(chunk_text)
     return tokens
+
+
+def _source_title_set(sources: list[CitationSource]) -> set[str]:
+    return {source.title for source in sources if source.title.strip()}
 
 
 def _select_document_sources(
@@ -568,7 +596,11 @@ def _select_supported_sources_with_decision(
     scored: list[tuple[int, int, int, int, CitationSource]] = []
     for index, source in enumerate(sources):
         support_tokens = _source_support_tokens(source)
-        query_score = len(query_tokens & support_tokens) if query_tokens else 0
+        query_score = (
+            len(query_intent_tokens & support_tokens)
+            if query_intent_tokens
+            else len(query_tokens & support_tokens) if query_tokens else 0
+        )
         answer_score = _source_relevance_score(answer_tokens, source)
         if query_intent_tokens and query_score < min_query_overlap:
             decision["rejected"].append(
@@ -594,6 +626,24 @@ def _select_supported_sources_with_decision(
             continue
         scored.append((query_score * 3 + answer_score, query_score, answer_score, index, source))
     scored.sort(key=lambda item: (-item[0], item[3]))
+    if query_intent_tokens and scored:
+        best_score = scored[0][0]
+        kept_scored: list[tuple[int, int, int, int, CitationSource]] = []
+        for item in scored:
+            score, query_score, answer_score, _, source = item
+            if score >= best_score * _SUPPORTED_SOURCE_KEEP_RATIO:
+                kept_scored.append(item)
+                continue
+            decision["rejected"].append(
+                _source_decision_entry(
+                    source,
+                    selected=False,
+                    reason="weaker_than_best_supported_source",
+                    query_score=query_score,
+                    answer_score=answer_score,
+                )
+            )
+        scored = kept_scored
     if max_sources is None:
         selected_scored = scored
         overflow_scored: list[tuple[int, int, int, int, CitationSource]] = []
@@ -655,7 +705,11 @@ def _compose_citations_from_sources(
     layer deterministic: sanitize model-authored citation artifacts, then attach
     a compact source registry built from trusted retrieval metadata.
     """
-    cleaned = strip_model_citation_artifacts(text, allowed_image_urls=allowed_image_urls)
+    cleaned = strip_model_citation_artifacts(
+        text,
+        allowed_image_urls=allowed_image_urls,
+        source_titles=_source_title_set(sources),
+    )
     if not cleaned or not sources:
         return ComposedCitations(content=cleaned, sources=[])
 
@@ -804,6 +858,60 @@ def _source_evidence_texts(
     return texts
 
 
+def _trusted_candidate_sources(
+    trusted_sources: list[dict[str, Any]],
+    evidence_chunks: list[dict[str, Any]],
+) -> list[CitationSource]:
+    candidate_sources: list[CitationSource] = []
+    seen_keys: set[str] = set()
+    for source in trusted_sources:
+        url = normalise_source_url(source.get("url"))
+        if not url:
+            continue
+        key = source_url_key(url)
+        if not key:
+            continue
+        evidence_texts = _source_evidence_texts(source, evidence_chunks)
+        candidate_sources.append(
+            CitationSource(
+                key=key,
+                url=url,
+                title=str(source.get("title") or "Source"),
+                chunk_texts=evidence_texts,
+            )
+        )
+        seen_keys.add(key)
+
+    # EvidencePack.sources can be compact and omit a document that is still
+    # present in EvidencePack.items. These item URLs are trusted provenance,
+    # so include them as candidates instead of letting the model's source list
+    # leak through or forcing a weak document-level source.
+    for chunk in evidence_chunks:
+        if not isinstance(chunk, dict):
+            continue
+        url = _chunk_source_url(chunk)
+        key = source_url_key(url)
+        if not url or not key or key in seen_keys:
+            continue
+        texts = _source_evidence_texts(
+            {"url": url, "evidence_ids": [chunk.get("evidence_id")]},
+            evidence_chunks,
+        )
+        if not texts:
+            text = _string_value(chunk.get("text") or chunk.get("content"))
+            texts = [text] if text else []
+        candidate_sources.append(
+            CitationSource(
+                key=key,
+                url=url,
+                title=_chunk_source_title(chunk),
+                chunk_texts=texts,
+            )
+        )
+        seen_keys.add(key)
+    return candidate_sources
+
+
 def compose_answer_with_trusted_sources(
     text: str,
     trusted_sources: list[dict[str, Any]],
@@ -820,22 +928,13 @@ def compose_answer_with_trusted_sources(
     the EvidencePack contract; ``evidence_chunks`` are used only to validate and
     rank those candidate sources against the final answer text.
     """
-    cleaned = strip_model_citation_artifacts(text, allowed_image_urls=allowed_image_urls)
     evidence_chunks = evidence_chunks or []
-    candidate_sources: list[CitationSource] = []
-    for source in trusted_sources:
-        url = normalise_source_url(source.get("url"))
-        if not url:
-            continue
-        evidence_texts = _source_evidence_texts(source, evidence_chunks)
-        candidate_sources.append(
-            CitationSource(
-                key=source_url_key(url),
-                url=url,
-                title=str(source.get("title") or "Source"),
-                chunk_texts=evidence_texts,
-            )
-        )
+    candidate_sources = _trusted_candidate_sources(trusted_sources, evidence_chunks)
+    cleaned = strip_model_citation_artifacts(
+        text,
+        allowed_image_urls=allowed_image_urls,
+        source_titles=_source_title_set(candidate_sources),
+    )
     selected, decision = _select_supported_sources_with_decision(
         cleaned,
         candidate_sources,

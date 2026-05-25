@@ -2833,11 +2833,18 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert returned is response
         content = response.choices[0].message.content
-        assert "[Diagram](https://docs.getklai.com/diagram)" in content
         assert "Zie het diagram bron en fake." in content
         assert "https://example.com" not in content
+        assert "https://docs.getklai.com/diagram" not in content
         assert "![fake]" not in content
-        assert "kb_citations_rendered_markdown" in caplog.text
+        assert response.choices[0].message.sources == [
+            {
+                "label": "1",
+                "title": "Diagram",
+                "url": "https://docs.getklai.com/diagram",
+            }
+        ]
+        assert "kb_citations_rendered_structured" in caplog.text
         assert "rendered_sources=1" in caplog.text
 
     @pytest.mark.asyncio
@@ -2881,10 +2888,14 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert returned is response
         content = response.choices[0].message.content
         assert "Je kunt iemand uitnodigen via het beheerscherm." in content
-        assert (
-            "[Invite and remove people](https://docs.getklai.com/admin/invite-remove-people)"
-            in content
-        )
+        assert "https://docs.getklai.com/admin/invite-remove-people" not in content
+        assert response.choices[0].message.sources == [
+            {
+                "label": "1",
+                "title": "Invite and remove people",
+                "url": "https://docs.getklai.com/admin/invite-remove-people",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_post_call_guard_refuses_answer_without_citable_sources(self, monkeypatch, caplog):
@@ -3075,7 +3086,14 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert second.choices[0].delta.content == ""
         assert "https://bad.example" not in final.choices[0].delta.content
         assert "Zie diagram fake." in final.choices[0].delta.content
-        assert "[Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
+        assert "https://docs.getklai.com/diagram" not in final.choices[0].delta.content
+        assert final.choices[0].delta.sources == [
+            {
+                "label": "1",
+                "title": "Diagram",
+                "url": "https://docs.getklai.com/diagram",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_streaming_post_call_without_trusted_sources_fails_closed(self, monkeypatch):
@@ -3163,4 +3181,11 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert streamed == [only]
         assert "Zie diagram." in streamed[0]["choices"][0]["delta"]["content"]
-        assert "[Diagram](https://docs.getklai.com/diagram)" in streamed[0]["choices"][0]["delta"]["content"]
+        assert "https://docs.getklai.com/diagram" not in streamed[0]["choices"][0]["delta"]["content"]
+        assert streamed[0]["choices"][0]["delta"]["sources"] == [
+            {
+                "label": "1",
+                "title": "Diagram",
+                "url": "https://docs.getklai.com/diagram",
+            }
+        ]
