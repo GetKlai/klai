@@ -114,34 +114,15 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
     # SPEC-SEC-HYGIENE-001 REQ-24.2: signing key is HKDF-derived per tenant.
-    # New widget JWTs carry a `kid` header that selects the portal org used to
-    # derive the verification key. The header is only a key-selection hint; the
-    # verified payload's org_id is checked against the selected org below.
+    # Widget JWTs must carry a `kid` header that selects the portal org used
+    # to derive the verification key. The header is only a key-selection hint;
+    # the verified payload's org_id is checked against the selected org below.
     try:
         kid = get_unverified_session_token_key_id(token)
     except jwt.InvalidTokenError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
 
-    if kid is None:
-        # Deploy-window compatibility for old in-flight JWTs minted before the
-        # `kid` header existed. Remove after one widget JWT TTL has elapsed in
-        # production. This unverified value is used only for key selection and
-        # is followed by decode_session_token() in this same function.
-        try:
-            # nosemgrep: python.jwt.security.unverified-jwt-decode.unverified-jwt-decode
-            legacy_payload = jwt.decode(token, options={"verify_signature": False})
-        except jwt.InvalidTokenError as exc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
-
-        legacy_org_id = legacy_payload.get("org_id")
-        org_id_for_key = (
-            legacy_org_id
-            if isinstance(legacy_org_id, int) and not isinstance(legacy_org_id, bool) and legacy_org_id > 0
-            else None
-        )
-    else:
-        org_id_for_key = org_id_from_session_token_key_id(kid)
-
+    org_id_for_key = org_id_from_session_token_key_id(kid) if kid is not None else None
     if org_id_for_key is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
