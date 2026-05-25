@@ -275,14 +275,29 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
 )
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
-_KB_RENDER_MODE_DETERMINISTIC = "deterministic_non_streaming"
-_KB_RENDER_MODE_LEGACY_STREAM = "legacy_stream_guard"
-_requested_kb_render_mode = os.getenv("KLAI_KB_CHAT_RENDER_MODE", "").strip().lower()
-KLAI_KB_CHAT_RENDER_MODE = (
-    _KB_RENDER_MODE_DETERMINISTIC
-    if _requested_kb_render_mode == _KB_RENDER_MODE_DETERMINISTIC
-    else _KB_RENDER_MODE_LEGACY_STREAM
-)
+_KB_RENDER_MODE_STREAMING_GUARD = "streaming_guard"
+_KB_RENDER_MODE_LEGACY_STREAMING_GUARD = "legacy_stream_guard"
+_KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING = "deterministic_non_streaming"
+_KB_STREAMING_RENDER_MODES = {
+    _KB_RENDER_MODE_STREAMING_GUARD,
+    _KB_RENDER_MODE_LEGACY_STREAMING_GUARD,
+}
+
+
+def _resolve_kb_render_mode(value: object) -> str:
+    """Resolve the configured citation rendering strategy.
+
+    Streaming is the safe default for LibreChat/LangGraph. The old
+    ``legacy_stream_guard`` value is accepted as an alias, but new metadata
+    should use ``streaming_guard``.
+    """
+    requested = value.strip().lower() if isinstance(value, str) else ""
+    if requested == _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING:
+        return _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING
+    return _KB_RENDER_MODE_STREAMING_GUARD
+
+
+KLAI_KB_CHAT_RENDER_MODE = _resolve_kb_render_mode(os.getenv("KLAI_KB_CHAT_RENDER_MODE"))
 _SENTINEL_URLS = {"undefined", "null", "none", "n/a", "na", "-", "#"}
 
 # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2 — anti-hallucination injection
@@ -1995,11 +2010,11 @@ class KlaiKnowledgeHook(CustomLogger):
         data["messages"] = messages
         original_stream = data.get("stream")
         effective_render_mode = (
-            _KB_RENDER_MODE_LEGACY_STREAM
+            _KB_RENDER_MODE_STREAMING_GUARD
             if original_stream is True
             else KLAI_KB_CHAT_RENDER_MODE
         )
-        if effective_render_mode == _KB_RENDER_MODE_DETERMINISTIC:
+        if effective_render_mode == _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING:
             data["stream"] = False
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
         # Stored in data["metadata"] so it is never forwarded to the LLM provider.
@@ -2046,7 +2061,7 @@ class KlaiKnowledgeHook(CustomLogger):
         if (
             not kb_meta
             or kb_meta.get("gate_bypassed")
-            or kb_meta.get("render_mode") != _KB_RENDER_MODE_LEGACY_STREAM
+            or kb_meta.get("render_mode") not in _KB_STREAMING_RENDER_MODES
         ):
             async for item in response:
                 yield item

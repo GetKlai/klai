@@ -2207,7 +2207,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "![afbeelding" not in format_section
         kb_meta = result["metadata"]["_klai_kb_meta"]
         assert "stream" not in result
-        assert kb_meta["render_mode"] == "legacy_stream_guard"
+        assert kb_meta["render_mode"] == "streaming_guard"
         assert kb_meta["original_stream"] is None
         assert kb_meta["citable_sources_count"] == 0
         assert kb_meta["user_query"] == "Heb je hier ook een afbeelding bij?"
@@ -2254,7 +2254,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         kb_meta = result["metadata"]["_klai_kb_meta"]
         assert result["stream"] is True
         assert kb_meta["original_stream"] is True
-        assert kb_meta["render_mode"] == "legacy_stream_guard"
+        assert kb_meta["render_mode"] == "streaming_guard"
         assert kb_meta["citable_sources_count"] == 1
 
     @pytest.mark.asyncio
@@ -2300,7 +2300,60 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         kb_meta = result["metadata"]["_klai_kb_meta"]
         assert result["stream"] is True
         assert kb_meta["original_stream"] is True
-        assert kb_meta["render_mode"] == "legacy_stream_guard"
+        assert kb_meta["render_mode"] == "streaming_guard"
+
+    def test_legacy_stream_guard_env_alias_resolves_to_streaming_guard(self, monkeypatch):
+        """The old env value remains accepted but no longer leaks into new metadata."""
+        mod = _load_hook(
+            monkeypatch,
+            extra_env={"KLAI_KB_CHAT_RENDER_MODE": "legacy_stream_guard"},
+        )
+
+        assert mod.KLAI_KB_CHAT_RENDER_MODE == "streaming_guard"
+
+    @pytest.mark.asyncio
+    async def test_explicit_deterministic_mode_for_non_streaming_calls(self, monkeypatch):
+        """Non-streaming deterministic mode remains an explicit opt-in for compatible callers."""
+        mod = _load_hook(
+            monkeypatch,
+            extra_env={"KLAI_KB_CHAT_RENDER_MODE": "deterministic_non_streaming"},
+        )
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}
+            ],
+        }
+        chunks = [
+            {
+                "text": "Gebruikers kunnen via Instellingen worden toegevoegd.",
+                "scope": "org",
+                "metadata": {"title": "Gebruikersbeheer"},
+                "source_url": "https://docs.getklai.com/users",
+                "chunk_id": "c1",
+                "reranker_score": 0.91,
+            }
+        ]
+        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert result["stream"] is False
+        assert kb_meta["original_stream"] is None
+        assert kb_meta["render_mode"] == "deterministic_non_streaming"
 
     @pytest.mark.asyncio
     async def test_prompt_only_exposes_images_from_chunk_image_urls(self, monkeypatch):
@@ -2346,7 +2399,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "ALWAYS include them literally" not in sys_content
         kb_meta = result["metadata"]["_klai_kb_meta"]
         assert "stream" not in result
-        assert kb_meta["render_mode"] == "legacy_stream_guard"
+        assert kb_meta["render_mode"] == "streaming_guard"
         assert kb_meta["citable_sources_count"] == 1
         assert kb_meta["allowed_source_urls"] == ["https://docs.getklai.com/diagram"]
         assert kb_meta["allowed_image_urls"] == [
@@ -2411,7 +2464,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         kb_meta = result["metadata"]["_klai_kb_meta"]
         assert "stream" not in result
-        assert kb_meta["render_mode"] == "legacy_stream_guard"
+        assert kb_meta["render_mode"] == "streaming_guard"
         assert kb_meta["citable_sources_count"] == 2
         assert kb_meta["allowed_source_urls"] == [
             "https://getklai.com/docs/company/mission",
@@ -2522,7 +2575,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
-                    "render_mode": "legacy_stream_guard",
+                    "render_mode": "streaming_guard",
                     "allowed_source_urls": ["https://docs.getklai.com/diagram"],
                     "allowed_image_urls": [],
                     "citation_chunks": [
@@ -2559,6 +2612,46 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "[Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
 
     @pytest.mark.asyncio
+    async def test_streaming_post_call_accepts_legacy_stream_guard_metadata(self, monkeypatch):
+        """In-flight requests from an older hook deploy should still be flushed safely."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "render_mode": "legacy_stream_guard",
+                    "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "title": "Diagram",
+                            "source_url": "https://docs.getklai.com/diagram",
+                            "text": "Deze handleiding heeft een diagram.",
+                        }
+                    ],
+                }
+            }
+        }
+
+        only = {"choices": [{"delta": {"content": "Zie diagram."}, "finish_reason": None}]}
+
+        async def stream():
+            yield only
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+        ]
+
+        assert streamed == [only]
+        assert "Zie diagram (1)." in streamed[0]["choices"][0]["delta"]["content"]
+        assert "[Diagram](https://docs.getklai.com/diagram)" in streamed[0]["choices"][0]["delta"]["content"]
+
+    @pytest.mark.asyncio
     async def test_streaming_post_call_flushes_when_iterator_closes_without_finish_reason(self, monkeypatch):
         """Provider streams should still render citations if no explicit final chunk is sent."""
         mod = _load_hook(monkeypatch)
@@ -2571,7 +2664,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
-                    "render_mode": "legacy_stream_guard",
+                    "render_mode": "streaming_guard",
                     "allowed_image_urls": [],
                     "citation_chunks": [
                         {
