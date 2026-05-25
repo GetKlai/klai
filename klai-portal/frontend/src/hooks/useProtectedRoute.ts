@@ -77,6 +77,20 @@ function hasRequiredRole(user: CurrentUser | undefined, options: UseProtectedRou
   return true
 }
 
+function workspaceHandoffUrl(workspaceUrl: string | null | undefined): string | null {
+  if (!workspaceUrl) return null
+  const current = window.location
+  if (current.hostname === 'localhost' || current.hostname === '127.0.0.1') return null
+  try {
+    const workspace = new URL(workspaceUrl)
+    if (current.hostname === workspace.hostname) return null
+    const target = new URL(`${current.pathname}${current.search}${current.hash}`, workspace.origin)
+    return target.toString()
+  } catch {
+    return null
+  }
+}
+
 export function useProtectedRoute(
   options: UseProtectedRouteOptions = {},
 ): UseProtectedRouteResult {
@@ -88,6 +102,7 @@ export function useProtectedRoute(
   const auth = useAuth()
   const navigate = useNavigate()
   const { user, isPending: userLoading } = useCurrentUser()
+  const workspaceRedirectUrl = user ? workspaceHandoffUrl(user.workspace_url) : null
 
   useEffect(() => {
     if (auth.isLoading) return
@@ -98,6 +113,10 @@ export function useProtectedRoute(
       return
     }
     if (userLoading) return
+    if (workspaceRedirectUrl) {
+      window.location.replace(workspaceRedirectUrl)
+      return
+    }
     // 2. MFA setup pending — send to the setup flow.
     if (user?.requires_2fa_setup) {
       window.location.replace('/setup/2fa')
@@ -112,6 +131,7 @@ export function useProtectedRoute(
     auth.isAuthenticated,
     user,
     userLoading,
+    workspaceRedirectUrl,
     needsRoleCheck,
     fallback,
     noRoleFallback,
@@ -120,7 +140,7 @@ export function useProtectedRoute(
   ])
 
   const roleOk = !needsRoleCheck || hasRequiredRole(user, options)
-  const isResolving = auth.isLoading || !auth.isAuthenticated || userLoading || !roleOk
+  const isResolving = auth.isLoading || !auth.isAuthenticated || userLoading || !!workspaceRedirectUrl || !roleOk
 
   return {
     user,

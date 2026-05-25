@@ -76,6 +76,7 @@ describe('useProtectedRoute', () => {
     mockQuery = { user: undefined, isPending: true }
     // Reset any lingering location.replace mock.
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('does not resolve while auth is still loading', () => {
@@ -123,6 +124,46 @@ describe('useProtectedRoute', () => {
     expect(navigate).not.toHaveBeenCalled()
     expect(result.current.canRender).toBe(true)
     expect(result.current.user?.user_id).toBe('u1')
+  })
+
+  it('hands off protected routes from my.getklai.com to the workspace host', () => {
+    const replace = vi.fn()
+    vi.stubGlobal('location', {
+      hostname: 'my.getklai.com',
+      pathname: '/app/chat',
+      search: '?thread=1',
+      hash: '#reply',
+      replace,
+    } as unknown as Location)
+    mockQuery = {
+      user: userFixture({ workspace_url: 'https://voys.getklai.com' }),
+      isPending: false,
+    }
+    const { result } = renderHook(() => useProtectedRoute(), {
+      wrapper: wrapperFor(makeAuth({ isLoading: false, isAuthenticated: true })),
+    })
+    expect(replace).toHaveBeenCalledWith('https://voys.getklai.com/app/chat?thread=1#reply')
+    expect(result.current.canRender).toBe(false)
+  })
+
+  it('does not hand off when already on the workspace host', () => {
+    const replace = vi.fn()
+    vi.stubGlobal('location', {
+      hostname: 'voys.getklai.com',
+      pathname: '/app/chat',
+      search: '',
+      hash: '',
+      replace,
+    } as unknown as Location)
+    mockQuery = {
+      user: userFixture({ workspace_url: 'https://voys.getklai.com' }),
+      isPending: false,
+    }
+    const { result } = renderHook(() => useProtectedRoute(), {
+      wrapper: wrapperFor(makeAuth({ isLoading: false, isAuthenticated: true })),
+    })
+    expect(replace).not.toHaveBeenCalled()
+    expect(result.current.canRender).toBe(true)
   })
 
   it('redirects to /setup/2fa when requires_2fa_setup is true', () => {
