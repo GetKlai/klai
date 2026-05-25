@@ -277,10 +277,11 @@ EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
 _KB_RENDER_MODE_DETERMINISTIC = "deterministic_non_streaming"
 _KB_RENDER_MODE_LEGACY_STREAM = "legacy_stream_guard"
+_requested_kb_render_mode = os.getenv("KLAI_KB_CHAT_RENDER_MODE", "").strip().lower()
 KLAI_KB_CHAT_RENDER_MODE = (
-    _KB_RENDER_MODE_LEGACY_STREAM
-    if os.getenv("KLAI_KB_CHAT_RENDER_MODE", "").strip().lower() == _KB_RENDER_MODE_LEGACY_STREAM
-    else _KB_RENDER_MODE_DETERMINISTIC
+    _KB_RENDER_MODE_DETERMINISTIC
+    if _requested_kb_render_mode == _KB_RENDER_MODE_DETERMINISTIC
+    else _KB_RENDER_MODE_LEGACY_STREAM
 )
 _SENTINEL_URLS = {"undefined", "null", "none", "n/a", "na", "-", "#"}
 
@@ -1993,7 +1994,10 @@ class KlaiKnowledgeHook(CustomLogger):
         _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
         original_stream = data.get("stream")
-        if KLAI_KB_CHAT_RENDER_MODE == _KB_RENDER_MODE_DETERMINISTIC:
+        if (
+            KLAI_KB_CHAT_RENDER_MODE == _KB_RENDER_MODE_DETERMINISTIC
+            and original_stream is not True
+        ):
             data["stream"] = False
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
         # Stored in data["metadata"] so it is never forwarded to the LLM provider.
