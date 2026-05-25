@@ -178,6 +178,7 @@ async def synthesize(
     if evidence_pack is None:
         evidence_pack = build_evidence_pack(
             chunks,
+            query=query_resolved,
             min_relevance_score=settings.confidence_band_low_threshold
             if settings.reranker_enabled
             else None,

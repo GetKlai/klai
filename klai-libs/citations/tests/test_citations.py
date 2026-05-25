@@ -225,6 +225,25 @@ def test_rendered_answer_renumbers_copied_mid_document_steps() -> None:
     assert "3. De gebruiker klikt" in rendered.content
 
 
+def test_rendered_answer_renumbers_single_copied_mid_document_step() -> None:
+    rendered = render_markdown_answer_with_sources(
+        (
+            "TL;DR: Voeg de gebruiker toe via Admin > Gebruikers.\n"
+            "3. Voer het werk-emailadres van de nieuwe gebruiker in."
+        ),
+        [
+            {
+                "title": "Invite and remove people",
+                "source_url": "https://docs.getklai.com/invite-remove-people",
+                "text": "Admins invite users from Admin > Gebruikers.",
+            }
+        ],
+    )
+
+    assert "1. Voer het werk-emailadres" in rendered.content
+    assert "3. Voer het werk-emailadres" not in rendered.content
+
+
 def test_evidence_context_preserves_heading_as_section_metadata() -> None:
     context = render_evidence_context(
         [

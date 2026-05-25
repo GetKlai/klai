@@ -320,7 +320,7 @@ class TestSynthesize:
         ]
 
         items = []
-        async for item in synthesize("follow up?", chunks, history):
+        async for item in synthesize("answer context?", chunks, history):
             items.append(item)
 
         call_args = mock_client.stream.call_args

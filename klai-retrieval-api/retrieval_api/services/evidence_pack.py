@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from klai_citations import normalise_source_url, source_url_key
@@ -9,6 +10,80 @@ from klai_citations import normalise_source_url, source_url_key
 from retrieval_api.models import ChunkResult, EvidenceItem, EvidencePack, EvidenceSource
 
 _DEFAULT_MAX_SOURCES = 3
+_TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{1,}", re.IGNORECASE)
+_QUERY_STOPWORDS = {
+    "aan",
+    "a",
+    "an",
+    "and",
+    "de",
+    "do",
+    "does",
+    "een",
+    "en",
+    "er",
+    "for",
+    "het",
+    "hoe",
+    "how",
+    "i",
+    "ik",
+    "in",
+    "is",
+    "je",
+    "jij",
+    "kan",
+    "kun",
+    "met",
+    "naar",
+    "of",
+    "op",
+    "or",
+    "the",
+    "to",
+    "van",
+    "via",
+    "voor",
+    "wat",
+    "welke",
+    "what",
+    "where",
+    "which",
+    "wie",
+    "with",
+    "zijn",
+}
+_TOKEN_SYNONYMS = {
+    "add": "invite",
+    "adding": "invite",
+    "ask": "question",
+    "emailadres": "email",
+    "e-mailadres": "email",
+    "gebruiker": "user",
+    "gebruikers": "user",
+    "invite": "invite",
+    "invited": "invite",
+    "invites": "invite",
+    "invitation": "invite",
+    "member": "user",
+    "members": "user",
+    "nodig": "invite",
+    "nodigen": "invite",
+    "people": "user",
+    "persoon": "user",
+    "question": "question",
+    "rol": "role",
+    "rollen": "role",
+    "roles": "role",
+    "toevoegen": "invite",
+    "uitnodigen": "invite",
+    "uitnodiging": "invite",
+    "uitnodigingslink": "invite",
+    "user": "user",
+    "users": "user",
+    "vraag": "question",
+    "vragen": "question",
+}
 
 
 def _chunk_value(chunk: ChunkResult | dict[str, Any], key: str) -> Any:
@@ -91,6 +166,38 @@ def _image_urls(chunk: ChunkResult | dict[str, Any]) -> list[str] | None:
     return urls or None
 
 
+def _canonical_token(token: str) -> str:
+    value = token.lower().strip("_-")
+    return _TOKEN_SYNONYMS.get(value, value)
+
+
+def _tokens(text: object) -> set[str]:
+    if not isinstance(text, str) or not text.strip():
+        return set()
+    return {
+        canonical
+        for token in _TOKEN_RE.findall(text)
+        if (canonical := _canonical_token(token)) not in _QUERY_STOPWORDS
+        and not canonical.isdigit()
+    }
+
+
+def _item_tokens(item: EvidenceItem) -> set[str]:
+    return set().union(
+        _tokens(item.title),
+        _tokens(item.source_label),
+        _tokens(item.heading_path),
+        _tokens(item.text),
+    )
+
+
+def _has_query_evidence_overlap(query_tokens: set[str], item: EvidenceItem) -> bool:
+    if not query_tokens:
+        return True
+    required_overlap = 1 if len(query_tokens) <= 2 else 2
+    return len(query_tokens & _item_tokens(item)) >= required_overlap
+
+
 def _make_item(
     chunk: ChunkResult | dict[str, Any],
     *,
@@ -124,6 +231,7 @@ def _make_item(
 def build_evidence_pack(
     chunks: list[ChunkResult | dict[str, Any]],
     *,
+    query: str | None = None,
     max_sources: int = _DEFAULT_MAX_SOURCES,
     min_relevance_score: float | None = None,
 ) -> EvidencePack:
@@ -138,6 +246,8 @@ def build_evidence_pack(
 
     candidates: list[tuple[EvidenceItem, str, str, float]] = []
     below_threshold_count = 0
+    query_mismatch_count = 0
+    query_tokens = _tokens(query)
     for chunk in chunks:
         source_url = _source_url(chunk)
         source_key = source_url_key(source_url) if source_url else ""
@@ -160,10 +270,18 @@ def build_evidence_pack(
         )
         if item is None:
             continue
+        if not _has_query_evidence_overlap(query_tokens, item):
+            query_mismatch_count += 1
+            continue
         candidates.append((item, source_key, source_url, _score(chunk)))
 
     if not candidates:
-        reason = "below_relevance_threshold" if below_threshold_count else "no_citable_sources"
+        if query_mismatch_count:
+            reason = "query_evidence_mismatch"
+        elif below_threshold_count:
+            reason = "below_relevance_threshold"
+        else:
+            reason = "no_citable_sources"
         return EvidencePack(no_citable_reason=reason)
 
     source_order: list[str] = []

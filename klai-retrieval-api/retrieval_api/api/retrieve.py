@@ -568,6 +568,7 @@ async def retrieve(
 
     evidence_pack = build_evidence_pack(
         chunks_out,
+        query=query_resolved,
         min_relevance_score=settings.confidence_band_low_threshold
         if settings.reranker_enabled
         else None,

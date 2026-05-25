@@ -99,6 +99,67 @@ def test_evidence_pack_refuses_low_relevance_citable_sources():
     assert pack.no_citable_reason == "below_relevance_threshold"
 
 
+def test_evidence_pack_filters_sources_that_do_not_match_query_evidence():
+    pack = build_evidence_pack(
+        [
+            {
+                "chunk_id": "invite-user",
+                "title": "Invite and remove people",
+                "text": "Ga naar Admin > Gebruikers en nodig een nieuwe gebruiker uit.",
+                "source_url": "https://getklai.com/docs/admin/invite-remove-people",
+                "score": 0.9,
+                "reranker_score": 0.94,
+            },
+            {
+                "chunk_id": "getting-started",
+                "title": "Getting started",
+                "text": "Create your first knowledge base and ask Klai questions.",
+                "source_url": "https://getklai.com/docs/getting-started",
+                "score": 0.91,
+                "reranker_score": 0.93,
+            },
+            {
+                "chunk_id": "roles",
+                "title": "The five roles",
+                "text": "Users can have one of five roles in Klai.",
+                "source_url": "https://getklai.com/docs/admin/the-five-roles",
+                "score": 0.9,
+                "reranker_score": 0.92,
+            },
+            {
+                "chunk_id": "ask",
+                "title": "Ask a question",
+                "text": "Ask a question about your knowledge base.",
+                "source_url": "https://getklai.com/docs/chat/ask-a-question",
+                "score": 0.88,
+                "reranker_score": 0.91,
+            },
+        ],
+        query="Hoe voeg ik een nieuwe user toe?",
+    )
+
+    assert [source.title for source in pack.sources] == ["Invite and remove people"]
+    assert [item.chunk_id for item in pack.items] == ["invite-user"]
+
+
+def test_evidence_pack_can_select_role_source_for_role_query():
+    pack = build_evidence_pack(
+        [
+            {
+                "chunk_id": "roles",
+                "title": "The five roles",
+                "text": "Users can have one of five roles in Klai.",
+                "source_url": "https://getklai.com/docs/admin/the-five-roles",
+                "score": 0.9,
+                "reranker_score": 0.92,
+            }
+        ],
+        query="Welke rollen zijn er?",
+    )
+
+    assert [source.title for source in pack.sources] == ["The five roles"]
+
+
 def test_evidence_pack_preserves_heading_metadata_for_prompt_context():
     pack = build_evidence_pack(
         [
