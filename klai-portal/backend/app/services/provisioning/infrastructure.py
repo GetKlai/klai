@@ -272,8 +272,7 @@ def _wait_for_librechat_openid_ready(client, container_name: str) -> None:
             continue
 
     raise RuntimeError(
-        "LibreChat OpenID did not become ready "
-        f"for {container_name}: status={last_status}, detail={last_detail[:200]}"
+        f"LibreChat OpenID did not become ready for {container_name}: status={last_status}, detail={last_detail[:200]}"
     )
 
 
