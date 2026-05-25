@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+
 from knowledge_ingest.chunker import (
     CHILD_CHUNK_SIZE_DEFAULT,
     PARENT_CHUNK_SIZE_DEFAULT,
     Chunk,
     ParentChunk,
     chunk_markdown_with_parents,
+    normalize_document_for_chunking,
 )
 
 # A short document that fits in one parent — exercises the trivial case.
@@ -121,6 +124,47 @@ def test_frontmatter_is_stripped_from_chunks() -> None:
         assert "tags: [crm, voys]" not in c.text
     for p in parents:
         assert "title: Test" not in p.text
+
+
+def test_blocknote_json_is_normalized_before_chunking() -> None:
+    blocks = [
+        {
+            "type": "paragraph",
+            "content": [
+                {"type": "text", "text": "User management lives under ", "styles": {}},
+                {"type": "text", "text": "Admin > Users", "styles": {"bold": True}},
+                {"type": "text", "text": ".", "styles": {}},
+            ],
+            "children": [],
+        },
+        {
+            "type": "heading",
+            "props": {"level": 2},
+            "content": [{"type": "text", "text": "Invite a colleague", "styles": {}}],
+            "children": [],
+        },
+        {
+            "type": "numberedListItem",
+            "content": [{"type": "text", "text": "Click Invite.", "styles": {}}],
+            "children": [],
+        },
+    ]
+    content = (
+        "---\n"
+        "title: Invite people\n"
+        "---\n\n"
+        f"{json.dumps(blocks)}"
+    )
+
+    normalized = normalize_document_for_chunking(content)
+    children, parents = chunk_markdown_with_parents(normalized)
+    combined = "\n\n".join([*(c.text for c in children), *(p.text for p in parents)])
+
+    assert "## Invite a colleague" in normalized
+    assert "User management lives under **Admin > Users**." in combined
+    assert "Invite a colleague" in combined
+    assert "1. Click Invite." in combined
+    assert '"type":"paragraph"' not in combined
 
 
 def test_position_field_is_zero_indexed_and_monotonic() -> None:

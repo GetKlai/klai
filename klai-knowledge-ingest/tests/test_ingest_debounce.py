@@ -17,6 +17,7 @@ import json
 import logging
 import sys
 import types
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -116,6 +117,15 @@ def webhook_client(mock_pool):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_docs_source_extra_builds_public_reader_url():
+    from knowledge_ingest.routes.ingest import docs_source_extra
+
+    assert docs_source_extra("org-getklai/klai-help", "klai-help", "users/invite people.md") == {
+        "source_url": "https://getklai.getklai.com/docs/klai-help/users/invite%20people",
+        "source_ref": "https://getklai.getklai.com/docs/klai-help/users/invite%20people",
+    }
 
 
 def test_webhook_defers_debounced_task(webhook_client):
@@ -263,6 +273,12 @@ async def test_ingest_from_gitea_task_fetches_latest_content():
     """ingest_from_gitea must call _fetch_gitea_file at execution time, not use queued content."""
     mock_fetch = AsyncMock(return_value="# Latest content\nFresh text")
     mock_ingest = AsyncMock(return_value={"status": "ok", "chunks": 1})
+    mock_conn = MagicMock()
+
+    @asynccontextmanager
+    async def fake_tenant_conn(org_id: str):
+        assert org_id == "org1"
+        yield mock_conn
 
     with (
         patch(
@@ -272,6 +288,10 @@ async def test_ingest_from_gitea_task_fetches_latest_content():
         patch(
             "knowledge_ingest.routes.ingest.ingest_document",
             mock_ingest,
+        ),
+        patch(
+            "knowledge_ingest.db.tenant_scoped_connection",
+            fake_tenant_conn,
         ),
     ):
         from knowledge_ingest.ingest_tasks import register_ingest_tasks
@@ -300,6 +320,11 @@ async def test_ingest_from_gitea_task_fetches_latest_content():
 
     mock_fetch.assert_called_once_with("org-myslug/kb", "docs/page.md")
     mock_ingest.assert_called_once()
-    req_arg = mock_ingest.call_args.args[0]
+    conn_arg, req_arg = mock_ingest.call_args.args
+    assert conn_arg is mock_conn
     assert req_arg.content == "# Latest content\nFresh text"
     assert req_arg.org_id == "org1"
+    assert req_arg.extra == {
+        "source_url": "https://myslug.getklai.com/docs/kb/docs/page",
+        "source_ref": "https://myslug.getklai.com/docs/kb/docs/page",
+    }

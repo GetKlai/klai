@@ -41,11 +41,13 @@ def register_ingest_tasks(procrastinate_app: object) -> None:
         how many saves were made after the task was queued.
         """
         # Lazy imports to avoid circular dependencies and psycopg at module level
-        from knowledge_ingest.routes.ingest import (  # noqa: PLC0415
+        from knowledge_ingest.db import tenant_scoped_connection
+        from knowledge_ingest.models import IngestRequest
+        from knowledge_ingest.routes.ingest import (
             _fetch_gitea_file,
+            docs_source_extra,
             ingest_document,
         )
-        from knowledge_ingest.models import IngestRequest  # noqa: PLC0415
 
         logger.info("gitea_ingest_started", kb_slug=kb_slug, path=path, org_id=org_id)
 
@@ -62,8 +64,10 @@ def register_ingest_tasks(procrastinate_app: object) -> None:
             source_type="docs",
             content_type="kb_article",
             user_id=user_id,
+            extra=docs_source_extra(gitea_repo, kb_slug, path),
         )
-        result = await ingest_document(req)
+        async with tenant_scoped_connection(org_id) as conn:
+            result = await ingest_document(conn, req)
         logger.info(
             "gitea_ingest_complete",
             kb_slug=kb_slug,
