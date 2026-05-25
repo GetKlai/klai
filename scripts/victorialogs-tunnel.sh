@@ -13,11 +13,20 @@
 #        ./scripts/victorialogs-tunnel.sh --stop    (kill existing tunnel)
 set -euo pipefail
 
-CONTAINER="klai-core-victorialogs-1"
-LOCAL_PORT=9428
-REMOTE_PORT=9428
+CONTAINER="${VICTORIALOGS_CONTAINER:-klai-core-victorialogs-1}"
+LOCAL_PORT="${VICTORIALOGS_LOCAL_PORT:-9428}"
+REMOTE_PORT="${VICTORIALOGS_REMOTE_PORT:-9428}"
 MAX_RETRIES=5
-PIDFILE="${TMPDIR:-/tmp}/victorialogs-tunnel.pid"
+PIDFILE="${TMPDIR:-/tmp}/victorialogs-tunnel-${LOCAL_PORT}.pid"
+LOCKDIR="${TMPDIR:-/tmp}/victorialogs-tunnel-${LOCAL_PORT}.lock"
+
+acquire_lock() {
+  if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    echo "ERROR: Another VictoriaLogs tunnel operation is already running for port $LOCAL_PORT." >&2
+    exit 1
+  fi
+  trap 'rm -rf "$LOCKDIR"' EXIT
+}
 
 check_tunnel() {
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
@@ -51,12 +60,12 @@ resolve_ip() {
 }
 
 health_check() {
-  # VictoriaLogs requires basic auth — use env var if set
-  local auth_header=""
+  # VictoriaLogs requires basic auth — use env var if set.
+  local curl_args=(-sf -o /dev/null -m 3)
   if [ -n "${VICTORIALOGS_BASIC_AUTH_B64:-}" ]; then
-    auth_header="-H Authorization:Basic ${VICTORIALOGS_BASIC_AUTH_B64}"
+    curl_args+=(-H "Authorization: Basic ${VICTORIALOGS_BASIC_AUTH_B64}")
   fi
-  curl -sf -o /dev/null -m 3 $auth_header "http://localhost:$LOCAL_PORT/health" 2>/dev/null
+  curl "${curl_args[@]}" "http://localhost:$LOCAL_PORT/health" 2>/dev/null
 }
 
 # Handle subcommands
@@ -71,10 +80,13 @@ case "${1:-}" in
     fi
     ;;
   --stop)
+    acquire_lock
     stop_tunnel
     exit 0
     ;;
 esac
+
+acquire_lock
 
 # Prevent duplicate tunnels
 if check_tunnel; then

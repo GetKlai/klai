@@ -39,7 +39,7 @@
       }
     },
     "victorialogs": {
-      "$comment": "LogsQL queries against VictoriaLogs. Requires SSH tunnel: ./scripts/victorialogs-tunnel.sh. Binary must be at ~/bin/mcp-victorialogs (Mac) or %USERPROFILE%\\bin\\mcp-victorialogs.exe (Windows). Set VICTORIALOGS_BASIC_AUTH_B64 in shell profile.",
+      "$comment": "LogsQL queries against VictoriaLogs. Launcher opens a per-MCP-process SSH tunnel on a free local port, so parallel agent sessions do not share localhost:9428. Binary must be at ~/bin/mcp-victorialogs (Mac) or %USERPROFILE%\\bin\\mcp-victorialogs.exe (Windows). Set VICTORIALOGS_BASIC_AUTH_B64 in shell profile.",
       "type": "stdio",
       "command": "node",
       "args": [".claude/scripts/victorialogs-launcher.mjs"],

@@ -15,8 +15,10 @@ One `request_id:<uuid>` query in VictoriaLogs shows the full chain.
 
 ## VictoriaLogs MCP (preferred for production debugging)
 Configured in `.mcp.json` as `victorialogs` server (read-only, v1.8.0).
-Requires SSH tunnel to the production server (VictoriaLogs is only on Docker's internal `monitoring` network).
-Tunnel setup and auth credentials are documented in `klai-infra/docs/rules/observability.md` (private).
+The launcher opens a per-MCP-process SSH tunnel to the production server
+(VictoriaLogs is only on Docker's internal `monitoring` network), so parallel
+Conductor/Claude sessions do not share a single `localhost:9428` tunnel.
+Auth credentials are documented in `klai-infra/docs/rules/observability.md` (private).
 
 Uses LogsQL — NOT LogQL (Loki). Key tools: `query`, `hits`, `field_names`, `facets`, `streams`.
 
@@ -27,7 +29,7 @@ VictoriaLogs requires basic auth. Credentials are stored in SOPS (klai-infra).
 |---|---|
 | core-01 Alloy (internal) | `basic_auth` in `loki.write` endpoint — `deploy/alloy/config.alloy` |
 | public-01 Alloy (external) | Bearer token via Caddy, Caddy passes basic auth upstream |
-| MCP (local Mac) | `VL_INSTANCE_HEADERS` env var with Basic auth in `.mcp.json` |
+| MCP (local Mac) | `.claude/scripts/victorialogs-launcher.mjs` reads `VICTORIALOGS_BASIC_AUTH_B64` and sets `VL_INSTANCE_HEADERS` |
 
 Common LogsQL queries:
 - Trace a request: `request_id:<uuid>`
