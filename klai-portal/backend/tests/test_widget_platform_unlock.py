@@ -113,6 +113,8 @@ async def test_widget_config_returns_404_when_widgets_not_unlocked():
 
     with (
         patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
         patch("app.api.partner.set_tenant", new=AsyncMock()),
         patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
     ):
@@ -134,6 +136,8 @@ async def test_widget_config_returns_200_when_widgets_unlocked():
 
     with (
         patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
         patch("app.api.partner.set_tenant", new=AsyncMock()),
         patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
     ):
@@ -158,6 +162,8 @@ async def test_public_bot_config_returns_404_when_widgets_not_unlocked():
 
     with (
         patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
         patch("app.api.partner.set_tenant", new=AsyncMock()),
         patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
     ):
@@ -178,6 +184,8 @@ async def test_public_bot_config_returns_200_when_widgets_unlocked():
 
     with (
         patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
         patch("app.api.partner.set_tenant", new=AsyncMock()),
         patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
     ):

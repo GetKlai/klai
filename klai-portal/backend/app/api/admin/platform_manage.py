@@ -44,8 +44,9 @@ from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.default_knowledge_bases import create_default_personal_kb
 from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.provisioning import provision_tenant
+from app.services.user_deletion_orchestrator import delete_user_with_state_machine
 from app.services.user_memberships import get_user_membership_summary
-from app.services.zitadel import zitadel
+from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 
 
 def _slugify(name: str) -> str:
@@ -66,6 +67,31 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/platform", tags=["platform-admin"])
 
+
+async def _emit_audit_safe(action: str, details: dict, perms: UserPermissions) -> None:
+    """Emit an audit event; fall back to structlog on DB failure (REQ-6 AC6.3).
+
+    # @MX:NOTE: [AUTO] Used for partial-failure audit paths where the primary session
+    # may be aborted. Mirrors the fallback pattern in kb_offboarding._do_delete.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-6
+    """
+    try:
+        await log_event(
+            org_id=perms.org_id,
+            actor=perms.user_id,
+            action=action,
+            resource_type="user",
+            resource_id="",
+            details=details,
+        )
+    except Exception:
+        logger.exception(
+            "platform_admin_audit_emit_failed",
+            original_action=action,
+            original_details=details,
+        )
+
+
 PortalRole = Literal["personal", "company", "kb_manager", "group_manager", "admin"]
 
 # Mirror of users.py::_ZITADEL_ROLE_BY_PORTAL_ROLE — only admin gets a
@@ -81,6 +107,12 @@ _ZITADEL_ROLE_BY_PORTAL_ROLE: dict[str, str | None] = {
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class RoleUpdateResponse(MessageResponse):
+    """Response for role-change endpoints; carries zitadel_sync_failed flag (REQ-5)."""
+
+    zitadel_sync_failed: bool = False
 
 
 class RoleUpdateRequest(BaseModel):
@@ -125,14 +157,14 @@ async def _rollback_zitadel_user(zitadel_user_id: str) -> None:
 
 @router.patch(
     "/organizations/{org_id}/users/{zitadel_user_id}/role",
-    response_model=MessageResponse,
+    response_model=RoleUpdateResponse,
 )
 async def platform_update_role(
     org_id: int,
     zitadel_user_id: str,
     body: RoleUpdateRequest,
     perms: UserPermissions = Depends(require_platform_admin()),
-) -> MessageResponse:
+) -> RoleUpdateResponse:
     """Change a user's role inside a target tenant. Refuses to demote the
     last admin (mirrors the per-tenant invariant)."""
     async with tenant_scoped_session(org_id) as db:
@@ -168,6 +200,7 @@ async def platform_update_role(
                     detail="Kan rol niet wijzigen: dit is de laatste admin.",
                 )
 
+        old_role = user.role
         user.role = body.role
         await db.commit()
 
@@ -180,7 +213,29 @@ async def platform_update_role(
         resource_id=zitadel_user_id,
         details={"target_org_id": org_id, "new_role": body.role},
     )
-    return MessageResponse(message="Rol bijgewerkt.")
+
+    # REQ-5 (Finding A-4): sync Zitadel org:owner grant after DB commit.
+    # @MX:NOTE: [AUTO] Failure is non-fatal: DB is already committed; we emit
+    # a desync audit event and surface zitadel_sync_failed in the response.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-5
+    zitadel_sync_failed = False
+    try:
+        await _sync_zitadel_role_grant(zitadel_user_id, old_role=old_role, new_role=body.role)
+    except Exception:
+        zitadel_sync_failed = True
+        logger.exception("platform_role_change_zitadel_sync_failed", zitadel_user_id=zitadel_user_id)
+        await _emit_audit_safe(
+            action="platform_admin.role_change_zitadel_desync",
+            details={
+                "db_role": body.role,
+                "target_zitadel_role": "org:owner",
+                "zitadel_sync_failed": True,
+                "target_org_id": org_id,
+            },
+            perms=perms,
+        )
+
+    return RoleUpdateResponse(message="Rol bijgewerkt.", zitadel_sync_failed=zitadel_sync_failed)
 
 
 # ---------------------------------------------------------------------------
@@ -290,10 +345,53 @@ async def platform_delete_user(
 
     Deleting the sole owner of a tenant leaves an empty org — use the
     tenant-deprovision endpoint to remove the whole tenant instead.
+
+    Uses the user_deletion_orchestrator state machine (REQ-4) so that partial
+    failures are recorded on portal_users.deletion_status and can be retried.
+    """
+    return await _execute_user_delete(
+        org_id=org_id,
+        zitadel_user_id=zitadel_user_id,
+        perms=perms,
+    )
+
+
+@router.post(
+    "/organizations/{org_id}/users/{zitadel_user_id}/retry-delete",
+    response_model=MessageResponse,
+)
+async def platform_retry_user_delete(
+    org_id: int,
+    zitadel_user_id: str,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> MessageResponse:
+    """Restart the user-delete state machine from scratch.
+
+    Each step is idempotent — already-deleted resources are skipped
+    harmlessly. Use this after a portal_users.deletion_status='failed_partial'
+    to complete the deletion.
+    """
+    return await _execute_user_delete(
+        org_id=org_id,
+        zitadel_user_id=zitadel_user_id,
+        perms=perms,
+    )
+
+
+async def _execute_user_delete(
+    *,
+    org_id: int,
+    zitadel_user_id: str,
+    perms: UserPermissions,
+) -> MessageResponse:
+    """Shared implementation for platform_delete_user and platform_retry_user_delete.
+
+    Resolves all pre-conditions, then delegates to delete_user_with_state_machine.
+    The orchestrator records partial failures on portal_users so the retry
+    endpoint can restart from scratch.
     """
     from app.services.kb_offboarding import (
         KbDisposition,
-        apply_dispositions,
         compute_offboard_preview,
         revoke_user_credentials,
     )
@@ -327,49 +425,44 @@ async def platform_delete_user(
             )
         delete_global_identity = membership_summary.remaining_count == 0
 
-        # 1. Purge KBs: personal + solely-owned org KBs (complete delete).
+        # Pre-compute KB dispositions + revoke credentials before entering the
+        # state machine. Credential revocation is safe to do here because it is
+        # idempotent (already-revoked keys are skipped).
         preview = await compute_offboard_preview(zitadel_user_id, org_id, db)
-        dispositions = [
+        kb_dispositions = [
             KbDisposition(kb_id=kb.kb_id, action="delete")
             for kb in (*preview.personal_kbs, *preview.org_kbs_solely_owned)
         ]
-        if dispositions:
-            await apply_dispositions(zitadel_user_id, dispositions, perms.user_id, org, db)
-
-        # 2. Revoke partner API keys + MCP tokens.
         api_keys, mcp_tokens = await revoke_user_credentials(zitadel_user_id, org_id, db)
 
-        # 3. Delete the global Zitadel identity only when this was the last
-        # tenant membership. Multi-tenant users keep their login elsewhere.
-        if delete_global_identity:
-            try:
-                await zitadel.remove_user(
-                    org_id=settings_zitadel_portal_org_id(),
-                    zitadel_user_id=zitadel_user_id,
-                )
-            except Exception as exc:
-                raise HTTPException(status_code=502, detail=f"Zitadel-verwijdering mislukt: {exc}") from exc
+        # Delegate to the state machine. It records partial failures and emits
+        # the audit event. We pass the open tenant-scoped session so step 3
+        # (portal_db_delete) runs in the same RLS context.
+        success = await delete_user_with_state_machine(
+            org_id=org_id,
+            zitadel_user_id=zitadel_user_id,
+            actor_user_id=perms.user_id,
+            delete_global_identity=delete_global_identity,
+            kb_dispositions=kb_dispositions,
+            api_keys_count=api_keys,
+            mcp_tokens_count=mcp_tokens,
+            org=org,
+            portal_user=user,
+            db=db,
+        )
 
-        # 4. Delete the portal_users row (cascades memberships/capabilities).
-        await db.delete(user)
-        await db.commit()
+        if success:
+            await db.commit()
 
     fire_role_change_notification(zitadel_user_id)
-    await log_event(
-        org_id=perms.org_id,
-        actor=perms.user_id,
-        action="platform_admin.user_deleted",
-        resource_type="user",
-        resource_id=zitadel_user_id,
-        details={
-            "target_org_id": org_id,
-            "kbs_deleted": len(dispositions),
-            "api_keys_revoked": api_keys,
-            "mcp_tokens_revoked": mcp_tokens,
-            "global_identity_deleted": delete_global_identity,
-            "remaining_membership_count": membership_summary.remaining_count,
-        },
-    )
+
+    if not success:
+        # Partial failure — orchestrator already wrote deletion_status and audit.
+        raise HTTPException(
+            status_code=502,
+            detail=("Verwijdering gedeeltelijk mislukt. Gebruik POST .../retry-delete om opnieuw te proberen."),
+        )
+
     message = "Gebruiker volledig verwijderd." if delete_global_identity else "Gebruiker uit tenant verwijderd."
     return MessageResponse(message=message)
 
@@ -416,6 +509,17 @@ async def platform_invite(
         )
     except Exception as exc:
         logger.exception("platform_invite_zitadel_failed", email=body.email)
+        # REQ-6 (Finding A-7): emit audit event for permanent trail even though
+        # VictoriaLogs captures the exception above (30-day retention only).
+        await _emit_audit_safe(
+            action="platform_admin.invite_zitadel_invite_failed",
+            details={
+                "target_email": body.email,
+                "target_org_id": org_id,
+                "error": str(exc)[:200],
+            },
+            perms=perms,
+        )
         raise HTTPException(status_code=502, detail=f"Zitadel invite mislukt: {exc}") from exc
     zitadel_user_id: str = user_data["userId"]
 
@@ -430,6 +534,15 @@ async def platform_invite(
             )
         except Exception as exc:
             logger.exception("platform_invite_grant_failed", zitadel_user_id=zitadel_user_id)
+            await _emit_audit_safe(
+                action="platform_admin.invite_grant_role_failed",
+                details={
+                    "target_email": body.email,
+                    "target_org_id": org_id,
+                    "error": str(exc)[:200],
+                },
+                perms=perms,
+            )
             await _rollback_zitadel_user(zitadel_user_id)
             raise HTTPException(status_code=502, detail=f"Rol-grant mislukt: {exc}") from exc
 
@@ -560,6 +673,17 @@ async def platform_create_tenant(
         )
     except Exception as exc:
         logger.exception("platform_create_tenant_owner_setup_failed", email=body.owner_email)
+        # REQ-6 (Finding A-7): permanent audit trail for grant failure.
+        await _emit_audit_safe(
+            action="platform_admin.create_tenant_grant_role_failed",
+            details={
+                "target_email": body.owner_email,
+                "target_org_id": None,
+                "target_zitadel_org_id": zitadel_org_id,
+                "error": str(exc)[:200],
+            },
+            perms=perms,
+        )
         await _rollback_zitadel_user(owner_user_id)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Owner-setup mislukt: {exc}") from exc

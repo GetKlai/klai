@@ -146,7 +146,7 @@ async def record_widget_turn(
                     "conversation_id": conv_id,
                     "org_id": org_id,
                     "role": role,
-                    "content": content,
+                    "content": content[:10000],  # REQ-8: clamp to 10000 chars (AC8.1)
                     "sources": None if sources is None else json.dumps(sources),
                     "sequence": sequence,
                 },
