@@ -349,13 +349,13 @@ def _make_jwt(
     )
 
 
-def _make_legacy_jwt(
+def _make_no_kid_jwt(
     wgt_id: str = "wgt_abcdef0123456789",
     org_id: int = 42,
     kb_ids: list[int] | None = None,
     tenant_slug: str = "acme",
 ) -> str:
-    """Encode a pre-kid widget session JWT for deploy-window fallback tests."""
+    """Encode a widget session JWT without a kid header."""
     from app.services.widget_auth import _derive_tenant_key
 
     payload = {
@@ -363,7 +363,7 @@ def _make_legacy_jwt(
         "org_id": org_id,
         "kb_ids": kb_ids if kb_ids is not None else [1, 2],
         "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
-        "jti": "legacy-test-jti",
+        "jti": "no-kid-test-jti",
     }
     return jwt.encode(payload, _derive_tenant_key(_TEST_WIDGET_SECRET, tenant_slug), algorithm="HS256")
 
@@ -406,8 +406,8 @@ async def test_session_token_all_kbs_valid_returns_full_scope():
 
 
 @pytest.mark.asyncio
-async def test_session_token_uses_kid_header_without_legacy_payload_decode():
-    """New JWTs must select the tenant key via kid, not unverified payload."""
+async def test_session_token_uses_kid_header_without_payload_decode():
+    """JWTs must select the tenant key via kid, not unverified payload."""
     from app.api.partner_dependencies import get_partner_key
 
     token = _make_jwt(kb_ids=[1, 2, 3])
@@ -426,7 +426,7 @@ async def test_session_token_uses_kid_header_without_legacy_payload_decode():
     def _reject_unverified_decode(*args, **kwargs):
         options = kwargs.get("options")
         if isinstance(options, dict) and options.get("verify_signature") is False:
-            raise AssertionError("legacy payload fallback should not run for kid JWTs")
+            raise AssertionError("kid JWTs must not trigger unverified payload decode")
         return original_decode(*args, **kwargs)
 
     patches = _session_patches()
@@ -446,27 +446,25 @@ async def test_session_token_uses_kid_header_without_legacy_payload_decode():
 
 
 @pytest.mark.asyncio
-async def test_session_token_without_kid_uses_legacy_fallback_during_deploy_window():
-    """Old in-flight JWTs without kid remain valid for one deploy window."""
+async def test_session_token_without_kid_is_rejected_without_payload_decode():
+    """No-kid JWTs are rejected before DB or tenant lookup."""
     from app.api.partner_dependencies import get_partner_key
 
-    token = _make_legacy_jwt(kb_ids=[1, 2])
+    token = _make_no_kid_jwt(kb_ids=[1, 2])
     db = AsyncMock()
-    setup_db(
-        db,
-        [
-            FakeResult([FakeOrg()]),
-            FakeResult([FakeWidget()]),
-            FakeResult(rows=[1, 2]),
-        ],
-    )
 
-    patches = _session_patches()
-    with patches[0], patches[1], patches[2]:
-        result = await get_partner_key(request=_make_request(token=token), db=db)
+    with (
+        patch("app.api.partner_dependencies.settings.widget_jwt_secret", _TEST_WIDGET_SECRET),
+        patch(
+            "app.api.partner_dependencies.jwt.decode",
+            side_effect=AssertionError("no-kid JWT must not trigger unverified payload decode"),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await get_partner_key(request=_make_request(token=token), db=db)
 
-    assert result.org_id == 42
-    assert result.kb_access == {1: "read", 2: "read"}
+    assert exc.value.status_code == 401
+    db.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -504,7 +502,7 @@ async def test_session_token_rejects_verified_org_mismatch_after_kid_lookup():
 
 
 @pytest.mark.asyncio
-async def test_session_token_rejects_malformed_kid_without_legacy_fallback():
+async def test_session_token_rejects_malformed_kid_without_payload_decode():
     """Malformed kid is a hard auth failure, not a reason to read payload claims."""
     from app.api.partner_dependencies import get_partner_key
     from app.services.widget_auth import _derive_tenant_key
@@ -528,7 +526,7 @@ async def test_session_token_rejects_malformed_kid_without_legacy_fallback():
         patch("app.api.partner_dependencies.settings.widget_jwt_secret", secret),
         patch(
             "app.api.partner_dependencies.jwt.decode",
-            side_effect=AssertionError("legacy fallback should not run when kid is present"),
+            side_effect=AssertionError("malformed kid must not trigger payload decode"),
         ),
     ):
         with pytest.raises(HTTPException) as exc:
