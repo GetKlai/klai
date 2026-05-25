@@ -50,10 +50,10 @@ from klai_chat_prompts import (
     META_CHAT_SYSTEM_PROMPT,
 )
 from klai_citations import (
+    compose_answer_with_trusted_sources,
     evidence_pack_items_as_chunks,
     format_sources_markdown,
     render_evidence_context,
-    strip_model_citation_artifacts,
     trusted_sources_from_evidence_pack,
 )
 
@@ -1521,14 +1521,21 @@ def _render_kb_citation_content(
     allowed_image_urls: set[str],
     user_query: object,
     trusted_sources: list[dict[str, Any]],
+    evidence_chunks: list[dict],
 ) -> tuple[str, int, bool]:
     if not trusted_sources:
         return _no_citable_sources_message(user_query), 0, True
-    cleaned = strip_model_citation_artifacts(text, allowed_image_urls=allowed_image_urls)
-    sources_markdown = format_sources_markdown(trusted_sources)
-    if not cleaned or not sources_markdown:
+    composed = compose_answer_with_trusted_sources(
+        text,
+        trusted_sources,
+        query_text=user_query if isinstance(user_query, str) else "",
+        allowed_image_urls=allowed_image_urls,
+        evidence_chunks=evidence_chunks,
+    )
+    sources_markdown = format_sources_markdown(composed.sources)
+    if not composed.content or not sources_markdown:
         return _no_citable_sources_message(user_query), 0, True
-    return f"{cleaned}\n\n{sources_markdown}", len(trusted_sources), False
+    return f"{composed.content}\n\n{sources_markdown}", len(composed.sources), False
 
 
 def _log_kb_citation_render(
@@ -1582,6 +1589,7 @@ def _flush_citation_stream_buffer(
         allowed_image_urls=allowed_image_urls,
         user_query=kb_meta.get("user_query"),
         trusted_sources=trusted_sources,
+        evidence_chunks=citation_chunks,
     )
 
     for choice in _get_response_choices(response):
@@ -1620,6 +1628,7 @@ def _compose_non_streaming_kb_response(
                 allowed_image_urls=allowed_image_urls,
                 user_query=kb_meta.get("user_query"),
                 trusted_sources=trusted_sources,
+                evidence_chunks=citation_chunks,
             )
             if rendered_content != content:
                 _set_message_content(message, rendered_content)
