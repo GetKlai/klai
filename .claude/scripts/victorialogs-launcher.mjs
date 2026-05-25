@@ -39,6 +39,10 @@ function readLoginShellEnv(name) {
 const env = { ...process.env };
 const loginShellAuth = readLoginShellEnv('VICTORIALOGS_BASIC_AUTH_B64');
 
+if (!env.VL_INSTANCE_ENTRYPOINT) {
+  env.VL_INSTANCE_ENTRYPOINT = 'http://localhost:9428';
+}
+
 if (loginShellAuth) {
   env.VICTORIALOGS_BASIC_AUTH_B64 = loginShellAuth;
   env.VL_INSTANCE_HEADERS = `Authorization=Basic ${loginShellAuth}`;
