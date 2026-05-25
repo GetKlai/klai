@@ -820,7 +820,7 @@ class TestChatEndpoint:
             },
         ]
 
-        async def fake_synthesize(query, chunks, history):
+        async def fake_synthesize(query, chunks, history, evidence_pack=None):
             yield "Hello"
             yield " world"
             yield {

@@ -255,6 +255,8 @@ class TestSynthesize:
                 "text": "refund policy text",
                 "artifact_id": "a1",
                 "context_prefix": "Policy: ",
+                "title": "Refund policy",
+                "source_url": "https://getklai.com/docs/refund-policy",
                 "score": 0.85,
                 "reranker_score": 0.92,
             },
@@ -272,7 +274,8 @@ class TestSynthesize:
         assert len(dict_items) == 1
         assert dict_items[0]["retrieval_bypassed"] is False
         assert len(dict_items[0]["citations"]) == 1
-        assert dict_items[0]["citations"][0]["index"] == 1
+        assert dict_items[0]["citations"][0]["title"] == "Refund policy"
+        assert dict_items[0]["citations"][0]["url"] == "https://getklai.com/docs/refund-policy"
 
     @patch("retrieval_api.services.synthesis.httpx.AsyncClient")
     async def test_with_history(self, mock_client_cls):
@@ -305,8 +308,19 @@ class TestSynthesize:
             {"role": "assistant", "content": "resp2"},
         ]
 
+        chunks = [
+            {
+                "chunk_id": "c1",
+                "text": "answer context",
+                "title": "Answer context",
+                "source_url": "https://getklai.com/docs/answer-context",
+                "score": 0.8,
+                "reranker_score": 0.9,
+            }
+        ]
+
         items = []
-        async for item in synthesize("follow up?", [], history):
+        async for item in synthesize("follow up?", chunks, history):
             items.append(item)
 
         call_args = mock_client.stream.call_args
@@ -345,10 +359,30 @@ class TestSynthesize:
         mock_stream_resp.aiter_lines = fake_aiter_lines
         mock_client.stream = MagicMock(return_value=mock_stream_resp)
 
+        chunks = [
+            {
+                "chunk_id": "c1",
+                "text": "answer context",
+                "title": "Answer context",
+                "source_url": "https://getklai.com/docs/answer-context",
+                "score": 0.8,
+                "reranker_score": 0.9,
+            }
+        ]
+
         items = []
-        async for item in synthesize("q", [], []):
+        async for item in synthesize("q", chunks, []):
             items.append(item)
 
         str_items = [i for i in items if isinstance(i, str)]
         assert len(str_items) == 1
         assert str_items[0] == "token"
+
+    async def test_no_citable_evidence_refuses_without_model_call(self):
+        items = []
+        async for item in synthesize("q", [], []):
+            items.append(item)
+
+        assert items[0] == "I cannot answer this reliably from the available knowledge sources."
+        assert items[1]["citations"] == []
+        assert items[1]["evidence_pack"]["no_citable_reason"] == "no_evidence"

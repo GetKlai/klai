@@ -24,6 +24,12 @@ from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
 from klai_citations import normalise_source_url, render_evidence_context, source_url_key
 
 from retrieval_api.config import settings
+from retrieval_api.models import EvidencePack
+from retrieval_api.services.evidence_pack import (
+    build_evidence_pack,
+    evidence_pack_items_as_chunks,
+    evidence_pack_sources_payload,
+)
 from retrieval_api.util.language_detect import (
     detect_language,
     language_correctness,
@@ -83,9 +89,14 @@ def _chunk_title(chunk: dict) -> str:
     return (chunk.get("context_prefix") or chunk.get("text", ""))[:80]
 
 
-def _build_context(chunks: list[dict]) -> str:
+def _build_context(chunks: list[dict], evidence_pack: EvidencePack | None = None) -> str:
     """Format retrieved chunks as structured evidence for the LLM."""
-    return render_evidence_context(chunks, include_source_urls=True, max_chars=_MAX_CONTEXT_CHARS)
+    context_chunks = evidence_pack_items_as_chunks(evidence_pack) if evidence_pack else chunks
+    return render_evidence_context(
+        context_chunks,
+        include_source_urls=True,
+        max_chars=_MAX_CONTEXT_CHARS,
+    )
 
 
 def _extract_citation_indices(text: str) -> list[int]:
@@ -156,6 +167,7 @@ async def synthesize(
     query_resolved: str,
     chunks: list[dict],
     history: list[dict],
+    evidence_pack: EvidencePack | None = None,
 ) -> AsyncIterator[str | dict]:
     """Stream synthesis tokens, then yield a final dict with citations.
 
@@ -163,7 +175,24 @@ async def synthesize(
         str: individual token strings
         dict: final event ``{"citations": [...], "retrieval_bypassed": False}``
     """
-    context = _build_context(chunks)
+    if evidence_pack is None:
+        evidence_pack = build_evidence_pack(
+            chunks,
+            min_relevance_score=settings.confidence_band_low_threshold
+            if settings.reranker_enabled
+            else None,
+        )
+    if not evidence_pack.sources:
+        message = "I cannot answer this reliably from the available knowledge sources."
+        yield message
+        yield {
+            "citations": [],
+            "retrieval_bypassed": False,
+            "query_resolved": query_resolved,
+            "evidence_pack": evidence_pack.model_dump(),
+        }
+        return
+    context = _build_context(chunks, evidence_pack)
 
     messages = [
         {"role": "system", "content": GROUNDED_CHAT_SYSTEM_PROMPT},
@@ -217,12 +246,9 @@ async def synthesize(
     # Passive language-correctness telemetry (SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07).
     _emit_language_correctness_log(query_resolved, full_text)
 
-    # Final event with citations
-    indices = _extract_citation_indices(full_text)
-    citations = _build_citations(indices, chunks)
-
     yield {
-        "citations": citations,
+        "citations": evidence_pack_sources_payload(evidence_pack),
         "retrieval_bypassed": False,
         "query_resolved": query_resolved,
+        "evidence_pack": evidence_pack.model_dump(),
     }
