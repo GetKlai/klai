@@ -122,9 +122,15 @@ async def test_list_documents_first_sync_returns_drive_files(
 
 async def test_list_documents_incremental_uses_cursor(
     gdrive_adapter: Any,
-    gdrive_connector: SimpleNamespace,
 ) -> None:
     """Incremental sync passes cursor_context['page_token'] through to the changes API."""
+    connector = _make_connector(
+        {
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+            "max_files": 200,
+        }
+    )
     cursor = {"page_token": "existing-cursor-token"}
     changes_response = {
         "changes": [
@@ -145,7 +151,7 @@ async def test_list_documents_incremental_uses_cursor(
 
     list_changes = AsyncMock(return_value=changes_response)
     with patch.object(gdrive_adapter, "_list_changes", list_changes):
-        refs = await gdrive_adapter.list_documents(gdrive_connector, cursor_context=cursor)
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=cursor)
 
     list_changes.assert_awaited_once()
     call_kwargs = list_changes.call_args.kwargs or {}
@@ -237,10 +243,49 @@ async def test_list_documents_uses_selected_item_ids(
     assert {r.ref for r in refs} == {"file-a", "file-b"}
 
 
-async def test_list_documents_incremental_filters_selected_item_ids(
+async def test_list_documents_scoped_folder_ignores_incremental_cursor(
     gdrive_adapter: Any,
 ) -> None:
-    """Incremental changes are ignored unless they belong to selected item_ids."""
+    """Folder-scoped syncs always rediscover the selected tree, even when a cursor exists."""
+    connector = _make_connector(
+        {
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+            "folder_id": "folder-a",
+        }
+    )
+    files = [
+        {
+            "id": "file-a",
+            "name": "A.pdf",
+            "mimeType": "application/pdf",
+            "modifiedTime": "2026-04-10T10:00:00.000Z",
+            "webViewLink": "https://drive.google.com/file/d/file-a/view",
+            "size": "100",
+        },
+    ]
+    list_files = AsyncMock(return_value=_list_response(files))
+
+    with (
+        patch.object(gdrive_adapter, "_list_files", list_files),
+        patch.object(gdrive_adapter, "_list_changes", AsyncMock()) as list_changes,
+    ):
+        refs = await gdrive_adapter.list_documents(
+            connector,
+            cursor_context={"page_token": "existing-cursor"},
+        )
+
+    list_changes.assert_not_called()
+    list_files.assert_awaited_once()
+    assert list_files.call_args.kwargs["folder_id"] == "folder-a"
+    assert list_files.call_args.kwargs["recursive"] is True
+    assert [r.ref for r in refs] == ["file-a"]
+
+
+async def test_list_documents_selected_item_ids_ignore_incremental_cursor(
+    gdrive_adapter: Any,
+) -> None:
+    """File-scoped syncs always fetch selected files, even when a cursor exists."""
     connector = _make_connector(
         {
             "access_token": "placeholder-access-value",
@@ -248,38 +293,97 @@ async def test_list_documents_incremental_filters_selected_item_ids(
             "item_ids": ["file-keep"],
         }
     )
-    changes_response = {
-        "changes": [
+    files_response = _list_response(
+        [
             {
-                "fileId": "file-keep",
-                "file": {
-                    "id": "file-keep",
-                    "name": "Keep.pdf",
-                    "mimeType": "application/pdf",
-                    "modifiedTime": "2026-04-12T11:00:00.000Z",
-                    "webViewLink": "https://drive.google.com/file/d/file-keep/view",
-                    "size": "100",
-                },
-            },
-            {
-                "fileId": "file-skip",
-                "file": {
-                    "id": "file-skip",
-                    "name": "Skip.pdf",
-                    "mimeType": "application/pdf",
-                    "modifiedTime": "2026-04-12T11:00:00.000Z",
-                    "webViewLink": "https://drive.google.com/file/d/file-skip/view",
-                    "size": "100",
-                },
+                "id": "file-keep",
+                "name": "Keep.pdf",
+                "mimeType": "application/pdf",
+                "modifiedTime": "2026-04-12T11:00:00.000Z",
+                "webViewLink": "https://drive.google.com/file/d/file-keep/view",
+                "size": "100",
             },
         ],
-        "newStartPageToken": "new-cursor-token",
-    }
+    )
+    get_files = AsyncMock(return_value=files_response)
 
-    with patch.object(gdrive_adapter, "_list_changes", AsyncMock(return_value=changes_response)):
+    with (
+        patch.object(gdrive_adapter, "_get_files_by_ids", get_files),
+        patch.object(gdrive_adapter, "_list_changes", AsyncMock()) as list_changes,
+    ):
         refs = await gdrive_adapter.list_documents(connector, cursor_context={"page_token": "old"})
 
+    list_changes.assert_not_called()
+    get_files.assert_awaited_once()
     assert [r.ref for r in refs] == ["file-keep"]
+
+
+async def test_list_files_recurses_selected_folder_children(gdrive_adapter: Any) -> None:
+    """Recursive folder listing traverses subfolders and returns descendant files."""
+    connector = _make_connector(
+        {
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+            "token_expiry": "2030-01-01T00:00:00+00:00",
+        }
+    )
+
+    folder_mime = "application/vnd.google-apps.folder"
+    responses = [
+        _list_response(
+            [
+                {"id": "subfolder", "name": "Subfolder", "mimeType": folder_mime},
+                {
+                    "id": "file-root",
+                    "name": "Root.pdf",
+                    "mimeType": "application/pdf",
+                    "modifiedTime": "2026-04-10T10:00:00.000Z",
+                    "webViewLink": "https://drive.google.com/file/d/file-root/view",
+                    "size": "100",
+                },
+            ]
+        ),
+        _list_response(
+            [
+                {
+                    "id": "file-child",
+                    "name": "Child.pdf",
+                    "mimeType": "application/pdf",
+                    "modifiedTime": "2026-04-10T10:00:00.000Z",
+                    "webViewLink": "https://drive.google.com/file/d/file-child/view",
+                    "size": "100",
+                },
+            ]
+        ),
+    ]
+
+    mock_responses: list[MagicMock] = []
+    for payload in responses:
+        response = MagicMock()
+        response.json = MagicMock(return_value=payload)
+        response.raise_for_status = MagicMock(return_value=None)
+        mock_responses.append(response)
+
+    http_client = MagicMock()
+    http_client.get = AsyncMock(side_effect=mock_responses)
+    http_client.__aenter__ = AsyncMock(return_value=http_client)
+    http_client.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch.object(gdrive_adapter, "ensure_token", AsyncMock(return_value="placeholder-access-value")),
+        patch("app.adapters.google_drive.httpx.AsyncClient", MagicMock(return_value=http_client)),
+    ):
+        result = await gdrive_adapter._list_files(
+            connector,
+            folder_id="folder-a",
+            recursive=True,
+        )
+
+    assert [f["id"] for f in result["files"]] == ["file-root", "file-child"]
+    first_q = http_client.get.await_args_list[0].kwargs["params"]["q"]
+    second_q = http_client.get.await_args_list[1].kwargs["params"]["q"]
+    assert "'folder-a' in parents" in first_q
+    assert "'subfolder' in parents" in second_q
 
 
 async def test_list_folders_returns_picker_items(gdrive_adapter: Any) -> None:
