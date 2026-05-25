@@ -51,6 +51,7 @@ from app.services.kb_upload_poller import run_poll_loop as run_kb_upload_poll_lo
 from app.services.recording_cleanup import recording_cleanup_loop
 from app.services.telemetry_purge import telemetry_purge_loop
 from app.services.vexa import vexa
+from app.services.widget_messages_retention import widget_messages_retention_loop
 from app.services.zitadel import zitadel
 
 setup_logging("portal-api")
@@ -261,6 +262,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     telemetry_purge_task = asyncio.create_task(telemetry_purge_loop())
     logger.info("Telemetry purge loop started")
 
+    # REQ-8 (SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): daily widget_messages retention.
+    widget_messages_retention_task = asyncio.create_task(widget_messages_retention_loop())
+    logger.info("Widget messages retention loop started")
+
     imap_task: asyncio.Task[None] | None = None
     if settings.imap_host and settings.imap_username:
         from app.services.imap_listener import start_imap_listener
@@ -276,6 +281,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     kb_upload_poller_task.cancel()
     cleanup_task.cancel()
     telemetry_purge_task.cancel()
+    widget_messages_retention_task.cancel()
     if imap_task is not None:
         imap_task.cancel()
     if _event_tasks:

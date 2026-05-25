@@ -97,6 +97,8 @@ async def test_widget_config_happy_path():
 
     with (
         patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
         patch("app.api.partner.set_tenant", new=AsyncMock()),
         patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
     ):
@@ -130,7 +132,11 @@ async def test_widget_config_unknown_widget_id():
     db = _make_db_chain(None, None, [])
     request = _make_request()
 
-    with patch("app.api.partner.settings") as mock_settings:
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+    ):
         mock_settings.widget_jwt_secret = "shared-secret"
         with pytest.raises(Exception) as exc_info:
             await widget_config(id="wgt_does_not_exist", request=request, db=db)
@@ -145,7 +151,11 @@ async def test_widget_config_disallowed_origin():
     db = _make_db_chain(widget, None, [])
     request = _make_request("https://evil.example.com")
 
-    with patch("app.api.partner.settings") as mock_settings:
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+    ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -178,6 +188,8 @@ async def test_widget_config_empty_allowed_origins_denied_by_default():
 
     with (
         patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
         patch("app.api.partner.set_tenant", new=AsyncMock()),
         patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
     ):
@@ -211,6 +223,8 @@ async def test_widget_config_empty_allowed_origins_allowed_when_allow_any_origin
 
     with (
         patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
         patch("app.api.partner.set_tenant", new=AsyncMock()),
         patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
     ):
@@ -298,7 +312,11 @@ async def test_public_bot_config_rejects_when_share_disabled():
     widget = FakeWidget()
     db = _make_db_chain(widget, None, [])
 
-    with patch("app.api.partner.settings") as mock_settings:
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+    ):
         mock_settings.widget_jwt_secret = "shared-secret"
         with pytest.raises(Exception) as exc_info:
             await public_bot_config(id=widget.widget_id, db=db)
@@ -326,6 +344,8 @@ async def test_public_bot_config_returns_token_when_share_enabled():
 
     with (
         patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
         patch("app.api.partner.set_tenant", new=AsyncMock()),
         patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
     ):

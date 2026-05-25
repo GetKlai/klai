@@ -43,6 +43,7 @@ from app.services.partner_chat import (
     chat_completion_streaming,
     retrieve_context,
 )
+from app.services.partner_rate_limit import check_rate_limit
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.retrieval_log import find_correlated_log, write_retrieval_log
@@ -814,6 +815,23 @@ async def widget_config(
             media_type="application/json",
         )
 
+    # REQ-7 (Finding B-4): per-widget mint rate-limit BEFORE DB lookup.
+    # @MX:NOTE: [AUTO] Rate-limit key is widget_mint:{id} (public widget_id from URL param).
+    # Limit is 10/min per widget to prevent unbounded LLM-token drain via the public mint path.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-7
+    redis = await get_redis_pool()
+    if redis is not None:
+        allowed, retry_after = await check_rate_limit(
+            redis, f"widget_mint:{id}", limit_per_minute=10, window_seconds=60
+        )
+        if not allowed:
+            return Response(
+                content='{"detail":"Rate limit exceeded"}',
+                status_code=429,
+                media_type="application/json",
+                headers={"Retry-After": str(retry_after)},
+            )
+
     # Look up widget by public widget_id (SPEC-WIDGET-002: own table)
     result = await db.execute(select(Widget).where(Widget.widget_id == id))
     widget_row = result.scalar_one_or_none()
@@ -918,6 +936,23 @@ async def public_bot_config(
             status_code=503,
             media_type="application/json",
         )
+
+    # REQ-7 (Finding B-4): per-widget mint rate-limit BEFORE DB lookup.
+    # @MX:NOTE: [AUTO] Same rate-limit as widget_config — isolates public share-link
+    # mint path from the embed mint path with separate per-widget keys.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-7
+    redis = await get_redis_pool()
+    if redis is not None:
+        allowed, retry_after = await check_rate_limit(
+            redis, f"widget_mint:{id}", limit_per_minute=10, window_seconds=60
+        )
+        if not allowed:
+            return Response(
+                content='{"detail":"Rate limit exceeded"}',
+                status_code=429,
+                media_type="application/json",
+                headers={"Retry-After": str(retry_after)},
+            )
 
     result = await db.execute(select(Widget).where(Widget.widget_id == id))
     widget_row = result.scalar_one_or_none()

@@ -311,6 +311,10 @@ class Settings(BaseSettings):
     # When empty, widget endpoints return 503.
     widget_jwt_secret: str = ""  # PORTAL_API_WIDGET_JWT_SECRET
 
+    # REQ-8 (SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): widget_messages retention.
+    # Rows older than this many days are deleted daily by the background loop.
+    widget_messages_retention_days: int = 90  # PORTAL_API_WIDGET_MESSAGES_RETENTION_DAYS
+
     # CORS — explicit allowlist of trusted origins for credentialed requests.
     # SPEC-SEC-CORS-001 REQ-1.6: cors_allow_origin_regex removed. The runtime
     # CORS check is the fixed first-party regex in KlaiCORSMiddleware (REQ-1.2)
