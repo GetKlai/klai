@@ -411,7 +411,7 @@ async def chat_completions(
             audit_widget_id = str(widget_uuid_row)
             bearer = http_request.headers.get("authorization", "")
             raw_token = bearer.removeprefix("Bearer ").strip()
-            audit_session_key = session_key_from_token(raw_token)
+            audit_session_key = getattr(auth, "session_key", None) or session_key_from_token(raw_token)
             audit_ip_hash = hash_audit_value(http_request.client.host if http_request.client else None)
             audit_ua_hash = hash_audit_value(http_request.headers.get("user-agent"))
             last_user_msg = next(
