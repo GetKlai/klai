@@ -49,12 +49,13 @@ export async function POST(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     org = await db.createOrg(orgSlug, orgSlug, zitadelOrgId);
-    await gitea.createOrg(`org-${orgSlug}`, orgSlug);
+    await gitea.createOrg(`org-${orgSlug}`, orgSlug, zitadelOrgId);
   } else {
     // Existing org: verify caller belongs to it
     if (payload.org_id && payload.org_id !== org.zitadel_org_id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    await gitea.ensureOrgDescription(`org-${orgSlug}`, org.zitadel_org_id);
   }
 
   const giteaOrg = `org-${orgSlug}`;
