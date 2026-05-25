@@ -13,6 +13,7 @@ from retrieval_api.config import settings
 from retrieval_api.middleware.auth import verify_body_identity
 from retrieval_api.models import RetrieveRequest
 from retrieval_api.services import coreference, gate, reranker, search, synthesis
+from retrieval_api.services.evidence_pack import build_evidence_pack
 from retrieval_api.services.tei import embed_single
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,12 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
             reranked = await reranker.rerank(query_resolved, raw_results, req.top_k)
         else:
             reranked = raw_results[: req.top_k]
+        evidence_pack = build_evidence_pack(
+            reranked,
+            min_relevance_score=settings.confidence_band_low_threshold
+            if settings.reranker_enabled
+            else None,
+        )
 
         retrieval_ms = (time.perf_counter() - t0) * 1000
 
@@ -81,7 +88,12 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
         )
 
         # 6. Stream synthesis
-        async for item in synthesis.synthesize(query_resolved, reranked, req.conversation_history):
+        async for item in synthesis.synthesize(
+            query_resolved,
+            reranked,
+            req.conversation_history,
+            evidence_pack,
+        ):
             if isinstance(item, str):
                 yield json.dumps({"type": "token", "content": item})
             elif isinstance(item, dict):
@@ -89,6 +101,7 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
                 done_event = {
                     "type": "done",
                     "citations": item.get("citations", []),
+                    "evidence_pack": item.get("evidence_pack"),
                     "retrieval_bypassed": item.get("retrieval_bypassed", False),
                     "query_resolved": item.get("query_resolved", query_resolved),
                 }

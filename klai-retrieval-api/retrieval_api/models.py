@@ -86,6 +86,40 @@ class ChunkResult(BaseModel):
     is_parent_text: bool = False
 
 
+class EvidenceItem(BaseModel):
+    evidence_id: str
+    chunk_id: str
+    artifact_id: str | None = None
+    content_type: str | None = None
+    text: str
+    title: str | None = None
+    heading_path: str | None = None
+    source_url: str | None = None
+    source_label: str | None = None
+    score: float
+    reranker_score: float | None = None
+    final_score: float | None = None
+    scope: str | None = None
+    image_urls: list[str] | None = None
+    is_parent_text: bool = False
+
+
+class EvidenceSource(BaseModel):
+    source_id: str
+    title: str
+    source_url: str | None = None
+    artifact_id: str | None = None
+    source_label: str | None = None
+    evidence_ids: list[str]
+    relevance_score: float
+
+
+class EvidencePack(BaseModel):
+    items: list[EvidenceItem] = Field(default_factory=list)
+    sources: list[EvidenceSource] = Field(default_factory=list)
+    no_citable_reason: str | None = None
+
+
 class RetrieveMetadata(BaseModel):
     candidates_retrieved: int
     reranked_to: int
@@ -109,6 +143,9 @@ class RetrieveResponse(BaseModel):
     # whether to inject the anti-hallucination instruction (REQ-2).
     # ``None`` only on retrieval-bypass (gate) paths; otherwise always set.
     confidence_band: ConfidenceBand | None = None
+    # Deterministic citation contract. Downstream clients should render sources
+    # only from this pack; ``chunks`` remains for compatibility/debugging.
+    evidence_pack: EvidencePack | None = None
 
 
 class Citation(BaseModel):

@@ -35,6 +35,7 @@ from retrieval_api.quality_floor import filter_quality_floor
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
+from retrieval_api.services.evidence_pack import build_evidence_pack
 from retrieval_api.services.features import extract_features
 from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
@@ -565,6 +566,21 @@ async def retrieve(
         decision_record["confidence_band"] = confidence_band
         retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
 
+    evidence_pack = build_evidence_pack(
+        chunks_out,
+        min_relevance_score=settings.confidence_band_low_threshold
+        if settings.reranker_enabled
+        else None,
+    )
+    decision_record["evidence_pack"] = {
+        "item_count": len(evidence_pack.items),
+        "source_count": len(evidence_pack.sources),
+        "no_citable_reason": evidence_pack.no_citable_reason,
+        "top_source_labels": [
+            source.source_label or source.title for source in evidence_pack.sources[:3]
+        ],
+    }
+
     # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-8 — link-expand survival
     # outcome counter. Only count when link-expand actually contributed
     # candidates (link_expand_count > 0). Hit = at least one expanded chunk
@@ -706,4 +722,5 @@ async def retrieve(
             graph_search_ms=round(graph_search_ms, 1) if graph_search_ms is not None else None,
         ),
         confidence_band=confidence_band,
+        evidence_pack=evidence_pack,
     )

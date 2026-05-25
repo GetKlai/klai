@@ -2603,6 +2603,52 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "rendered_sources=1" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_post_call_guard_prefers_evidence_pack_sources(self, monkeypatch):
+        """EvidencePack sources are already selected; do not re-score them from answer text."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="Je kunt iemand uitnodigen via het beheerscherm."
+                    )
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Hoe voeg ik een nieuwe user toe?",
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Invite and remove people",
+                            "url": "https://docs.getklai.com/admin/invite-remove-people",
+                            "evidence_ids": ["E1"],
+                        }
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        content = response.choices[0].message.content
+        assert "Je kunt iemand uitnodigen via het beheerscherm." in content
+        assert (
+            "[Invite and remove people](https://docs.getklai.com/admin/invite-remove-people)"
+            in content
+        )
+
+    @pytest.mark.asyncio
     async def test_post_call_guard_refuses_answer_without_citable_sources(self, monkeypatch, caplog):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
@@ -2641,6 +2687,42 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
         )
         assert "kb_citations_no_citable_sources" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_post_call_guard_refuses_empty_evidence_pack(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Je kunt dit via het admin-scherm doen.")
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Hoe voeg ik een nieuwe user toe?",
+                    "chunks_injected": 0,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "citation_chunks": [],
+                    "trusted_sources": [],
+                    "no_citable_sources": True,
+                    "no_citable_reason": "below_relevance_threshold",
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        assert response.choices[0].message.content == (
+            "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+        )
 
     @pytest.mark.asyncio
     async def test_post_call_guard_refuses_irrelevant_citable_sources(self, monkeypatch, caplog):

@@ -29,7 +29,12 @@ import structlog
 from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
 
 from app.core.config import Settings
-from app.services.citations import build_citation_registry, render_evidence_context, render_structured_answer
+from app.services.citations import (
+    build_citation_registry,
+    render_evidence_context,
+    render_structured_sources,
+    strip_model_citation_artifacts,
+)
 from app.trace import get_trace_headers
 from app.utils.language_detect import (
     detect_language,
@@ -1062,6 +1067,52 @@ def _no_citable_sources_message(user_query: str) -> str:
     return "I cannot answer this reliably from the available knowledge sources."
 
 
+def _compose_backend_managed_answer(
+    text: str,
+    citation_chunks: list[dict] | None,
+    user_query: str,
+) -> tuple[str, list[dict]]:
+    registry = build_citation_registry(citation_chunks or [])
+    sources = render_structured_sources(registry, max_sources=None)
+    if not sources:
+        return _no_citable_sources_message(user_query), []
+    content = strip_model_citation_artifacts(text)
+    if not content:
+        return _no_citable_sources_message(user_query), []
+    return content, sources
+
+
+def _evidence_pack_items_as_chunks(evidence_pack: object) -> list[dict[str, Any]]:
+    if not isinstance(evidence_pack, dict):
+        return []
+    items = evidence_pack.get("items")
+    if not isinstance(items, list):
+        return []
+    chunks: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        chunks.append(
+            {
+                "chunk_id": item.get("chunk_id"),
+                "artifact_id": item.get("artifact_id"),
+                "content_type": item.get("content_type"),
+                "text": item.get("text"),
+                "title": item.get("title"),
+                "heading_path": item.get("heading_path"),
+                "source_url": item.get("source_url"),
+                "source_label": item.get("source_label"),
+                "score": item.get("score"),
+                "reranker_score": item.get("reranker_score"),
+                "final_score": item.get("final_score"),
+                "scope": item.get("scope"),
+                "image_urls": item.get("image_urls"),
+                "is_parent_text": item.get("is_parent_text"),
+            }
+        )
+    return chunks
+
+
 async def _chat_completion_streaming_with_composed_citations(
     *,
     augmented_messages: list[dict],
@@ -1108,27 +1159,28 @@ async def _chat_completion_streaming_with_composed_citations(
                 if isinstance(text, str) and text:
                     raw_text_parts.append(text)
 
-    registry = build_citation_registry(citation_chunks or [])
-    composed = render_structured_answer("".join(raw_text_parts), registry)
-    if not composed.sources:
-        yield _sse_content_delta(_no_citable_sources_message(user_query))
+    content, sources = _compose_backend_managed_answer(
+        "".join(raw_text_parts),
+        citation_chunks,
+        user_query,
+    )
+    if not sources:
+        yield _sse_content_delta(content)
         yield b"data: [DONE]\n\n"
         _emit_language_correctness_log(
             org_id=org_id,
             query=user_query,
-            response_text=_no_citable_sources_message(user_query),
+            response_text=content,
         )
         return
 
-    if composed.sources:
-        yield _sse_sources_delta(composed.sources)
-    if composed.content:
-        yield _sse_content_delta(composed.content)
+    yield _sse_sources_delta(sources)
+    yield _sse_content_delta(content)
     yield b"data: [DONE]\n\n"
     _emit_language_correctness_log(
         org_id=org_id,
         query=user_query,
-        response_text=composed.content,
+        response_text=content,
     )
 
 
@@ -1276,7 +1328,9 @@ async def retrieve_context(
         resp.raise_for_status()
         result = resp.json()
 
-    chunks = result.get("chunks", [])
+    evidence_pack = result.get("evidence_pack")
+    evidence_chunks = _evidence_pack_items_as_chunks(evidence_pack)
+    chunks = evidence_chunks if isinstance(evidence_pack, dict) else result.get("chunks", [])
     system_prompt = _build_system_prompt(
         chunks,
         original_system,
@@ -1351,14 +1405,13 @@ async def chat_completion_non_streaming(
             message = choice.get("message") if isinstance(choice, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
             if isinstance(message, dict) and isinstance(content, str):
-                registry = build_citation_registry(citation_chunks or [])
-                composed = render_structured_answer(content, registry)
-                message["content"] = (
-                    composed.content
-                    if composed.sources
-                    else _no_citable_sources_message(_last_user_message(messages) or "")
+                rendered_content, sources = _compose_backend_managed_answer(
+                    content,
+                    citation_chunks,
+                    _last_user_message(messages) or "",
                 )
-                message["sources"] = composed.sources
+                message["content"] = rendered_content
+                message["sources"] = sources
         stripped_links = 0
     else:
         stripped_links = _sanitize_completion_body(
