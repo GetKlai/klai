@@ -115,7 +115,7 @@ def test_mismatch_html_navigation_returns_302() -> None:
         follow_redirects=False,
     )
     assert response.status_code == 302
-    assert response.headers["location"] == "https://getklai.getklai.com/api/me?page=2"
+    assert response.headers["location"] == "https://getklai.getklai.com/"
 
 
 # ---------------------------------------------------------------------------
@@ -128,13 +128,17 @@ def test_mismatch_xhr_returns_409_with_structured_body() -> None:
     client = TestClient(app)
     response = client.get(
         "/api/me",
-        headers={"host": "voys.getklai.com", "accept": "application/json"},
+        headers={
+            "host": "voys.getklai.com",
+            "accept": "application/json",
+            "referer": "https://voys.getklai.com/app/chat",
+        },
     )
     assert response.status_code == 409
     assert response.json() == {
         "detail": {
             "error_code": "tenant_host_mismatch",
-            "redirect_to": "https://getklai.getklai.com/api/me",
+            "redirect_to": "https://getklai.getklai.com/app/chat",
         }
     }
 

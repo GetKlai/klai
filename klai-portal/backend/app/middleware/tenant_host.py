@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 import time
-from urllib.parse import urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import structlog
 from fastapi import Request, Response, status
@@ -209,12 +209,13 @@ class KlaiTenantHostMiddleware(BaseHTTPMiddleware):
         # by the caller) and ``settings.domain`` (hardcoded config) are
         # server-controlled. Construct the URL with ``urlunsplit`` so the
         # path/query/host segments stay structurally separated.
+        target_path, target_query = KlaiTenantHostMiddleware._redirect_path_query(request)
         target = urlunsplit(
             (
                 "https",
                 f"{session_slug}.{settings.domain}",
-                request.url.path,
-                request.url.query,
+                target_path,
+                target_query,
                 "",
             )
         )
@@ -245,6 +246,35 @@ class KlaiTenantHostMiddleware(BaseHTTPMiddleware):
                 }
             },
         )
+
+    @staticmethod
+    def _redirect_path_query(request: Request) -> tuple[str, str]:
+        """Return the browser route to use for tenant-mismatch redirects.
+
+        Page navigations should keep their current path. API calls are
+        different: redirecting to the same API path would land the browser on
+        raw JSON (for example `/api/me`). For XHR/fetch mismatches, use the
+        same-origin Referer page path when available, otherwise go to `/`.
+        """
+        if not request.url.path.startswith("/api/"):
+            return request.url.path, request.url.query
+
+        referer = request.headers.get("referer")
+        if not referer:
+            return "/", ""
+
+        try:
+            parsed = urlsplit(referer)
+        except ValueError:
+            return "/", ""
+
+        if parsed.scheme not in {"http", "https"}:
+            return "/", ""
+        if parsed.hostname != request.url.hostname:
+            return "/", ""
+        if parsed.path.startswith("/api/"):
+            return "/", ""
+        return parsed.path or "/", parsed.query
 
 
 __all__ = [
