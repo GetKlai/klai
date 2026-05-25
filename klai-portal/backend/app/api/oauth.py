@@ -269,6 +269,16 @@ def _build_token_exchange(provider: str, code: str) -> tuple[str, dict[str, Any]
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown provider")
 
 
+def _build_google_refresh(refresh_token: str) -> tuple[str, dict[str, Any]]:
+    """Build the refresh_token grant used for short-lived Picker access."""
+    return _GOOGLE_TOKEN_URL, {
+        "client_id": settings.google_drive_client_id,
+        "client_secret": settings.google_drive_client_secret,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }
+
+
 def _frontend_redirect_url(path: str) -> str:
     """Build the browser redirect URL for post-callback navigation."""
     return f"{settings.portal_url.rstrip('/')}{path}"
@@ -300,6 +310,78 @@ async def list_providers(
             "enabled": bool(settings.ms_docs_client_id),
             "scopes": _MS_SCOPES.split(" "),
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/oauth/google_drive/picker-token
+# ---------------------------------------------------------------------------
+
+
+@router.post("/google_drive/picker-token")
+async def google_drive_picker_token(
+    connector_id: str = Query(..., description="Existing Google connector UUID"),
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Return a short-lived Google Drive access token for Google Picker.
+
+    The tenant UI cannot use Google Identity Services directly because each
+    tenant subdomain would need to be registered as an OAuth JavaScript origin.
+    Instead, reuse the already-consented, encrypted refresh token for this
+    connector and return only the short-lived access token to the same
+    authenticated org user.
+    """
+    if not settings.google_drive_client_id or not settings.google_drive_client_secret:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google Drive OAuth not configured")
+    if credential_store is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Credential store not configured")
+
+    await set_tenant(db, perms.org_id)
+    connector = await db.get(PortalConnector, connector_id)
+    if connector is None or connector.org_id != perms.org_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    if _canonical_provider(connector.connector_type) != "google_drive":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Connector is not Google Drive")
+    if not connector.encrypted_credentials:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Google Drive is not authenticated")
+
+    credentials = await credential_store.decrypt_credentials(
+        org_id=connector.org_id,
+        encrypted_credentials=connector.encrypted_credentials,
+        db=db,
+    )
+    refresh_token = str(credentials.get("refresh_token") or "")
+    if not refresh_token:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Google Drive reconnect required")
+
+    token_url, token_payload = _build_google_refresh(refresh_token)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            token_response = await client.post(token_url, data=token_payload)
+            token_response.raise_for_status()
+            token_data = token_response.json()
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "google_picker_token_refresh_failed: connector_id=%s status=%s",
+            connector_id,
+            exc.response.status_code,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Google Drive token refresh failed",
+        ) from exc
+
+    access_token = token_data.get("access_token")
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Google Drive token refresh failed",
+        )
+    return {
+        "access_token": access_token,
+        "expires_in": token_data.get("expires_in"),
+        "token_type": token_data.get("token_type", "Bearer"),
     }
 
 

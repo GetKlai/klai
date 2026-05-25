@@ -3,19 +3,20 @@ import { File, Folder, Loader2 } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
 import { Button } from '@/components/ui/button'
 
-const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
 const GOOGLE_API_SCRIPT = 'https://apis.google.com/js/api.js'
-const GOOGLE_GSI_SCRIPT = 'https://accounts.google.com/gsi/client'
 
 type PickerMode = 'folder' | 'files'
 
 interface GoogleProvidersResponse {
   google_drive?: {
     enabled: boolean
-    client_id?: string
     picker_api_key?: string
     picker_app_id?: string
   }
+}
+
+interface PickerTokenResponse {
+  access_token: string
 }
 
 interface PickerDocument {
@@ -37,17 +38,6 @@ declare global {
       load: (name: string, callback: () => void) => void
     }
     google?: {
-      accounts?: {
-        oauth2?: {
-          initTokenClient: (config: {
-            client_id: string
-            scope: string
-            callback: (response: { access_token?: string; error?: string }) => void
-          }) => {
-            requestAccessToken: (options?: { prompt?: string }) => void
-          }
-        }
-      }
       picker?: {
         Action: { PICKED: string; CANCEL: string }
         DocsView: new (viewId?: string) => {
@@ -89,7 +79,6 @@ interface PickerProps {
 }
 
 let googleApiPromise: Promise<void> | null = null
-let googleGsiPromise: Promise<void> | null = null
 
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -118,8 +107,7 @@ function loadScript(src: string): Promise<void> {
 
 async function loadGooglePickerLibraries(): Promise<void> {
   googleApiPromise ??= loadScript(GOOGLE_API_SCRIPT)
-  googleGsiPromise ??= loadScript(GOOGLE_GSI_SCRIPT)
-  await Promise.all([googleApiPromise, googleGsiPromise])
+  await googleApiPromise
   await new Promise<void>((resolve, reject) => {
     if (!window.gapi) {
       reject(new Error('Google API loader is niet beschikbaar'))
@@ -134,6 +122,7 @@ function chain<T extends object>(value: unknown): T {
 }
 
 export function GoogleDrivePicker({
+  connectorId,
   initialFolderId,
   initialFileIds,
   onConfirm,
@@ -164,10 +153,9 @@ export function GoogleDrivePicker({
   async function getPickerConfig() {
     const providers = await apiFetch<GoogleProvidersResponse>('/api/oauth/providers')
     const googleDrive = providers.google_drive
-    const clientId = googleDrive?.client_id || ''
     const appId = googleDrive?.picker_app_id || ''
     const apiKey = googleDrive?.picker_api_key || ''
-    if (!googleDrive?.enabled || !clientId) {
+    if (!googleDrive?.enabled) {
       throw new Error('Google Drive OAuth is niet geconfigureerd')
     }
     if (!appId) {
@@ -177,36 +165,34 @@ export function GoogleDrivePicker({
       throw new Error('Google Picker API key ontbreekt')
     }
     return {
-      clientId,
       appId,
       apiKey,
     }
+  }
+
+  async function getPickerAccessToken() {
+    const response = await apiFetch<PickerTokenResponse>(
+      `/api/oauth/google_drive/picker-token?connector_id=${encodeURIComponent(connectorId)}`,
+      { method: 'POST' },
+    )
+    if (!response.access_token) {
+      throw new Error('Google gaf geen toegangstoken terug')
+    }
+    return response.access_token
   }
 
   async function openPicker(mode: PickerMode) {
     setIsOpening(mode)
     setError(null)
     try {
-      const { clientId, appId, apiKey } = await getPickerConfig()
+      const { appId, apiKey } = await getPickerConfig()
       await loadGooglePickerLibraries()
       const google = window.google
-      if (!google?.accounts?.oauth2 || !google.picker) {
+      if (!google?.picker) {
         throw new Error('Google Picker is niet beschikbaar')
       }
-
-      const tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: DRIVE_FILE_SCOPE,
-        callback: (response) => {
-          if (response.error || !response.access_token) {
-            setError(response.error || 'Google gaf geen toegangstoken terug')
-            setIsOpening(null)
-            return
-          }
-          showPicker(mode, response.access_token, appId, apiKey)
-        },
-      })
-      tokenClient.requestAccessToken({ prompt: '' })
+      const accessToken = await getPickerAccessToken()
+      showPicker(mode, accessToken, appId, apiKey)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kon Google Picker niet openen')
       setIsOpening(null)
