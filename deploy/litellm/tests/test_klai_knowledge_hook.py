@@ -2419,3 +2419,42 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "https://bad.example" not in final.choices[0].delta.content
         assert "Zie fake (1)." in final.choices[0].delta.content
         assert "[Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
+
+    @pytest.mark.asyncio
+    async def test_streaming_post_call_flushes_when_iterator_closes_without_finish_reason(self, monkeypatch):
+        """Provider streams should still render citations if no explicit final chunk is sent."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "title": "Diagram",
+                            "source_url": "https://docs.getklai.com/diagram",
+                            "text": "Deze handleiding heeft een diagram.",
+                        }
+                    ],
+                }
+            }
+        }
+
+        only = {"choices": [{"delta": {"content": "Zie diagram."}, "finish_reason": None}]}
+
+        async def stream():
+            yield only
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+        ]
+
+        assert streamed == [only]
+        assert "Zie diagram (1)." in streamed[0]["choices"][0]["delta"]["content"]
+        assert "[Diagram](https://docs.getklai.com/diagram)" in streamed[0]["choices"][0]["delta"]["content"]
