@@ -14,6 +14,8 @@ would hand any tenant-provisioning bug a shell on the host.
 
 import asyncio
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import docker
@@ -43,6 +45,11 @@ _LIBRECHAT_PATCH_MOUNTS = {
     "patches/stream.cjs": "/app/node_modules/@librechat/agents/dist/cjs/stream.cjs",
     "patches/search.cjs": "/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs",
 }
+
+_LIBRECHAT_OPENID_READY_BOOT_ATTEMPTS = 3
+_LIBRECHAT_OPENID_READY_BOOT_TIMEOUT_SECONDS = 45
+_LIBRECHAT_OPENID_PROBE_INTERVAL_SECONDS = 2
+_LIBRECHAT_OPENID_PROBE_TIMEOUT_SECONDS = 5
 
 # Process-wide lock that serialises Caddy file writes + container restarts.
 # Both `provision_tenant` (orchestrator.py) and `deprovision_tenant`
@@ -192,6 +199,82 @@ def _ensure_librechat_env_flags(path: Path) -> dict[str, str]:
         path.write_text("\n".join(updated).rstrip() + "\n")
 
     return env
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _probe_librechat_openid(container_name: str) -> tuple[int, str]:
+    """Return the in-container HTTP status for LibreChat OpenID login."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    request = urllib.request.Request(
+        f"http://{container_name}:3080/oauth/openid",
+        headers={"User-Agent": "klai-provisioning-openid-healthcheck"},
+    )
+
+    try:
+        with opener.open(request, timeout=_LIBRECHAT_OPENID_PROBE_TIMEOUT_SECONDS) as response:
+            return response.status, response.headers.get("Location", "")
+    except urllib.error.HTTPError as exc:
+        detail = exc.headers.get("Location", "") or exc.read(256).decode("utf-8", "replace")
+        return exc.code, detail
+    except (OSError, TimeoutError, urllib.error.URLError) as exc:
+        return 0, str(exc)
+
+
+def _wait_for_librechat_openid_ready(client, container_name: str) -> None:
+    """Wait until LibreChat has registered its OpenID strategy.
+
+    LibreChat configures Passport strategies once during boot. If its OpenID
+    discovery fetch fails, the process still starts but `/oauth/openid` stays a
+    permanent 500 until restart. Provisioning must catch that before marking the
+    tenant ready.
+    """
+    last_status = 0
+    last_detail = ""
+
+    for boot_attempt in range(1, _LIBRECHAT_OPENID_READY_BOOT_ATTEMPTS + 1):
+        deadline = time.monotonic() + _LIBRECHAT_OPENID_READY_BOOT_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            last_status, last_detail = _probe_librechat_openid(container_name)
+            if 300 <= last_status < 400:
+                logger.info(
+                    "librechat_openid_ready",
+                    container=container_name,
+                    boot_attempt=boot_attempt,
+                    status=last_status,
+                )
+                return
+
+            if last_status >= 500:
+                logger.warning(
+                    "librechat_openid_probe_server_error",
+                    container=container_name,
+                    boot_attempt=boot_attempt,
+                    status=last_status,
+                    detail=last_detail[:200],
+                )
+                break
+
+            time.sleep(_LIBRECHAT_OPENID_PROBE_INTERVAL_SECONDS)
+
+        if boot_attempt < _LIBRECHAT_OPENID_READY_BOOT_ATTEMPTS:
+            logger.warning(
+                "librechat_openid_not_ready_restarting",
+                container=container_name,
+                boot_attempt=boot_attempt,
+                last_status=last_status,
+                last_detail=last_detail[:200],
+            )
+            client.containers.get(container_name).restart(timeout=10)
+            continue
+
+    raise RuntimeError(
+        "LibreChat OpenID did not become ready "
+        f"for {container_name}: status={last_status}, detail={last_detail[:200]}"
+    )
 
 
 def _flush_redis_and_restart_librechat(slug: str) -> None:
@@ -405,3 +488,4 @@ def _start_librechat_container(
         net.connect(container_name)
 
     container.start()
+    _wait_for_librechat_openid_ready(client, container_name)

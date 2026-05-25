@@ -389,6 +389,11 @@ class TestCharacterizeFlushRedisAndRestartLibrechat:
 class TestCharacterizeStartLibrechatContainer:
     """Characterization tests for _start_librechat_container."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_openid_ready(self):
+        with patch("app.services.provisioning.infrastructure._wait_for_librechat_openid_ready") as mock:
+            yield mock
+
     def _write_lc_files(self, tmp_path: Path, slug: str = "acme") -> None:
         (tmp_path / "librechat.yaml").write_text("version: 1.0\n")
         tenant_dir = tmp_path / slug
@@ -561,3 +566,43 @@ class TestCharacterizeStartLibrechatContainer:
                 _start_librechat_container(tenant_slug, f"/opt/klai/librechat-data/{tenant_slug}/.env")
                 labels = mock_client.containers.create.call_args[1]["labels"]
                 assert labels["klai.tenant_slug"] == tenant_slug
+
+
+class TestCharacterizeLibrechatOpenidReadiness:
+    """Characterization tests for the post-start OpenID readiness gate."""
+
+    def test_ready_when_openid_returns_redirect(self):
+        from app.services.provisioning.infrastructure import _wait_for_librechat_openid_ready
+
+        mock_client = MagicMock()
+        with patch("app.services.provisioning.infrastructure._probe_librechat_openid", return_value=(302, "")):
+            _wait_for_librechat_openid_ready(mock_client, "librechat-acme")
+
+        mock_client.containers.get.assert_not_called()
+
+    def test_restarts_once_after_openid_server_error_then_succeeds(self):
+        from app.services.provisioning.infrastructure import _wait_for_librechat_openid_ready
+
+        mock_client = MagicMock()
+        with patch(
+            "app.services.provisioning.infrastructure._probe_librechat_openid",
+            side_effect=[(500, "An unknown error occurred."), (302, "")],
+        ):
+            _wait_for_librechat_openid_ready(mock_client, "librechat-acme")
+
+        mock_client.containers.get.assert_called_once_with("librechat-acme")
+        mock_client.containers.get.return_value.restart.assert_called_once_with(timeout=10)
+
+    def test_raises_after_openid_never_becomes_ready(self):
+        from app.services.provisioning.infrastructure import _wait_for_librechat_openid_ready
+
+        mock_client = MagicMock()
+        with patch(
+            "app.services.provisioning.infrastructure._probe_librechat_openid",
+            return_value=(500, "An unknown error occurred."),
+        ):
+            with pytest.raises(RuntimeError, match="LibreChat OpenID did not become ready"):
+                _wait_for_librechat_openid_ready(mock_client, "librechat-acme")
+
+        assert mock_client.containers.get.call_count == 2
+        assert mock_client.containers.get.return_value.restart.call_count == 2
