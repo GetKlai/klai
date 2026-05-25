@@ -79,6 +79,7 @@ _GOOGLE_EXPORT_MIMES: dict[str, str] = {
 
 # Which mime types are Google-native (require export) vs binary downloads.
 _GOOGLE_NATIVE_MIMES = set(_GOOGLE_EXPORT_MIMES.keys())
+_GOOGLE_FOLDER_MIME = "application/vnd.google-apps.folder"
 
 # Fallback max_files when config omits it — keeps single-run latency bounded.
 _DEFAULT_MAX_FILES = 500
@@ -183,6 +184,11 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
 
         return {
             "folder_id": config.get("folder_id") or None,
+            "item_ids": [
+                str(item_id).strip()
+                for item_id in (config.get("item_ids") or [])
+                if str(item_id).strip()
+            ],
             "max_files": int(config.get("max_files") or _DEFAULT_MAX_FILES),
             "content_types": content_types,
         }
@@ -258,6 +264,8 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         connector_id = str(connector.id)
         max_files: int = cfg["max_files"]
         content_types: list[str] | None = cfg.get("content_types")
+        item_ids: list[str] = cfg["item_ids"]
+        selected_item_ids = set(item_ids)
         page_token = (cursor_context or {}).get("page_token") if cursor_context else None
 
         # Build the set of allowed mimeTypes (None = all types).
@@ -275,6 +283,8 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             # Client-side mimeType filter for incremental path (changes API has no q= support).
             if allowed_mimes is not None:
                 raw_files = [f for f in raw_files if f and f.get("mimeType") in allowed_mimes]
+            if selected_item_ids:
+                raw_files = [f for f in raw_files if f and f.get("id") in selected_item_ids]
             new_cursor = response.get("newStartPageToken")
             if new_cursor:
                 self._latest_page_token[connector_id] = new_cursor
@@ -284,11 +294,18 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
                 connector_id,
                 cfg["folder_id"],
             )
-            response = await self._list_files(
-                connector,
-                folder_id=cfg["folder_id"],
-                allowed_mimes=allowed_mimes,
-            )
+            if item_ids:
+                response = await self._get_files_by_ids(
+                    connector,
+                    file_ids=item_ids,
+                    allowed_mimes=allowed_mimes,
+                )
+            else:
+                response = await self._list_files(
+                    connector,
+                    folder_id=cfg["folder_id"],
+                    allowed_mimes=allowed_mimes,
+                )
             raw_files = list(response.get("files", []))
             # Client-side guard: the q= filter is applied in _list_files, but
             # when _list_files is mocked in tests it may return any files.
@@ -301,6 +318,8 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             if not file:
                 continue
             mime = file.get("mimeType", "")
+            if mime == _GOOGLE_FOLDER_MIME:
+                continue
             size_str = file.get("size")
             try:
                 size = int(size_str) if size_str else 0
@@ -345,6 +364,44 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             page_token is not None,
         )
         return refs
+
+    async def list_folders(
+        self,
+        connector: Any,
+        parent_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """List visible Drive children for the portal picker.
+
+        Returns folders plus files that match the connector's implicit content
+        type filter. ``parent_id=None`` means the user's Drive root.
+        """
+        cfg = self._extract_config(connector)
+        allowed_mimes: set[str] | None = None
+        if cfg.get("content_types"):
+            allowed_mimes = {_CONTENT_TYPE_TO_MIME[ct] for ct in cfg["content_types"]}
+
+        response = await self._list_folder_children(
+            connector,
+            parent_id=parent_id or "root",
+            allowed_mimes=allowed_mimes,
+        )
+        items: list[dict[str, object]] = []
+        for file in response.get("files", []):
+            if not file:
+                continue
+            mime = str(file.get("mimeType", ""))
+            is_folder = mime == _GOOGLE_FOLDER_MIME
+            items.append(
+                {
+                    "id": str(file.get("id") or ""),
+                    "name": str(file.get("name") or file.get("id") or ""),
+                    "kind": "folder" if is_folder else "file",
+                    # Drive does not expose child counts in files.list; the
+                    # picker lazy-loads folders when expanded.
+                    "child_count": 0,
+                }
+            )
+        return items
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
         """Download a single Drive file as bytes.
@@ -477,6 +534,71 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         if new_start_page_token is not None:
             result["newStartPageToken"] = new_start_page_token
         return result
+
+    async def _list_folder_children(
+        self,
+        connector: Any,
+        parent_id: str,
+        allowed_mimes: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """List one folder level for the portal Drive picker."""
+        token = await self.ensure_token(connector)
+        params: dict[str, Any] = {
+            "pageSize": 100,
+            "fields": _LIST_FIELDS,
+            "spaces": "drive",
+            "includeItemsFromAllDrives": "true",
+            "supportsAllDrives": "true",
+            "orderBy": "folder,name_natural",
+        }
+        base_q = f"'{parent_id}' in parents and trashed = false"
+        if allowed_mimes:
+            mime_clauses = " or ".join(f"mimeType='{m}'" for m in sorted(allowed_mimes))
+            params["q"] = f"{base_q} and (mimeType='{_GOOGLE_FOLDER_MIME}' or {mime_clauses})"
+        else:
+            params["q"] = base_q
+
+        all_files: list[dict[str, Any]] = []
+        next_token: str | None = None
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while True:
+                if next_token:
+                    params["pageToken"] = next_token
+                response = await client.get(
+                    _DRIVE_FILES_URL,
+                    headers={"Authorization": f"Bearer {token}"},
+                    params=params,
+                )
+                response.raise_for_status()
+                data = response.json()
+                all_files.extend(data.get("files", []))
+                next_token = data.get("nextPageToken")
+                if not next_token:
+                    break
+        return {"files": all_files}
+
+    async def _get_files_by_ids(
+        self,
+        connector: Any,
+        file_ids: list[str],
+        allowed_mimes: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Fetch a specific set of Drive files selected in the picker."""
+        token = await self.ensure_token(connector)
+        files: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for file_id in file_ids:
+                response = await client.get(
+                    f"{_DRIVE_FILES_URL}/{file_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    params={"fields": _FILE_FIELDS, "supportsAllDrives": "true"},
+                )
+                response.raise_for_status()
+                file = response.json()
+                if allowed_mimes is not None and file.get("mimeType") not in allowed_mimes:
+                    continue
+                files.append(file)
+        return {"files": files}
 
     async def _fetch_start_page_token(self, connector: Any) -> str:
         """Bootstrap a starting cursor via ``changes/startPageToken``."""

@@ -215,3 +215,56 @@ async def list_ms_docs_folders(
         logger.exception("ms_docs list_folders failed for %s", connector_id)
         raise HTTPException(status_code=502, detail=f"Microsoft Graph error: {exc.response.status_code}") from exc
     return {"folders": folders}
+
+
+@router.get("/{connector_id}/google-drive/folders")
+async def list_google_drive_folders(
+    connector_id: uuid.UUID,
+    request: Request,
+    parent: str | None = None,
+) -> dict[str, list[dict[str, object]]]:
+    """List child Drive items for a Google Drive / Workspace connector.
+
+    Powers the post-OAuth picker in the portal. The endpoint accepts the
+    ``google_docs`` / ``google_sheets`` / ``google_slides`` aliases; the
+    adapter applies their content-type presets when listing files.
+    """
+    _require_portal_call(request)
+
+    portal_client = getattr(request.app.state, "portal_client", None)
+    if portal_client is None:
+        raise HTTPException(status_code=503, detail="Portal client unavailable")
+    try:
+        portal_config = await portal_client.get_connector_config(connector_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Connector not found") from exc
+        logger.exception("Portal config fetch failed for %s", connector_id)
+        raise HTTPException(status_code=502, detail="Portal config fetch failed") from exc
+
+    if portal_config.connector_type not in {
+        "google_drive",
+        "google_docs",
+        "google_sheets",
+        "google_slides",
+    }:
+        raise HTTPException(status_code=400, detail="Not a Google Drive connector")
+
+    registry = getattr(request.app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Adapter registry unavailable")
+    try:
+        adapter = registry.get(portal_config.connector_type)
+    except ValueError:
+        raise HTTPException(
+            status_code=503,
+            detail="google_drive adapter not registered on this deployment",
+        ) from None
+
+    parent_id = parent.strip() if parent else None
+    try:
+        folders = await adapter.list_folders(portal_config, parent_id=parent_id)  # type: ignore[attr-defined]
+    except httpx.HTTPStatusError as exc:
+        logger.exception("google_drive list_folders failed for %s", connector_id)
+        raise HTTPException(status_code=502, detail=f"Google Drive error: {exc.response.status_code}") from exc
+    return {"folders": folders}
