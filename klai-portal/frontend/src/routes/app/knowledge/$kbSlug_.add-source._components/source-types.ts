@@ -89,7 +89,7 @@ export const SOURCE_TYPES: SourceTypeMeta[] = [
     subtitle: m.knowledge_add_source_connector_subtitle_google_drive,
     Icon: SiGoogledrive,
     available: true,
-    badges: ['Drive', 'Docs', 'Sheets', 'Slides', 'Files'],
+    badges: ['Docs', 'Sheets', 'Slides', 'PDF', 'Office', 'Text'],
     routeTo: (kbSlug) => `/app/knowledge/${kbSlug}/add-connector?type=google_drive`,
   },
   {

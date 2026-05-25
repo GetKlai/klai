@@ -566,7 +566,7 @@ function AddConnectorPage() {
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
-                        {['Docs', 'Sheets', 'Slides', 'Files'].map((type) => (
+                        {['Docs', 'Sheets', 'Slides', 'PDF', 'Office', 'Text'].map((type) => (
                           <span
                             key={type}
                             className="rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[11px] leading-4 text-gray-500"
