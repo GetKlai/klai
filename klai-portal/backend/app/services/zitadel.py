@@ -372,6 +372,14 @@ class ZitadelClient:
             f"/management/v1/users/{zitadel_user_id}",
             headers={"x-zitadel-orgid": org_id},
         )
+        if resp.status_code in (403, 404):
+            logger.info(
+                "zitadel_user_already_absent org_id=%s user_id=%s status=%d",
+                org_id,
+                zitadel_user_id,
+                resp.status_code,
+            )
+            return
         resp.raise_for_status()
 
     # @MX:WARN external API call - deactivation is irreversible
@@ -999,18 +1007,22 @@ _ZITADEL_ROLE_FOR_PORTAL_ADMIN = "org:owner"
 _PORTAL_ADMIN_ROLE = "admin"
 
 
+def _grant_has_project_role(grant: dict, role: str) -> bool:
+    return grant.get("projectId") == settings.zitadel_project_id and role in (grant.get("roles") or [])
+
+
 async def _sync_zitadel_role_grant(
     zitadel_user_id: str,
     old_role: str,
     new_role: str,
 ) -> None:
-    """Sync the Zitadel org:owner grant when a portal role transitions to or from admin.
+    """Reconcile the global Zitadel org:owner grant for one portal identity.
 
     Called AFTER the DB commit — does NOT rollback on failure.
 
-    - promotion to admin  → grant_user_role(org:owner)
-    - demotion from admin → remove_user_role(org:owner)
-    - no admin transition  → no-op
+    The identity can be a member of multiple tenants. The grant must exist if
+    any non-offboarded tenant membership is admin, and must be removed only
+    when no such admin membership remains.
 
     Callers must catch exceptions and emit a desync audit event without
     propagating (DB commit must not be undone).
@@ -1021,18 +1033,22 @@ async def _sync_zitadel_role_grant(
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-5
     """
     from app.core.config import settings as _settings  # local import to avoid circular
+    from app.services.user_memberships import get_user_global_membership_state
 
     portal_org_id = _settings.zitadel_portal_org_id
+    membership_state = await get_user_global_membership_state(zitadel_user_id)
+    desired = membership_state.admin_count > 0
 
-    if old_role != _PORTAL_ADMIN_ROLE and new_role == _PORTAL_ADMIN_ROLE:
-        # Promotion to admin → grant org:owner
+    grants = await zitadel.list_user_grants(org_id=portal_org_id, user_id=zitadel_user_id)
+    has_grant = any(_grant_has_project_role(grant, _ZITADEL_ROLE_FOR_PORTAL_ADMIN) for grant in grants)
+
+    if desired and not has_grant:
         await zitadel.grant_user_role(
             org_id=portal_org_id,
             user_id=zitadel_user_id,
             role=_ZITADEL_ROLE_FOR_PORTAL_ADMIN,
         )
-    elif old_role == _PORTAL_ADMIN_ROLE and new_role != _PORTAL_ADMIN_ROLE:
-        # Demotion from admin → remove org:owner
+    elif not desired and has_grant:
         await zitadel.remove_user_role(
             org_id=portal_org_id,
             user_id=zitadel_user_id,

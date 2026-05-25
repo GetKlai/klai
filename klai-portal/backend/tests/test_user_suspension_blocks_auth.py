@@ -12,6 +12,7 @@ AC12.4 — Zitadel lock/unlock failure surfaces zitadel_sync_failed=true and
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -119,6 +120,10 @@ class TestPlatformSuspendZitadelLock:
             patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(db)),
             patch("app.api.admin.platform_manage.fire_role_change_notification"),
             patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
+            patch(
+                "app.api.admin.platform_manage.get_user_global_membership_state",
+                new=AsyncMock(return_value=SimpleNamespace(active_count=0)),
+            ),
             patch("app.api.admin.platform_manage.zitadel") as zitadel,
         ):
             zitadel.lock_user = AsyncMock()
@@ -127,6 +132,30 @@ class TestPlatformSuspendZitadelLock:
 
         db.commit.assert_awaited_once()
         zitadel.lock_user.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_platform_suspend_skips_zitadel_lock_when_other_active_membership_exists(self) -> None:
+        from app.api.admin.platform_manage import platform_suspend
+
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=lambda: _user()))
+        with (
+            patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(db)),
+            patch("app.api.admin.platform_manage.fire_role_change_notification"),
+            patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
+            patch(
+                "app.api.admin.platform_manage.get_user_global_membership_state",
+                new=AsyncMock(return_value=SimpleNamespace(active_count=1)),
+            ),
+            patch("app.api.admin.platform_manage.zitadel") as zitadel,
+        ):
+            zitadel.lock_user = AsyncMock()
+
+            response = await platform_suspend(org_id=42, zitadel_user_id="target-user", perms=_platform_perms())
+
+        db.commit.assert_awaited_once()
+        zitadel.lock_user.assert_not_awaited()
+        assert response.zitadel_sync_failed is False
 
     @pytest.mark.asyncio
     async def test_platform_suspend_zitadel_lock_failure_surfaces_desync(self) -> None:
@@ -144,6 +173,10 @@ class TestPlatformSuspendZitadelLock:
             patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(db)),
             patch("app.api.admin.platform_manage.fire_role_change_notification"),
             patch("app.api.admin.platform_manage.log_event", side_effect=_capture),
+            patch(
+                "app.api.admin.platform_manage.get_user_global_membership_state",
+                new=AsyncMock(return_value=SimpleNamespace(active_count=0)),
+            ),
             patch("app.api.admin.platform_manage.zitadel") as zitadel,
         ):
             zitadel.lock_user = AsyncMock(side_effect=RuntimeError("zitadel 502"))
@@ -168,6 +201,10 @@ class TestPlatformReactivateZitadelUnlock:
             patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(db)),
             patch("app.api.admin.platform_manage.fire_role_change_notification"),
             patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
+            patch(
+                "app.api.admin.platform_manage.get_user_global_membership_state",
+                new=AsyncMock(return_value=SimpleNamespace(active_count=1)),
+            ),
             patch("app.api.admin.platform_manage.zitadel") as zitadel,
         ):
             zitadel.unlock_user = AsyncMock()
@@ -192,6 +229,10 @@ class TestPlatformReactivateZitadelUnlock:
             patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(db)),
             patch("app.api.admin.platform_manage.fire_role_change_notification"),
             patch("app.api.admin.platform_manage.log_event", side_effect=_capture),
+            patch(
+                "app.api.admin.platform_manage.get_user_global_membership_state",
+                new=AsyncMock(return_value=SimpleNamespace(active_count=1)),
+            ),
             patch("app.api.admin.platform_manage.zitadel") as zitadel,
         ):
             zitadel.unlock_user = AsyncMock(side_effect=RuntimeError("zitadel 502"))

@@ -14,10 +14,12 @@ covered so the shared helper is exercised from both call sites.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.config import settings
 from tests.conftest import make_perms
 
 # ---------------------------------------------------------------------------
@@ -68,6 +70,92 @@ def _setup_db(db, execute_results: list):
     )
     db.commit = AsyncMock()
     db.add = MagicMock()
+
+
+# ---------------------------------------------------------------------------
+# Helper reconciliation — multi-tenant admin memberships
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_role_grant_does_not_remove_when_other_admin_memberships_remain():
+    """Demoting one tenant admin must keep org:owner when another admin membership remains."""
+    from app.services import user_memberships as memberships_module
+    from app.services import zitadel as zitadel_module
+    from app.services.zitadel import _sync_zitadel_role_grant
+
+    with (
+        patch.object(
+            memberships_module,
+            "get_user_global_membership_state",
+            new=AsyncMock(return_value=SimpleNamespace(admin_count=1)),
+        ),
+        patch.object(
+            zitadel_module.zitadel,
+            "list_user_grants",
+            new=AsyncMock(
+                return_value=[{"id": "grant-1", "projectId": settings.zitadel_project_id, "roles": ["org:owner"]}]
+            ),
+        ),
+        patch.object(zitadel_module.zitadel, "remove_user_role", new=AsyncMock()) as remove_user_role,
+        patch.object(zitadel_module.zitadel, "grant_user_role", new=AsyncMock()) as grant_user_role,
+    ):
+        await _sync_zitadel_role_grant("zit-abc123", old_role="admin", new_role="company")
+
+    remove_user_role.assert_not_awaited()
+    grant_user_role.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sync_role_grant_removes_when_no_admin_memberships_remain():
+    """The global org:owner grant is removed only after the last admin membership is gone."""
+    from app.services import user_memberships as memberships_module
+    from app.services import zitadel as zitadel_module
+    from app.services.zitadel import _sync_zitadel_role_grant
+
+    with (
+        patch.object(
+            memberships_module,
+            "get_user_global_membership_state",
+            new=AsyncMock(return_value=SimpleNamespace(admin_count=0)),
+        ),
+        patch.object(
+            zitadel_module.zitadel,
+            "list_user_grants",
+            new=AsyncMock(
+                return_value=[{"id": "grant-1", "projectId": settings.zitadel_project_id, "roles": ["org:owner"]}]
+            ),
+        ),
+        patch.object(zitadel_module.zitadel, "remove_user_role", new=AsyncMock()) as remove_user_role,
+        patch.object(zitadel_module.zitadel, "grant_user_role", new=AsyncMock()) as grant_user_role,
+    ):
+        await _sync_zitadel_role_grant("zit-abc123", old_role="admin", new_role="company")
+
+    remove_user_role.assert_awaited_once()
+    grant_user_role.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sync_role_grant_grants_when_admin_membership_exists_but_grant_missing():
+    """A promotion reconciles a missing org:owner grant without duplicating an existing one."""
+    from app.services import user_memberships as memberships_module
+    from app.services import zitadel as zitadel_module
+    from app.services.zitadel import _sync_zitadel_role_grant
+
+    with (
+        patch.object(
+            memberships_module,
+            "get_user_global_membership_state",
+            new=AsyncMock(return_value=SimpleNamespace(admin_count=1)),
+        ),
+        patch.object(zitadel_module.zitadel, "list_user_grants", new=AsyncMock(return_value=[])),
+        patch.object(zitadel_module.zitadel, "remove_user_role", new=AsyncMock()) as remove_user_role,
+        patch.object(zitadel_module.zitadel, "grant_user_role", new=AsyncMock()) as grant_user_role,
+    ):
+        await _sync_zitadel_role_grant("zit-abc123", old_role="company", new_role="admin")
+
+    grant_user_role.assert_awaited_once()
+    remove_user_role.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

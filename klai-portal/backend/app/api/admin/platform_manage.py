@@ -45,7 +45,7 @@ from app.services.default_knowledge_bases import create_default_personal_kb
 from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.provisioning import provision_tenant
 from app.services.user_deletion_orchestrator import delete_user_with_state_machine
-from app.services.user_memberships import get_user_membership_summary
+from app.services.user_memberships import get_user_global_membership_state, get_user_membership_summary
 from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 
 
@@ -286,10 +286,12 @@ async def platform_suspend(
     # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
     zitadel_sync_failed = False
     try:
-        await zitadel.lock_user(
-            zitadel_user_id=zitadel_user_id,
-            org_id=settings_zitadel_portal_org_id(),
-        )
+        membership_state = await get_user_global_membership_state(zitadel_user_id)
+        if membership_state.active_count == 0:
+            await zitadel.lock_user(
+                zitadel_user_id=zitadel_user_id,
+                org_id=settings_zitadel_portal_org_id(),
+            )
     except Exception as exc:
         logger.exception("platform_suspend_zitadel_lock_failed", zitadel_user_id=zitadel_user_id)
         await _emit_audit_safe(
@@ -351,10 +353,12 @@ async def platform_reactivate(
     # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
     zitadel_sync_failed = False
     try:
-        await zitadel.unlock_user(
-            zitadel_user_id=zitadel_user_id,
-            org_id=settings_zitadel_portal_org_id(),
-        )
+        membership_state = await get_user_global_membership_state(zitadel_user_id)
+        if membership_state.active_count > 0:
+            await zitadel.unlock_user(
+                zitadel_user_id=zitadel_user_id,
+                org_id=settings_zitadel_portal_org_id(),
+            )
     except Exception as exc:
         logger.exception("platform_reactivate_zitadel_unlock_failed", zitadel_user_id=zitadel_user_id)
         await _emit_audit_safe(

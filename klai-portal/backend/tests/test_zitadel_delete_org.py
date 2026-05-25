@@ -71,3 +71,34 @@ class TestDeleteOrg:
         respx_zitadel_local.delete(_DELETE_PATH).mock(return_value=httpx.Response(403))
         result = await zitadel.delete_org(_ORG_ID)
         assert result is None
+
+
+class TestRemoveUser:
+    _USER_ID = "user-abc-123"
+    _REMOVE_USER_PATH = f"/management/v1/users/{_USER_ID}"
+
+    @pytest.mark.asyncio
+    async def test_200_returns_none(self, respx_zitadel_local) -> None:
+        respx_zitadel_local.delete(self._REMOVE_USER_PATH).mock(return_value=httpx.Response(200))
+        result = await zitadel.remove_user(org_id=_ORG_ID, zitadel_user_id=self._USER_ID)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_404_is_idempotent_returns_none(self, respx_zitadel_local) -> None:
+        respx_zitadel_local.delete(self._REMOVE_USER_PATH).mock(return_value=httpx.Response(404))
+        result = await zitadel.remove_user(org_id=_ORG_ID, zitadel_user_id=self._USER_ID)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_403_is_idempotent_returns_none(self, respx_zitadel_local) -> None:
+        respx_zitadel_local.delete(self._REMOVE_USER_PATH).mock(return_value=httpx.Response(403))
+        result = await zitadel.remove_user(org_id=_ORG_ID, zitadel_user_id=self._USER_ID)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_500_raises_http_status_error(self, respx_zitadel_local) -> None:
+        respx_zitadel_local.delete(self._REMOVE_USER_PATH).mock(
+            return_value=httpx.Response(500, json={"message": "internal error"})
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            await zitadel.remove_user(org_id=_ORG_ID, zitadel_user_id=self._USER_ID)
