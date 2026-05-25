@@ -17,6 +17,7 @@ import math
 import time
 import uuid
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 import structlog
 
@@ -26,6 +27,19 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _REDIS_POOL: aioredis.Redis | None = None
+
+
+def _quote_redis_url_password(redis_url: str) -> str:
+    """URL-encode raw Redis passwords from docker-compose env interpolation."""
+    for scheme in ("redis://:", "rediss://:"):
+        if not redis_url.startswith(scheme):
+            continue
+        auth_and_host = redis_url[len(scheme) :]
+        if "@" not in auth_and_host:
+            return redis_url
+        password, rest = auth_and_host.rsplit("@", 1)
+        return f"{scheme}{quote(password, safe='%')}@{rest}"
+    return redis_url
 
 
 async def get_redis_pool(redis_url: str) -> aioredis.Redis | None:
@@ -44,7 +58,7 @@ async def get_redis_pool(redis_url: str) -> aioredis.Redis | None:
         logger.warning("rate_limiter_degraded", reason="redis_import_failed")
         return None
     try:
-        _REDIS_POOL = aioredis.from_url(redis_url, decode_responses=True)
+        _REDIS_POOL = aioredis.from_url(_quote_redis_url_password(redis_url), decode_responses=True)
     except Exception:
         logger.exception("rate_limiter_degraded", reason="redis_pool_init_failed")
         return None

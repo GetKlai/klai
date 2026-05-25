@@ -155,3 +155,18 @@ async def test_rate_limit_fails_open_when_redis_pipeline_raises(monkeypatch):
     )
     assert allowed is True, "fail-open contract broken — Redis error must allow request"
     assert retry_after == 0, "fail-open path must not surface a Retry-After"
+
+
+def test_rate_limit_quotes_raw_redis_password_for_url_parsing():
+    """Production compose may interpolate raw Redis passwords into REDIS_URL."""
+    from retrieval_api.services.rate_limit import _quote_redis_url_password
+
+    assert (
+        _quote_redis_url_password("redis://:abc:123@hPKBf@redis:6379/0")
+        == "redis://:abc%3A123%40hPKBf@redis:6379/0"
+    )
+    assert (
+        _quote_redis_url_password("rediss://:abc%3A123@redis:6379/0")
+        == "rediss://:abc%3A123@redis:6379/0"
+    )
+    assert _quote_redis_url_password("redis://redis:6379/0") == "redis://redis:6379/0"
