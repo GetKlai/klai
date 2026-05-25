@@ -4,6 +4,24 @@ import { apiFetch } from '@/lib/apiFetch'
 import { Button } from '@/components/ui/button'
 
 const GOOGLE_API_SCRIPT = 'https://apis.google.com/js/api.js'
+const SUPPORTED_FILE_MIME_TYPES = [
+  'application/vnd.google-apps.document',
+  'application/vnd.google-apps.spreadsheet',
+  'application/vnd.google-apps.presentation',
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/msword',
+  'application/vnd.ms-excel',
+  'application/vnd.ms-powerpoint',
+  'text/plain',
+  'text/csv',
+  'text/tab-separated-values',
+  'text/html',
+  'text/markdown',
+  'application/rtf',
+]
 
 type PickerMode = 'folder' | 'files'
 
@@ -203,6 +221,9 @@ export function GoogleDrivePicker({
     chain<{ setSelectFolderEnabled?: (enabled: boolean) => unknown }>(
       view.setSelectFolderEnabled(mode === 'folder'),
     )
+    if (mode === 'files') {
+      view.setMimeTypes(SUPPORTED_FILE_MIME_TYPES.join(','))
+    }
     if (view.setMode && pickerApi.DocsViewMode?.LIST) {
       view.setMode(pickerApi.DocsViewMode.LIST)
     }
@@ -252,8 +273,8 @@ export function GoogleDrivePicker({
       <div className="border-b border-gray-200 px-3 py-2">
         <p className="text-sm font-medium text-gray-900">Kies wat je wilt syncen</p>
         <p className="text-xs text-gray-400 mt-0.5">
-          Kies een map of losse bestanden met Google Drive. Docs, Sheets en Slides worden
-          automatisch naar een indexeerbaar formaat omgezet.
+          Kies een map of losse ondersteunde bestanden. Docs, Sheets en Slides worden
+          automatisch omgezet; video, audio, afbeeldingen en archives worden niet getoond.
         </p>
       </div>
 
