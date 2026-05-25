@@ -17,7 +17,6 @@ import hmac
 import json
 import time
 from datetime import UTC, datetime
-from urllib.parse import quote
 
 import asyncpg
 import httpx
@@ -41,6 +40,8 @@ from knowledge_ingest.config import settings
 from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.docs_provenance import build_docs_source_extra
+from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import enrichment_skip_reason
 from knowledge_ingest.identity import assert_caller_identity, assert_caller_identity_tenant_only
 from knowledge_ingest.models import (
@@ -58,20 +59,6 @@ _background_tasks: set = set()  # Prevents fire-and-forget tasks from being GC'd
 
 logger = structlog.get_logger()
 router = APIRouter()
-
-
-def docs_source_extra(gitea_repo: str, kb_slug: str, path: str) -> dict[str, str]:
-    """Build public Docs provenance for pages stored in a tenant Gitea repo."""
-    org_part = gitea_repo.split("/", 1)[0] if "/" in gitea_repo else ""
-    if not org_part.startswith("org-"):
-        return {}
-    org_slug = org_part[4:]
-    page_slug = path.removesuffix(".md")
-    encoded_slug = "/".join(quote(part) for part in page_slug.split("/") if part)
-    if not org_slug or not encoded_slug:
-        return {}
-    source_url = f"https://{org_slug}.getklai.com/docs/{quote(kb_slug)}/{encoded_slug}"
-    return {"source_url": source_url, "source_ref": source_url}
 
 
 def _verify_internal_secret(request: Request) -> None:
@@ -304,7 +291,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     indexable_content = (
         req.content
         if req.skip_chunking
-        else chunker.normalize_document_for_chunking(req.content)
+        else normalize_document_for_chunking(req.content)
     )
     content_hash = req.content_hash or hashlib.sha256(indexable_content.encode()).hexdigest()
     stored_hash = await pg_store.get_active_content_hash(conn, req.org_id, req.kb_slug, req.path)
@@ -847,7 +834,7 @@ async def gitea_webhook(request: Request) -> dict:
                 source_type="docs",
                 content_type="kb_article",
                 user_id=webhook_user_id,
-                extra=docs_source_extra(full_name, kb_slug, path),
+                extra=build_docs_source_extra(full_name, kb_slug, path),
             )
             try:
                 async with tenant_scoped_connection(org_id) as conn:
@@ -1162,7 +1149,7 @@ async def bulk_sync_kb_route(request: Request, req: BulkSyncRequest) -> dict:
                 content=content,
                 source_type="docs",
                 content_type="kb_article",
-                extra=docs_source_extra(req.gitea_repo, req.kb_slug, path),
+                extra=build_docs_source_extra(req.gitea_repo, req.kb_slug, path),
             )
             try:
                 await ingest_document(conn, ingest_req)

@@ -42,6 +42,7 @@ from knowledge_ingest import (
 )
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
+from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import enrichment_skip_reason
 
 logger = structlog.get_logger()
@@ -171,7 +172,7 @@ async def _load_and_enrich(artifact_id: str) -> None:
         return
 
     title: str = extra.get("title") or ""
-    document_text = chunker.normalize_document_for_chunking(document_text)
+    document_text = normalize_document_for_chunking(document_text)
 
     # Re-derive chunks deterministically from the current PG body so
     # Phase-2 always operates on the same content the artifact row claims
