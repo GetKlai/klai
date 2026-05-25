@@ -347,7 +347,13 @@ def _renumber_ordered_list_runs(text: str) -> str:
             return
         numbers = [int(match.group(2)) for line in run if (match := _ORDERED_LIST_LINE_RE.match(line))]
         expected = list(range(1, len(run) + 1))
-        if numbers and numbers != expected:
+        if len(run) == 1 and numbers and numbers[0] != 1:
+            match = _ORDERED_LIST_LINE_RE.match(run[0])
+            if match:
+                output.append(f"{match.group(1)}{match.group(4).lstrip()}")
+            else:
+                output.extend(run)
+        elif numbers and numbers != expected:
             for index, line in enumerate(run, 1):
                 match = _ORDERED_LIST_LINE_RE.match(line)
                 if match:

@@ -240,7 +240,8 @@ def test_rendered_answer_renumbers_single_copied_mid_document_step() -> None:
         ],
     )
 
-    assert "1. Voer het werk-emailadres" in rendered.content
+    assert "Voer het werk-emailadres" in rendered.content
+    assert "1. Voer het werk-emailadres" not in rendered.content
     assert "3. Voer het werk-emailadres" not in rendered.content
 
 
