@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -284,6 +285,12 @@ _KB_STREAMING_RENDER_MODES = {
 }
 
 
+@dataclass(frozen=True)
+class KbCitationRenderStrategy:
+    mode: str
+    force_non_streaming: bool = False
+
+
 def _resolve_kb_render_mode(value: object) -> str:
     """Resolve the configured citation rendering strategy.
 
@@ -295,6 +302,21 @@ def _resolve_kb_render_mode(value: object) -> str:
     if requested == _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING:
         return _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING
     return _KB_RENDER_MODE_STREAMING_GUARD
+
+
+def _is_streaming_kb_render_mode(value: object) -> bool:
+    return value in _KB_STREAMING_RENDER_MODES
+
+
+def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrategy:
+    if original_stream is True:
+        return KbCitationRenderStrategy(mode=_KB_RENDER_MODE_STREAMING_GUARD)
+    if KLAI_KB_CHAT_RENDER_MODE == _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING:
+        return KbCitationRenderStrategy(
+            mode=_KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING,
+            force_non_streaming=True,
+        )
+    return KbCitationRenderStrategy(mode=_KB_RENDER_MODE_STREAMING_GUARD)
 
 
 KLAI_KB_CHAT_RENDER_MODE = _resolve_kb_render_mode(os.getenv("KLAI_KB_CHAT_RENDER_MODE"))
@@ -1311,6 +1333,36 @@ def _get_response_choices(response: object) -> object:
     return getattr(response, "choices", []) or []
 
 
+def _citation_render_inputs(kb_meta: dict[str, Any]) -> tuple[set[str], list[dict]]:
+    allowed_image_urls = {
+        url
+        for url in (
+            _normalise_guard_url(url) for url in kb_meta.get("allowed_image_urls") or []
+        )
+        if url
+    }
+    citation_chunks = [
+        chunk for chunk in (kb_meta.get("citation_chunks") or []) if isinstance(chunk, dict)
+    ]
+    return allowed_image_urls, citation_chunks
+
+
+def _render_kb_answer_content(
+    content: str,
+    kb_meta: dict[str, Any],
+    citation_chunks: list[dict],
+    allowed_image_urls: set[str],
+) -> str:
+    registry = build_citation_registry(citation_chunks)
+    if not registry.has_sources:
+        return _no_citable_sources_message(kb_meta.get("user_query"))
+    return render_markdown_answer(
+        content,
+        registry,
+        allowed_image_urls=allowed_image_urls,
+    ).content
+
+
 def _flush_citation_stream_buffer(
     response: object,
     kb_meta: dict[str, Any],
@@ -1322,15 +1374,11 @@ def _flush_citation_stream_buffer(
     if not full_text:
         return 0
 
-    registry = build_citation_registry(citation_chunks)
-    rendered_content = (
-        render_markdown_answer(
-            full_text,
-            registry,
-            allowed_image_urls=allowed_image_urls,
-        ).content
-        if registry.has_sources
-        else _no_citable_sources_message(kb_meta.get("user_query"))
+    rendered_content = _render_kb_answer_content(
+        full_text,
+        kb_meta,
+        citation_chunks,
+        allowed_image_urls,
     )
 
     for choice in _get_response_choices(response):
@@ -1343,45 +1391,44 @@ def _flush_citation_stream_buffer(
     return 0
 
 
-def _compose_kb_response(
+def _compose_non_streaming_kb_response(response: object, kb_meta: dict[str, Any]) -> int:
+    """Replace non-streaming message content with deterministic citations."""
+    allowed_image_urls, citation_chunks = _citation_render_inputs(kb_meta)
+    if not citation_chunks:
+        return 0
+
+    changed = 0
+    for choice in _get_response_choices(response):
+        message = _get_choice_message(choice, "message")
+        if message is None:
+            continue
+        content = _get_message_content(message)
+        if isinstance(content, str):
+            rendered_content = _render_kb_answer_content(
+                content,
+                kb_meta,
+                citation_chunks,
+                allowed_image_urls,
+            )
+            if rendered_content != content:
+                _set_message_content(message, rendered_content)
+                changed += 1
+    return changed
+
+
+def _compose_streaming_kb_response(
     response: object,
     kb_meta: dict[str, Any],
     *,
     flush_stream: bool = False,
 ) -> int:
-    """Replace model-authored references with deterministic chunk citations."""
-    allowed_image_urls = {
-        url
-        for url in (
-            _normalise_guard_url(url) for url in kb_meta.get("allowed_image_urls") or []
-        )
-        if url
-    }
-    citation_chunks = [chunk for chunk in (kb_meta.get("citation_chunks") or []) if isinstance(chunk, dict)]
+    """Buffer streaming deltas and flush one deterministic cited delta."""
+    allowed_image_urls, citation_chunks = _citation_render_inputs(kb_meta)
     if not citation_chunks:
         return 0
-    registry = build_citation_registry(citation_chunks)
 
     changed = 0
     for choice in _get_response_choices(response):
-        message = _get_choice_message(choice, "message")
-        if message is not None:
-            content = _get_message_content(message)
-            if isinstance(content, str):
-                rendered_content = (
-                    render_markdown_answer(
-                        content,
-                        registry,
-                        allowed_image_urls=allowed_image_urls,
-                    ).content
-                    if registry.has_sources
-                    else _no_citable_sources_message(kb_meta.get("user_query"))
-                )
-                if rendered_content != content:
-                    _set_message_content(message, rendered_content)
-                    changed += 1
-            continue
-
         delta = _get_choice_message(choice, "delta")
         if delta is None:
             continue
@@ -2009,12 +2056,8 @@ class KlaiKnowledgeHook(CustomLogger):
         _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
         original_stream = data.get("stream")
-        effective_render_mode = (
-            _KB_RENDER_MODE_STREAMING_GUARD
-            if original_stream is True
-            else KLAI_KB_CHAT_RENDER_MODE
-        )
-        if effective_render_mode == _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING:
+        render_strategy = _select_kb_render_strategy(original_stream)
+        if render_strategy.force_non_streaming:
             data["stream"] = False
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
         # Stored in data["metadata"] so it is never forwarded to the LLM provider.
@@ -2032,7 +2075,7 @@ class KlaiKnowledgeHook(CustomLogger):
             "citation_chunks": chunks,
             "citable_sources_count": len(citation_registry.sources),
             "original_stream": original_stream,
-            "render_mode": effective_render_mode,
+            "render_mode": render_strategy.mode,
             "retrieval_ms": retrieval_ms,
             "gate_bypassed": False,
         }
@@ -2041,7 +2084,7 @@ class KlaiKnowledgeHook(CustomLogger):
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
         kb_meta = data.get("metadata", {}).get("_klai_kb_meta")
         if kb_meta and not kb_meta.get("gate_bypassed"):
-            composed_count = _compose_kb_response(response, kb_meta)
+            composed_count = _compose_non_streaming_kb_response(response, kb_meta)
             if composed_count:
                 logger.warning(
                     "KB output guard composed deterministic citations for %d response messages",
@@ -2061,7 +2104,7 @@ class KlaiKnowledgeHook(CustomLogger):
         if (
             not kb_meta
             or kb_meta.get("gate_bypassed")
-            or kb_meta.get("render_mode") not in _KB_STREAMING_RENDER_MODES
+            or not _is_streaming_kb_render_mode(kb_meta.get("render_mode"))
         ):
             async for item in response:
                 yield item
@@ -2072,14 +2115,14 @@ class KlaiKnowledgeHook(CustomLogger):
             if pending_item is not None:
                 yield pending_item
             pending_item = item
-            composed_count = _compose_kb_response(item, kb_meta)
+            composed_count = _compose_streaming_kb_response(item, kb_meta)
             if composed_count:
                 logger.warning(
                     "KB output guard composed deterministic citations for %d streaming response chunks",
                     composed_count,
                 )
         if pending_item is not None and kb_meta.get("_citation_stream_parts"):
-            composed_count = _compose_kb_response(pending_item, kb_meta, flush_stream=True)
+            composed_count = _compose_streaming_kb_response(pending_item, kb_meta, flush_stream=True)
             if composed_count:
                 logger.warning(
                     "KB output guard composed deterministic citations for %d streaming response chunks at iterator close",
