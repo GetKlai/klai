@@ -54,6 +54,10 @@ class PartnerAuthContext:
     permissions: dict  # {"chat": bool, "feedback": bool, "knowledge_append": bool}
     kb_access: dict[int, str]  # {kb_id: access_level} from junction table
     rate_limit_rpm: int
+    # REQ-15 (Finding B-11, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001):
+    # True when the JWT was minted by the admin preview path so the chat
+    # handler can flag the resulting conversation row as is_preview.
+    is_preview: bool = False
 
 
 async def _update_last_used(key_id: str, org_id: int) -> None:
@@ -155,6 +159,7 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     org_id: int = payload.get("org_id", 0)
     wgt_id: str = payload.get("wgt_id", "")
     kb_ids: list[int] = payload.get("kb_ids", [])
+    is_preview: bool = bool(payload.get("is_preview", False))
 
     if not org_id or not wgt_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
@@ -164,7 +169,16 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     # SPEC-SEC-006: DB cross-check widget_kb_access for real-time revocation.
     # Without this, a revoked widget's JWT would remain valid for up to 1h TTL.
     # The JWT wgt_id claim is the public identifier; resolve to internal UUID first.
-    widget_result = await db.execute(select(Widget).where(Widget.widget_id == wgt_id, Widget.org_id == org_id))
+    # REQ-16: soft-deleted widgets MUST NOT keep accepting chat requests
+    # even with a still-valid JWT (the JWT TTL is 1h; soft-delete revokes
+    # access instantly via this guard).
+    widget_result = await db.execute(
+        select(Widget).where(
+            Widget.widget_id == wgt_id,
+            Widget.org_id == org_id,
+            Widget.deleted_at.is_(None),
+        )
+    )
     widget = widget_result.scalar_one_or_none()
     if widget is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
@@ -202,6 +216,7 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
         permissions={"chat": True, "feedback": False, "knowledge_append": False},
         kb_access=kb_access,
         rate_limit_rpm=_SESSION_RATE_LIMIT_RPM,
+        is_preview=is_preview,
     )
 
 

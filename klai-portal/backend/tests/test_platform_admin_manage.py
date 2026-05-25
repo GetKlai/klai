@@ -230,6 +230,158 @@ async def test_platform_create_tenant_owner_setup_failure_rolls_back_org_and_use
 
 
 # ---------------------------------------------------------------------------
+# REQ-10 (Finding A-3): platform_create_tenant owner-user INSERT MUST use
+# tenant_scoped_session(org_row.id), NOT set_tenant on the request session.
+# Conforms to standards.md § 3 — request-scoped session is never mutated.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_platform_create_tenant_user_insert_uses_tenant_scoped_session() -> None:
+    """AC10.1 + AC10.2 — owner-user INSERT runs inside
+    tenant_scoped_session(org_row.id); set_tenant is NOT called on the
+    request-scoped session passed via Depends(get_db).
+    """
+    from app.api.admin.platform_manage import CreateTenantRequest, platform_create_tenant
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    background_tasks = MagicMock()
+
+    # Simulate autoincrement: any PortalOrg added to `db` gets id=12345 after flush/commit.
+    new_org_id = 12345
+
+    async def _fake_commit() -> None:
+        for call in db.add.call_args_list:
+            (obj,) = call.args
+            if obj.__class__.__name__ == "PortalOrg" and getattr(obj, "id", None) is None:
+                obj.id = new_org_id
+
+    db.commit.side_effect = _fake_commit
+    db.flush = AsyncMock(side_effect=_fake_commit)
+
+    tdb_session = AsyncMock()
+    tdb_session.add = MagicMock()
+
+    tenant_scoped_mock = MagicMock(return_value=AsyncContext(tdb_session))
+    cross_org_mock = MagicMock(return_value=AsyncContext(AsyncMock()))
+
+    with (
+        patch("app.api.admin.platform_manage.tenant_scoped_session", new=tenant_scoped_mock),
+        patch("app.api.admin.platform_manage.cross_org_session", new=cross_org_mock),
+        patch("app.api.auth.invalidate_tenant_slug_cache"),
+        patch("app.api.admin.platform_manage.provision_tenant", new=AsyncMock()),
+        patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
+        patch("app.api.admin.platform_manage.zitadel") as mock_zitadel,
+    ):
+        mock_zitadel.create_org = AsyncMock(return_value={"id": "z-org-new"})
+        mock_zitadel.invite_user = AsyncMock(return_value={"userId": "owner-user"})
+        mock_zitadel.grant_user_role = AsyncMock()
+        mock_zitadel.send_invite_code = AsyncMock()
+
+        response = await platform_create_tenant(
+            body=CreateTenantRequest(
+                company_name="Acme BV",
+                owner_email="owner@acme.example",
+                owner_first_name="Owner",
+                owner_last_name="User",
+            ),
+            background_tasks=background_tasks,
+            perms=_platform_perms(),
+            db=db,
+        )
+
+    # AC10.1 — user INSERT issued via tenant_scoped_session
+    tenant_scoped_mock.assert_called_once_with(new_org_id)
+    tdb_session.add.assert_called_once()
+    added_user = tdb_session.add.call_args.args[0]
+    assert added_user.__class__.__name__ == "PortalUser"
+    assert added_user.org_id == new_org_id
+    tdb_session.commit.assert_awaited_once()
+
+    # AC10.2 — request-scoped session is NOT mutated by set_tenant. We assert
+    # this structurally: set_tenant is no longer imported in platform_manage.
+    import app.api.admin.platform_manage as platform_manage_module
+
+    assert not hasattr(platform_manage_module, "set_tenant"), (
+        "set_tenant must not be imported in platform_manage.py — REQ-10 "
+        "eliminated all set_tenant call-sites on the request session."
+    )
+
+    assert response.org_id == new_org_id
+    assert response.owner_user_id == "owner-user"
+
+
+@pytest.mark.asyncio
+async def test_platform_create_tenant_rolls_back_org_when_owner_insert_fails() -> None:
+    """REQ-10 follow-up — if the tenant-scoped owner INSERT fails AFTER the
+    org row was committed, the orphan org must be cleaned up via a cross-org
+    session DELETE plus the Zitadel rollbacks must fire.
+    """
+    from app.api.admin.platform_manage import CreateTenantRequest, platform_create_tenant
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    background_tasks = MagicMock()
+    new_org_id = 9999
+
+    async def _fake_commit() -> None:
+        for call in db.add.call_args_list:
+            (obj,) = call.args
+            if obj.__class__.__name__ == "PortalOrg" and getattr(obj, "id", None) is None:
+                obj.id = new_org_id
+
+    db.commit.side_effect = _fake_commit
+    db.flush = AsyncMock(side_effect=_fake_commit)
+
+    # The tenant-scoped session itself raises on commit (simulate FK/RLS failure).
+    tdb_session = AsyncMock()
+    tdb_session.add = MagicMock()
+    tdb_session.commit = AsyncMock(side_effect=RuntimeError("user insert failed"))
+
+    cleanup_db = AsyncMock()
+    tenant_scoped_mock = MagicMock(return_value=AsyncContext(tdb_session))
+    cross_org_mock = MagicMock(return_value=AsyncContext(cleanup_db))
+
+    with (
+        patch("app.api.admin.platform_manage.tenant_scoped_session", new=tenant_scoped_mock),
+        patch("app.api.admin.platform_manage.cross_org_session", new=cross_org_mock),
+        patch("app.api.auth.invalidate_tenant_slug_cache"),
+        patch("app.api.admin.platform_manage.provision_tenant", new=AsyncMock()),
+        patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
+        patch("app.api.admin.platform_manage.zitadel") as mock_zitadel,
+    ):
+        mock_zitadel.create_org = AsyncMock(return_value={"id": "z-org-new"})
+        mock_zitadel.invite_user = AsyncMock(return_value={"userId": "owner-user"})
+        mock_zitadel.grant_user_role = AsyncMock()
+        mock_zitadel.remove_user = AsyncMock()
+        mock_zitadel.delete_org = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await platform_create_tenant(
+                body=CreateTenantRequest(
+                    company_name="Acme BV",
+                    owner_email="owner@acme.example",
+                    owner_first_name="Owner",
+                    owner_last_name="User",
+                ),
+                background_tasks=background_tasks,
+                perms=_platform_perms(),
+                db=db,
+            )
+
+    assert exc_info.value.status_code == 502
+    cleanup_db.execute.assert_awaited()  # cross_org_session ran the DELETE
+    cleanup_db.commit.assert_awaited_once()
+    mock_zitadel.remove_user.assert_awaited_once()
+    assert (
+        mock_zitadel.remove_user.await_args.kwargs.get("zitadel_user_id") == "owner-user"
+        or "owner-user" in mock_zitadel.remove_user.await_args.args
+    )
+    mock_zitadel.delete_org.assert_awaited_once_with("z-org-new")
+
+
+# ---------------------------------------------------------------------------
 # REQ-6 (Finding A-7): partial-failure paths emit audit events
 # ---------------------------------------------------------------------------
 

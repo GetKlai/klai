@@ -37,6 +37,7 @@ class FakeWidgetRow:
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
     created_by: str = "user-1"
+    deleted_at: datetime | None = None  # REQ-16 soft-delete
 
 
 @pytest.mark.asyncio
@@ -145,27 +146,34 @@ async def test_update_widget_patches_config():
 
 
 @pytest.mark.asyncio
-async def test_delete_widget_calls_db_delete():
-    """DELETE /api/admin/widgets/{id} executes DELETE on DB."""
+async def test_delete_widget_soft_deletes_widget_keeps_audit_trail():
+    """REQ-16 (Finding B-14): DELETE /api/admin/widgets/{id} soft-deletes the
+    widget (sets deleted_at) and revokes kb_access, but does NOT physically
+    DELETE the widget row so the conversation/messages audit trail survives.
+    """
     from app.api.admin_widgets import delete_widget
 
     widget = FakeWidgetRow()
+    assert widget.deleted_at is None  # precondition
     db = AsyncMock()
     setup_db(
         db,
         [
             FakeResult([widget]),  # SELECT widget
             FakeResult(),  # DELETE kb_access
-            FakeResult(),  # DELETE widget
         ],
     )
 
     with patch("app.api.admin_widgets.emit_event"):
         await delete_widget(
             widget_id="widget-uuid-1",
-            perms=make_perms(role="admin", user_id="user-1", org_id=1),
+            perms=make_perms(role="admin", user_id="user-1", org_id=1, platform_unlocked_features=["widgets"]),
             db=db,
         )
 
     db.commit.assert_awaited_once()
-    assert db.execute.await_count == 3
+    # Only TWO executes: SELECT widget + DELETE kb_access. The widget row
+    # itself is updated via attribute mutation (widget.deleted_at = NOW()),
+    # not via a DELETE statement.
+    assert db.execute.await_count == 2
+    assert widget.deleted_at is not None, "Soft-delete must set deleted_at"
