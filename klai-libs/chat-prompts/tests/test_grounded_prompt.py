@@ -61,12 +61,11 @@ def test_prompt_does_not_hardcode_dutch_language_switch():
     assert "Never switch mid-conversation" not in text
 
 
-def test_prompt_includes_citation_format_instruction():
-    # Citations [n] format must remain intact — downstream parsers depend
-    # on it.
-    text = GROUNDED_CHAT_SYSTEM_PROMPT.lower()
-    assert "[n] citation" in text
-    assert "factual claim" in text
+def test_prompt_keeps_sources_backend_managed():
+    text = GROUNDED_CHAT_SYSTEM_PROMPT
+    assert "Do NOT write citation markers" in text
+    assert "renders trusted sources separately" in text
+    assert "Every factual claim gets a [n] citation" not in text
 
 
 def test_prompt_includes_no_disclaimer_directive():

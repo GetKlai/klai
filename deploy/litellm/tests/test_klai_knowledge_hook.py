@@ -2596,7 +2596,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert returned is response
         content = response.choices[0].message.content
         assert "[Diagram](https://docs.getklai.com/diagram)" in content
-        assert "Zie bron en fake (1)." in content
+        assert "Zie bron en fake." in content
         assert "https://example.com" not in content
         assert "![fake]" not in content
         assert "kb_citations_rendered_markdown" in caplog.text
@@ -2688,7 +2688,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert first.choices[0].delta.content == ""
         assert second.choices[0].delta.content == ""
         assert "https://bad.example" not in final.choices[0].delta.content
-        assert "Zie fake (1)." in final.choices[0].delta.content
+        assert "Zie fake." in final.choices[0].delta.content
         assert "[Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
 
     @pytest.mark.asyncio
@@ -2728,7 +2728,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
         assert streamed == [only]
-        assert "Zie diagram (1)." in streamed[0]["choices"][0]["delta"]["content"]
+        assert "Zie diagram." in streamed[0]["choices"][0]["delta"]["content"]
         assert "[Diagram](https://docs.getklai.com/diagram)" in streamed[0]["choices"][0]["delta"]["content"]
 
     @pytest.mark.asyncio
@@ -2768,5 +2768,5 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
         assert streamed == [only]
-        assert "Zie diagram (1)." in streamed[0]["choices"][0]["delta"]["content"]
+        assert "Zie diagram." in streamed[0]["choices"][0]["delta"]["content"]
         assert "[Diagram](https://docs.getklai.com/diagram)" in streamed[0]["choices"][0]["delta"]["content"]
