@@ -1070,9 +1070,15 @@ def _no_citable_sources_message(user_query: str) -> str:
 def _compose_backend_managed_answer(
     text: str,
     trusted_sources: list[dict[str, Any]] | None,
+    citation_chunks: list[dict] | None,
     user_query: str,
 ) -> tuple[str, list[dict]]:
-    composed = compose_answer_with_trusted_sources(text, trusted_sources or [])
+    composed = compose_answer_with_trusted_sources(
+        text,
+        trusted_sources or [],
+        query_text=user_query,
+        evidence_chunks=citation_chunks or [],
+    )
     if not composed.sources:
         return _no_citable_sources_message(user_query), []
     if not composed.content:
@@ -1089,6 +1095,7 @@ async def _chat_completion_streaming_with_composed_citations(
     org_id: int | str | None,
     user_query: str,
     trusted_sources: list[dict[str, Any]] | None,
+    citation_chunks: list[dict] | None,
 ) -> AsyncGenerator[bytes]:
     """Collect widget text, compose deterministic citations, then stream once."""
     raw_text_parts: list[str] = []
@@ -1129,6 +1136,7 @@ async def _chat_completion_streaming_with_composed_citations(
     content, sources = _compose_backend_managed_answer(
         "".join(raw_text_parts),
         trusted_sources,
+        citation_chunks,
         user_query,
     )
     if not sources:
@@ -1384,6 +1392,7 @@ async def chat_completion_non_streaming(
                 rendered_content, sources = _compose_backend_managed_answer(
                     content,
                     trusted_sources,
+                    citation_chunks,
                     _last_user_message(messages) or "",
                 )
                 message["content"] = rendered_content
@@ -1450,6 +1459,7 @@ async def chat_completion_streaming(
             org_id=org_id,
             user_query=user_query,
             trusted_sources=trusted_sources,
+            citation_chunks=citation_chunks,
         ):
             yield chunk
         return

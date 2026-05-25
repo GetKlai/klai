@@ -125,6 +125,29 @@ def _apply_link_expand_boost(
     return chunks
 
 
+def _evidence_pack_decision_sources(evidence_pack: object) -> list[dict[str, object]]:
+    """Return source provenance that is safe and useful in retrieval logs."""
+    sources = getattr(evidence_pack, "sources", None)
+    if not isinstance(sources, list):
+        return []
+    decision_sources: list[dict[str, object]] = []
+    for source in sources[:5]:
+        relevance_score = getattr(source, "relevance_score", None)
+        if isinstance(relevance_score, (int, float)):
+            relevance_score = round(float(relevance_score), 4)
+        decision_sources.append(
+            {
+                "source_id": getattr(source, "source_id", None),
+                "title": getattr(source, "title", None),
+                "url": getattr(source, "source_url", None),
+                "source_label": getattr(source, "source_label", None),
+                "evidence_ids": getattr(source, "evidence_ids", None) or [],
+                "relevance_score": relevance_score,
+            }
+        )
+    return decision_sources
+
+
 def _rrf_merge(qdrant_results: list[dict], graph_results: list[dict], k: int = 60) -> list[dict]:
     """Reciprocal Rank Fusion merge of two ranked result lists (AC-5)."""
     scores: dict[str, float] = {}
@@ -582,6 +605,8 @@ async def retrieve(
         "top_source_labels": [
             source.source_label or source.title for source in evidence_pack.sources[:3]
         ],
+        "sources": _evidence_pack_decision_sources(evidence_pack),
+        "top_item_chunk_ids": [item.chunk_id for item in evidence_pack.items[:5]],
     }
 
     # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-8 — link-expand survival

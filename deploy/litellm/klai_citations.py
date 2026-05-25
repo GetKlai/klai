@@ -75,6 +75,8 @@ _SOURCE_RELEVANCE_STOPWORDS = {
     "dat",
     "een",
     "for",
+    "hoe",
+    "ik",
     "klai",
     "het",
     "met",
@@ -85,6 +87,43 @@ _SOURCE_RELEVANCE_STOPWORDS = {
     "voor",
     "with",
     "you",
+}
+_QUERY_INTENT_TOKENS = {"admin", "email", "invite", "remove", "role", "user"}
+_TOKEN_SYNONYMS = {
+    "colleague": "user",
+    "colleagues": "user",
+    "e-mail": "email",
+    "emails": "email",
+    "gebruiker": "user",
+    "gebruikers": "user",
+    "iemand": "user",
+    "invite": "invite",
+    "invited": "invite",
+    "invites": "invite",
+    "inviting": "invite",
+    "mailadres": "email",
+    "medewerker": "user",
+    "medewerkers": "user",
+    "mensen": "user",
+    "people": "user",
+    "persoon": "user",
+    "personen": "user",
+    "role": "role",
+    "roles": "role",
+    "rol": "role",
+    "rollen": "role",
+    "teamlid": "user",
+    "teamleden": "user",
+    "voeg": "invite",
+    "toevoegen": "invite",
+    "toegevoegd": "invite",
+    "toe": "invite",
+    "uitgenodigd": "invite",
+    "uitnodigen": "invite",
+    "user": "user",
+    "users": "user",
+    "verwijder": "remove",
+    "verwijderen": "remove",
 }
 
 
@@ -422,9 +461,13 @@ def strip_model_citation_artifacts(text: str, *, allowed_image_urls: set[str] | 
     return cleaned.strip()
 
 
+def _canonical_token(token: str) -> str:
+    return _TOKEN_SYNONYMS.get(token.lower(), token.lower())
+
+
 def _tokens(text: str) -> set[str]:
     return {
-        token.lower()
+        _canonical_token(token)
         for token in _TOKEN_RE.findall(text)
         if not token.isdigit() and token.lower() not in _SOURCE_RELEVANCE_STOPWORDS
     }
@@ -439,6 +482,13 @@ def _source_relevance_score(answer_tokens: set[str], source: CitationSource) -> 
         default=0,
     )
     return title_score + chunk_score
+
+
+def _source_support_tokens(source: CitationSource) -> set[str]:
+    tokens = _tokens(source.title)
+    for chunk_text in source.chunk_texts:
+        tokens |= _tokens(chunk_text)
+    return tokens
 
 
 def _select_document_sources(
@@ -463,6 +513,36 @@ def _select_document_sources(
 
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [source for _, _, source in scored[:max_sources]]
+
+
+def _select_supported_sources(
+    cleaned_answer: str,
+    sources: list[CitationSource],
+    *,
+    query_text: str | None,
+    max_sources: int | None,
+) -> list[CitationSource]:
+    if max_sources is not None and max_sources <= 0:
+        return []
+    answer_tokens = _tokens(cleaned_answer)
+    query_tokens = _tokens(query_text or "")
+    query_intent_tokens = query_tokens & _QUERY_INTENT_TOKENS
+    min_query_overlap = min(2, len(query_intent_tokens)) if query_intent_tokens else 0
+    scored: list[tuple[int, int, CitationSource]] = []
+    for index, source in enumerate(sources):
+        support_tokens = _source_support_tokens(source)
+        query_score = len(query_tokens & support_tokens) if query_tokens else 0
+        answer_score = _source_relevance_score(answer_tokens, source)
+        if query_intent_tokens and query_score < min_query_overlap:
+            continue
+        if answer_score <= 0:
+            continue
+        scored.append((query_score * 3 + answer_score, index, source))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    selected = [source for _, _, source in scored]
+    if max_sources is not None:
+        return selected[:max_sources]
+    return selected
 
 
 def _compose_citations_from_sources(
@@ -584,6 +664,7 @@ def evidence_pack_items_as_chunks(evidence_pack: object) -> list[dict[str, Any]]
         chunks.append(
             {
                 "chunk_id": item.get("chunk_id"),
+                "evidence_id": item.get("evidence_id"),
                 "artifact_id": item.get("artifact_id"),
                 "content_type": item.get("content_type"),
                 "text": item.get("text"),
@@ -602,25 +683,71 @@ def evidence_pack_items_as_chunks(evidence_pack: object) -> list[dict[str, Any]]
     return chunks
 
 
+def _source_evidence_texts(
+    source: dict[str, Any],
+    evidence_chunks: list[dict[str, Any]],
+) -> list[str]:
+    evidence_ids = {
+        str(evidence_id)
+        for evidence_id in source.get("evidence_ids") or []
+        if isinstance(evidence_id, str | int)
+    }
+    source_url = source_url_key(source.get("url"))
+    texts: list[str] = []
+    for chunk in evidence_chunks:
+        if not isinstance(chunk, dict):
+            continue
+        chunk_evidence_id = chunk.get("evidence_id")
+        chunk_url = source_url_key(chunk.get("source_url") or chunk.get("url"))
+        evidence_matches = evidence_ids and str(chunk_evidence_id) in evidence_ids
+        url_matches = source_url and chunk_url == source_url
+        if not evidence_matches and not url_matches:
+            continue
+        text = _string_value(chunk.get("text") or chunk.get("content"))
+        if text:
+            texts.append(text)
+    return texts
+
+
 def compose_answer_with_trusted_sources(
     text: str,
     trusted_sources: list[dict[str, Any]],
     *,
+    query_text: str | None = None,
     allowed_image_urls: set[str] | None = None,
+    evidence_chunks: list[dict[str, Any]] | None = None,
+    max_sources: int | None = _DEFAULT_MAX_SOURCES,
 ) -> ComposedCitations:
     """Clean model text and attach already-selected document sources.
 
     Unlike ``compose_citations()``, this function never chooses sources from
-    answer overlap or raw chunks. Source selection must already have happened
-    in the EvidencePack contract.
+    model-authored URLs or raw chunks. Source URLs must already have come from
+    the EvidencePack contract; ``evidence_chunks`` are used only to validate and
+    rank those candidate sources against the final answer text.
     """
     cleaned = strip_model_citation_artifacts(text, allowed_image_urls=allowed_image_urls)
-    sources = [
-        {"label": str(index), "title": title, "url": url}
-        for index, source in enumerate(trusted_sources, 1)
-        if (url := normalise_source_url(source.get("url")))
-        for title in [str(source.get("title") or "Source")]
-    ]
+    evidence_chunks = evidence_chunks or []
+    candidate_sources: list[CitationSource] = []
+    for source in trusted_sources:
+        url = normalise_source_url(source.get("url"))
+        if not url:
+            continue
+        evidence_texts = _source_evidence_texts(source, evidence_chunks)
+        candidate_sources.append(
+            CitationSource(
+                key=source_url_key(url),
+                url=url,
+                title=str(source.get("title") or "Source"),
+                chunk_texts=evidence_texts,
+            )
+        )
+    selected = _select_supported_sources(
+        cleaned,
+        candidate_sources,
+        query_text=query_text,
+        max_sources=max_sources,
+    )
+    sources = render_structured_sources(CitationRegistry(sources=selected), max_sources=None)
     return ComposedCitations(content=cleaned, sources=sources)
 
 

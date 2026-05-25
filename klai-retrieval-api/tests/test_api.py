@@ -44,8 +44,12 @@ class TestRetrieveEndpoint:
         )
         assert resp.status_code == 422
 
-    def test_retrieve_happy_path(self, client, sample_retrieve_request):
+    def test_retrieve_happy_path(self, client, sample_retrieve_request, caplog):
         """Happy path: mock all external calls, verify response structure."""
+        import logging
+
+        caplog.set_level(logging.INFO)
+
         with (
             patch(
                 "retrieval_api.api.retrieve.coreference.resolve",
@@ -79,6 +83,9 @@ class TestRetrieveEndpoint:
                         "content_type": "policy",
                         "context_prefix": "Policy: ",
                         "scope": "org",
+                        "title": "Refund policy",
+                        "source_url": "https://docs.getklai.com/refunds",
+                        "source_label": "klai-help",
                         "valid_at": None,
                         "invalid_at": None,
                         "ingested_at": None,
@@ -99,6 +106,9 @@ class TestRetrieveEndpoint:
                         "content_type": "policy",
                         "context_prefix": "Policy: ",
                         "scope": "org",
+                        "title": "Refund policy",
+                        "source_url": "https://docs.getklai.com/refunds",
+                        "source_label": "klai-help",
                         "valid_at": None,
                         "invalid_at": None,
                         "ingested_at": None,
@@ -156,6 +166,17 @@ class TestRetrieveEndpoint:
         assert data["confidence_band"] == "high", (
             f"reranker_score=0.95 should map to 'high', got {data.get('confidence_band')!r}"
         )
+        decision_record = next(
+            record
+            for record in caplog.records
+            if "retrieval_decision_record" in record.getMessage()
+        )
+        decision_attrs = " ".join(
+            f"{key}={value}" for key, value in decision_record.__dict__.items()
+        )
+        assert "https://docs.getklai.com/refunds" in decision_attrs
+        assert "Refund policy" in decision_attrs
+        assert "top_item_chunk_ids" in decision_attrs
 
 
 class TestConfidenceBandEndToEnd:

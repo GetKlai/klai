@@ -355,6 +355,7 @@ def test_trusted_sources_are_projected_only_from_evidence_pack_sources() -> None
     assert evidence_pack_items_as_chunks(pack) == [
         {
             "chunk_id": "chunk-1",
+            "evidence_id": "E1",
             "artifact_id": None,
             "content_type": None,
             "text": "Admins can invite users.",
@@ -381,3 +382,93 @@ def test_trusted_source_composition_never_reconstructs_sources_from_text_or_chun
     assert composed.sources == []
     assert "https://docs.getklai.com/fake" not in composed.content
     assert "https://bad.example" not in composed.content
+
+
+def test_trusted_source_composition_filters_unsupported_evidence_pack_sources() -> None:
+    composed = compose_answer_with_trusted_sources(
+        "Ga naar Admin > Users, klik op Invite en kies een rol.",
+        [
+            {
+                "label": "1",
+                "title": "Ask a question",
+                "url": "https://docs.getklai.com/ask-a-question",
+                "evidence_ids": ["E1"],
+            },
+            {
+                "label": "2",
+                "title": "Invite and remove people",
+                "url": "https://docs.getklai.com/invite-and-remove-people",
+                "evidence_ids": ["E2"],
+            },
+        ],
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "source_url": "https://docs.getklai.com/ask-a-question",
+                "text": "Ask Klai a question and read the answer.",
+            },
+            {
+                "evidence_id": "E2",
+                "source_url": "https://docs.getklai.com/invite-and-remove-people",
+                "text": "Open Admin > Users, click Invite, enter an email, and choose a role.",
+            },
+        ],
+    )
+
+    assert composed.sources == [
+        {
+            "label": "1",
+            "title": "Invite and remove people",
+            "url": "https://docs.getklai.com/invite-and-remove-people",
+        }
+    ]
+
+
+def test_trusted_source_composition_uses_query_intent_not_surface_overlap() -> None:
+    composed = compose_answer_with_trusted_sources(
+        (
+            "Ga naar Admin > Gebruikers, klik op Gebruiker toevoegen "
+            "en stel de rol in via het dropdownmenu."
+        ),
+        [
+            {
+                "label": "1",
+                "title": "The five roles",
+                "url": "https://getklai.getklai.com/docs/klai-help/the-five-roles",
+                "evidence_ids": ["E1"],
+            },
+            {
+                "label": "2",
+                "title": "Invite and remove people",
+                "url": "https://getklai.getklai.com/docs/klai-help/invite-and-remove-people",
+                "evidence_ids": ["E2"],
+            },
+        ],
+        query_text="Hoe voeg ik een nieuwe gebruiker toe?",
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "source_url": "https://getklai.getklai.com/docs/klai-help/the-five-roles",
+                "text": (
+                    "Promoting and demoting. Open Admin > Users. "
+                    "Click a user. Pick a new role from the dropdown."
+                ),
+            },
+            {
+                "evidence_id": "E2",
+                "source_url": "https://getklai.getklai.com/docs/klai-help/invite-and-remove-people",
+                "text": (
+                    "Invite a colleague. Click Invite. Enter their work email. "
+                    "Pick a starting role."
+                ),
+            },
+        ],
+    )
+
+    assert composed.sources == [
+        {
+            "label": "1",
+            "title": "Invite and remove people",
+            "url": "https://getklai.getklai.com/docs/klai-help/invite-and-remove-people",
+        }
+    ]

@@ -2794,7 +2794,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                 SimpleNamespace(
                     message=SimpleNamespace(
                         content=(
-                            "Zie [bron](https://docs.getklai.com/diagram) "
+                            "Zie het diagram [bron](https://docs.getklai.com/diagram) "
                             "en ![fake](https://example.com/fake.png)."
                         )
                     )
@@ -2834,7 +2834,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert returned is response
         content = response.choices[0].message.content
         assert "[Diagram](https://docs.getklai.com/diagram)" in content
-        assert "Zie bron en fake." in content
+        assert "Zie het diagram bron en fake." in content
         assert "https://example.com" not in content
         assert "![fake]" not in content
         assert "kb_citations_rendered_markdown" in caplog.text
@@ -3055,7 +3055,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             }
         }
 
-        first = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="Zie [fake]("), finish_reason=None)])
+        first = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="Zie diagram [fake]("), finish_reason=None)])
         second = SimpleNamespace(
             choices=[SimpleNamespace(delta=SimpleNamespace(content="https://bad.example)."), finish_reason=None)]
         )
@@ -3074,7 +3074,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert first.choices[0].delta.content == ""
         assert second.choices[0].delta.content == ""
         assert "https://bad.example" not in final.choices[0].delta.content
-        assert "Zie fake." in final.choices[0].delta.content
+        assert "Zie diagram fake." in final.choices[0].delta.content
         assert "[Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
 
     @pytest.mark.asyncio
