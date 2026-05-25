@@ -421,14 +421,22 @@ async def test_session_token_uses_kid_header_without_legacy_payload_decode():
         ],
     )
 
+    original_decode = jwt.decode
+
+    def _reject_unverified_decode(*args, **kwargs):
+        options = kwargs.get("options")
+        if isinstance(options, dict) and options.get("verify_signature") is False:
+            raise AssertionError("legacy payload fallback should not run for kid JWTs")
+        return original_decode(*args, **kwargs)
+
     patches = _session_patches()
     with (
         patches[0],
         patches[1],
         patches[2],
         patch(
-            "app.api.partner_dependencies._legacy_org_id_from_unsigned_session_payload",
-            side_effect=AssertionError("legacy payload fallback should not run for kid JWTs"),
+            "app.api.partner_dependencies.jwt.decode",
+            side_effect=_reject_unverified_decode,
         ),
     ):
         result = await get_partner_key(request=_make_request(token=token), db=db)
@@ -519,7 +527,7 @@ async def test_session_token_rejects_malformed_kid_without_legacy_fallback():
     with (
         patch("app.api.partner_dependencies.settings.widget_jwt_secret", secret),
         patch(
-            "app.api.partner_dependencies._legacy_org_id_from_unsigned_session_payload",
+            "app.api.partner_dependencies.jwt.decode",
             side_effect=AssertionError("legacy fallback should not run when kid is present"),
         ),
     ):
