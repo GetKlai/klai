@@ -208,8 +208,8 @@ async def test_chat_completion_returns_403_when_widgets_not_unlocked():
     The JWT already identifies the widget so existence-non-disclosure does not apply.
     A 403 tells the user they can't chat, which is the honest response.
 
-    The platform-unlock check runs after org is loaded (so we know the tenant) and
-    before the JWT is fully trusted for authorization.
+    The platform-unlock check runs after org is loaded and after the JWT is
+    verified, so forged/invalid tokens remain opaque 401s.
     """
     from app.api.partner_dependencies import _auth_via_session_token
 
@@ -229,7 +229,7 @@ async def test_chat_completion_returns_403_when_widgets_not_unlocked():
         patch("app.api.partner_dependencies.decode_session_token") as mock_decode,
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        # decode_session_token returns a valid payload — platform check should fire first
+        # decode_session_token returns a valid payload — platform check should fire after verification.
         mock_decode.return_value = {
             "org_id": 42,
             "wgt_id": "wgt_test",
@@ -241,7 +241,10 @@ async def test_chat_completion_returns_403_when_widgets_not_unlocked():
             # Use a real-enough JWT that survives the unverified peek
             import jwt as pyjwt
 
-            token = pyjwt.encode({"org_id": 42, "wgt_id": "wgt_test", "kb_ids": [1]}, "secret")
+            token = pyjwt.encode(
+                {"org_id": 42, "wgt_id": "wgt_test", "kb_ids": [1]},
+                "legacy-test-secret-at-least-32-bytes",
+            )
             await _auth_via_session_token(token, db)
 
     assert exc_info.value.status_code == 403

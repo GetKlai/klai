@@ -35,7 +35,11 @@ from app.services.partner_keys import verify_partner_key
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.redis_client import get_redis_pool
 from app.services.widget_audit import session_key_from_claims, session_key_from_token
-from app.services.widget_auth import decode_session_token
+from app.services.widget_auth import (
+    decode_session_token,
+    get_unverified_session_token_key_id,
+    org_id_from_session_token_key_id,
+)
 
 logger = structlog.get_logger()
 
@@ -43,6 +47,25 @@ _AUTH_ERROR = {"error": {"type": "authentication_error", "message": "Invalid API
 
 # Hold references to fire-and-forget tasks to prevent GC (same pattern as app.services.events)
 _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
+
+
+def _legacy_org_id_from_unsigned_session_payload(token: str) -> int | None:
+    """Temporary fallback for widget JWTs minted before ``kid`` headers.
+
+    Widget JWTs have a 1h TTL. Keep this only for one deploy window after all
+    mint paths emit ``kid``; then remove the fallback and the Semgrep
+    suppression with it.
+    """
+    try:
+        # nosemgrep: python.jwt.security.unverified-jwt-decode.unverified-jwt-decode
+        payload = jwt.decode(token, options={"verify_signature": False})
+    except jwt.InvalidTokenError:
+        return None
+
+    org_id = payload.get("org_id")
+    if isinstance(org_id, int) and not isinstance(org_id, bool) and org_id > 0:
+        return org_id
+    return None
 
 
 @dataclass
@@ -109,43 +132,32 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     if not settings.widget_jwt_secret:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
-    # SPEC-SEC-HYGIENE-001 REQ-24.2: signing key is HKDF-derived per tenant,
-    # so we need the tenant slug BEFORE we can verify the signature. Peek at
-    # the unverified payload to read org_id, look up the slug, then re-decode
-    # with signature verification using the derived key at line 126 below.
-    # A forged token fails the verified decode with InvalidSignatureError.
-    #
-    # The unverified peek's only output is `org_id_unverified`, which is used
-    # SOLELY to look up the per-tenant HKDF salt — it is NEVER used for
-    # authorization or any session-state decision. Authorization happens on
-    # the verified `payload` returned by `decode_session_token`.
-    #
-    # Semgrep's `python.jwt.security.unverified-jwt-decode` rule is a static
-    # pattern match that cannot trace through to the verified decode below.
-    # Suppression is correct here; do NOT remove without refactoring to a
-    # kid-based JWT scheme (which is a breaking change for live widget JWTs).
+    # SPEC-SEC-HYGIENE-001 REQ-24.2: signing key is HKDF-derived per tenant.
+    # New widget JWTs carry a `kid` header that selects the portal org used to
+    # derive the verification key. The header is only a key-selection hint; the
+    # verified payload's org_id is checked against the selected org below.
     try:
-        # nosemgrep: python.jwt.security.unverified-jwt-decode.unverified-jwt-decode
-        unverified = jwt.decode(token, options={"verify_signature": False})
+        kid = get_unverified_session_token_key_id(token)
     except jwt.InvalidTokenError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
 
-    org_id_unverified: int = unverified.get("org_id", 0)
-    if not org_id_unverified:
+    if kid is None:
+        # Deploy-window compatibility for old in-flight JWTs minted before the
+        # `kid` header existed. Remove after one widget JWT TTL has elapsed in
+        # production.
+        org_id_for_key = _legacy_org_id_from_unsigned_session_payload(token)
+    else:
+        org_id_for_key = org_id_from_session_token_key_id(kid)
+
+    if org_id_for_key is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
-    # Load org for slug + zitadel_org_id and set RLS tenant.
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id_unverified))
+    # Load org for slug + zitadel_org_id. Do not set tenant or consult tenant
+    # state until the signature verifies and the payload matches this org.
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id_for_key))
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
-
-    # REQ-1 (Finding B-1): chat path — 403 (JWT identifies widget so existence is moot).
-    # @MX:ANCHOR: [AUTO] Platform-unlock gate on widget chat-completions JWT path
-    # @MX:REASON: Admin disabling 'widgets' must block chat, not just the embed mint;
-    # 403 is correct here because the JWT proves the widget exists.
-    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1
-    assert_platform_unlocked(org, "widgets")
 
     # Verified decode using the per-tenant derived key.
     try:
@@ -159,14 +171,36 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     except jwt.InvalidTokenError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
 
-    org_id: int = payload.get("org_id", 0)
-    wgt_id: str = payload.get("wgt_id", "")
-    kb_ids: list[int] = payload.get("kb_ids", [])
+    org_id_raw = payload.get("org_id")
+    wgt_id = payload.get("wgt_id")
+    kb_ids_raw = payload.get("kb_ids", [])
     is_preview: bool = bool(payload.get("is_preview", False))
     jti: str | None = payload.get("jti") if isinstance(payload.get("jti"), str) else None
 
-    if not org_id or not wgt_id:
+    if (
+        not isinstance(org_id_raw, int)
+        or isinstance(org_id_raw, bool)
+        or org_id_raw != org.id
+        or not isinstance(wgt_id, str)
+        or not wgt_id
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+    if not isinstance(kb_ids_raw, list) or any(
+        not isinstance(kb_id, int) or isinstance(kb_id, bool) for kb_id in kb_ids_raw
+    ):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+
+    org_id = org_id_raw
+    kb_ids = kb_ids_raw
+
+    # REQ-1 (Finding B-1): chat path — 403 after verified JWT identifies the
+    # widget tenant. Invalid or forged JWTs above remain opaque 401s.
+    # @MX:ANCHOR: [AUTO] Platform-unlock gate on widget chat-completions JWT path
+    # @MX:REASON: Admin disabling 'widgets' must block chat, not just the embed mint;
+    # 403 is correct here because the verified JWT proves the tenant.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1
+    assert_platform_unlocked(org, "widgets")
+
     session_key = session_key_from_claims(org_id=org_id, wgt_id=wgt_id, jti=jti) or session_key_from_token(token)
 
     await set_tenant(db, org.id)

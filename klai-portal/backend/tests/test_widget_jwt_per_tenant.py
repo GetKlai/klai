@@ -23,6 +23,9 @@ from app.services.widget_auth import (
     _derive_tenant_key,
     decode_session_token,
     generate_session_token,
+    get_unverified_session_token_key_id,
+    org_id_from_session_token_key_id,
+    session_token_key_id,
 )
 
 _MASTER_SECRET = "test-master-secret-32-bytes-long!!"  # nosec — test placeholder
@@ -45,6 +48,23 @@ def test_token_for_tenant_a_validates_with_tenant_a_slug() -> None:
     assert payload["org_id"] == 1
     assert payload["kb_ids"] == [10, 11]
     assert "exp" in payload
+
+
+def test_token_carries_kid_header_for_key_selection() -> None:
+    """New widget JWTs expose org id only as a header key-selection hint."""
+    token = generate_session_token(
+        wgt_id="wgt_a",
+        org_id=1,
+        kb_ids=[10, 11],
+        secret=_MASTER_SECRET,
+        tenant_slug="alpha",
+    )
+
+    kid = get_unverified_session_token_key_id(token)
+
+    assert kid is not None
+    assert kid == session_token_key_id(1)
+    assert org_id_from_session_token_key_id(kid) == 1
 
 
 def test_token_for_tenant_a_does_not_validate_with_tenant_b_slug() -> None:

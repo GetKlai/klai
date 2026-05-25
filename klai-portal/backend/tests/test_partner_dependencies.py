@@ -4,9 +4,10 @@ SPEC-API-001 REQ-2.1, REQ-2.2, REQ-2.4, REQ-2.6, REQ-1.6.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 from fastapi import HTTPException
 from helpers import FakeResult, setup_db
@@ -22,7 +23,7 @@ class FakeKeyRow:
     org_id: int = 42
     name: str = "Test Key"
     key_hash: str = "abc123"
-    permissions: dict = None
+    permissions: dict | None = None
     rate_limit_rpm: int = 60
     active: bool = True
     last_used_at: datetime | None = None
@@ -185,6 +186,7 @@ async def test_rate_limited_returns_429():
             await get_partner_key(request=_make_request(token="pk_live_" + "a" * 40), db=db)
 
     assert exc.value.status_code == 429
+    assert exc.value.headers is not None
     assert exc.value.headers.get("Retry-After") == "30"
 
 
@@ -336,17 +338,34 @@ def _make_jwt(
     `FakeOrg.slug`, so `partner_dependencies._auth_via_session_token` (which
     looks up `org.slug` and re-derives the same key) verifies successfully.
     """
-    from app.core.config import settings
     from app.services.widget_auth import generate_session_token
 
-    secret = settings.widget_jwt_secret or _TEST_WIDGET_SECRET
     return generate_session_token(
         wgt_id=wgt_id,
         org_id=org_id,
         kb_ids=kb_ids if kb_ids is not None else [1, 2],
-        secret=secret,
+        secret=_TEST_WIDGET_SECRET,
         tenant_slug=tenant_slug,
     )
+
+
+def _make_legacy_jwt(
+    wgt_id: str = "wgt_abcdef0123456789",
+    org_id: int = 42,
+    kb_ids: list[int] | None = None,
+    tenant_slug: str = "acme",
+) -> str:
+    """Encode a pre-kid widget session JWT for deploy-window fallback tests."""
+    from app.services.widget_auth import _derive_tenant_key
+
+    payload = {
+        "wgt_id": wgt_id,
+        "org_id": org_id,
+        "kb_ids": kb_ids if kb_ids is not None else [1, 2],
+        "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+        "jti": "legacy-test-jti",
+    }
+    return jwt.encode(payload, _derive_tenant_key(_TEST_WIDGET_SECRET, tenant_slug), algorithm="HS256")
 
 
 def _session_patches(widget_secret: str = _TEST_WIDGET_SECRET):
@@ -384,6 +403,131 @@ async def test_session_token_all_kbs_valid_returns_full_scope():
     assert result.kb_access == {1: "read", 2: "read", 3: "read"}
     assert result.org_id == 42
     assert result.key_id == "wgt_abcdef0123456789"
+
+
+@pytest.mark.asyncio
+async def test_session_token_uses_kid_header_without_legacy_payload_decode():
+    """New JWTs must select the tenant key via kid, not unverified payload."""
+    from app.api.partner_dependencies import get_partner_key
+
+    token = _make_jwt(kb_ids=[1, 2, 3])
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeOrg()]),
+            FakeResult([FakeWidget()]),
+            FakeResult(rows=[1, 2, 3]),
+        ],
+    )
+
+    patches = _session_patches()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patch(
+            "app.api.partner_dependencies._legacy_org_id_from_unsigned_session_payload",
+            side_effect=AssertionError("legacy payload fallback should not run for kid JWTs"),
+        ),
+    ):
+        result = await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert result.org_id == 42
+    assert result.kb_access == {1: "read", 2: "read", 3: "read"}
+
+
+@pytest.mark.asyncio
+async def test_session_token_without_kid_uses_legacy_fallback_during_deploy_window():
+    """Old in-flight JWTs without kid remain valid for one deploy window."""
+    from app.api.partner_dependencies import get_partner_key
+
+    token = _make_legacy_jwt(kb_ids=[1, 2])
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeOrg()]),
+            FakeResult([FakeWidget()]),
+            FakeResult(rows=[1, 2]),
+        ],
+    )
+
+    patches = _session_patches()
+    with patches[0], patches[1], patches[2]:
+        result = await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert result.org_id == 42
+    assert result.kb_access == {1: "read", 2: "read"}
+
+
+@pytest.mark.asyncio
+async def test_session_token_rejects_verified_org_mismatch_after_kid_lookup():
+    """kid-selected org and verified payload org_id must match exactly."""
+    from app.api.partner_dependencies import get_partner_key
+    from app.services.widget_auth import _derive_tenant_key, session_token_key_id
+
+    secret = _TEST_WIDGET_SECRET
+    token = jwt.encode(
+        {
+            "wgt_id": "wgt_abcdef0123456789",
+            "org_id": 999,
+            "kb_ids": [1],
+            "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+            "jti": "org-mismatch-test",
+        },
+        _derive_tenant_key(secret, "acme"),
+        algorithm="HS256",
+        headers={"kid": session_token_key_id(42)},
+    )
+    db = AsyncMock()
+    setup_db(db, [FakeResult([FakeOrg(id=42)])])
+    set_tenant = AsyncMock()
+
+    with (
+        patch("app.api.partner_dependencies.settings.widget_jwt_secret", secret),
+        patch("app.api.partner_dependencies.set_tenant", set_tenant),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert exc.value.status_code == 401
+    set_tenant.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_session_token_rejects_malformed_kid_without_legacy_fallback():
+    """Malformed kid is a hard auth failure, not a reason to read payload claims."""
+    from app.api.partner_dependencies import get_partner_key
+    from app.services.widget_auth import _derive_tenant_key
+
+    secret = _TEST_WIDGET_SECRET
+    token = jwt.encode(
+        {
+            "wgt_id": "wgt_abcdef0123456789",
+            "org_id": 42,
+            "kb_ids": [1],
+            "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+            "jti": "bad-kid-test",
+        },
+        _derive_tenant_key(secret, "acme"),
+        algorithm="HS256",
+        headers={"kid": "not-an-org-kid"},
+    )
+    db = AsyncMock()
+
+    with (
+        patch("app.api.partner_dependencies.settings.widget_jwt_secret", secret),
+        patch(
+            "app.api.partner_dependencies._legacy_org_id_from_unsigned_session_payload",
+            side_effect=AssertionError("legacy fallback should not run when kid is present"),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert exc.value.status_code == 401
+    db.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
