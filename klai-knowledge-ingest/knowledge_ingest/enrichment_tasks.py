@@ -171,6 +171,8 @@ async def _load_and_enrich(artifact_id: str) -> None:
         return
 
     title: str = extra.get("title") or ""
+    document_text = chunker.normalize_document_for_chunking(document_text)
+
     # Re-derive chunks deterministically from the current PG body so
     # Phase-2 always operates on the same content the artifact row claims
     # is current, regardless of what was in flight at enqueue time.
