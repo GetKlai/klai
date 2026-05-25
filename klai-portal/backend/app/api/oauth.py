@@ -68,6 +68,20 @@ def _canonical_provider(provider: str) -> str:
     return _PROVIDER_ALIASES.get(provider, provider)
 
 
+def _google_picker_app_id() -> str:
+    """Return the Google Picker app id (Cloud project number) when known.
+
+    Google OAuth client IDs usually start with the Cloud project number. Keep
+    an explicit setting as the source of truth, but derive a useful default so
+    existing deployments only need a Browser API key for Picker.
+    """
+    explicit = getattr(settings, "google_drive_picker_app_id", "") or ""
+    if explicit:
+        return explicit
+    prefix = (settings.google_drive_client_id or "").split("-", 1)[0]
+    return prefix if prefix.isdigit() else ""
+
+
 # Google Drive OAuth endpoints (constants -- never secrets).
 _GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -278,6 +292,9 @@ async def list_providers(
         "google_drive": {
             "enabled": bool(settings.google_drive_client_id),
             "scopes": [_GOOGLE_SCOPES],
+            "client_id": settings.google_drive_client_id,
+            "picker_api_key": getattr(settings, "google_drive_picker_api_key", "") or "",
+            "picker_app_id": _google_picker_app_id(),
         },
         "ms_docs": {
             "enabled": bool(settings.ms_docs_client_id),

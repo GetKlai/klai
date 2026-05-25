@@ -85,11 +85,16 @@ class TestProvidersEndpoint:
         ):
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            mock_settings.google_drive_picker_api_key = "placeholder-picker-key"
+            mock_settings.google_drive_picker_app_id = "123456789"
             mock_settings.ms_docs_client_id = ""
 
             result = await list_providers(user_id="zitadel-user-1")
 
             assert result["google_drive"]["enabled"] is True
+            assert result["google_drive"]["client_id"] == _PLACEHOLDER_CLIENT_ID
+            assert result["google_drive"]["picker_api_key"] == "placeholder-picker-key"
+            assert result["google_drive"]["picker_app_id"] == "123456789"
 
     @pytest.mark.asyncio
     async def test_providers_endpoint_reflects_disabled_google_drive(self) -> None:
@@ -102,6 +107,8 @@ class TestProvidersEndpoint:
         ):
             mock_settings.google_drive_client_id = ""
             mock_settings.google_drive_client_secret = ""
+            mock_settings.google_drive_picker_api_key = ""
+            mock_settings.google_drive_picker_app_id = ""
             mock_settings.ms_docs_client_id = ""
 
             result = await list_providers(user_id="zitadel-user-1")
