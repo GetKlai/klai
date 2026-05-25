@@ -10,7 +10,6 @@ type PickerMode = 'folder' | 'files'
 interface GoogleProvidersResponse {
   google_drive?: {
     enabled: boolean
-    picker_api_key?: string
     picker_app_id?: string
   }
 }
@@ -53,7 +52,6 @@ declare global {
           enableFeature: (feature: string) => unknown
           setAppId: (appId: string) => unknown
           setCallback: (callback: (data: PickerResponse) => void) => unknown
-          setDeveloperKey: (key: string) => unknown
           setOAuthToken: (token: string) => unknown
           build: () => { setVisible: (visible: boolean) => void }
         }
@@ -154,19 +152,14 @@ export function GoogleDrivePicker({
     const providers = await apiFetch<GoogleProvidersResponse>('/api/oauth/providers')
     const googleDrive = providers.google_drive
     const appId = googleDrive?.picker_app_id || ''
-    const apiKey = googleDrive?.picker_api_key || ''
     if (!googleDrive?.enabled) {
       throw new Error('Google Drive OAuth is niet geconfigureerd')
     }
     if (!appId) {
       throw new Error('Google Picker app id ontbreekt')
     }
-    if (!apiKey) {
-      throw new Error('Google Picker API key ontbreekt')
-    }
     return {
       appId,
-      apiKey,
     }
   }
 
@@ -185,21 +178,21 @@ export function GoogleDrivePicker({
     setIsOpening(mode)
     setError(null)
     try {
-      const { appId, apiKey } = await getPickerConfig()
+      const { appId } = await getPickerConfig()
       await loadGooglePickerLibraries()
       const google = window.google
       if (!google?.picker) {
         throw new Error('Google Picker is niet beschikbaar')
       }
       const accessToken = await getPickerAccessToken()
-      showPicker(mode, accessToken, appId, apiKey)
+      showPicker(mode, accessToken, appId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kon Google Picker niet openen')
       setIsOpening(null)
     }
   }
 
-  function showPicker(mode: PickerMode, accessToken: string, appId: string, apiKey: string) {
+  function showPicker(mode: PickerMode, accessToken: string, appId: string) {
     const pickerApi = window.google?.picker
     if (!pickerApi) return
 
@@ -227,7 +220,6 @@ export function GoogleDrivePicker({
     const builder = new pickerApi.PickerBuilder()
     builder.setOAuthToken(accessToken)
     builder.setAppId(appId)
-    builder.setDeveloperKey(apiKey)
     builder.addView(view)
     builder.setCallback((data) => {
       if (data.action === pickerApi.Action.PICKED) {
