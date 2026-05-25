@@ -23,6 +23,8 @@ def _mock_litellm():
             pass
         async def async_post_call_success_hook(self, *args, **kwargs):
             pass
+        async def async_post_call_streaming_iterator_hook(self, *args, **kwargs):
+            pass
         async def async_post_call_failure_hook(self, *args, **kwargs):
             pass
 
@@ -2402,10 +2404,16 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         )
         final = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=""), finish_reason="stop")])
 
-        await hook.async_post_call_success_hook(data, None, first)
-        await hook.async_post_call_success_hook(data, None, second)
-        await hook.async_post_call_success_hook(data, None, final)
+        async def stream():
+            for item in (first, second, final):
+                yield item
 
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+        ]
+
+        assert streamed == [first, second, final]
         assert first.choices[0].delta.content == ""
         assert second.choices[0].delta.content == ""
         assert "https://bad.example" not in final.choices[0].delta.content
