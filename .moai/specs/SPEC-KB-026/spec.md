@@ -1,7 +1,7 @@
 ---
 id: SPEC-KB-026
-version: 0.1.0
-status: draft
+version: 0.2.0
+status: implemented
 created: 2026-05-25
 updated: 2026-05-25
 author: Codex
@@ -13,6 +13,7 @@ priority: high
 | Version | Date | Author | Change |
 |---|---|---|---|
 | 0.1.0 | 2026-05-25 | Codex | Initial architecture SPEC for deterministic chat citations. |
+| 0.2.0 | 2026-05-25 | Codex | Align rollout with LibreChat/LangGraph streaming contract and registry-source rendering. |
 
 ---
 
@@ -27,14 +28,15 @@ deterministic `CitationRegistry`, and each chat surface renders that registry in
 the format it supports.
 
 For regular LibreChat KB answers, the system shall prefer correctness over
-token-by-token streaming: KB-enriched requests are completed non-streaming and
-then rendered once with a deterministic Markdown source list. General chat may
-remain streaming.
+token-by-token source rendering: KB-enriched streaming requests keep the
+LibreChat/LangGraph streaming contract, buffer model-authored text, and render
+deterministic Markdown sources at the final boundary. Compatible non-streaming
+callers may opt into a non-streaming deterministic path.
 
 ## Goals
 
 - Stop hallucinated or irrelevant URLs in regular LibreChat.
-- Remove fragile stream-delta citation rewriting from the target architecture.
+- Remove source-truth from stream deltas; streaming may remain as transport.
 - Keep widget/partner and LibreChat on one shared citation implementation.
 - Avoid duplicated source extraction logic between services.
 - Make deployment of citation helpers explicit and testable.
@@ -105,12 +107,17 @@ them as source truth.
 
 ### Module 3: Regular LibreChat KB Rendering
 
-**REQ-3.1** WHEN a regular LibreChat request is KB-enriched and has citable
-sources, THE SYSTEM SHALL call the model with `stream=false`.
+**REQ-3.1** WHEN a regular LibreChat request is KB-enriched and the caller
+already requested `stream=true`, THE SYSTEM SHALL preserve `stream=true` to
+honor LibreChat/LangGraph's message contract.
 
-**REQ-3.2** WHEN the non-streaming model response returns, THE SYSTEM SHALL
-render a single final assistant message containing answer prose and a
-deterministic Markdown source list.
+**REQ-3.1a** WHEN a regular LibreChat request is KB-enriched, the caller did
+not request streaming, and `KLAI_KB_CHAT_RENDER_MODE=deterministic_non_streaming`,
+THE SYSTEM MAY call the model with `stream=false`.
+
+**REQ-3.2** WHEN the model response reaches a final rendering boundary
+(non-streaming response or stream close), THE SYSTEM SHALL render answer prose
+with a deterministic Markdown source list.
 
 **REQ-3.3** THE Markdown source list SHALL be derived solely from the
 `CitationRegistry`.
@@ -161,8 +168,9 @@ distinguish:
 **REQ-6.2** The system SHALL expose a rollback switch for regular LibreChat KB
 rendering mode during rollout.
 
-**REQ-6.3** The rollback switch SHALL default to the new deterministic
-non-streaming path after rollout validation.
+**REQ-6.3** The render-mode switch SHALL default to the streaming-safe
+`streaming_guard` path unless a future LibreChat integration proves the
+non-streaming path safe end-to-end.
 
 ## Architecture
 
@@ -194,12 +202,12 @@ non-streaming path after rollout validation.
 
 ## Key Design Decisions
 
-### D1: KB LibreChat is non-streaming
+### D1: KB LibreChat keeps the caller's streaming contract
 
-The regular LibreChat KB path shall not token-stream model output. Source
-correctness requires a final rendering boundary. Streaming can remain for
-general chat and for future clients that support a structured final-source
-event cleanly.
+The regular LibreChat KB path shall not expose model-authored source URLs while
+streaming. Source correctness requires a final rendering boundary, but the
+transport may remain streaming because LibreChat/LangGraph expects streaming
+message writes for its agent graph.
 
 ### D2: Source list first, inline markers second
 
@@ -235,10 +243,11 @@ trusted citation.
 1. Add registry/renderer API to `klai-libs/citations`.
 2. Refactor widget/partner code to use registry/renderer names while preserving
    behavior.
-3. Change regular LibreChat KB requests to non-streaming rendering behind
-   `KLAI_KB_CHAT_RENDER_MODE=deterministic_non_streaming`.
+3. Keep regular LibreChat KB requests streaming-safe by default; allow
+   `KLAI_KB_CHAT_RENDER_MODE=deterministic_non_streaming` only for compatible
+   non-streaming callers.
 4. Run focused tests and production import smoke.
 5. Deploy with rollback env available.
 6. Observe LiteLLM logs for 7 days.
-7. Remove legacy streaming post-processing path in a cleanup PR.
-
+7. Remove the `legacy_stream_guard` alias after one deploy window; keep
+   `streaming_guard` as the default path.

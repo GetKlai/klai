@@ -195,6 +195,26 @@ async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> s
     return "\n\n".join(parts) if parts else None
 
 
+def _citation_runtime_options(
+    chunks: list[dict[str, Any]],
+    *,
+    is_widget_chat: bool,
+) -> tuple[set[str], dict[int, str], dict[str, dict[str, str]], Literal["links", "markers"]]:
+    """Return citation inputs for the two partner chat rendering modes.
+
+    Widget chat uses backend-managed registry rendering, so it does not need
+    the legacy model-authored citation URL maps. Partner API chat keeps those
+    maps for backward-compatible linked-citation sanitizing.
+    """
+    if is_widget_chat:
+        return set(), {}, {}, "markers"
+
+    citation_source_urls = _citation_source_urls_from_chunks(chunks)
+    citation_source_metadata = _citation_source_metadata_from_chunks(chunks)
+    allowed_source_urls = set(citation_source_urls.values()) or _source_urls_from_chunks(chunks)
+    return allowed_source_urls, citation_source_urls, citation_source_metadata, "links"
+
+
 async def _audit_streaming_wrapper(
     inner: AsyncGenerator[bytes],
     *,
@@ -435,11 +455,15 @@ async def chat_completions(
                 task.add_done_callback(_pending.discard)
 
     audit_ready = is_widget_chat and audit_widget_id is not None and audit_session_key is not None
+    (
+        allowed_source_urls,
+        citation_source_urls,
+        citation_source_metadata,
+        citation_output,
+    ) = _citation_runtime_options(chunks, is_widget_chat=is_widget_chat)
 
     # 8. Streaming or non-streaming
     if request.stream:
-        citation_source_urls = _citation_source_urls_from_chunks(chunks)
-        citation_source_metadata = _citation_source_metadata_from_chunks(chunks)
         streaming_gen = chat_completion_streaming(
             messages=request.messages,
             model=request.model,
@@ -447,11 +471,11 @@ async def chat_completions(
             system_prompt=system_prompt,
             settings=settings,
             org_id=auth.org_id,
-            allowed_source_urls=set(citation_source_urls.values()) or _source_urls_from_chunks(chunks),
+            allowed_source_urls=allowed_source_urls,
             citation_source_urls=citation_source_urls,
             citation_source_metadata=citation_source_metadata,
             citation_chunks=chunks,
-            citation_output="markers" if is_widget_chat else "links",
+            citation_output=citation_output,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -467,8 +491,6 @@ async def chat_completions(
         )
 
     # Non-streaming
-    citation_source_urls = _citation_source_urls_from_chunks(chunks)
-    citation_source_metadata = _citation_source_metadata_from_chunks(chunks)
     result = await chat_completion_non_streaming(
         messages=request.messages,
         model=request.model,
@@ -476,11 +498,11 @@ async def chat_completions(
         system_prompt=system_prompt,
         settings=settings,
         org_id=auth.org_id,
-        allowed_source_urls=set(citation_source_urls.values()) or _source_urls_from_chunks(chunks),
+        allowed_source_urls=allowed_source_urls,
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
         citation_chunks=chunks,
-        citation_output="markers" if is_widget_chat else "links",
+        citation_output=citation_output,
     )
     if audit_ready:
         assistant_text, assistant_sources = _extract_assistant_text_and_sources(result)

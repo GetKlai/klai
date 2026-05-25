@@ -395,13 +395,8 @@ async def test_widget_streaming_uses_structured_citation_mode():
     assert mock_retrieve.call_args.kwargs["backend_managed_citations"] is True
     assert chat_stream.call_args.kwargs["citation_output"] == "markers"
     assert chat_stream.call_args.kwargs["citation_chunks"] == retrieved_chunks
-    assert chat_stream.call_args.kwargs["citation_source_urls"] == {1: "https://getklai.com/docs/legal/privacy"}
-    assert chat_stream.call_args.kwargs["citation_source_metadata"] == {
-        "https://getklai.com/docs/legal/privacy": {
-            "title": "Privacy policy",
-            "url": "https://getklai.com/docs/legal/privacy",
-        }
-    }
+    assert chat_stream.call_args.kwargs["citation_source_urls"] == {}
+    assert chat_stream.call_args.kwargs["citation_source_metadata"] == {}
 
 
 @pytest.mark.asyncio

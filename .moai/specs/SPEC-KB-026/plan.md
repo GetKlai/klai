@@ -10,7 +10,7 @@ without changing its public API.
 | Area | Change | Risk |
 |---|---|---|
 | `klai-libs/citations` | Add explicit registry + renderers on top of current citation logic | Low |
-| `deploy/litellm/klai_knowledge.py` | Route KB-enriched requests through deterministic non-streaming rendering | Medium |
+| `deploy/litellm/klai_knowledge.py` | Route KB-enriched requests through a streaming-safe deterministic render boundary | Medium |
 | `klai-portal/backend/app/services/partner_chat.py` | Rename/refactor toward registry renderer; remove duplicate source helpers where safe | Medium |
 | `deploy/docker-compose.yml` / LiteLLM deploy | Harden helper loading/import checks | Medium |
 | Tests | Add production-path tests for non-streaming KB LibreChat + widget structured sources | Low |
@@ -53,14 +53,17 @@ Add env:
 - `KLAI_KB_CHAT_RENDER_MODE`
 
 Values:
-- `deterministic_non_streaming` (target/default after rollout)
-- `legacy_stream_guard` (temporary rollback)
+- `streaming_guard` (default; preserves LibreChat/LangGraph streaming contract)
+- `deterministic_non_streaming` (opt-in for compatible non-streaming callers)
+- `legacy_stream_guard` (temporary alias for `streaming_guard`)
 
-### Task 2.2: Force KB Requests to Non-Streaming
+### Task 2.2: Resolve Render Mode Per Request
 
 In `async_pre_call_hook`, when retrieval returns citable chunks:
 - store citation registry metadata in `_klai_kb_meta`;
-- set `data["stream"] = False` for deterministic mode;
+- preserve `stream=true` requests and render at stream close;
+- set `data["stream"] = False` only for explicit deterministic mode on
+  callers that did not already request streaming;
 - preserve the caller's original stream preference in metadata for logging.
 
 Important:
@@ -79,10 +82,10 @@ Failure handling:
 - if registry has no sources, return deterministic no-citable-sources message;
 - log `kb_citations_no_citable_sources`.
 
-### Task 2.4: Keep Temporary Rollback Path
+### Task 2.4: Keep Temporary Alias
 
-Keep `async_post_call_streaming_iterator_hook` only for
-`legacy_stream_guard`. Mark it with a cleanup comment tied to SPEC-KB-026.
+Accept `legacy_stream_guard` as a config alias for one deploy window, but emit
+new metadata as `streaming_guard`.
 
 ## Phase 3 — Widget / Partner Refactor
 
@@ -174,7 +177,7 @@ Add:
 
 ## Phase 6 — Rollout and Cleanup
 
-1. Deploy with `KLAI_KB_CHAT_RENDER_MODE=deterministic_non_streaming`.
+1. Deploy with the default `KLAI_KB_CHAT_RENDER_MODE=streaming_guard`.
 2. Confirm regular LibreChat KB answer has deterministic sources.
 3. Confirm general chat still streams.
 4. Watch LiteLLM logs:
@@ -200,11 +203,10 @@ git diff --check
 ## Rollback
 
 Immediate rollback:
-- set `KLAI_KB_CHAT_RENDER_MODE=legacy_stream_guard`;
+- leave or set `KLAI_KB_CHAT_RENDER_MODE=streaming_guard`;
 - recreate LiteLLM.
 
 Code rollback:
 - revert the SPEC-KB-026 implementation commit;
 - keep `klai_citations.py` mount in place because it is required by the
   existing hotfix.
-
