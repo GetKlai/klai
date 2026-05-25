@@ -211,3 +211,91 @@ async def test_no_short_docs_keeps_skip_reasons_empty() -> None:
     )
 
     assert sync_run.skip_reasons == {}
+
+
+@pytest.mark.asyncio
+async def test_document_failure_marks_run_failed() -> None:
+    """A per-document ingest failure must not become a successful cursor baseline."""
+    sync_run = MagicMock()
+    sync_run.status = SyncStatus.PENDING
+    sync_run.cursor_state = None
+    sync_run.error_details = None
+    sync_run.quality_status = None
+    sync_run.skip_reasons = {}
+
+    session_maker_mock, _session = _mock_session_maker(sync_run)
+
+    portal_client = MagicMock()
+    portal_client.get_connector_config = AsyncMock(return_value=_portal_config())
+    portal_client.report_sync_status = AsyncMock()
+
+    adapter = MagicMock()
+    adapter.get_cursor_state = AsyncMock(return_value={"page_token": "advanced-cursor"})
+    adapter.list_documents = AsyncMock(return_value=[_short_doc_ref("/failing.md")])
+    adapter.fetch_document = AsyncMock(return_value=b"<bytes>")
+    adapter.post_sync = AsyncMock(return_value=None)
+
+    registry = MagicMock()
+    registry.get = MagicMock(return_value=adapter)
+
+    ingest_client = MagicMock()
+    ingest_client.ingest_document = AsyncMock(side_effect=RuntimeError("ingest exploded"))
+
+    engine = SyncEngine(
+        session_maker=session_maker_mock,
+        registry=registry,
+        ingest_client=ingest_client,
+        portal_client=portal_client,
+        settings=MagicMock(),
+        image_store=None,
+        crawl_sync_client=MagicMock(),
+    )
+
+    long_text_result = MagicMock()
+    long_text_result.text = "This document is long enough to reach the ingest client. " * 2
+    long_text_result.images = []
+
+    def _fake_parser(_content: bytes, _filename: str) -> Any:  # noqa: ANN401
+        return long_text_result
+
+    import app.services.sync_engine as engine_module
+
+    original_parser = engine_module.parse_document_with_images
+    engine_module.parse_document_with_images = _fake_parser
+    try:
+        await engine.run_sync(
+            uuid.UUID("55555555-5555-5555-5555-555555555555"),
+            uuid.UUID("66666666-6666-6666-6666-666666666666"),
+        )
+    finally:
+        engine_module.parse_document_with_images = original_parser
+
+    assert sync_run.status == SyncStatus.FAILED
+    assert sync_run.documents_total == 1
+    assert sync_run.documents_ok == 0
+    assert sync_run.documents_failed == 1
+    assert sync_run.error_details == [{"file": "/failing.md", "error": "ingest exploded"}]
+
+    portal_client.report_sync_status.assert_awaited_once()
+    kwargs = portal_client.report_sync_status.await_args.kwargs
+    assert kwargs["sync_status"] == SyncStatus.FAILED
+    assert kwargs["documents_failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_last_successful_run_ignores_completed_runs_with_failures() -> None:
+    """Retries must start from the last fully successful cursor, not a partial run."""
+    session = AsyncMock()
+    scalars = MagicMock()
+    scalars.first = MagicMock(return_value=None)
+    exec_result = MagicMock()
+    exec_result.scalars = MagicMock(return_value=scalars)
+    session.execute = AsyncMock(return_value=exec_result)
+
+    await SyncEngine._get_last_successful_run(
+        session,
+        uuid.UUID("77777777-7777-7777-7777-777777777777"),
+    )
+
+    statement = session.execute.await_args.args[0]
+    assert "documents_failed" in str(statement)
