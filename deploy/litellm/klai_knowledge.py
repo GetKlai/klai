@@ -1994,10 +1994,12 @@ class KlaiKnowledgeHook(CustomLogger):
         _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
         original_stream = data.get("stream")
-        if (
-            KLAI_KB_CHAT_RENDER_MODE == _KB_RENDER_MODE_DETERMINISTIC
-            and original_stream is not True
-        ):
+        effective_render_mode = (
+            _KB_RENDER_MODE_LEGACY_STREAM
+            if original_stream is True
+            else KLAI_KB_CHAT_RENDER_MODE
+        )
+        if effective_render_mode == _KB_RENDER_MODE_DETERMINISTIC:
             data["stream"] = False
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
         # Stored in data["metadata"] so it is never forwarded to the LLM provider.
@@ -2015,7 +2017,7 @@ class KlaiKnowledgeHook(CustomLogger):
             "citation_chunks": chunks,
             "citable_sources_count": len(citation_registry.sources),
             "original_stream": original_stream,
-            "render_mode": KLAI_KB_CHAT_RENDER_MODE,
+            "render_mode": effective_render_mode,
             "retrieval_ms": retrieval_ms,
             "gate_bypassed": False,
         }
