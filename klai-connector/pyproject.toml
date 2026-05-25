@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.9.0",
     "pydantic-settings>=2.7.0",
     "unstructured[docx,pptx,xlsx]>=0.16.0",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "httpx[http2]>=0.28.0",
     "apscheduler>=3.10.0",
     "cryptography>=44.0.0",
