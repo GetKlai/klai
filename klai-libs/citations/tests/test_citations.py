@@ -198,6 +198,33 @@ def test_document_sources_do_not_fallback_to_first_retrieved_sources() -> None:
     assert "https://docs.getklai.com/build-a-knowledge-base" not in rendered.content
 
 
+def test_rendered_answer_renumbers_copied_mid_document_steps() -> None:
+    rendered = render_markdown_answer_with_sources(
+        (
+            "TL;DR\n"
+            "Open Admin > Gebruikers en klik op Nodigen.\n"
+            "Voeg stap voor stap toe:\n"
+            "3. Typ het werk-emailadres van de nieuwe gebruiker.\n"
+            "4. Selecteer de startrol via het rol-dropdownmenu.\n"
+            "6. De gebruiker klikt op de link en is klaar."
+        ),
+        [
+            {
+                "title": "For admins",
+                "source_url": "https://docs.getklai.com/for-admins",
+                "text": "Admins invite users from Admin > Gebruikers with a start role.",
+            }
+        ],
+    )
+
+    assert "3. Typ het werk-emailadres" not in rendered.content
+    assert "4. Selecteer de startrol" not in rendered.content
+    assert "6. De gebruiker klikt" not in rendered.content
+    assert "1. Typ het werk-emailadres" in rendered.content
+    assert "2. Selecteer de startrol" in rendered.content
+    assert "3. De gebruiker klikt" in rendered.content
+
+
 def test_evidence_context_preserves_heading_as_section_metadata() -> None:
     context = render_evidence_context(
         [
