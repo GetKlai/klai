@@ -477,3 +477,75 @@ def test_trusted_source_composition_uses_query_intent_not_surface_overlap() -> N
     assert composed.decision["selected"][0]["query_score"] >= 2
     assert composed.decision["rejected"][0]["title"] == "The five roles"
     assert composed.decision["rejected"][0]["reason"] == "query_intent_not_supported"
+
+
+def test_trusted_source_composition_uses_evidence_items_and_strips_model_source_bullets() -> None:
+    composed = compose_answer_with_trusted_sources(
+        (
+            "TL;DR\n"
+            "Ga als admin naar Admin > Users, klik op Invite, vul het werkmailadres in "
+            "en kies direct de juiste rol.\n\n"
+            "- Invite and remove people\n"
+            "- The five roles\n"
+            "- For admins\n"
+            "- Getting started"
+        ),
+        [
+            {
+                "label": "1",
+                "title": "For admins",
+                "url": "https://getklai.getklai.com/docs/klai-help/for-admins",
+                "evidence_ids": ["E1"],
+            },
+            {
+                "label": "2",
+                "title": "Getting started",
+                "url": "https://getklai.getklai.com/docs/klai-help/getting-started",
+                "evidence_ids": ["E2"],
+            },
+        ],
+        query_text="Hoe voeg ik als admin een nieuwe gebruiker toe?",
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "title": "For admins",
+                "source_url": "https://getklai.getklai.com/docs/klai-help/for-admins",
+                "text": "Admins manage users, invite teammates, and configure roles.",
+            },
+            {
+                "evidence_id": "E2",
+                "title": "Getting started",
+                "source_url": "https://getklai.getklai.com/docs/klai-help/getting-started",
+                "text": "Get started by inviting users and setting up your account.",
+            },
+            {
+                "evidence_id": "E3",
+                "title": "Invite and remove people",
+                "source_url": "https://getklai.getklai.com/docs/klai-help/invite-and-remove-people",
+                "text": (
+                    "Invite a colleague from Admin > Users. Click Invite, enter their work email, "
+                    "pick a starting role, and confirm the invitation."
+                ),
+            },
+            {
+                "evidence_id": "E4",
+                "title": "The five roles",
+                "source_url": "https://getklai.getklai.com/docs/klai-help/the-five-roles",
+                "text": "Open Admin > Users. Click a user and pick a new role from the dropdown.",
+            },
+        ],
+    )
+
+    assert "- Invite and remove people" not in composed.content
+    assert "- The five roles" not in composed.content
+    assert "- For admins" not in composed.content
+    assert composed.sources == [
+        {
+            "label": "1",
+            "title": "Invite and remove people",
+            "url": "https://getklai.getklai.com/docs/klai-help/invite-and-remove-people",
+        }
+    ]
+    assert {item["reason"] for item in composed.decision["rejected"]} >= {
+        "weaker_than_best_supported_source"
+    }
