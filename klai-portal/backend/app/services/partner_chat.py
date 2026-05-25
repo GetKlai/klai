@@ -29,7 +29,7 @@ import structlog
 from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
 
 from app.core.config import Settings
-from app.services.citations import compose_citations
+from app.services.citations import build_citation_registry, render_structured_answer
 from app.trace import get_trace_headers
 from app.utils.language_detect import (
     detect_language,
@@ -1108,7 +1108,8 @@ async def _chat_completion_streaming_with_composed_citations(
                 if isinstance(text, str) and text:
                     raw_text_parts.append(text)
 
-    composed = compose_citations("".join(raw_text_parts), citation_chunks or [])
+    registry = build_citation_registry(citation_chunks or [])
+    composed = render_structured_answer("".join(raw_text_parts), registry)
     if not composed.sources:
         yield _sse_content_delta(_no_citable_sources_message(user_query))
         yield b"data: [DONE]\n\n"
@@ -1365,7 +1366,8 @@ async def chat_completion_non_streaming(
             message = choice.get("message") if isinstance(choice, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
             if isinstance(message, dict) and isinstance(content, str):
-                composed = compose_citations(content, citation_chunks or [])
+                registry = build_citation_registry(citation_chunks or [])
+                composed = render_structured_answer(content, registry)
                 message["content"] = (
                     composed.content
                     if composed.sources

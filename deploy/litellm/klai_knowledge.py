@@ -48,7 +48,10 @@ from klai_chat_prompts import (
     GROUNDED_CHAT_SYSTEM_PROMPT,
     META_CHAT_SYSTEM_PROMPT,
 )
-from klai_citations import citation_sources_from_chunks, render_markdown_answer_with_sources
+from klai_citations import (
+    build_citation_registry,
+    render_markdown_answer,
+)
 
 # SPEC-MCP-RETRIEVAL-001 Phase 1: telemetry helpers moved out of this file
 # into ``klai-libs/retrieval-telemetry/`` so klai-knowledge-mcp's new
@@ -272,6 +275,13 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
 )
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
+_KB_RENDER_MODE_DETERMINISTIC = "deterministic_non_streaming"
+_KB_RENDER_MODE_LEGACY_STREAM = "legacy_stream_guard"
+KLAI_KB_CHAT_RENDER_MODE = (
+    _KB_RENDER_MODE_LEGACY_STREAM
+    if os.getenv("KLAI_KB_CHAT_RENDER_MODE", "").strip().lower() == _KB_RENDER_MODE_LEGACY_STREAM
+    else _KB_RENDER_MODE_DETERMINISTIC
+)
 _SENTINEL_URLS = {"undefined", "null", "none", "n/a", "na", "-", "#"}
 
 # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2 — anti-hallucination injection
@@ -1270,6 +1280,15 @@ def _set_message_content(message: object, content: object) -> None:
         setattr(message, "content", content)
 
 
+def _no_citable_sources_message(user_query: object) -> str:
+    query = user_query if isinstance(user_query, str) else ""
+    dutch_markers = {"wat", "waar", "welke", "hoe", "waarom", "gegevens", "bronnen", "klopt"}
+    query_tokens = {token.lower() for token in re.findall(r"[a-zA-ZÀ-ÿ]+", query)}
+    if query_tokens & dutch_markers:
+        return "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+    return "I cannot answer this reliably from the available knowledge sources."
+
+
 def _get_response_choices(response: object) -> object:
     if isinstance(response, dict):
         return response.get("choices") or []
@@ -1287,16 +1306,22 @@ def _flush_citation_stream_buffer(
     if not full_text:
         return 0
 
+    registry = build_citation_registry(citation_chunks)
+    rendered_content = (
+        render_markdown_answer(
+            full_text,
+            registry,
+            allowed_image_urls=allowed_image_urls,
+        ).content
+        if registry.has_sources
+        else _no_citable_sources_message(kb_meta.get("user_query"))
+    )
+
     for choice in _get_response_choices(response):
         delta = _get_choice_message(choice, "delta")
         if delta is None:
             continue
-        composed = render_markdown_answer_with_sources(
-            full_text,
-            citation_chunks,
-            allowed_image_urls=allowed_image_urls,
-        )
-        _set_message_content(delta, composed.content)
+        _set_message_content(delta, rendered_content)
         stream_parts.clear()
         return 1
     return 0
@@ -1319,6 +1344,7 @@ def _compose_kb_response(
     citation_chunks = [chunk for chunk in (kb_meta.get("citation_chunks") or []) if isinstance(chunk, dict)]
     if not citation_chunks:
         return 0
+    registry = build_citation_registry(citation_chunks)
 
     changed = 0
     for choice in _get_response_choices(response):
@@ -1326,13 +1352,17 @@ def _compose_kb_response(
         if message is not None:
             content = _get_message_content(message)
             if isinstance(content, str):
-                composed = render_markdown_answer_with_sources(
-                    content,
-                    citation_chunks,
-                    allowed_image_urls=allowed_image_urls,
+                rendered_content = (
+                    render_markdown_answer(
+                        content,
+                        registry,
+                        allowed_image_urls=allowed_image_urls,
+                    ).content
+                    if registry.has_sources
+                    else _no_citable_sources_message(kb_meta.get("user_query"))
                 )
-                if composed.content != content:
-                    _set_message_content(message, composed.content)
+                if rendered_content != content:
+                    _set_message_content(message, rendered_content)
                     changed += 1
             continue
 
@@ -1885,13 +1915,13 @@ class KlaiKnowledgeHook(CustomLogger):
             "- Do NOT add images in the TL;DR (section 1).]\n"
         )
         lines = [header, source_link_instruction]
-        citation_sources = citation_sources_from_chunks(chunks)
+        citation_registry = build_citation_registry(chunks)
         citation_source_urls: dict[int, str] = {}
         for chunk_index, chunk in enumerate(chunks, 1):
             source_url = _chunk_source_url(chunk)
             if source_url:
                 citation_source_urls[chunk_index] = source_url
-        allowed_source_urls: set[str] = {source.url for source in citation_sources}
+        allowed_source_urls: set[str] = {source.url for source in citation_registry.sources}
         allowed_image_urls: set[str] = set()
 
         for chunk_index, chunk in enumerate(chunks, 1):
@@ -1962,11 +1992,15 @@ class KlaiKnowledgeHook(CustomLogger):
         prefix = _compose_libre_chat_prefix(templates_block, context_block)
         _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
+        original_stream = data.get("stream")
+        if KLAI_KB_CHAT_RENDER_MODE == _KB_RENDER_MODE_DETERMINISTIC:
+            data["stream"] = False
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
         # Stored in data["metadata"] so it is never forwarded to the LLM provider.
         data.setdefault("metadata", {})["_klai_kb_meta"] = {
             "org_id": org_id,
             "user_id": user_id,
+            "user_query": query,
             "chunks_injected": len(chunks),
             "chunk_ids": chunk_ids,
             "allowed_source_urls": sorted(allowed_source_urls),
@@ -1975,6 +2009,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 str(index): url for index, url in citation_source_urls.items()
             },
             "citation_chunks": chunks,
+            "citable_sources_count": len(citation_registry.sources),
+            "original_stream": original_stream,
+            "render_mode": KLAI_KB_CHAT_RENDER_MODE,
             "retrieval_ms": retrieval_ms,
             "gate_bypassed": False,
         }
@@ -2000,7 +2037,11 @@ class KlaiKnowledgeHook(CustomLogger):
 
     async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
         kb_meta = request_data.get("metadata", {}).get("_klai_kb_meta")
-        if not kb_meta or kb_meta.get("gate_bypassed"):
+        if (
+            not kb_meta
+            or kb_meta.get("gate_bypassed")
+            or kb_meta.get("render_mode") != _KB_RENDER_MODE_LEGACY_STREAM
+        ):
             async for item in response:
                 yield item
             return
