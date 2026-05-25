@@ -819,15 +819,18 @@ async def widget_config(
     # @MX:NOTE: [AUTO] Rate-limit key is widget_mint:{id} (public widget_id from URL param).
     # Limit is 10/min per widget to prevent unbounded LLM-token drain via the public mint path.
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-7
-    redis = get_redis_pool()
-    allowed, retry_after = await check_rate_limit(redis, f"widget_mint:{id}", limit_per_minute=10, window_seconds=60)
-    if not allowed:
-        return Response(
-            content='{"detail":"Rate limit exceeded"}',
-            status_code=429,
-            media_type="application/json",
-            headers={"Retry-After": str(retry_after)},
+    redis = await get_redis_pool()
+    if redis is not None:
+        allowed, retry_after = await check_rate_limit(
+            redis, f"widget_mint:{id}", limit_per_minute=10, window_seconds=60
         )
+        if not allowed:
+            return Response(
+                content='{"detail":"Rate limit exceeded"}',
+                status_code=429,
+                media_type="application/json",
+                headers={"Retry-After": str(retry_after)},
+            )
 
     # Look up widget by public widget_id (SPEC-WIDGET-002: own table)
     result = await db.execute(select(Widget).where(Widget.widget_id == id))
@@ -938,15 +941,18 @@ async def public_bot_config(
     # @MX:NOTE: [AUTO] Same rate-limit as widget_config — isolates public share-link
     # mint path from the embed mint path with separate per-widget keys.
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-7
-    redis = get_redis_pool()
-    allowed, retry_after = await check_rate_limit(redis, f"widget_mint:{id}", limit_per_minute=10, window_seconds=60)
-    if not allowed:
-        return Response(
-            content='{"detail":"Rate limit exceeded"}',
-            status_code=429,
-            media_type="application/json",
-            headers={"Retry-After": str(retry_after)},
+    redis = await get_redis_pool()
+    if redis is not None:
+        allowed, retry_after = await check_rate_limit(
+            redis, f"widget_mint:{id}", limit_per_minute=10, window_seconds=60
         )
+        if not allowed:
+            return Response(
+                content='{"detail":"Rate limit exceeded"}',
+                status_code=429,
+                media_type="application/json",
+                headers={"Retry-After": str(retry_after)},
+            )
 
     result = await db.execute(select(Widget).where(Widget.widget_id == id))
     widget_row = result.scalar_one_or_none()

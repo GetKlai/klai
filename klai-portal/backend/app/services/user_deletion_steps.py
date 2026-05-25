@@ -87,6 +87,7 @@ async def step_external_kb_delete(state: _UserDeletionState) -> None:
     from app.services.kb_offboarding import apply_dispositions
 
     if state.kb_dispositions:
+        assert state.db_for_steps is not None, "db_for_steps must be set before step_external_kb_delete"
         await apply_dispositions(
             state.zitadel_user_id,
             state.kb_dispositions,
@@ -122,6 +123,7 @@ async def step_portal_db_delete(state: _UserDeletionState) -> None:
     This step uses state.db_for_steps (the caller's session) so the
     DELETE and the success audit row land in the same transaction.
     """
+    assert state.db_for_steps is not None, "db_for_steps must be set before step_portal_db_delete"
     db: AsyncSession = state.db_for_steps
 
     await db.delete(state.portal_user)
