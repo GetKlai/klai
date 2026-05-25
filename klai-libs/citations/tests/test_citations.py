@@ -167,6 +167,37 @@ def test_document_sources_filter_irrelevant_retrieved_pages() -> None:
     assert "- [Add sources](https://docs.getklai.com/add-sources)" not in rendered.content
 
 
+def test_document_sources_do_not_fallback_to_first_retrieved_sources() -> None:
+    rendered = render_markdown_answer_with_sources(
+        (
+            "Je voegt een extra gebruiker toe via de admin-functie. "
+            "Een admin kan nieuwe gebruikers uitnodigen of hun rol aanpassen."
+        ),
+        [
+            {
+                "title": "Add sources",
+                "source_url": "https://docs.getklai.com/add-sources",
+                "text": "Connect Notion, Google Drive, websites, and other knowledge sources.",
+            },
+            {
+                "title": "Getting started",
+                "source_url": "https://docs.getklai.com/getting-started",
+                "text": "Create your first knowledge base and ask Klai questions.",
+            },
+            {
+                "title": "Build a knowledge base",
+                "source_url": "https://docs.getklai.com/build-a-knowledge-base",
+                "text": "Add documents, websites, and integrations to improve knowledge retrieval.",
+            },
+        ],
+    )
+
+    assert rendered.sources == []
+    assert "https://docs.getklai.com/add-sources" not in rendered.content
+    assert "https://docs.getklai.com/getting-started" not in rendered.content
+    assert "https://docs.getklai.com/build-a-knowledge-base" not in rendered.content
+
+
 def test_evidence_context_preserves_heading_as_section_metadata() -> None:
     context = render_evidence_context(
         [
