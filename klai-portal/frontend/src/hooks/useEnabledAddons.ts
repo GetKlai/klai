@@ -1,5 +1,5 @@
 // SPEC-PORTAL-PROFILES-001 P3.8: Fetch enabled add-ons for the current tenant.
-// Admin-only — only call from admin routes.
+// Admin-only - only call from admin routes.
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/lib/auth'
 import { apiFetch } from '@/lib/apiFetch'

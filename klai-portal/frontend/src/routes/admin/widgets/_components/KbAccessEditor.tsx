@@ -11,7 +11,7 @@ interface Props {
 }
 
 /**
- * Widget KB selector — multi-select checkbox list.
+ * Widget KB selector - multi-select checkbox list.
  * Widgets only have read access, so there's no access level column.
  */
 export function KbAccessEditor({ value, onChange, disabled = false }: Props) {

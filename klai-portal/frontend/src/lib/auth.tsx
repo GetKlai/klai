@@ -1,5 +1,5 @@
 /**
- * BFF session provider — SPEC-AUTH-008 Phase B.
+ * BFF session provider - SPEC-AUTH-008 Phase B.
  *
  * Cookie-based auth replacement for the former react-oidc-context integration.
  * The browser holds one `__Secure-klai_session` cookie (HttpOnly) + a readable
@@ -37,12 +37,12 @@ export {
 const AUTH_DEV_MODE = import.meta.env.VITE_AUTH_DEV_MODE === 'true'
 
 // ---------------------------------------------------------------------------
-// Dev mode — bypass auth entirely (must match backend AUTH_DEV_MODE=true)
+// Dev mode - bypass auth entirely (must match backend AUTH_DEV_MODE=true)
 // ---------------------------------------------------------------------------
 
 function DevAuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
-    authLogger.warn('Auth dev mode active — authentication is bypassed. Never use in production!')
+    authLogger.warn('Auth dev mode active - authentication is bypassed. Never use in production!')
   }, [])
 
   const value = useMemo<AuthContextValue>(
@@ -67,7 +67,7 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
 }
 
 // ---------------------------------------------------------------------------
-// Production BFF provider — fetches /api/auth/session on mount
+// Production BFF provider - fetches /api/auth/session on mount
 // ---------------------------------------------------------------------------
 
 function BffAuthProvider({ children }: { children: ReactNode }) {
@@ -126,7 +126,7 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
 
   const removeUser = useCallback(async (): Promise<void> => {
     if (isSigningOut.current) return
-    // Sticky flag — stays true until the page unloads. Calling setUser(null)
+    // Sticky flag - stays true until the page unloads. Calling setUser(null)
     // before the hard navigation triggered AppLayout's "navigate to /" guard,
     // which let LoginPage auto-signinRedirect race with the Zitadel end_session
     // hop and re-authenticate the user. Skipping both the state mutation and
@@ -141,7 +141,7 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
       })
       const postLogout = res.headers.get('X-Post-Logout-Redirect')
       if (postLogout) {
-        // RP-initiated logout — hand the browser over to Zitadel for the
+        // RP-initiated logout - hand the browser over to Zitadel for the
         // end_session bounce, which returns to /logged-out.
         window.location.href = postLogout
         return
@@ -149,7 +149,7 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
       window.location.href = '/logged-out'
     } catch (err) {
       authLogger.error('BFF logout failed', err)
-      // Navigation failed to even kick off — reset so the user can retry.
+      // Navigation failed to even kick off - reset so the user can retry.
       isSigningOut.current = false
       setUser(null)
       window.location.href = '/logged-out'

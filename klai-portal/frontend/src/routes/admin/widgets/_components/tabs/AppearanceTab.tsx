@@ -16,7 +16,7 @@ interface Props {
   widget: WidgetDetailResponse
 }
 
-// TWD-parity Appearance tab — five sub-sections (Brand & theme,
+// TWD-parity Appearance tab - five sub-sections (Brand & theme,
 // Welkomstbericht, Conversation starters, Chat display toggles, Widget
 // position). Wired fields land in widget_config JSON; widget client
 // renders those it supports (title, welcome, starters, hide_disclaimer

@@ -1,5 +1,5 @@
 /**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 — connector wizard shared utilities.
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 - connector wizard shared utilities.
  *
  * Covers ``joinSeedUrl`` (slash normalisation), now hosted in
  * ../-connector-constants.ts (was ../$kbSlug/-kb-helpers.tsx until the
@@ -25,7 +25,7 @@ describe('joinSeedUrl', () => {
     expect(joinSeedUrl('https://x.com', '/docs')).toBe('https://x.com/docs/')
   })
 
-  it('strips both — the redcactus case (the actual reported bug)', () => {
+  it('strips both - the redcactus case (the actual reported bug)', () => {
     expect(joinSeedUrl('https://wiki.redcactus.cloud/', '/nl/')).toBe(
       'https://wiki.redcactus.cloud/nl/',
     )

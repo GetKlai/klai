@@ -19,7 +19,7 @@ const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
 }
 
 /** OAuth-backed connector types that support the /api/oauth/{provider}/authorize reconnect flow.
- *  google_docs/sheets/slides are Google Drive aliases — the backend normalises
+ *  google_docs/sheets/slides are Google Drive aliases - the backend normalises
  *  them to the google_drive provider, so reconnect works for them too. */
 const OAUTH_RECONNECTABLE = new Set<string>([
   'google_drive', 'google_docs', 'google_sheets', 'google_slides', 'ms_docs',
@@ -110,7 +110,7 @@ export function ConnectorRow({
             {connector.last_sync_documents_ok.toLocaleString()} {m.connectors_documents_indexed()}
           </p>
         )}
-        {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5/REQ-7 — actionable error badge. */}
+        {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5/REQ-7 - actionable error badge. */}
         {connector.needs_reconfiguration && (
           <button
             type="button"

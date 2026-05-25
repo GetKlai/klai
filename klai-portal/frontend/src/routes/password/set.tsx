@@ -60,7 +60,7 @@ function PasswordSetPage() {
         return
       }
 
-      // Password is set. Backend returns 204 — auto-login is intentionally
+      // Password is set. Backend returns 204 - auto-login is intentionally
       // not attempted here (see #638). Show a success state with an explicit
       // "Inloggen" button; the user clicks through to the standard OIDC
       // login flow at `/` and re-authenticates with the password they just
@@ -110,7 +110,7 @@ function PasswordSetPage() {
           <p className="text-sm text-gray-400">
             {m.set_done_body()}
           </p>
-          {/* Anchor wrapped in Button styling — native browser navigation
+          {/* Anchor wrapped in Button styling - native browser navigation
               is immune to React event-handler crashes elsewhere on the page
               (e.g. the tabPrompt chunk that throws on /password/set). */}
           <Button asChild size="lg" className="w-full">

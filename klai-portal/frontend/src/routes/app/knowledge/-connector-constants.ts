@@ -41,7 +41,7 @@ export const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
 ]
 
 /**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix — slash-safe URL build.
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix - slash-safe URL build.
  *
  * Combines ``base_url`` and ``path_prefix`` without producing the ``//``
  * artifact that crawl4ai handles inconsistently (`https://x.com/` + `/nl/`

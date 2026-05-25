@@ -1,5 +1,5 @@
 /**
- * RoleGuard — SPEC-PORTAL-PROFILES-001 P3.3
+ * RoleGuard - SPEC-PORTAL-PROFILES-001 P3.3
  *
  * Renders children when the current user's effective_role meets or exceeds
  * minRole on the five-rung profile ladder. Falls back to LockedPanel otherwise.
@@ -19,7 +19,7 @@ interface RoleGuardProps {
 
 export function RoleGuard({ minRole, children }: RoleGuardProps) {
   const { user } = useCurrentUser()
-  // Platform admins bypass profile-role gates — mirrors the backend
+  // Platform admins bypass profile-role gates - mirrors the backend
   // is_platform_admin bypass on owner/role checks. Klai staff can preview
   // every gated surface without needing per-org role grants.
   if (user?.isAdmin) {

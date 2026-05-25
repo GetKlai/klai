@@ -6,7 +6,7 @@ export const Route = createFileRoute('/tenant-deleted')({
   component: TenantDeletedPage,
 })
 
-// @MX:NOTE: Public landing page — no auth required. Works even with stale auth cookies.
+// @MX:NOTE: Public landing page - no auth required. Works even with stale auth cookies.
 // Shown after org hard-delete completes (deprovisioning-status detects 404 and redirects here).
 // @MX:SPEC: SPEC-INFRA-TENANT-DELETE-001 Phase 11 R10
 function TenantDeletedPage() {

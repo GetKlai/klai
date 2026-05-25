@@ -63,7 +63,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
   }
 
   // Meta line: type label, optional item count for connectors. Drop the
-  // chunk count — the parent_chunks number is unreliable per-row.
+  // chunk count - the parent_chunks number is unreliable per-row.
   const metaParts: string[] = [source.type_label]
   if (source.kind === 'connector' && source.items_count > 0) {
     metaParts.push(`${source.items_count} items`)
@@ -76,7 +76,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
         className={[
           'group flex items-center gap-2 pr-2 transition-colors',
           // Keep the row in its hovered state while the delete-confirm
-          // pill is open — otherwise the pill (cream) would float
+          // pill is open - otherwise the pill (cream) would float
           // on a white row and the contrast looks like a bug.
           confirmingDelete ? 'bg-[var(--color-rl-cream)]' : 'klai-hover',
         ].join(' ')}
@@ -114,7 +114,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
 
         {/* Actions cell with rename-overlay slot.
             When renaming, SourceRowActions fades out and the Save/Cancel
-            buttons sit on top — same width, no layout shift. */}
+            buttons sit on top - same width, no layout shift. */}
         <div className="relative flex items-center">
           <SourceRowActions
             source={source}

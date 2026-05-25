@@ -277,7 +277,7 @@ function EditGroupPage() {
                     onChange={(e) => setSelectedUserId(e.target.value)}
                     className="flex-1"
                   >
-                    <option value="">— {m.admin_groups_members_add()} —</option>
+                    <option value="">- {m.admin_groups_members_add()} -</option>
                     {availableUsers.map((u) => (
                       <option key={u.zitadel_user_id} value={u.zitadel_user_id}>
                         {displayName(u)}

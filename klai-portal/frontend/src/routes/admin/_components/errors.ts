@@ -1,5 +1,5 @@
 /**
- * apiFetch formats errors as "{status}: {detail}" — fine for logs, ugly in
+ * apiFetch formats errors as "{status}: {detail}" - fine for logs, ugly in
  * UI toasts. cleanErrorMessage strips the "409: " / "404: " prefix so the
  * banner reads as natural prose.
  */

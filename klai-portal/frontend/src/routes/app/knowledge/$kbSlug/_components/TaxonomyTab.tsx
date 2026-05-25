@@ -1,5 +1,5 @@
 /**
- * TaxonomyTab — orchestrator for the Taxonomy/Insights tab. Composes
+ * TaxonomyTab - orchestrator for the Taxonomy/Insights tab. Composes
  * `<CoverageWidget>` (with `<CoverageNodeRow>`), `<ProposalCard>`,
  * `<TagCloud>`, plus the inline filter bar, add-form, and
  * suggest-flow banners.
@@ -15,7 +15,7 @@
  *   - singleton ids for proposal edit / reject (per-card input
  *     buffers live inside ProposalCard)
  *   - applyAllMutation + handleApplyAll (loops raw apiFetch + fires
- *     backfill — see SPEC Beslissingen § B5 for why orchestration
+ *     backfill - see SPEC Beslissingen § B5 for why orchestration
  *     stays here and not in a hook)
  *
  * Queries + mutations are extracted to `../-taxonomy-hooks.ts`.
@@ -116,7 +116,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   const [showAddRoot, setShowAddRoot] = useState(false)
   const [addParentId, setAddParentId] = useState<number | null>(null)
   const [newNodeName, setNewNodeName] = useState('')
-  // Singleton ids — only one proposal may be in edit OR reject mode at
+  // Singleton ids - only one proposal may be in edit OR reject mode at
   // any time. Per-card edit / reject input buffers live inside
   // ProposalCard. SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve.
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null)
@@ -151,7 +151,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   const [suggestState, setSuggestState] = useState<SuggestState>('idle')
 
   const canEdit = isContributor || isAdmin
-  // Stable empty-array fallbacks — TanStack Query returns undefined
+  // Stable empty-array fallbacks - TanStack Query returns undefined
   // until the first response, and a fresh `[]` per render would defeat
   // the useMemo'd derivations below.
   const nodes = useMemo(() => nodesQuery.data?.nodes ?? [], [nodesQuery.data?.nodes])
@@ -164,7 +164,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   //   - the suggestState useEffect below (count > 0 → banner)
   //   - handleApplyAll (loop body)
   //   - the Apply All button visibility
-  // Recomputes only when the proposals array changes — query refetches
+  // Recomputes only when the proposals array changes - query refetches
   // that return identical content hand back a new ref but the equality
   // check inside useMemo still sees a new ref, so this is mostly a
   // readability + DRY win, not a perf one.
@@ -175,7 +175,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
 
   // Sync suggestState with server data so the banner survives a page
   // refresh. Depend on the derived count (a primitive) rather than on
-  // proposalsQuery.data — that object's ref changes on every refetch,
+  // proposalsQuery.data - that object's ref changes on every refetch,
   // which would re-fire the effect unnecessarily.
   useEffect(() => {
     if (!proposalsQuery.isSuccess) return
@@ -195,7 +195,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
    * `auto_categorise=false` (skip per-approve classification), then
    * trigger a single backfill to re-classify everything against the
    * now-complete taxonomy. Calls `apiFetch` directly rather than via
-   * `useApproveProposal` — see SPEC Beslissingen § B5.
+   * `useApproveProposal` - see SPEC Beslissingen § B5.
    *
    * SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 4: per-approve auto_categorise
    * is suppressed so the single backfill at the end does all the
@@ -268,7 +268,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
         </div>
       )}
 
-      {/* Coverage widget — admin only */}
+      {/* Coverage widget - admin only */}
       {isAdmin && (
         <div>
           <div className="flex items-center gap-2 mb-3">
@@ -367,7 +367,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
         </div>
       )}
 
-      {/* Review queue — shown directly after coverage for visibility */}
+      {/* Review queue - shown directly after coverage for visibility */}
       {/* SPEC-TAXONOMY-REVIEW-FLOW-001 Issues 3+5+6: pending/approved/rejected
           all visible with status badges; pending rows have edit-before-approve;
           approved rows persist (don't disappear) so the operator can keep
@@ -484,7 +484,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
         </div>
       )}
 
-      {/* Review queue removed — moved to after Coverage */}
+      {/* Review queue removed - moved to after Coverage */}
 
     </div>
   )

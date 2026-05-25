@@ -17,10 +17,10 @@
  * @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-9
  */
 import { describe, it, expect } from 'vitest'
-// Import the utility before it exists — this will fail in RED phase.
+// Import the utility before it exists - this will fail in RED phase.
 import { _isSafeHttpUrl } from '../ActivityTab'
 
-describe('_isSafeHttpUrl — REQ-9 scheme allowlist', () => {
+describe('_isSafeHttpUrl - REQ-9 scheme allowlist', () => {
   describe('allowed schemes (must return true)', () => {
     it('accepts https:// URLs', () => {
       expect(_isSafeHttpUrl('https://example.com')).toBe(true)

@@ -17,13 +17,13 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useOffboardUser, type KbDisposition } from '@/hooks/useUserLifecycle'
 
 /**
- * SPEC-PORTAL-KB-OWNERSHIP-001 Phase 4 — admin offboarding wizard.
+ * SPEC-PORTAL-KB-OWNERSHIP-001 Phase 4 - admin offboarding wizard.
  *
  * Replaces the simple confirm-dialog with a per-KB disposition picker:
  *   - Org KBs the user solely owns: transfer to another active org
  *     member (default = the current admin, mirroring Google Workspace's
  *     "direct manager" pattern), or delete.
- *   - Personal KBs: always delete (no transfer option — REQ-2.4 / D2).
+ *   - Personal KBs: always delete (no transfer option - REQ-2.4 / D2).
  *
  * Token revoke counts (REQ-2.1b / REQ-2.7) surface as an info banner
  * so the admin sees what auto-cleanup will happen alongside the
@@ -63,7 +63,7 @@ interface OrgDispositionState {
 
 interface OffboardWizardProps {
   userId: string
-  /** Display label for the user being offboarded — shown in the dialog title. */
+  /** Display label for the user being offboarded - shown in the dialog title. */
   userLabel: string
   /** Current admin's user-id; used as the default transfer-recipient. */
   currentAdminId: string
@@ -114,7 +114,7 @@ export function OffboardWizard({
   }, [usersQuery.data, userId])
 
   // Per-org-KB disposition state. Default action is 'transfer' to the
-  // current admin — picks up Mark's "default to admin" decision (D1).
+  // current admin - picks up Mark's "default to admin" decision (D1).
   // Personal KBs have no state because their action is locked to delete.
   const [orgDispositions, setOrgDispositions] = useState<
     Record<number, OrgDispositionState>
@@ -126,7 +126,7 @@ export function OffboardWizard({
   // Initialise / re-initialise dispositions when the preview lands.
   // useMemo would race the render; useState init is a one-shot. We
   // use a derived helper that reads from state and falls back to the
-  // default for unseen kb_ids — keeps the picker stateless from the
+  // default for unseen kb_ids - keeps the picker stateless from the
   // user's POV until they touch it.
   function dispositionFor(kb: OffboardPreviewKb): OrgDispositionState {
     return (
@@ -208,7 +208,7 @@ export function OffboardWizard({
             Persoonlijke kennisbanken worden definitief verwijderd. Voor team-
             kennisbanken kies je per stuk: overdragen aan een collega of
             permanent verwijderen. Twijfel je? Schors de gebruiker tijdelijk
-            in plaats van offboarden — dan blijft alle data behouden.
+            in plaats van offboarden - dan blijft alle data behouden.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -306,7 +306,7 @@ export function OffboardWizard({
               </section>
             )}
 
-            {/* Personal KBs — locked to delete */}
+            {/* Personal KBs - locked to delete */}
             {personalKbs.length > 0 && (
               <section>
                 <h3 className="font-medium mb-2">

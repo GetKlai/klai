@@ -73,10 +73,10 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
       )
     }
     // Two cases produce empty chunks here:
-    //  1) Truly unindexed — index_status='pending'/'failed' on the row above.
-    //  2) Indexed via docs/graphiti path — vectors live in Qdrant, no
+    //  1) Truly unindexed - index_status='pending'/'failed' on the row above.
+    //  2) Indexed via docs/graphiti path - vectors live in Qdrant, no
     //     parent_chunks row exists for preview. Badge above says 'Gesynct'.
-    // Don't claim "no chunks indexed" in the indexed-Gesynct case — that
+    // Don't claim "no chunks indexed" in the indexed-Gesynct case - that
     // contradicts the badge. Speak to the preview gap instead.
     return (
       <div className="pl-[44px] pr-2 pb-3 text-xs text-gray-400">

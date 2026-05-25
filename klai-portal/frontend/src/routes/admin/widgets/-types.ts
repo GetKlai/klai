@@ -73,7 +73,7 @@ export interface OrgKnowledgeBase {
   owner_type: string
 }
 
-// SPEC-WIDGET-ACTIVITY-001 — audit-trail types.
+// SPEC-WIDGET-ACTIVITY-001 - audit-trail types.
 export type StatsPeriod = '7d' | '30d' | 'all'
 
 export interface ConversationListItem {

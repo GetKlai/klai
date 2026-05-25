@@ -21,7 +21,7 @@ export const Route = createFileRoute('/admin/platform/orgs/$orgId')({
 })
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return '—'
+  if (!iso) return '-'
   return datetime(getLocale(), iso, {
     day: 'numeric',
     month: 'short',

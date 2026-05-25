@@ -25,7 +25,7 @@ interface TestResult {
 }
 
 // ---------------------------------------------------------------------------
-// Test connection button — isolated so its local state does not re-trigger
+// Test connection button - isolated so its local state does not re-trigger
 // form re-renders.
 // ---------------------------------------------------------------------------
 
@@ -128,7 +128,7 @@ function McpEditPage() {
     if (server) setEnvValues(buildInitialEnv(server))
   }, [server])
 
-  // Managed servers cannot be configured — bounce back to the list.
+  // Managed servers cannot be configured - bounce back to the list.
   useEffect(() => {
     if (server?.managed) void navigate({ to: '/admin/mcps' })
   }, [server?.managed, navigate])

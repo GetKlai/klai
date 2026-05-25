@@ -1,5 +1,5 @@
 /**
- * SPEC-PORTAL-KENNIS-001 Phase C — KB list page (simpel, plat).
+ * SPEC-PORTAL-KENNIS-001 Phase C - KB list page (simpel, plat).
  *
  * Per KB row: icon · name · "N bronnen · M chunks" · status badge.
  * Click row = navigate to /app/knowledge/$kbSlug (default Bronnen tab).
@@ -70,7 +70,7 @@ type Status = 'klaar' | 'bezig' | 'probleem' | 'leeg'
 /**
  * Derive a user-visible status from aggregate stats.
  *
- * v1 maps via aggregates only — per-connector statuses live on the KB
+ * v1 maps via aggregates only - per-connector statuses live on the KB
  * detail page where each bron renders its own status. The "Probleem"
  * tier is reserved for that view.
  */
@@ -168,9 +168,9 @@ function KbRow({
 /**
  * Rank for the KB list ordering. Lower rank = closer to the top.
  *
- * 0 — Personal KBs (owned by the current user — only one per user in practice)
- * 1 — Default org KB (slug "org", rendered as "Organisatiekennis")
- * 2 — Every other org-owned KB (team / topic collections)
+ * 0 - Personal KBs (owned by the current user - only one per user in practice)
+ * 1 - Default org KB (slug "org", rendered as "Organisatiekennis")
+ * 2 - Every other org-owned KB (team / topic collections)
  */
 function kbSortRank(kb: KnowledgeBase): 0 | 1 | 2 {
   if (kb.owner_type === 'user') return 0
@@ -230,7 +230,7 @@ function KnowledgePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 space-y-8">
-      {/* Header — title + subtitle stacked, primary action top-right.
+      {/* Header - title + subtitle stacked, primary action top-right.
           Matches the dashboard pattern (/app/) and Scribe layout. */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">

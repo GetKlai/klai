@@ -17,7 +17,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 
 // ---------------------------------------------------------------------------
-// Module mocks — must be at the top level before any imports of the SUT.
+// Module mocks - must be at the top level before any imports of the SUT.
 // ---------------------------------------------------------------------------
 
 vi.mock('sonner', () => ({
@@ -64,7 +64,7 @@ vi.mock('@/paraglide/messages', () => ({
   admin_widgets_origins_error: () => 'Invalid origin',
   admin_widgets_widget_invalid_origins: () => 'Invalid origins',
   admin_widgets_widget_origins_empty_warning: () =>
-    'No origins set — widget loads on any website',
+    'No origins set - widget loads on any website',
   admin_shared_save: () => 'Save',
 }))
 
@@ -135,7 +135,7 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('EmbedTab — REQ-2 allow_any_origin toggle', () => {
+describe('EmbedTab - REQ-2 allow_any_origin toggle', () => {
   it('hides warning when allow_any_origin is false (default)', () => {
     render(
       <Wrapper>

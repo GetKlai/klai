@@ -196,7 +196,7 @@ function AdminProfileDetail() {
                       <td className="py-4 align-top text-right w-16">
                         {alreadyPersonal ? (
                           // No demote target on the lowest rung.
-                          <span className="text-xs text-gray-400">—</span>
+                          <span className="text-xs text-gray-400">-</span>
                         ) : (
                           <InlineDeleteConfirm
                             isConfirming={isConfirming}

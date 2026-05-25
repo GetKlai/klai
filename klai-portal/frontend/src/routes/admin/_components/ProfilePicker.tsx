@@ -16,11 +16,11 @@ interface ProfilePickerProps {
 
 /**
  * Shared radio-card profile picker for the 5-rung profile ladder
- * (SPEC-PORTAL-PROFILES-001). Controlled component — caller owns state and
+ * (SPEC-PORTAL-PROFILES-001). Controlled component - caller owns state and
  * persistence.
  *
  * Visual rules per portal-patterns.md v1-spine:
- * - border-gray-200 unselected, border-gray-900 selected (no amber accent —
+ * - border-gray-200 unselected, border-gray-900 selected (no amber accent -
  *   "Amber NOT applied to active states in v1")
  * - bg-black/[0.06] selected layer, hover bg-black/5
  * - text-gray-900 prose, text-gray-400 muted

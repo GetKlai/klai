@@ -5,7 +5,7 @@
  *
  * Avatar background colors are decorative tints (not semantic state), so raw
  * Tailwind classes are allowed per portal-patterns.md "Action icons in list
- * views (semantic colors — retained)" exception clause.
+ * views (semantic colors - retained)" exception clause.
  */
 
 const AVATAR_COLORS = [
@@ -35,7 +35,7 @@ export function userInitials(input: {
 /**
  * Standard "full name with email fallback" rendering used across the admin
  * surfaces (users table, profiles drill-in, groups detail). Lives next to
- * UserAvatar so the two stay in sync — same input shape, same fallback rules.
+ * UserAvatar so the two stay in sync - same input shape, same fallback rules.
  */
 export function displayName(input: {
   first_name?: string | null

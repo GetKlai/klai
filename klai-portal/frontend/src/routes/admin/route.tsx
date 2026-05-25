@@ -65,7 +65,7 @@ function AdminLayout() {
   })
 
   // Filter nav items: role-check first, then platform-unlock-check.
-  // The platform-unlock filter applies uniformly — including to platform-admin
+  // The platform-unlock filter applies uniformly - including to platform-admin
   // callers. Platform-admins managing other tenants do so via the Uitbreidingen
   // tenant-picker on /admin/settings; their own sidebar/tegels mirror what a
   // normal admin in their own tenant would see (emulation view). Without this

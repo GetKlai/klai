@@ -11,13 +11,13 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigate,
 }))
 
-// useCurrentUser mock — toggles per test.
+// useCurrentUser mock - toggles per test.
 const currentUserValue: { isAdmin: boolean; user_id: string } = { isAdmin: true, user_id: 'u1' }
 vi.mock('@/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ data: currentUserValue }),
 }))
 
-// apiFetch mock — mutations don't actually hit the network.
+// apiFetch mock - mutations don't actually hit the network.
 const apiFetchMock = vi.fn()
 vi.mock('@/lib/apiFetch', async () => {
   const actual = await vi.importActual<typeof import('@/lib/apiFetch')>('@/lib/apiFetch')
@@ -34,7 +34,7 @@ beforeEach(() => {
   apiFetchMock.mockReset()
 })
 
-describe('TemplateFormPage — design compliance', () => {
+describe('TemplateFormPage - design compliance', () => {
   it('uses mx-auto max-w-lg container on new form', () => {
     currentUserValue.isAdmin = true
     const { container } = render(
@@ -75,7 +75,7 @@ describe('TemplateFormPage — design compliance', () => {
   })
 })
 
-describe('TemplateFormPage — admin-gate on scope="org"', () => {
+describe('TemplateFormPage - admin-gate on scope="org"', () => {
   it('admin sees "Organisatie" enabled + default scope', () => {
     currentUserValue.isAdmin = true
     render(
@@ -107,7 +107,7 @@ describe('TemplateFormPage — admin-gate on scope="org"', () => {
   })
 })
 
-describe('TemplateFormPage — client-side validation', () => {
+describe('TemplateFormPage - client-side validation', () => {
   it('empty name shows name-required error and does NOT call apiFetch', () => {
     currentUserValue.isAdmin = true
     render(
@@ -153,7 +153,7 @@ describe('TemplateFormPage — client-side validation', () => {
   })
 })
 
-describe('TemplateFormPage — char counter', () => {
+describe('TemplateFormPage - char counter', () => {
   it('counter renders in gray when well below threshold', () => {
     currentUserValue.isAdmin = true
     render(

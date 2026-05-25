@@ -13,12 +13,12 @@ const ruleTester = new RuleTester({
 
 ruleTester.run('klai/no-cross-route-import', rule, {
   valid: [
-    // Dash-prefixed sibling — the canonical helper pattern.
+    // Dash-prefixed sibling - the canonical helper pattern.
     {
       filename: '/repo/src/routes/app/knowledge/$kbSlug_.add-connector.tsx',
       code: `import { AuthProbeFeedback } from './-connector-feedback'`,
     },
-    // Dash-prefixed file in a sibling directory — cross-directory but to a helper.
+    // Dash-prefixed file in a sibling directory - cross-directory but to a helper.
     {
       filename: '/repo/src/routes/app/knowledge/$kbSlug_.add-connector.tsx',
       code: `import { CookieRow } from './$kbSlug/-kb-types'`,
@@ -33,7 +33,7 @@ ruleTester.run('klai/no-cross-route-import', rule, {
       filename: '/repo/src/routes/app/knowledge/$kbSlug_.add-source.tsx',
       code: `import { SourceTypeGrid } from './$kbSlug_.add-source._components/SourceTypeGrid'`,
     },
-    // Absolute alias — never a relative cross-route concern.
+    // Absolute alias - never a relative cross-route concern.
     {
       filename: '/repo/src/routes/app/knowledge/$kbSlug/sources.tsx',
       code: `import { apiFetch } from '@/lib/apiFetch'`,
@@ -53,7 +53,7 @@ ruleTester.run('klai/no-cross-route-import', rule, {
       filename: '/repo/src/components/ui/Foo.tsx',
       code: `import { Bar } from './Bar'`,
     },
-    // routeTree.gen is the codegen consumer — explicitly allowed.
+    // routeTree.gen is the codegen consumer - explicitly allowed.
     {
       filename: '/repo/src/routes/app/knowledge/$kbSlug/sources.tsx',
       code: `import { Route } from './routeTree.gen'`,
@@ -74,7 +74,7 @@ ruleTester.run('klai/no-cross-route-import', rule, {
         },
       ],
     },
-    // F-S1 in the SPEC's follow-ups — insights.tsx imports two sibling routes.
+    // F-S1 in the SPEC's follow-ups - insights.tsx imports two sibling routes.
     {
       filename: '/repo/src/routes/app/knowledge/$kbSlug/insights.tsx',
       code: `import { TaxonomyTab } from './taxonomy'`,

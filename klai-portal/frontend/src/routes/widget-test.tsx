@@ -3,7 +3,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, AlertTriangle, Info, Loader2 } from 'lucide-react'
 
-// Public widget-test page — TWD's WidgetTest.vue equivalent. Loads
+// Public widget-test page - TWD's WidgetTest.vue equivalent. Loads
 // klai-chat.js with the widget's data-widget-id so the floating chat
 // bubble appears bottom-right exactly as it will on a customer site.
 // URL: /widget-test?id=<widget_id>
@@ -121,7 +121,7 @@ function WidgetTestEmbedPage() {
                 className="inline-flex h-2 w-2 rounded-full bg-[var(--color-rl-accent)]"
               />
               <span className="text-sm text-[var(--color-rl-dark)]">
-                Widget actief — klik op de chat-bubble rechtsonder.
+                Widget actief - klik op de chat-bubble rechtsonder.
               </span>
             </div>
           )}

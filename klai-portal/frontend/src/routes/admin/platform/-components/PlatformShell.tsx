@@ -22,7 +22,7 @@ export function PlatformStatCard({
         {loading ? (
           <Loader2 className="inline h-5 w-5 animate-spin text-gray-400" />
         ) : value === undefined ? (
-          '—'
+          '-'
         ) : (
           value
         )}

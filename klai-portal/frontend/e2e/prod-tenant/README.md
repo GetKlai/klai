@@ -18,7 +18,7 @@ prefixed `e2e-{run-timestamp}-...` so cleanup never touches real user data.
 
 > **Plan & rationale:** see [`docs/testing/test-suite-plan.md`](../../../../docs/testing/test-suite-plan.md).
 
-## Run locally — isolated-tenant mode (default)
+## Run locally - isolated-tenant mode (default)
 
 ```bash
 # .env.local (gitignored; values from your chosen secret store)
@@ -45,7 +45,7 @@ If MFA was already completed and the seed was not stored, reset TOTP for
 the e2e user and enroll it again. Capture the new manual secret before
 confirming the setup, then update local `.env.local` and GitHub Secrets.
 
-## Run locally — voys-attached mode
+## Run locally - voys-attached mode
 
 For testing inside the Voys tenant (Google SSO, no bot user available).
 **One-time** capture the browser session:
@@ -102,13 +102,13 @@ PWDEBUG=1 npx playwright test e2e/prod-tenant/J02-chat.spec.ts
    - Write + cleanup? Copy `J05-templates.spec.ts`.
    - Async background work? Copy `J03-knowledge.spec.ts` (uses `pollUntil`).
 3. **Reuse helpers** from `_lib/`:
-   - `loginAsE2EBot` is automatic — your spec inherits the
+   - `loginAsE2EBot` is automatic - your spec inherits the
      authenticated-journeys project's storageState.
    - Use `pollUntil` for any "wait until status=ready" pattern.
    - Use `cleanup.*` for tear-down so the tenant stays clean.
    - Add new fixtures (markdown / audio / etc.) to `fixtures/` and
      export them from `_lib/fixtures.ts`.
-4. **Hard fail vs soft fail** — distinguish in `expect()`:
+4. **Hard fail vs soft fail** - distinguish in `expect()`:
    - `expect(value).toBe(...)` for hard correctness checks.
    - `expect.soft()` for performance / non-critical assertions
      (page-load <3s, header presence) so they show up but don't gate.
@@ -121,12 +121,12 @@ PWDEBUG=1 npx playwright test e2e/prod-tenant/J02-chat.spec.ts
 prod-tenant/
 ├── _lib/
 │   ├── auth.ts         loginAsE2EBot, persistAuthState, logoutE2EBot
-│   ├── poll.ts         pollUntil — generic async-status polling
+│   ├── poll.ts         pollUntil - generic async-status polling
 │   ├── cleanup.ts      deleteKnowledgeBase, deleteTemplate, etc.
-│   └── fixtures.ts     KB_FIXTURE, AUDIO_FIXTURE — paths + canaries
+│   └── fixtures.ts     KB_FIXTURE, AUDIO_FIXTURE - paths + canaries
 ├── _config/
 │   ├── playwright.prod.config.ts
-│   └── storageState.json    gitignored — written by J01, read by J02..J11
+│   └── storageState.json    gitignored - written by J01, read by J02..J11
 ├── fixtures/
 │   ├── e2e-fixture.md       KB document with the canary string
 │   ├── e2e-fixture.wav      ~3s audio for J06 (regenerate via generate.sh)
@@ -136,9 +136,9 @@ prod-tenant/
 
 The Playwright config defines two projects:
 
-1. **`login`** — runs `J01-login.spec.ts` first; persists
+1. **`login`** - runs `J01-login.spec.ts` first; persists
    `_config/storageState.json`.
-2. **`authenticated-journeys`** — depends on `login`; runs everything
+2. **`authenticated-journeys`** - depends on `login`; runs everything
    else with the saved state. No re-login, no re-TOTP.
 
 ## Gotchas
@@ -160,14 +160,14 @@ The Playwright config defines two projects:
 
 Always check three things first when a journey turns red in CI:
 
-1. **HTML report artifact** — `playwright-report-prod-tenant/` is
+1. **HTML report artifact** - `playwright-report-prod-tenant/` is
    uploaded by the workflow. Open `index.html`, click the failing
    spec, see screenshots + traces.
-2. **VictoriaLogs request_id** — every test request carries an
+2. **VictoriaLogs request_id** - every test request carries an
    `X-Request-ID` header (Caddy-generated). Find it in the trace
    and query `request_id:<uuid>` in the victorialogs MCP for the
    full server-side chain.
-3. **Recent deploy** — was a service deployed in the last 5 min?
+3. **Recent deploy** - was a service deployed in the last 5 min?
    Check `gh run list --branch main --limit 5` and correlate timing.
 
 See plan §10 for symptom→check mapping.

@@ -39,12 +39,12 @@ async function main() {
   // for the Google-SSO + tenant-resolve roundtrip.
   await page.waitForURL(/\/app(\/|$)/, { timeout: 5 * 60 * 1000 })
 
-  console.log(`[capture] reached ${page.url()} — saving storage-state`)
+  console.log(`[capture] reached ${page.url()} - saving storage-state`)
   await context.storageState({ path: STORAGE_PATH })
   console.log(`[capture] wrote ${STORAGE_PATH}`)
   console.log('[capture] you can close the browser when done verifying.')
 
-  // Don't auto-close — user might want to poke around to confirm.
+  // Don't auto-close - user might want to poke around to confirm.
   // Wait until they close the page manually.
   await page.waitForEvent('close', { timeout: 0 }).catch(() => {})
   await browser.close()

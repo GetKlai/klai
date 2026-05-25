@@ -47,7 +47,7 @@ export function Sidebar({ navItems }: SidebarProps) {
         collapsed ? 'w-14' : 'w-60'
       )}
     >
-      {/* Logo + toggle — h-[66px] centers content at 33px → logo top-edge at 24px */}
+      {/* Logo + toggle - h-[66px] centers content at 33px → logo top-edge at 24px */}
       <div className={cn(
         'flex h-[66px] items-center',
         collapsed ? 'justify-center' : 'justify-between px-6'
@@ -193,7 +193,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           onClick={() => {
             // BFF logout via signoutRedirect → removeUser does the full flow:
             // revoke server-side session, clear cookies, navigate to Zitadel
-            // end_session. No sendBeacon needed — legacy /api/auth/logout
+            // end_session. No sendBeacon needed - legacy /api/auth/logout
             // only clears a cookie the BFF doesn't use and fails CSRF.
             void auth.signoutRedirect()
           }}

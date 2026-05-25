@@ -24,7 +24,7 @@ const QUERY_KEY = ['mcp-servers'] as const
 
 /**
  * Fetches the MCP catalog with per-tenant enable/configure state.
- * Shared across the list, picker and edit routes — TanStack Query dedupes
+ * Shared across the list, picker and edit routes - TanStack Query dedupes
  * concurrent requests by queryKey.
  */
 export function useMcpServers() {

@@ -1,11 +1,11 @@
 /**
- * SPEC-INFRA-TENANT-DELETE-003 Bug 3 — provisioning status helpers.
+ * SPEC-INFRA-TENANT-DELETE-003 Bug 3 - provisioning status helpers.
  *
  * The backend state machine emits `failed_rollback_pending`,
  * `failed_rollback_complete`, or `failed_deprovisioning` as terminal
  * failure states. It NEVER emits the literal `'failed'`. Old polling
  * code that compared `status === 'failed'` silently timed out after
- * 5 minutes instead of surfacing the failure — these helpers + the
+ * 5 minutes instead of surfacing the failure - these helpers + the
  * tests below lock in the correct contract so the regression cannot
  * come back via a `=== 'failed'` literal slipping into a new route.
  */

@@ -18,10 +18,10 @@ export const Route = createFileRoute('/admin/users/invite')({
 
 type Language = 'nl' | 'en'
 
-// SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 — per-user account type
+// SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 - per-user account type
 // (billing tier), DERIVED from Profile. Admin no longer selects this
 // directly; the FE shows a read-only badge that updates when the
-// Profile dropdown changes. ``viewer`` is gone — getklai.com/pricing
+// Profile dropdown changes. ``viewer`` is gone - getklai.com/pricing
 // has only Klai Chat and Klai Chat + Knowledge.
 type AccountType = 'chat' | 'knowledge'
 
@@ -198,14 +198,14 @@ function InviteUserPage() {
         </div>
 
         {/*
-          SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 — derived account type.
+          SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 - derived account type.
           Updates automatically when the Profile dropdown changes. No
           admin override; the server runs the same ``suggest_seat(role)``
           derivation regardless.
 
           A11y note: this is a display-only badge (no interactive form
           control), so we use a plain heading <div> + aria-labelledby on
-          the readout region — NOT a <Label htmlFor=>, which assumes a
+          the readout region - NOT a <Label htmlFor=>, which assumes a
           focusable form control as its target. The readout has
           role="status" so SR users hear updates when the Profile
           dropdown re-derives the badge.

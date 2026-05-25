@@ -46,7 +46,7 @@ interface RowActionIconButtonProps {
   disabled?: boolean
   /** Optional element to replace the icon while loading (e.g. spinner). */
   spinner?: ReactNode
-  /** Style variant — `destructive` paints hover red. */
+  /** Style variant - `destructive` paints hover red. */
   variant?: 'default' | 'destructive'
 }
 
@@ -78,7 +78,7 @@ function RowActionIconButton({
   )
 }
 
-/** Link-shaped sibling of `RowActionIconButton` — same shell, but the
+/** Link-shaped sibling of `RowActionIconButton` - same shell, but the
  *  target is a TanStack Router `<Link>` rather than a click handler. */
 function RowActionIconLink({
   label,
@@ -147,7 +147,7 @@ export function SourceRowActions({
 
   return (
     <div className={`flex items-center ${isRenaming ? 'opacity-0 pointer-events-none' : ''}`}>
-      {/* Reauth is the only non-icon-only action — it carries a label so
+      {/* Reauth is the only non-icon-only action - it carries a label so
           the affordance is unambiguous when an auth_error appears. */}
       {isAuthError && (
         <Tooltip label={m.kb_sources_row_reauth_tooltip()}>

@@ -36,7 +36,7 @@ function isColocationOrHelperSegment(segment) {
   if (!segment) return false
   if (segment.startsWith('-')) return true
   if (segment.startsWith('_')) return true
-  // <route>._<feature> or <route>._components style — TanStack co-location
+  // <route>._<feature> or <route>._components style - TanStack co-location
   if (segment.includes('._')) return true
   return false
 }
@@ -59,7 +59,7 @@ function isRouteFile(filename) {
   const routesIdx = normalized.indexOf('/src/routes/')
   if (routesIdx < 0) return false
   // Walk all path segments inside src/routes/. If ANY of them is a
-  // colocation/helper marker, the file is not a route — it lives in
+  // colocation/helper marker, the file is not a route - it lives in
   // a `-`-helper file, a `_components/` directory, or a `<route>._<x>`
   // co-located file/directory.
   const after = normalized.slice(routesIdx + '/src/routes/'.length)

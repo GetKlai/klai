@@ -2,9 +2,9 @@
  * Top-of-tab action bar for the Sources list.
  *
  * Three slots, right-aligned:
- *   1. "Open in editor" — only when docs are enabled AND there are pages.
- *   2. "Synchroniseer alles" — only when there is at least one connector source.
- *   3. "Bron toevoegen" — always.
+ *   1. "Open in editor" - only when docs are enabled AND there are pages.
+ *   2. "Synchroniseer alles" - only when there is at least one connector source.
+ *   3. "Bron toevoegen" - always.
  *
  * Left of the slots: subtle count ("N bronnen" / "N bron").
  */

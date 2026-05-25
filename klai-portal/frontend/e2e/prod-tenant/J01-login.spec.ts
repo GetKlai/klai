@@ -1,5 +1,5 @@
 /**
- * J01 — Login + TOTP, persist storage-state for J02..J11.
+ * J01 - Login + TOTP, persist storage-state for J02..J11.
  *
  * Runs ONLY in `isolated-tenant` mode (E2E_MODE default). The
  * playwright config skips this spec in `voys-attached` mode because
@@ -17,7 +17,7 @@ import fs from 'node:fs'
 import { loginAsE2EBot, persistAuthState } from './_lib/auth'
 import { STORAGE_STATE } from './_config/playwright.prod.config'
 
-test('J01 — login + TOTP and persist storage-state', async ({ page }) => {
+test('J01 - login + TOTP and persist storage-state', async ({ page }) => {
   await loginAsE2EBot(page)
 
   await expect(page).toHaveURL(/\/app(\/|$)/)

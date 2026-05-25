@@ -88,8 +88,8 @@ function EditUserPage() {
   const [offboardWizardOpen, setOffboardWizardOpen] = useState(false)
 
   // SPEC-PORTAL-ADMIN-UI-001 v0.3.0 REQ-12: ÉÉN form, ÉÉN save. Submit-handler
-  // stuurt PATCH /users/<id> voor naam/taal en — alleen als profile gewijzigd
-  // is — PATCH /users/<id>/role. Sequentieel zodat de role-update niet stilletjes
+  // stuurt PATCH /users/<id> voor naam/taal en - alleen als profile gewijzigd
+  // is - PATCH /users/<id>/role. Sequentieel zodat de role-update niet stilletjes
   // overgeslagen wordt als de basis-update een 400/422 oplevert.
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -211,7 +211,7 @@ function EditUserPage() {
         </div>
       </form>
 
-      {/* Lifecycle actions — destructive, separate from save */}
+      {/* Lifecycle actions - destructive, separate from save */}
       {user && (user.status === 'suspended' || (user.status === 'active' && !user.invite_pending)) && (
         <div className="border-t pt-6 flex flex-wrap gap-3">
           {user.status === 'active' && !user.invite_pending && (

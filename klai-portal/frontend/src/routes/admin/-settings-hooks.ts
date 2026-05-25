@@ -15,7 +15,7 @@ export type OrgSettings = {
   telemetry_level: TelemetryLevel
 }
 
-// SPEC-PORTAL-EXTENSIONS-UNIFY-001 — extensions API shape (i18n-clean:
+// SPEC-PORTAL-EXTENSIONS-UNIFY-001 - extensions API shape (i18n-clean:
 // labels + descriptions live in Paraglide via lib/extensions-i18n.ts).
 export type ExtensionItem = {
   key: string

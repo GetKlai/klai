@@ -4,7 +4,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 
-// jsdom doesn't ship ResizeObserver or Element#scrollIntoView — cmdk needs both.
+// jsdom doesn't ship ResizeObserver or Element#scrollIntoView - cmdk needs both.
 class ResizeObserverPolyfill {
   observe() {}
   unobserve() {}

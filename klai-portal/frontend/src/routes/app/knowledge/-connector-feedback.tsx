@@ -6,8 +6,8 @@
 // These two components are pure functions of their props (no internal
 // state, no side effects). They render the structured feedback for the
 // wizard's two probe outcomes:
-//   - AuthProbeFeedback: REQ-2 — auth-probe classification + reasons.
-//   - PreviewClassificationFeedback: REQ-3 — preview-pipeline judgement.
+//   - AuthProbeFeedback: REQ-2 - auth-probe classification + reasons.
+//   - PreviewClassificationFeedback: REQ-3 - preview-pipeline judgement.
 //
 // Both are tested directly via __tests__/wizard-feedback.test.tsx (no
 // router/query-client setup required).
@@ -16,7 +16,7 @@ import { AlertTriangle, CheckCircle2 } from 'lucide-react'
 import type { AuthProbeResult, PreviewClassification } from './-connector-types'
 
 /**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — render auth-probe outcome.
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 - render auth-probe outcome.
  * Shared by add-connector and edit-connector flows.
  */
 export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
@@ -40,7 +40,7 @@ export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
       message = `Cookies didn't unlock the content. Re-paste a fresh session cookie.${reasons}`
       break
     case 'auth_failed_credentials_invalid':
-      message = '401/403 — credentials rejected.'
+      message = '401/403 - credentials rejected.'
       break
     case 'auth_failed_unreachable':
       message = 'Could not reach the page. Check the Base URL.'
@@ -57,10 +57,10 @@ export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
 }
 
 /**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — render preview classification outcome.
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 - render preview classification outcome.
  * Single source of truth for all classification-driven feedback.
  * Supporting affordances (markdown body, AI selector, auth-guard) compose alongside
- * via the parent — this component only renders the primary message.
+ * via the parent - this component only renders the primary message.
  */
 export function PreviewClassificationFeedback({
   classification,

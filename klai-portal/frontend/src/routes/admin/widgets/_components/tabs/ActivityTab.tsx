@@ -13,7 +13,7 @@ import type {
   ConversationListItem,
 } from '../../-types'
 
-// SPEC-WIDGET-ACTIVITY-001 — Activiteit tab: live audit trail of
+// SPEC-WIDGET-ACTIVITY-001 - Activiteit tab: live audit trail of
 // every chat that flows through the widget. Period picker drives a
 // stats panel + hourly sparkline + top-queries list; a paginated
 // recent-conversations list opens a side drawer with the full
@@ -240,7 +240,7 @@ function StatCard({
         {loading ? (
           <Loader2 className="inline h-4 w-4 animate-spin text-gray-400" />
         ) : value === undefined ? (
-          '—'
+          '-'
         ) : (
           value
         )}
@@ -261,7 +261,7 @@ function HourlySparkline({ data }: { data: number[] | undefined }) {
             <div
               key={hour}
               className="flex-1 flex flex-col items-center justify-end h-full"
-              title={`${hour}:00 — ${count} ${count === 1 ? 'gesprek' : 'gesprekken'}`}
+              title={`${hour}:00 - ${count} ${count === 1 ? 'gesprek' : 'gesprekken'}`}
             >
               <div
                 className="w-full rounded-t bg-[var(--color-rl-accent)] transition-all"

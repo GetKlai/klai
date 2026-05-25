@@ -1,11 +1,11 @@
 /**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-6 — wizard feedback components.
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-6 - wizard feedback components.
  *
  * Tests cover the pure render helpers ``AuthProbeFeedback`` (REQ-2)
  * and ``PreviewClassificationFeedback`` (REQ-3). These components are
  * shared between add-connector and edit-connector and live in
  * `-connector-feedback.tsx` (per the file-organization rule in
- * portal-frontend.md). Unit-testable in isolation — no router or
+ * portal-frontend.md). Unit-testable in isolation - no router or
  * query-client setup needed.
  */
 

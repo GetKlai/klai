@@ -10,8 +10,8 @@ import * as m from '@/paraglide/messages'
 
 import { ChatConfigBar } from './_components/ChatConfigBar'
 
-// Threshold: 25 days (conservative — LibreChat refresh tokens are 30d)
-// Bookkeeping only — used by the OAuth-success handler to remember the
+// Threshold: 25 days (conservative - LibreChat refresh tokens are 30d)
+// Bookkeeping only - used by the OAuth-success handler to remember the
 // last successful auth, and cleared on detected SSO failure. The iframe
 // URL no longer reads it; every visit always goes through /oauth/openid
 // because the freshness check could drift past the LC server cookie.
@@ -30,16 +30,16 @@ interface ChatHealth {
 /**
  * Derive the per-tenant LibreChat host from the user's canonical workspace URL.
  *
- * NEVER from window.location.hostname — personal users live on `my.getklai.com`
+ * NEVER from window.location.hostname - personal users live on `my.getklai.com`
  * but their actual workspace (and provisioned LibreChat container) is on their
  * org subdomain (e.g. `getklai.getklai.com`). Using window.location yields
  * `chat-my.getklai.com`, a host that does not exist:
  *   1. iframe falls through to portal SPA wildcard
  *   2. SPA calls /api/me on `chat-my`, KlaiTenantHostMiddleware 409s with
  *      `redirect_to: https://{actual_slug}.getklai.com/api/me`
- *   3. apiFetch does window.location.replace(redirect_to) — iframe location
+ *   3. apiFetch does window.location.replace(redirect_to) - iframe location
  *      flips to /api/me, browser renders the JSON viewer
- * (Diagnosed 2026-05-11 — Jantine on my.getklai.com saw raw /api/me JSON in
+ * (Diagnosed 2026-05-11 - Jantine on my.getklai.com saw raw /api/me JSON in
  * the chat tab.)
  *
  * Returns null until workspace_url is known.
@@ -122,7 +122,7 @@ function ChatPage() {
         return
       }
 
-      // Health OK — load the iframe
+      // Health OK - load the iframe
       setIframeSrc(getIframeSrc(baseUrl))
       setPhase('loading_iframe')
 
@@ -131,7 +131,7 @@ function ChatPage() {
       stuckTimer.current = setTimeout(() => {
         setPhase((current) => {
           if (current === 'loading_iframe') {
-            chatKbLogger.warn('Chat iframe stuck — did not reach ready state within timeout')
+            chatKbLogger.warn('Chat iframe stuck - did not reach ready state within timeout')
             return 'stuck'
           }
           return current
@@ -139,7 +139,7 @@ function ChatPage() {
       }, STUCK_TIMEOUT_MS)
     } catch (err) {
       chatKbLogger.error('Chat health check request failed', { err })
-      // Health endpoint itself failed — still try loading the iframe as fallback.
+      // Health endpoint itself failed - still try loading the iframe as fallback.
       // The health check is a safety net, not a gate.
       if (baseUrl) {
         setIframeSrc(getIframeSrc(baseUrl))
@@ -170,7 +170,7 @@ function ChatPage() {
     function handleMessage(event: MessageEvent) {
       if (event.origin !== window.location.origin) return
       if (event.data?.type === 'klai-sso-failed') {
-        chatKbLogger.warn('SSO cookie expired — iframe auth failed, triggering re-auth')
+        chatKbLogger.warn('SSO cookie expired - iframe auth failed, triggering re-auth')
         clearStuckTimer()
         setPhase('error')
         setErrorReason('sso_expired')
@@ -232,7 +232,7 @@ function ChatPage() {
           </div>
         )}
 
-        {/* LibreChat iframe — only rendered after health check passes */}
+        {/* LibreChat iframe - only rendered after health check passes */}
         {iframeSrc && (
           <iframe
             src={iframeSrc}

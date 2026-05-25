@@ -3,7 +3,7 @@
  * CoverageWidget by SPEC-PORTAL-TAXONOMY-SPLIT-001 polish round.
  *
  * Focus: the state-machine paths the extraction is most likely to
- * break — singleton edit-mode + delete-confirm, buffer initialisation
+ * break - singleton edit-mode + delete-confirm, buffer initialisation
  * on isEditing transition, buffer preservation across prop refetches
  * (same regression class as ProposalCard's useEffect bug fix).
  */
@@ -54,7 +54,7 @@ afterEach(() => {
 // Static rendering
 // ---------------------------------------------------------------------------
 
-describe('CoverageNodeRow — static rendering', () => {
+describe('CoverageNodeRow - static rendering', () => {
   it('renders node name, description, and percentage', () => {
     render(
       <CoverageNodeRow
@@ -91,7 +91,7 @@ describe('CoverageNodeRow — static rendering', () => {
 // Edit-mode
 // ---------------------------------------------------------------------------
 
-describe('CoverageNodeRow — edit-mode', () => {
+describe('CoverageNodeRow - edit-mode', () => {
   it('calls onStartEdit when Rename pencil is clicked', () => {
     const props = defaultProps()
     render(<CoverageNodeRow node={node()} {...props} />)
@@ -176,7 +176,7 @@ describe('CoverageNodeRow — edit-mode', () => {
 // Delete-confirm
 // ---------------------------------------------------------------------------
 
-describe('CoverageNodeRow — delete-confirm', () => {
+describe('CoverageNodeRow - delete-confirm', () => {
   it('calls onStartDelete when trash icon is clicked', () => {
     const props = defaultProps()
     render(<CoverageNodeRow node={node()} {...props} />)
@@ -211,11 +211,11 @@ describe('CoverageNodeRow — delete-confirm', () => {
 // Active state
 // ---------------------------------------------------------------------------
 
-describe('CoverageNodeRow — active filter', () => {
+describe('CoverageNodeRow - active filter', () => {
   it('does not invoke onNodeClick when isEditing is true', () => {
     const props = defaultProps()
     render(<CoverageNodeRow node={node()} {...props} isEditing />)
-    // Click anywhere on the wrapping row — should not fire because
+    // Click anywhere on the wrapping row - should not fire because
     // the row guards on isEditing && isConfirmingDelete.
     const row = screen.getAllByRole('button')[0] // outer wrapping div has role='button'
     fireEvent.click(row)

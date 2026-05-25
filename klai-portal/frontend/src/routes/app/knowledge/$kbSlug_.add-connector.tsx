@@ -86,7 +86,7 @@ function AddConnectorPage() {
   })
   // Cookies live in their own state as structured {name, value} rows. The
   // wizard collects them directly in the shape the backend persists and the
-  // cron-sync consumes — no string-to-array parsing layer.
+  // cron-sync consumes - no string-to-array parsing layer.
   const [wcCookieRows, setWcCookieRows] = useState<CookieRow[]>([])
   const [notionConfig, setNotionConfig] = useState<NotionAddConfig>({
     access_token: '', database_ids: '', max_pages: '500',
@@ -99,7 +99,7 @@ function AddConnectorPage() {
     base_url: '', email: '', api_token: '', space_keys: '',
   })
   const [folderId, setFolderId] = useState('')
-  // ms_docs (SPEC-KB-MS-DOCS-001): optional site_url + drive_id — both empty = personal OneDrive
+  // ms_docs (SPEC-KB-MS-DOCS-001): optional site_url + drive_id - both empty = personal OneDrive
   const [msSiteUrl, setMsSiteUrl] = useState('')
   const [msDriveId, setMsDriveId] = useState('')
   const [msSiteUrlError, setMsSiteUrlError] = useState<string | null>(null)
@@ -121,13 +121,13 @@ function AddConnectorPage() {
   // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2: auth-probe state.
   const [authProbeResult, setAuthProbeResult] = useState<AuthProbeResult | null>(null)
   const [authProbeError, setAuthProbeError] = useState<string | null>(null)
-  // Save-time auth_guard config — operator-editable. Initialized from the
+  // Save-time auth_guard config - operator-editable. Initialized from the
   // auth-probe at step 4 → 5 transition, overwritten by preview's auth_guard
   // on a successful Run preview, written by the editable form below the
   // success message. Save reads this. Lives outside ``previewResult`` so we
   // don't have to fake a ``classification: 'unknown'`` state on the bridge
   // (which used to render an amber "Preview service did not respond" before
-  // the operator clicked anything — SPEC-CONNECTOR-INPUT-VALIDATION-001 D-2
+  // the operator clicked anything - SPEC-CONNECTOR-INPUT-VALIDATION-001 D-2
   // pre-pop bug).
   const [authGuard, setAuthGuard] = useState<AuthGuardSuggestion | null>(null)
 
@@ -171,7 +171,7 @@ function AddConnectorPage() {
         const cookies = buildCookies()
         if (cookies) config.cookies = cookies
         // SPEC-CRAWL-004: include auto-detected auth guard values. Source is
-        // ``authGuard`` state — initialized from auth-probe at step 4 → 5
+        // ``authGuard`` state - initialized from auth-probe at step 4 → 5
         // bridge, refreshed by preview onSuccess, mutated by the operator-
         // editable form on step 5.
         const ag = authGuard
@@ -225,7 +225,7 @@ function AddConnectorPage() {
   const createGoogleDriveMutation = useMutation({
     mutationFn: async () => {
       // google_docs / google_sheets / google_slides are aliases that reuse the google_drive
-      // OAuth flow — the backend's GoogleDriveAdapter injects content_types based on
+      // OAuth flow - the backend's GoogleDriveAdapter injects content_types based on
       // connector.connector_type. We pass the selected type as-is.
       const connectorType = selectedType ?? 'google_drive'
       const config: Record<string, unknown> = {}
@@ -245,7 +245,7 @@ function AddConnectorPage() {
     },
     onSuccess: ({ authorizeUrl }) => {
       void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) })
-      // .assign() over `.href =` — consistent with connectors.tsx reconnect flow;
+      // .assign() over `.href =` - consistent with connectors.tsx reconnect flow;
       // react-hooks/immutability flags the property-assignment form.
       window.location.assign(authorizeUrl)
     },
@@ -279,7 +279,7 @@ function AddConnectorPage() {
     },
     onSuccess: ({ authorizeUrl }) => {
       void queryClient.invalidateQueries({ queryKey: kbQueryKeys.connectorsPortal(kbSlug) })
-      // .assign() over `.href =` — consistent with connectors.tsx reconnect flow;
+      // .assign() over `.href =` - consistent with connectors.tsx reconnect flow;
       // react-hooks/immutability flags the property-assignment form.
       window.location.assign(authorizeUrl)
     },
@@ -305,7 +305,7 @@ function AddConnectorPage() {
       setPreviewError(null)
       // Preview is the freshest signal of effective auth state, so let its
       // ``auth_guard`` overwrite whatever the auth-probe seeded earlier.
-      // Note: we DO update on auth_wall_detected too — a null auth_guard is
+      // Note: we DO update on auth_wall_detected too - a null auth_guard is
       // still meaningful (operator hasn't proven login yet → save will be
       // blocked by classification check anyway).
       setAuthGuard(data.auth_guard)
@@ -371,7 +371,7 @@ function AddConnectorPage() {
         </Button>
       </div>
 
-      {/* Step indicator — shared component */}
+      {/* Step indicator - shared component */}
       {(() => {
         const isSimple = selectedType === 'github' || selectedType === 'notion' || selectedType === 'google_drive' || selectedType === 'ms_docs'
           || selectedType === 'airtable' || selectedType === 'confluence'
@@ -554,7 +554,7 @@ function AddConnectorPage() {
               </div>
             )}
 
-            {/* Google Drive OAuth flow — also used for google_docs / google_sheets / google_slides aliases */}
+            {/* Google Drive OAuth flow - also used for google_docs / google_sheets / google_slides aliases */}
             {(selectedType === 'google_drive' || selectedType === 'google_docs' || selectedType === 'google_sheets' || selectedType === 'google_slides') && (
               <form onSubmit={(e) => { e.preventDefault(); createGoogleDriveMutation.mutate() }} className="space-y-3">
                 {selectedType === 'google_docs' && (
@@ -764,7 +764,7 @@ function AddConnectorPage() {
                   </div>
                 )}
 
-                {/* Step 3: Authentication question — Yes/No only, no other state. */}
+                {/* Step 3: Authentication question - Yes/No only, no other state. */}
                 {wcStep === 'auth-question' && (
                   <div className="space-y-4">
                     <div className="rounded-lg border border-gray-200 p-4 space-y-3">
@@ -822,7 +822,7 @@ function AddConnectorPage() {
                   </div>
                 )}
 
-                {/* Step 4: Auth setup — only reached when requiresLogin === true.
+                {/* Step 4: Auth setup - only reached when requiresLogin === true.
                     Hits REQ-2 /connectors/auth-probe; gates on classification === auth_ok. */}
                 {wcStep === 'auth-setup' && (
                   <div className="space-y-4">
@@ -875,7 +875,7 @@ function AddConnectorPage() {
                         size="sm"
                         disabled={authProbeResult?.classification !== 'auth_ok'}
                         onClick={() => {
-                          // Carry auth_guard forward in its own state slot — selector step
+                          // Carry auth_guard forward in its own state slot - selector step
                           // (5) starts EMPTY (previewResult stays null) so no amber
                           // "Preview service did not respond" renders before the operator
                           // has clicked Run preview. Save reads ``authGuard`` directly.
@@ -897,16 +897,16 @@ function AddConnectorPage() {
                   </div>
                 )}
 
-                {/* Step 5: Selector — runs preview, gates on REQ-3 classification === success. */}
+                {/* Step 5: Selector - runs preview, gates on REQ-3 classification === success. */}
                 {wcStep === 'selector' && (
                   <div className="space-y-4">
-                    {/* Auth status reminder — public sites get a banner here, authenticated
+                    {/* Auth status reminder - public sites get a banner here, authenticated
                         sites land here only after auth-setup returned auth_ok. */}
                     {requiresLogin === false && (
                       <div className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3">
                         <div className="flex items-center gap-2 text-xs text-gray-400">
                           <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success)]" />
-                          Public site — no login needed
+                          Public site - no login needed
                         </div>
                         <button
                           type="button"
@@ -921,7 +921,7 @@ function AddConnectorPage() {
                       <div className="flex items-center justify-between rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 px-4 py-3">
                         <div className="flex items-center gap-2 text-xs text-[var(--color-success)]">
                           <CheckCircle2 className="h-3.5 w-3.5" />
-                          Logged in — cookies verified
+                          Logged in - cookies verified
                         </div>
                         <button
                           type="button"
@@ -975,7 +975,7 @@ function AddConnectorPage() {
                         SPEC-CONNECTOR-INPUT-VALIDATION-001: AI find is an upfront
                         affordance (operators expect to see it before running anything,
                         not buried inside a failure message). It composes with the
-                        classification feedback below — does not contradict it. */}
+                        classification feedback below - does not contradict it. */}
                     <div className="flex flex-wrap gap-2 items-center">
                       <Button
                         type="button"
@@ -1018,14 +1018,14 @@ function AddConnectorPage() {
                         {m.admin_connectors_webcrawler_preview_loading()}
                       </div>
                     )}
-                    {/* Empty state — before any preview has run */}
+                    {/* Empty state - before any preview has run */}
                     {!previewResult && !previewMutation.isPending && !previewError && (
                       <p className="text-sm text-gray-400">{m.admin_connectors_webcrawler_preview_empty()}</p>
                     )}
                     {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3:
                         Single source of truth: classification drives ALL feedback.
                         Supporting fields (fit_markdown, selector_source, auth_guard) compose
-                        ALONGSIDE the classification message — never in parallel. */}
+                        ALONGSIDE the classification message - never in parallel. */}
                     {previewResult !== null && !previewMutation.isPending && (
                       <div className="space-y-3">
                         {/* Primary classification message */}
@@ -1082,7 +1082,7 @@ function AddConnectorPage() {
                           </button>
                         )}
 
-                        {/* Affordance: extracted markdown body as proof — success only.
+                        {/* Affordance: extracted markdown body as proof - success only.
                             Shows what the crawler will actually store. */}
                         {previewResult.classification === 'success' && previewResult.word_count > 0 && (
                           <div className="rounded-lg border border-gray-200 p-3 space-y-2">
@@ -1104,7 +1104,7 @@ function AddConnectorPage() {
                             Only after a successful preview AND when we have an
                             auth_guard to work with (either fresh from preview or
                             carried over from auth-probe). Source of truth is
-                            ``authGuard`` state — operator edits flow there, save
+                            ``authGuard`` state - operator edits flow there, save
                             reads from there. */}
                         {previewResult.classification === 'success' && authGuard?.canary_url && (
                           <div className="rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 space-y-2">

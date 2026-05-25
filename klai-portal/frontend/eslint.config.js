@@ -57,7 +57,7 @@ export default defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       // Syncing server data to local form state via useEffect is a common, intentional React pattern
       'react-hooks/set-state-in-effect': 'off',
-      // no-unsafe-* requires a fully typed API client — disable until API types are generated
+      // no-unsafe-* requires a fully typed API client - disable until API types are generated
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
@@ -65,8 +65,8 @@ export default defineConfig([
       '@typescript-eslint/no-unsafe-argument': 'off',
     },
   },
-  // shadcn/ui components export variants alongside the component — this is intentional
-  // TanStack Router route files export `Route` (non-component) alongside local component functions —
+  // shadcn/ui components export variants alongside the component - this is intentional
+  // TanStack Router route files export `Route` (non-component) alongside local component functions -
   // Fast Refresh works via Route.component reference; the plugin doesn't understand this pattern
   {
     files: ['src/components/ui/**/*.{ts,tsx}', 'src/lib/locale.tsx', 'src/routes/**/*.{ts,tsx}'],

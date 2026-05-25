@@ -3,7 +3,7 @@
  * for the kb-image round-trip.
  *
  * Unlike the existing portal e2e tests, this one drives the **full**
- * transport stack — Caddy → portal-api → Garage — by uploading a tiny
+ * transport stack - Caddy → portal-api → Garage - by uploading a tiny
  * PNG and then rendering the returned URL as an `<img>` element. The
  * test fails if `naturalWidth === 0` (the v1 regression symptom that
  * went undetected for 3 weeks).
@@ -20,7 +20,7 @@
  * 3. Remove the `if: false` guard in
  *    `.github/workflows/portal-frontend-e2e.yml`.
  *
- * Until the secret is set up the workflow is dormant — running this
+ * Until the secret is set up the workflow is dormant - running this
  * test locally is supported via the Playwright config in this folder.
  */
 

@@ -19,7 +19,7 @@
 /** OIDC/OAuth error codes that indicate the user must re-authenticate. */
 export const REAUTHENTICATION_ERRORS: ReadonlySet<string> = new Set([
   'invalid_grant',             // refresh_token expired or revoked
-  'login_required',            // silent iframe renew — no active session at the OP
+  'login_required',            // silent iframe renew - no active session at the OP
   'interaction_required',      // OP requires user interaction
   'consent_required',          // OP requires explicit consent
   'account_selection_required' // OP needs the user to pick an account

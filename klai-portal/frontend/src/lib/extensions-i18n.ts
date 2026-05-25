@@ -1,5 +1,5 @@
 /**
- * SPEC-PORTAL-EXTENSIONS-UNIFY-001 polish — frontend i18n for extension keys.
+ * SPEC-PORTAL-EXTENSIONS-UNIFY-001 polish - frontend i18n for extension keys.
  *
  * The backend returns only feature keys (language-agnostic). This helper maps
  * each key to its Paraglide label + description, keeping NL/EN switching

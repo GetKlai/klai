@@ -39,7 +39,7 @@ export async function loginAsE2EBot(page: Page): Promise<void> {
   // half-finished auth state from prior runs.
   await page.goto('/login')
 
-  // Wait for the email input — explicit selector defensively guards
+  // Wait for the email input - explicit selector defensively guards
   // against the form taking a tick to mount.
   await page.waitForSelector('input[type="email"]', { timeout: 10_000 })
   await page.fill('input[type="email"]', email)
@@ -50,7 +50,7 @@ export async function loginAsE2EBot(page: Page): Promise<void> {
   await page.locator('button[type="submit"]').first().click()
 
   // TOTP step. The form may not always appear (e.g. if MFA is disabled
-  // — which we explicitly do NOT want for the e2e bot, see plan §1).
+  // - which we explicitly do NOT want for the e2e bot, see plan §1).
   // Wait up to 10s; failure here is a hard fail.
   await page.waitForSelector('input[name="totp"], input[autocomplete="one-time-code"]', {
     timeout: 10_000,

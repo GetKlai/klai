@@ -4,7 +4,7 @@
  * Many klai journeys involve background work (KB ingestion, scribe
  * transcription, tenant-provisioning). The standard pattern is:
  * trigger the action, then poll an API endpoint until it reports
- * the expected state — or time out.
+ * the expected state - or time out.
  *
  * Usage:
  *   const result = await pollUntil({

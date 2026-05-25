@@ -83,7 +83,7 @@ Sentry.init({
   ],
   tracesSampleRate: 0.3,
   beforeSend(event) {
-    // Strip IP address — we identify by user ID only, not by network location.
+    // Strip IP address - we identify by user ID only, not by network location.
     if (event.user) delete event.user.ip_address
     return event
   },

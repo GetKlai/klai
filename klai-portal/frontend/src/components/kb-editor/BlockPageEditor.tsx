@@ -50,11 +50,11 @@ export const BlockPageEditor = forwardRef<
     // SPEC-PORTAL-DOCS-IMAGE-PASTE-001 REQ-6:
     // BlockNote's default paste-flow checks Files BEFORE HTML/Markdown.
     // Configuring `uploadFile` is sufficient for clipboard paste, drag-drop,
-    // and slash-menu image insert to all route to the portal-api endpoint —
+    // and slash-menu image insert to all route to the portal-api endpoint -
     // no changes to `pasteHandler` are required.
     uploadFile: async (file: File): Promise<string> => {
       if (!kbSlug) {
-        editorLogger.warn('uploadFile invoked without kbSlug — skipping')
+        editorLogger.warn('uploadFile invoked without kbSlug - skipping')
         throw new Error('Afbeelding uploaden mislukt: geen kennisbank-context.')
       }
       const fd = new FormData()
@@ -120,17 +120,17 @@ export const BlockPageEditor = forwardRef<
       return
     }
     // Format detection (newest-first for fast path):
-    //   JSON  — saved by current code, lossless native BlockNote format
-    //   HTML  — saved by previous code (after wikilink support was added)
-    //   Markdown — saved by very first version of the editor
+    //   JSON  - saved by current code, lossless native BlockNote format
+    //   HTML  - saved by previous code (after wikilink support was added)
+    //   Markdown - saved by very first version of the editor
     const trimmed = initialContent.trimStart()
     const format = trimmed.startsWith('[') ? 'json'
                  : trimmed.startsWith('<') ? 'html'
                  : 'markdown'
     editorLogger.debug('Loading content', { format, length: initialContent.length })
 
-    // JSON is fast — parse synchronously for instant LCP.
-    // HTML/Markdown parsing is expensive — defer to let the editor shell paint first.
+    // JSON is fast - parse synchronously for instant LCP.
+    // HTML/Markdown parsing is expensive - defer to let the editor shell paint first.
     if (format === 'json') {
       try {
         const blocks = JSON.parse(initialContent) as Parameters<typeof editor.replaceBlocks>[1]
@@ -161,7 +161,7 @@ export const BlockPageEditor = forwardRef<
   }, [])
 
   useImperativeHandle(ref, () => ({
-    // Serialize as native BlockNote JSON — lossless (empty paragraphs, custom
+    // Serialize as native BlockNote JSON - lossless (empty paragraphs, custom
     // inline specs like WikiLink with all props) and round-trips without data loss.
     // HTML and Markdown exports are for display/RSS only, not for persistence.
     getContent: () => JSON.stringify(editor.document),

@@ -15,7 +15,7 @@
  *   1. Locate every `Property` whose `key.name === 'queryKey'`.
  *   2. If the value is an `ArrayExpression` AND the first element is a
  *      string `Literal` matching a registered prefix → report.
- *   3. The registry file `src/lib/kb-query-keys.ts` is exempt — it
+ *   3. The registry file `src/lib/kb-query-keys.ts` is exempt - it
  *      defines the literals.
  */
 

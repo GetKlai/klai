@@ -28,7 +28,7 @@ vi.mock('@/lib/logger', () => ({
   taxonomyLogger: { warn: vi.fn(), error: vi.fn() },
 }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
-// Paraglide is NOT mocked — same approach as the component test files.
+// Paraglide is NOT mocked - same approach as the component test files.
 // Assertions below check that *some* string was passed to toast.error,
 // not the specific translation, so this stays robust to copy changes.
 
@@ -438,7 +438,7 @@ describe('useBackfillTaxonomy', () => {
   // to stub in isolation: any `globalThis.setTimeout` mock leaks into
   // TanStack Query's own timing and times out neighbouring tests.
   // The error path tests below DO cover the state-machine transitions
-  // (Appendix A row for `useBackfillTaxonomy.onError`) — that is the
+  // (Appendix A row for `useBackfillTaxonomy.onError`) - that is the
   // refactor-sensitive part.
 
   it('on error during applying: falls back to proposals_ready if any pending', async () => {

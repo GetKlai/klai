@@ -27,7 +27,7 @@ export function SyncStatusBadge({
   status: string | null
   lastSyncAt?: string | null
   // SPEC-CRAWLER-006 REQ-08: live progress for delegated web_crawler runs.
-  // Crawler has two phases — discovery (pages_total = NULL) and processing
+  // Crawler has two phases - discovery (pages_total = NULL) and processing
   // (pages_total = N). Other connector types pass null/null and render
   // the plain "Bezig" label.
   pagesDone?: number | null
@@ -39,7 +39,7 @@ export function SyncStatusBadge({
       if (liveResolutionFailed) {
         return <Badge variant="accent">{m.admin_connectors_status_running_unknown()}</Badge>
       }
-      // Phase 2 (processing) — pages_total known and > 0. Crawler has
+      // Phase 2 (processing) - pages_total known and > 0. Crawler has
       // finished discovery and is iterating per-page ingest.
       if (pagesTotal && pagesTotal > 0 && pagesDone !== null && pagesDone !== undefined) {
         return (
@@ -51,7 +51,7 @@ export function SyncStatusBadge({
           </Badge>
         )
       }
-      // Phase 1 (discovery) — knowledge.crawl_jobs.pages_total defaults to 0
+      // Phase 1 (discovery) - knowledge.crawl_jobs.pages_total defaults to 0
       // and is updated to len(results) only AFTER crawl_site() returns.
       // While the row carries pages_total = 0 and pages_done = 0 we know
       // the crawl is still gathering URLs, not iterating per-page.
@@ -107,9 +107,9 @@ export function DashboardSection({
 
 // `ASSERTION_MODE_OPTIONS` and `joinSeedUrl` were moved to
 // `klai-portal/frontend/src/routes/app/knowledge/-connector-constants.ts`
-// — wizard-only, smallest-shared scope is the parent route dir.
+// - wizard-only, smallest-shared scope is the parent route dir.
 //
-// `roleBadge` was removed (dead code — no consumers).
+// `roleBadge` was removed (dead code - no consumers).
 //
 // `parseCookieString` was removed earlier: the wizard now collects cookies
 // as structured {name, value} rows via CookieRowsInput, matching the shape

@@ -128,7 +128,7 @@ function DocsPage() {
             </div>
           ))}
 
-          {/* Locked KBs — same row shape, faded, no actions */}
+          {/* Locked KBs - same row shape, faded, no actions */}
           {lockedKbs.map((kb) => (
             <Tooltip key={kb.id} label={m.docs_kb_locked_tooltip()}>
               <div className="flex items-center gap-3 px-2 py-3.5 opacity-60 cursor-default">

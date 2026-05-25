@@ -1,12 +1,12 @@
 /**
- * KB-image URL constants — TypeScript mirror of
+ * KB-image URL constants - TypeScript mirror of
  * ``klai-libs/image-storage/klai_image_storage/kb_image.py``.
  *
  * SPEC-KB-IMAGES-V2-001 REQ-7: single source of truth for the kb-image
  * URL shape, mirrored here so the portal frontend (the only TS consumer)
  * doesn't hardcode the path. A drift between this module and the Python
  * KbImage is caught at unit-test time by the fixture in
- * `__tests__/kb-image-url.test.ts` — the test compares this module's
+ * `__tests__/kb-image-url.test.ts` - the test compares this module's
  * outputs to known-good Python-generated strings.
  *
  * Why mirror instead of fetching at runtime: the URL is needed before
@@ -17,7 +17,7 @@
 
 // Production tenant ids are numeric snowflake (e.g. "368884765035593759").
 // Dev / test tenants use the kb_slug alphabet (e.g. "org-1"). Both shapes
-// are accepted in the path regex below — must match KbImage._PATH_RE.
+// are accepted in the path regex below - must match KbImage._PATH_RE.
 const ZITADEL_SEGMENT_RE = /([a-z0-9][a-z0-9-]{0,63}|[0-9]{1,20})/
 const KB_SLUG_SEGMENT_RE = /([a-z0-9][a-z0-9-]{0,63})/
 const SHA256_SEGMENT_RE = /([0-9a-f]{64})/

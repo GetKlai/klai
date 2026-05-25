@@ -24,7 +24,7 @@ interface InlineEditProps {
  * Inline edit with amber ring and zero layout shift.
  *
  * How it works:
- * - `children` stays in the DOM at all times — `invisible` when editing to preserve height.
+ * - `children` stays in the DOM at all times - `invisible` when editing to preserve height.
  * - The `<input>` is absolutely positioned on top, so it fills the exact same space.
  * - `ring-1 ring-[var(--color-accent)]` provides the amber focus indicator without adding border width.
  * - `rounded-none` gives square forms per portal standard.
@@ -65,11 +65,11 @@ export function InlineEdit({
 
   return (
     <div className="relative">
-      {/* Spacer — always in DOM to hold layout height */}
+      {/* Spacer - always in DOM to hold layout height */}
       <div className={isEditing ? 'invisible pointer-events-none' : undefined}>
         {children}
       </div>
-      {/* Amber-ring input overlay — does not affect layout */}
+      {/* Amber-ring input overlay - does not affect layout */}
       {isEditing && (
         <input
           autoFocus

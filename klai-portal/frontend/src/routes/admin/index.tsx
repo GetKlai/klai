@@ -112,7 +112,7 @@ function sectionIsVisible(
   me: MeResponse | undefined,
 ): boolean {
   if (!section.requiresFeature) return true
-  // Show all tiles while /api/me is still loading — avoids a flash of
+  // Show all tiles while /api/me is still loading - avoids a flash of
   // "no tiles" before the first response lands. Both tenant-admin and
   // platform-admin see exactly what their own tenant has unlocked
   // (emulation view). Cross-tenant management uses the tenant-picker on

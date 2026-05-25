@@ -10,7 +10,7 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigate,
 }))
 
-// `useCurrentUser` is mocked via a settable query state — each test overrides
+// `useCurrentUser` is mocked via a settable query state - each test overrides
 // the payload before rendering the hook.
 interface MockQuery {
   user: CurrentUser | undefined
@@ -88,7 +88,7 @@ describe('useProtectedRoute', () => {
     expect(result.current.isResolving).toBe(true)
   })
 
-  it('redirects to / when unauthenticated — without waiting on the disabled /api/me query', () => {
+  it('redirects to / when unauthenticated - without waiting on the disabled /api/me query', () => {
     // Classic regression case: useCurrentUser is disabled (isPending: true forever)
     // because auth.isAuthenticated is false. The guard must still redirect.
     mockQuery = { user: undefined, isPending: true }

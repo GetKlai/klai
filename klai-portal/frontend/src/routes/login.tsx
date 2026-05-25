@@ -31,7 +31,7 @@ function LoginPage() {
   // True while checking for an existing portal SSO session
   const [checkingSSO, setCheckingSSO] = useState(!!authRequestId)
 
-  // TOTP challenge state — shown after a successful password check
+  // TOTP challenge state - shown after a successful password check
   const [totpStep, setTotpStep] = useState(false)
   const [tempToken, setTempToken] = useState<string | null>(null)
   const [totpCode, setTotpCode] = useState('')
@@ -70,10 +70,10 @@ function LoginPage() {
       }
 
       // SSO failed. If we're inside the LibreChat iframe, showing a login form is
-      // useless — the user can't interact with it. Notify the parent frame so it
+      // useless - the user can't interact with it. Notify the parent frame so it
       // can show an error/retry UI instead of hanging forever on "Welcome back".
       if (inIframe) {
-        authLogger.warn('SSO failed inside iframe — notifying parent frame')
+        authLogger.warn('SSO failed inside iframe - notifying parent frame')
         window.parent.postMessage({ type: 'klai-sso-failed' }, window.location.origin)
         return
       }
@@ -92,7 +92,7 @@ function LoginPage() {
     return null
   }
 
-  // Still checking for existing SSO session — show a spinner
+  // Still checking for existing SSO session - show a spinner
   if (checkingSSO) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
@@ -138,7 +138,7 @@ function LoginPage() {
 
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
-        // Stale auth request — restart the OIDC flow from scratch
+        // Stale auth request - restart the OIDC flow from scratch
         if (resp.status === 409 && data?.detail === 'auth_request_stale') {
           authLogger.warn('Auth request stale, restarting OIDC flow')
           window.location.href = '/'
@@ -156,7 +156,7 @@ function LoginPage() {
         return
       }
 
-      // Navigate to the OIDC callback URL — react-oidc-context picks it up from there
+      // Navigate to the OIDC callback URL - react-oidc-context picks it up from there
       window.location.href = data.callback_url
     } catch (err) {
       authLogger.warn('Password login request failed', err)
@@ -184,7 +184,7 @@ function LoginPage() {
 
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
-        // Stale auth request — restart the OIDC flow from scratch
+        // Stale auth request - restart the OIDC flow from scratch
         if (resp.status === 409 && data?.detail === 'auth_request_stale') {
           authLogger.warn('Auth request stale, restarting OIDC flow')
           window.location.href = '/'

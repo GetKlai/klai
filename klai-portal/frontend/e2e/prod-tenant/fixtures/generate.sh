@@ -31,7 +31,7 @@ else
     exit 1
 fi
 
-# Normalise to 16kHz mono PCM — what most ASR pipelines expect.
+# Normalise to 16kHz mono PCM - what most ASR pipelines expect.
 ffmpeg -y -i /tmp/e2e-raw.wav -ac 1 -ar 16000 -sample_fmt s16 "$OUT"
 rm -f /tmp/e2e-raw.wav /tmp/e2e-raw.aiff
 

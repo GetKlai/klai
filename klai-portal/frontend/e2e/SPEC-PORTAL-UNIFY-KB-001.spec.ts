@@ -1,5 +1,5 @@
 /**
- * SPEC-PORTAL-UNIFY-KB-001 — Phase B: Playwright E2E smoke tests.
+ * SPEC-PORTAL-UNIFY-KB-001 - Phase B: Playwright E2E smoke tests.
  *
  * Scenarios 1-10 from the SPEC testing section.
  * Requires a running dev-stack (npm run dev) and seed users per plan.
@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test'
 import { loginAs, CORE_USER, COMPLETE_USER, ADMIN_USER } from './helpers/auth'
 
 // ---------------------------------------------------------------------------
-// Scenario 1: Core-user creates 5 personal KBs — all succeed
+// Scenario 1: Core-user creates 5 personal KBs - all succeed
 // ---------------------------------------------------------------------------
 test('S1: core-user can create 5 personal KBs', async ({ page }) => {
   await loginAs(page, CORE_USER)
@@ -31,7 +31,7 @@ test('S1: core-user can create 5 personal KBs', async ({ page }) => {
 })
 
 // ---------------------------------------------------------------------------
-// Scenario 2: Core-user at quota — button grayed with tooltip, no network call
+// Scenario 2: Core-user at quota - button grayed with tooltip, no network call
 // ---------------------------------------------------------------------------
 test('S2: core-user at quota sees grayed +New KB button with tooltip', async ({ page }) => {
   // This test requires the core-user to already have 5 personal KBs in the seed.
@@ -59,14 +59,14 @@ test('S2: core-user at quota sees grayed +New KB button with tooltip', async ({ 
     expect(request).toBeNull()
     await expect(page).toHaveURL(/\/app\/knowledge/)
   } else {
-    // Quota not reached in this environment — verify button is enabled
+    // Quota not reached in this environment - verify button is enabled
     const enabledButton = page.getByRole('button', { name: /nieuwe kennisbank|new knowledge base/i })
     await expect(enabledButton).toBeEnabled()
   }
 })
 
 // ---------------------------------------------------------------------------
-// Scenario 3: Core-user uploads 20 items — all succeed (quota not reached)
+// Scenario 3: Core-user uploads 20 items - all succeed (quota not reached)
 // ---------------------------------------------------------------------------
 test('S3: core-user below item quota sees no grayed upload indicator', async ({ page }) => {
   await loginAs(page, CORE_USER)
@@ -77,7 +77,7 @@ test('S3: core-user below item quota sees no grayed upload indicator', async ({ 
   const kbLinks = page.locator('table tbody tr a[href*="/app/knowledge/"]')
   const count = await kbLinks.count()
   if (count === 0) {
-    test.skip(true, 'No KBs found for core-user — seed required')
+    test.skip(true, 'No KBs found for core-user - seed required')
     return
   }
 
@@ -106,7 +106,7 @@ test('S4: core-user at item quota sees grayed add-item with tooltip', async ({ p
     await grayedAdd.first().hover()
     await expect(page.getByRole('tooltip').or(page.locator('[role="tooltip"]'))).toBeVisible()
   } else {
-    test.skip(true, 'No KB at item quota in this environment — seed required')
+    test.skip(true, 'No KB at item quota in this environment - seed required')
   }
 })
 
@@ -120,7 +120,7 @@ test('S5: core-user sees grayed capability-gated tabs in KB detail', async ({ pa
   // Navigate to any KB detail
   const kbLinks = page.locator('table tbody tr a[href*="/app/knowledge/"]')
   if (await kbLinks.count() === 0) {
-    test.skip(true, 'No KBs found for core-user — seed required')
+    test.skip(true, 'No KBs found for core-user - seed required')
     return
   }
   await kbLinks.first().click()
@@ -160,7 +160,7 @@ test('S7: /app/focus/some-old-notebook-id redirects to /app/knowledge', async ({
 })
 
 // ---------------------------------------------------------------------------
-// Scenario 8: Complete-user creates 8+ KBs, uploads 50+ items — no limits
+// Scenario 8: Complete-user creates 8+ KBs, uploads 50+ items - no limits
 // ---------------------------------------------------------------------------
 test('S8: complete-user sees no quota restrictions', async ({ page }) => {
   await loginAs(page, COMPLETE_USER)
@@ -185,7 +185,7 @@ test('S9: complete-user sees all tabs normally clickable in KB detail', async ({
 
   const kbLinks = page.locator('table tbody tr a[href*="/app/knowledge/"]')
   if (await kbLinks.count() === 0) {
-    test.skip(true, 'No KBs found for complete-user — seed required')
+    test.skip(true, 'No KBs found for complete-user - seed required')
     return
   }
 
@@ -210,10 +210,10 @@ test('S10: after plan upgrade, tabs unlock on next page refresh', async ({ page 
   await loginAs(page, ADMIN_USER)
   await page.goto('/app/knowledge')
 
-  // Admins bypass all capability gates — no grayed tabs
+  // Admins bypass all capability gates - no grayed tabs
   const kbLinks = page.locator('table tbody tr a[href*="/app/knowledge/"]')
   if (await kbLinks.count() === 0) {
-    test.skip(true, 'No KBs found for admin — seed required')
+    test.skip(true, 'No KBs found for admin - seed required')
     return
   }
 

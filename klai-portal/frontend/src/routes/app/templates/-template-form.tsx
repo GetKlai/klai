@@ -11,10 +11,10 @@ import * as m from '@/paraglide/messages'
 
 // Shared form for new + edit. Container, buttons and field styling follow
 // .claude/rules/klai/design/portal-patterns.md. The admin-gate for
-// `scope="org"` is defensive UX — server-side backend (SPEC-CHAT-TEMPLATES-001)
+// `scope="org"` is defensive UX - server-side backend (SPEC-CHAT-TEMPLATES-001)
 // is the authority via HTTP 403.
 //
-// @MX:ANCHOR fan_in=2 — rendered by both /app/templates/new and
+// @MX:ANCHOR fan_in=2 - rendered by both /app/templates/new and
 //     /app/templates/$slug/edit route wrappers.
 
 export type TemplateScope = 'org' | 'personal'
@@ -90,7 +90,7 @@ export function TemplateFormPage({
   const isAdmin = currentUser?.isAdmin ?? false
 
   // Non-admins are forced to personal scope. Do NOT mutate initialForm in
-  // place — we honour its scope on the first render so the edit flow can
+  // place - we honour its scope on the first render so the edit flow can
   // inspect an org-scope template without accidentally flipping it.
   const [form, setForm] = useState<TemplateFormState>(() => {
     if (mode === 'new' && !isAdmin && initialForm.scope === 'org') {
@@ -133,7 +133,7 @@ export function TemplateFormPage({
   async function invalidateAndLeave() {
     // Await invalidation BEFORE navigating so the templates list page
     // mounts with fresh data. Without the await the user landed on
-    // /app/templates with the stale cached list — "ik zie de template
+    // /app/templates with the stale cached list - "ik zie de template
     // niet gelijk" (2026-05-20).
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['app-templates'] }),

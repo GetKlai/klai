@@ -41,7 +41,7 @@ export function HelpButton() {
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        {/* Tooltip — absolute, centered above the button */}
+        {/* Tooltip - absolute, centered above the button */}
         {!enabled && hovered && (
           <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 pointer-events-none">
             <div className="relative px-2 py-1 text-xs text-white bg-[var(--color-foreground)] rounded whitespace-nowrap">

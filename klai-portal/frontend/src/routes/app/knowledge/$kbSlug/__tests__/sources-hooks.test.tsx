@@ -7,7 +7,7 @@
  *      (connector → /sync, upload → /reindex). One wrong character here
  *      and the row's primary action becomes a no-op against the wrong URL.
  *
- *   2. `useSourceRename` calls `onDone` ONLY on success — failures keep the
+ *   2. `useSourceRename` calls `onDone` ONLY on success - failures keep the
  *      inline-edit overlay open so the user can retry without re-typing
  *      (regression captured during SPEC-PORTAL-SOURCES-RENAME-001 Phase 4
  *      adversarial review; the original `onSettled` version dropped the

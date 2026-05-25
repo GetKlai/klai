@@ -3,7 +3,7 @@
  *
  * Kept in a component-free file so ESLint's `react-refresh/only-export-components`
  * rule stays happy on `lib/auth.tsx` (which holds the provider component).
- * Consumers still import everything from `@/lib/auth` — that module re-exports
+ * Consumers still import everything from `@/lib/auth` - that module re-exports
  * these symbols.
  */
 

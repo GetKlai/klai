@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Loader2, Eye, Pencil, Plus, Trash2 } from 'lucide-react'
 
-// Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
+// Avatar colors: decorative differentiation, not semantic states - raw Tailwind allowed per frontend.md
 const AVATAR_COLORS = [
   'bg-purple-100 text-purple-700',
   'bg-blue-100 text-blue-700',
@@ -64,7 +64,7 @@ function MemberAvatars({
   const visible = userIds.slice(0, 4)
   const extra = userIds.length - visible.length
   if (userIds.length === 0) {
-    return <span className="text-xs text-gray-400">—</span>
+    return <span className="text-xs text-gray-400">-</span>
   }
   return (
     <div className="flex items-center gap-1.5">

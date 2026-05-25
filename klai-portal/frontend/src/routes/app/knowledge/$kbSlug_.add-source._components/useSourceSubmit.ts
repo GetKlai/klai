@@ -4,7 +4,7 @@
  * Keeps each individual form component under 100 lines (SPEC-KB-SOURCES-001
  * R6.3) and guarantees consistent error text across the two tiles. The
  * ``youtube`` kind used to be wired here too, but the tile was pulled from
- * the UI in 1.5.0 — the backend route remains live for when we re-enable.
+ * the UI in 1.5.0 - the backend route remains live for when we re-enable.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
@@ -50,7 +50,7 @@ export function extractErrorCode(detail: string): string | undefined {
 /**
  * Map an ApiError to one of the i18n error keys documented in SPEC D8.
  *
- * Never calls the generic key for errors we can recognise — the UI should
+ * Never calls the generic key for errors we can recognise - the UI should
  * tell the user WHICH constraint tripped (invalid URL / blocked URL /
  * KB full) rather than a vague "try again". Exported for direct unit
  * testing.

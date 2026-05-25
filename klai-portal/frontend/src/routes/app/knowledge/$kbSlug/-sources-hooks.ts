@@ -74,11 +74,11 @@ export function useSourceDelete(kbSlug: string, source: Source) {
  *
  * Upload-only: connector display names live in `portal_connectors.name`,
  * edited via the dedicated `/edit-connector` route. The mutation does NOT
- * touch `artifacts.path` (Qdrant identity) — only `extra.display_name`.
+ * touch `artifacts.path` (Qdrant identity) - only `extra.display_name`.
  *
  * The `onSuccess` callback closes the inline edit overlay; failures keep the
  * overlay open so the user can retry without re-typing. This matches the
- * pre-rename behaviour from PR #574 — closing on error silently dropped
+ * pre-rename behaviour from PR #574 - closing on error silently dropped
  * the user's typed name with no feedback.
  */
 export function useSourceRename(kbSlug: string, source: Source, onDone: () => void) {
@@ -113,7 +113,7 @@ interface ReauthState {
    * by `connectors.tsx::handleReconnect`. No dedicated `/reauth` route.
    *
    * Sets `error=true` and `pending=false` if the connector has no
-   * `connector_type` (defensive — should never happen on the auth_error
+   * `connector_type` (defensive - should never happen on the auth_error
    * path) or if the authorize call itself fails before the redirect.
    */
   start: () => Promise<void>
@@ -152,7 +152,7 @@ export function useSourceReauth(kbSlug: string, source: Source): ReauthState {
 
 /**
  * Fan-out helper: sync every connector source in this KB in parallel. We
- * don't await individual responses — each row will pick up its `pending`
+ * don't await individual responses - each row will pick up its `pending`
  * status on the next poll of the bronnen list.
  */
 export function useSyncAllConnectors(kbSlug: string, connectorSources: Source[]) {

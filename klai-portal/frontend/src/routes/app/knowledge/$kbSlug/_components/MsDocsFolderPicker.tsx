@@ -19,9 +19,9 @@ interface FoldersResponse {
 
 /**
  * Picker can return ONE of three scope shapes:
- *   1. ``{ folderId: '', fileIds: [] }`` — whole drive
- *   2. ``{ folderId: <id>, fileIds: [] }`` — single folder subtree
- *   3. ``{ folderId: '', fileIds: [...] }`` — specific files
+ *   1. ``{ folderId: '', fileIds: [] }`` - whole drive
+ *   2. ``{ folderId: <id>, fileIds: [] }`` - single folder subtree
+ *   3. ``{ folderId: '', fileIds: [...] }`` - specific files
  *
  * Folder + files are mutually exclusive: clicking a folder clears file
  * selection, clicking a file clears folder selection.
@@ -61,7 +61,7 @@ function ItemNode({
   const isFileSelected = !isFolder && selectedFileIds.has(item.id)
 
   // Lazy load children only after the user expands this folder.
-  // We always allow expansion — Graph's ``childCount`` is unreliable for
+  // We always allow expansion - Graph's ``childCount`` is unreliable for
   // some special folders, and showing an empty state is more useful than
   // a disabled chevron the user can't try.
   const { data, isLoading } = useQuery<FoldersResponse>({
@@ -112,7 +112,7 @@ function ItemNode({
         ) : (
           // Checkbox for files. Native input so keyboard / accessibility
           // are free. Click bubbles up to the parent row, which calls
-          // onToggleFile — no stopPropagation here or the toggle never
+          // onToggleFile - no stopPropagation here or the toggle never
           // fires when the user clicks the checkbox itself.
           <input
             type="checkbox"
@@ -193,11 +193,11 @@ interface PickerProps {
 }
 
 /**
- * Picker for Microsoft 365 connectors — pick a folder OR specific files.
+ * Picker for Microsoft 365 connectors - pick a folder OR specific files.
  *
  * The two modes are mutually exclusive: clicking a folder clears any
  * checked files, ticking a file clears the folder selection. "Hele drive"
- * means neither — sync everything.
+ * means neither - sync everything.
  */
 export function MsDocsFolderPicker({
   kbSlug,

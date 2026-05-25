@@ -97,7 +97,7 @@ describe('InviteUserPage', () => {
     expect((select as HTMLSelectElement).value).toBe('personal')
   })
 
-  // SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 — account type is derived from
+  // SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 - account type is derived from
   // the chosen Profile and shown as a display-only badge. There is no admin
   // override; the server runs the same suggest_seat(role) derivation
   // regardless of what the FE sends.
@@ -121,12 +121,12 @@ describe('InviteUserPage', () => {
     expect(badge.textContent).toContain('€28/mo')
     // Hint copy is part of the read-only badge.
     expect(badge.textContent).toContain('Derived from the chosen Profile.')
-    // No radio buttons in the badge container — it is display-only.
+    // No radio buttons in the badge container - it is display-only.
     expect(badge.querySelectorAll('input[type="radio"]')).toHaveLength(0)
     // A11y contract: the badge announces itself as a status region with
     // a polite live-region (so SR users hear the re-derivation when the
     // Profile changes), and is labelled by the standalone heading div
-    // — NOT by an htmlFor= label, which would mis-imply a focusable
+    // - NOT by an htmlFor= label, which would mis-imply a focusable
     // form control behind it.
     expect(badge.getAttribute('role')).toBe('status')
     expect(badge.getAttribute('aria-live')).toBe('polite')
@@ -204,7 +204,7 @@ describe('InviteUserPage', () => {
     expect(lastCall?.[0]).toBe('/api/admin/users/invite')
     const body = JSON.parse(lastCall?.[1]?.body ?? '{}')
     // v0.5.0 contract: the FE does NOT send seat_type. Server derives it
-    // from role via suggest_seat() in seats.py — preventing client tamper.
+    // from role via suggest_seat() in seats.py - preventing client tamper.
     expect(body).not.toHaveProperty('seat_type')
     // Required fields ARE present.
     expect(body).toMatchObject({

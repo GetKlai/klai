@@ -1,5 +1,5 @@
 /**
- * SPEC-PORTAL-SOURCES-RENAME-001 REQ-1 — legacy URL redirect.
+ * SPEC-PORTAL-SOURCES-RENAME-001 REQ-1 - legacy URL redirect.
  *
  * /app/knowledge/<slug>/bronnen → /app/knowledge/<slug>/sources
  *

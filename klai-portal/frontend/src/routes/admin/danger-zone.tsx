@@ -19,7 +19,7 @@ interface OrgMe {
   name: string
 }
 
-// @MX:NOTE: Owner-only page — access gated by isAdmin check via useProtectedRoute.
+// @MX:NOTE: Owner-only page - access gated by isAdmin check via useProtectedRoute.
 // @MX:SPEC: SPEC-INFRA-TENANT-DELETE-001 Phase 10 R10
 function DangerZonePage() {
   const { canRender } = useProtectedRoute({

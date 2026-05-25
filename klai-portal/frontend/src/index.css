@@ -8,7 +8,7 @@
 @import "tailwindcss";
 
 @theme inline {
-  /* Klai brand colors — warm ivory palette */
+  /* Klai brand colors - warm ivory palette */
   --color-rl-bg:           #fffef2;
   --color-rl-dark:         #191918;
   --color-rl-dark-60:      #19191899;
@@ -126,9 +126,9 @@ body {
    line with the portal's design system (page title = 24px).
    ─────────────────────────────────────────────────────────────────────── */
 
-/* BlockNote editor typography — Klai style overrides.
+/* BlockNote editor typography - Klai style overrides.
    Layout (max-width, padding) is handled by the component wrapper,
-   NOT here — CSS layout properties on .bn-editor cause reflow thrashing
+   NOT here - CSS layout properties on .bn-editor cause reflow thrashing
    as BlockNote incrementally renders blocks.
    Only typography + color overrides below. */
 .bn-editor {
@@ -143,7 +143,7 @@ body {
   margin-bottom: 2px !important;
 }
 
-/* H1: 21px semibold — subordinate to page title (24px text-2xl) */
+/* H1: 21px semibold - subordinate to page title (24px text-2xl) */
 .bn-editor h1 {
   font-size: 21px !important;
   font-weight: 600 !important;
@@ -163,7 +163,7 @@ body {
   margin-bottom: 2px !important;
 }
 
-/* H3: 15.5px — just bolder body text */
+/* H3: 15.5px - just bolder body text */
 .bn-editor h3 {
   font-size: 15.5px !important;
   font-weight: 600 !important;

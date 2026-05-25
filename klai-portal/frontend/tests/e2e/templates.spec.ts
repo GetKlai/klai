@@ -1,7 +1,7 @@
 /**
  * Playwright e2e spec for SPEC-CHAT-TEMPLATES-002.
  *
- * STATUS: STUB — klai-portal/frontend has no Playwright harness checked in
+ * STATUS: STUB - klai-portal/frontend has no Playwright harness checked in
  * yet. Activation requires a separate follow-up that adds:
  *  - `@playwright/test` to devDependencies
  *  - `playwright.config.ts` with baseURL, `webServer` for the vite dev server
@@ -18,18 +18,18 @@
  * scripts this stub will flesh out.
  */
 
-// @ts-expect-error — @playwright/test not yet installed in this project.
+// @ts-expect-error - @playwright/test not yet installed in this project.
 // Remove the comment once the harness lands.
 import { test, expect } from '@playwright/test'
 
-test.describe('SPEC-CHAT-TEMPLATES-002 — Prompt Templates frontend CRUD', () => {
+test.describe('SPEC-CHAT-TEMPLATES-002 - Prompt Templates frontend CRUD', () => {
   test.skip(
     true,
     'Playwright harness not configured in klai-portal/frontend. Unit tests cover component-level behaviour until the harness lands.',
   )
 
   /**
-   * SCEN-E2E-1 — Create template as admin → visible in list.
+   * SCEN-E2E-1 - Create template as admin → visible in list.
    *
    * Preconditions:
    *  - Tenant is freshly provisioned (expect 4 default templates in list).
@@ -50,7 +50,7 @@ test.describe('SPEC-CHAT-TEMPLATES-002 — Prompt Templates frontend CRUD', () =
   })
 
   /**
-   * SCEN-E2E-2 — Edit an existing template updates prompt_text.
+   * SCEN-E2E-2 - Edit an existing template updates prompt_text.
    *
    * Steps:
    *  1. goto('/app/templates')
@@ -65,7 +65,7 @@ test.describe('SPEC-CHAT-TEMPLATES-002 — Prompt Templates frontend CRUD', () =
   })
 
   /**
-   * SCEN-E2E-3 — Delete template via InlineDeleteConfirm.
+   * SCEN-E2E-3 - Delete template via InlineDeleteConfirm.
    *
    * Steps:
    *  1. goto('/app/templates')
@@ -80,7 +80,7 @@ test.describe('SPEC-CHAT-TEMPLATES-002 — Prompt Templates frontend CRUD', () =
   })
 
   /**
-   * SCEN-E2E-4 — Chat-integration: template injection reaches LiteLLM.
+   * SCEN-E2E-4 - Chat-integration: template injection reaches LiteLLM.
    *
    * End-to-end smoke: frontend activation flows into the LiteLLM hook.
    *
