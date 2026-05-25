@@ -730,7 +730,7 @@ def test_citation_composer_adds_sources_when_model_has_no_citations():
         ],
     )
 
-    assert composed.content == "Klai is steward-owned and mission-led (1)."
+    assert composed.content == "Klai is steward-owned and mission-led."
     assert composed.sources == [
         {
             "label": "1",
@@ -755,7 +755,7 @@ def test_citation_composer_ignores_model_citation_text_and_source_lists():
         ],
     )
 
-    assert composed.content == "Steward ownership protects Klai (1)."
+    assert composed.content == "Steward ownership protects Klai."
     assert composed.sources[0]["url"] == "https://getklai.com/docs/company/steward-ownership"
     assert "Stichting DOEN" not in composed.content
 
@@ -780,7 +780,7 @@ def test_citation_composer_dedupes_www_and_non_www_sources():
         ],
     )
 
-    assert composed.content == "Klai stores account data and query data (1)."
+    assert composed.content == "Klai stores account data and query data."
     assert composed.sources == [
         {
             "label": "1",
@@ -806,7 +806,7 @@ def test_citation_composer_uses_source_ref_as_url_fallback():
         ],
     )
 
-    assert composed.content == "Klai stores account data (1)."
+    assert composed.content == "Klai stores account data."
     assert composed.sources[0]["url"] == "https://getklai.com/docs/legal/privacy"
 
 
@@ -1332,7 +1332,7 @@ async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
         chunks.append(chunk)
 
     body = b"".join(chunks).decode()
-    assert '"content": "Naam (1)."' in body
+    assert '"content": "Naam."' in body
     assert (
         '"sources": [{"label": "1", "title": "Privacy policy", "url": "https://getklai.com/docs/legal/privacy"}]'
     ) in body
@@ -1400,7 +1400,7 @@ async def test_streaming_widget_mode_composes_sources_without_model_citations(mo
 
     body = b"".join(chunks).decode()
     assert '"sources": [{"label": "1", "title": "Steward ownership"' in body
-    assert '"content": "Klai is steward-owned and mission-led (1)."' in body
+    assert '"content": "Klai is steward-owned and mission-led."' in body
     assert body.index('"sources"') < body.index('"content"')
 
 

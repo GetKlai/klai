@@ -1,38 +1,29 @@
-"""Vendored single-file copy of ``klai-libs/chat-prompts/klai_chat_prompts``.
+"""Shared chat system-prompt constants for Klai.
 
-SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10).
+Owned by SPEC-RAG-MULTILINGUAL-CHAT-001. Both klai-retrieval-api's
+synthesis service and klai-portal's partner_chat service import
+:data:`GROUNDED_CHAT_SYSTEM_PROMPT` from this module. Do not duplicate
+the constant in either service — a CI lint at the monorepo level
+rejects copies elsewhere.
 
-Why a vendored copy
--------------------
+:data:`GENERAL_CHAT_SYSTEM_PROMPT` is used by the LiteLLM hook (path A)
+when the user has explicitly opted out of every knowledge-base scope
+(``kb_personal_enabled=False`` AND ``kb_slugs_filter=[]``). Same
+language-detection contract as GROUNDED, but no KB-grounding rules and
+no [n] citation pressure — the model behaves as a general-purpose
+assistant. Paths B and C never reach this prompt because they are
+server-to-server and always carry KB scope.
 
-The LiteLLM container (``ghcr.io/berriai/litellm:v1.83.7-stable``) is a stock
-upstream image; klai mounts ``klai_knowledge.py`` and ``custom_router.py`` as
-files into ``/app/`` (which is on PYTHONPATH). There is no ``pyproject.toml``
-inside the container, no ``pip install`` step, and no klai-libs path-dep
-mechanism the way other klai services have.
+:data:`META_CHAT_SYSTEM_PROMPT` is used by the LiteLLM hook (path A)
+when the user asks a META question about Klai itself — "what is Klai?",
+"what can I do here?", "how does this work?". Same language-detection
+contract as GROUNDED and GENERAL, but no retrieval and no KB-grounding
+rules — the model gives a plain "what Klai is and how to use it"
+answer without fabricating specific features. Paths B and C never
+reach this prompt: partners build their own UI affordances around the
+chat surface, and retrieval-api /chat is server-to-server.
 
-This mirrors the pattern established for ``klai_service_auth.py`` in Phase
-C-1 of SPEC-SEC-SERVICE-AUTH-001:
-
-1. Build a custom litellm Dockerfile that ``pip install``s
-   ``klai-libs/chat-prompts`` on top of the upstream image. This is the
-   long-term plan but requires a separate CI workflow + image push pipeline.
-2. Vendor a single-file copy here. Mount it next to ``klai_knowledge.py``.
-   Refresh manually when the canonical library changes. Drift is detected
-   by ``deploy/litellm/tests/test_klai_chat_prompts_drift.py``.
-
-Phase 4 ships option 2.
-
-When updating
--------------
-
-If you change ``klai-libs/chat-prompts/klai_chat_prompts/__init__.py``, copy
-every public constant (currently ``GROUNDED_CHAT_SYSTEM_PROMPT``,
-``GENERAL_CHAT_SYSTEM_PROMPT``, and ``META_CHAT_SYSTEM_PROMPT``) below
-verbatim. The drift test compares the vendored constant strings to the
-canonical strings and rejects PRs that forget the copy.
-
-Behaviour encoded in the prompts (per SPEC REQ-01):
+Behaviour encoded in both prompts (per SPEC REQ-01):
 
 1. Auto-detect the language of the user's most recent SUBSTANTIVE
    message and respond in that language.
@@ -53,10 +44,12 @@ GROUNDED-only behaviour (KB chunks present):
    language.
 5. When the user questions WHY a previous answer was given, the model
    names the actual chunks it used and admits weak matches rather than
-   retrofitting a justification (anti-confabulation guard, 2026-05-12).
+   retrofitting a justification. This is the anti-confabulation guard
+   (added 2026-05-12 after the Voys "Meldingen" incident where the
+   model defended a tangential KB match by claiming "dat staat in de
+   kennisbank" as the sole justification).
 
-GENERAL-only behaviour (no KB selected — used by the LiteLLM hook when
-``kb_personal_enabled=False`` AND ``kb_slugs_filter=[]``):
+GENERAL-only behaviour (no KB selected):
 
 6. Answer from general knowledge. Do NOT add [n] citations. Do NOT
    pretend to have sources. If unsure, say so plainly.
@@ -66,6 +59,15 @@ META-only behaviour (user asks what Klai is):
 7. Explain Klai at the level of "what kind of thing it is" — not a
    feature list. Suggest 2-3 generic example questions. Never fabricate
    specific product names, processes, or features.
+
+Industry validation for the three guards: Invent's 2025 multilingual-AI
+agents best-practices guide and Quickchat's 2026 multilingual-chatbots
+guide both call out per-message detection with minimum-message-length +
+single-foreign-word guards as the production-safe pattern. ChatGPT and
+Claude implement equivalent guards without an explicit user-facing
+"do you want to switch?" confirmation; this library follows the same
+quiet-switch convention because Klai is an internal-team tool, not a
+customer-support surface where extra confirmation friction pays off.
 """
 
 from __future__ import annotations
@@ -114,11 +116,10 @@ _GROUNDED_BODY: Final[str] = (
     "Use action verbs for the system: indexes, retrieves, returns, matches, cites. "
     "Do NOT say the system understands, thinks, learns, knows, reasons, believes, or decides.\n"
     "No filler, emoji, exclamation marks, or closing pleasantries.\n\n"
-    "## How to cite\n"
-    "Every factual claim gets a [n] citation where n is the chunk number. "
-    "If a chunk includes a URL or help page link, include it: [n] (https://...). "
-    "Citations [n] always link to the original source URL regardless of source language. "
-    "If sources contradict each other, say so — don't pick a side silently.\n\n"
+    "## Source handling\n"
+    "Do NOT write citation markers, citation numbers, source lists, URLs, Markdown links, or footnotes. "
+    "The application renders trusted sources separately from retrieved metadata after generation. "
+    "Use the chunks to answer, and if sources contradict each other, say so — don't pick a side silently.\n\n"
     "## When the answer isn't there\n"
     "Say it plainly, in the user's language: e.g. 'That's not in the knowledge base' / "
     "'Dat staat niet in de kennisbank' / 'Das steht nicht in der Wissensdatenbank'. "
@@ -213,12 +214,8 @@ _META_BODY: Final[str] = (
 )
 
 
-GROUNDED_CHAT_SYSTEM_PROMPT: Final[str] = (
-    _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GROUNDED_BODY
-)
+GROUNDED_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GROUNDED_BODY
 
-GENERAL_CHAT_SYSTEM_PROMPT: Final[str] = (
-    _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GENERAL_BODY
-)
+GENERAL_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GENERAL_BODY
 
 META_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _META_BODY

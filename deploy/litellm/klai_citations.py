@@ -43,10 +43,9 @@ _BARE_BRACKET_CITATION_RE = re.compile(r"(?<!!)\[\s*\d{1,3}\s*\]")
 _PAREN_CITATION_RE = re.compile(r"\(\s*\d{1,3}(?:\s*[,;]\s*\d{1,3})*\s*\)")
 _MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)")
 _BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?=(?:[.!?])?(?:\s|$))")
-_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}", re.IGNORECASE)
 _SOURCE_HEADING_RE = re.compile(r"^\s*(?:bronnen?|sources?|references?)\s*:?\s*$", re.IGNORECASE)
 _SOURCE_LIST_LINE_RE = re.compile(r"^\s*(?:\(\s*\d{1,3}\s*\)|\[\s*\d{1,3}\s*\]|\d{1,3}[.)])\s*(.+)$")
-_TRAILING_PUNCT_RE = re.compile(r"([.!?:;])(\s*)$")
+_DEFAULT_MAX_SOURCES = 3
 
 
 def normalise_source_url(url: object) -> str:
@@ -199,85 +198,37 @@ def strip_model_citation_artifacts(text: str, *, allowed_image_urls: set[str] | 
     return cleaned.strip()
 
 
-def _tokens(text: str) -> set[str]:
-    return {token.lower() for token in _TOKEN_RE.findall(text)}
-
-
-def _segment_score(segment_tokens: set[str], source: CitationSource) -> int:
-    if not segment_tokens:
-        return 0
-    source_tokens = _tokens(" ".join([source.title, *source.chunk_texts]))
-    return len(segment_tokens & source_tokens)
-
-
-def _add_marker(segment: str, labels: list[str]) -> str:
-    marker = f" ({','.join(labels)})"
-    match = _TRAILING_PUNCT_RE.search(segment)
-    if match:
-        return f"{segment[: match.start(1)].rstrip()}{marker}{match.group(1)}{match.group(2)}"
-    return f"{segment.rstrip()}{marker}"
-
-
 def _compose_citations_from_sources(
     text: str,
     sources: list[CitationSource],
     *,
-    max_sources: int = 3,
+    max_sources: int | None = _DEFAULT_MAX_SOURCES,
     max_sources_per_segment: int = 2,
     allowed_image_urls: set[str] | None = None,
 ) -> ComposedCitations:
+    """Return clean answer text plus document-level sources.
+
+    Inline citation placement cannot be made reliable from free-form LLM text
+    without asking the model to produce a claim-to-source contract. Keep this
+    layer deterministic: sanitize model-authored citation artifacts, then attach
+    a compact source registry built from trusted retrieval metadata.
+    """
     cleaned = strip_model_citation_artifacts(text, allowed_image_urls=allowed_image_urls)
     if not cleaned or not sources:
         return ComposedCitations(content=cleaned, sources=[])
 
-    labels_by_key = {source.key: str(index) for index, source in enumerate(sources, 1)}
-    cited_keys: set[str] = set()
-    output_lines: list[str] = []
-    has_cited_any_segment = False
-
-    for line in cleaned.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            output_lines.append(line)
-            continue
-
-        segment_tokens = _tokens(stripped)
-        scored = [
-            (score, source)
-            for source in sources
-            if source.key not in cited_keys and (score := _segment_score(segment_tokens, source)) > 0
-        ]
-        scored.sort(key=lambda item: item[0], reverse=True)
-        candidates = [source for _, source in scored[:max_sources_per_segment]]
-
-        if not candidates and not has_cited_any_segment:
-            candidates = [source for source in sources if source.key not in cited_keys][:1]
-
-        labels: list[str] = []
-        for source in candidates:
-            if len(cited_keys) >= max_sources:
-                break
-            label = labels_by_key.get(source.key)
-            if not label:
-                continue
-            cited_keys.add(source.key)
-            labels.append(label)
-
-        if labels:
-            output_lines.append(_add_marker(line, labels))
-            has_cited_any_segment = True
-        else:
-            output_lines.append(line)
-
-    rendered_sources = render_structured_sources(CitationRegistry(sources=sources))
-    return ComposedCitations(content="\n".join(output_lines), sources=rendered_sources)
+    rendered_sources = render_structured_sources(
+        CitationRegistry(sources=sources),
+        max_sources=max_sources,
+    )
+    return ComposedCitations(content=cleaned, sources=rendered_sources)
 
 
 def compose_citations(
     text: str,
     chunks: list[dict],
     *,
-    max_sources: int = 3,
+    max_sources: int | None = _DEFAULT_MAX_SOURCES,
     max_sources_per_segment: int = 2,
     allowed_image_urls: set[str] | None = None,
 ) -> ComposedCitations:
@@ -303,15 +254,24 @@ def format_sources_markdown(sources: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def render_structured_sources(registry: CitationRegistry) -> list[dict[str, str]]:
+def render_structured_sources(
+    registry: CitationRegistry,
+    *,
+    max_sources: int | None = _DEFAULT_MAX_SOURCES,
+) -> list[dict[str, str]]:
+    sources = registry.sources if max_sources is None else registry.sources[:max_sources]
     return [
         {"label": str(index), "title": source.title, "url": source.url}
-        for index, source in enumerate(registry.sources, 1)
+        for index, source in enumerate(sources, 1)
     ]
 
 
-def render_markdown_sources(registry: CitationRegistry) -> str:
-    return format_sources_markdown(render_structured_sources(registry))
+def render_markdown_sources(
+    registry: CitationRegistry,
+    *,
+    max_sources: int | None = _DEFAULT_MAX_SOURCES,
+) -> str:
+    return format_sources_markdown(render_structured_sources(registry, max_sources=max_sources))
 
 
 def render_structured_answer(
@@ -319,10 +279,12 @@ def render_structured_answer(
     registry: CitationRegistry,
     *,
     allowed_image_urls: set[str] | None = None,
+    max_sources: int | None = _DEFAULT_MAX_SOURCES,
 ) -> ComposedCitations:
     return _compose_citations_from_sources(
         text,
         registry.sources,
+        max_sources=max_sources,
         allowed_image_urls=allowed_image_urls,
     )
 
@@ -332,8 +294,14 @@ def render_markdown_answer(
     registry: CitationRegistry,
     *,
     allowed_image_urls: set[str] | None = None,
+    max_sources: int | None = _DEFAULT_MAX_SOURCES,
 ) -> ComposedCitations:
-    composed = render_structured_answer(text, registry, allowed_image_urls=allowed_image_urls)
+    composed = render_structured_answer(
+        text,
+        registry,
+        allowed_image_urls=allowed_image_urls,
+        max_sources=max_sources,
+    )
     sources_markdown = format_sources_markdown(composed.sources)
     if not sources_markdown:
         return composed
@@ -345,15 +313,21 @@ def render_markdown_answer_with_sources(
     chunks: list[dict],
     *,
     allowed_image_urls: set[str] | None = None,
+    max_sources: int | None = _DEFAULT_MAX_SOURCES,
 ) -> ComposedCitations:
-    """Compose markers and append a deterministic Markdown source list.
+    """Append a deterministic Markdown source list to clean answer text.
 
     This is for chat clients that do not have a structured ``sources`` field.
     Widget-style clients should use :func:`compose_citations` and render
     ``ComposedCitations.sources`` separately.
     """
     registry = build_citation_registry(chunks)
-    return render_markdown_answer(text, registry, allowed_image_urls=allowed_image_urls)
+    return render_markdown_answer(
+        text,
+        registry,
+        allowed_image_urls=allowed_image_urls,
+        max_sources=max_sources,
+    )
 
 
 __all__ = [

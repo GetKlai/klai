@@ -23,7 +23,8 @@ def test_render_markdown_answer_uses_retrieved_source_urls_not_model_links() -> 
 
     assert "https://getklai.com/made-up" not in rendered.content
     assert "https://bad.example" not in rendered.content
-    assert "Klai is steward-owned fake (1)." in rendered.content
+    assert "Klai is steward-owned fake" in rendered.content
+    assert "(1)" not in rendered.content
     assert "- [Steward ownership](https://getklai.com/docs/company/steward-ownership)" in rendered.content
 
 
@@ -95,16 +96,17 @@ def test_registry_renderers_output_markdown_and_structured_sources() -> None:
     assert render_markdown_sources(registry) == "- [Privacy policy](https://getklai.com/docs/legal/privacy)"
 
     structured = render_structured_answer("The privacy policy explains data handling.", registry)
-    assert structured.content == "The privacy policy explains data handling (1)."
+    assert structured.content == "The privacy policy explains data handling."
 
     rendered = render_markdown_answer("The privacy policy explains data handling.", registry)
 
-    assert "The privacy policy explains data handling (1)." in rendered.content
+    assert "The privacy policy explains data handling." in rendered.content
+    assert "(1)" not in rendered.content
     assert "- [Privacy policy](https://getklai.com/docs/legal/privacy)" in rendered.content
 
 
-def test_registry_sources_are_not_limited_by_inline_marker_heuristic() -> None:
-    """The source payload/list is the registry; inline markers are best-effort."""
+def test_registry_sources_are_limited_for_compact_document_level_sources() -> None:
+    """Default source payload/list is compact document-level provenance."""
     registry = build_citation_registry(
         [
             {
@@ -132,11 +134,45 @@ def test_registry_sources_are_not_limited_by_inline_marker_heuristic() -> None:
 
     rendered = render_markdown_answer("The answer discusses account access.", registry)
 
-    assert "account access (1)." in rendered.content.lower()
+    assert "account access." in rendered.content.lower()
+    assert "(1)" not in rendered.content
     assert rendered.sources == [
         {"label": "1", "title": "Alpha policy", "url": "https://docs.getklai.com/alpha"},
         {"label": "2", "title": "Beta policy", "url": "https://docs.getklai.com/beta"},
         {"label": "3", "title": "Gamma policy", "url": "https://docs.getklai.com/gamma"},
-        {"label": "4", "title": "Delta policy", "url": "https://docs.getklai.com/delta"},
     ]
-    assert "- [Delta policy](https://docs.getklai.com/delta)" in rendered.content
+    assert "- [Gamma policy](https://docs.getklai.com/gamma)" in rendered.content
+    assert "- [Delta policy](https://docs.getklai.com/delta)" not in rendered.content
+
+
+def test_registry_sources_can_render_full_list_when_requested() -> None:
+    registry = build_citation_registry(
+        [
+            {
+                "title": "Alpha policy",
+                "source_url": "https://docs.getklai.com/alpha",
+                "text": "Alpha policy explains account access.",
+            },
+            {
+                "title": "Beta policy",
+                "source_url": "https://docs.getklai.com/beta",
+                "text": "Beta policy explains billing ownership.",
+            },
+            {
+                "title": "Gamma policy",
+                "source_url": "https://docs.getklai.com/gamma",
+                "text": "Gamma policy explains support ownership.",
+            },
+            {
+                "title": "Delta policy",
+                "source_url": "https://docs.getklai.com/delta",
+                "text": "Delta policy explains workspace ownership.",
+            },
+        ]
+    )
+
+    assert render_structured_sources(registry, max_sources=None)[-1] == {
+        "label": "4",
+        "title": "Delta policy",
+        "url": "https://docs.getklai.com/delta",
+    }
