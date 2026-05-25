@@ -752,6 +752,42 @@ async def test_list_documents_no_filter_lists_all_workspace_types(
     assert len(refs) == 2
 
 
+async def test_list_documents_default_skips_unsupported_drive_mimes(
+    gdrive_adapter: Any,
+) -> None:
+    """Plain google_drive sync skips binaries the parser cannot ingest."""
+    connector = _make_alias_connector(connector_type="google_drive")
+    files_response = _list_response(
+        [
+            {
+                "id": "file-pdf-1",
+                "name": "Policy.pdf",
+                "mimeType": "application/pdf",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://drive.google.com/file/d/file-pdf-1/view",
+                "size": "100",
+                "owners": [],
+                "permissions": [],
+            },
+            {
+                "id": "file-video-1",
+                "name": "Launch.mp4",
+                "mimeType": "video/mp4",
+                "modifiedTime": "2026-04-10T10:00:00.000Z",
+                "webViewLink": "https://drive.google.com/file/d/file-video-1/view",
+                "size": "100",
+                "owners": [],
+                "permissions": [],
+            },
+        ]
+    )
+
+    with patch.object(gdrive_adapter, "_list_files", AsyncMock(return_value=files_response)):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    assert [r.ref for r in refs] == ["file-pdf-1"]
+
+
 async def test_list_documents_google_doc_filter_restricts_to_docs(
     gdrive_adapter: Any,
 ) -> None:

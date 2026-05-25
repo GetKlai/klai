@@ -92,6 +92,23 @@ _CONTENT_TYPE_TO_MIME: dict[str, str] = {
     "google_slides": "application/vnd.google-apps.presentation",
 }
 
+_SUPPORTED_SYNC_MIMES: set[str] = {
+    *_GOOGLE_NATIVE_MIMES,
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "text/plain",
+    "text/csv",
+    "text/tab-separated-values",
+    "text/html",
+    "text/markdown",
+    "application/rtf",
+}
+
 # Roles whose email addresses are included in DocumentRef.mentioned_emails.
 # "reader" is excluded per SPEC-KB-CONNECTORS-001 R5.5.
 _WRITER_ROLES = {"owner", "writer", "commenter"}
@@ -148,6 +165,21 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             "google_slides": ["google_slides"],
         }
         return mapping.get(connector_type)
+
+    @staticmethod
+    def _allowed_mimes_for_config(cfg: dict[str, Any]) -> set[str]:
+        """Return Drive mimeTypes this connector is allowed to sync.
+
+        ``content_types`` remains the narrower Google Workspace alias filter.
+        Plain ``google_drive`` connectors default to the parser-supported
+        document set instead of every Drive mimeType, so folder/full-drive syncs
+        skip videos, audio, images, archives and arbitrary binaries before the
+        parser sees them.
+        """
+        content_types: list[str] | None = cfg.get("content_types")
+        if content_types:
+            return {_CONTENT_TYPE_TO_MIME[ct] for ct in content_types}
+        return set(_SUPPORTED_SYNC_MIMES)
 
     @staticmethod
     def _extract_config(connector: Any) -> dict[str, Any]:
@@ -263,16 +295,12 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         cfg = self._extract_config(connector)
         connector_id = str(connector.id)
         max_files: int = cfg["max_files"]
-        content_types: list[str] | None = cfg.get("content_types")
         item_ids: list[str] = cfg["item_ids"]
         selected_item_ids = set(item_ids)
         page_token = (cursor_context or {}).get("page_token") if cursor_context else None
         scoped_selection = bool(cfg["folder_id"] or item_ids)
 
-        # Build the set of allowed mimeTypes (None = all types).
-        allowed_mimes: set[str] | None = None
-        if content_types:
-            allowed_mimes = {_CONTENT_TYPE_TO_MIME[ct] for ct in content_types}
+        allowed_mimes = self._allowed_mimes_for_config(cfg)
 
         if page_token and not scoped_selection:
             logger.info(
@@ -282,8 +310,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             response = await self._list_changes(connector, page_token=page_token)
             raw_files = [c.get("file") for c in response.get("changes", []) if c.get("file")]
             # Client-side mimeType filter for incremental path (changes API has no q= support).
-            if allowed_mimes is not None:
-                raw_files = [f for f in raw_files if f and f.get("mimeType") in allowed_mimes]
+            raw_files = [f for f in raw_files if f and f.get("mimeType") in allowed_mimes]
             if selected_item_ids:
                 raw_files = [f for f in raw_files if f and f.get("id") in selected_item_ids]
             new_cursor = response.get("newStartPageToken")
@@ -313,8 +340,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             # Client-side guard: the q= filter is applied in _list_files, but
             # when _list_files is mocked in tests it may return any files.
             # Applying the filter here keeps list_documents correct regardless.
-            if allowed_mimes is not None:
-                raw_files = [f for f in raw_files if f and f.get("mimeType") in allowed_mimes]
+            raw_files = [f for f in raw_files if f and f.get("mimeType") in allowed_mimes]
 
         refs: list[DocumentRef] = []
         for file in raw_files[:max_files]:
@@ -379,9 +405,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         type filter. ``parent_id=None`` means the user's Drive root.
         """
         cfg = self._extract_config(connector)
-        allowed_mimes: set[str] | None = None
-        if cfg.get("content_types"):
-            allowed_mimes = {_CONTENT_TYPE_TO_MIME[ct] for ct in cfg["content_types"]}
+        allowed_mimes = self._allowed_mimes_for_config(cfg)
 
         response = await self._list_folder_children(
             connector,
