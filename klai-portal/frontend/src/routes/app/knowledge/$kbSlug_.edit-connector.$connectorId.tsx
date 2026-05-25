@@ -16,6 +16,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import type { ConnectorSummary, CookieRow } from './$kbSlug/-kb-types'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
+import { GoogleDrivePicker } from './$kbSlug/_components/GoogleDrivePicker'
 import { MsDocsFolderPicker } from './$kbSlug/_components/MsDocsFolderPicker'
 import {
   AuthProbeFeedback,
@@ -51,6 +52,13 @@ function _stepToWcStep(step: StepDeepLink | undefined): WcStep | undefined {
   if (step === 'selector') return 'selector'
   return undefined
 }
+
+const GOOGLE_DRIVE_CONNECTOR_TYPES = new Set([
+  'google_drive',
+  'google_docs',
+  'google_sheets',
+  'google_slides',
+])
 
 type EditSearch = { step?: StepDeepLink; show?: 'picker' }
 
@@ -97,6 +105,9 @@ function EditConnectorPage() {
     database_ids: '', max_pages: '500', new_access_token: '',
   })
   const [folderId, setFolderId] = useState('')
+  const [folderName, setFolderName] = useState('')
+  const [fileIds, setFileIds] = useState<string[]>([])
+  const [showGoogleDrivePicker, setShowGoogleDrivePicker] = useState(false)
   const [isReconnecting, setIsReconnecting] = useState(false)
   // ms_docs (SPEC-KB-MS-DOCS-001 R4.4): optional site_url + drive_id +
   // post-OAuth scope. Three mutually-exclusive scope modes:
@@ -238,9 +249,12 @@ function EditConnectorPage() {
         new_access_token: '',
       })
     }
-    if (connector.connector_type === 'google_drive') {
-      const cfg = connector.config as { folder_id?: string }
+    if (GOOGLE_DRIVE_CONNECTOR_TYPES.has(connector.connector_type)) {
+      const cfg = connector.config as { folder_id?: string; folder_name?: string; item_ids?: string[] }
       setFolderId(cfg.folder_id ?? '')
+      setFolderName(cfg.folder_name ?? '')
+      setFileIds(Array.isArray(cfg.item_ids) ? cfg.item_ids : [])
+      setShowGoogleDrivePicker(search.show === 'picker')
     }
     if (connector.connector_type === 'ms_docs') {
       const cfg = connector.config as {
@@ -318,8 +332,13 @@ function EditConnectorPage() {
         if (ids.length > 0) config.database_ids = ids
         if (notionConfig.max_pages) config.max_pages = Number(notionConfig.max_pages)
       }
-      if (connector.connector_type === 'google_drive') {
-        if (folderId.trim()) config.folder_id = folderId.trim()
+      if (GOOGLE_DRIVE_CONNECTOR_TYPES.has(connector.connector_type)) {
+        if (fileIds.length > 0) {
+          config.item_ids = fileIds
+        } else if (folderId.trim()) {
+          config.folder_id = folderId.trim()
+          if (folderName.trim()) config.folder_name = folderName.trim()
+        }
       }
       if (connector.connector_type === 'ms_docs') {
         const siteUrl = msSiteUrl.trim()
@@ -432,6 +451,60 @@ function EditConnectorPage() {
       <p className="text-sm text-[var(--color-destructive)]">
         {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
       </p>
+    )
+  }
+
+  function renderGoogleDriveScopePicker() {
+    if (!connector) return null
+    return (
+      <div className="space-y-1.5">
+        <Label>Wat wil je syncen?</Label>
+        <div className="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2">
+          <div className="min-w-0 flex-1">
+            {fileIds.length > 0 ? (
+              <p className="text-sm text-gray-900 truncate">
+                {fileIds.length} bestand{fileIds.length === 1 ? '' : 'en'} geselecteerd
+              </p>
+            ) : folderId ? (
+              <p className="text-sm text-gray-900 truncate">
+                Map: {folderName || 'geselecteerd'}
+              </p>
+            ) : (
+              <p className="text-sm text-gray-400">Hele Google Drive</p>
+            )}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setShowGoogleDrivePicker((p) => !p)}
+          >
+            {showGoogleDrivePicker
+              ? 'Sluiten'
+              : folderId || fileIds.length > 0
+                ? 'Wijzigen'
+                : 'Kies mappen / bestanden'}
+          </Button>
+        </div>
+        <p className="text-xs text-gray-400">
+          Voor Google Docs, Sheets en Slides tonen we alleen bestanden van het gekozen type.
+        </p>
+        {showGoogleDrivePicker && (
+          <GoogleDrivePicker
+            kbSlug={kbSlug}
+            connectorId={connector.id}
+            initialFolderId={folderId}
+            initialFileIds={fileIds}
+            onCancel={() => setShowGoogleDrivePicker(false)}
+            onConfirm={(result) => {
+              setFolderId(result.folderId)
+              setFolderName(result.folderId ? result.folderName : '')
+              setFileIds(result.fileIds)
+              setShowGoogleDrivePicker(false)
+            }}
+          />
+        )}
+      </div>
     )
   }
 
@@ -1040,11 +1113,8 @@ function EditConnectorPage() {
                 <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
                 <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-folder-id">{m.admin_connectors_google_drive_folder_id()}</Label>
-                <Input id="edit-conn-folder-id" placeholder={m.admin_connectors_google_drive_folder_id_placeholder()} value={folderId} onChange={(e) => setFolderId(e.target.value)} />
-                <p className="text-xs text-gray-400">{m.admin_connectors_google_drive_folder_id_help()}</p>
-              </div>              {renderError()}
+              {renderGoogleDriveScopePicker()}
+              {renderError()}
               <div className="flex gap-2 pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
                 <Button
@@ -1165,7 +1235,9 @@ function EditConnectorPage() {
               )}
               {connector.connector_type === 'google_slides' && (
                 <p className="text-sm text-gray-400">{m.admin_connectors_google_slides_subtitle()}</p>
-              )}              {renderError()}
+              )}
+              {renderGoogleDriveScopePicker()}
+              {renderError()}
               <div className="flex gap-2 pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
                 <Button

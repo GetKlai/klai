@@ -259,7 +259,7 @@ class TestCallbackEndpoint:
                 "refresh_token": "placeholder-refresh-value",
                 "expires_in": 3599,
                 "token_type": "Bearer",
-                "scope": "https://www.googleapis.com/auth/drive.readonly",
+                "scope": "https://www.googleapis.com/auth/drive.file",
             },
         )
 

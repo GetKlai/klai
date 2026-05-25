@@ -193,5 +193,27 @@ class KlaiConnectorClient:
             folders = data.get("folders", []) if isinstance(data, dict) else []
             return folders if isinstance(folders, list) else []
 
+    async def list_google_drive_folders(
+        self,
+        connector_id: str,
+        *,
+        org_id: str,
+        parent_id: str | None = None,
+    ) -> list[dict]:
+        """List child Drive items for a Google Drive / Workspace connector."""
+        params: dict[str, str] = {}
+        if parent_id:
+            params["parent"] = parent_id
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                f"{settings.klai_connector_url}/api/v1/connectors/{connector_id}/google-drive/folders",
+                params=params,
+                headers=self._headers(org_id=org_id),
+            )
+            response.raise_for_status()
+            data = response.json()
+            folders = data.get("folders", []) if isinstance(data, dict) else []
+            return folders if isinstance(folders, list) else []
+
 
 klai_connector_client = KlaiConnectorClient()

@@ -98,7 +98,6 @@ function AddConnectorPage() {
   const [confluenceConfig, setConfluenceConfig] = useState<ConfluenceConfig>({
     base_url: '', email: '', api_token: '', space_keys: '',
   })
-  const [folderId, setFolderId] = useState('')
   // ms_docs (SPEC-KB-MS-DOCS-001): optional site_url + drive_id - both empty = personal OneDrive
   const [msSiteUrl, setMsSiteUrl] = useState('')
   const [msDriveId, setMsDriveId] = useState('')
@@ -229,7 +228,6 @@ function AddConnectorPage() {
       // connector.connector_type. We pass the selected type as-is.
       const connectorType = selectedType ?? 'google_drive'
       const config: Record<string, unknown> = {}
-      if (folderId.trim()) config.folder_id = folderId.trim()
       const result = await apiFetch<{ id: string }>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         body: JSON.stringify({
@@ -422,7 +420,6 @@ function AddConnectorPage() {
                         setSelectedType(type)
                         setWcStep('details')
                         setNotionStep('credentials')
-                        setFolderId('')
                         setShowAdvancedSelector(false)
                         setPreviewResult(null)
                         setWcPreviewUrl('')
@@ -570,11 +567,14 @@ function AddConnectorPage() {
                   <Label htmlFor="gd-name">{m.admin_connectors_field_name()}</Label>
                   <Input id="gd-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="gd-folder-id">{m.admin_connectors_google_drive_folder_id()}</Label>
-                  <Input id="gd-folder-id" placeholder={m.admin_connectors_google_drive_folder_id_placeholder()} value={folderId} onChange={(e) => setFolderId(e.target.value)} />
-                  <p className="text-xs text-gray-400">{m.admin_connectors_google_drive_folder_id_help()}</p>
-                </div>                {createGoogleDriveMutation.error && (
+                <div className="rounded-lg border border-gray-200 px-4 py-3 space-y-2">
+                  <p className="text-sm font-medium text-gray-900">Kies je bestanden na het inloggen</p>
+                  <p className="text-xs text-gray-400">
+                    We openen na Google-authenticatie een Drive-kiezer. Daar kies je de volledige Drive,
+                    een specifieke map of losse bestanden zonder ID's uit URL's te kopieren.
+                  </p>
+                </div>
+                {createGoogleDriveMutation.error && (
                   <p className="text-sm text-[var(--color-destructive)]">
                     {createGoogleDriveMutation.error instanceof Error ? createGoogleDriveMutation.error.message : m.admin_connectors_error_create_generic()}
                   </p>
