@@ -45,10 +45,20 @@ async def test_record_widget_turn_clamps_content_at_10000_chars():
     fake_db.__aenter__ = AsyncMock(return_value=fake_db)
     fake_db.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.widget_audit.tenant_scoped_session", return_value=fake_db):
+    # REQ-14: cross_org_session lookup returns the widget's org_id.
+    lookup_row = MagicMock()
+    lookup_row.first.return_value = (42,)
+    lookup_db = AsyncMock()
+    lookup_db.execute = AsyncMock(return_value=lookup_row)
+    lookup_db.__aenter__ = AsyncMock(return_value=lookup_db)
+    lookup_db.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("app.services.widget_audit.cross_org_session", return_value=lookup_db),
+        patch("app.services.widget_audit.tenant_scoped_session", return_value=fake_db),
+    ):
         await record_widget_turn(
             widget_id="wid-1",
-            org_id=42,
             session_key="ses-1",
             role="user",
             content=long_content,
@@ -81,10 +91,19 @@ async def test_record_widget_turn_does_not_truncate_short_content():
     fake_db.__aenter__ = AsyncMock(return_value=fake_db)
     fake_db.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.widget_audit.tenant_scoped_session", return_value=fake_db):
+    lookup_row = MagicMock()
+    lookup_row.first.return_value = (42,)
+    lookup_db = AsyncMock()
+    lookup_db.execute = AsyncMock(return_value=lookup_row)
+    lookup_db.__aenter__ = AsyncMock(return_value=lookup_db)
+    lookup_db.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("app.services.widget_audit.cross_org_session", return_value=lookup_db),
+        patch("app.services.widget_audit.tenant_scoped_session", return_value=fake_db),
+    ):
         await record_widget_turn(
             widget_id="wid-1",
-            org_id=42,
             session_key="ses-1",
             role="assistant",
             content=short_content,
@@ -116,10 +135,19 @@ async def test_record_widget_turn_clamps_exactly_at_boundary():
     fake_db.__aenter__ = AsyncMock(return_value=fake_db)
     fake_db.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.widget_audit.tenant_scoped_session", return_value=fake_db):
+    lookup_row = MagicMock()
+    lookup_row.first.return_value = (42,)
+    lookup_db = AsyncMock()
+    lookup_db.execute = AsyncMock(return_value=lookup_row)
+    lookup_db.__aenter__ = AsyncMock(return_value=lookup_db)
+    lookup_db.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("app.services.widget_audit.cross_org_session", return_value=lookup_db),
+        patch("app.services.widget_audit.tenant_scoped_session", return_value=fake_db),
+    ):
         await record_widget_turn(
             widget_id="wid-1",
-            org_id=42,
             session_key="ses-1",
             role="user",
             content=boundary_content,

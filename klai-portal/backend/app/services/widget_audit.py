@@ -30,7 +30,7 @@ import structlog
 from sqlalchemy import text
 
 from app.core.config import settings as _global_settings
-from app.core.database import tenant_scoped_session
+from app.core.database import cross_org_session, tenant_scoped_session
 
 logger = structlog.get_logger()
 
@@ -63,7 +63,6 @@ def session_key_from_token(token: str | None, secret: str | None = None) -> str 
 async def record_widget_turn(
     *,
     widget_id: str,  # UUID-as-string from widgets.id
-    org_id: int,
     session_key: str,  # sha256(jwt token), stable per widget-load
     role: Literal["user", "assistant"],
     content: str,
@@ -75,16 +74,48 @@ async def record_widget_turn(
     # Truncated to 200 chars. NULL when Origin was absent.
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
     loaded_origin: str | None = None,
+    # REQ-15 (Finding B-11): mark conversations minted via the admin preview
+    # session so widget_activity_stats can exclude them from visitor totals.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-15
+    is_preview: bool = False,
 ) -> None:
     """Append one turn to a widget conversation, creating the
     conversation row on first call.
 
+    REQ-14 (Finding B-7, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): ``org_id`` is
+    derived server-side from the widgets row — never taken from the caller.
+    A forged JWT or future admin-impersonation token cannot write into the
+    wrong tenant's audit trail because the lookup uses the row that owns
+    the widget id, not the caller's claimed org.
+
     Idempotent on the conversation row (UNIQUE (widget_id, session_key)).
     Sequence is computed inside the same transaction so concurrent
     user+assistant turns within one session stay ordered.
+
+    # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-14 (Finding B-7)
     """
     if not content.strip():
         return
+
+    # REQ-14: derive org_id from widgets table (single source of truth).
+    # Uses cross_org_session for the bare SELECT; the per-tenant INSERT
+    # path below then opens tenant_scoped_session(org_id) which sets the
+    # proper RLS GUC.
+    try:
+        async with cross_org_session() as lookup_db:
+            row = (
+                await lookup_db.execute(
+                    text("SELECT org_id FROM widgets WHERE id = CAST(:widget_id AS uuid)"),
+                    {"widget_id": widget_id},
+                )
+            ).first()
+    except Exception:
+        logger.exception("widget_audit_org_lookup_failed", widget_id=widget_id)
+        return
+    if row is None:
+        logger.warning("widget_audit_widget_not_found", widget_id=widget_id)
+        return
+    org_id = int(row[0])
 
     truncated_query = content[:240] if role == "user" else None
 
@@ -96,11 +127,11 @@ async def record_widget_turn(
                     INSERT INTO widget_conversations
                         (org_id, widget_id, session_key, first_user_query,
                          ip_hash, user_agent_hash, language_detected,
-                         loaded_origin, last_message_at)
+                         loaded_origin, is_preview, last_message_at)
                     VALUES
                         (:org_id, CAST(:widget_id AS uuid), :session_key,
                          :first_user_query, :ip_hash, :user_agent_hash,
-                         :language_detected, :loaded_origin, NOW())
+                         :language_detected, :loaded_origin, :is_preview, NOW())
                     ON CONFLICT (widget_id, session_key) DO UPDATE
                         SET last_message_at = NOW(),
                             -- never overwrite an existing first_user_query
@@ -124,6 +155,7 @@ async def record_widget_turn(
                     "user_agent_hash": user_agent_hash,
                     "language_detected": language_detected,
                     "loaded_origin": loaded_origin[:200] if loaded_origin else None,
+                    "is_preview": is_preview,
                 },
             )
             row = upsert.first()

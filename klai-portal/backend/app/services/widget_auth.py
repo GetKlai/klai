@@ -77,6 +77,8 @@ def generate_session_token(
     kb_ids: list[int],
     secret: str,
     tenant_slug: str,
+    *,
+    is_preview: bool = False,
 ) -> str:
     """Generate a HS256-signed JWT session token for widget chat.
 
@@ -105,11 +107,16 @@ def generate_session_token(
     now = datetime.now(UTC)
     exp = now + timedelta(seconds=_SESSION_TTL_SECONDS)
 
+    # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-15 (Finding B-11)
+    # The preview path mints a JWT with ``is_preview: true``; widget_audit
+    # uses this to tag the resulting conversation row so admin probing does
+    # not pollute the visitor-facing stats.
     payload = {
         "wgt_id": wgt_id,
         "org_id": org_id,
         "kb_ids": kb_ids,
         "exp": int(exp.timestamp()),
+        "is_preview": is_preview,
     }
 
     derived_key = _derive_tenant_key(secret, tenant_slug)
