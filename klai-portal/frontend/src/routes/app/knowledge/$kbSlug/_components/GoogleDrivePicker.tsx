@@ -166,16 +166,20 @@ export function GoogleDrivePicker({
     const googleDrive = providers.google_drive
     const clientId = googleDrive?.client_id || ''
     const appId = googleDrive?.picker_app_id || ''
+    const apiKey = googleDrive?.picker_api_key || ''
     if (!googleDrive?.enabled || !clientId) {
       throw new Error('Google Drive OAuth is niet geconfigureerd')
     }
     if (!appId) {
       throw new Error('Google Picker app id ontbreekt')
     }
+    if (!apiKey) {
+      throw new Error('Google Picker API key ontbreekt')
+    }
     return {
       clientId,
       appId,
-      apiKey: googleDrive.picker_api_key || '',
+      apiKey,
     }
   }
 
@@ -237,7 +241,7 @@ export function GoogleDrivePicker({
     const builder = new pickerApi.PickerBuilder()
     builder.setOAuthToken(accessToken)
     builder.setAppId(appId)
-    if (apiKey) builder.setDeveloperKey(apiKey)
+    builder.setDeveloperKey(apiKey)
     builder.addView(view)
     builder.setCallback((data) => {
       if (data.action === pickerApi.Action.PICKED) {
