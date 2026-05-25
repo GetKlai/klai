@@ -33,12 +33,45 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 logger = structlog.get_logger()
 
 _SESSION_TTL_SECONDS = 3600  # 1 hour
+_SESSION_TOKEN_KID_PREFIX = "org:"
 
 # SPEC-SEC-HYGIENE-001 REQ-24.1: HKDF parameters. The salt is a fixed
 # v1 marker so a future migration to v2 can flip the constant + bump
 # the cache without the full asymmetric-signing rework.
 _HKDF_SALT = b"klai-widget-jwt-v1"
 _HKDF_LENGTH = 32  # 32 bytes — appropriate for HS256.
+
+
+def session_token_key_id(org_id: int) -> str:
+    """Return the JWT ``kid`` used to select the tenant signing key.
+
+    The ``kid`` is intentionally only a routing hint. Callers must verify the
+    JWT signature with the selected key and then compare the verified
+    ``org_id`` claim against the org selected by this key id.
+    """
+    return f"{_SESSION_TOKEN_KID_PREFIX}{org_id}"
+
+
+def get_unverified_session_token_key_id(token: str) -> str | None:
+    """Read the JWT ``kid`` header without reading unverified claims."""
+    header = jwt.get_unverified_header(token)
+    kid = header.get("kid")
+    if kid is None:
+        return None
+    if not isinstance(kid, str):
+        raise jwt.InvalidTokenError("Invalid widget JWT kid header")
+    return kid
+
+
+def org_id_from_session_token_key_id(kid: str) -> int | None:
+    """Parse a widget JWT ``kid`` into a portal org id."""
+    if not kid.startswith(_SESSION_TOKEN_KID_PREFIX):
+        return None
+    raw_org_id = kid[len(_SESSION_TOKEN_KID_PREFIX) :]
+    if not raw_org_id.isdecimal():
+        return None
+    org_id = int(raw_org_id)
+    return org_id if org_id > 0 else None
 
 
 # @MX:NOTE: Cryptographic security boundary — HKDF-derived per-tenant signing key.
@@ -94,6 +127,12 @@ def generate_session_token(
         exp: expiry timestamp (UTC, 1 hour from now)
         jti: per-mint nonce used to derive audit session keys
 
+    Header:
+        kid: key selector in ``org:<portal_org_id>`` format. The auth path
+            uses this header to pick the tenant-specific HKDF key before
+            signature verification, then checks the verified ``org_id`` claim
+            still matches.
+
     Args:
         wgt_id: The widget_id string (e.g. wgt_abcdef...)
         org_id: Portal organisation integer id
@@ -123,7 +162,12 @@ def generate_session_token(
     }
 
     derived_key = _derive_tenant_key(secret, tenant_slug)
-    return jwt.encode(payload, derived_key, algorithm="HS256")
+    return jwt.encode(
+        payload,
+        derived_key,
+        algorithm="HS256",
+        headers={"kid": session_token_key_id(org_id), "typ": "JWT"},
+    )
 
 
 def decode_session_token(token: str, master_secret: str, tenant_slug: str) -> dict:
