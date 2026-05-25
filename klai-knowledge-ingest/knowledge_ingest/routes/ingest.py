@@ -61,6 +61,40 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
+def _strip_postgres_nul(value):
+    """Remove NUL bytes from values before persisting to PostgreSQL.
+
+    PostgreSQL text/jsonb cannot store ``\x00``. Some upstream parsers can
+    emit it from binary-ish document content, so sanitize once at the ingest
+    boundary instead of letting a single character fail the whole sync.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [_strip_postgres_nul(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            _strip_postgres_nul(key): _strip_postgres_nul(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _sanitize_ingest_request(req: IngestRequest) -> None:
+    req.content = _strip_postgres_nul(req.content)
+    req.path = _strip_postgres_nul(req.path)
+    req.source_type = _strip_postgres_nul(req.source_type)
+    req.content_type = _strip_postgres_nul(req.content_type)
+    req.extra = _strip_postgres_nul(req.extra)
+    req.chunks = _strip_postgres_nul(req.chunks)
+    req.content_hash = _strip_postgres_nul(req.content_hash)
+    req.source_connector_id = _strip_postgres_nul(req.source_connector_id)
+    req.source_ref = _strip_postgres_nul(req.source_ref)
+    req.kb_name = _strip_postgres_nul(req.kb_name)
+    req.connector_type = _strip_postgres_nul(req.connector_type)
+    req.source_domain = _strip_postgres_nul(req.source_domain)
+
+
 def _verify_internal_secret(request: Request) -> None:
     """Verify X-Internal-Secret header for service-to-service calls.
 
@@ -255,6 +289,15 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     ``tenant_scoped_connection(req.org_id)``.
     """
     t_ingest = time.monotonic()
+    had_nul = "\x00" in req.content or "\x00" in req.path
+    _sanitize_ingest_request(req)
+    if had_nul:
+        logger.warning(
+            "ingest_sanitized_postgres_nul",
+            kb_slug=req.kb_slug,
+            path=req.path,
+            org_id=req.org_id,
+        )
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: existence-guard for the
     # ingest write path. Closes the race-window where a connector flipped
