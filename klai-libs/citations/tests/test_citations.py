@@ -472,3 +472,8 @@ def test_trusted_source_composition_uses_query_intent_not_surface_overlap() -> N
             "url": "https://getklai.getklai.com/docs/klai-help/invite-and-remove-people",
         }
     ]
+    assert composed.decision["selected"][0]["title"] == "Invite and remove people"
+    assert composed.decision["selected"][0]["reason"] == "supported"
+    assert composed.decision["selected"][0]["query_score"] >= 2
+    assert composed.decision["rejected"][0]["title"] == "The five roles"
+    assert composed.decision["rejected"][0]["reason"] == "query_intent_not_supported"

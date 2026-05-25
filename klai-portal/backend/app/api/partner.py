@@ -197,28 +197,15 @@ def _citation_runtime_options(
     *,
     is_widget_chat: bool,
 ) -> tuple[set[str], dict[int, str], dict[str, dict[str, str]], Literal["links", "markers"]]:
-    """Return citation inputs for the two partner chat rendering modes.
+    """Return citation inputs for backend-managed document-level citations.
 
-    Widget chat uses backend-managed registry rendering, so it does not need
-    the legacy model-authored citation URL maps. Partner API chat keeps those
-    maps for backward-compatible linked-citation sanitizing.
+    Both widget and partner API chat use the shared deterministic selector.
+    The legacy link sanitizer still exists for direct helper coverage and
+    rollback, but this endpoint no longer asks the model to choose visible
+    citation links.
     """
-    if is_widget_chat:
-        return set(), {}, {}, "markers"
-
-    citation_source_urls = {
-        index: source["url"] for index, source in enumerate(trusted_sources, 1) if isinstance(source.get("url"), str)
-    }
-    citation_source_metadata = {
-        source["url"]: {
-            "title": str(source.get("title") or "Source"),
-            "url": source["url"],
-        }
-        for source in trusted_sources
-        if isinstance(source.get("url"), str)
-    }
-    allowed_source_urls = set(citation_source_urls.values())
-    return allowed_source_urls, citation_source_urls, citation_source_metadata, "links"
+    _ = trusted_sources, is_widget_chat
+    return set(), {}, {}, "markers"
 
 
 async def _audit_streaming_wrapper(
@@ -396,7 +383,7 @@ async def chat_completions(
             settings=settings,
             partner_user_id=partner_user_id,
             widget_system_prompt=widget_system_prompt,
-            backend_managed_citations=is_widget_chat,
+            backend_managed_citations=True,
         )
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(

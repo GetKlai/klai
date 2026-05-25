@@ -25,6 +25,7 @@ class CitationSource:
 class ComposedCitations:
     content: str
     sources: list[dict[str, str]]
+    decision: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -515,6 +516,114 @@ def _select_document_sources(
     return [source for _, _, source in scored[:max_sources]]
 
 
+def _source_decision_entry(
+    source: CitationSource,
+    *,
+    selected: bool,
+    reason: str,
+    query_score: int,
+    answer_score: int,
+) -> dict[str, Any]:
+    return {
+        "title": source.title,
+        "url": source.url,
+        "selected": selected,
+        "reason": reason,
+        "query_score": query_score,
+        "answer_score": answer_score,
+    }
+
+
+def _select_supported_sources_with_decision(
+    cleaned_answer: str,
+    sources: list[CitationSource],
+    *,
+    query_text: str | None,
+    max_sources: int | None,
+) -> tuple[list[CitationSource], dict[str, Any]]:
+    decision: dict[str, Any] = {
+        "mode": "document_level_supported_sources",
+        "candidate_count": len(sources),
+        "selected": [],
+        "rejected": [],
+    }
+    if max_sources is not None and max_sources <= 0:
+        decision["rejected"] = [
+            _source_decision_entry(
+                source,
+                selected=False,
+                reason="max_sources_zero",
+                query_score=0,
+                answer_score=0,
+            )
+            for source in sources
+        ]
+        return [], decision
+    answer_tokens = _tokens(cleaned_answer)
+    query_tokens = _tokens(query_text or "")
+    query_intent_tokens = query_tokens & _QUERY_INTENT_TOKENS
+    min_query_overlap = min(2, len(query_intent_tokens)) if query_intent_tokens else 0
+    decision["query_intent_tokens"] = sorted(query_intent_tokens)
+    decision["min_query_overlap"] = min_query_overlap
+    scored: list[tuple[int, int, int, int, CitationSource]] = []
+    for index, source in enumerate(sources):
+        support_tokens = _source_support_tokens(source)
+        query_score = len(query_tokens & support_tokens) if query_tokens else 0
+        answer_score = _source_relevance_score(answer_tokens, source)
+        if query_intent_tokens and query_score < min_query_overlap:
+            decision["rejected"].append(
+                _source_decision_entry(
+                    source,
+                    selected=False,
+                    reason="query_intent_not_supported",
+                    query_score=query_score,
+                    answer_score=answer_score,
+                )
+            )
+            continue
+        if answer_score <= 0:
+            decision["rejected"].append(
+                _source_decision_entry(
+                    source,
+                    selected=False,
+                    reason="answer_not_supported",
+                    query_score=query_score,
+                    answer_score=answer_score,
+                )
+            )
+            continue
+        scored.append((query_score * 3 + answer_score, query_score, answer_score, index, source))
+    scored.sort(key=lambda item: (-item[0], item[3]))
+    if max_sources is None:
+        selected_scored = scored
+        overflow_scored: list[tuple[int, int, int, int, CitationSource]] = []
+    else:
+        selected_scored = scored[:max_sources]
+        overflow_scored = scored[max_sources:]
+    for _, query_score, answer_score, _, source in selected_scored:
+        decision["selected"].append(
+            _source_decision_entry(
+                source,
+                selected=True,
+                reason="supported",
+                query_score=query_score,
+                answer_score=answer_score,
+            )
+        )
+    for _, query_score, answer_score, _, source in overflow_scored:
+        decision["rejected"].append(
+            _source_decision_entry(
+                source,
+                selected=False,
+                reason="max_sources_exceeded",
+                query_score=query_score,
+                answer_score=answer_score,
+            )
+        )
+    selected = [source for _, _, _, _, source in selected_scored]
+    return selected, decision
+
+
 def _select_supported_sources(
     cleaned_answer: str,
     sources: list[CitationSource],
@@ -522,26 +631,12 @@ def _select_supported_sources(
     query_text: str | None,
     max_sources: int | None,
 ) -> list[CitationSource]:
-    if max_sources is not None and max_sources <= 0:
-        return []
-    answer_tokens = _tokens(cleaned_answer)
-    query_tokens = _tokens(query_text or "")
-    query_intent_tokens = query_tokens & _QUERY_INTENT_TOKENS
-    min_query_overlap = min(2, len(query_intent_tokens)) if query_intent_tokens else 0
-    scored: list[tuple[int, int, CitationSource]] = []
-    for index, source in enumerate(sources):
-        support_tokens = _source_support_tokens(source)
-        query_score = len(query_tokens & support_tokens) if query_tokens else 0
-        answer_score = _source_relevance_score(answer_tokens, source)
-        if query_intent_tokens and query_score < min_query_overlap:
-            continue
-        if answer_score <= 0:
-            continue
-        scored.append((query_score * 3 + answer_score, index, source))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    selected = [source for _, _, source in scored]
-    if max_sources is not None:
-        return selected[:max_sources]
+    selected, _ = _select_supported_sources_with_decision(
+        cleaned_answer,
+        sources,
+        query_text=query_text,
+        max_sources=max_sources,
+    )
     return selected
 
 
@@ -741,14 +836,14 @@ def compose_answer_with_trusted_sources(
                 chunk_texts=evidence_texts,
             )
         )
-    selected = _select_supported_sources(
+    selected, decision = _select_supported_sources_with_decision(
         cleaned,
         candidate_sources,
         query_text=query_text,
         max_sources=max_sources,
     )
     sources = render_structured_sources(CitationRegistry(sources=selected), max_sources=None)
-    return ComposedCitations(content=cleaned, sources=sources)
+    return ComposedCitations(content=cleaned, sources=sources, decision=decision)
 
 
 def render_markdown_sources(

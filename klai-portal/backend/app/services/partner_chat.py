@@ -1072,7 +1072,7 @@ def _compose_backend_managed_answer(
     trusted_sources: list[dict[str, Any]] | None,
     citation_chunks: list[dict] | None,
     user_query: str,
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[dict], dict[str, Any]]:
     composed = compose_answer_with_trusted_sources(
         text,
         trusted_sources or [],
@@ -1080,10 +1080,10 @@ def _compose_backend_managed_answer(
         evidence_chunks=citation_chunks or [],
     )
     if not composed.sources:
-        return _no_citable_sources_message(user_query), []
+        return _no_citable_sources_message(user_query), [], composed.decision
     if not composed.content:
-        return _no_citable_sources_message(user_query), []
-    return composed.content, composed.sources
+        return _no_citable_sources_message(user_query), [], composed.decision
+    return composed.content, composed.sources, composed.decision
 
 
 async def _chat_completion_streaming_with_composed_citations(
@@ -1133,11 +1133,17 @@ async def _chat_completion_streaming_with_composed_citations(
                 if isinstance(text, str) and text:
                     raw_text_parts.append(text)
 
-    content, sources = _compose_backend_managed_answer(
+    content, sources, decision = _compose_backend_managed_answer(
         "".join(raw_text_parts),
         trusted_sources,
         citation_chunks,
         user_query,
+    )
+    logger.info(
+        "partner_chat_citation_selection_decision",
+        org_id=org_id,
+        selected_count=len(sources),
+        decision=decision,
     )
     if not sources:
         yield _sse_content_delta(content)
@@ -1389,11 +1395,17 @@ async def chat_completion_non_streaming(
             message = choice.get("message") if isinstance(choice, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
             if isinstance(message, dict) and isinstance(content, str):
-                rendered_content, sources = _compose_backend_managed_answer(
+                rendered_content, sources, decision = _compose_backend_managed_answer(
                     content,
                     trusted_sources,
                     citation_chunks,
                     _last_user_message(messages) or "",
+                )
+                logger.info(
+                    "partner_chat_citation_selection_decision",
+                    org_id=org_id,
+                    selected_count=len(sources),
+                    decision=decision,
                 )
                 message["content"] = rendered_content
                 message["sources"] = sources

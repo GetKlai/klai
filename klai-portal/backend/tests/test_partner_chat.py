@@ -412,6 +412,59 @@ async def test_widget_streaming_uses_structured_citation_mode():
 
 
 @pytest.mark.asyncio
+async def test_partner_streaming_uses_backend_managed_citations():
+    """Partner API calls use the same deterministic source selector as widgets."""
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
+    auth = make_partner_auth(kb_access={10: "read"})
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}],
+        model="klai-primary",
+        stream=True,
+    )
+
+    async def mock_streaming_gen():
+        yield b"data: [DONE]\n\n"
+
+    retrieved_chunks = [
+        {
+            "chunk_id": "c1",
+            "title": "Invite and remove people",
+            "source_url": "https://www.getklai.com/docs/klai-help/invite-and-remove-people",
+            "text": "Invite a colleague from Admin > Users.",
+        }
+    ]
+
+    with (
+        patch(
+            "app.api.partner.retrieve_context",
+            return_value=(
+                retrieved_chunks,
+                "prompt",
+                [
+                    {
+                        "title": "Invite and remove people",
+                        "url": "https://www.getklai.com/docs/klai-help/invite-and-remove-people",
+                    }
+                ],
+            ),
+        ) as mock_retrieve,
+        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
+        patch("app.api.partner.asyncio"),
+    ):
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
+
+    assert mock_retrieve.call_args.kwargs["backend_managed_citations"] is True
+    assert chat_stream.call_args.kwargs["citation_output"] == "markers"
+    assert chat_stream.call_args.kwargs["citation_source_urls"] == {}
+    assert chat_stream.call_args.kwargs["citation_source_metadata"] == {}
+
+
+@pytest.mark.asyncio
 async def test_streaming_chunks_forwarded():
     """Mock LiteLLM streaming chunks are forwarded byte-for-byte."""
     from app.api.partner import ChatCompletionsRequest, chat_completions

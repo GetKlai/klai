@@ -21,7 +21,7 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -1507,12 +1507,14 @@ class _KbCitationRenderStats:
     rendered_messages: int = 0
     rendered_sources: int = 0
     no_citable_sources: bool = False
+    citation_decisions: list[dict[str, Any]] = field(default_factory=list)
 
     def merge(self, other: "_KbCitationRenderStats") -> None:
         self.mutated_messages += other.mutated_messages
         self.rendered_messages += other.rendered_messages
         self.rendered_sources = max(self.rendered_sources, other.rendered_sources)
         self.no_citable_sources = self.no_citable_sources or other.no_citable_sources
+        self.citation_decisions.extend(other.citation_decisions)
 
 
 def _render_kb_citation_content(
@@ -1522,9 +1524,15 @@ def _render_kb_citation_content(
     user_query: object,
     trusted_sources: list[dict[str, Any]],
     evidence_chunks: list[dict],
-) -> tuple[str, int, bool]:
+) -> tuple[str, int, bool, dict[str, Any]]:
     if not trusted_sources:
-        return _no_citable_sources_message(user_query), 0, True
+        return _no_citable_sources_message(user_query), 0, True, {
+            "mode": "document_level_supported_sources",
+            "candidate_count": 0,
+            "selected": [],
+            "rejected": [],
+            "no_citable_reason": "no_trusted_sources",
+        }
     composed = compose_answer_with_trusted_sources(
         text,
         trusted_sources,
@@ -1534,8 +1542,10 @@ def _render_kb_citation_content(
     )
     sources_markdown = format_sources_markdown(composed.sources)
     if not composed.content or not sources_markdown:
-        return _no_citable_sources_message(user_query), 0, True
-    return f"{composed.content}\n\n{sources_markdown}", len(composed.sources), False
+        decision = dict(composed.decision)
+        decision["no_citable_reason"] = "selector_rejected_all_sources"
+        return _no_citable_sources_message(user_query), 0, True, decision
+    return f"{composed.content}\n\n{sources_markdown}", len(composed.sources), False, composed.decision
 
 
 def _log_kb_citation_render(
@@ -1553,7 +1563,7 @@ def _log_kb_citation_render(
         else "kb_citations_rendered_markdown"
     )
     logger.warning(
-        "%s org_id=%s user_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s",
+        "%s org_id=%s user_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_decisions=%s",
         event,
         kb_meta.get("org_id"),
         kb_meta.get("user_id"),
@@ -1563,6 +1573,7 @@ def _log_kb_citation_render(
         stats.rendered_sources,
         kb_meta.get("chunks_injected"),
         kb_meta.get("no_citable_reason"),
+        stats.citation_decisions,
     )
 
 
@@ -1584,7 +1595,7 @@ def _flush_citation_stream_buffer(
         trusted_sources = []
     if not trusted_sources and not force_no_citable and not citation_chunks:
         return stats
-    rendered_content, rendered_sources, no_citable_sources = _render_kb_citation_content(
+    rendered_content, rendered_sources, no_citable_sources, decision = _render_kb_citation_content(
         full_text,
         allowed_image_urls=allowed_image_urls,
         user_query=kb_meta.get("user_query"),
@@ -1602,6 +1613,7 @@ def _flush_citation_stream_buffer(
         stats.rendered_messages += 1
         stats.rendered_sources = rendered_sources
         stats.no_citable_sources = no_citable_sources
+        stats.citation_decisions.append(decision)
         return stats
     return stats
 
@@ -1623,7 +1635,7 @@ def _compose_non_streaming_kb_response(
             continue
         content = _get_message_content(message)
         if isinstance(content, str):
-            rendered_content, rendered_sources, no_citable_sources = _render_kb_citation_content(
+            rendered_content, rendered_sources, no_citable_sources, decision = _render_kb_citation_content(
                 content,
                 allowed_image_urls=allowed_image_urls,
                 user_query=kb_meta.get("user_query"),
@@ -1636,6 +1648,7 @@ def _compose_non_streaming_kb_response(
                 stats.rendered_messages += 1
                 stats.rendered_sources = max(stats.rendered_sources, rendered_sources)
                 stats.no_citable_sources = stats.no_citable_sources or no_citable_sources
+                stats.citation_decisions.append(decision)
     return stats
 
 
