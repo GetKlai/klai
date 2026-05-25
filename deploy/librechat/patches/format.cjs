@@ -29,6 +29,7 @@ const formatMediaMessage = ({ message, endpoint, mediaParts, }) => {
     ];
     return result;
 };
+const isRecord = (value) => value != null && typeof value === 'object';
 /**
  * Formats a message to OpenAI payload format based on the provided options.
  *
@@ -36,6 +37,9 @@ const formatMediaMessage = ({ message, endpoint, mediaParts, }) => {
  * @returns - The formatted message.
  */
 const formatMessage = ({ message, userName, endpoint, assistantName, langChain = false, }) => {
+    if (!isRecord(message)) {
+        message = {};
+    }
     // eslint-disable-next-line prefer-const
     let { role: _role, _name, sender, text, content: _content, lc_id } = message;
     if (lc_id && lc_id[2] && !langChain) {
@@ -126,7 +130,7 @@ const formatMessage = ({ message, userName, endpoint, assistantName, langChain =
  * @returns - The array of formatted LangChain messages.
  */
 const formatLangChainMessages = (messages, formatOptions) => {
-    return messages.map((msg) => {
+    return messages.filter(isRecord).map((msg) => {
         const formatted = formatMessage({
             ...formatOptions,
             message: msg,
@@ -495,6 +499,9 @@ const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
     // Process messages with tool conversion if tools set is provided
     for (let i = 0; i < payload.length; i++) {
         const message = payload[i];
+        if (!isRecord(message)) {
+            continue;
+        }
         // Q: Store the current length of messages to track where this payload message starts in the result?
         // const startIndex = messages.length;
         if (typeof message.content === 'string') {
@@ -527,6 +534,9 @@ const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
                 const invalidToolCallIds = new Set();
                 const invalidToolStrings = [];
                 for (const part of content) {
+                    if (!isRecord(part)) {
+                        continue;
+                    }
                     if (part.type !== _enum.ContentTypes.TOOL_CALL) {
                         filteredContent.push(part);
                         continue;
@@ -733,7 +743,7 @@ function shiftIndexTokenCountMap(indexTokenCountMap, instructionsTokenCount) {
 /** Block types that contain binary image data and must be preserved structurally. */
 const IMAGE_BLOCK_TYPES = new Set(['image_url', 'image']);
 /** Checks whether a BaseMessage is a tool-role message. */
-const isToolMessage = (m) => m instanceof messages.ToolMessage || ('role' in m && m.role === 'tool');
+const isToolMessage = (m) => m instanceof messages.ToolMessage || (isRecord(m) && 'role' in m && m.role === 'tool');
 /** Flushes accumulated text chunks into `parts` as a single text block. */
 function flushTextChunks(textChunks, parts) {
     if (textChunks.length === 0) {
@@ -771,6 +781,9 @@ function appendMessageContent(msg, role, textChunks, parts) {
     }
     let hasToolUseBlock = false;
     for (const block of content) {
+        if (!isRecord(block)) {
+            continue;
+        }
         if (IMAGE_BLOCK_TYPES.has(block.type ?? '')) {
             flushTextChunks(textChunks, parts);
             parts.push({ ...block });
@@ -833,6 +846,9 @@ function ensureThinkingBlockInMessages(messages$1, _provider) {
     let lastHumanIndex = -1;
     for (let k = messages$1.length - 1; k >= 0; k--) {
         const m = messages$1[k];
+        if (!isRecord(m)) {
+            continue;
+        }
         if (m instanceof messages.HumanMessage ||
             ('role' in m && m.role === 'user')) {
             lastHumanIndex = k;
@@ -846,6 +862,10 @@ function ensureThinkingBlockInMessages(messages$1, _provider) {
     let i = lastHumanIndex + 1;
     while (i < messages$1.length) {
         const msg = messages$1[i];
+        if (!isRecord(msg)) {
+            i++;
+            continue;
+        }
         /** Detect AI messages by instanceof OR by role, in case cache-control cloning
          produced a plain object that lost the LangChain prototype. */
         const isAI = msg instanceof messages.AIMessage ||
@@ -883,7 +903,7 @@ function ensureThinkingBlockInMessages(messages$1, _provider) {
         }
         // Bedrock also stores reasoning in additional_kwargs (may not be in content array)
         if (!hasThinkingBlock &&
-            aiMsg.additional_kwargs.reasoning_content != null) {
+            aiMsg.additional_kwargs?.reasoning_content != null) {
             hasThinkingBlock = true;
         }
         // If message has tool use but no thinking block, check whether this is a
@@ -938,6 +958,9 @@ function ensureThinkingBlockInMessages(messages$1, _provider) {
 function chainHasThinkingBlock(messages$1, currentIndex) {
     for (let k = currentIndex - 1; k >= 0; k--) {
         const prev = messages$1[k];
+        if (!isRecord(prev)) {
+            continue;
+        }
         // HumanMessage = turn boundary — stop searching
         if (prev instanceof messages.HumanMessage ||
             ('role' in prev && prev.role === 'user')) {
@@ -960,7 +983,7 @@ function chainHasThinkingBlock(messages$1, currentIndex) {
                 }
             }
             // Bedrock also stores reasoning in additional_kwargs
-            if (prevAiMsg.additional_kwargs.reasoning_content != null) {
+            if (prevAiMsg.additional_kwargs?.reasoning_content != null) {
                 return true;
             }
         }
