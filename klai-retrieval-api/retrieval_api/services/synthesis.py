@@ -18,10 +18,10 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator
-from urllib.parse import urlparse, urlunparse
 
 import httpx
 from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+from klai_citations import normalise_source_url, render_evidence_context, source_url_key
 
 from retrieval_api.config import settings
 from retrieval_api.util.language_detect import (
@@ -33,27 +33,14 @@ logger = logging.getLogger(__name__)
 
 # Approximate char budget for context (6000 tokens * ~4 chars/token)
 _MAX_CONTEXT_CHARS = 24_000
-_SENTINEL_URLS = {"undefined", "null", "none", "n/a", "na", "-", "#"}
 
 
 def _normalise_source_url(url: object) -> str:
-    if not isinstance(url, str):
-        return ""
-    value = url.strip().strip("<>")
-    if not value or value.lower() in _SENTINEL_URLS:
-        return ""
-    parsed = urlparse(value)
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-        return ""
-    netloc = parsed.netloc.lower()
-    if netloc.startswith("www."):
-        netloc = netloc[4:]
-    path = parsed.path or "/"
-    return urlunparse((parsed.scheme.lower(), netloc, path, "", parsed.query, ""))
+    return normalise_source_url(url)
 
 
 def _source_url_key(url: str) -> str:
-    return _normalise_source_url(url).rstrip("/")
+    return source_url_key(url)
 
 
 def _chunk_source_url(chunk: dict) -> str:
@@ -97,25 +84,8 @@ def _chunk_title(chunk: dict) -> str:
 
 
 def _build_context(chunks: list[dict]) -> str:
-    """Format chunks as numbered context for the LLM."""
-    parts: list[str] = []
-    total_chars = 0
-    for i, chunk in enumerate(chunks, 1):
-        prefix = chunk.get("context_prefix", "") or ""
-        text = chunk.get("text", "")
-        source_url = _chunk_source_url(chunk)
-        title = _chunk_title(chunk)
-        entry_lines = [f"[{i}] {prefix}{text}".strip()]
-        if title:
-            entry_lines.append(f"title: {title}")
-        if source_url:
-            entry_lines.append(f"source_url: {source_url}")
-        entry = "\n".join(entry_lines)
-        if total_chars + len(entry) > _MAX_CONTEXT_CHARS:
-            break
-        parts.append(entry)
-        total_chars += len(entry)
-    return "\n\n".join(parts)
+    """Format retrieved chunks as structured evidence for the LLM."""
+    return render_evidence_context(chunks, include_source_urls=True, max_chars=_MAX_CONTEXT_CHARS)
 
 
 def _extract_citation_indices(text: str) -> list[int]:

@@ -29,7 +29,7 @@ import structlog
 from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
 
 from app.core.config import Settings
-from app.services.citations import build_citation_registry, render_structured_answer
+from app.services.citations import build_citation_registry, render_evidence_context, render_structured_answer
 from app.trace import get_trace_headers
 from app.utils.language_detect import (
     detect_language,
@@ -1165,24 +1165,9 @@ def _build_system_prompt(
     if not chunks:
         return base
 
-    context_parts = []
-    for i, chunk in enumerate(chunks, 1):
-        text = chunk.get("text", "")
-        if text:
-            title = (
-                chunk.get("title")
-                or (chunk.get("metadata") or {}).get("title")
-                or chunk.get("source_label")
-                or "Knowledge Base"
-            )
-            source_url = "" if backend_managed_citations else _chunk_source_url(chunk)
-            source_line = f"\nsource_url: {source_url}" if source_url else ""
-            context_parts.append(f"[{i}] title: {title}{source_line}\n{text}")
-
-    if not context_parts:
+    context_block = render_evidence_context(chunks, include_source_urls=not backend_managed_citations)
+    if not context_block:
         return base
-
-    context_block = "\n\n".join(context_parts)
     if backend_managed_citations:
         url_guard = (
             "Source handling rules:\n"

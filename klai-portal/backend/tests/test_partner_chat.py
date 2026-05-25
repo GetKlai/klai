@@ -715,6 +715,30 @@ def test_build_system_prompt_can_leave_citations_to_backend():
     assert "Do not write URLs" in prompt
 
 
+def test_build_system_prompt_renders_structured_evidence_context():
+    from app.services.partner_chat import _build_system_prompt
+
+    prompt = _build_system_prompt(
+        [
+            {
+                "title": "Invite and remove people",
+                "source_url": "https://docs.example.com/invite",
+                "heading_path": "Admin > Mensen",
+                "text": "Admin > Mensen\n\n4. Voer het werk-emailadres in.\n5. Selecteer een rol.",
+                "chunk_type": "procedural",
+            }
+        ],
+        backend_managed_citations=True,
+    )
+
+    assert "Evidence E1" in prompt
+    assert "Source title: Invite and remove people" in prompt
+    assert "Section path: Admin > Mensen" in prompt
+    assert "List note: this excerpt starts mid ordered-list" in prompt
+    assert "Admin > Mensen\n\n4." not in prompt
+    assert "source_url:" not in prompt
+
+
 def test_citation_composer_adds_sources_when_model_has_no_citations():
     """Widget sources come from retrieved chunks, not from model-authored markers."""
     from app.services.citations import compose_citations

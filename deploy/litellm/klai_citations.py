@@ -35,17 +35,54 @@ class CitationRegistry:
         return bool(self.sources)
 
 
+@dataclass
+class EvidenceChunk:
+    evidence_id: str
+    title: str
+    content: str
+    source_url: str = ""
+    source_key: str = ""
+    section_path: list[str] = field(default_factory=list)
+    scope: str = ""
+    chunk_type: str = ""
+    starts_mid_list: bool = False
+    image_urls: list[str] = field(default_factory=list)
+
+
 _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)")
 _MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\([^)]*\)")
+_MARKDOWN_HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$")
+_ORDERED_LIST_ITEM_RE = re.compile(r"^\s*(\d+)[.)]\s+")
 _NUMERIC_MARKDOWN_CITATION_RE = re.compile(r"\[\s*\d{1,3}\s*\]\([^)]*\)")
 _BARE_BRACKET_CITATION_RE = re.compile(r"(?<!!)\[\s*\d{1,3}\s*\]")
 _PAREN_CITATION_RE = re.compile(r"\(\s*\d{1,3}(?:\s*[,;]\s*\d{1,3})*\s*\)")
 _MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)")
 _BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?=(?:[.!?])?(?:\s|$))")
+_TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
 _SOURCE_HEADING_RE = re.compile(r"^\s*(?:bronnen?|sources?|references?)\s*:?\s*$", re.IGNORECASE)
 _SOURCE_LIST_LINE_RE = re.compile(r"^\s*(?:\(\s*\d{1,3}\s*\)|\[\s*\d{1,3}\s*\]|\d{1,3}[.)])\s*(.+)$")
 _DEFAULT_MAX_SOURCES = 3
+_SOURCE_RELEVANCE_STOPWORDS = {
+    "aan",
+    "als",
+    "and",
+    "are",
+    "bij",
+    "but",
+    "dat",
+    "een",
+    "for",
+    "het",
+    "met",
+    "not",
+    "the",
+    "tot",
+    "van",
+    "voor",
+    "with",
+    "you",
+}
 
 
 def normalise_source_url(url: object) -> str:
@@ -118,6 +155,151 @@ def _chunk_source_title(chunk: dict) -> str:
     return "Source"
 
 
+def _metadata(chunk: dict) -> dict:
+    metadata = chunk.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _string_value(value: object) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _split_section_path(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [part.strip() for part in value if isinstance(part, str) and part.strip()]
+    if not isinstance(value, str) or not value.strip():
+        return []
+    return [part.strip() for part in re.split(r"\s*>\s*|\s*/\s*", value) if part.strip()]
+
+
+def _chunk_section_path(chunk: dict) -> list[str]:
+    metadata = _metadata(chunk)
+    for value in (
+        chunk.get("section_path"),
+        metadata.get("section_path"),
+        chunk.get("heading_path"),
+        metadata.get("heading_path"),
+    ):
+        section_path = _split_section_path(value)
+        if section_path:
+            return section_path
+    return []
+
+
+def _looks_like_injected_heading(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped or len(stripped) > 180:
+        return False
+    if _ORDERED_LIST_ITEM_RE.match(stripped):
+        return False
+    if stripped[-1:] in ".!?:;":
+        return False
+    words = re.findall(r"[A-Za-zÀ-ÿ0-9_-]+", stripped)
+    return bool(words) and len(words) <= 12
+
+
+def _extract_section_and_content(text: str, section_path: list[str]) -> tuple[list[str], str]:
+    stripped = (text or "").strip()
+    if not stripped:
+        return section_path, ""
+
+    lines = stripped.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if not lines:
+        return section_path, ""
+
+    first = lines[0].strip()
+    heading_match = _MARKDOWN_HEADING_RE.match(first)
+    if heading_match:
+        if not section_path:
+            section_path = _split_section_path(heading_match.group(1))
+        return section_path, "\n".join(lines[1:]).strip()
+
+    # The ingest chunker historically prepended "Heading > Subheading" as
+    # plain text before a blank line. Preserve that as metadata and keep the
+    # prompt content body-only so the model cannot echo it as answer Markdown.
+    if len(lines) > 2 and not lines[1].strip():
+        inferred_section_path = _split_section_path(first)
+        matches_known_section = bool(section_path and inferred_section_path == section_path)
+        looks_like_heading_prefix = ">" in first or _looks_like_injected_heading(first)
+        if matches_known_section or (not section_path and looks_like_heading_prefix):
+            if not section_path:
+                section_path = inferred_section_path
+            return section_path, "\n".join(lines[2:]).strip()
+
+    return section_path, stripped
+
+
+def _starts_mid_ordered_list(text: str) -> bool:
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        match = _ORDERED_LIST_ITEM_RE.match(line)
+        return bool(match and int(match.group(1)) > 1)
+    return False
+
+
+def evidence_chunks_from_chunks(chunks: list[dict]) -> list[EvidenceChunk]:
+    evidence: list[EvidenceChunk] = []
+    for index, chunk in enumerate(chunks, 1):
+        raw_text = chunk.get("text", "")
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            continue
+        section_path, content = _extract_section_and_content(raw_text, _chunk_section_path(chunk))
+        if not content:
+            continue
+        source_url = _chunk_source_url(chunk)
+        image_urls = [url for url in chunk.get("image_urls") or [] if isinstance(url, str) and url.strip()]
+        evidence.append(
+            EvidenceChunk(
+                evidence_id=f"E{index}",
+                title=_chunk_source_title(chunk),
+                content=content,
+                source_url=source_url,
+                source_key=source_url_key(source_url),
+                section_path=section_path,
+                scope=_string_value(chunk.get("scope")),
+                chunk_type=_string_value(chunk.get("chunk_type") or _metadata(chunk).get("chunk_type")),
+                starts_mid_list=_starts_mid_ordered_list(content),
+                image_urls=image_urls,
+            )
+        )
+    return evidence
+
+
+def render_evidence_context(
+    chunks: list[dict],
+    *,
+    include_source_urls: bool = False,
+    max_chars: int | None = None,
+) -> str:
+    parts: list[str] = []
+    total_chars = 0
+    for item in evidence_chunks_from_chunks(chunks):
+        lines = [f"Evidence {item.evidence_id}", f"Source title: {item.title}"]
+        if item.scope:
+            lines.append(f"Scope: [{item.scope}]")
+        if item.section_path:
+            lines.append(f"Section path: {' > '.join(item.section_path)}")
+        if item.chunk_type:
+            lines.append(f"Chunk type: {item.chunk_type}")
+        if item.starts_mid_list:
+            lines.append(
+                "List note: this excerpt starts mid ordered-list; do not preserve the original numbering in the answer."
+            )
+        if include_source_urls and item.source_url:
+            lines.append(f"source_url: {item.source_url}")
+        lines.append("Content:")
+        lines.append(item.content)
+        entry = "\n".join(lines)
+        if max_chars is not None and total_chars + len(entry) > max_chars:
+            break
+        parts.append(entry)
+        total_chars += len(entry)
+    return "\n\n".join(parts)
+
+
 def citation_sources_from_chunks(chunks: list[dict]) -> list[CitationSource]:
     sources_by_key: dict[str, CitationSource] = {}
     for chunk in chunks:
@@ -129,9 +311,8 @@ def citation_sources_from_chunks(chunks: list[dict]) -> list[CitationSource]:
         if source is None:
             source = CitationSource(key=key, url=url, title=_chunk_source_title(chunk))
             sources_by_key[key] = source
-        text = chunk.get("text")
-        if isinstance(text, str) and text.strip():
-            source.chunk_texts.append(text)
+        for item in evidence_chunks_from_chunks([chunk]):
+            source.chunk_texts.append(item.content)
     return list(sources_by_key.values())
 
 
@@ -198,6 +379,49 @@ def strip_model_citation_artifacts(text: str, *, allowed_image_urls: set[str] | 
     return cleaned.strip()
 
 
+def _tokens(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in _TOKEN_RE.findall(text)
+        if not token.isdigit() and token.lower() not in _SOURCE_RELEVANCE_STOPWORDS
+    }
+
+
+def _source_relevance_score(answer_tokens: set[str], source: CitationSource) -> int:
+    if not answer_tokens:
+        return 0
+    title_score = len(answer_tokens & _tokens(source.title)) * 2
+    chunk_score = max(
+        (len(answer_tokens & _tokens(chunk_text)) for chunk_text in source.chunk_texts),
+        default=0,
+    )
+    return title_score + chunk_score
+
+
+def _select_document_sources(
+    cleaned_answer: str,
+    sources: list[CitationSource],
+    *,
+    max_sources: int | None,
+) -> list[CitationSource]:
+    if max_sources is None:
+        return sources
+    if max_sources <= 0:
+        return []
+
+    answer_tokens = _tokens(cleaned_answer)
+    scored = [
+        (score, index, source)
+        for index, source in enumerate(sources)
+        if (score := _source_relevance_score(answer_tokens, source)) > 0
+    ]
+    if not scored:
+        return sources[:max_sources]
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [source for _, _, source in scored[:max_sources]]
+
+
 def _compose_citations_from_sources(
     text: str,
     sources: list[CitationSource],
@@ -217,10 +441,12 @@ def _compose_citations_from_sources(
     if not cleaned or not sources:
         return ComposedCitations(content=cleaned, sources=[])
 
-    rendered_sources = render_structured_sources(
-        CitationRegistry(sources=sources),
+    selected_sources = _select_document_sources(
+        cleaned,
+        sources,
         max_sources=max_sources,
     )
+    rendered_sources = render_structured_sources(CitationRegistry(sources=selected_sources), max_sources=None)
     return ComposedCitations(content=cleaned, sources=rendered_sources)
 
 
@@ -334,11 +560,14 @@ __all__ = [
     "CitationRegistry",
     "CitationSource",
     "ComposedCitations",
+    "EvidenceChunk",
     "build_citation_registry",
     "citation_sources_from_chunks",
     "compose_citations",
+    "evidence_chunks_from_chunks",
     "format_sources_markdown",
     "normalise_source_url",
+    "render_evidence_context",
     "render_markdown_answer",
     "render_markdown_answer_with_sources",
     "render_markdown_sources",

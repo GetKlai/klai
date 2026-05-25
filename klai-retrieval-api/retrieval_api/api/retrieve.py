@@ -523,6 +523,7 @@ async def retrieve(
                     content_type=r.get("content_type"),
                     text=display_text,
                     context_prefix=r.get("context_prefix"),
+                    heading_path=r.get("heading_path"),
                     score=r["score"],
                     reranker_score=r.get("reranker_score"),
                     scope=r.get("scope"),

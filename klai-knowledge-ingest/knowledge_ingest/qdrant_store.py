@@ -94,6 +94,7 @@ async def ensure_collection() -> None:
         "content_label",
         "source_label",
         "chunk_type",
+        "heading_path",
     ):
         if field not in indexed_fields:
             await client.create_payload_index(
@@ -321,6 +322,8 @@ async def upsert_enriched_chunks(
         }
         if getattr(ec, "chunk_type", ""):
             chunk_payload["chunk_type"] = ec.chunk_type
+        if getattr(ec, "heading_path", ""):
+            chunk_payload["heading_path"] = ec.heading_path
 
         # SPEC-RAG-PARENT-CHILD-001: thread the parent_chunks.id into each
         # child's payload so retrieval-api can fetch the parent text and
@@ -427,6 +430,7 @@ _ALLOWED_METADATA_FIELDS = frozenset(
         "valid_until",
         "ingested_at",
         "assertion_mode",
+        "heading_path",
     }
 )
 
@@ -512,6 +516,7 @@ async def search(
             "metadata": {
                 k: v for k, v in (p.payload or {}).items() if k in _ALLOWED_METADATA_FIELDS
             },
+            "heading_path": p.payload.get("heading_path") if p.payload else None,
         }
         for p in points
     ]

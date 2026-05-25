@@ -52,6 +52,7 @@ from klai_chat_prompts import (
 from klai_citations import (
     CitationRegistry,
     build_citation_registry,
+    render_evidence_context,
     render_markdown_answer,
 )
 
@@ -2114,6 +2115,7 @@ class KlaiKnowledgeHook(CustomLogger):
         source_link_instruction = (
             "[ANSWER FORMAT — always follow this:\n"
             "1. Begin with a short TL;DR (2-3 sentences) of the answer. "
+            "Write it as normal prose, not as a Markdown heading. "
             "Use the standard short-summary label in the SAME LANGUAGE as the "
             "user's question — NOT the language of the source documents. "
             "'TL;DR' is universally understood and is a safe default in any "
@@ -2121,7 +2123,9 @@ class KlaiKnowledgeHook(CustomLogger):
             "2. Do not write source lists, URLs, Markdown links, footnotes, "
             "or citation numbers. The application adds citations after "
             "generation from retrieved metadata.\n"
-            "3. If needed for a clear explanation, or if the user asks for "
+            "3. Do not preserve source-list step numbers when a retrieved "
+            "chunk starts mid-procedure; rewrite steps into a clean sequence.\n"
+            "4. If needed for a clear explanation, or if the user asks for "
             "more detail, follow with an extended answer with inline "
             "explanation.\n"
             "   Be concise but complete. No walls of text — write as if you "
@@ -2153,19 +2157,11 @@ class KlaiKnowledgeHook(CustomLogger):
         allowed_source_urls: set[str] = {source.url for source in citation_registry.sources}
         allowed_image_urls: set[str] = set()
 
-        for chunk_index, chunk in enumerate(chunks, 1):
-            title = _chunk_title(chunk)
-            scope_label = chunk.get("scope", "org")
-            # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English chunk
-            # labels. These appear inside the system prompt only — the model
-            # interprets them but never echoes them to the user verbatim.
-            label = "[personal]" if scope_label == "personal" else "[org]"
-            text = chunk.get("text", "").strip()
-            if title:
-                lines.append(f"### {title}  {label}")
-            else:
-                lines.append(f"### Knowledge Base  {label}")
-            lines.append(text)
+        context_block = render_evidence_context(chunks, include_source_urls=False)
+        if context_block:
+            lines.append(context_block)
+
+        for chunk in chunks:
             absolute_urls = [
                 url
                 for url in (

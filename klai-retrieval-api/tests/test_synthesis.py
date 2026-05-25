@@ -20,8 +20,10 @@ class TestBuildContext:
             {"context_prefix": "", "text": "Contact support for help."},
         ]
         result = _build_context(chunks)
-        assert "[1] Policy: Refund within 30 days." in result
-        assert "[2] Contact support for help." in result
+        assert "Evidence E1" in result
+        assert "Content:\nRefund within 30 days." in result
+        assert "Evidence E2" in result
+        assert "Content:\nContact support for help." in result
         assert "\n\n" in result
 
     def test_truncation_at_max_chars(self):
@@ -31,8 +33,8 @@ class TestBuildContext:
             {"context_prefix": "", "text": big_text},
         ]
         result = _build_context(chunks)
-        assert "[1]" in result
-        assert "[2]" not in result
+        assert "Evidence E1" in result
+        assert "Evidence E2" not in result
 
     def test_empty_input(self):
         result = _build_context([])
@@ -41,7 +43,8 @@ class TestBuildContext:
     def test_none_prefix_treated_as_empty(self):
         chunks = [{"context_prefix": None, "text": "hello"}]
         result = _build_context(chunks)
-        assert "[1] hello" in result
+        assert "Evidence E1" in result
+        assert "Content:\nhello" in result
 
     def test_context_includes_canonical_source_url(self):
         chunks = [
@@ -54,8 +57,23 @@ class TestBuildContext:
             }
         ]
         result = _build_context(chunks)
-        assert "title: Steward ownership" in result
+        assert "Source title: Steward ownership" in result
         assert "source_url: https://getklai.com/docs/company/steward-ownership" in result
+
+    def test_context_preserves_heading_as_metadata_not_markdown(self):
+        chunks = [
+            {
+                "title": "Invite and remove people",
+                "heading_path": "Admin > Mensen",
+                "text": "Admin > Mensen\n\n4. Voer het emailadres in.\n5. Selecteer een rol.",
+            }
+        ]
+        result = _build_context(chunks)
+
+        assert "Section path: Admin > Mensen" in result
+        assert "List note: this excerpt starts mid ordered-list" in result
+        assert "Content:\n4. Voer het emailadres in." in result
+        assert "###" not in result
 
 
 class TestExtractCitationIndices:

@@ -141,6 +141,7 @@ class EnrichedChunk:
     enriched_text: str  # "{context_prefix}\n\n{original_text}"
     context_prefix: str
     questions: list[str]  # embedded as vector_questions for depth 0-1; stored in payload for all
+    heading_path: str = ""
     # @MX:NOTE: SPEC-KB-021 chunk-level classification (procedural/conceptual/
     #   reference/warning/example). Distinct from the document-level content_type
     #   field ("kb_article", "pdf_document", ...) stored on the Qdrant point
@@ -385,6 +386,7 @@ async def enrich_chunks(
     artifact_id: str = "",
     document_summary: str | None = None,
     document_language: str | None = None,
+    heading_paths: list[str] | None = None,
 ) -> list[EnrichedChunk]:
     """
     Enrich all chunks with a semaphore limiting concurrent LLM calls.
@@ -433,11 +435,17 @@ async def enrich_chunks(
                 document_language=document_language,
             )
         enriched_text = f"{result.context_prefix}\n\n{chunk_text}"
+        heading_path = (
+            heading_paths[chunk_index]
+            if heading_paths and chunk_index < len(heading_paths)
+            else ""
+        )
         return EnrichedChunk(
             original_text=chunk_text,
             enriched_text=enriched_text,
             context_prefix=result.context_prefix,
             questions=result.questions,
+            heading_path=heading_path,
             chunk_type=result.chunk_type,
         )
 

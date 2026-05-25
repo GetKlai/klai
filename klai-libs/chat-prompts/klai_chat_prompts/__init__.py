@@ -107,6 +107,8 @@ _GROUNDED_BODY: Final[str] = (
     "## How to answer\n"
     "Start with the answer. No warm-up, no rephrasing the question, no 'great question!'\n"
     "Simple question: 1-3 sentences. Complex question: the core answer first, then the detail.\n"
+    "Do NOT use Markdown headings for the answer opening. Do NOT preserve source-list step numbers "
+    "when a retrieved chunk starts mid-procedure; rewrite the steps into a clean sequence.\n"
     "Be direct. Be honest. If the sources say something unexpected, say it.\n\n"
     "## Klai voice\n"
     "Sound like a senior colleague who has read the sources and tells the user plainly what they say. "
