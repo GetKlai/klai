@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 
@@ -534,6 +535,95 @@ def render_structured_sources(
     ]
 
 
+def trusted_sources_from_evidence_pack(evidence_pack: object) -> list[dict[str, Any]]:
+    """Return UI-renderable sources from an EvidencePack-like dict.
+
+    This is the shared adapter for app surfaces that render document-level
+    citations. It deliberately reads only ``evidence_pack.sources``; callers
+    must not reconstruct visible citations from raw chunks when this list is
+    empty or absent.
+    """
+    if not isinstance(evidence_pack, dict):
+        return []
+    sources = evidence_pack.get("sources")
+    if not isinstance(sources, list):
+        return []
+    rendered: list[dict[str, Any]] = []
+    for index, source in enumerate(sources, 1):
+        if not isinstance(source, dict):
+            continue
+        url = normalise_source_url(source.get("source_url") or source.get("url"))
+        if not url:
+            continue
+        rendered.append(
+            {
+                "label": str(index),
+                "title": source.get("title") or "Source",
+                "url": url,
+                "source_id": source.get("source_id"),
+                "evidence_ids": source.get("evidence_ids") or [],
+                "artifact_id": source.get("artifact_id"),
+                "source_label": source.get("source_label"),
+                "relevance_score": source.get("relevance_score"),
+            }
+        )
+    return rendered
+
+
+def evidence_pack_items_as_chunks(evidence_pack: object) -> list[dict[str, Any]]:
+    """Adapt EvidencePack items to the existing evidence-context renderer."""
+    if not isinstance(evidence_pack, dict):
+        return []
+    items = evidence_pack.get("items")
+    if not isinstance(items, list):
+        return []
+    chunks: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        chunks.append(
+            {
+                "chunk_id": item.get("chunk_id"),
+                "artifact_id": item.get("artifact_id"),
+                "content_type": item.get("content_type"),
+                "text": item.get("text"),
+                "title": item.get("title"),
+                "heading_path": item.get("heading_path"),
+                "source_url": item.get("source_url"),
+                "source_label": item.get("source_label"),
+                "score": item.get("score"),
+                "reranker_score": item.get("reranker_score"),
+                "final_score": item.get("final_score"),
+                "scope": item.get("scope"),
+                "image_urls": item.get("image_urls"),
+                "is_parent_text": item.get("is_parent_text"),
+            }
+        )
+    return chunks
+
+
+def compose_answer_with_trusted_sources(
+    text: str,
+    trusted_sources: list[dict[str, Any]],
+    *,
+    allowed_image_urls: set[str] | None = None,
+) -> ComposedCitations:
+    """Clean model text and attach already-selected document sources.
+
+    Unlike ``compose_citations()``, this function never chooses sources from
+    answer overlap or raw chunks. Source selection must already have happened
+    in the EvidencePack contract.
+    """
+    cleaned = strip_model_citation_artifacts(text, allowed_image_urls=allowed_image_urls)
+    sources = [
+        {"label": str(index), "title": title, "url": url}
+        for index, source in enumerate(trusted_sources, 1)
+        if (url := normalise_source_url(source.get("url")))
+        for title in [str(source.get("title") or "Source")]
+    ]
+    return ComposedCitations(content=cleaned, sources=sources)
+
+
 def render_markdown_sources(
     registry: CitationRegistry,
     *,
@@ -605,8 +695,10 @@ __all__ = [
     "EvidenceChunk",
     "build_citation_registry",
     "citation_sources_from_chunks",
+    "compose_answer_with_trusted_sources",
     "compose_citations",
     "evidence_chunks_from_chunks",
+    "evidence_pack_items_as_chunks",
     "format_sources_markdown",
     "normalise_source_url",
     "render_evidence_context",
@@ -617,4 +709,5 @@ __all__ = [
     "render_structured_sources",
     "source_url_key",
     "strip_model_citation_artifacts",
+    "trusted_sources_from_evidence_pack",
 ]

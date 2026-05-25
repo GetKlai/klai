@@ -566,12 +566,14 @@ async def retrieve(
         decision_record["confidence_band"] = confidence_band
         retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
 
+    evidence_query = (
+        f"{req.raw_query}\n{query_resolved}"
+        if req.raw_query and req.raw_query != query_resolved
+        else query_resolved
+    )
     evidence_pack = build_evidence_pack(
         chunks_out,
-        query=query_resolved,
-        min_relevance_score=settings.confidence_band_low_threshold
-        if settings.reranker_enabled
-        else None,
+        query=evidence_query,
     )
     decision_record["evidence_pack"] = {
         "item_count": len(evidence_pack.items),

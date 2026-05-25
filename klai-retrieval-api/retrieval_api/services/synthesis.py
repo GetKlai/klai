@@ -179,9 +179,6 @@ async def synthesize(
         evidence_pack = build_evidence_pack(
             chunks,
             query=query_resolved,
-            min_relevance_score=settings.confidence_band_low_threshold
-            if settings.reranker_enabled
-            else None,
         )
     if not evidence_pack.sources:
         message = "I cannot answer this reliably from the available knowledge sources."

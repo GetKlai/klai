@@ -1,13 +1,16 @@
 from klai_citations import (
     build_citation_registry,
+    compose_answer_with_trusted_sources,
     compose_citations,
     evidence_chunks_from_chunks,
+    evidence_pack_items_as_chunks,
     render_evidence_context,
     render_markdown_answer,
     render_markdown_answer_with_sources,
     render_markdown_sources,
     render_structured_answer,
     render_structured_sources,
+    trusted_sources_from_evidence_pack,
 )
 
 
@@ -314,3 +317,67 @@ def test_registry_sources_can_render_full_list_when_requested() -> None:
         "title": "Delta policy",
         "url": "https://docs.getklai.com/delta",
     }
+
+
+def test_trusted_sources_are_projected_only_from_evidence_pack_sources() -> None:
+    pack = {
+        "items": [
+            {
+                "evidence_id": "E1",
+                "chunk_id": "chunk-1",
+                "title": "Invite people",
+                "text": "Admins can invite users.",
+                "source_url": "https://docs.getklai.com/invite-people",
+            }
+        ],
+        "sources": [
+            {
+                "source_id": "S1",
+                "title": "Invite people",
+                "source_url": "https://www.docs.getklai.com/invite-people",
+                "evidence_ids": ["E1"],
+            }
+        ],
+    }
+
+    assert trusted_sources_from_evidence_pack(pack) == [
+        {
+            "label": "1",
+            "title": "Invite people",
+            "url": "https://docs.getklai.com/invite-people",
+            "source_id": "S1",
+            "evidence_ids": ["E1"],
+            "artifact_id": None,
+            "source_label": None,
+            "relevance_score": None,
+        }
+    ]
+    assert evidence_pack_items_as_chunks(pack) == [
+        {
+            "chunk_id": "chunk-1",
+            "artifact_id": None,
+            "content_type": None,
+            "text": "Admins can invite users.",
+            "title": "Invite people",
+            "heading_path": None,
+            "source_url": "https://docs.getklai.com/invite-people",
+            "source_label": None,
+            "score": None,
+            "reranker_score": None,
+            "final_score": None,
+            "scope": None,
+            "image_urls": None,
+            "is_parent_text": None,
+        }
+    ]
+
+
+def test_trusted_source_composition_never_reconstructs_sources_from_text_or_chunks() -> None:
+    composed = compose_answer_with_trusted_sources(
+        "Zie [fake](https://docs.getklai.com/fake).\n\nSources:\n1. Bad https://bad.example",
+        [],
+    )
+
+    assert composed.sources == []
+    assert "https://docs.getklai.com/fake" not in composed.content
+    assert "https://bad.example" not in composed.content

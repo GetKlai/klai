@@ -36,9 +36,6 @@ from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services.events import emit_event
 from app.services.partner_chat import (
-    _citation_source_metadata_from_chunks,
-    _citation_source_urls_from_chunks,
-    _source_urls_from_chunks,
     chat_completion_non_streaming,
     chat_completion_streaming,
     retrieve_context,
@@ -196,7 +193,7 @@ async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> s
 
 
 def _citation_runtime_options(
-    chunks: list[dict[str, Any]],
+    trusted_sources: list[dict[str, Any]],
     *,
     is_widget_chat: bool,
 ) -> tuple[set[str], dict[int, str], dict[str, dict[str, str]], Literal["links", "markers"]]:
@@ -209,9 +206,20 @@ def _citation_runtime_options(
     if is_widget_chat:
         return set(), {}, {}, "markers"
 
-    citation_source_urls = _citation_source_urls_from_chunks(chunks)
-    citation_source_metadata = _citation_source_metadata_from_chunks(chunks)
-    allowed_source_urls = set(citation_source_urls.values()) or _source_urls_from_chunks(chunks)
+    citation_source_urls = {
+        index: source["url"]
+        for index, source in enumerate(trusted_sources, 1)
+        if isinstance(source.get("url"), str)
+    }
+    citation_source_metadata = {
+        source["url"]: {
+            "title": str(source.get("title") or "Source"),
+            "url": source["url"],
+        }
+        for source in trusted_sources
+        if isinstance(source.get("url"), str)
+    }
+    allowed_source_urls = set(citation_source_urls.values())
     return allowed_source_urls, citation_source_urls, citation_source_metadata, "links"
 
 
@@ -382,7 +390,7 @@ async def chat_completions(
     is_widget_chat = str(auth.key_id).startswith("wgt_")
 
     try:
-        chunks, system_prompt = await retrieve_context(
+        chunks, system_prompt, trusted_sources = await retrieve_context(
             org_id=auth.org_id,
             zitadel_org_id=auth.zitadel_org_id,
             kb_slugs=kb_slugs,
@@ -460,7 +468,7 @@ async def chat_completions(
         citation_source_urls,
         citation_source_metadata,
         citation_output,
-    ) = _citation_runtime_options(chunks, is_widget_chat=is_widget_chat)
+    ) = _citation_runtime_options(trusted_sources, is_widget_chat=is_widget_chat)
 
     # 8. Streaming or non-streaming
     if request.stream:
@@ -475,6 +483,7 @@ async def chat_completions(
             citation_source_urls=citation_source_urls,
             citation_source_metadata=citation_source_metadata,
             citation_chunks=chunks,
+            trusted_sources=trusted_sources,
             citation_output=citation_output,
         )
         if audit_ready:
@@ -502,6 +511,7 @@ async def chat_completions(
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
         citation_chunks=chunks,
+        trusted_sources=trusted_sources,
         citation_output=citation_output,
     )
     if audit_ready:

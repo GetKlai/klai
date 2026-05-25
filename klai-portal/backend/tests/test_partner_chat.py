@@ -196,7 +196,7 @@ async def test_happy_path_non_streaming():
     }
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt")),
+        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [])),
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio"),
     ):
@@ -233,7 +233,7 @@ async def test_retrieval_log_scheduled():
     with (
         patch(
             "app.api.partner.retrieve_context",
-            return_value=([{"chunk_id": "c1", "text": "ctx", "reranker_score": 0.9}], "prompt"),
+            return_value=([{"chunk_id": "c1", "text": "ctx", "reranker_score": 0.9}], "prompt", []),
         ),
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio") as mock_asyncio,
@@ -272,7 +272,7 @@ async def test_kb_id_to_slug_translation():
     }
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt")) as mock_retrieve,
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio"),
     ):
@@ -343,7 +343,7 @@ async def test_streaming_returns_event_stream_content_type():
         yield b"data: [DONE]\n\n"
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt")),
+        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [])),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):
@@ -386,7 +386,19 @@ async def test_widget_streaming_uses_structured_citation_mode():
     ]
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=(retrieved_chunks, "prompt")) as mock_retrieve,
+        patch(
+            "app.api.partner.retrieve_context",
+            return_value=(
+                retrieved_chunks,
+                "prompt",
+                [
+                    {
+                        "title": "Privacy policy",
+                        "url": "https://www.getklai.com/docs/legal/privacy",
+                    }
+                ],
+            ),
+        ) as mock_retrieve,
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
         patch("app.api.partner.asyncio"),
     ):
@@ -424,7 +436,7 @@ async def test_streaming_chunks_forwarded():
             yield chunk
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt")),
+        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [])),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):
@@ -460,7 +472,7 @@ async def test_streaming_done_terminator():
         yield b"data: [DONE]\n\n"
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt")),
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):
@@ -494,7 +506,7 @@ async def test_streaming_retrieval_log_fires():
         yield b"data: [DONE]\n\n"
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1"}], "prompt")),
+        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1"}], "prompt", [])),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio") as mock_asyncio,
     ):
@@ -1351,6 +1363,13 @@ async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
                 "text": "Naam en e-mailadres staan in de privacy policy.",
             }
         ],
+        trusted_sources=[
+            {
+                "label": "1",
+                "title": "Privacy policy",
+                "url": "https://getklai.com/docs/legal/privacy",
+            }
+        ],
         citation_output="markers",
     ):
         chunks.append(chunk)
@@ -1416,6 +1435,13 @@ async def test_streaming_widget_mode_composes_sources_without_model_citations(mo
                 "title": "Steward ownership",
                 "source_url": "https://www.getklai.com/docs/company/steward-ownership",
                 "text": "Klai is steward-owned and mission-led.",
+            }
+        ],
+        trusted_sources=[
+            {
+                "label": "1",
+                "title": "Steward ownership",
+                "url": "https://getklai.com/docs/company/steward-ownership",
             }
         ],
         citation_output="markers",

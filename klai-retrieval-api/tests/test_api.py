@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from retrieval_api.services.evidence_pack import build_evidence_pack
+
 
 class TestRetrieveEndpoint:
     def test_retrieve_scope_personal_without_user_id(self, client):
@@ -107,6 +109,10 @@ class TestRetrieveEndpoint:
             patch(
                 "retrieval_api.api.retrieve.settings",
             ) as mock_settings,
+            patch(
+                "retrieval_api.api.retrieve.build_evidence_pack",
+                wraps=build_evidence_pack,
+            ) as mock_evidence_pack,
         ):
             # Enable reranker so the rerank mock is actually called
             mock_settings.reranker_enabled = True
@@ -129,7 +135,8 @@ class TestRetrieveEndpoint:
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
             mock_settings.link_expand_score_boost = 1.00
-            resp = client.post("/retrieve", json=sample_retrieve_request)
+            request = {**sample_retrieve_request, "raw_query": "original user query"}
+            resp = client.post("/retrieve", json=request)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -138,6 +145,9 @@ class TestRetrieveEndpoint:
         assert len(data["chunks"]) == 1
         assert data["chunks"][0]["chunk_id"] == "c1"
         assert data["chunks"][0]["reranker_score"] == 0.95
+        assert mock_evidence_pack.call_args.kwargs["query"] == (
+            "original user query\nresolved query"
+        )
         assert data["metadata"]["candidates_retrieved"] == 1
         assert data["metadata"]["retrieval_ms"] > 0
         # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: confidence_band must

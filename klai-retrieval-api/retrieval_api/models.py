@@ -11,6 +11,10 @@ _CONVERSATION_CONTENT_MAX_CHARS = 8_000
 
 class RetrieveRequest(BaseModel):
     query: str
+    # Optional original user text when the caller sends a rewritten query for
+    # retrieval. Evidence/source matching uses both so a rewrite cannot make
+    # otherwise relevant citable chunks look unrelated.
+    raw_query: str | None = None
     org_id: str
     scope: Literal["personal", "org", "both"] = "org"
     user_id: str | None = None

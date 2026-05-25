@@ -2811,6 +2811,13 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "gate_bypassed": False,
                     "allowed_source_urls": ["https://docs.getklai.com/diagram"],
                     "allowed_image_urls": [],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Diagram",
+                            "url": "https://docs.getklai.com/diagram",
+                        }
+                    ],
                     "citation_chunks": [
                         {
                             "title": "Diagram",
@@ -3030,6 +3037,13 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "render_mode": "streaming_guard",
                     "allowed_source_urls": ["https://docs.getklai.com/diagram"],
                     "allowed_image_urls": [],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Diagram",
+                            "url": "https://docs.getklai.com/diagram",
+                        }
+                    ],
                     "citation_chunks": [
                         {
                             "title": "Diagram",
@@ -3064,8 +3078,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "[Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
 
     @pytest.mark.asyncio
-    async def test_streaming_post_call_accepts_legacy_stream_guard_metadata(self, monkeypatch):
-        """In-flight requests from an older hook deploy should still be flushed safely."""
+    async def test_streaming_post_call_without_trusted_sources_fails_closed(self, monkeypatch):
+        """Streaming post-call never reconstructs citations from raw chunks."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         data = {
@@ -3100,8 +3114,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
         assert streamed == [only]
-        assert "Zie diagram." in streamed[0]["choices"][0]["delta"]["content"]
-        assert "[Diagram](https://docs.getklai.com/diagram)" in streamed[0]["choices"][0]["delta"]["content"]
+        assert streamed[0]["choices"][0]["delta"]["content"] == (
+            "I cannot answer this reliably from the available knowledge sources."
+        )
 
     @pytest.mark.asyncio
     async def test_streaming_post_call_flushes_when_iterator_closes_without_finish_reason(self, monkeypatch):
@@ -3118,6 +3133,13 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "gate_bypassed": False,
                     "render_mode": "streaming_guard",
                     "allowed_image_urls": [],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Diagram",
+                            "url": "https://docs.getklai.com/diagram",
+                        }
+                    ],
                     "citation_chunks": [
                         {
                             "title": "Diagram",
