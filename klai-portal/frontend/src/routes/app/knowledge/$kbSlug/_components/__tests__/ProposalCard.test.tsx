@@ -5,7 +5,7 @@
  * Focus on the state-machine paths the extraction is most likely to
  * break (singleton edit-mode + singleton reject-mode + the edit
  * buffer initialisation on isEditing transition). Static JSX (badge
- * colours, date formatting) is intentionally NOT asserted — the live
+ * colours, date formatting) is intentionally NOT asserted - the live
  * Playwright pass on Voys covers that.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
@@ -60,7 +60,7 @@ afterEach(() => {
 // Status branches
 // ---------------------------------------------------------------------------
 
-describe('ProposalCard — status branches', () => {
+describe('ProposalCard - status branches', () => {
   it('renders pending status with action cluster', () => {
     render(
       <ProposalCard
@@ -83,7 +83,7 @@ describe('ProposalCard — status branches', () => {
       />,
     )
     expect(screen.getByText('Approved one')).toBeDefined()
-    // No Approve/Edit/Reject — only the status badge remains
+    // No Approve/Edit/Reject - only the status badge remains
     expect(screen.queryByText('Approve')).toBeNull()
     expect(screen.queryByText('Edit')).toBeNull()
     expect(screen.queryByText('Reject')).toBeNull()
@@ -101,7 +101,7 @@ describe('ProposalCard — status branches', () => {
       />,
     )
     expect(screen.getByText('Rejected one')).toBeDefined()
-    expect(screen.getByText('— duplicate of #42')).toBeDefined()
+    expect(screen.getByText('- duplicate of #42')).toBeDefined()
     // No action cluster
     expect(screen.queryByText('Approve')).toBeNull()
   })
@@ -124,7 +124,7 @@ describe('ProposalCard — status branches', () => {
 // Direct approve
 // ---------------------------------------------------------------------------
 
-describe('ProposalCard — direct approve', () => {
+describe('ProposalCard - direct approve', () => {
   it('calls onApprove when Approve button is clicked', () => {
     const props = defaultProps()
     render(<ProposalCard proposal={proposal()} {...props} />)
@@ -137,7 +137,7 @@ describe('ProposalCard — direct approve', () => {
 // Edit-mode
 // ---------------------------------------------------------------------------
 
-describe('ProposalCard — edit-mode', () => {
+describe('ProposalCard - edit-mode', () => {
   it('calls onStartEdit when Edit button clicked', () => {
     const props = defaultProps()
     render(<ProposalCard proposal={proposal()} {...props} />)
@@ -222,7 +222,7 @@ describe('ProposalCard — edit-mode', () => {
 // Reject-mode
 // ---------------------------------------------------------------------------
 
-describe('ProposalCard — reject-mode', () => {
+describe('ProposalCard - reject-mode', () => {
   it('calls onStartReject when Reject button clicked', () => {
     const props = defaultProps()
     render(<ProposalCard proposal={proposal()} {...props} />)

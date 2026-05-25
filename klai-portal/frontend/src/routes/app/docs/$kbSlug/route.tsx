@@ -57,11 +57,11 @@ function KBEditorLayout() {
   const isAuthenticated = auth.isAuthenticated
   const orgSlug = getOrgSlug(user?.workspace_url)
 
-  // Shared display state — owned here, set by page component via context
+  // Shared display state - owned here, set by page component via context
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [editTitle, setEditTitle] = useState('')
 
-  // Page's save+clear-timer function — registered by page via useEffect
+  // Page's save+clear-timer function - registered by page via useEffect
   const doSaveRef = useRef<(() => Promise<void>) | null>(null)
 
   // REQ-EVT-01: Prevent duplicate page creation on double-click
@@ -74,7 +74,7 @@ function KBEditorLayout() {
     enabled: isAuthenticated,
   })
 
-  // PageIndex (id → slug mapping) — also settable synchronously for post-create update
+  // PageIndex (id → slug mapping) - also settable synchronously for post-create update
   const { data: fetchedPageIndex = [], refetch: refetchPageIndex } = useQuery<PageIndexEntry[]>({
     queryKey: kbQueryKeys.docsPageIndex(orgSlug, kbSlug),
     queryFn: async () => {
@@ -102,11 +102,11 @@ function KBEditorLayout() {
   useEffect(() => { setLocalTree(null) }, [tree])
   const displayTree = localTree ?? tree
 
-  // Derive selectedPath from URL — strict resolveSlug, never exposes a raw UUID as a slug
+  // Derive selectedPath from URL - strict resolveSlug, never exposes a raw UUID as a slug
   const selectedPath = useMemo(() => {
     if (!pageId) return null
     if (pageIndex.length === 0) {
-      // pageIndex not loaded yet — UUID cannot be resolved, non-UUID slugs are used directly
+      // pageIndex not loaded yet - UUID cannot be resolved, non-UUID slugs are used directly
       return UUID_RE.test(pageId) ? null : pageId
     }
     try {
@@ -170,7 +170,7 @@ function KBEditorLayout() {
     let counter = 2
     while (existingSlugs.has(slug)) { slug = `${baseSlug}-${counter++}` }
 
-    // REQ-UNW-01: Pre-creation save — explicit null check, not silent optional chaining
+    // REQ-UNW-01: Pre-creation save - explicit null check, not silent optional chaining
     if (doSaveRef.current !== null) {
       try {
         await doSaveRef.current()
@@ -185,7 +185,7 @@ function KBEditorLayout() {
         return
       }
     }
-    // If doSaveRef is null, editor is not mounted — proceed anyway (no content to save)
+    // If doSaveRef is null, editor is not mounted - proceed anyway (no content to save)
 
     // REQ-UBI-01: Generate unique Idempotency-Key per user action
     const idempotencyKey = crypto.randomUUID()
@@ -300,7 +300,7 @@ function KBEditorLayout() {
             if (newSlug === selectedPath) return
 
             // REQ-EVT-04: Await pending save before navigating to another page
-            // REQ-UNW-01: Explicit null check — never silent skip
+            // REQ-UNW-01: Explicit null check - never silent skip
             if (doSaveRef.current !== null) {
               try {
                 await doSaveRef.current()
@@ -323,7 +323,7 @@ function KBEditorLayout() {
             if (targetId) {
               navigateToPage(targetId)
             } else {
-              // No UUID yet (draft page) — navigate by slug until UUID is assigned on first save
+              // No UUID yet (draft page) - navigate by slug until UUID is assigned on first save
               void navigate({ to: '/app/docs/$kbSlug/$pageId', params: { kbSlug, pageId: newSlug } })
             }
           }}
@@ -337,7 +337,7 @@ function KBEditorLayout() {
           onUpload={(file) => uploadMutation.mutate(file)}
         />
 
-        {/* Editor pane — child route renders here */}
+        {/* Editor pane - child route renders here */}
         <main className="flex-1 flex flex-col overflow-hidden">
           <Outlet />
         </main>
@@ -351,7 +351,7 @@ function KBEditorLayout() {
         />
       </div>
 
-      {/* Wikilink new-page input — kept here because it needs sidebar state */}
+      {/* Wikilink new-page input - kept here because it needs sidebar state */}
       {showNewPage && !newPageParent && (
         <div className="hidden">
           <Input

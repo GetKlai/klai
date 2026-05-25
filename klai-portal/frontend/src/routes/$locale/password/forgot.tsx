@@ -36,7 +36,7 @@ function ForgotPasswordPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       })
-      // Always show confirmation — do not reveal whether email exists
+      // Always show confirmation - do not reveal whether email exists
       setDone(true)
     } catch {
       setError(m.error_connection())

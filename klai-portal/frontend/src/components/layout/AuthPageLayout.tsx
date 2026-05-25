@@ -17,7 +17,7 @@ interface AuthPageLayoutProps {
 export function AuthPageLayout({ leftContent, children, showLocale = false }: AuthPageLayoutProps) {
   return (
     <div className="flex min-h-screen bg-[var(--color-background)]">
-      {/* Left panel — branding on bg-1 */}
+      {/* Left panel - branding on bg-1 */}
       <div className="relative hidden lg:flex lg:w-1/2 flex-col text-[var(--color-rl-cream)]">
         {/* Background image */}
         <div
@@ -29,7 +29,7 @@ export function AuthPageLayout({ leftContent, children, showLocale = false }: Au
             backgroundRepeat: 'no-repeat',
           }}
         />
-        {/* Overlay — warm rl-dark, heavy in the content band (40–90%) where
+        {/* Overlay - warm rl-dark, heavy in the content band (40–90%) where
             the body paragraph + bullets live, lighter at the logo edge. */}
         <div
           className="absolute inset-0 z-0"
@@ -39,7 +39,7 @@ export function AuthPageLayout({ leftContent, children, showLocale = false }: Au
           }}
         />
 
-        {/* Content — above overlays */}
+        {/* Content - above overlays */}
         <div className="relative z-10 flex flex-1 flex-col justify-between p-14">
           <div>
             <img src="/klai-logo-white.svg" alt="Klai" className="h-7 w-auto block" />

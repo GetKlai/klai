@@ -25,7 +25,7 @@ function InsightsTab() {
       <section className="border-t border-gray-200 pt-8">
         <h2 className="text-sm font-semibold text-gray-900 mb-3">Sync-historie</h2>
         <p className="text-sm text-gray-400">
-          Komt eraan — laatste sync-runs per connector met status en fout-reden.
+          Komt eraan - laatste sync-runs per connector met status en fout-reden.
         </p>
       </section>
     </div>

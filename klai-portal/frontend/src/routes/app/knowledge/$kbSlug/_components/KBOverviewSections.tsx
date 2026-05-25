@@ -13,7 +13,7 @@ import type { KnowledgeBase, KBStats } from '../-kb-types'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
 
 /**
- * Reusable Docs + Statistieken sections — embedded into the Inzichten tab.
+ * Reusable Docs + Statistieken sections - embedded into the Inzichten tab.
  *
  * Was the body of the standalone /overview route before consolidation. Now
  * lives in `_components/` (TanStack ignores the directory, no route impact)

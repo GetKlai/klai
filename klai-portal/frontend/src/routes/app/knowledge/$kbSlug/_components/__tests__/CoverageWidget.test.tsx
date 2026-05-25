@@ -5,7 +5,7 @@
  * Focus on the state-machine paths the extraction is most likely to
  * break (singleton edit-mode + singleton delete-confirm + the Suggest
  * gating). Static JSX (bars, percentages, badges) is intentionally
- * NOT asserted — the live Playwright pass on Voys covers that.
+ * NOT asserted - the live Playwright pass on Voys covers that.
  *
  * Paraglide messages are loaded for real (source language = 'en' per
  * project.inlang/settings.json); tests query against the visible
@@ -51,7 +51,7 @@ afterEach(() => {
 // Edit-mode singleton
 // ---------------------------------------------------------------------------
 
-describe('CoverageWidget — edit-mode', () => {
+describe('CoverageWidget - edit-mode', () => {
   it('starts edit on click; cancel restores original (no onRename call)', () => {
     const onRename = vi.fn()
     render(
@@ -67,7 +67,7 @@ describe('CoverageWidget — edit-mode', () => {
       />,
     )
 
-    // Click pencil — edit mode opens, input pre-filled with current name
+    // Click pencil - edit mode opens, input pre-filled with current name
     fireEvent.click(screen.getByLabelText('Rename'))
     const input = screen.getByDisplayValue('Original')
     expect(input).toBeDefined()
@@ -127,7 +127,7 @@ describe('CoverageWidget — edit-mode', () => {
     fireEvent.click(renameButtons[0])
     expect(screen.getByDisplayValue('Sales')).toBeDefined()
 
-    // Open B — pencil A is now gone (in edit mode), pencil B is still there.
+    // Open B - pencil A is now gone (in edit mode), pencil B is still there.
     const remainingRename = screen.getAllByLabelText('Rename')
     expect(remainingRename).toHaveLength(1)
     fireEvent.click(remainingRename[0])
@@ -142,7 +142,7 @@ describe('CoverageWidget — edit-mode', () => {
 // Delete-confirm singleton
 // ---------------------------------------------------------------------------
 
-describe('CoverageWidget — delete-confirm', () => {
+describe('CoverageWidget - delete-confirm', () => {
   it('shows confirm controls on first click; confirms delete on second', () => {
     const onDelete = vi.fn()
     render(
@@ -158,7 +158,7 @@ describe('CoverageWidget — delete-confirm', () => {
       />,
     )
 
-    // Click trash icon (aria-label='Delete') — confirm mode opens.
+    // Click trash icon (aria-label='Delete') - confirm mode opens.
     fireEvent.click(screen.getByLabelText('Delete'))
     // Confirm Button has text 'Delete'; aria-label is gone now that the
     // icon-button is hidden in confirm mode. getByText finds only the
@@ -193,7 +193,7 @@ describe('CoverageWidget — delete-confirm', () => {
 // Suggest button gating
 // ---------------------------------------------------------------------------
 
-describe('CoverageWidget — Suggest CTA gating', () => {
+describe('CoverageWidget - Suggest CTA gating', () => {
   it('shown in empty state when total_chunks >= 10 AND onSuggest is provided', () => {
     const onSuggest = vi.fn()
     render(
@@ -244,7 +244,7 @@ describe('CoverageWidget — Suggest CTA gating', () => {
     )
     // Hint shown instead
     expect(
-      screen.getByText('Enough categories — adding more reduces clarity'),
+      screen.getByText('Enough categories - adding more reduces clarity'),
     ).toBeDefined()
     // Button absent
     expect(
@@ -279,7 +279,7 @@ describe('CoverageWidget — Suggest CTA gating', () => {
         coverage={{
           nodes: [node({ chunk_count: 195 })],
           total_chunks: 200,
-          untagged_count: 10, // 5% exactly — gate says > 5
+          untagged_count: 10, // 5% exactly - gate says > 5
           untagged_percentage: 5,
         }}
         activeNodeId={null}
@@ -297,7 +297,7 @@ describe('CoverageWidget — Suggest CTA gating', () => {
 // canEdit gating
 // ---------------------------------------------------------------------------
 
-describe('CoverageWidget — canEdit', () => {
+describe('CoverageWidget - canEdit', () => {
   it('hides rename + delete icons when canEdit is false', () => {
     render(
       <CoverageWidget
@@ -316,7 +316,7 @@ describe('CoverageWidget — canEdit', () => {
 // Node-click
 // ---------------------------------------------------------------------------
 
-describe('CoverageWidget — node click', () => {
+describe('CoverageWidget - node click', () => {
   it('calls onNodeClick with the node id when clicking the row', () => {
     const onNodeClick = vi.fn()
     render(

@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label'
 import { apiFetch } from '@/lib/apiFetch'
 
 /**
- * SPEC-PORTAL-KB-OWNERSHIP-001 REQ-1.1 — header-based admin-override token.
+ * SPEC-PORTAL-KB-OWNERSHIP-001 REQ-1.1 - header-based admin-override token.
  * Mirrors the I-CONFIRM-REMOVAL precedent in klai-infra/sync-env.yml: a
  * typed string forces explicit operator intent, impossible to set by an
  * accidental click-through.
@@ -34,9 +34,9 @@ interface DeleteKbModalProps {
   hasGitea: boolean
   hasDocs: boolean
   /**
-   * `'self'` — caller is owner / creator. Existing UX:
+   * `'self'` - caller is owner / creator. Existing UX:
    *    type the kb-slug to confirm; no override header sent.
-   * `'admin-override'` — caller is org admin but NOT the creator
+   * `'admin-override'` - caller is org admin but NOT the creator
    *    (SPEC-PORTAL-KB-OWNERSHIP-001 REQ-1.1). Yellow banner names the
    *    creator; confirm-gate becomes "type DELETE"; the
    *    `X-Admin-Override-Confirm: I-WAS-NOT-CREATOR` header is attached
@@ -79,7 +79,7 @@ export function DeleteKbModal({
   const deleteMutation = useMutation({
     mutationFn: async () => {
       const headers: Record<string, string> = {}
-      // REQ-1.1 — only attach the override header in admin-override mode.
+      // REQ-1.1 - only attach the override header in admin-override mode.
       // The owner pad must NEVER send it (defense-in-depth: the header
       // alone bypasses the owner role check on the backend, so leaking
       // it across modes would let a non-owner get a 204).
@@ -133,7 +133,7 @@ export function DeleteKbModal({
               </p>
               <p className="mt-1 text-foreground">
                 Aangemaakt door <strong>{creatorName ?? '(onbekend)'}</strong>. Je
-                verwijdert content van een collega — deze actie staat los van een
+                verwijdert content van een collega - deze actie staat los van een
                 eigen back-up. Vraag bij twijfel eerst even bij de aanmaker na.
               </p>
             </div>

@@ -14,7 +14,7 @@ vi.mock('@/lib/apiFetch', async () => {
   return { ...actual, apiFetch: (...args: unknown[]) => apiFetchMock(...args) }
 })
 
-// Paraglide messages — return simple string representations
+// Paraglide messages - return simple string representations
 vi.mock('@/paraglide/messages', () => ({
   delete_org_modal_title: () => 'Werkruimte permanent verwijderen',
   delete_org_modal_intro: () => 'Dit verwijdert permanent:',

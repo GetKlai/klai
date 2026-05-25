@@ -48,7 +48,7 @@ export function SourceTypeTile({ meta, kbSlug, onSelectUpload }: SourceTypeTileP
     )
   }
 
-  // Upload type — handled inline by the orchestrator
+  // Upload type - handled inline by the orchestrator
   return (
     <button
       type="button"

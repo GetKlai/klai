@@ -1,4 +1,4 @@
-// SPEC-PLATFORM-ADMIN-001 — cross-tenant console types.
+// SPEC-PLATFORM-ADMIN-001 - cross-tenant console types.
 // Mirror 1:1 of the Pydantic responses in app/api/admin/platform.py.
 
 export interface PlatformStats {

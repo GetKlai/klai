@@ -118,7 +118,7 @@ function NewWidgetPage() {
         return m.admin_shared_wizard_error_no_kb_selected()
     }
     if (s === 'embed') {
-      // Origins are optional — empty list = widget loads anywhere.
+      // Origins are optional - empty list = widget loads anywhere.
       // Only block if something was typed AND it doesn't parse.
       const origins = parseOrigins(form.allowed_origins_raw)
       if (origins.length > 0 && origins.some((o) => !isValidOrigin(o)))
@@ -157,7 +157,7 @@ function NewWidgetPage() {
     // Pressing Enter inside any input inside the form fires onSubmit
     // even when the focused button is type="button". Guard: never
     // create the widget until the admin is actually on the Insluiten
-    // step — earlier steps advance instead.
+    // step - earlier steps advance instead.
     if (!isLastStep) {
       handleNext()
       return
@@ -194,7 +194,7 @@ function NewWidgetPage() {
       {
         onSuccess: (data) => {
           // Land on the Insluiten tab so the admin immediately sees
-          // the share link, embed snippet, and Test button — the
+          // the share link, embed snippet, and Test button - the
           // whole point of running the wizard was to ship the widget.
           void navigate({
             to: '/admin/widgets/$id',
@@ -540,10 +540,10 @@ function NewWidgetPage() {
           <section className="space-y-4">
             <p className="text-sm text-gray-400">
               Standaard werkt je widget overal. Wil je hem alleen op
-              specifieke domeinen laten laden? Vul ze hieronder in — één
+              specifieke domeinen laten laden? Vul ze hieronder in - één
               per regel. Laat leeg om overal toe te staan.
             </p>
-            {/* REQ-2 (Finding B-2): allow_any_origin toggle — bypasses the origin gate entirely.
+            {/* REQ-2 (Finding B-2): allow_any_origin toggle - bypasses the origin gate entirely.
                 @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2 */}
             <div className="flex items-start gap-3 rounded-md border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] p-3">
               <Checkbox
@@ -591,7 +591,7 @@ function NewWidgetPage() {
             </div>
             <p className="text-xs text-gray-400 pt-2">
               Na aanmaken vind je de share-link, embed-code en testknop op
-              de Insluiten-tab van je widget — daar kun je deze lijst ook
+              de Insluiten-tab van je widget - daar kun je deze lijst ook
               later nog aanpassen.
             </p>
           </section>

@@ -58,7 +58,7 @@ function ItemsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Add document button — active when canAddItem, disabled with tooltip when quota reached */}
+      {/* Add document button - active when canAddItem, disabled with tooltip when quota reached */}
       <div className="flex items-center justify-between">
         {canAddItem ? (
           <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }}>

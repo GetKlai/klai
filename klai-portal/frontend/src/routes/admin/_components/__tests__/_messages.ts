@@ -37,8 +37,8 @@ export const adminUsersMessages = {
   admin_users_field_email: () => 'Email',
   admin_users_field_profile: () => 'Profile',
   admin_users_field_language: () => 'Language',
-  // SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 — Account type derived from Profile.
-  // No selector, no viewer tier, no mismatch warning — the display is a read-only badge.
+  // SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 - Account type derived from Profile.
+  // No selector, no viewer tier, no mismatch warning - the display is a read-only badge.
   admin_users_field_account_type: () => 'Account type',
   admin_users_col_account_type: () => 'Account type',
   admin_users_account_chat_label: () => 'Klai Chat',

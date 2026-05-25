@@ -131,7 +131,7 @@ function EditConnectorPage() {
     search.step === 'auth' ? true : null,
   )
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
-  // Cookies live as structured {name, value} rows — same shape as the
+  // Cookies live as structured {name, value} rows - same shape as the
   // backend persists and the cron-sync consumes. No parser layer.
   const [wcCookieRows, setWcCookieRows] = useState<CookieRow[]>([])
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
@@ -139,13 +139,13 @@ function EditConnectorPage() {
   // SPEC D-2: auth probe for the edit wizard
   const [authProbeResult, setAuthProbeResult] = useState<AuthProbeResult | null>(null)
   const [authProbeError, setAuthProbeError] = useState<string | null>(null)
-  // Save-time auth_guard config — operator-editable. Initialized from the
+  // Save-time auth_guard config - operator-editable. Initialized from the
   // auth-probe at step 4 → 5 transition, overwritten by preview's auth_guard
   // on a successful Run preview, written by the editable form below the
   // success message. Save reads this. Lives outside ``previewResult`` so we
   // don't have to fake a ``classification: 'unknown'`` state on the bridge
   // (which used to render an amber "Preview service did not respond" before
-  // the operator clicked anything — SPEC-CONNECTOR-INPUT-VALIDATION-001 D-2
+  // the operator clicked anything - SPEC-CONNECTOR-INPUT-VALIDATION-001 D-2
   // pre-pop bug).
   const [authGuard, setAuthGuard] = useState<AuthGuardSuggestion | null>(null)
 
@@ -153,7 +153,7 @@ function EditConnectorPage() {
     setIsReconnecting(true)
     try {
       const { authorize_url } = await apiFetch<{ authorize_url: string }>(`/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`, )
-      // .assign() over `.href =` — consistent with connectors.tsx + add-connector;
+      // .assign() over `.href =` - consistent with connectors.tsx + add-connector;
       // react-hooks/immutability flags the property-assignment form.
       window.location.assign(authorize_url)
     } finally {
@@ -161,7 +161,7 @@ function EditConnectorPage() {
     }
   }
 
-  // SPEC-KB-MS-DOCS-001 R4.4 — trigger a fresh OAuth flow when refresh_token is invalid.
+  // SPEC-KB-MS-DOCS-001 R4.4 - trigger a fresh OAuth flow when refresh_token is invalid.
   async function handleMsDocsReconnect() {
     setIsReconnecting(true)
     try {
@@ -200,7 +200,7 @@ function EditConnectorPage() {
         max_pages: String(cfg.max_pages ?? '200'),
         content_selector: cfg.content_selector ?? '',
       })
-      // Pre-seed cookie rows from saved config — same shape, no parsing needed.
+      // Pre-seed cookie rows from saved config - same shape, no parsing needed.
       // Existing connectors store cookies as {name, value, domain, path} objects;
       // the wizard only displays/edits name + value (domain + path are derived
       // from base_url at submit time).
@@ -257,7 +257,7 @@ function EditConnectorPage() {
       setMsFileIds(Array.isArray(cfg.item_ids) ? cfg.item_ids : [])
       setMsSiteUrlError(null)
       // Auto-open the picker when arriving here from OAuth callback
-      // (?show=picker). One-time on mount — subsequent toggles via the
+      // (?show=picker). One-time on mount - subsequent toggles via the
       // "Wijzigen" / "Sluiten" button are handled by msShowFolderPicker.
       setMsShowFolderPicker(search.show === 'picker')
     }
@@ -297,7 +297,7 @@ function EditConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages) config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
-        // SPEC-CRAWL-004: auth guard from ``authGuard`` state — initialized from
+        // SPEC-CRAWL-004: auth guard from ``authGuard`` state - initialized from
         // auth-probe at step 4 → 5 bridge, refreshed by preview onSuccess,
         // mutated by the operator-editable form on step 5.
         const ag = authGuard
@@ -367,7 +367,7 @@ function EditConnectorPage() {
     },
   })
 
-  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — edit wizard preview mutation.
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 - edit wizard preview mutation.
   const previewMutation = useMutation({
     mutationFn: async ({ url, content_selector, try_ai, cookies }: { url: string; content_selector?: string; try_ai?: boolean; cookies?: unknown[] }) => {
       return apiFetch<PreviewResult>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
@@ -398,7 +398,7 @@ function EditConnectorPage() {
     },
   })
 
-  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — edit wizard auth probe.
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 - edit wizard auth probe.
   const authProbeMutation = useMutation({
     mutationFn: async ({ url, cookies }: { url: string; cookies?: unknown[] }) => {
       return apiFetch<AuthProbeResult>(`/api/app/knowledge-bases/${kbSlug}/connectors/auth-probe`, {
@@ -452,7 +452,7 @@ function EditConnectorPage() {
         </Button>
       </div>
 
-          {/* Web crawler — 5-step wizard (mirrors add-connector, edit-specific differences per SPEC D-1 / D-2) */}
+          {/* Web crawler - 5-step wizard (mirrors add-connector, edit-specific differences per SPEC D-1 / D-2) */}
           {connector?.connector_type === 'web_crawler' && (
             <div className="space-y-4">
               {/* Step indicator */}
@@ -580,7 +580,7 @@ function EditConnectorPage() {
                 </div>
               )}
 
-              {/* Step 3: Auth setup — REQ-2 auth-probe */}
+              {/* Step 3: Auth setup - REQ-2 auth-probe */}
               {wcStep === 'auth-setup' && (
                 <div className="space-y-4">
                   <div className="rounded-lg border border-gray-200 p-4 space-y-3">
@@ -632,7 +632,7 @@ function EditConnectorPage() {
                       size="sm"
                       disabled={authProbeResult?.classification !== 'auth_ok'}
                       onClick={() => {
-                        // Carry auth_guard forward in its own state slot — selector step
+                        // Carry auth_guard forward in its own state slot - selector step
                         // (5) starts EMPTY (previewResult stays null) so no amber
                         // "Preview service did not respond" renders before the operator
                         // has clicked Run preview. Save reads ``authGuard`` directly.
@@ -649,7 +649,7 @@ function EditConnectorPage() {
                 </div>
               )}
 
-              {/* Step 4: Selector — REQ-3 preview, gates save on classification === success */}
+              {/* Step 4: Selector - REQ-3 preview, gates save on classification === success */}
               {wcStep === 'selector' && (
                 <div className="space-y-4">
                   {/* Auth status reminder */}
@@ -657,7 +657,7 @@ function EditConnectorPage() {
                     <div className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3">
                       <div className="flex items-center gap-2 text-xs text-gray-400">
                         <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success)]" />
-                        Public site — no login needed
+                        Public site - no login needed
                       </div>
                       <button
                         type="button"
@@ -672,7 +672,7 @@ function EditConnectorPage() {
                     <div className="flex items-center justify-between rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 px-4 py-3">
                       <div className="flex items-center gap-2 text-xs text-[var(--color-success)]">
                         <CheckCircle2 className="h-3.5 w-3.5" />
-                        Logged in — cookies verified
+                        Logged in - cookies verified
                       </div>
                       <button
                         type="button"
@@ -725,7 +725,7 @@ function EditConnectorPage() {
                   )}
 
                   {/* Run preview button */}
-                  {/* Run preview + AI-find — same upfront affordance as add-connector. */}
+                  {/* Run preview + AI-find - same upfront affordance as add-connector. */}
                   <div className="flex flex-wrap gap-2 items-center">
                     <Button
                       type="button"
@@ -766,7 +766,7 @@ function EditConnectorPage() {
                     )}
                   </div>
 
-                  {/* Preview feedback — classification-driven single source of truth */}
+                  {/* Preview feedback - classification-driven single source of truth */}
                   {previewError && !previewMutation.isPending && (
                     <p className="text-sm text-[var(--color-destructive)]">{previewError}</p>
                   )}
@@ -835,7 +835,7 @@ function EditConnectorPage() {
                         </button>
                       )}
 
-                      {/* Extracted markdown body — success only */}
+                      {/* Extracted markdown body - success only */}
                       {previewResult.classification === 'success' && previewResult.word_count > 0 && (
                         <div className="rounded-lg border border-gray-200 p-3 space-y-2">
                           <div className="flex items-center justify-between">
@@ -852,7 +852,7 @@ function EditConnectorPage() {
                         </div>
                       )}
 
-                      {/* Auth guard confirmation block — only after a successful
+                      {/* Auth guard confirmation block - only after a successful
                           preview AND when we have an auth_guard to work with
                           (either fresh from preview or carried over from the
                           auth-probe). Source of truth is ``authGuard`` state. */}
@@ -1086,7 +1086,7 @@ function EditConnectorPage() {
                 <p className="text-xs text-gray-400">{m.admin_connectors_ms_docs_drive_id_help()}</p>
               </div>
               {/* Post-OAuth picker. Three scope modes are mutually
-                  exclusive — folder, files, or whole drive (default). */}
+                  exclusive - folder, files, or whole drive (default). */}
               <div className="space-y-1.5">
                 <Label>Wat wil je syncen?</Label>
                 <div className="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2">
@@ -1150,7 +1150,7 @@ function EditConnectorPage() {
             </form>
           )}
 
-          {/* Google Docs / Sheets / Slides — reuse Google Drive OAuth status */}
+          {/* Google Docs / Sheets / Slides - reuse Google Drive OAuth status */}
           {connector && ['google_docs', 'google_sheets', 'google_slides'].includes(connector.connector_type) && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">

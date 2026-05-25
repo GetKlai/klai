@@ -8,7 +8,7 @@ journey. RAG-pipeline coverage depends on a unique, never-changing
 
 - Last regenerated: 2026-05-03
 - Word count: ~80
-- Embedding-model coverage: dense (BGE-M3) + sparse — both must rank
+- Embedding-model coverage: dense (BGE-M3) + sparse - both must rank
   this chunk highest for queries about the canary
 - Graphiti / FalkorDB coverage: chunk's metadata edges should land in
   the tenant's graph after ingestion

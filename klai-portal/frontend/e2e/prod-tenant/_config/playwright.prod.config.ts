@@ -10,18 +10,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  *
  * Two modes:
  *
- *  E2E_MODE=isolated-tenant   (default)  — bot logs in via email + password
+ *  E2E_MODE=isolated-tenant   (default)  - bot logs in via email + password
  *                                          + TOTP into a dedicated e2e tenant
  *                                          (e.g. e2e.getklai.com). Fully
  *                                          headless / CI-runnable.
  *
- *  E2E_MODE=voys-attached     — attaches to an existing browser session
+ *  E2E_MODE=voys-attached     - attaches to an existing browser session
  *                               that the user logged in manually (e.g. Voys
  *                               tenant via Google SSO). J01-login is SKIPPED.
  *                               Storage-state must already exist on disk;
  *                               capture it once via:
  *                                 npm run e2e:capture-session
- *                               Local-only — cannot run in CI.
+ *                               Local-only - cannot run in CI.
  *
  * Required env (isolated-tenant mode):
  *   E2E_BASE_URL          e.g. https://e2e.getklai.com
@@ -31,7 +31,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  *
  * Required env (voys-attached mode):
  *   E2E_BASE_URL          e.g. https://voys.getklai.com
- *   (storageState.voys.json is captured by the helper script — no
+ *   (storageState.voys.json is captured by the helper script - no
  *    credentials in env)
  *
  * Run:
@@ -83,7 +83,7 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   // In isolated-tenant mode: J01 runs first, captures storage-state.
-  // In voys-attached mode: J01 is SKIPPED — user has captured the
+  // In voys-attached mode: J01 is SKIPPED - user has captured the
   //   storage-state manually via `npm run e2e:capture-session`.
   projects:
     E2E_MODE === 'voys-attached'

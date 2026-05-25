@@ -42,7 +42,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
   // Keep <html lang> in sync with the active UI locale. The static
   // `lang="en"` in index.html stays put after a switchLocale() unless
-  // we mirror it here — which leaves screen-readers and SEO crawlers
+  // we mirror it here - which leaves screen-readers and SEO crawlers
   // reading English-tagged content while the UI renders Dutch.
   // Discovered during 2026-05-03 e2e walkthrough on voys.getklai.com.
   useEffect(() => {

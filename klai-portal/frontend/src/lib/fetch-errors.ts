@@ -3,15 +3,15 @@
  *
  * Centralises transient-vs-permanent failure classification for any code path
  * that talks to portal-api from the browser. Producers throw one of:
- *   - UnauthorizedError   — 401 response; caller must force a fresh sign-in
- *   - FetchError          — any other non-OK response, carries the status
- *   - TypeError (native)  — network-layer failure from the fetch() call itself
+ *   - UnauthorizedError   - 401 response; caller must force a fresh sign-in
+ *   - FetchError          - any other non-OK response, carries the status
+ *   - TypeError (native)  - network-layer failure from the fetch() call itself
  *
  * A DOMException with name === "AbortError" is the only outcome we treat as
- * "not an error at all" — it signals a cancelled request, never user-facing.
+ * "not an error at all" - it signals a cancelled request, never user-facing.
  */
 
-/** HTTP status codes that warrant a retry — transient server/network issues. */
+/** HTTP status codes that warrant a retry - transient server/network issues. */
 export const RETRYABLE_STATUS: ReadonlySet<number> = new Set([
   408, // Request Timeout
   429, // Too Many Requests
@@ -21,7 +21,7 @@ export const RETRYABLE_STATUS: ReadonlySet<number> = new Set([
   504, // Gateway Timeout
 ])
 
-/** The BFF session cookie has been rejected — the caller must force a fresh sign-in. */
+/** The BFF session cookie has been rejected - the caller must force a fresh sign-in. */
 export class UnauthorizedError extends Error {
   constructor() {
     super('Unauthorized')
@@ -48,7 +48,7 @@ export function isRetryable(err: unknown): boolean {
   return err instanceof TypeError
 }
 
-/** True when the error represents a cancelled fetch — never surface to users. */
+/** True when the error represents a cancelled fetch - never surface to users. */
 export function isAborted(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError'
 }
@@ -77,7 +77,7 @@ export function friendlyErrorKey(err: unknown): FriendlyErrorKey {
 
 /**
  * Abort-aware sleep. Resolves after `ms` unless the signal fires, in which
- * case it rejects with an AbortError — matching fetch()'s own abort semantics.
+ * case it rejects with an AbortError - matching fetch()'s own abort semantics.
  */
 export function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {

@@ -1,5 +1,5 @@
 /**
- * Portal-api HTTP client — BFF edition (SPEC-AUTH-008).
+ * Portal-api HTTP client - BFF edition (SPEC-AUTH-008).
  *
  * All requests are same-origin and authenticated via the `__Secure-klai_session`
  * HttpOnly cookie that portal-api sets after the OIDC callback. State-changing
@@ -34,7 +34,7 @@ export interface ValidationIssue {
  *
  * For 422 responses (FastAPI validation) the structured issue list is
  * preserved on `validationIssues`, and `message` is built as a
- * human-readable "field: reason; field: reason" summary — never the raw
+ * human-readable "field: reason; field: reason" summary - never the raw
  * JSON dump the frontend used to show.
  */
 export class ApiError extends FetchError {
@@ -56,7 +56,7 @@ export class ApiError extends FetchError {
 
 /**
  * Build a human-readable error string from a FastAPI validation response.
- * Strips the leading `body.` that FastAPI prefixes every location with —
+ * Strips the leading `body.` that FastAPI prefixes every location with -
  * showing "email: ..." instead of "body.email: ..." reads better in forms.
  */
 export function formatValidationIssues(issues: ValidationIssue[]): string {
@@ -96,7 +96,7 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
     throw new UnauthorizedError()
   }
 
-  // @MX:NOTE: tenant_deleting 403 — org is mid-deprovisioning. Clear all cached queries
+  // @MX:NOTE: tenant_deleting 403 - org is mid-deprovisioning. Clear all cached queries
   // and redirect to the tenant-deleted waiting page.
   // @MX:SPEC: SPEC-INFRA-TENANT-DELETE-001 Phase 11 R10
   if (res.status === 403) {
@@ -105,10 +105,10 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
       const body = (await res.clone().json()) as { error?: string }
       errorCode = body.error
     } catch {
-      // no JSON body or already consumed — ignore
+      // no JSON body or already consumed - ignore
     }
     if (errorCode === 'tenant_deleting') {
-      deprovisionLogger.info('Received 403 tenant_deleting — redirecting to tenant-deleted', { path })
+      deprovisionLogger.info('Received 403 tenant_deleting - redirecting to tenant-deleted', { path })
       clearAllQueries()
       navigateTo('/tenant-deleted')
       // Return a sentinel to prevent calling code from trying to render fallback UI
@@ -143,14 +143,14 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
 
     // Tenant-host guard: portal-api returns 409 when the URL hostname's tenant
     // slug does not match the session's org slug (KlaiTenantHostMiddleware).
-    // Redirect the browser to the correct subdomain — the SPA on the wrong
+    // Redirect the browser to the correct subdomain - the SPA on the wrong
     // subdomain otherwise renders content that contradicts the URL.
     if (
       res.status === 409 &&
       detailObject?.error_code === 'tenant_host_mismatch' &&
       typeof detailObject?.redirect_to === 'string'
     ) {
-      authLogger.info('tenant_host_mismatch — redirecting to correct subdomain', {
+      authLogger.info('tenant_host_mismatch - redirecting to correct subdomain', {
         redirect_to: detailObject.redirect_to,
       })
       window.location.replace(detailObject.redirect_to)
@@ -172,7 +172,7 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     return await doFetch<T>(path, options)
   } catch (err) {
     if (err instanceof UnauthorizedError) {
-      authLogger.info('apiFetch received 401 — session expired or missing', { path })
+      authLogger.info('apiFetch received 401 - session expired or missing', { path })
     }
     throw err
   }

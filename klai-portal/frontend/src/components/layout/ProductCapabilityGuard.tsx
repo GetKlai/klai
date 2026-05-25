@@ -1,7 +1,7 @@
 /**
  * ProductCapabilityGuard
  *
- * SPEC-PORTAL-UNIFY-KB-001 — D4: missing capabilities are rendered grayed,
+ * SPEC-PORTAL-UNIFY-KB-001 - D4: missing capabilities are rendered grayed,
  * not hidden, not clickable, with a tooltip.  No lock icon, no upgrade CTA.
  *
  * Usage:

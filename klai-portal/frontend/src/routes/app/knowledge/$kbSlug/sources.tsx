@@ -1,7 +1,7 @@
 /**
- * SPEC-PORTAL-KENNIS-001 Phase E — Sources tab (route shell).
- * SPEC-PORTAL-KENNIS-002 Track 2 — per-row delete + reauth.
- * SPEC-PORTAL-SOURCES-RENAME-001 Phase 3 — split out of bronnen.tsx.
+ * SPEC-PORTAL-KENNIS-001 Phase E - Sources tab (route shell).
+ * SPEC-PORTAL-KENNIS-002 Track 2 - per-row delete + reauth.
+ * SPEC-PORTAL-SOURCES-RENAME-001 Phase 3 - split out of bronnen.tsx.
  *
  * "Alles is een bron." One unified list of every source in this KB
  * (connector aggregates + direct uploads), same row shape, same actions.
@@ -56,7 +56,7 @@ function SourcesTab() {
   // Sources and docs-editor pages are two separate stores: sources live in
   // knowledge.artifacts (Postgres + RAG chunks), docs pages live in the KB's
   // Gitea repo. An upload here does NOT create a Gitea page. We only surface
-  // "Open in editor" when the editor actually has something to show — i.e.
+  // "Open in editor" when the editor actually has something to show - i.e.
   // when the docs-tree endpoint returns at least one node. Same query key
   // as route.tsx so a tree hit here warms the cache for the editor route.
   const { user } = useCurrentUser()
@@ -72,7 +72,7 @@ function SourcesTab() {
 
   // Page-index: list of {id, slug, title} pairs for THIS KB's Gitea pages.
   // We use it to decide whether to render the per-row 'Bewerken in editor'
-  // pencil — only show when the source's name strips to a slug that exists
+  // pencil - only show when the source's name strips to a slug that exists
   // in the page-index. Prevents 'Pagina niet gevonden' on click. Stable
   // key with route.tsx so a hit here warms the editor's cache.
   const { data: pageIndex } = useQuery<PageIndexEntry[]>({

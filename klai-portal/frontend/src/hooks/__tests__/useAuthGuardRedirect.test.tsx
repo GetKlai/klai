@@ -74,9 +74,9 @@ describe('useAuthGuardRedirect', () => {
   // gated the redirect behind `useCurrentUser().isPending`, which stays `true`
   // forever when the query is disabled. An unauthenticated visitor thus
   // stared at an infinite spinner. This hook deliberately ignores that query
-  // and redirects purely on auth state — the tests above assert it.
+  // and redirects purely on auth state - the tests above assert it.
   it('redirects even when a simulated userLoading=true dependency would otherwise block', () => {
-    // The hook itself takes no userLoading input — that is the point. If a
+    // The hook itself takes no userLoading input - that is the point. If a
     // future refactor re-introduces such a dependency, this placeholder
     // scenario (unauthenticated, auth resolved) should still redirect.
     renderHook(() => useAuthGuardRedirect(), {

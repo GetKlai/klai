@@ -1,5 +1,5 @@
 /**
- * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5 — edit wizard deep-link routing.
+ * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5 - edit wizard deep-link routing.
  *
  * Tests cover the step-to-WcStep mapping that drives the edit wizard's
  * initial step when the user arrives via a ?step= deep-link from the

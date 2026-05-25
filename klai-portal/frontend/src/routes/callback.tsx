@@ -94,7 +94,7 @@ async function resolveDestination(
 
   if (me.org_found === false) return { kind: 'navigate', url: '/no-account' }
 
-  // SPEC-INFRA-TENANT-DELETE-003 Bug 3 — route to /provisioning for any
+  // SPEC-INFRA-TENANT-DELETE-003 Bug 3 - route to /provisioning for any
   // in-flight or terminal-failure state. The poll loop on that page
   // surfaces the actionable error; the literal `"failed"` value is never
   // emitted by the backend (only `failed_rollback_*` / `failed_deprovisioning`).
@@ -173,7 +173,7 @@ function CallbackPage() {
       // re-run the resolution instead of stalling on the stale flag.
       redirected.current = false
     }
-    // `auth` identity is unstable — its reference changes on every provider
+    // `auth` identity is unstable - its reference changes on every provider
     // render, which would abort and retry the fetch on benign updates. Depend
     // only on the primitives that actually gate the flow.
     // eslint-disable-next-line react-hooks/exhaustive-deps

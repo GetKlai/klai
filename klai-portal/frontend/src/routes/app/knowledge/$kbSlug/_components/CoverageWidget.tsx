@@ -1,5 +1,5 @@
 /**
- * Coverage widget — a list of `<CoverageNodeRow>` plus the untagged
+ * Coverage widget - a list of `<CoverageNodeRow>` plus the untagged
  * tail section + a contextual "Suggest categories" CTA.
  *
  * Owns the singleton state for which row is being edited / asked-to-
@@ -8,7 +8,7 @@
  * The Suggest button has three gates baked in:
  *   1. Empty KB: shown when total chunks >= SUGGEST_MIN_CHUNKS.
  *   2. Populated KB at IA target: hidden once node count reaches
- *      MAX_HEALTHY_NODE_COUNT (Miller's Law 5-9 — more categories
+ *      MAX_HEALTHY_NODE_COUNT (Miller's Law 5-9 - more categories
  *      makes the taxonomy worse).
  *   3. Populated KB below target: shown when untagged_count >=
  *      SUGGEST_MIN_CHUNKS AND untagged percentage > SUGGEST_MIN_PCT.
@@ -22,7 +22,7 @@ import { CoverageNodeRow } from './CoverageNodeRow'
 // SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: cap on healthy taxonomy size.
 // Mirrors the backend's ``taxonomy_consolidate_target_max`` (default 9).
 // When the KB already has this many root taxonomy nodes, hide the
-// "Suggest categories" affordance — Miller's Law makes more categories
+// "Suggest categories" affordance - Miller's Law makes more categories
 // counter-productive (see SPEC-TAXONOMY-MERGE-DETECT-001 motivation).
 // If the backend value drifts, revisit this constant.
 const MAX_HEALTHY_NODE_COUNT = 9
@@ -66,7 +66,7 @@ export function CoverageWidget({
 
   if (coverage.nodes.length === 0) {
     // Empty-state: KB has no taxonomy nodes yet. When chunks exist
-    // (>= SUGGEST_MIN_CHUNKS) we surface the Suggest CTA here too —
+    // (>= SUGGEST_MIN_CHUNKS) we surface the Suggest CTA here too -
     // without it the user faces a catch-22: no Suggest button until
     // nodes exist, no nodes until Suggest is clicked. Threshold mirrors
     // the populated-coverage Suggest gate below; for an empty KB every

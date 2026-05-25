@@ -3,11 +3,11 @@
 // `$kbSlug_.edit-connector.$connectorId.tsx`. Per the
 // "File organization for shared types and helpers" rule
 // (.claude/rules/klai/projects/portal-frontend.md), wizard-specific
-// shared types live at the parent route level — NOT in `$kbSlug/-kb-types.ts`
+// shared types live at the parent route level - NOT in `$kbSlug/-kb-types.ts`
 // (wrong scope: that file is for KB-tab routes inside `$kbSlug/`).
 //
 // Types that are genuinely shared between KB-tab routes AND wizard routes
-// (`CookieRow`, `ConnectorSummary`) stay in `$kbSlug/-kb-types.ts` —
+// (`CookieRow`, `ConnectorSummary`) stay in `$kbSlug/-kb-types.ts` -
 // they have a broader scope than this file.
 
 // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1: web_crawler wizard step order is

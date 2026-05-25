@@ -6,9 +6,9 @@ import { defineConfig, devices } from '@playwright/test'
  * Set PLAYWRIGHT_BASE_URL env var to override.
  *
  * Seed users (set via env vars or .env.test.local):
- *   E2E_CORE_USER_EMAIL / E2E_CORE_USER_PASSWORD    — core plan user
- *   E2E_COMPLETE_USER_EMAIL / E2E_COMPLETE_USER_PASSWORD  — complete plan user
- *   E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD            — admin user
+ *   E2E_CORE_USER_EMAIL / E2E_CORE_USER_PASSWORD    - core plan user
+ *   E2E_COMPLETE_USER_EMAIL / E2E_COMPLETE_USER_PASSWORD  - complete plan user
+ *   E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD            - admin user
  */
 export default defineConfig({
   testDir: './e2e',

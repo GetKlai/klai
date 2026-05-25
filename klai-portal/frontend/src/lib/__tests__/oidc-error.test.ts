@@ -8,7 +8,7 @@ import {
 // The pre-BFF code relied on `ErrorResponse` from oidc-client-ts to surface
 // silent-renew failures. Now that auth is cookie-based we no longer import
 // from the OIDC library, but the extractor still needs to handle objects
-// shaped like legacy ErrorResponses — older backends, third-party apps, or
+// shaped like legacy ErrorResponses - older backends, third-party apps, or
 // any future OIDC flow we add. The tests use a plain object that matches
 // the observed shape.
 function makeErrorResponse(args: { error: string; error_description?: string | null }): Record<string, unknown> {

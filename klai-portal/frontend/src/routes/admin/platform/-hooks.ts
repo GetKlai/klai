@@ -1,4 +1,4 @@
-// SPEC-PLATFORM-ADMIN-001 — data hooks for the cross-tenant console.
+// SPEC-PLATFORM-ADMIN-001 - data hooks for the cross-tenant console.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/lib/auth'
 import { apiFetch } from '@/lib/apiFetch'
@@ -117,7 +117,7 @@ export function usePlatformChatErrors() {
 }
 
 // Live liveness-probe against portal-api's /api/health (unauthenticated allowlist
-// endpoint). Raw fetch — not apiFetch — so a transient 5xx surfaces as a plain
+// endpoint). Raw fetch - not apiFetch - so a transient 5xx surfaces as a plain
 // query error instead of triggering apiFetch's auth-refresh/redirect path.
 export function usePortalHealth() {
   return useQuery({
@@ -226,7 +226,7 @@ export function usePlatformDeleteUser(orgId: string) {
   })
 }
 
-// Deprovision (delete) an entire tenant by slug — runs the 16-step
+// Deprovision (delete) an entire tenant by slug - runs the 16-step
 // orchestrator in the background. Returns 202 {status: "queued"}.
 export function usePlatformDeprovisionTenant() {
   const qc = useQueryClient()

@@ -16,7 +16,7 @@ interface TextBody {
   content: string
 }
 
-// IngestRequest.content has max_length=500_000 — enforce client-side so the
+// IngestRequest.content has max_length=500_000 - enforce client-side so the
 // user learns before a 400 from the backend. Same constant lives in
 // app/services/source_extractors/text.py._MAX_TEXT_LEN.
 const MAX_CONTENT_CHARS = 500_000

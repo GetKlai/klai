@@ -10,7 +10,7 @@
  *     `editingDescription`), initialised when `isEditing` flips from
  *     false to true via a useRef transition guard. The guard prevents
  *     TanStack Query refetches (window-focus, mutation invalidation)
- *     from wiping the user's typed input — same regression class as
+ *     from wiping the user's typed input - same regression class as
  *     ProposalCard's bug-fixed in v0.2.1.
  */
 import { useEffect, useRef, useState } from 'react'
@@ -34,7 +34,7 @@ function barColor(pct: number): string {
 
 export interface CoverageNodeRowProps {
   node: TaxonomyCoverageNode
-  /** Total chunks across all nodes — denominator for the percentage. */
+  /** Total chunks across all nodes - denominator for the percentage. */
   totalChunks: number
   isActive: boolean
   isEditing: boolean
@@ -68,7 +68,7 @@ export function CoverageNodeRow({
   const [editingDescription, setEditingDescription] = useState(node.description ?? '')
 
   // Initialise edit buffers ONLY on the false → true transition for
-  // isEditing — not on every re-render while editing is active. Same
+  // isEditing - not on every re-render while editing is active. Same
   // pattern as ProposalCard: prevents query-refetch object-ref changes
   // from overwriting typed input.
   const prevIsEditing = useRef(false)
@@ -78,7 +78,7 @@ export function CoverageNodeRow({
       setEditingDescription(node.description ?? '')
     }
     prevIsEditing.current = isEditing
-    // Deliberately omit node.* from deps — see comment above.
+    // Deliberately omit node.* from deps - see comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing])
 

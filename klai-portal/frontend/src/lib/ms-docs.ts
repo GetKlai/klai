@@ -15,7 +15,7 @@
  * contain anything that is URL-safe except `/`. A trailing slash is tolerated.
  *
  * Keep in sync with the server-side `_parse_site_url` split in
- * `klai-connector/app/adapters/ms_docs.py` — that function expects exactly the
+ * `klai-connector/app/adapters/ms_docs.py` - that function expects exactly the
  * `hostname` + `/sites/{site}` shape this regex accepts.
  */
 export const MS_SITE_URL_PATTERN =

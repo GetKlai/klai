@@ -27,7 +27,7 @@ function AppHome() {
 
   // SPEC-PORTAL-PROFILES-001 P3.1 follow-up: tools-grid mirrors sidebar gating.
   // Tiles for products the user does not have are HIDDEN (not greyed-out).
-  // Admin-bypass is intentionally absent — admins see exactly what their tenant
+  // Admin-bypass is intentionally absent - admins see exactly what their tenant
   // has enabled, same as everyone else.
   // SPEC-PORTAL-UNIFY-KB-001: Focus tile removed; Knowledge replaces it.
   // SPEC-PORTAL-PROFILES-001 Phase 2: docs is its own product (was: knowledge).

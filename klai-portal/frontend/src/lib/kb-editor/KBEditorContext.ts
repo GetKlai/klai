@@ -15,7 +15,7 @@ export class PageNotInIndexError extends Error {
 export interface KBEditorCtxValue {
   orgSlug: string
   kbSlug: string
-  /** True once the BFF session has resolved — gates queries that depend on auth. */
+  /** True once the BFF session has resolved - gates queries that depend on auth. */
   isAuthenticated: boolean
   displayTree: NavNode[]
   pageIndex: PageIndexEntry[]
@@ -24,7 +24,7 @@ export interface KBEditorCtxValue {
   refetchTree: () => void
   refetchPageIndex: () => Promise<{ data?: PageIndexEntry[] }>
   doSaveRef: React.MutableRefObject<(() => Promise<void>) | null>
-  // Shared display state — owned by layout, set by page
+  // Shared display state - owned by layout, set by page
   saveStatus: SaveStatus
   setSaveStatus: (s: SaveStatus) => void
   editTitle: string
@@ -46,7 +46,7 @@ export function useKBEditor(): KBEditorCtxValue {
 /**
  * Resolve a pageId (UUID or slug) to its slug using the pageIndex.
  *
- * REQ-STA-04: Strict mode — throws PageNotInIndexError if not found.
+ * REQ-STA-04: Strict mode - throws PageNotInIndexError if not found.
  * REQ-UNW-02: Never treats a UUID as a slug fallback.
  */
 export function resolveSlug(pageId: string, pageIndex: PageIndexEntry[]): string {
@@ -58,13 +58,13 @@ export function resolveSlug(pageId: string, pageIndex: PageIndexEntry[]): string
   const bySlug = pageIndex.find((p) => p.slug === pageId)
   if (bySlug) return bySlug.slug
 
-  // Not found — throw instead of falling back to treating pageId as a slug
+  // Not found - throw instead of falling back to treating pageId as a slug
   throw new PageNotInIndexError(pageId)
 }
 
 /**
  * Get the stable UUID for URL routing.
- * REQ-UBI-02: Returns only the UUID id — no slug fallback.
+ * REQ-UBI-02: Returns only the UUID id - no slug fallback.
  * Returns empty string when id is null (page not yet saved with UUID).
  */
 export function shortId(entry: PageIndexEntry | undefined): string {

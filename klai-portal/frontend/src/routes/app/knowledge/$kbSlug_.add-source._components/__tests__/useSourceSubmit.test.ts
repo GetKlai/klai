@@ -1,7 +1,7 @@
 /**
  * Direct tests for the error-mapping logic in useSourceSubmit.ts.
  *
- * These cover the SPEC D8 HTTP-status → i18n-key translation table — the
+ * These cover the SPEC D8 HTTP-status → i18n-key translation table - the
  * hook itself (mutation wiring, navigation) is exercised via the form
  * components in end-to-end smoke rather than here.
  */
@@ -32,12 +32,12 @@ describe('extractErrorCode', () => {
   })
 })
 
-describe('errorMessageFor — SPEC D8 mapping', () => {
+describe('errorMessageFor - SPEC D8 mapping', () => {
   // Mirror of the mapping we expect. Keeps the test readable AND guards
   // against silent i18n-key renames (compiler catches missing keys at
   // build time, and the runtime assertion catches wiring regressions).
   function keyOf(message: string): string {
-    // Paraglide messages in dev don't have a stable "key" handle — assert
+    // Paraglide messages in dev don't have a stable "key" handle - assert
     // on the message text we wrote in messages/en.json. If the EN copy is
     // ever retranslated, this is where to update the test.
     return message
@@ -78,16 +78,16 @@ describe('errorMessageFor — SPEC D8 mapping', () => {
   it('ApiError 502 on URL kind → fetch-failed banner', () => {
     const err = new ApiError(502, 'crawl4ai unreachable')
     expect(errorMessageFor('url', err)).toBe(
-      keyOf('Could not reach the page — try again'),
+      keyOf('Could not reach the page - try again'),
     )
   })
 
   it('ApiError 502 on Text kind → fetch-failed banner', () => {
-    // Text never calls crawl4ai — a 502 here is from the knowledge-ingest
+    // Text never calls crawl4ai - a 502 here is from the knowledge-ingest
     // forwarding step. Same generic "fetch failed" copy is fine.
     const err = new ApiError(502, 'Knowledge ingest unreachable')
     expect(errorMessageFor('text', err)).toBe(
-      keyOf('Could not reach the page — try again'),
+      keyOf('Could not reach the page - try again'),
     )
   })
 

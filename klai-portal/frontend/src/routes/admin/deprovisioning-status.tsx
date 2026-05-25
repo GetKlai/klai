@@ -24,7 +24,7 @@ const TIMEOUT_MS = 5 * 60_000
 interface DeprovisionStatus {
   status: 'deprovisioning' | 'failed_deprovisioning' | 'ready' | 'gone'
   // Backend deliberately strips `error` + `attempt` from the owner-facing
-  // payload — they may contain internal infra detail. Full fields are
+  // payload - they may contain internal infra detail. Full fields are
   // available to platform admins via direct DB query / VictoriaLogs.
   last_failure?: {
     step: string
@@ -82,7 +82,7 @@ export function DeprovisioningStatusPage() {
     if (!data) return
 
     if (data.status === 'gone') {
-      deprovisionLogger.info('Org deprovisioning complete — navigating to tenant-deleted')
+      deprovisionLogger.info('Org deprovisioning complete - navigating to tenant-deleted')
       // Clear all cached queries so stale auth data is gone
       queryClient.clear()
       void navigate({ to: '/tenant-deleted' })
@@ -90,7 +90,7 @@ export function DeprovisioningStatusPage() {
     }
 
     if (data.status === 'ready') {
-      deprovisionLogger.info('No active deprovisioning — navigating back to admin')
+      deprovisionLogger.info('No active deprovisioning - navigating back to admin')
       void navigate({ to: '/admin' })
       return
     }

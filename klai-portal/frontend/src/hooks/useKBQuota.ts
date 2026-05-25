@@ -1,7 +1,7 @@
 /**
  * useKBQuota
  *
- * SPEC-PORTAL-UNIFY-KB-001 — centralized quota state so components do not
+ * SPEC-PORTAL-UNIFY-KB-001 - centralized quota state so components do not
  * duplicate the limit-check logic.
  *
  * Rules (from plan_limits.py):
@@ -77,7 +77,7 @@ export function useKBQuota(kbSlug?: string): UseKBQuotaResult {
     staleTime: 60_000,
   })
 
-  // Unlimited plan — no restrictions.
+  // Unlimited plan - no restrictions.
   if (!isLimited) {
     return { canCreateKB: true, canAddItem: true, isLoading: false }
   }

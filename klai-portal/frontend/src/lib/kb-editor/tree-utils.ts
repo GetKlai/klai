@@ -1,6 +1,6 @@
 // ─── KB Editor: tree utilities ───────────────────────────────────────────────
 // Pure functions and shared interfaces for the knowledge-base editor sidebar.
-// Nothing here imports React — all functions are independently testable.
+// Nothing here imports React - all functions are independently testable.
 
 export const DOCS_BASE = '/api/docs/api'
 export const DEFAULT_ICON = '📄'
@@ -17,7 +17,7 @@ export const INDENT_WIDTH = 24
  *
  * Callers MUST pass `user.workspace_url` from `useCurrentUser`. The
  * window.location fallback is only there to keep the function callable
- * during the initial render before useCurrentUser resolves — and even
+ * during the initial render before useCurrentUser resolves - and even
  * that fallback returns a placeholder `''` if the hostname is in the
  * platform-host shortlist, so callers can guard on falsy values.
  */

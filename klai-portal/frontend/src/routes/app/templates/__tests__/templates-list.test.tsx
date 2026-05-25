@@ -46,7 +46,7 @@ function mockTemplates(templates: Array<Record<string, unknown>>) {
   })
 }
 
-describe('TemplatesPage — empty state', () => {
+describe('TemplatesPage - empty state', () => {
   it('renders dashed-border empty state with CTA when list is empty', async () => {
     currentUserValue.isAdmin = true
     mockTemplates([])
@@ -63,7 +63,7 @@ describe('TemplatesPage — empty state', () => {
   })
 })
 
-describe('TemplatesPage — CTA label depends on role', () => {
+describe('TemplatesPage - CTA label depends on role', () => {
   it('admin CTA label is "Nieuwe template"', async () => {
     currentUserValue.isAdmin = true
     mockTemplates([])
@@ -96,7 +96,7 @@ describe('TemplatesPage — CTA label depends on role', () => {
   })
 })
 
-describe('TemplatesPage — populated list', () => {
+describe('TemplatesPage - populated list', () => {
   it('renders each template name and scope badge', async () => {
     currentUserValue.isAdmin = true
     mockTemplates([
@@ -155,7 +155,7 @@ describe('TemplatesPage — populated list', () => {
   })
 })
 
-describe('TemplatesPage — design compliance', () => {
+describe('TemplatesPage - design compliance', () => {
   it('list container uses mx-auto max-w-3xl', async () => {
     currentUserValue.isAdmin = true
     mockTemplates([])

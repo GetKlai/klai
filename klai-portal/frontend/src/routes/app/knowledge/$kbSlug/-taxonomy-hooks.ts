@@ -4,14 +4,14 @@
  *
  * Each hook owns one taxonomy concern. Query keys are unchanged from
  * the pre-extraction inline versions. Mutation invalidation sets are
- * the behaviour-preservation contract — see SPEC Appendix A.
+ * the behaviour-preservation contract - see SPEC Appendix A.
  *
- * `applyAllMutation` is intentionally NOT here — it orchestrates a
+ * `applyAllMutation` is intentionally NOT here - it orchestrates a
  * loop of raw `apiFetch(/approve?auto_categorise=false)` calls plus a
  * backfill trigger. That orchestration belongs in the orchestrator
  * (TaxonomyTab.tsx). See SPEC Beslissingen § B5.
  *
- * Auth gating is the caller's responsibility — pass `enabled` to the
+ * Auth gating is the caller's responsibility - pass `enabled` to the
  * query hooks. Matches the `-sources-hooks.ts` pattern.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -197,7 +197,7 @@ export interface ApproveProposalVars {
    * pass `false` so the backend skips per-approve classification; the
    * orchestrator triggers a single backfill at the end. The
    * orchestrator does NOT use this hook (it calls apiFetch directly,
-   * see Beslissingen § B5) — this flag exists for parity with the
+   * see Beslissingen § B5) - this flag exists for parity with the
    * pre-SPEC API.
    */
   autoCategorise?: boolean
@@ -234,7 +234,7 @@ export function useApproveProposal(kbSlug: string) {
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
     },
     onError: (err) => {
-      // TODO(klai): string-matching on err.message is brittle — if
+      // TODO(klai): string-matching on err.message is brittle - if
       // apiFetch ever rewords its error string the user sees the wrong
       // toast. Better: have apiFetch throw a typed error class with
       // `.status: number` and check that. Out of scope for this hook,
@@ -285,7 +285,7 @@ export function useRejectProposal(kbSlug: string, onSuccess: () => void) {
 /**
  * Run taxonomy bootstrap (auto-suggest categories from KB content).
  * The hook drives the `suggestState` state machine via the
- * `onStateChange` callback — caller (TaxonomyTab) owns the
+ * `onStateChange` callback - caller (TaxonomyTab) owns the
  * `useState` and passes its setter.
  */
 export function useBootstrapTaxonomy(

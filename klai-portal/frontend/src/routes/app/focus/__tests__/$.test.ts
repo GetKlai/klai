@@ -1,5 +1,5 @@
 /**
- * Unit tests for /app/focus/* catch-all redirect — SPEC-PORTAL-UNIFY-KB-001 R-E4
+ * Unit tests for /app/focus/* catch-all redirect - SPEC-PORTAL-UNIFY-KB-001 R-E4
  *
  * Verifies that the splat route's beforeLoad always throws a redirect to
  * /app/knowledge, regardless of the sub-path supplied.
@@ -40,7 +40,7 @@ describe('/app/focus/$ splat route', () => {
   })
 
   it('redirect fires regardless of splat segment value', () => {
-    // beforeLoad receives no input that changes the redirect destination —
+    // beforeLoad receives no input that changes the redirect destination -
     // call it multiple times to confirm deterministic behaviour.
     const attempts = [undefined, null, {}, { params: { _splat: 'new' } }]
     for (const _ctx of attempts) {

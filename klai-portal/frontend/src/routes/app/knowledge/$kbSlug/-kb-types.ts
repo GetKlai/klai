@@ -26,7 +26,7 @@ export interface ConnectorSummary {
   last_sync_at: string | null
   last_sync_documents_ok: number | null
   allowed_assertion_modes: string[] | null
-  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-7 — backend predicate; UI badge.
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-7 - backend predicate; UI badge.
   needs_reconfiguration?: boolean
 }
 
@@ -139,7 +139,7 @@ export interface TopTagsResponse {
 
 // `GitHubConfig` and `WebCrawlerConfig` were moved to
 // `klai-portal/frontend/src/routes/app/knowledge/-connector-types.ts`
-// — wizard-only types, smallest-shared scope is the parent route dir.
+// - wizard-only types, smallest-shared scope is the parent route dir.
 // See portal-frontend.md § "File organization for shared types and helpers".
 
 /**
@@ -148,7 +148,7 @@ export interface TopTagsResponse {
  * Connector wizard step 4 collects cookies as structured rows, NOT as a
  * free-text textarea that the frontend then parses. This mirrors the shape
  * stored in `connector.config.cookies` and consumed by the ingest cron-sync
- * (knowledge_ingest/connector_cookies.py → crawl_page) — no parser layer in
+ * (knowledge_ingest/connector_cookies.py → crawl_page) - no parser layer in
  * between, no chance of cookie-name guessing.
  *
  * `domain` and `path` are derived at submit time from the connector's

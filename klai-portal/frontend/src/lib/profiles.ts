@@ -1,6 +1,6 @@
 /**
  * SPEC-PORTAL-PROFILES-001: Profile ladder constants shared across UI.
- * Mirror of backend app/core/profiles.py — keep in sync.
+ * Mirror of backend app/core/profiles.py - keep in sync.
  */
 
 export const PROFILE_LADDER = ['personal', 'company', 'kb_manager', 'group_manager', 'admin'] as const

@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 // Portal v1 spine (SPEC-PORTAL-REDESIGN-002):
 // - rounded-full (pill), sentence-case (no uppercase, no tracking-wider)
 // - gray-on-white primary (polish-1 reintroduces amber)
-// - focus ring uses --color-ring (amber) — amber is reserved for focus + logo
+// - focus ring uses --color-ring (amber) - amber is reserved for focus + logo
 const buttonVariants = cva(
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
   {

@@ -3,7 +3,7 @@
  *
  * Run via vitest. RuleTester from `eslint` registers its own describe/it
  * blocks against vitest's globals, so it MUST be called at the top level
- * of the file — never inside an `it()`.
+ * of the file - never inside an `it()`.
  */
 import { RuleTester } from 'eslint'
 import rule from '../no-direct-kb-querykey.js'
@@ -14,22 +14,22 @@ const ruleTester = new RuleTester({
 
 ruleTester.run('klai/no-direct-kb-querykey', rule, {
   valid: [
-    // Helper call — the supported pattern.
+    // Helper call - the supported pattern.
     {
       filename: 'src/routes/app/knowledge/$kbSlug/sources.tsx',
       code: `useQuery({ queryKey: kbQueryKeys.sources(kbSlug) })`,
     },
-    // Inside the registry file itself — exempt.
+    // Inside the registry file itself - exempt.
     {
       filename: 'src/lib/kb-query-keys.ts',
       code: `const k = { queryKey: ['kb-sources', kbSlug] }`,
     },
-    // Unrelated literal key — out of scope for this rule.
+    // Unrelated literal key - out of scope for this rule.
     {
       filename: 'src/routes/foo.tsx',
       code: `useQuery({ queryKey: ['admin-users', orgId] })`,
     },
-    // Non-array queryKey value — out of scope (rule only fires on array literals).
+    // Non-array queryKey value - out of scope (rule only fires on array literals).
     {
       filename: 'src/routes/foo.tsx',
       code: `useQuery({ queryKey: someKey })`,

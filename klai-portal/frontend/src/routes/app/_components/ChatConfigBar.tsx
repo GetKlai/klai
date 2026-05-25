@@ -88,18 +88,18 @@ export function ChatConfigBar() {
       ? currentSlugs.filter((s) => s !== slug)
       : [...currentSlugs, slug]
     // null = all on, [] = none, anything else = explicit subset.
-    // DO NOT collapse empty to null — that would flip "turn last off" into
+    // DO NOT collapse empty to null - that would flip "turn last off" into
     // "turn everything back on" and break user intent.
     mutation.mutate({ kb_slugs_filter: next.length === allSlugs.length ? null : next })
   }
 
-  // "anything active" — true when ANY collection is on (personal or any
+  // "anything active" - true when ANY collection is on (personal or any
   // org KB). Drives the dropdown header button:
   //   * if anythingActive → label "Alles uit", click turns ALL off (incl. personal).
   //   * else              → label "Alles aan", click turns ALL on.
   // Previously this was `allActive` (TRUE only when EVERYTHING was on),
   // which meant a partially-on state always showed "Alles aan" and clicking
-  // it re-enabled everything — exactly the user complaint.
+  // it re-enabled everything - exactly the user complaint.
   const anythingActive =
     (pref?.kb_personal_enabled ?? false) || currentSlugs.length > 0
 
@@ -220,11 +220,11 @@ export function ChatConfigBar() {
       </div>
 
       {/* Modus: inline segmented two-pill toggle. Replaces the previous
-          single-dropdown picker — a wider, single-click affordance the
+          single-dropdown picker - a wider, single-click affordance the
           user can compare side-by-side instead of opening a menu. The
           selected pill carries the dark fill (matches the page-header
           primary-button pattern); the other shows muted text. Backed by
-          the same kb_narrow boolean — the LiteLLM hook
+          the same kb_narrow boolean - the LiteLLM hook
           (deploy/litellm/klai_knowledge.py) reads it per-request and
           injects the corresponding system-prompt header. */}
       <div className="flex items-center gap-2 min-w-0">
@@ -274,7 +274,7 @@ export function ChatConfigBar() {
           <button
             type="button"
             onClick={() => setModeInfoOpen((v) => !v)}
-            aria-label={`${m.chatbar_mode_label()} — uitleg`}
+            aria-label={`${m.chatbar_mode_label()} - uitleg`}
             aria-expanded={modeInfoOpen}
             className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 hover:text-gray-900 klai-hover"
           >

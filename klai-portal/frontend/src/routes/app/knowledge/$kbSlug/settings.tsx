@@ -43,7 +43,7 @@ function SettingsTab() {
   const isOwnerRole = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isAdmin = currentUser?.isAdmin === true
   const isOwner = isCreator || isOwnerRole || isAdmin
-  // SPEC-PORTAL-KB-OWNERSHIP-001 REQ-1.1 — admins who are NOT the creator
+  // SPEC-PORTAL-KB-OWNERSHIP-001 REQ-1.1 - admins who are NOT the creator
   // get the typed-confirmation override pad. Owners + creators continue to
   // use the existing slug-typed UX.
   const isAdminOverride = isAdmin && !isCreator && !isOwnerRole
@@ -186,7 +186,7 @@ function SettingsTab() {
         </div>
       )}
 
-      {/* Danger zone — owner / admin only */}
+      {/* Danger zone - owner / admin only */}
       {isOwner && (
         <div className="space-y-2 border-t border-gray-200 pt-6">
           <h2 className="text-sm font-semibold text-[var(--color-destructive)]">

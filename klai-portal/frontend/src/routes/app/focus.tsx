@@ -1,5 +1,5 @@
 /**
- * Focus redirect — SPEC-PORTAL-UNIFY-KB-001 D5
+ * Focus redirect - SPEC-PORTAL-UNIFY-KB-001 D5
  *
  * All /app/focus/* routes are redirected to /app/knowledge.
  * Focus has been collapsed into Knowledge; this stub prevents 404s for

@@ -13,7 +13,7 @@ function McpsNewPage() {
   const navigate = useNavigate()
   const { data, isLoading, isError } = useMcpServers()
 
-  // Managed servers are always enabled and live in the main list — never in the picker.
+  // Managed servers are always enabled and live in the main list - never in the picker.
   const availableServers = data?.servers.filter((s) => !s.enabled && !s.managed) ?? []
 
   function handleBack() {

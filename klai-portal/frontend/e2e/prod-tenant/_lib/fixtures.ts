@@ -27,11 +27,11 @@ const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures')
  * Example: `e2e-1762345678901-my-test-kb`
  *
  * The prefix is captured once per process, so all artifacts created by
- * the same Playwright run share it — making bulk cleanup via "delete
+ * the same Playwright run share it - making bulk cleanup via "delete
  * everything starting with e2e-<run-ts>-" trivially scoped.
  *
  * Cleanup helpers (`_lib/cleanup.ts`) refuse to delete anything that
- * does NOT start with `e2e-` — defence-in-depth against accidentally
+ * does NOT start with `e2e-` - defence-in-depth against accidentally
  * wiping real tenant data when running in voys-attached mode.
  */
 let _runPrefix: string | null = null

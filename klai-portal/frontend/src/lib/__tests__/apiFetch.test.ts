@@ -59,7 +59,7 @@ describe('ApiError', () => {
   })
 })
 
-describe('apiFetch — detail body handling', () => {
+describe('apiFetch - detail body handling', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })

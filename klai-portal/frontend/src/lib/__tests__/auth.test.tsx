@@ -116,7 +116,7 @@ describe('BffAuthProvider.removeUser', () => {
     })
     fetchMock
       .mockResolvedValueOnce(new Response(null, { status: 401 })) // session bootstrap
-      .mockReturnValueOnce(pendingLogout) // first logout — never resolves yet
+      .mockReturnValueOnce(pendingLogout) // first logout - never resolves yet
 
     const { result } = renderHook(() => useAuth(), { wrapper })
     await act(async () => {
@@ -129,7 +129,7 @@ describe('BffAuthProvider.removeUser', () => {
       void result.current.removeUser()
     })
 
-    // Second call must be deduplicated — still only one POST initiated.
+    // Second call must be deduplicated - still only one POST initiated.
     expect(fetchMock).toHaveBeenCalledTimes(2) // 1 session probe + 1 logout
     const logoutCalls = fetchMock.mock.calls.filter(
       (call) => call[0] === '/api/auth/bff/logout',

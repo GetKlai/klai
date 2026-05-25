@@ -1,5 +1,5 @@
 /**
- * Focus sub-path catch-all redirect — SPEC-PORTAL-UNIFY-KB-001 R-E4
+ * Focus sub-path catch-all redirect - SPEC-PORTAL-UNIFY-KB-001 R-E4
  *
  * Catches all /app/focus/* sub-paths (e.g. /app/focus/new,
  * /app/focus/<notebook-id>, /app/focus/<id>/edit) and redirects to

@@ -6,14 +6,14 @@ import * as m from '@/paraglide/messages'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 
 // SPEC-PORTAL-PROFILES-001 P3.1: Nav items filtered by product availability.
-// Admin-bypass for products is intentionally removed — admins see what tenant has enabled.
+// Admin-bypass for products is intentionally removed - admins see what tenant has enabled.
 // SPEC-PORTAL-UNIFY-KB-001: Focus removed; all /app/focus/* now redirects to /app/knowledge.
 const PRODUCT_ROUTES: Record<string, string[]> = {
   '/app/chat': ['chat'],
   '/app/transcribe': ['scribe'],
   '/app/knowledge': ['knowledge'],
   '/app/docs': ['docs'],
-  // Templates is intentionally NOT in this map — every authenticated
+  // Templates is intentionally NOT in this map - every authenticated
   // user sees it. Permission gating happens per-row via canMutate()
   // on /app/templates (admins can edit org-wide; everyone can edit
   // their own personal). SPEC-PORTAL-IA-2026.
@@ -28,10 +28,10 @@ function AppLayout() {
 
   const allNavItems = [
     { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
+    { to: '/app/templates', label: m.templates_page_title(), icon: Sliders },
     { to: '/app/transcribe', label: m.app_tool_transcribe_title(), icon: Mic },
     { to: '/app/knowledge', label: m.app_tool_knowledge_title(), icon: Brain },
     { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
-    { to: '/app/templates', label: m.templates_page_title(), icon: Sliders },
   ]
 
   const products = user?.products ?? []

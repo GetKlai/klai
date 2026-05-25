@@ -1,5 +1,5 @@
 /**
- * CookieRowsInput — structured cookie input for the connector wizard.
+ * CookieRowsInput - structured cookie input for the connector wizard.
  *
  * Replaces the free-text "paste your Cookie header here" textarea that
  * forced the frontend to parse a string into the structured shape the
@@ -7,7 +7,7 @@
  * the operator: one row per cookie, with explicit name + value fields.
  *
  * No parser. No silent fallbacks. No name='session' guessing. Operators
- * type the cookie name they actually see in DevTools — exact match with
+ * type the cookie name they actually see in DevTools - exact match with
  * what the connector stores in DB and what the cron-sync passes through.
  *
  * Always renders at least one row so first-time use is obvious. Remove
@@ -34,7 +34,7 @@ export function CookieRowsInput({
   onChange,
   idPrefix = 'cookie-row',
 }: CookieRowsInputProps) {
-  // Always show at least one row — empty input is the first-time-use UX.
+  // Always show at least one row - empty input is the first-time-use UX.
   const rows: CookieRow[] = value.length === 0 ? [{ name: '', value: '' }] : value
   const showRemove = rows.length > 1
 
@@ -49,7 +49,7 @@ export function CookieRowsInput({
 
   function removeRow(index: number) {
     const next = rows.filter((_, i) => i !== index)
-    // Never push an empty array upstream — keep one row visible.
+    // Never push an empty array upstream - keep one row visible.
     onChange(next.length === 0 ? [{ name: '', value: '' }] : next)
   }
 
@@ -122,7 +122,7 @@ export function CookieRowsInput({
       <p className="text-xs text-gray-400">
         Open the site in your browser, log in, then read the cookie name and
         value from DevTools &rarr; Application &rarr; Cookies. Type or paste
-        each separately — no need to format anything.
+        each separately - no need to format anything.
       </p>
     </div>
   )

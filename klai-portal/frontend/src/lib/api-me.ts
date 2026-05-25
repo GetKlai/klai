@@ -47,16 +47,16 @@ export async function fetchMe(signal: AbortSignal): Promise<MeResponse> {
 }
 
 /**
- * SPEC-INFRA-TENANT-DELETE-003 Bug 3 — provisioning failure detection.
+ * SPEC-INFRA-TENANT-DELETE-003 Bug 3 - provisioning failure detection.
  *
  * The state machine writes any of: `failed_rollback_pending`,
  * `failed_rollback_complete`, or `failed_deprovisioning` for terminal
  * failures. The literal `'failed'` value is NOT emitted by the backend
- * — old polling code that checked `status === 'failed'` never matched
+ * - old polling code that checked `status === 'failed'` never matched
  * and silently timed out after 5 minutes instead of failing fast.
  *
  * Treat any state with the `failed` prefix as a fatal provisioning state.
- * The `deprovisioning` state is intentionally NOT included — that's an
+ * The `deprovisioning` state is intentionally NOT included - that's an
  * active in-progress lifecycle event with its own handling
  * (`tenant_deleting` 403 in `_get_caller_org`).
  */
@@ -64,7 +64,7 @@ export function isFailedProvisioningStatus(status: string | undefined): boolean 
   return typeof status === 'string' && status.startsWith('failed')
 }
 
-/** SPEC-INFRA-TENANT-DELETE-003 Bug 3 — match either pending or terminal-failure. */
+/** SPEC-INFRA-TENANT-DELETE-003 Bug 3 - match either pending or terminal-failure. */
 export function isInFlightProvisioningStatus(status: string | undefined): boolean {
   return status === 'pending' || isFailedProvisioningStatus(status)
 }

@@ -30,12 +30,12 @@ function KBPageEditor() {
   const ctx = useKBEditor()
   const { orgSlug, isAuthenticated, pageIndex, refetchTree, refetchPageIndex, doSaveRef, setSaveStatus, setEditTitle, navigateToPage } = ctx
 
-  // REQ-STA-04: Strict slug resolution — throws PageNotInIndexError when not found
+  // REQ-STA-04: Strict slug resolution - throws PageNotInIndexError when not found
   let selectedPath: string | null = null
   let pageNotFound = false
 
   if (pageIndex.length === 0) {
-    // pageIndex not yet loaded — use slug-based pageId as temp path, but never send a UUID
+    // pageIndex not yet loaded - use slug-based pageId as temp path, but never send a UUID
     // directly to the API (the API stores pages by slug, not UUID)
     if (!UUID_RE.test(pageId)) {
       selectedPath = pageId
@@ -75,7 +75,7 @@ function KBPageEditor() {
   // Combined with shaRef (client-owned SHA), eliminates both the scheduling race and
   // the server-side SHA fetch race that caused Gitea PushRejected (500) errors.
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
-  // Current file SHA — sent with every PUT; updated from the PUT response.
+  // Current file SHA - sent with every PUT; updated from the PUT response.
   // The server uses this instead of fetching SHA from Gitea, closing the race window.
   const shaRef = useRef<string | null>(null)
   const isMountedRef = useRef(true)
@@ -218,7 +218,7 @@ function KBPageEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgSlug, kbSlug, refetchTree, refetchPageIndex, navigateToPage, pageIndex])
 
-  // saveNow clears pending timer and saves immediately — used by layout before page switch
+  // saveNow clears pending timer and saves immediately - used by layout before page switch
   const saveNow = useCallback(async () => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current)
@@ -240,7 +240,7 @@ function KBPageEditor() {
   //
   // Guard: only fires when there is a pending timer (unsaved changes not yet queued).
   // If saveTimerRef is null, either there are no unsaved changes or a save is already
-  // in the queue — in both cases, the queued save's keepalive fetch will finish on its own.
+  // in the queue - in both cases, the queued save's keepalive fetch will finish on its own.
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (!saveTimerRef.current) return
@@ -306,7 +306,7 @@ function KBPageEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageIndex])
 
-  // REQ-STA-04: Page not found UI — shown when UUID/slug is not in pageIndex
+  // REQ-STA-04: Page not found UI - shown when UUID/slug is not in pageIndex
   if (pageNotFound) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
@@ -322,7 +322,7 @@ function KBPageEditor() {
     )
   }
 
-  // Skeleton while page content is loading — show immediately to reduce perceived LCP
+  // Skeleton while page content is loading - show immediately to reduce perceived LCP
   if (!page && selectedPath) {
     return (
       <div className="flex-1 flex flex-col animate-pulse">

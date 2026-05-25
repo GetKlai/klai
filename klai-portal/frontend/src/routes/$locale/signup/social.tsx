@@ -60,7 +60,7 @@ function SocialSignupPage() {
       }
 
       const data = await resp.json()
-      // SSO cookie is set by the backend — navigate to root to trigger OIDC auto-login
+      // SSO cookie is set by the backend - navigate to root to trigger OIDC auto-login
       window.location.href = data.redirect_url ?? '/'
     } catch {
       setError(m.signup_error_connection())
@@ -93,7 +93,7 @@ function SocialSignupPage() {
         </p>
       </div>
 
-      {/* Identity confirmation — read-only */}
+      {/* Identity confirmation - read-only */}
       <div className="rounded-lg border border-gray-200 bg-[var(--color-muted)] px-3 py-2.5">
         <p className="text-xs text-gray-400">
           {m.signup_social_identity_label()}

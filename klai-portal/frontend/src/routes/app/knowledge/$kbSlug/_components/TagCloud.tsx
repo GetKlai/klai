@@ -1,5 +1,5 @@
 /**
- * Tag cloud — clickable pill-buttons sized by tag frequency.
+ * Tag cloud - clickable pill-buttons sized by tag frequency.
  *
  * Pure renderer: no state, no side-effects. Active tags are styled
  * with a filled dark pill; inactive tags get a subtle outline. Font

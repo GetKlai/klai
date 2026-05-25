@@ -18,7 +18,7 @@ import {
   isRetryable,
 } from '@/lib/fetch-errors'
 
-/** Base interval between successful status polls — provisioning takes seconds, not minutes. */
+/** Base interval between successful status polls - provisioning takes seconds, not minutes. */
 const POLL_INTERVAL_MS = 3000
 
 /** Exponential backoff when the server or network is unreachable. */
@@ -27,7 +27,7 @@ const ERROR_BACKOFF_MS = [3000, 6000, 12000, 24000, 48000] as const
 /** After this many consecutive failures, stop retrying and surface an error to the user. */
 const MAX_CONSECUTIVE_ERRORS = ERROR_BACKOFF_MS.length
 
-/** Total time budget — after this, show a "provisioning is stuck" message. */
+/** Total time budget - after this, show a "provisioning is stuck" message. */
 const POLL_TIMEOUT_MS = 5 * 60 * 1000
 
 type Status = 'polling' | 'ready' | 'failed' | 'timeout' | 'error'
@@ -101,7 +101,7 @@ function ProvisioningPage() {
  *     failed_rollback_pending,
  *     failed_deprovisioning)
  *
- * SPEC-INFRA-TENANT-DELETE-003 Bug 3 — the state machine emits
+ * SPEC-INFRA-TENANT-DELETE-003 Bug 3 - the state machine emits
  * `failed_*` variants, never the literal `"failed"`. Old code that
  * compared against `"failed"` silently timed out after 5 minutes
  * instead of surfacing the failure to the user.
@@ -178,7 +178,7 @@ async function pollProvisioning(
       return
     }
 
-    // Still pending — poll again at the base interval.
+    // Still pending - poll again at the base interval.
     try {
       await delay(POLL_INTERVAL_MS, signal)
     } catch (abortErr) {

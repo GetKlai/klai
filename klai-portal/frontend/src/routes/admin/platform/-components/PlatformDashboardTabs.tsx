@@ -495,7 +495,7 @@ export function ChatErrorsTab({
             </td>
             <td className={TD}>{e.org_name ?? `#${e.org_id}`}</td>
             <td className={`${TD} max-w-md truncate text-gray-400`}>
-              {e.detail ?? '—'}
+              {e.detail ?? '-'}
             </td>
             <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
               {fmtDate(e.created_at)}

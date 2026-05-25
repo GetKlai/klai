@@ -24,7 +24,7 @@ describe('kbImageUploadPath', () => {
     expect(kbImageUploadPath('support')).toBe('/kb-images/support')
   })
 
-  it('url-encodes the kb_slug (defensive — production slugs are already url-safe)', () => {
+  it('url-encodes the kb_slug (defensive - production slugs are already url-safe)', () => {
     // Defensive: production kb_slugs match /^[a-z0-9][a-z0-9-]{0,63}$/ so
     // encodeURIComponent is a no-op. But if someone ever passes a slug
     // with spaces or unicode, the encoded form must not break the route

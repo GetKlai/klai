@@ -66,7 +66,7 @@ export function EmbedTab({ widget }: Props) {
 
   function openTest() {
     if (!publicShareEnabled) return
-    // Embedded widget test (floating bubble preview) — TWD's
+    // Embedded widget test (floating bubble preview) - TWD's
     // /widget-test?bot=...&w=... equivalent. Use the id query
     // param so the widget-test page loads the public-bot-config
     // and injects /widget/klai-chat.js with this widget_id.
@@ -171,7 +171,7 @@ export function EmbedTab({ widget }: Props) {
       </section>
 
       <section className="space-y-4 pt-4 border-t border-gray-200">
-        {/* REQ-2 (Finding B-2): allow_any_origin toggle — bypasses the origin gate entirely.
+        {/* REQ-2 (Finding B-2): allow_any_origin toggle - bypasses the origin gate entirely.
             @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2 */}
         <div className="flex items-start gap-3 rounded-md border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] p-3">
           <Checkbox

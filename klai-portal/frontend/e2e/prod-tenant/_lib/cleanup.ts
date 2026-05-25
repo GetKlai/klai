@@ -10,7 +10,7 @@
  * artifact whose NAME does not start with `E2E_NAME_GUARD` (`e2e-`).
  * This is defence-in-depth against accidentally wiping genuine user
  * data. Per-id helpers (where the caller passes an id, not a name)
- * REQUIRE the caller to have created the artifact during this run —
+ * REQUIRE the caller to have created the artifact during this run -
  * the spec convention is to capture the id from the create-response
  * and pass it to cleanup. See _lib/fixtures.ts::e2ePrefix() for the
  * naming contract.
@@ -26,14 +26,14 @@ import { E2E_NAME_GUARD } from './fixtures'
 function assertE2ENamed(name: string, kind: string): void {
   if (!name.startsWith(E2E_NAME_GUARD)) {
     throw new Error(
-      `[cleanup] refused to delete ${kind} '${name}' — name does not start ` +
+      `[cleanup] refused to delete ${kind} '${name}' - name does not start ` +
         `with '${E2E_NAME_GUARD}'. Cleanup is scoped to test-created artifacts only.`,
     )
   }
 }
 
 /**
- * Remove a knowledge base by id. Idempotent — 404 is not an error.
+ * Remove a knowledge base by id. Idempotent - 404 is not an error.
  *
  * REQUIRES the caller to pass `expectedName` so we can verify the KB's
  * name starts with `e2e-` before deleting. This is a hard guard against
@@ -82,7 +82,7 @@ export async function deleteTranscript(
 /**
  * Restore the org's display-name (used by J09 cleanup).
  *
- * Two safety guards — both critical when running in voys-attached
+ * Two safety guards - both critical when running in voys-attached
  * mode against a real customer tenant. Display names are NOT prefix-
  * scoped (free-text field), so we derive safety from state instead:
  *
@@ -95,7 +95,7 @@ export async function deleteTranscript(
  *      E2E_NAME_GUARD ('e2e-'). That proves the journey actually put
  *      a test-value there. If something else is in the field (the
  *      journey didn't run, a parallel run crashed, the user manually
- *      changed it between create and cleanup), refuse — this avoids
+ *      changed it between create and cleanup), refuse - this avoids
  *      the worst case where a stale `previousDisplayName` from a
  *      prior run blows away genuine data.
  *
@@ -130,7 +130,7 @@ export async function restoreOrgDisplayName(
       `[cleanup] restoreOrgDisplayName refused: current display name is ` +
         `'${currentName}', not '${E2E_NAME_GUARD}'-prefixed. The journey ` +
         `may not have changed it, or someone else has touched it since. ` +
-        `Refusing to overwrite — verify tenant state manually.`,
+        `Refusing to overwrite - verify tenant state manually.`,
     )
   }
 

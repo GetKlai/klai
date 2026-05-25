@@ -1,5 +1,5 @@
 /**
- * One taxonomy proposal card — pending / approved / rejected status,
+ * One taxonomy proposal card - pending / approved / rejected status,
  * inline edit-before-approve form (SPEC-TAXONOMY-REVIEW-FLOW-001
  * Issue 5), inline reject-with-reason form.
  *
@@ -37,9 +37,9 @@ export interface ProposalCardProps {
   canEdit: boolean
   isEditing: boolean
   isRejecting: boolean
-  /** Parent's approveMutation.isPending — shared across all cards. */
+  /** Parent's approveMutation.isPending - shared across all cards. */
   approvePending: boolean
-  /** Parent's rejectMutation.isPending — shared across all cards. */
+  /** Parent's rejectMutation.isPending - shared across all cards. */
   rejectPending: boolean
   onStartEdit: () => void
   onSubmitEdit: (title: string, description: string) => void
@@ -74,7 +74,7 @@ export function ProposalCard({
   const [rejectReason, setRejectReason] = useState('')
 
   // Initialise edit buffers ONLY when the parent flips this card from
-  // not-editing to editing — not on every re-render while editing is
+  // not-editing to editing - not on every re-render while editing is
   // active. Without the prevIsEditing ref the effect's `proposal.payload`
   // dep (an object) re-fires on every TanStack Query refetch (window
   // focus, mutation invalidation), wiping the user's typed input.
@@ -89,7 +89,7 @@ export function ProposalCard({
     }
     prevIsEditing.current = isEditing
     // We intentionally do NOT depend on `proposal.title` /
-    // `proposal.payload` — they are read for initial-value purposes
+    // `proposal.payload` - they are read for initial-value purposes
     // only and would re-fire this effect on every query refetch,
     // overwriting the user's typed input.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -190,7 +190,7 @@ export function ProposalCard({
                 <p className="text-xs text-gray-400 mt-0.5">
                   {new Date(proposal.created_at).toLocaleDateString()}
                   {proposal.rejection_reason && (
-                    <span className="ml-2">— {proposal.rejection_reason}</span>
+                    <span className="ml-2">- {proposal.rejection_reason}</span>
                   )}
                 </p>
               </>

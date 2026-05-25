@@ -7,7 +7,7 @@ import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
 import { invalidateKnowledgeSourceLists } from '@/lib/kb-query-keys'
 
-// SPEC-KB-FILE-UPLOAD-001 — full whitelist routed through portal-api.
+// SPEC-KB-FILE-UPLOAD-001 - full whitelist routed through portal-api.
 // .md / .txt / .csv go to /ingest/v1/document directly. PDF / DOCX /
 // XLSX / PPTX / JSON / XML go to docling-serve's async queue; portal-api
 // returns 202 with status="processing" and we poll until terminal.
@@ -15,9 +15,9 @@ import { invalidateKnowledgeSourceLists } from '@/lib/kb-query-keys'
 // "binnenkort"); they ship in a follow-up.
 
 const ACCEPT_ATTR = '.csv,.doc,.docx,.json,.md,.pdf,.pptx,.tar,.txt,.xlsx,.xml,.zip'
-const MAX_FILE_BYTES = 200 * 1024 * 1024 // 200 MB — matches Caddy + portal-api
+const MAX_FILE_BYTES = 200 * 1024 * 1024 // 200 MB - matches Caddy + portal-api
 const POLL_INTERVAL_MS = 2000
-const POLL_TIMEOUT_MS = 10 * 60 * 1000 // 10 min — covers a 100 MB PDF on CPU docling
+const POLL_TIMEOUT_MS = 10 * 60 * 1000 // 10 min - covers a 100 MB PDF on CPU docling
 
 const FORMATS_LABEL = 'PDF, Word, Excel, PowerPoint, Markdown, TXT, CSV, JSON, XML, ZIP, TAR'
 
@@ -98,7 +98,7 @@ function reasonToMessage(reason: string): string {
     case 'archive_entry_too_large':
       return 'Een bestand in het archief is te groot (max 50 MB per bestand).'
     case 'archive_compression_ratio':
-      return 'Archief lijkt verdacht (compressie-ratio te hoog) — afgewezen.'
+      return 'Archief lijkt verdacht (compressie-ratio te hoog) - afgewezen.'
     case 'archive_path_traversal':
       return 'Archief bevat een onveilige bestandsnaam (path-traversal).'
     case 'archive_nested':
@@ -202,7 +202,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
       .filter((e) => e.status === 'processing' || e.status === 'ingesting')
       .map((e) => e.id)
     if (pendingIds.length === 0) {
-      // All terminal — show success when at least one done, no failures.
+      // All terminal - show success when at least one done, no failures.
       const anyFailed = trackedEntries.some((e) => e.status === 'failed')
       const anyDone = trackedEntries.some((e) => e.status === 'done')
       if (anyDone && !anyFailed && serverSkipped.length === 0) {
@@ -224,7 +224,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
     const tick = async (): Promise<void> => {
       if (cancelled) return
       if (Date.now() - start > POLL_TIMEOUT_MS) {
-        // Operator escalation case — flag remaining as failed in the UI
+        // Operator escalation case - flag remaining as failed in the UI
         // so the user is not stuck on a spinner forever.
         setTrackedEntries((prev) =>
           prev.map((e) =>
@@ -405,7 +405,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
           <ul className="text-xs text-[var(--color-destructive)] space-y-0.5">
             {clientRejections.map((r, i) => (
               <li key={`${r.filename}-${String(i)}`}>
-                {r.filename} — {reasonToMessage(r.reason)}
+                {r.filename} - {reasonToMessage(r.reason)}
               </li>
             ))}
           </ul>
@@ -426,7 +426,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
           <ul className="text-xs text-[var(--color-warning)] space-y-0.5">
             {serverSkipped.map((r, i) => (
               <li key={`${r.filename}-${String(i)}`}>
-                {r.filename} — {reasonToMessage(r.reason)}
+                {r.filename} - {reasonToMessage(r.reason)}
               </li>
             ))}
           </ul>

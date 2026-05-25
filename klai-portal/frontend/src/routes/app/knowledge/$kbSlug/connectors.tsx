@@ -48,7 +48,7 @@ function ConnectorsTab() {
       window.history.replaceState({}, '', window.location.pathname)
     }
   }, [oauth])
-  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5 — InvestigateDialog state.
+  // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5 - InvestigateDialog state.
   const [investigatingConnector, setInvestigatingConnector] = useState<ConnectorSummary | null>(null)
   const deleteMutation = useConnectorDelete(kbSlug)
   const { syncingIds, sync } = useConnectorSync(kbSlug)
@@ -84,7 +84,7 @@ function ConnectorsTab() {
   // SPEC-CRAWLER-006 REQ-08: for every running connector, fetch the latest
   // sync_run so the badge can render live progress (pages_done/pages_total
   // for crawler runs). The connector list endpoint does not carry these
-  // fields — they live on connector.sync_runs and are surfaced by
+  // fields - they live on connector.sync_runs and are surfaced by
   // SyncRunResolver. Backend caches the upstream call 30s per remote_job_id,
   // so a UI-side 5s poll only generates one upstream call every six ticks.
   const runningConnectorIds = connectors
@@ -212,7 +212,7 @@ function ConnectorsTab() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5 — InvestigateDialog. */}
+      {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5 - InvestigateDialog. */}
       <AlertDialog open={investigatingConnector !== null} onOpenChange={(open) => { if (!open) setInvestigatingConnector(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -225,7 +225,7 @@ function ConnectorsTab() {
                 </p>
                 <p className="text-xs text-gray-400">
                   Re-run the wizard to verify authentication and selector. The wizard
-                  refuses to save until both checks pass — no more silent broken syncs.
+                  refuses to save until both checks pass - no more silent broken syncs.
                 </p>
               </div>
             </AlertDialogDescription>

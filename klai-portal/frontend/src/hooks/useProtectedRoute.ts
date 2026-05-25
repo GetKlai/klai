@@ -13,7 +13,7 @@
  *
  * The redirects run in priority order. `isResolving` is `true` while any
  * dependency is still loading, so callers can show a single spinner until
- * the guard has made up its mind — no flash of content, no infinite spinner
+ * the guard has made up its mind - no flash of content, no infinite spinner
  * when `useCurrentUser()` is disabled (which happens whenever `auth.isAuthenticated`
  * is false, because TanStack Query leaves disabled queries in `isPending: true`).
  */
@@ -106,7 +106,7 @@ export function useProtectedRoute(
 
   useEffect(() => {
     if (auth.isLoading) return
-    // 1. Unauthenticated — redirect without waiting on /api/me, which is
+    // 1. Unauthenticated - redirect without waiting on /api/me, which is
     //    disabled (and thus perpetually `isPending`) when there is no session.
     if (!auth.isAuthenticated) {
       void navigate({ to: fallback })
@@ -117,7 +117,7 @@ export function useProtectedRoute(
       window.location.replace(workspaceRedirectUrl)
       return
     }
-    // 2. MFA setup pending — send to the setup flow.
+    // 2. MFA setup pending - send to the setup flow.
     if (user?.requires_2fa_setup) {
       window.location.replace('/setup/2fa')
       return

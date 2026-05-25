@@ -1,7 +1,7 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
 /**
- * Legacy /overview route — redirects to /insights, which now hosts the
+ * Legacy /overview route - redirects to /insights, which now hosts the
  * Docs / Statistieken sections (extracted to `_components/KBOverviewSections.tsx`)
  * AND the taxonomy / coverage / sync-history blocks.
  */
