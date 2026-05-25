@@ -160,6 +160,8 @@ class Settings(BaseSettings):
     # Google Drive OAuth (SPEC-KB-025) — empty client_id disables the provider
     google_drive_client_id: str = ""
     google_drive_client_secret: str = ""
+    google_drive_picker_api_key: str = ""
+    google_drive_picker_app_id: str = ""
 
     # Microsoft 365 OAuth (SPEC-KB-MS-DOCS-001) — empty client_id disables the provider.
     # Azure AD app registered in the Klai-owned M365 tenant as a multi-tenant application
