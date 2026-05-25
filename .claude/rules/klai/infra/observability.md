@@ -46,6 +46,28 @@ not the VictoriaLogs API. Use the `victorialogs` MCP for log queries instead.
 Use Grafana MCP for: dashboard search, Prometheus/VictoriaMetrics queries,
 PostgreSQL queries (product_events), and alert inspection.
 
+The launcher `.claude/scripts/grafana-launcher.mjs` maps the shell's
+`GRAFANA_SERVICE_ACCOUNT_TOKEN` to the `GRAFANA_API_KEY` variable expected by
+`mcp-grafana`. Do not put tokens directly in `.mcp.json`.
+
+## MCP smoke test
+Before production debugging, validate the actual MCP stdio launchers:
+
+```bash
+node .claude/scripts/observability-mcp-smoke.mjs
+```
+
+If you already have a local VictoriaLogs tunnel on `localhost:9428`, avoid
+opening a managed SSH tunnel during the smoke test:
+
+```bash
+OBS_MCP_SMOKE_LOCAL_VICTORIALOGS=1 node .claude/scripts/observability-mcp-smoke.mjs
+```
+
+If this fails with 401, fix the launcher/env first. Do not fall back to
+Grafana Loki tools for VictoriaLogs, and do not debug production behavior from
+code alone when the relevant runtime data should be available.
+
 ## Key log fields
 | Field | Set by | Available in |
 |---|---|---|

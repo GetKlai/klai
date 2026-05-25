@@ -30,13 +30,11 @@
       "env": {}
     },
     "grafana": {
-      "$comment": "AI agent access to Grafana dashboards, metrics queries, and alerts. Read-only. VictoriaLogs queries use the dedicated victorialogs MCP instead.",
+      "$comment": "AI agent access to Grafana dashboards, metrics queries, and alerts. Read-only. VictoriaLogs queries use the dedicated victorialogs MCP instead. Launcher maps GRAFANA_SERVICE_ACCOUNT_TOKEN -> GRAFANA_API_KEY.",
       "type": "stdio",
-      "command": "uvx",
-      "args": ["mcp-grafana", "--disable-write"],
-      "env": {
-        "GRAFANA_URL": "https://grafana.getklai.com"
-      }
+      "command": "node",
+      "args": [".claude/scripts/grafana-launcher.mjs"],
+      "env": {}
     },
     "victorialogs": {
       "$comment": "LogsQL queries against VictoriaLogs. Launcher opens a per-MCP-process SSH tunnel on a free local port, so parallel agent sessions do not share localhost:9428. Binary must be at ~/bin/mcp-victorialogs (Mac) or %USERPROFILE%\\bin\\mcp-victorialogs.exe (Windows). Set VICTORIALOGS_BASIC_AUTH_B64 in shell profile.",
@@ -44,8 +42,7 @@
       "command": "node",
       "args": [".claude/scripts/victorialogs-launcher.mjs"],
       "env": {
-        "VL_INSTANCE_ENTRYPOINT": "http://localhost:9428",
-        "VL_INSTANCE_HEADERS": "Authorization=Basic ${VICTORIALOGS_BASIC_AUTH_B64}"
+        "VL_INSTANCE_ENTRYPOINT": "http://localhost:9428"
       }
     }
   }
