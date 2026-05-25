@@ -545,12 +545,12 @@ async def callback_provider(
     )
 
     # 6. Redirect back to the frontend.
-    # For first-time ms_docs connects: land on the edit page with the
+    # For first-time Drive-style connects: land on the edit page with the
     # picker auto-opened so the user can pick folders/files as a natural
     # next step of the wizard. Reconnects keep the legacy ?oauth=connected
     # redirect — there's nothing for the user to pick after a re-consent.
     kb_slug = payload.get("kb_slug", "")
-    if provider == "ms_docs" and not was_reconnect:
+    if provider in {"google_drive", "ms_docs"} and not was_reconnect:
         target = _frontend_redirect_url(f"/app/knowledge/{kb_slug}/edit-connector/{connector.id}?show=picker")
     else:
         target = _frontend_redirect_url(f"/app/knowledge/{kb_slug}/connectors?oauth=connected")

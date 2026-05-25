@@ -194,6 +194,117 @@ async def test_list_documents_respects_max_files(
     assert len(refs) == 2
 
 
+async def test_list_documents_uses_selected_item_ids(
+    gdrive_adapter: Any,
+) -> None:
+    """When item_ids are configured, first sync fetches only those files."""
+    connector = _make_connector(
+        {
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+            "item_ids": ["file-a", "file-b"],
+            "max_files": 20,
+        }
+    )
+    files = [
+        {
+            "id": "file-a",
+            "name": "A.pdf",
+            "mimeType": "application/pdf",
+            "modifiedTime": "2026-04-10T10:00:00.000Z",
+            "webViewLink": "https://drive.google.com/file/d/file-a/view",
+            "size": "100",
+        },
+        {
+            "id": "file-b",
+            "name": "B.pdf",
+            "mimeType": "application/pdf",
+            "modifiedTime": "2026-04-10T10:00:00.000Z",
+            "webViewLink": "https://drive.google.com/file/d/file-b/view",
+            "size": "100",
+        },
+    ]
+    get_files = AsyncMock(return_value=_list_response(files))
+
+    with (
+        patch.object(gdrive_adapter, "_get_files_by_ids", get_files),
+        patch.object(gdrive_adapter, "_list_files", AsyncMock()) as list_files,
+    ):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context=None)
+
+    get_files.assert_awaited_once()
+    list_files.assert_not_called()
+    assert {r.ref for r in refs} == {"file-a", "file-b"}
+
+
+async def test_list_documents_incremental_filters_selected_item_ids(
+    gdrive_adapter: Any,
+) -> None:
+    """Incremental changes are ignored unless they belong to selected item_ids."""
+    connector = _make_connector(
+        {
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+            "item_ids": ["file-keep"],
+        }
+    )
+    changes_response = {
+        "changes": [
+            {
+                "fileId": "file-keep",
+                "file": {
+                    "id": "file-keep",
+                    "name": "Keep.pdf",
+                    "mimeType": "application/pdf",
+                    "modifiedTime": "2026-04-12T11:00:00.000Z",
+                    "webViewLink": "https://drive.google.com/file/d/file-keep/view",
+                    "size": "100",
+                },
+            },
+            {
+                "fileId": "file-skip",
+                "file": {
+                    "id": "file-skip",
+                    "name": "Skip.pdf",
+                    "mimeType": "application/pdf",
+                    "modifiedTime": "2026-04-12T11:00:00.000Z",
+                    "webViewLink": "https://drive.google.com/file/d/file-skip/view",
+                    "size": "100",
+                },
+            },
+        ],
+        "newStartPageToken": "new-cursor-token",
+    }
+
+    with patch.object(gdrive_adapter, "_list_changes", AsyncMock(return_value=changes_response)):
+        refs = await gdrive_adapter.list_documents(connector, cursor_context={"page_token": "old"})
+
+    assert [r.ref for r in refs] == ["file-keep"]
+
+
+async def test_list_folders_returns_picker_items(gdrive_adapter: Any) -> None:
+    """Portal picker gets folders and files in the common {id,name,kind} shape."""
+    connector = _make_connector(
+        {
+            "access_token": "placeholder-access-value",
+            "refresh_token": "placeholder-refresh-value",
+        }
+    )
+    folder_mime = "application/vnd.google-apps.folder"
+    files = [
+        {"id": "folder-1", "name": "Team", "mimeType": folder_mime},
+        {"id": "file-1", "name": "Plan", "mimeType": "application/vnd.google-apps.document"},
+    ]
+
+    with patch.object(gdrive_adapter, "_list_folder_children", AsyncMock(return_value=_list_response(files))):
+        items = await gdrive_adapter.list_folders(connector)
+
+    assert items == [
+        {"id": "folder-1", "name": "Team", "kind": "folder", "child_count": 0},
+        {"id": "file-1", "name": "Plan", "kind": "file", "child_count": 0},
+    ]
+
+
 # ---------------------------------------------------------------------------
 # 4. fetch_document -- Google Doc is exported as DOCX
 # ---------------------------------------------------------------------------
