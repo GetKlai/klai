@@ -71,7 +71,7 @@ def _canonical_provider(provider: str) -> str:
 # Google Drive OAuth endpoints (constants -- never secrets).
 _GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-_GOOGLE_SCOPES = "https://www.googleapis.com/auth/drive.file"
+_GOOGLE_SCOPES = "https://www.googleapis.com/auth/drive.readonly"
 
 # Microsoft Graph OAuth endpoints (constants -- never secrets). SPEC-KB-MS-DOCS-001.
 # tenant_id is injected at request time from settings.ms_docs_tenant_id ("common" by default).
