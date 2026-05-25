@@ -267,13 +267,14 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         item_ids: list[str] = cfg["item_ids"]
         selected_item_ids = set(item_ids)
         page_token = (cursor_context or {}).get("page_token") if cursor_context else None
+        scoped_selection = bool(cfg["folder_id"] or item_ids)
 
         # Build the set of allowed mimeTypes (None = all types).
         allowed_mimes: set[str] | None = None
         if content_types:
             allowed_mimes = {_CONTENT_TYPE_TO_MIME[ct] for ct in content_types}
 
-        if page_token:
+        if page_token and not scoped_selection:
             logger.info(
                 "Listing Google Drive changes since cursor (connector=%s)",
                 connector_id,
@@ -290,9 +291,10 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
                 self._latest_page_token[connector_id] = new_cursor
         else:
             logger.info(
-                "Listing Google Drive files (first sync, connector=%s, folder=%s)",
+                "Listing Google Drive files (full sync, connector=%s, folder=%s, scoped=%s)",
                 connector_id,
                 cfg["folder_id"],
+                scoped_selection,
             )
             if item_ids:
                 response = await self._get_files_by_ids(
@@ -305,6 +307,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
                     connector,
                     folder_id=cfg["folder_id"],
                     allowed_mimes=allowed_mimes,
+                    recursive=bool(cfg["folder_id"]),
                 )
             raw_files = list(response.get("files", []))
             # Client-side guard: the q= filter is applied in _list_files, but
@@ -361,7 +364,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             "Listed %d Google Drive files (connector=%s, incremental=%s)",
             len(refs),
             connector_id,
-            page_token is not None,
+            page_token is not None and not scoped_selection,
         )
         return refs
 
@@ -449,6 +452,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         connector: Any,
         folder_id: str | None,
         allowed_mimes: set[str] | None = None,
+        recursive: bool = False,
     ) -> dict[str, Any]:
         """Call ``files.list`` with pagination rolled up into one response dict.
 
@@ -458,41 +462,72 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             allowed_mimes: When set, a ``mimeType in (...)`` predicate is
                 AND-ed into the Drive API ``q`` parameter (SPEC-KB-CONNECTORS-001
                 R5.2).  ``None`` preserves existing all-types behaviour.
+            recursive: When set with ``folder_id``, traverse descendant folders
+                and return all matching files below the selected folder.
         """
         token = await self.ensure_token(connector)
-        params: dict[str, Any] = {
-            "pageSize": 100,
-            "fields": _LIST_FIELDS,
-            "spaces": "drive",
-            "includeItemsFromAllDrives": "true",
-            "supportsAllDrives": "true",
-        }
-
-        # Build the q= query string.
-        base_q = f"'{folder_id}' in parents and trashed = false" if folder_id else "trashed = false"
-
-        if allowed_mimes:
-            mime_clauses = " or ".join(f"mimeType='{m}'" for m in sorted(allowed_mimes))
-            params["q"] = f"{base_q} and ({mime_clauses})"
-        else:
-            params["q"] = base_q
-
         all_files: list[dict[str, Any]] = []
-        next_token: str | None = None
+        folder_queue: list[str | None] = [folder_id]
+
         async with httpx.AsyncClient(timeout=30.0) as client:
-            while True:
-                if next_token:
-                    params["pageToken"] = next_token
-                response = await client.get(
-                    _DRIVE_FILES_URL,
-                    headers={"Authorization": f"Bearer {token}"},
-                    params=params,
+            while folder_queue:
+                current_folder_id = folder_queue.pop(0)
+                include_folders = recursive and bool(current_folder_id)
+                params: dict[str, Any] = {
+                    "pageSize": 100,
+                    "fields": _LIST_FIELDS,
+                    "spaces": "drive",
+                    "includeItemsFromAllDrives": "true",
+                    "supportsAllDrives": "true",
+                }
+
+                base_q = (
+                    f"'{current_folder_id}' in parents and trashed = false"
+                    if current_folder_id
+                    else "trashed = false"
                 )
-                response.raise_for_status()
-                data = response.json()
-                all_files.extend(data.get("files", []))
-                next_token = data.get("nextPageToken")
-                if not next_token:
+
+                if allowed_mimes:
+                    mime_clauses = " or ".join(f"mimeType='{m}'" for m in sorted(allowed_mimes))
+                    if include_folders:
+                        params["q"] = (
+                            f"{base_q} and (mimeType='{_GOOGLE_FOLDER_MIME}' or {mime_clauses})"
+                        )
+                    else:
+                        params["q"] = f"{base_q} and ({mime_clauses})"
+                else:
+                    params["q"] = base_q
+
+                next_token: str | None = None
+                while True:
+                    if next_token:
+                        params["pageToken"] = next_token
+                    elif "pageToken" in params:
+                        params.pop("pageToken", None)
+
+                    response = await client.get(
+                        _DRIVE_FILES_URL,
+                        headers={"Authorization": f"Bearer {token}"},
+                        params=params,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+
+                    for file in data.get("files", []):
+                        if not file:
+                            continue
+                        if file.get("mimeType") == _GOOGLE_FOLDER_MIME and include_folders:
+                            child_id = str(file.get("id") or "")
+                            if child_id:
+                                folder_queue.append(child_id)
+                            continue
+                        all_files.append(file)
+
+                    next_token = data.get("nextPageToken")
+                    if not next_token:
+                        break
+
+                if not recursive:
                     break
         return {"files": all_files}
 
