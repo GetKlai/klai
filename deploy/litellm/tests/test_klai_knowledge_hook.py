@@ -2258,6 +2258,51 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert kb_meta["citable_sources_count"] == 1
 
     @pytest.mark.asyncio
+    async def test_explicit_deterministic_mode_does_not_override_streaming_calls(self, monkeypatch):
+        """The opt-in non-streaming mode must not break callers that already requested streaming."""
+        mod = _load_hook(
+            monkeypatch,
+            extra_env={"KLAI_KB_CHAT_RENDER_MODE": "deterministic_non_streaming"},
+        )
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "stream": True,
+            "messages": [
+                {"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}
+            ],
+        }
+        chunks = [
+            {
+                "text": "Gebruikers kunnen via Instellingen worden toegevoegd.",
+                "scope": "org",
+                "metadata": {"title": "Gebruikersbeheer"},
+                "source_url": "https://docs.getklai.com/users",
+                "chunk_id": "c1",
+                "reranker_score": 0.91,
+            }
+        ]
+        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert result["stream"] is True
+        assert kb_meta["original_stream"] is True
+        assert kb_meta["render_mode"] == "legacy_stream_guard"
+
+    @pytest.mark.asyncio
     async def test_prompt_only_exposes_images_from_chunk_image_urls(self, monkeypatch):
         """Image markdown in the prompt is generated only from retrieved image_urls."""
         mod = _load_hook(monkeypatch)
