@@ -17,6 +17,7 @@ import hmac
 import json
 import time
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import asyncpg
 import httpx
@@ -57,6 +58,20 @@ _background_tasks: set = set()  # Prevents fire-and-forget tasks from being GC'd
 
 logger = structlog.get_logger()
 router = APIRouter()
+
+
+def docs_source_extra(gitea_repo: str, kb_slug: str, path: str) -> dict[str, str]:
+    """Build public Docs provenance for pages stored in a tenant Gitea repo."""
+    org_part = gitea_repo.split("/", 1)[0] if "/" in gitea_repo else ""
+    if not org_part.startswith("org-"):
+        return {}
+    org_slug = org_part[4:]
+    page_slug = path.removesuffix(".md")
+    encoded_slug = "/".join(quote(part) for part in page_slug.split("/") if part)
+    if not org_slug or not encoded_slug:
+        return {}
+    source_url = f"https://{org_slug}.getklai.com/docs/{quote(kb_slug)}/{encoded_slug}"
+    return {"source_url": source_url, "source_ref": source_url}
 
 
 def _verify_internal_secret(request: Request) -> None:
@@ -283,8 +298,15 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
                 "chunks": 0,
             }
 
-    # Early exit if content is unchanged since last ingest
-    content_hash = req.content_hash or hashlib.sha256(req.content.encode()).hexdigest()
+    # Early exit if indexable content is unchanged since last ingest. Docs pages
+    # are stored as BlockNote JSON for editor fidelity; hash the normalized
+    # chunking input so deploying converter fixes forces one clean re-index.
+    indexable_content = (
+        req.content
+        if req.skip_chunking
+        else chunker.normalize_document_for_chunking(req.content)
+    )
+    content_hash = req.content_hash or hashlib.sha256(indexable_content.encode()).hexdigest()
     stored_hash = await pg_store.get_active_content_hash(conn, req.org_id, req.kb_slug, req.path)
     if stored_hash is not None and stored_hash == content_hash:
         logger.info(
@@ -320,7 +342,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         # retrieval-api falls through to child text when parent_chunk_id
         # is absent (REQ-3).
         chunks, parents = chunker.chunk_markdown_with_parents(
-            req.content,
+            indexable_content,
             child_size=chunk_size,
             child_overlap=settings.chunk_overlap,
         )
@@ -342,8 +364,8 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
 
     vectors = await embedder.embed(texts)
 
-    title = _extract_title(req.content, req.path)
-    kf = _parse_knowledge_fields(req.content, req.source_type, req.allowed_assertion_modes)
+    title = _extract_title(indexable_content, req.path)
+    kf = _parse_knowledge_fields(indexable_content, req.source_type, req.allowed_assertion_modes)
 
     # Apply synthesis_depth override from adapter if provided
     if req.synthesis_depth is not None:
@@ -353,7 +375,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # Uses klai-fast, 15s timeout, returns [] on failure (non-fatal).
     content_label = await generate_content_label(
         title=title,
-        content_preview=req.content,
+        content_preview=indexable_content,
     )
 
     # Taxonomy classification (SPEC-KB-022 R1) — multi-label, one call per document.
@@ -370,7 +392,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             if centroids:
                 from knowledge_ingest import embedder as _embedder
 
-                doc_vectors = await _embedder.embed([req.content[:512]])
+                doc_vectors = await _embedder.embed([indexable_content[:512]])
                 doc_vec = doc_vectors[0] if doc_vectors else None
                 if doc_vec is not None:
                     centroid_result = classify_by_centroid(
@@ -400,13 +422,13 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         if not centroid_matched:
             matched_nodes, llm_tags = await classify_document(
                 title=title,
-                content_preview=req.content,
+                content_preview=indexable_content,
                 taxonomy_nodes=taxonomy_nodes,
             )
             taxonomy_node_ids = [node_id for node_id, _conf in matched_nodes]
 
     # Merge frontmatter tags + LLM-suggested tags (frontmatter has priority, dedup)
-    frontmatter_meta = _extract_frontmatter_metadata(req.content)
+    frontmatter_meta = _extract_frontmatter_metadata(indexable_content)
     frontmatter_tags: list[str] = frontmatter_meta.get("tags", [])
     if isinstance(frontmatter_tags, list):
         seen: set[str] = set()
@@ -439,8 +461,8 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # the artifact row so rebuild_kb can replay against the original
     # source instead of reconstructing from Qdrant chunks. Bounded by
     # the same ingest-content limits the rest of the pipeline observes.
-    if req.content:
-        pg_extra["document_text"] = req.content
+    if indexable_content:
+        pg_extra["document_text"] = indexable_content
 
     artifact_id = await pg_store.create_artifact(
         conn,
@@ -492,8 +514,8 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # chunk-overlap leaves duplication on boundaries). Stored on extra
     # JSONB to avoid a schema migration; size is bounded by the same
     # ingest limits the rest of the pipeline observes.
-    if req.content:
-        extra_payload["document_text"] = req.content
+    if indexable_content:
+        extra_payload["document_text"] = indexable_content
     if req.source_type:
         extra_payload["source_type"] = req.source_type
     if req.source_connector_id:
@@ -615,7 +637,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             queueing_lock=f"graphiti:{artifact_id}",
         ).defer_async(
             artifact_id=artifact_id,
-            document_text=req.content,
+            document_text=indexable_content,
             org_id=req.org_id,
             content_type=req.content_type,
             belief_time_start=kf["belief_time_start"],
@@ -825,6 +847,7 @@ async def gitea_webhook(request: Request) -> dict:
                 source_type="docs",
                 content_type="kb_article",
                 user_id=webhook_user_id,
+                extra=docs_source_extra(full_name, kb_slug, path),
             )
             try:
                 async with tenant_scoped_connection(org_id) as conn:
@@ -1139,6 +1162,7 @@ async def bulk_sync_kb_route(request: Request, req: BulkSyncRequest) -> dict:
                 content=content,
                 source_type="docs",
                 content_type="kb_article",
+                extra=docs_source_extra(req.gitea_repo, req.kb_slug, path),
             )
             try:
                 await ingest_document(conn, ingest_req)

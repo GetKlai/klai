@@ -282,6 +282,7 @@ async def _rebuild_artifact(
             # Step 1: Re-chunk with parent-child chunking (SPEC-RAG-PARENT-CHILD-001).
             from knowledge_ingest import chunker
 
+            document_text = chunker.normalize_document_for_chunking(document_text)
             child_chunks, parent_chunks_obj = chunker.chunk_markdown_with_parents(document_text)
             child_texts = [c.text for c in child_chunks]
             # Each child knows its parent's index in parent_chunks_obj —

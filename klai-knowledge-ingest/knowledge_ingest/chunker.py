@@ -11,6 +11,7 @@ narrative context. The legacy chunk_markdown() entry point is preserved
 for callers that don't yet need parents.
 """
 
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -48,6 +49,248 @@ def _strip_frontmatter(text: str) -> tuple[str, str]:
         if end != -1:
             return text[: end + 4], text[end + 4 :].lstrip("\n")
     return "", text
+
+
+def normalize_document_for_chunking(content: str) -> str:
+    """Return Markdown-like text suitable for chunking and embedding.
+
+    Docs pages are stored losslessly as BlockNote JSON in Gitea so the editor
+    can round-trip custom blocks. The knowledge pipeline, however, needs
+    readable text. Convert a BlockNote JSON body to Markdown while preserving
+    YAML frontmatter; legacy Markdown content passes through unchanged.
+    """
+    frontmatter, body = _strip_frontmatter(content)
+    converted = _blocknote_json_to_markdown(body)
+    if converted is None:
+        return content
+    if frontmatter:
+        return f"{frontmatter}\n\n{converted}".rstrip()
+    return converted
+
+
+def _blocknote_json_to_markdown(body: str) -> str | None:
+    trimmed = body.strip()
+    if not trimmed.startswith("["):
+        return None
+    try:
+        blocks = json.loads(trimmed)
+    except json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(blocks, list)
+        or not blocks
+        or not all(isinstance(b, dict) and _looks_like_blocknote_block(b) for b in blocks)
+    ):
+        return None
+    return _render_blocknote_blocks(blocks).strip()
+
+
+def _looks_like_blocknote_block(block: dict) -> bool:
+    block_type = block.get("type")
+    content = block.get("content")
+    children = block.get("children")
+    if block_type is not None and not isinstance(block_type, str):
+        return False
+    if children is not None and not isinstance(children, list):
+        return False
+    if block_type in {
+        "paragraph",
+        "heading",
+        "bulletListItem",
+        "numberedListItem",
+        "checkListItem",
+        "codeBlock",
+        "quote",
+        "table",
+        "image",
+        "file",
+    }:
+        return True
+    return isinstance(content, (str, list, dict)) or isinstance(children, list)
+
+
+def _render_blocknote_blocks(blocks: list[dict], depth: int = 0) -> str:
+    rendered: list[str] = []
+    i = 0
+    while i < len(blocks):
+        block = blocks[i]
+        block_type = block.get("type")
+        if block_type in {"bulletListItem", "numberedListItem", "checkListItem"}:
+            items: list[str] = []
+            number = 1
+            while i < len(blocks) and blocks[i].get("type") == block_type:
+                items.append(_render_blocknote_list_item(blocks[i], depth, number))
+                number += 1
+                i += 1
+            rendered.append("\n".join(item for item in items if item))
+            continue
+
+        block_text = _render_blocknote_block(block, depth)
+        if block_text:
+            rendered.append(block_text)
+        i += 1
+    return "\n\n".join(rendered)
+
+
+def _render_blocknote_block(block: dict, depth: int) -> str:
+    block_type = block.get("type")
+    content = block.get("content")
+    text = "" if _is_table_content(content) else _render_inline_content(content)
+    children = block.get("children")
+    rendered_children = (
+        _render_blocknote_blocks(children, depth + 1)
+        if isinstance(children, list) and all(isinstance(c, dict) for c in children)
+        else ""
+    )
+
+    if block_type == "heading":
+        props = block.get("props") if isinstance(block.get("props"), dict) else {}
+        level = props.get("level")
+        if not isinstance(level, int):
+            level = 2
+        primary = f"{'#' * max(1, min(level, 6))} {text}".strip()
+    elif block_type == "codeBlock":
+        props = block.get("props") if isinstance(block.get("props"), dict) else {}
+        language = props.get("language")
+        language = language if isinstance(language, str) else ""
+        primary = f"```{language}\n{_extract_inline_plain_text(content)}\n```"
+    elif block_type == "quote":
+        primary = "\n".join(f"> {line}" for line in text.splitlines())
+    elif block_type == "table" and _is_table_content(content):
+        primary = _render_blocknote_table(content)
+    else:
+        primary = text
+
+    if primary and rendered_children:
+        return f"{primary}\n\n{rendered_children}"
+    return primary or rendered_children
+
+
+def _render_blocknote_list_item(block: dict, depth: int, number: int) -> str:
+    block_type = block.get("type")
+    indent = "  " * depth
+    text = _render_inline_content(block.get("content"))
+    if block_type == "numberedListItem":
+        marker = f"{number}."
+    elif block_type == "checkListItem":
+        props = block.get("props") if isinstance(block.get("props"), dict) else {}
+        marker = "- [x]" if props.get("checked") else "- [ ]"
+    else:
+        marker = "-"
+    line = f"{indent}{marker} {text}".rstrip()
+    children = block.get("children")
+    if isinstance(children, list) and all(isinstance(c, dict) for c in children):
+        rendered_children = _render_blocknote_blocks(children, depth + 1)
+        if rendered_children:
+            return f"{line}\n{rendered_children}"
+    return line
+
+
+def _render_inline_content(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(_render_inline_item(item) for item in content)
+
+
+def _render_inline_item(item: object) -> str:
+    if isinstance(item, str):
+        return item
+    if not isinstance(item, dict):
+        return ""
+
+    item_type = item.get("type")
+    if item_type == "text":
+        return _apply_inline_styles(str(item.get("text") or ""), item.get("styles"))
+    if item_type == "link":
+        label = _render_inline_content(item.get("content"))
+        href = item.get("href")
+        return f"[{label}]({href})" if isinstance(href, str) and href.strip() else label
+    if item_type == "wikilink":
+        props = item.get("props") if isinstance(item.get("props"), dict) else {}
+        return str(props.get("title") or props.get("pageId") or "")
+    return ""
+
+
+def _apply_inline_styles(text: str, styles: object) -> str:
+    if not text or not isinstance(styles, dict):
+        return text
+    leading = re.match(r"^\s*", text).group(0)
+    trailing = re.search(r"\s*$", text).group(0)
+    core = text[len(leading) : len(text) - len(trailing) if trailing else len(text)]
+    if not core:
+        return text
+    if styles.get("code"):
+        escaped_core = core.replace("`", "\\`")
+        core = f"`{escaped_core}`"
+    if styles.get("bold"):
+        core = f"**{core}**"
+    if styles.get("italic"):
+        core = f"_{core}_"
+    if styles.get("strike"):
+        core = f"~~{core}~~"
+    return f"{leading}{core}{trailing}"
+
+
+def _extract_inline_plain_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            if item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+            elif item.get("type") == "link":
+                parts.append(_extract_inline_plain_text(item.get("content")))
+            elif item.get("type") == "wikilink":
+                props = item.get("props") if isinstance(item.get("props"), dict) else {}
+                parts.append(str(props.get("title") or ""))
+    return "".join(parts)
+
+
+def _is_table_content(content: object) -> bool:
+    return (
+        isinstance(content, dict)
+        and content.get("type") == "tableContent"
+        and isinstance(content.get("rows"), list)
+    )
+
+
+def _table_cell_content(cell: object) -> object:
+    if isinstance(cell, list):
+        return cell
+    if isinstance(cell, dict):
+        return cell.get("content")
+    return None
+
+
+def _render_blocknote_table(content: dict) -> str:
+    rows = content.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return ""
+    parsed_rows: list[list[str]] = []
+    width = 0
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("cells"), list):
+            continue
+        cells = [
+            _render_inline_content(_table_cell_content(cell)).replace("\n", " ").strip()
+            for cell in row["cells"]
+        ]
+        parsed_rows.append(cells)
+        width = max(width, len(cells))
+    if not parsed_rows or width == 0:
+        return ""
+    normalized = [row + [""] * (width - len(row)) for row in parsed_rows]
+    lines = [f"| {' | '.join(cell or ' ' for cell in normalized[0])} |"]
+    lines.append(f"|{' --- |' * width}")
+    lines.extend(f"| {' | '.join(cell or ' ' for cell in row)} |" for row in normalized[1:])
+    return "\n".join(lines)
 
 
 def _find_code_block_ranges(text: str) -> list[tuple[int, int]]:
