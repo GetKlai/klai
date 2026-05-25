@@ -8,6 +8,16 @@
 -- content to 10000 chars before INSERT (AC8.1). The DB constraint prevents
 -- any future code path from silently bypassing the cap.
 
-ALTER TABLE widget_messages
-    ADD CONSTRAINT widget_messages_content_length
-    CHECK (LENGTH(content) <= 10000);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'widget_messages_content_length'
+          AND conrelid = 'widget_messages'::regclass
+    ) THEN
+        ALTER TABLE widget_messages
+            ADD CONSTRAINT widget_messages_content_length
+            CHECK (LENGTH(content) <= 10000);
+    END IF;
+END $$;
