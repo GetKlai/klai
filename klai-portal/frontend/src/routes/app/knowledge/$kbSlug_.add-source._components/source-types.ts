@@ -6,9 +6,6 @@ import {
   SiGoogledrive,
   SiAirtable,
   SiConfluence,
-  SiGoogledocs,
-  SiGooglesheets,
-  SiGoogleslides,
 } from '@icons-pack/react-simple-icons'
 import * as m from '@/paraglide/messages'
 
@@ -20,9 +17,6 @@ export type ConnectorSourceType =
   | 'github'
   | 'notion'
   | 'google_drive'
-  | 'google_docs'
-  | 'google_sheets'
-  | 'google_slides'
   | 'airtable'
   | 'confluence'
   | 'ms_docs'
@@ -37,6 +31,7 @@ export interface SourceTypeMeta {
   subtitle: () => string
   Icon: ComponentType<{ className?: string; size?: number | string }>
   available: boolean
+  badges?: string[]
   /** For connector types: builds the deep-link URL. Upload types (file/url/text): undefined. */
   routeTo?: (kbSlug: string) => string
 }
@@ -94,34 +89,8 @@ export const SOURCE_TYPES: SourceTypeMeta[] = [
     subtitle: m.knowledge_add_source_connector_subtitle_google_drive,
     Icon: SiGoogledrive,
     available: true,
+    badges: ['Drive', 'Docs', 'Sheets', 'Slides', 'Files'],
     routeTo: (kbSlug) => `/app/knowledge/${kbSlug}/add-connector?type=google_drive`,
-  },
-  {
-    type: 'google_docs',
-    group: 'connector',
-    label: m.admin_connectors_type_google_docs,
-    subtitle: m.knowledge_add_source_connector_subtitle_google_docs,
-    Icon: SiGoogledocs,
-    available: true,
-    routeTo: (kbSlug) => `/app/knowledge/${kbSlug}/add-connector?type=google_docs`,
-  },
-  {
-    type: 'google_sheets',
-    group: 'connector',
-    label: m.admin_connectors_type_google_sheets,
-    subtitle: m.knowledge_add_source_connector_subtitle_google_sheets,
-    Icon: SiGooglesheets,
-    available: true,
-    routeTo: (kbSlug) => `/app/knowledge/${kbSlug}/add-connector?type=google_sheets`,
-  },
-  {
-    type: 'google_slides',
-    group: 'connector',
-    label: m.admin_connectors_type_google_slides,
-    subtitle: m.knowledge_add_source_connector_subtitle_google_slides,
-    Icon: SiGoogleslides,
-    available: true,
-    routeTo: (kbSlug) => `/app/knowledge/${kbSlug}/add-connector?type=google_slides`,
   },
   {
     type: 'airtable',

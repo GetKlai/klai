@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import {
   ArrowLeft, ChevronRight, Settings, ChevronDown, CheckCircle2, Loader2, Sparkles, Globe, FileText, Shield,
 } from 'lucide-react'
-import { SiGithub, SiNotion, SiGoogledrive, SiAirtable, SiConfluence, SiGoogledocs, SiGooglesheets, SiGoogleslides } from '@icons-pack/react-simple-icons'
+import { SiGithub, SiNotion, SiGoogledrive, SiAirtable, SiConfluence } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
@@ -31,6 +31,7 @@ import type {
 import {
   joinSeedUrl,
   MARKDOWN_PROSE_CLASSES,
+  normalizeConnectorPreselectType,
   VALID_PRESELECT_TYPES,
 } from './-connector-constants'
 import { AuthProbeFeedback, PreviewClassificationFeedback } from './-connector-feedback'
@@ -50,9 +51,6 @@ const CONNECTOR_TYPES: {
   { type: 'ms_docs',      label: m.admin_connectors_type_ms_docs,       available: true,  Icon: FileText },
   { type: 'airtable',     label: m.admin_connectors_type_airtable,      available: true,  Icon: SiAirtable },
   { type: 'confluence',   label: m.admin_connectors_type_confluence,    available: true,  Icon: SiConfluence },
-  { type: 'google_docs',  label: m.admin_connectors_type_google_docs,   available: true,  Icon: SiGoogledocs },
-  { type: 'google_sheets', label: m.admin_connectors_type_google_sheets, available: true, Icon: SiGooglesheets },
-  { type: 'google_slides', label: m.admin_connectors_type_google_slides, available: true, Icon: SiGoogleslides },
 ]
 
 // -- Route -------------------------------------------------------------------
@@ -76,7 +74,9 @@ function AddConnectorPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const [selectedType, setSelectedType] = useState<ConnectorType | null>(preselectType ?? null)
+  const [selectedType, setSelectedType] = useState<ConnectorType | null>(
+    normalizeConnectorPreselectType(preselectType) ?? null,
+  )
   const [name, setName] = useState('')
   const [githubConfig, setGithubConfig] = useState<GitHubConfig>({
     installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
@@ -223,16 +223,12 @@ function AddConnectorPage() {
 
   const createGoogleDriveMutation = useMutation({
     mutationFn: async () => {
-      // google_docs / google_sheets / google_slides are aliases that reuse the google_drive
-      // OAuth flow - the backend's GoogleDriveAdapter injects content_types based on
-      // connector.connector_type. We pass the selected type as-is.
-      const connectorType = selectedType ?? 'google_drive'
       const config: Record<string, unknown> = {}
       const result = await apiFetch<{ id: string }>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         body: JSON.stringify({
           name,
-          connector_type: connectorType,
+          connector_type: 'google_drive',
           config,
           schedule: null,
         }),
@@ -373,7 +369,6 @@ function AddConnectorPage() {
       {(() => {
         const isSimple = selectedType === 'github' || selectedType === 'notion' || selectedType === 'google_drive' || selectedType === 'ms_docs'
           || selectedType === 'airtable' || selectedType === 'confluence'
-          || selectedType === 'google_docs' || selectedType === 'google_sheets' || selectedType === 'google_slides'
 
         const steps: StepItem[] = isSimple
           ? [
@@ -551,28 +546,51 @@ function AddConnectorPage() {
               </div>
             )}
 
-            {/* Google Drive OAuth flow - also used for google_docs / google_sheets / google_slides aliases */}
-            {(selectedType === 'google_drive' || selectedType === 'google_docs' || selectedType === 'google_sheets' || selectedType === 'google_slides') && (
+            {/* Google Drive OAuth flow. Docs, Sheets and Slides are selected inside the Drive picker after auth. */}
+            {selectedType === 'google_drive' && (
               <form onSubmit={(e) => { e.preventDefault(); createGoogleDriveMutation.mutate() }} className="space-y-3">
-                {selectedType === 'google_docs' && (
-                  <p className="text-sm text-gray-400">{m.admin_connectors_google_docs_subtitle()}</p>
-                )}
-                {selectedType === 'google_sheets' && (
-                  <p className="text-sm text-gray-400">{m.admin_connectors_google_sheets_subtitle()}</p>
-                )}
-                {selectedType === 'google_slides' && (
-                  <p className="text-sm text-gray-400">{m.admin_connectors_google_slides_subtitle()}</p>
-                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="gd-name">{m.admin_connectors_field_name()}</Label>
                   <Input id="gd-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
                 </div>
-                <div className="rounded-lg border border-gray-200 px-4 py-3 space-y-2">
-                  <p className="text-sm font-medium text-gray-900">Kies je bestanden na het inloggen</p>
-                  <p className="text-xs text-gray-400">
-                    We openen na Google-authenticatie een Drive-kiezer. Daar kies je de volledige Drive,
-                    een specifieke map of losse bestanden zonder ID's uit URL's te kopieren.
-                  </p>
+                <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <SiGoogledrive className="mt-0.5 h-5 w-5 shrink-0 text-gray-400" />
+                    <div className="space-y-3">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-gray-900">
+                          {m.admin_connectors_google_drive_picker_title()}
+                        </p>
+                        <p className="text-xs leading-5 text-gray-400">
+                          {m.admin_connectors_google_drive_picker_body()}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {['Docs', 'Sheets', 'Slides', 'Files'].map((type) => (
+                          <span
+                            key={type}
+                            className="rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[11px] leading-4 text-gray-500"
+                          >
+                            {type}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="grid gap-2 text-xs text-gray-500 sm:grid-cols-3">
+                        <span className="flex items-center gap-1.5">
+                          <Shield className="h-3.5 w-3.5 text-gray-400" />
+                          {m.admin_connectors_google_drive_flow_auth()}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <FileText className="h-3.5 w-3.5 text-gray-400" />
+                          {m.admin_connectors_google_drive_flow_select()}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-gray-400" />
+                          {m.admin_connectors_google_drive_flow_sync()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 {createGoogleDriveMutation.error && (
                   <p className="text-sm text-[var(--color-destructive)]">
