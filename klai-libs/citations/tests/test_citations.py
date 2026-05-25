@@ -1,6 +1,8 @@
 from klai_citations import (
     build_citation_registry,
     compose_citations,
+    evidence_chunks_from_chunks,
+    render_evidence_context,
     render_markdown_answer,
     render_markdown_answer_with_sources,
     render_markdown_sources,
@@ -106,7 +108,7 @@ def test_registry_renderers_output_markdown_and_structured_sources() -> None:
 
 
 def test_registry_sources_are_limited_for_compact_document_level_sources() -> None:
-    """Default source payload/list is compact document-level provenance."""
+    """Default source payload/list is compact and relevant to the final answer."""
     registry = build_citation_registry(
         [
             {
@@ -138,11 +140,69 @@ def test_registry_sources_are_limited_for_compact_document_level_sources() -> No
     assert "(1)" not in rendered.content
     assert rendered.sources == [
         {"label": "1", "title": "Alpha policy", "url": "https://docs.getklai.com/alpha"},
-        {"label": "2", "title": "Beta policy", "url": "https://docs.getklai.com/beta"},
-        {"label": "3", "title": "Gamma policy", "url": "https://docs.getklai.com/gamma"},
     ]
-    assert "- [Gamma policy](https://docs.getklai.com/gamma)" in rendered.content
+    assert "- [Alpha policy](https://docs.getklai.com/alpha)" in rendered.content
+    assert "- [Beta policy](https://docs.getklai.com/beta)" not in rendered.content
     assert "- [Delta policy](https://docs.getklai.com/delta)" not in rendered.content
+
+
+def test_document_sources_filter_irrelevant_retrieved_pages() -> None:
+    rendered = render_markdown_answer_with_sources(
+        "Ga naar Admin en nodig een nieuwe gebruiker uit via Mensen.",
+        [
+            {
+                "title": "Add sources",
+                "source_url": "https://docs.getklai.com/add-sources",
+                "text": "Connect Notion, Google Drive, websites, and other knowledge sources.",
+            },
+            {
+                "title": "Invite and remove people",
+                "source_url": "https://docs.getklai.com/invite-and-remove-people",
+                "text": "Admins can invite a new user from Admin > Mensen by entering the work email address.",
+            },
+        ],
+    )
+
+    assert "- [Invite and remove people](https://docs.getklai.com/invite-and-remove-people)" in rendered.content
+    assert "- [Add sources](https://docs.getklai.com/add-sources)" not in rendered.content
+
+
+def test_evidence_context_preserves_heading_as_section_metadata() -> None:
+    context = render_evidence_context(
+        [
+            {
+                "title": "Invite and remove people",
+                "source_url": "https://docs.getklai.com/invite",
+                "heading_path": "Admin > Mensen",
+                "text": "Admin > Mensen\n\n4. Voer het werk-emailadres in.\n5. Selecteer een rol.",
+                "chunk_type": "procedural",
+            }
+        ],
+        include_source_urls=False,
+    )
+
+    assert "Evidence E1" in context
+    assert "Section path: Admin > Mensen" in context
+    assert "Chunk type: procedural" in context
+    assert "List note: this excerpt starts mid ordered-list" in context
+    assert "source_url:" not in context
+    assert "Content:\n4. Voer het werk-emailadres in." in context
+    assert "Admin > Mensen\n\n4." not in context
+
+
+def test_evidence_chunks_infer_legacy_prepended_heading() -> None:
+    evidence = evidence_chunks_from_chunks(
+        [
+            {
+                "title": "For admins",
+                "source_url": "https://docs.getklai.com/admins",
+                "text": "For admins\n\nAdmins can invite new users.",
+            }
+        ]
+    )
+
+    assert evidence[0].section_path == ["For admins"]
+    assert evidence[0].content == "Admins can invite new users."
 
 
 def test_registry_sources_can_render_full_list_when_requested() -> None:

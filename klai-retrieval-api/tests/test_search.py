@@ -47,7 +47,7 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_kb_slugs_filter_excludes_other_kb(self):
-        """kb_slugs restricts search to the specified KBs; chunks from other KBs are not returned."""
+        """kb_slugs restricts search to the specified KBs."""
         from qdrant_client.models import MatchAny
 
         # Mock returns only the chunk that Qdrant would keep after applying the filter.
@@ -117,3 +117,21 @@ class TestSearch:
 
         assert results[0]["ingested_at"] is None
         assert results[0]["assertion_mode"] is None
+
+    @pytest.mark.asyncio
+    async def test_knowledge_search_passes_heading_path(self):
+        """Heading hierarchy is returned as metadata for structured evidence rendering."""
+        point = _make_point(
+            "c1",
+            "Admin > Mensen\n\nNodig iemand uit.",
+            0.8,
+            heading_path="Admin > Mensen",
+        )
+        mock_client = AsyncMock()
+        mock_client.query_points.return_value = _make_query_response([point])
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="test", org_id="org-1", scope="org")
+            results = await search.hybrid_search([0.1, 0.2], req, 10)
+
+        assert results[0]["heading_path"] == "Admin > Mensen"

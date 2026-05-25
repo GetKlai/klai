@@ -711,8 +711,28 @@ dev = [
 ]
 
 [[package]]
-name = "klai-identity-assert"
+name = "klai-citations"
 version = "0.1.0"
+source = { editable = "../klai-libs/citations" }
+
+[package.metadata]
+requires-dist = [
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
+name = "klai-identity-assert"
+version = "0.2.0"
 source = { editable = "../klai-libs/identity-assert" }
 dependencies = [
     { name = "httpx" },
@@ -1269,6 +1289,7 @@ dependencies = [
     { name = "graphiti-core", extra = ["falkordb"] },
     { name = "httpx" },
     { name = "klai-chat-prompts" },
+    { name = "klai-citations" },
     { name = "klai-identity-assert" },
     { name = "lingua-language-detector" },
     { name = "prometheus-client" },
@@ -1299,6 +1320,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "klai-chat-prompts", editable = "../klai-libs/chat-prompts" },
+    { name = "klai-citations", editable = "../klai-libs/citations" },
     { name = "klai-identity-assert", editable = "../klai-libs/identity-assert" },
     { name = "lingua-language-detector", specifier = ">=2.2.0" },
     { name = "prometheus-client", specifier = ">=0.21" },

@@ -28,11 +28,14 @@ dependencies = [
     # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-02: shared chat-prompt constant.
     # Editable install — same pattern as klai-identity-assert.
     "klai-chat-prompts",
+    # Shared evidence context + deterministic citation/source helpers.
+    "klai-citations",
 ]
 
 [tool.uv.sources]
 klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
 klai-chat-prompts = { path = "../klai-libs/chat-prompts", editable = true }
+klai-citations = { path = "../klai-libs/citations", editable = true }
 
 [project.optional-dependencies]
 dev = [

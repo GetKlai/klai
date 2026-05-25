@@ -193,12 +193,14 @@ async def _load_and_enrich(artifact_id: str) -> None:
     parents_serialised: list[dict] = [
         {
             "text": p.text,
+            "heading_path": p.heading_path,
             "token_count": chunker._approx_token_count(p.text),
             "position": p.position,
         }
         for p in parents
     ]
     parent_index_per_child: list[int | None] = [c.parent_index for c in children]
+    heading_path_per_child: list[str] = [c.heading_path for c in children]
 
     await _enrich_document(
         org_id=artifact["org_id"],
@@ -214,6 +216,7 @@ async def _load_and_enrich(artifact_id: str) -> None:
         content_type=artifact["content_type"] or "unknown",
         parents=parents_serialised,
         parent_index_per_child=parent_index_per_child,
+        heading_path_per_child=heading_path_per_child,
     )
 
 
@@ -320,6 +323,7 @@ async def _enrich_document(
     content_type: str = "unknown",
     parents: list[dict] | None = None,
     parent_index_per_child: list[int | None] | None = None,
+    heading_path_per_child: list[str] | None = None,
 ) -> None:
     """
     Core enrichment logic shared by both task variants.
@@ -418,6 +422,7 @@ async def _enrich_document(
             artifact_id=artifact_id,
             document_summary=document_summary_val,
             document_language=document_language_val,
+            heading_paths=heading_path_per_child,
         )
         llm_ms = int((time.monotonic() - t0) * 1000)
 

@@ -65,6 +65,8 @@ def test_prompt_keeps_sources_backend_managed():
     text = GROUNDED_CHAT_SYSTEM_PROMPT
     assert "Do NOT write citation markers" in text
     assert "renders trusted sources separately" in text
+    assert "Do NOT use Markdown headings" in text
+    assert "rewrite the steps into a clean sequence" in text
     assert "Every factual claim gets a [n] citation" not in text
 
 

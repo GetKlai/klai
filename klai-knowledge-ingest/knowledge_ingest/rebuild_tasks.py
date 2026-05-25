@@ -290,6 +290,7 @@ async def _rebuild_artifact(
             # _enrich_document needs this list to thread parent_chunks.id
             # into each child's Qdrant payload (parent_chunk_id).
             parent_index_per_child: list[int | None] = [c.parent_index for c in child_chunks]
+            heading_path_per_child: list[str] = [c.heading_path for c in child_chunks]
 
             if not child_texts:
                 logger.info(
@@ -305,6 +306,7 @@ async def _rebuild_artifact(
             parents_serialised: list[dict] = [
                 {
                     "text": p.text,
+                    "heading_path": p.heading_path,
                     "token_count": chunker._approx_token_count(p.text),
                     "position": p.position,
                 }
@@ -353,6 +355,7 @@ async def _rebuild_artifact(
                 content_type=content_type,
                 parents=parents_serialised,
                 parent_index_per_child=parent_index_per_child,
+                heading_path_per_child=heading_path_per_child,
             )
 
             logger.info(

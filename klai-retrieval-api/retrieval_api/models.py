@@ -58,6 +58,7 @@ class ChunkResult(BaseModel):
     content_type: str | None = None
     text: str
     context_prefix: str | None = None
+    heading_path: str | None = None
     score: float
     reranker_score: float | None = None
     scope: str | None = None
