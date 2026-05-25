@@ -31,12 +31,12 @@ import httpx
 import pymongo.errors
 import redis
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.models.portal import PortalOrg
+from app.models.portal import PortalOrg, PortalUser
 from app.services.provisioning.deprovisioning_steps import STEPS
 
 try:
@@ -90,6 +90,7 @@ class _DeprovisionState:
     deprovisioner_user_id: str
     deprovisioner_type: str  # 'owner' | 'platform_admin' | 'system'
     org_name: str
+    zitadel_user_ids: tuple[str, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +181,20 @@ async def _load_state(org_id: int, actor_id: str, actor_type: str, db: AsyncSess
         client_id=org.zitadel_librechat_client_id,
     )
     litellm_team_id = await _resolve_litellm_team_id(org.slug)
+    single_membership_users = (
+        select(PortalUser.zitadel_user_id)
+        .group_by(PortalUser.zitadel_user_id)
+        .having(func.count(PortalUser.org_id) == 1)
+    )
+    user_result = await db.execute(
+        select(PortalUser.zitadel_user_id)
+        .where(
+            PortalUser.org_id == org_id,
+            PortalUser.zitadel_user_id.in_(single_membership_users),
+        )
+        .order_by(PortalUser.id)
+    )
+    zitadel_user_ids = tuple(dict.fromkeys(user_id for user_id in user_result.scalars().all() if user_id))
 
     return _DeprovisionState(
         db=db,
@@ -193,6 +208,7 @@ async def _load_state(org_id: int, actor_id: str, actor_type: str, db: AsyncSess
         deprovisioner_user_id=actor_id,
         deprovisioner_type=actor_type,
         org_name=org.name,
+        zitadel_user_ids=zitadel_user_ids,
     )
 
 

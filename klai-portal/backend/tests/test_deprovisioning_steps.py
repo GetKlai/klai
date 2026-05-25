@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -29,7 +30,7 @@ import respx
 # ---------------------------------------------------------------------------
 
 
-def _make_state(**overrides) -> SimpleNamespace:
+def _make_state(**overrides) -> Any:
     """Return a minimal deprovisioning state stub."""
     defaults = {
         "db": AsyncMock(),
@@ -43,9 +44,17 @@ def _make_state(**overrides) -> SimpleNamespace:
         "deprovisioner_user_id": "user-999",
         "deprovisioner_type": "owner",
         "org_name": "ACME Corp",
+        "zitadel_user_ids": ("zitadel-user-1",),
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
+
+
+def _http_status_error(status_code: int, method: str = "DELETE") -> httpx.HTTPStatusError:
+    """Build an httpx status error for mocked external service failures."""
+    request = httpx.Request(method, "https://auth.example.com/test")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError(f"HTTP {status_code}", request=request, response=response)
 
 
 # ---------------------------------------------------------------------------
@@ -987,7 +996,90 @@ class TestDeleteZitadelOidcApp:
 
 
 # ---------------------------------------------------------------------------
-# Step 15 — _delete_zitadel_org
+# Step 15 — _delete_zitadel_users
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteZitadelUsers:
+    @pytest.mark.asyncio
+    async def test_deletes_all_captured_zitadel_users_from_portal_org(self) -> None:
+        """Tenant users are explicitly removed before portal_users is deleted."""
+        state = _make_state(zitadel_user_ids=("user-a", "user-b"))
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock()) as mock_remove,
+            patch("app.services.zitadel.zitadel.get_user_by_id", new=AsyncMock()) as mock_get_user,
+        ):
+            mock_settings.zitadel_portal_org_id = "portal-org"
+            mock_settings.zitadel_org_id = "legacy-org"
+            from app.services.provisioning.deprovisioning_steps import _delete_zitadel_users
+
+            await _delete_zitadel_users(state)
+
+        assert mock_remove.await_args_list[0].args == ("portal-org", "user-a")
+        assert mock_remove.await_args_list[1].args == ("portal-org", "user-b")
+        mock_get_user.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_404_is_idempotent_when_user_is_already_absent(self) -> None:
+        """A missing Zitadel user is treated as already deleted."""
+        state = _make_state(zitadel_user_ids=("missing-user",))
+        not_found = _http_status_error(404)
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock(side_effect=not_found)) as mock_remove,
+            patch(
+                "app.services.zitadel.zitadel.get_user_by_id",
+                new=AsyncMock(side_effect=not_found),
+            ) as mock_get_user,
+        ):
+            mock_settings.zitadel_portal_org_id = "portal-org"
+            mock_settings.zitadel_org_id = "legacy-org"
+            from app.services.provisioning.deprovisioning_steps import _delete_zitadel_users
+
+            await _delete_zitadel_users(state)
+
+        assert mock_remove.await_count == 3
+        mock_get_user.assert_awaited_once_with("missing-user")
+
+    @pytest.mark.asyncio
+    async def test_raises_when_user_still_exists_after_delete_attempts(self) -> None:
+        """If all delete attempts fail but lookup still finds the user, the step fails."""
+        state = _make_state(zitadel_user_ids=("still-present",))
+        not_found = _http_status_error(404)
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock(side_effect=not_found)),
+            patch(
+                "app.services.zitadel.zitadel.get_user_by_id",
+                new=AsyncMock(return_value={"id": "still-present"}),
+            ),
+        ):
+            mock_settings.zitadel_portal_org_id = "portal-org"
+            mock_settings.zitadel_org_id = "legacy-org"
+            from app.services.provisioning.deprovisioning_steps import _delete_zitadel_users
+
+            with pytest.raises(httpx.HTTPStatusError):
+                await _delete_zitadel_users(state)
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_captured_users(self) -> None:
+        """No portal users means no Zitadel user delete calls."""
+        state = _make_state(zitadel_user_ids=())
+
+        with patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock()) as mock_remove:
+            from app.services.provisioning.deprovisioning_steps import _delete_zitadel_users
+
+            await _delete_zitadel_users(state)
+
+        mock_remove.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Step 16 — _delete_zitadel_org
 # ---------------------------------------------------------------------------
 
 
@@ -1009,7 +1101,7 @@ class TestDeleteZitadelOrg:
 
 
 # ---------------------------------------------------------------------------
-# Step 16 — _finalize_postgres_delete
+# Step 17 — _finalize_postgres_delete
 # ---------------------------------------------------------------------------
 
 
@@ -1118,17 +1210,19 @@ class TestFinalizePostgresDelete:
 
 
 class TestStepsList:
-    def test_has_19_entries(self) -> None:
-        """STEPS must contain exactly 19 entries.
+    def test_has_20_entries(self) -> None:
+        """STEPS must contain exactly 20 entries.
 
         Original SPEC-INFRA-TENANT-DELETE-001 had 17 steps. SPEC-INFRA-TENANT-DELETE-002
         G3 + G6 inserted two adjacent wipes-via-internal-endpoint steps after
         ``_delete_falkordb_graph``: ``_wipe_knowledge_postgres`` (G3) and
-        ``_wipe_klai_connector_state`` (G6). Total: 17 + 2 = 19.
+        ``_wipe_klai_connector_state`` (G6). Tenant deprovisioning must also
+        explicitly remove portal-owned Zitadel users before deleting the tenant
+        org. Total: 17 + 2 + 1 = 20.
         """
         from app.services.provisioning.deprovisioning_steps import STEPS
 
-        assert len(STEPS) == 19
+        assert len(STEPS) == 20
 
     def test_g3_g6_steps_are_adjacent_to_falkordb(self) -> None:
         """SPEC-INFRA-TENANT-DELETE-002 G3+G6 ordering invariant.
@@ -1157,6 +1251,21 @@ class TestStepsList:
 
         assert idx_falkordb < idx_kp < idx_finalize, "G3 step must come AFTER falkordb and BEFORE finalize"
         assert idx_falkordb < idx_kc < idx_finalize, "G6 step must come AFTER falkordb and BEFORE finalize"
+
+    def test_zitadel_users_deleted_before_zitadel_org_and_postgres_rows(self) -> None:
+        """Captured users must be deleted while state still has portal_users data."""
+        from app.services.provisioning.deprovisioning_steps import (
+            STEPS,
+            _delete_zitadel_org,
+            _delete_zitadel_users,
+            _finalize_postgres_delete,
+        )
+
+        idx_users = STEPS.index(_delete_zitadel_users)
+        idx_org = STEPS.index(_delete_zitadel_org)
+        idx_finalize = STEPS.index(_finalize_postgres_delete)
+
+        assert idx_users < idx_org < idx_finalize
 
     def test_all_entries_are_callables(self) -> None:
         """Every entry in STEPS must be an async callable."""
