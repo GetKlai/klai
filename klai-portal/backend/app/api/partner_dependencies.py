@@ -49,25 +49,6 @@ _AUTH_ERROR = {"error": {"type": "authentication_error", "message": "Invalid API
 _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
 
 
-def _legacy_org_id_from_unsigned_session_payload(token: str) -> int | None:
-    """Temporary fallback for widget JWTs minted before ``kid`` headers.
-
-    Widget JWTs have a 1h TTL. Keep this only for one deploy window after all
-    mint paths emit ``kid``; then remove the fallback and the Semgrep
-    suppression with it.
-    """
-    try:
-        # nosemgrep: python.jwt.security.unverified-jwt-decode.unverified-jwt-decode
-        payload = jwt.decode(token, options={"verify_signature": False})
-    except jwt.InvalidTokenError:
-        return None
-
-    org_id = payload.get("org_id")
-    if isinstance(org_id, int) and not isinstance(org_id, bool) and org_id > 0:
-        return org_id
-    return None
-
-
 @dataclass
 class PartnerAuthContext:
     """Resolved partner auth state passed to endpoint handlers."""
@@ -144,8 +125,20 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     if kid is None:
         # Deploy-window compatibility for old in-flight JWTs minted before the
         # `kid` header existed. Remove after one widget JWT TTL has elapsed in
-        # production.
-        org_id_for_key = _legacy_org_id_from_unsigned_session_payload(token)
+        # production. This unverified value is used only for key selection and
+        # is followed by decode_session_token() in this same function.
+        try:
+            # nosemgrep: python.jwt.security.unverified-jwt-decode.unverified-jwt-decode
+            legacy_payload = jwt.decode(token, options={"verify_signature": False})
+        except jwt.InvalidTokenError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
+
+        legacy_org_id = legacy_payload.get("org_id")
+        org_id_for_key = (
+            legacy_org_id
+            if isinstance(legacy_org_id, int) and not isinstance(legacy_org_id, bool) and legacy_org_id > 0
+            else None
+        )
     else:
         org_id_for_key = org_id_from_session_token_key_id(kid)
 
