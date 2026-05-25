@@ -117,6 +117,125 @@ class TestProvidersEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# POST /api/oauth/google_drive/picker-token
+# ---------------------------------------------------------------------------
+
+
+class TestGoogleDrivePickerToken:
+    """Picker token endpoint refreshes stored Google OAuth credentials server-side."""
+
+    @pytest.mark.asyncio
+    async def test_picker_token_refreshes_stored_google_credentials(self) -> None:
+        """Valid org connector + refresh_token -> short-lived Picker access token."""
+        from app.api.oauth import google_drive_picker_token
+
+        db = AsyncMock()
+        mock_connector = MagicMock()
+        mock_connector.id = "conn-uuid-picker"
+        mock_connector.org_id = 42
+        mock_connector.connector_type = "google_drive"
+        mock_connector.encrypted_credentials = b"ENCRYPTED_GOOGLE_CREDS"
+
+        token_response = _make_http_response(
+            200,
+            {
+                "access_token": "placeholder-picker-access-token",
+                "expires_in": 3599,
+                "token_type": "Bearer",
+            },
+        )
+
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.credential_store") as mock_store,
+            patch("app.api.oauth.set_tenant", new=AsyncMock()) as mock_set_tenant,
+            patch("app.api.oauth.httpx.AsyncClient", _mock_httpx_client(token_response)) as mock_httpx_cls,
+        ):
+            mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            db.get = AsyncMock(return_value=mock_connector)
+            mock_store.decrypt_credentials = AsyncMock(
+                return_value={"refresh_token": "placeholder-refresh-token"}
+            )
+
+            result = await google_drive_picker_token(
+                connector_id="conn-uuid-picker",
+                perms=make_perms(user_id="zitadel-user-1", org_id=42),
+                db=db,
+            )
+
+            assert result["access_token"] == "placeholder-picker-access-token"
+            mock_set_tenant.assert_awaited_once_with(db, 42)
+            mock_store.decrypt_credentials.assert_awaited_once_with(
+                org_id=42,
+                encrypted_credentials=b"ENCRYPTED_GOOGLE_CREDS",
+                db=db,
+            )
+            post_call = mock_httpx_cls.return_value.post.call_args
+            assert post_call.args[0] == "https://oauth2.googleapis.com/token"
+            assert post_call.kwargs["data"]["grant_type"] == "refresh_token"
+
+    @pytest.mark.asyncio
+    async def test_picker_token_rejects_connector_from_other_org(self) -> None:
+        """Connector primary-key hits from another org are hidden as 404."""
+        from app.api.oauth import google_drive_picker_token
+
+        db = AsyncMock()
+        mock_connector = MagicMock()
+        mock_connector.org_id = 99
+        mock_connector.connector_type = "google_drive"
+        mock_connector.encrypted_credentials = b"ENCRYPTED_GOOGLE_CREDS"
+
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.credential_store", new=MagicMock()),
+            patch("app.api.oauth.set_tenant", new=AsyncMock()),
+        ):
+            mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            db.get = AsyncMock(return_value=mock_connector)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await google_drive_picker_token(
+                    connector_id="conn-uuid-picker",
+                    perms=make_perms(user_id="zitadel-user-1", org_id=42),
+                    db=db,
+                )
+
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_picker_token_requires_refresh_token(self) -> None:
+        """Existing connector without stored refresh_token must reconnect."""
+        from app.api.oauth import google_drive_picker_token
+
+        db = AsyncMock()
+        mock_connector = MagicMock()
+        mock_connector.org_id = 42
+        mock_connector.connector_type = "google_drive"
+        mock_connector.encrypted_credentials = b"ENCRYPTED_GOOGLE_CREDS"
+
+        with (
+            patch("app.api.oauth.settings") as mock_settings,
+            patch("app.api.oauth.credential_store") as mock_store,
+            patch("app.api.oauth.set_tenant", new=AsyncMock()),
+        ):
+            mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
+            mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
+            db.get = AsyncMock(return_value=mock_connector)
+            mock_store.decrypt_credentials = AsyncMock(return_value={})
+
+            with pytest.raises(HTTPException) as exc_info:
+                await google_drive_picker_token(
+                    connector_id="conn-uuid-picker",
+                    perms=make_perms(user_id="zitadel-user-1", org_id=42),
+                    db=db,
+                )
+
+            assert exc_info.value.status_code == 409
+
+
+# ---------------------------------------------------------------------------
 # GET /api/oauth/{provider}/authorize
 # ---------------------------------------------------------------------------
 
