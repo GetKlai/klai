@@ -1236,11 +1236,15 @@ async def retrieve_context(
     """
     query = _last_user_message(messages)
     if not query:
-        return [], _build_system_prompt(
+        return (
             [],
-            widget_system_prompt=widget_system_prompt,
-            backend_managed_citations=backend_managed_citations,
-        ), []
+            _build_system_prompt(
+                [],
+                widget_system_prompt=widget_system_prompt,
+                backend_managed_citations=backend_managed_citations,
+            ),
+            [],
+        )
 
     conversation_history = _build_conversation_history(messages)
 
@@ -1267,12 +1271,16 @@ async def retrieve_context(
     retrieval_url = settings.knowledge_retrieve_url
     if not retrieval_url:
         logger.warning("partner_chat_no_retrieval_url")
-        return [], _build_system_prompt(
+        return (
             [],
-            original_system,
-            widget_system_prompt,
-            backend_managed_citations=backend_managed_citations,
-        ), []
+            _build_system_prompt(
+                [],
+                original_system,
+                widget_system_prompt,
+                backend_managed_citations=backend_managed_citations,
+            ),
+            [],
+        )
 
     # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
     # retrieval_api_internal_secret (separate from portal-api's mailer secret).

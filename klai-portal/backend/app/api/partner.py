@@ -207,9 +207,7 @@ def _citation_runtime_options(
         return set(), {}, {}, "markers"
 
     citation_source_urls = {
-        index: source["url"]
-        for index, source in enumerate(trusted_sources, 1)
-        if isinstance(source.get("url"), str)
+        index: source["url"] for index, source in enumerate(trusted_sources, 1) if isinstance(source.get("url"), str)
     }
     citation_source_metadata = {
         source["url"]: {
