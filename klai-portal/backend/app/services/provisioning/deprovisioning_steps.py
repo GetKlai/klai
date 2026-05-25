@@ -1,7 +1,7 @@
 """
 Tenant deprovisioning steps — SPEC-INFRA-TENANT-DELETE-001.
 
-16 idempotent step-functions that are called in order by the deprovisioning
+20 idempotent step-functions that are called in order by the deprovisioning
 orchestrator. Each step accepts a ``_DeprovisionState`` dataclass (defined in
 ``deprovisioning_orchestrator.py``) and returns None on success.
 
@@ -709,12 +709,88 @@ async def _delete_zitadel_oidc_app(state: _DeprovisionState) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 15 — delete_zitadel_org
+# Step 15 — delete_zitadel_users
+# ---------------------------------------------------------------------------
+
+
+async def _delete_zitadel_users(state: _DeprovisionState) -> None:
+    """Delete tenant users from Zitadel before deleting the org.
+
+    Portal-created users live in the portal org in Zitadel, even when they are
+    members of a tenant org in the Klai portal DB. Deleting the tenant org does
+    not remove those platform-owned human users. The orchestrator captures only
+    users whose final portal membership is this tenant, so multi-tenant users
+    keep their global identity.
+    """
+    if not state.zitadel_user_ids:
+        logger.info("zitadel_users_delete_skipped_no_users", slug=state.slug)
+        return
+
+    from app.services.zitadel import zitadel
+
+    org_ids = tuple(
+        dict.fromkeys(
+            org_id
+            for org_id in (
+                settings.zitadel_portal_org_id,
+                settings.zitadel_org_id,
+                state.zitadel_org_id,
+            )
+            if org_id
+        )
+    )
+    if not org_ids:
+        raise RuntimeError("No Zitadel org id configured for user deletion")
+
+    deleted = 0
+    already_absent = 0
+    for user_id in state.zitadel_user_ids:
+        removed = False
+        last_error: httpx.HTTPStatusError | None = None
+        for org_id in org_ids:
+            try:
+                await zitadel.remove_user(org_id, user_id)
+                deleted += 1
+                removed = True
+                logger.info("zitadel_user_deleted", slug=state.slug, zitadel_user_id=user_id, org_id=org_id)
+                break
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in (403, 404):
+                    last_error = exc
+                    continue
+                raise
+
+        if removed:
+            continue
+
+        try:
+            await zitadel.get_user_by_id(user_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                already_absent += 1
+                logger.info("zitadel_user_already_absent", slug=state.slug, zitadel_user_id=user_id)
+                continue
+            raise
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"Zitadel user still exists after deletion attempts: {user_id}")
+
+    logger.info(
+        "zitadel_users_deleted",
+        slug=state.slug,
+        deleted=deleted,
+        already_absent=already_absent,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Step 16 — delete_zitadel_org
 # ---------------------------------------------------------------------------
 
 
 async def _delete_zitadel_org(state: _DeprovisionState) -> None:
-    """DELETE /management/v1/orgs — cascades all users + grants.
+    """DELETE /management/v1/orgs.
 
     # @MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.
     """
@@ -725,7 +801,7 @@ async def _delete_zitadel_org(state: _DeprovisionState) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 16 — finalize_postgres_delete
+# Step 17 — finalize_postgres_delete
 # ---------------------------------------------------------------------------
 
 
@@ -887,6 +963,7 @@ STEPS = [
     _archive_moneybird_subscription,
     _delete_personal_kb,
     _delete_zitadel_oidc_app,
+    _delete_zitadel_users,
     _delete_zitadel_org,
     _finalize_postgres_delete,
 ]

@@ -24,6 +24,7 @@ import pytest
 from app.services.provisioning.deprovisioning_orchestrator import (
     DeprovisionStepError,
     _DeprovisionState,
+    _load_state,
     _mark_failed,
     _resolve_litellm_team_id,
     _resolve_zitadel_oidc_app_id,
@@ -50,6 +51,7 @@ def _make_state(**overrides) -> _DeprovisionState:
         "deprovisioner_user_id": "user-1",
         "deprovisioner_type": "owner",
         "org_name": "ACME Corp",
+        "zitadel_user_ids": ("zitadel-user-1",),
     }
     defaults.update(overrides)
     return _DeprovisionState(**defaults)
@@ -272,6 +274,54 @@ class TestMarkFailed:
         # JSON-string bind reaches the column as jsonb (REQ-2 AC-2.1).
         stmt_text = str(captured["stmt"])
         assert "jsonb" in stmt_text.lower(), f"UPDATE statement must cast bind to jsonb, got: {stmt_text!r}"
+
+
+# ---------------------------------------------------------------------------
+# _load_state
+# ---------------------------------------------------------------------------
+
+
+class TestLoadState:
+    @pytest.mark.asyncio
+    async def test_captures_unique_zitadel_user_ids_before_finalize_deletes_rows(self) -> None:
+        """Only last-membership Zitadel users are captured before portal_users rows are deleted."""
+        mock_org = SimpleNamespace(
+            id=42,
+            slug="acme",
+            zitadel_org_id="zit-org",
+            zitadel_librechat_client_id="client-abc",
+            moneybird_subscription_id="sub-1",
+            moneybird_contact_id="contact-1",
+            name="ACME Corp",
+        )
+        org_result = MagicMock()
+        org_result.scalar_one.return_value = mock_org
+        user_scalars = MagicMock()
+        user_scalars.all.return_value = ["user-a", None, "user-b", "user-a", ""]
+        user_result = MagicMock()
+        user_result.scalars.return_value = user_scalars
+        db = AsyncMock()
+        db.execute.side_effect = [org_result, user_result]
+
+        with (
+            patch(
+                "app.services.provisioning.deprovisioning_orchestrator._resolve_zitadel_oidc_app_id",
+                new=AsyncMock(return_value="zit-app"),
+            ),
+            patch(
+                "app.services.provisioning.deprovisioning_orchestrator._resolve_litellm_team_id",
+                new=AsyncMock(return_value="team-1"),
+            ),
+        ):
+            state = await _load_state(42, "actor-1", "platform_admin", db)
+
+        assert state.zitadel_user_ids == ("user-a", "user-b")
+        assert state.zitadel_oidc_app_id == "zit-app"
+        assert state.litellm_team_id == "team-1"
+        assert db.execute.await_count == 2
+        user_query = str(db.execute.await_args_list[1].args[0]).lower()
+        assert "group by" in user_query
+        assert "having count" in user_query
 
 
 # ---------------------------------------------------------------------------
