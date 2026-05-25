@@ -98,6 +98,7 @@ export async function PUT(
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const denied = checkKBAccess(kb, payload.sub);
   if (denied) return denied;
+  await gitea.ensureOrgDescription(`org-${orgSlug}`, org.zitadel_org_id);
 
   const pagePath = path.join("/");
 
