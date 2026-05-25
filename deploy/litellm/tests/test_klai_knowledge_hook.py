@@ -665,6 +665,81 @@ class TestKlaiKnowledgeHookSlugsTriState:
         assert "SUBSTANTIVE message" in content
 
     @pytest.mark.asyncio
+    async def test_empty_slugs_and_personal_off_web_search_tool_marks_runtime_available(
+        self, monkeypatch
+    ):
+        """[] + personal=False + web-search tool → GENERAL prompt says search is usable."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+                "kb_narrow": False,
+                "version": 0,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "Wat doet https://odynt.eu?"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the live web for current information.",
+                    },
+                }
+            ],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
+        assert system_msg is not None
+        content = system_msg["content"]
+        assert "general-purpose assistant" in content
+        assert "Web Search: available for this turn." in content
+        assert "use the available Web Search tool" in content
+        assert "Do NOT tell the user to enable Search" in content
+
+    def test_search_knowledge_tool_is_not_treated_as_web_search(self, monkeypatch):
+        """KB/MCP search tools must not trip the web-search runtime override."""
+        mod = _load_hook(monkeypatch)
+        data = {
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search_knowledge",
+                        "description": "Search selected knowledge-base chunks.",
+                    },
+                }
+            ]
+        }
+        assert mod._request_has_web_search(data) is False
+
+    def test_web_search_metadata_marks_runtime_available(self, monkeypatch):
+        """Future LibreChat/portal metadata can opt into web-search behavior directly."""
+        mod = _load_hook(monkeypatch)
+        assert mod._request_has_web_search(
+            {"metadata": {"klai_web_search_enabled": True}}
+        )
+
+    @pytest.mark.asyncio
     async def test_empty_slugs_and_personal_on_uses_personal_scope(self, monkeypatch):
         """[] + personal=True → scope=personal, no kb_slugs filter."""
         mod = _load_hook(monkeypatch)

@@ -434,6 +434,110 @@ def _is_meta_query(text: str) -> bool:
     return bool(_META_QUERY_PATTERNS.match(text.strip()))
 
 
+_WEB_SEARCH_TOOL_RE = re.compile(
+    r"(?:^|[_\-\s])"
+    r"(?:web[_\-\s]*search|websearch|search[_\-\s]*web|browser|searx|firecrawl)"
+    r"(?:$|[_\-\s])",
+    re.IGNORECASE,
+)
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+    if isinstance(value, (int, float)):
+        return value != 0
+    return False
+
+
+def _request_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for candidate in (
+        data.get("metadata"),
+        data.get("litellm_metadata"),
+        data.get("litellm_params", {}).get("metadata")
+        if isinstance(data.get("litellm_params"), dict)
+        else None,
+    ):
+        if isinstance(candidate, dict):
+            metadata.update(candidate)
+    return metadata
+
+
+def _tool_name(tool: object) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function = tool.get("function")
+    names = [
+        tool.get("name"),
+        tool.get("type"),
+        function.get("name") if isinstance(function, dict) else None,
+    ]
+    return " ".join(str(name) for name in names if name)
+
+
+def _tool_description(tool: object) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function = tool.get("function")
+    descriptions = [
+        tool.get("description"),
+        function.get("description") if isinstance(function, dict) else None,
+    ]
+    return " ".join(str(description) for description in descriptions if description)
+
+
+def _request_has_web_search(data: dict[str, Any]) -> bool:
+    """Return True when this LiteLLM request advertises Web Search.
+
+    LibreChat can expose search either as an OpenAI-style tool/function or as
+    explicit metadata. We accept both so the hook works with current LibreChat
+    tool payloads and with a future first-class ``klai_web_search_enabled`` flag.
+    """
+    metadata = _request_metadata(data)
+    for key in (
+        "klai_web_search_enabled",
+        "web_search_enabled",
+        "webSearch",
+        "web_search",
+    ):
+        if _truthy(metadata.get(key)):
+            return True
+
+    if isinstance(data.get("web_search_options"), dict):
+        return True
+
+    tools = data.get("tools")
+    if not isinstance(tools, list):
+        return False
+    for tool in tools:
+        name = _tool_name(tool)
+        if name and _WEB_SEARCH_TOOL_RE.search(name):
+            return True
+        if (
+            name.strip().lower() == "search"
+            and "web" in _tool_description(tool).lower()
+        ):
+            return True
+    return False
+
+
+def _general_runtime_capabilities_block(data: dict[str, Any]) -> str:
+    if not _request_has_web_search(data):
+        return ""
+    return (
+        "[Klai Runtime Capabilities]\n"
+        "Knowledge Base: none selected.\n"
+        "Web Search: available for this turn.\n"
+        "Instruction: for questions that need a live lookup, use the available "
+        "Web Search tool or provided web results now. Do NOT tell the user to "
+        "enable Search unless the tool call fails or no search result is returned.\n"
+        "[End Klai Runtime Capabilities]"
+    )
+
+
 def _last_user_message(messages: list[dict]) -> str | None:
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -1711,7 +1815,11 @@ class KlaiKnowledgeHook(CustomLogger):
         # contract is shared between GROUNDED and GENERAL prompts).
         if not kb_personal and kb_slugs == []:
             _prepend_system_prefix(
-                messages, _compose_general_chat_prefix(templates_block)
+                messages,
+                _compose_general_chat_prefix(
+                    _general_runtime_capabilities_block(data),
+                    templates_block,
+                ),
             )
             data["messages"] = messages
             return data

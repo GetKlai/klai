@@ -52,6 +52,12 @@ model_list:
     rpm: 1000
     tpm: 1000000
 
+search_tools:
+  - search_tool_name: klai-web-search
+    litellm_params:
+      search_provider: searxng
+      api_base: os.environ/SEARXNG_API_BASE
+
 router_settings:
   routing_strategy: simple-shuffle
   optional_pre_call_checks:
