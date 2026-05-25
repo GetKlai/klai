@@ -1270,7 +1270,44 @@ def _set_message_content(message: object, content: object) -> None:
         setattr(message, "content", content)
 
 
-def _compose_kb_response(response: object, kb_meta: dict[str, Any]) -> int:
+def _get_response_choices(response: object) -> object:
+    if isinstance(response, dict):
+        return response.get("choices") or []
+    return getattr(response, "choices", []) or []
+
+
+def _flush_citation_stream_buffer(
+    response: object,
+    kb_meta: dict[str, Any],
+    citation_chunks: list[dict],
+    allowed_image_urls: set[str],
+) -> int:
+    stream_parts = kb_meta.get("_citation_stream_parts") or []
+    full_text = "".join(part for part in stream_parts if isinstance(part, str))
+    if not full_text:
+        return 0
+
+    for choice in _get_response_choices(response):
+        delta = _get_choice_message(choice, "delta")
+        if delta is None:
+            continue
+        composed = render_markdown_answer_with_sources(
+            full_text,
+            citation_chunks,
+            allowed_image_urls=allowed_image_urls,
+        )
+        _set_message_content(delta, composed.content)
+        stream_parts.clear()
+        return 1
+    return 0
+
+
+def _compose_kb_response(
+    response: object,
+    kb_meta: dict[str, Any],
+    *,
+    flush_stream: bool = False,
+) -> int:
     """Replace model-authored references with deterministic chunk citations."""
     allowed_image_urls = {
         url
@@ -1284,7 +1321,7 @@ def _compose_kb_response(response: object, kb_meta: dict[str, Any]) -> int:
         return 0
 
     changed = 0
-    for choice in getattr(response, "choices", []) or []:
+    for choice in _get_response_choices(response):
         message = _get_choice_message(choice, "message")
         if message is not None:
             content = _get_message_content(message)
@@ -1308,17 +1345,13 @@ def _compose_kb_response(response: object, kb_meta: dict[str, Any]) -> int:
             stream_parts.append(content)
             _set_message_content(delta, "")
             changed += 1
-        if _get_choice_finish_reason(choice):
-            full_text = "".join(part for part in stream_parts if isinstance(part, str))
-            if full_text:
-                composed = render_markdown_answer_with_sources(
-                    full_text,
-                    citation_chunks,
-                    allowed_image_urls=allowed_image_urls,
-                )
-                _set_message_content(delta, composed.content)
-                stream_parts.clear()
-                changed += 1
+        if flush_stream or _get_choice_finish_reason(choice):
+            changed += _flush_citation_stream_buffer(
+                response,
+                kb_meta,
+                citation_chunks,
+                allowed_image_urls,
+            )
     return changed
 
 
@@ -1972,14 +2005,26 @@ class KlaiKnowledgeHook(CustomLogger):
                 yield item
             return
 
+        pending_item = None
         async for item in response:
+            if pending_item is not None:
+                yield pending_item
+            pending_item = item
             composed_count = _compose_kb_response(item, kb_meta)
             if composed_count:
                 logger.warning(
                     "KB output guard composed deterministic citations for %d streaming response chunks",
                     composed_count,
                 )
-            yield item
+        if pending_item is not None and kb_meta.get("_citation_stream_parts"):
+            composed_count = _compose_kb_response(pending_item, kb_meta, flush_stream=True)
+            if composed_count:
+                logger.warning(
+                    "KB output guard composed deterministic citations for %d streaming response chunks at iterator close",
+                    composed_count,
+                )
+        if pending_item is not None:
+            yield pending_item
 
     async def async_post_call_failure_hook(self, *args, **kwargs):
         pass
