@@ -2195,8 +2195,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         format_section = sys_content.split("[ANSWER FORMAT — always follow this", 1)[1]
         format_section = format_section.split("[End knowledge base context]", 1)[0]
 
-        assert "NEVER invent a URL" in format_section
-        assert "If no chunk has a source_url" in format_section
+        assert "NEVER invent or write a URL" in format_section
+        assert "The application adds citations after generation" in format_section
         assert "NEVER create, guess, search for, or suggest an image URL" in format_section
         assert "no explicit image tag is present" in format_section
         assert "no image is available in the knowledge base" in format_section
@@ -2256,8 +2256,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
     @pytest.mark.asyncio
-    async def test_prompt_deduplicates_document_sources(self, monkeypatch):
-        """Multiple chunks from one URL should become one document source."""
+    async def test_prompt_keeps_source_urls_out_of_llm_context(self, monkeypatch):
+        """Source URLs stay in metadata; the LLM no longer authors source links."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
@@ -2305,21 +2305,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             )
 
         sys_content = self._system_msg(result)
-        assert "DOCUMENT SOURCES (deduplicated by source_url):" in sys_content
-        document_sources = sys_content.split(
-            "DOCUMENT SOURCES (deduplicated by source_url):", 1
-        )[1].split("###", 1)[0]
-        assert document_sources.count(
-            "https://getklai.com/docs/company/steward-ownership"
-        ) == 1
-        assert (
-            "S1. Steward ownership — https://getklai.com/docs/company/steward-ownership "
-            "(chunks [1], [2])"
-        ) in document_sources
-        assert (
-            "S2. Mission — https://getklai.com/docs/company/mission (chunks [3])"
-            in document_sources
-        )
+        assert "DOCUMENT SOURCES (deduplicated by source_url):" not in sys_content
+        assert "source_url:" not in sys_content
+        assert "https://getklai.com/docs/company/steward-ownership" not in sys_content
+        assert "https://getklai.com/docs/company/mission" not in sys_content
         assert "www.getklai.com" not in sys_content
 
         kb_meta = result["metadata"]["_klai_kb_meta"]
@@ -2332,55 +2321,11 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             "2": "https://getklai.com/docs/company/steward-ownership",
             "3": "https://getklai.com/docs/company/mission",
         }
-
-    def test_sanitizer_removes_unretrieved_links_and_images(self, monkeypatch):
-        """Output guard keeps only exact URLs retrieved for this KB call."""
-        mod = _load_hook(monkeypatch)
-
-        text = (
-            "Bron: [ok](https://docs.getklai.com/diagram) "
-            "[fake](https://example.com/fake). "
-            "Goed: ![diagram](https://getklai.getklai.com/kb-images/org/diagram.png) "
-            "Slecht: ![fake](https://example.com/fake.png) "
-            "Raw: https://example.com/raw"
-        )
-
-        sanitized, changed = mod._sanitize_kb_markdown_output(
-            text,
-            allowed_source_urls={"https://docs.getklai.com/diagram"},
-            allowed_image_urls={
-                "https://getklai.getklai.com/kb-images/org/diagram.png"
-            },
-        )
-
-        assert changed == 3
-        assert "[ok](https://docs.getklai.com/diagram)" in sanitized
-        assert "![diagram](https://getklai.getklai.com/kb-images/org/diagram.png)" in sanitized
-        assert "https://example.com" not in sanitized
-        assert "fake" in sanitized
-        assert "[link removed]" in sanitized
-
-    def test_sanitizer_deduplicates_adjacent_same_document_citations(self, monkeypatch):
-        """Inline citation stacks from the same document are collapsed."""
-        mod = _load_hook(monkeypatch)
-
-        sanitized, changed = mod._sanitize_kb_markdown_output(
-            "Klai is steward-owned [1][2][3].",
-            allowed_source_urls={"https://getklai.com/docs/company/steward-ownership"},
-            allowed_image_urls=set(),
-            citation_source_urls={
-                1: "https://getklai.com/docs/company/steward-ownership",
-                2: "https://www.getklai.com/docs/company/steward-ownership",
-                3: "https://getklai.com/docs/company/mission",
-            },
-        )
-
-        assert sanitized == "Klai is steward-owned [1][3]."
-        assert changed == 1
+        assert kb_meta["citation_chunks"] == chunks
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_mutates_response_content(self, monkeypatch):
-        """The proxy post-call hook strips invented URLs before returning response."""
+    async def test_post_call_guard_composes_deterministic_sources(self, monkeypatch):
+        """The proxy post-call hook replaces model links with retrieved sources."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         response = SimpleNamespace(
@@ -2405,6 +2350,13 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "gate_bypassed": False,
                     "allowed_source_urls": ["https://docs.getklai.com/diagram"],
                     "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "title": "Diagram",
+                            "source_url": "https://docs.getklai.com/diagram",
+                            "text": "Deze handleiding heeft een diagram.",
+                        }
+                    ],
                 }
             }
         }
@@ -2413,6 +2365,49 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert returned is response
         content = response.choices[0].message.content
-        assert "[bron](https://docs.getklai.com/diagram)" in content
+        assert "[Diagram](https://docs.getklai.com/diagram)" in content
+        assert "Zie bron en fake (1)." in content
         assert "https://example.com" not in content
         assert "![fake]" not in content
+
+    @pytest.mark.asyncio
+    async def test_streaming_post_call_buffers_until_deterministic_sources(self, monkeypatch):
+        """Streaming chunks must not leak model-authored links before final composition."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_source_urls": ["https://docs.getklai.com/diagram"],
+                    "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "title": "Diagram",
+                            "source_url": "https://docs.getklai.com/diagram",
+                            "text": "Deze handleiding heeft een diagram.",
+                        }
+                    ],
+                }
+            }
+        }
+
+        first = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="Zie [fake]("), finish_reason=None)])
+        second = SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="https://bad.example)."), finish_reason=None)]
+        )
+        final = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=""), finish_reason="stop")])
+
+        await hook.async_post_call_success_hook(data, None, first)
+        await hook.async_post_call_success_hook(data, None, second)
+        await hook.async_post_call_success_hook(data, None, final)
+
+        assert first.choices[0].delta.content == ""
+        assert second.choices[0].delta.content == ""
+        assert "https://bad.example" not in final.choices[0].delta.content
+        assert "Zie fake (1)." in final.choices[0].delta.content
+        assert "[Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content

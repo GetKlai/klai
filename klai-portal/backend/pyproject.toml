@@ -46,6 +46,9 @@ dependencies = [
     # used by partner_chat. Single source of truth across portal-api and
     # retrieval-api; CI lint asserts no other service hardcodes a copy.
     "klai-chat-prompts",
+    # Shared deterministic citation composer used by widget/partner chat and
+    # vendored into the LiteLLM hook for the LibreChat path.
+    "klai-citations",
     # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07: passive language detection
     # for the chat_synthesis_complete log event in partner_chat.
     "lingua-language-detector>=2.2.0",
@@ -61,6 +64,7 @@ klai-image-storage = { path = "../../klai-libs/image-storage", editable = true }
 klai-identity-assert = { path = "../../klai-libs/identity-assert", editable = true }
 klai-log-utils = { path = "../../klai-libs/log-utils", editable = true }
 klai-chat-prompts = { path = "../../klai-libs/chat-prompts", editable = true }
+klai-citations = { path = "../../klai-libs/citations", editable = true }
 
 [project.optional-dependencies]
 dev = [
