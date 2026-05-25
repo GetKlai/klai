@@ -54,6 +54,7 @@ _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?
 _MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\([^)]*\)")
 _MARKDOWN_HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$")
 _ORDERED_LIST_ITEM_RE = re.compile(r"^\s*(\d+)[.)]\s+")
+_ORDERED_LIST_LINE_RE = re.compile(r"^(\s*)(\d+)([.)])(\s+.+)$")
 _NUMERIC_MARKDOWN_CITATION_RE = re.compile(r"\[\s*\d{1,3}\s*\]\([^)]*\)")
 _BARE_BRACKET_CITATION_RE = re.compile(r"(?<!!)\[\s*\d{1,3}\s*\]")
 _PAREN_CITATION_RE = re.compile(r"\(\s*\d{1,3}(?:\s*[,;]\s*\d{1,3})*\s*\)")
@@ -334,6 +335,39 @@ def _looks_like_source_list_line(line: str) -> bool:
     return bool(re.search(r"\b(?:bron|source|stichting|privacy|policy|docs?)\b", rest, re.IGNORECASE))
 
 
+def _renumber_ordered_list_runs(text: str) -> str:
+    """Renumber copied mid-document ordered-list excerpts to clean local lists."""
+    lines = text.splitlines()
+    output: list[str] = []
+    run: list[str] = []
+
+    def flush_run() -> None:
+        nonlocal run
+        if not run:
+            return
+        numbers = [int(match.group(2)) for line in run if (match := _ORDERED_LIST_LINE_RE.match(line))]
+        expected = list(range(1, len(run) + 1))
+        if len(run) >= 2 and numbers != expected:
+            for index, line in enumerate(run, 1):
+                match = _ORDERED_LIST_LINE_RE.match(line)
+                if match:
+                    output.append(f"{match.group(1)}{index}{match.group(3)}{match.group(4)}")
+                else:
+                    output.append(line)
+        else:
+            output.extend(run)
+        run = []
+
+    for line in lines:
+        if _ORDERED_LIST_LINE_RE.match(line):
+            run.append(line)
+            continue
+        flush_run()
+        output.append(line)
+    flush_run()
+    return "\n".join(output)
+
+
 def strip_model_citation_artifacts(text: str, *, allowed_image_urls: set[str] | None = None) -> str:
     """Remove model-authored citations/source lists before composing our own."""
     allowed_image_urls = {
@@ -375,6 +409,7 @@ def strip_model_citation_artifacts(text: str, *, allowed_image_urls: set[str] | 
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"[ \t]+([.,;:!?])", r"\1", cleaned)
     cleaned = re.sub(r"\(\s*\)", "", cleaned)
+    cleaned = _renumber_ordered_list_runs(cleaned)
     for placeholder, image_markdown in image_placeholders.items():
         cleaned = cleaned.replace(placeholder, image_markdown)
     return cleaned.strip()
