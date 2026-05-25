@@ -30,10 +30,10 @@ from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
 
 from app.core.config import Settings
 from app.services.citations import (
-    build_citation_registry,
+    compose_answer_with_trusted_sources,
+    evidence_pack_items_as_chunks,
     render_evidence_context,
-    render_structured_sources,
-    strip_model_citation_artifacts,
+    trusted_sources_from_evidence_pack,
 )
 from app.trace import get_trace_headers
 from app.utils.language_detect import (
@@ -1069,48 +1069,15 @@ def _no_citable_sources_message(user_query: str) -> str:
 
 def _compose_backend_managed_answer(
     text: str,
-    citation_chunks: list[dict] | None,
+    trusted_sources: list[dict[str, Any]] | None,
     user_query: str,
 ) -> tuple[str, list[dict]]:
-    registry = build_citation_registry(citation_chunks or [])
-    sources = render_structured_sources(registry, max_sources=None)
-    if not sources:
+    composed = compose_answer_with_trusted_sources(text, trusted_sources or [])
+    if not composed.sources:
         return _no_citable_sources_message(user_query), []
-    content = strip_model_citation_artifacts(text)
-    if not content:
+    if not composed.content:
         return _no_citable_sources_message(user_query), []
-    return content, sources
-
-
-def _evidence_pack_items_as_chunks(evidence_pack: object) -> list[dict[str, Any]]:
-    if not isinstance(evidence_pack, dict):
-        return []
-    items = evidence_pack.get("items")
-    if not isinstance(items, list):
-        return []
-    chunks: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        chunks.append(
-            {
-                "chunk_id": item.get("chunk_id"),
-                "artifact_id": item.get("artifact_id"),
-                "content_type": item.get("content_type"),
-                "text": item.get("text"),
-                "title": item.get("title"),
-                "heading_path": item.get("heading_path"),
-                "source_url": item.get("source_url"),
-                "source_label": item.get("source_label"),
-                "score": item.get("score"),
-                "reranker_score": item.get("reranker_score"),
-                "final_score": item.get("final_score"),
-                "scope": item.get("scope"),
-                "image_urls": item.get("image_urls"),
-                "is_parent_text": item.get("is_parent_text"),
-            }
-        )
-    return chunks
+    return composed.content, composed.sources
 
 
 async def _chat_completion_streaming_with_composed_citations(
@@ -1121,7 +1088,7 @@ async def _chat_completion_streaming_with_composed_citations(
     settings: Settings,
     org_id: int | str | None,
     user_query: str,
-    citation_chunks: list[dict] | None,
+    trusted_sources: list[dict[str, Any]] | None,
 ) -> AsyncGenerator[bytes]:
     """Collect widget text, compose deterministic citations, then stream once."""
     raw_text_parts: list[str] = []
@@ -1161,7 +1128,7 @@ async def _chat_completion_streaming_with_composed_citations(
 
     content, sources = _compose_backend_managed_answer(
         "".join(raw_text_parts),
-        citation_chunks,
+        trusted_sources,
         user_query,
     )
     if not sources:
@@ -1252,7 +1219,7 @@ async def retrieve_context(
     partner_user_id: str | None = None,
     widget_system_prompt: str | None = None,
     backend_managed_citations: bool = False,
-) -> tuple[list[dict], str]:
+) -> tuple[list[dict], str, list[dict[str, Any]]]:
     """Call retrieval-api and return (chunks, augmented_system_prompt).
 
     Follows the pattern from deploy/litellm/klai_knowledge.py.
@@ -1273,7 +1240,7 @@ async def retrieve_context(
             [],
             widget_system_prompt=widget_system_prompt,
             backend_managed_citations=backend_managed_citations,
-        )
+        ), []
 
     conversation_history = _build_conversation_history(messages)
 
@@ -1305,7 +1272,7 @@ async def retrieve_context(
             original_system,
             widget_system_prompt,
             backend_managed_citations=backend_managed_citations,
-        )
+        ), []
 
     # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
     # retrieval_api_internal_secret (separate from portal-api's mailer secret).
@@ -1329,8 +1296,8 @@ async def retrieve_context(
         result = resp.json()
 
     evidence_pack = result.get("evidence_pack")
-    evidence_chunks = _evidence_pack_items_as_chunks(evidence_pack)
-    chunks = evidence_chunks if isinstance(evidence_pack, dict) else result.get("chunks", [])
+    chunks = evidence_pack_items_as_chunks(evidence_pack)
+    trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
     system_prompt = _build_system_prompt(
         chunks,
         original_system,
@@ -1338,7 +1305,7 @@ async def retrieve_context(
         backend_managed_citations=backend_managed_citations,
     )
 
-    return chunks, system_prompt
+    return chunks, system_prompt, trusted_sources
 
 
 def _extract_completion_text(body: dict) -> str:
@@ -1367,6 +1334,7 @@ async def chat_completion_non_streaming(
     citation_source_urls: dict[int, str] | None = None,
     citation_source_metadata: dict[str, dict[str, str]] | None = None,
     citation_chunks: list[dict] | None = None,
+    trusted_sources: list[dict[str, Any]] | None = None,
     citation_output: CitationOutput = "links",
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
@@ -1407,7 +1375,7 @@ async def chat_completion_non_streaming(
             if isinstance(message, dict) and isinstance(content, str):
                 rendered_content, sources = _compose_backend_managed_answer(
                     content,
-                    citation_chunks,
+                    trusted_sources,
                     _last_user_message(messages) or "",
                 )
                 message["content"] = rendered_content
@@ -1451,6 +1419,7 @@ async def chat_completion_streaming(
     citation_source_urls: dict[int, str] | None = None,
     citation_source_metadata: dict[str, dict[str, str]] | None = None,
     citation_chunks: list[dict] | None = None,
+    trusted_sources: list[dict[str, Any]] | None = None,
     citation_output: CitationOutput = "links",
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with KB-source URL sanitization.
@@ -1472,7 +1441,7 @@ async def chat_completion_streaming(
             settings=settings,
             org_id=org_id,
             user_query=user_query,
-            citation_chunks=citation_chunks,
+            trusted_sources=trusted_sources,
         ):
             yield chunk
         return

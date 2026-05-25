@@ -99,7 +99,26 @@ def test_evidence_pack_refuses_low_relevance_citable_sources():
     assert pack.no_citable_reason == "below_relevance_threshold"
 
 
-def test_evidence_pack_filters_sources_that_do_not_match_query_evidence():
+def test_evidence_pack_keeps_low_score_sources_when_threshold_not_requested():
+    pack = build_evidence_pack(
+        [
+            {
+                "chunk_id": "invite-user",
+                "title": "Adding A New User",
+                "text": "Open Admin > Users and invite the new user by email.",
+                "source_url": "https://getklai.com/docs/admin/add-user",
+                "score": 0.2,
+                "reranker_score": 0.12,
+            }
+        ],
+        query="Heej hoe voeg ik een nieuwe gebruiker toe?",
+    )
+
+    assert [source.title for source in pack.sources] == ["Adding A New User"]
+    assert [item.chunk_id for item in pack.items] == ["invite-user"]
+
+
+def test_evidence_pack_projects_citable_retrieval_sources_without_reranking():
     pack = build_evidence_pack(
         [
             {
@@ -138,8 +157,16 @@ def test_evidence_pack_filters_sources_that_do_not_match_query_evidence():
         query="Heej hoe voeg ik een nieuwe gebruiker toe?",
     )
 
-    assert [source.title for source in pack.sources] == ["Invite and remove people"]
-    assert [item.chunk_id for item in pack.items] == ["invite-user"]
+    assert [source.title for source in pack.sources] == [
+        "Invite and remove people",
+        "Getting started",
+        "The five roles",
+    ]
+    assert [item.chunk_id for item in pack.items] == [
+        "invite-user",
+        "getting-started",
+        "roles",
+    ]
 
 
 def test_evidence_pack_can_select_role_source_for_role_query():

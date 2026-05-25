@@ -50,12 +50,11 @@ from klai_chat_prompts import (
     META_CHAT_SYSTEM_PROMPT,
 )
 from klai_citations import (
-    CitationRegistry,
-    build_citation_registry,
+    evidence_pack_items_as_chunks,
     format_sources_markdown,
     render_evidence_context,
-    render_markdown_answer,
     strip_model_citation_artifacts,
+    trusted_sources_from_evidence_pack,
 )
 
 # SPEC-MCP-RETRIEVAL-001 Phase 1: telemetry helpers moved out of this file
@@ -1483,65 +1482,6 @@ def _get_response_choices(response: object) -> object:
     return getattr(response, "choices", []) or []
 
 
-def _normalise_evidence_pack_sources(evidence_pack: object) -> list[dict[str, Any]]:
-    if not isinstance(evidence_pack, dict):
-        return []
-    sources = evidence_pack.get("sources")
-    if not isinstance(sources, list):
-        return []
-    rendered: list[dict[str, Any]] = []
-    for index, source in enumerate(sources, 1):
-        if not isinstance(source, dict):
-            continue
-        url = _normalise_guard_url(source.get("source_url") or source.get("url"))
-        if not url:
-            continue
-        rendered.append(
-            {
-                "label": str(index),
-                "title": source.get("title") or "Source",
-                "url": url,
-                "source_id": source.get("source_id"),
-                "evidence_ids": source.get("evidence_ids") or [],
-                "artifact_id": source.get("artifact_id"),
-                "source_label": source.get("source_label"),
-                "relevance_score": source.get("relevance_score"),
-            }
-        )
-    return rendered
-
-
-def _evidence_pack_items_as_chunks(evidence_pack: object) -> list[dict[str, Any]]:
-    if not isinstance(evidence_pack, dict):
-        return []
-    items = evidence_pack.get("items")
-    if not isinstance(items, list):
-        return []
-    chunks: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        chunks.append(
-            {
-                "chunk_id": item.get("chunk_id"),
-                "artifact_id": item.get("artifact_id"),
-                "content_type": item.get("content_type"),
-                "text": item.get("text"),
-                "title": item.get("title"),
-                "heading_path": item.get("heading_path"),
-                "source_url": item.get("source_url"),
-                "source_label": item.get("source_label"),
-                "score": item.get("score"),
-                "reranker_score": item.get("reranker_score"),
-                "final_score": item.get("final_score"),
-                "scope": item.get("scope"),
-                "image_urls": item.get("image_urls"),
-                "is_parent_text": item.get("is_parent_text"),
-            }
-        )
-    return chunks
-
-
 def _citation_render_inputs(kb_meta: dict[str, Any]) -> tuple[set[str], list[dict], list[dict[str, Any]]]:
     allowed_image_urls = {
         url
@@ -1577,31 +1517,18 @@ class _KbCitationRenderStats:
 
 def _render_kb_citation_content(
     text: str,
-    registry: CitationRegistry,
     *,
     allowed_image_urls: set[str],
     user_query: object,
-    trusted_sources: list[dict[str, Any]] | None = None,
+    trusted_sources: list[dict[str, Any]],
 ) -> tuple[str, int, bool]:
-    if trusted_sources is not None:
-        if not trusted_sources:
-            return _no_citable_sources_message(user_query), 0, True
-        cleaned = strip_model_citation_artifacts(text, allowed_image_urls=allowed_image_urls)
-        sources_markdown = format_sources_markdown(trusted_sources)
-        if not cleaned or not sources_markdown:
-            return _no_citable_sources_message(user_query), 0, True
-        return f"{cleaned}\n\n{sources_markdown}", len(trusted_sources), False
-
-    if not getattr(registry, "has_sources", False):
+    if not trusted_sources:
         return _no_citable_sources_message(user_query), 0, True
-    rendered = render_markdown_answer(
-        text,
-        registry,
-        allowed_image_urls=allowed_image_urls,
-    )
-    if not rendered.sources:
+    cleaned = strip_model_citation_artifacts(text, allowed_image_urls=allowed_image_urls)
+    sources_markdown = format_sources_markdown(trusted_sources)
+    if not cleaned or not sources_markdown:
         return _no_citable_sources_message(user_query), 0, True
-    return rendered.content, len(rendered.sources), False
+    return f"{cleaned}\n\n{sources_markdown}", len(trusted_sources), False
 
 
 def _log_kb_citation_render(
@@ -1619,7 +1546,7 @@ def _log_kb_citation_render(
         else "kb_citations_rendered_markdown"
     )
     logger.warning(
-        "%s org_id=%s user_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s",
+        "%s org_id=%s user_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s",
         event,
         kb_meta.get("org_id"),
         kb_meta.get("user_id"),
@@ -1628,6 +1555,7 @@ def _log_kb_citation_render(
         stats.rendered_messages,
         stats.rendered_sources,
         kb_meta.get("chunks_injected"),
+        kb_meta.get("no_citable_reason"),
     )
 
 
@@ -1645,15 +1573,15 @@ def _flush_citation_stream_buffer(
 
     trusted_sources = kb_meta.get("trusted_sources")
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
-    registry = build_citation_registry(citation_chunks)
+    if not isinstance(trusted_sources, list):
+        trusted_sources = []
+    if not trusted_sources and not force_no_citable and not citation_chunks:
+        return stats
     rendered_content, rendered_sources, no_citable_sources = _render_kb_citation_content(
         full_text,
-        registry,
         allowed_image_urls=allowed_image_urls,
         user_query=kb_meta.get("user_query"),
-        trusted_sources=trusted_sources
-        if isinstance(trusted_sources, list) and (trusted_sources or force_no_citable)
-        else None,
+        trusted_sources=trusted_sources,
     )
 
     for choice in _get_response_choices(response):
@@ -1680,7 +1608,6 @@ def _compose_non_streaming_kb_response(
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
     if not citation_chunks and not trusted_sources and not force_no_citable:
         return stats
-    registry = build_citation_registry(citation_chunks)
 
     for choice in _get_response_choices(response):
         message = _get_choice_message(choice, "message")
@@ -1690,10 +1617,9 @@ def _compose_non_streaming_kb_response(
         if isinstance(content, str):
             rendered_content, rendered_sources, no_citable_sources = _render_kb_citation_content(
                 content,
-                registry,
                 allowed_image_urls=allowed_image_urls,
                 user_query=kb_meta.get("user_query"),
-                trusted_sources=trusted_sources if trusted_sources or force_no_citable else None,
+                trusted_sources=trusted_sources,
             )
             if rendered_content != content:
                 _set_message_content(message, rendered_content)
@@ -2232,8 +2158,8 @@ class KlaiKnowledgeHook(CustomLogger):
                 "gate_bypassed": False,
             }
             return data
-        evidence_chunks = _evidence_pack_items_as_chunks(evidence_pack)
-        trusted_sources = _normalise_evidence_pack_sources(evidence_pack)
+        evidence_chunks = evidence_pack_items_as_chunks(evidence_pack)
+        trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
         context_chunks = evidence_chunks
         # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2: confidence band drives the
         # anti-hallucination injection. None on bypass paths (fail-open).
@@ -2352,17 +2278,14 @@ class KlaiKnowledgeHook(CustomLogger):
             "- Do NOT add images in the TL;DR (section 1).]\n"
         )
         lines = [header, source_link_instruction]
-        citation_registry = build_citation_registry(context_chunks)
         citation_source_urls: dict[int, str] = {}
         for chunk_index, chunk in enumerate(context_chunks, 1):
             source_url = _chunk_source_url(chunk)
             if source_url:
                 citation_source_urls[chunk_index] = source_url
-        allowed_source_urls: set[str] = (
-            {source["url"] for source in trusted_sources if isinstance(source.get("url"), str)}
-            if has_evidence_pack
-            else {source.url for source in citation_registry.sources}
-        )
+        allowed_source_urls: set[str] = {
+            source["url"] for source in trusted_sources if isinstance(source.get("url"), str)
+        }
         allowed_image_urls: set[str] = set()
 
         context_block = render_evidence_context(context_chunks, include_source_urls=False)
@@ -2445,9 +2368,7 @@ class KlaiKnowledgeHook(CustomLogger):
             "citation_chunks": context_chunks,
             "trusted_sources": trusted_sources,
             "evidence_pack": evidence_pack if isinstance(evidence_pack, dict) else None,
-            "citable_sources_count": len(trusted_sources)
-            if has_evidence_pack
-            else len(citation_registry.sources),
+            "citable_sources_count": len(trusted_sources),
             "original_stream": original_stream,
             "render_mode": render_strategy.mode,
             "retrieval_ms": retrieval_ms,

@@ -67,9 +67,6 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
         evidence_pack = build_evidence_pack(
             reranked,
             query=query_resolved,
-            min_relevance_score=settings.confidence_band_low_threshold
-            if settings.reranker_enabled
-            else None,
         )
 
         retrieval_ms = (time.perf_counter() - t0) * 1000

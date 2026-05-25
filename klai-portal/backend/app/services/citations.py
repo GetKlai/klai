@@ -10,8 +10,10 @@ from klai_citations import (
     ComposedCitations,
     build_citation_registry,
     citation_sources_from_chunks,
+    compose_answer_with_trusted_sources,
     compose_citations,
     evidence_chunks_from_chunks,
+    evidence_pack_items_as_chunks,
     format_sources_markdown,
     normalise_source_url,
     render_evidence_context,
@@ -22,6 +24,7 @@ from klai_citations import (
     render_structured_sources,
     source_url_key,
     strip_model_citation_artifacts,
+    trusted_sources_from_evidence_pack,
 )
 
 __all__ = [
@@ -30,8 +33,10 @@ __all__ = [
     "ComposedCitations",
     "build_citation_registry",
     "citation_sources_from_chunks",
+    "compose_answer_with_trusted_sources",
     "compose_citations",
     "evidence_chunks_from_chunks",
+    "evidence_pack_items_as_chunks",
     "format_sources_markdown",
     "normalise_source_url",
     "render_evidence_context",
@@ -42,4 +47,5 @@ __all__ = [
     "render_structured_sources",
     "source_url_key",
     "strip_model_citation_artifacts",
+    "trusted_sources_from_evidence_pack",
 ]
