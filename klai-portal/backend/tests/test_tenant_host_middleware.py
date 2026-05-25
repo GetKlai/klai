@@ -31,6 +31,7 @@ def _make_request(
     method: str = "GET",
     query: str = "",
     accept: str = "application/json",
+    referer: str | None = None,
     session_org_id: int | None = 42,
 ) -> MagicMock:
     """Build a Starlette-compatible request mock."""
@@ -41,6 +42,8 @@ def _make_request(
     request.url.path = path
     request.url.query = query
     request.headers = {"accept": accept}
+    if referer is not None:
+        request.headers["referer"] = referer
 
     if session_org_id is not None:
         request.state.session = SessionContext(
@@ -275,11 +278,12 @@ class TestMismatchResponse:
 
     @pytest.mark.asyncio
     async def test_xhr_request_returns_409_json(self) -> None:
-        """XHR/fetch gets a 409 with structured error_code body."""
+        """XHR/fetch gets a 409 with a redirect back to the browser route."""
         middleware = KlaiTenantHostMiddleware(app=MagicMock())
         request = _make_request(
             host="voys.getklai.com",
             path="/api/me",
+            referer="https://voys.getklai.com/app/chat",
             session_org_id=42,
             accept="application/json",
         )
@@ -294,13 +298,33 @@ class TestMismatchResponse:
         assert body == {
             "detail": {
                 "error_code": "tenant_host_mismatch",
-                "redirect_to": "https://getklai.getklai.com/api/me",
+                "redirect_to": "https://getklai.getklai.com/app/chat",
             }
         }
 
     @pytest.mark.asyncio
-    async def test_xhr_request_with_query_string(self) -> None:
-        """409 JSON's redirect_to preserves the query string."""
+    async def test_xhr_request_uses_referer_query_string(self) -> None:
+        """409 JSON's redirect_to preserves the browser route query string."""
+        middleware = KlaiTenantHostMiddleware(app=MagicMock())
+        request = _make_request(
+            host="voys.getklai.com",
+            path="/api/me",
+            query="api_query_is_not_a_browser_route=1",
+            referer="https://voys.getklai.com/app/knowledge?tab=sources",
+            session_org_id=42,
+            accept="application/json",
+        )
+        call_next = AsyncMock()
+
+        with patch.object(mw_module, "_resolve_org_slug", _slug_resolver({42: "getklai"})):
+            response = await middleware.dispatch(request, call_next)
+
+        body = json.loads(response.body)
+        assert body["detail"]["redirect_to"] == "https://getklai.getklai.com/app/knowledge?tab=sources"
+
+    @pytest.mark.asyncio
+    async def test_api_mismatch_without_referer_falls_back_to_root(self) -> None:
+        """Never redirect a browser to raw API JSON when no Referer exists."""
         middleware = KlaiTenantHostMiddleware(app=MagicMock())
         request = _make_request(
             host="voys.getklai.com",
@@ -315,7 +339,7 @@ class TestMismatchResponse:
             response = await middleware.dispatch(request, call_next)
 
         body = json.loads(response.body)
-        assert body["detail"]["redirect_to"] == "https://getklai.getklai.com/api/me?x=1"
+        assert body["detail"]["redirect_to"] == "https://getklai.getklai.com/"
 
     @pytest.mark.asyncio
     async def test_accept_with_both_html_and_json_returns_json(self) -> None:
