@@ -152,13 +152,25 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
     )
 
 
-async def _get_widget_or_404(widget_id: str, org_id: int, db: AsyncSession) -> Widget:
-    result = await db.execute(
-        select(Widget).where(
-            Widget.id == widget_id,
-            Widget.org_id == org_id,
-        )
-    )
+async def _get_widget_or_404(
+    widget_id: str,
+    org_id: int,
+    db: AsyncSession,
+    *,
+    include_deleted: bool = False,
+) -> Widget:
+    """Tenant-scoped widget lookup.
+
+    REQ-16 (Finding B-14, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): callers that
+    drive live widget behaviour MUST exclude soft-deleted widgets (default).
+    Audit-trail endpoints that read historical conversations pass
+    ``include_deleted=True`` so admins keep being able to investigate after
+    a widget is wiped.
+    """
+    conditions = [Widget.id == widget_id, Widget.org_id == org_id]
+    if not include_deleted:
+        conditions.append(Widget.deleted_at.is_(None))
+    result = await db.execute(select(Widget).where(*conditions))
     widget = result.scalar_one_or_none()
     if widget is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Widget not found")
@@ -363,12 +375,16 @@ async def widget_preview_session(
     kb_rows = await db.execute(select(WidgetKbAccess.kb_id).where(WidgetKbAccess.widget_id == widget.id))
     kb_ids = [row[0] for row in kb_rows.all()]
 
+    # REQ-15 (Finding B-11): mark the admin-preview JWT with is_preview=true
+    # so widget_audit can flag the conversation and the stats query can
+    # exclude it. @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-15
     token = generate_session_token(
         wgt_id=widget.widget_id,
         org_id=widget.org_id,
         kb_ids=kb_ids,
         secret=settings.widget_jwt_secret,
         tenant_slug=org.slug,
+        is_preview=True,
     )
     return PreviewSessionResponse(
         session_token=token,
@@ -440,16 +456,21 @@ async def delete_widget(
     _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Permanently delete a widget and its KB access entries."""
+    """Soft-delete a widget and revoke its KB access entries.
+
+    REQ-16 (Finding B-14, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): widgets are
+    soft-deleted (``deleted_at = NOW()``) so the conversation/messages audit
+    trail survives admin "wipe traces" attempts. ``widget_kb_access`` is
+    still hard-deleted so a soft-deleted widget cannot route to any KB.
+    @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-16
+    """
     widget = await _get_widget_or_404(widget_id, perms.org_id, db)
 
+    # Revoke KB access on soft-delete: a soft-deleted widget MUST NOT keep
+    # querying KBs. The audit-trail rows that DO survive (conversations,
+    # messages) only reference the widget id, never the KB list.
     await db.execute(delete(WidgetKbAccess).where(WidgetKbAccess.widget_id == widget.id))
-    await db.execute(
-        delete(Widget).where(
-            Widget.id == widget.id,
-            Widget.org_id == perms.org_id,
-        )
-    )
+    widget.deleted_at = datetime.now(UTC)
     await db.commit()
 
     emit_event(
@@ -458,7 +479,7 @@ async def delete_widget(
         user_id=perms.user_id,
         properties={"widget_id": widget.id, "name": widget.name},
     )
-    logger.info("Widget deleted", widget_id=widget.id, org_id=perms.org_id)
+    logger.info("Widget soft-deleted", widget_id=widget.id, org_id=perms.org_id)
 
 
 # ---------------------------------------------------------------------------
@@ -521,14 +542,18 @@ async def list_widget_conversations(
     cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
 ) -> list[ConversationListItem]:
     """Paginated list of conversations for one widget, newest first.
 
     Cursor = ISO timestamp of the last row returned. Pass it to
     ``cursor`` to fetch the next page (``started_at < cursor``).
+
+    REQ-16: audit-trail endpoints accept soft-deleted widgets so admins
+    keep being able to read conversation history after a widget is wiped.
     """
-    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db, include_deleted=True)
 
     params: dict[str, object] = {"widget_id": widget.id, "limit": limit}
     if cursor:
@@ -580,10 +605,14 @@ async def get_widget_conversation(
     widget_id: str,
     conv_id: int,
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationDetail:
-    """Full transcript of one conversation, messages in chronological order."""
-    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    """Full transcript of one conversation, messages in chronological order.
+
+    REQ-16: audit-trail endpoints accept soft-deleted widgets.
+    """
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db, include_deleted=True)
 
     conv_result = await db.execute(
         text(
@@ -640,14 +669,19 @@ async def widget_activity_stats(
     widget_id: str,
     period: Literal["7d", "30d", "all"] = "7d",
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
 ) -> WidgetStats:
     """Aggregate metrics for the Activiteit tab.
 
     Three queries: totals, top 10 first-user-queries, and 24 hourly
     buckets. The ``period`` filter scopes everything to a rolling
-    window of 7 / 30 days, or all-time."""
-    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    window of 7 / 30 days, or all-time.
+
+    REQ-16: audit-trail endpoints accept soft-deleted widgets so the
+    admin Activity tab keeps surfacing history after a widget is wiped.
+    """
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db, include_deleted=True)
     cutoff = _period_cutoff(period)
 
     params: dict[str, object] = {"widget_id": widget.id}
@@ -661,6 +695,7 @@ async def widget_activity_stats(
                 "COALESCE(SUM(message_count), 0) AS total_messages "
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND is_preview = false "
                 "AND started_at >= :cutoff"
             ),
             params,
@@ -671,7 +706,8 @@ async def widget_activity_stats(
                 "SELECT COUNT(*) AS total_conversations, "
                 "COALESCE(SUM(message_count), 0) AS total_messages "
                 "FROM widget_conversations "
-                "WHERE widget_id = CAST(:widget_id AS uuid)"
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND is_preview = false"
             ),
             params,
         )
@@ -700,6 +736,7 @@ async def widget_activity_stats(
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND first_user_query IS NOT NULL "
+                "AND is_preview = false "
                 "GROUP BY first_user_query "
                 "ORDER BY c DESC, q ASC LIMIT 10"
             ),
@@ -724,6 +761,7 @@ async def widget_activity_stats(
                 "SELECT EXTRACT(HOUR FROM started_at)::int AS hour, COUNT(*) AS c "
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND is_preview = false "
                 "GROUP BY hour"
             ),
             params,

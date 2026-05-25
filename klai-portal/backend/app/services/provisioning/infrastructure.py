@@ -23,6 +23,7 @@ import structlog
 from pymongo.errors import OperationFailure
 
 from app.core.config import settings
+from app.services.provisioning._slug_guard import _assert_safe_slug
 from app.services.provisioning.generators import _generate_librechat_yaml
 
 logger = structlog.get_logger()
@@ -114,6 +115,7 @@ def _sync_drop_mongodb_tenant_user(slug: str) -> None:
     Idempotent: a missing user is not an error — tenant offboarding can be
     re-run safely if a previous attempt was interrupted.
     """
+    _assert_safe_slug(slug)  # REQ-18 (Finding C-3)
     db_name = f"librechat-{slug}"
     user = f"librechat-{slug}"
     with _mongo_admin_client() as client:
@@ -129,6 +131,7 @@ def _sync_drop_mongodb_tenant_user(slug: str) -> None:
 
 def _create_mongodb_tenant_user(slug: str, tenant_password: str) -> None:
     """Create a per-tenant MongoDB user with readWrite on the tenant's DB only."""
+    _assert_safe_slug(slug)  # REQ-18 (Finding C-3)
     db_name = f"librechat-{slug}"
     user = f"librechat-{slug}"
     try:
@@ -212,6 +215,7 @@ def _flush_redis_and_restart_librechat(slug: str) -> None:
     silently succeeded. Both were previously logged as warnings and ignored.
     Now they raise.
     """
+    _assert_safe_slug(slug)  # REQ-18 (Finding C-3)
     with _redis_sync_client() as client:
         cache_pattern = settings.librechat_cache_key_pattern
         deleted = 0
@@ -273,6 +277,7 @@ def _write_tenant_caddyfile(slug: str) -> None:
     The main Caddyfile imports /etc/caddy/tenants/*.caddyfile, which maps
     to the caddy-tenants Docker volume (also mounted in portal-api at /caddy/tenants).
     """
+    _assert_safe_slug(slug)  # REQ-18 (Finding C-3)
     domain = settings.domain
     tenants_path = Path(settings.caddy_tenants_path)
     tenants_path.mkdir(parents=True, exist_ok=True)
@@ -318,6 +323,7 @@ def _start_librechat_container(
     mcp_servers: dict | None = None,
 ) -> None:
     """Start the LibreChat Docker container for a tenant (synchronous, run in executor)."""
+    _assert_safe_slug(slug)  # REQ-18 (Finding C-3)
     client = docker.from_env()
     container_name = f"librechat-{slug}"
 

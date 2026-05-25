@@ -47,13 +47,23 @@ async def test_record_widget_turn_persists_loaded_origin_truncated_to_200():
     mock_db.execute = AsyncMock(side_effect=fake_execute)
     mock_db.commit = AsyncMock()
 
-    with patch("app.services.widget_audit.tenant_scoped_session") as mock_ctx:
+    # REQ-14: cross_org_session lookup yields org_id from widgets table.
+    lookup_row = MagicMock()
+    lookup_row.first.return_value = (1,)
+    lookup_db = AsyncMock()
+    lookup_db.execute = AsyncMock(return_value=lookup_row)
+
+    with (
+        patch("app.services.widget_audit.cross_org_session") as mock_cross,
+        patch("app.services.widget_audit.tenant_scoped_session") as mock_ctx,
+    ):
+        mock_cross.return_value.__aenter__ = AsyncMock(return_value=lookup_db)
+        mock_cross.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
         await record_widget_turn(
             widget_id="00000000-0000-0000-0000-000000000001",
-            org_id=1,
             session_key="test-session-key",
             role="user",
             content="Hello world",
@@ -92,14 +102,23 @@ async def test_record_widget_turn_persists_loaded_origin_none():
     mock_db.execute = AsyncMock(side_effect=fake_execute)
     mock_db.commit = AsyncMock()
 
-    with patch("app.services.widget_audit.tenant_scoped_session") as mock_ctx:
+    lookup_row = MagicMock()
+    lookup_row.first.return_value = (1,)
+    lookup_db = AsyncMock()
+    lookup_db.execute = AsyncMock(return_value=lookup_row)
+
+    with (
+        patch("app.services.widget_audit.cross_org_session") as mock_cross,
+        patch("app.services.widget_audit.tenant_scoped_session") as mock_ctx,
+    ):
+        mock_cross.return_value.__aenter__ = AsyncMock(return_value=lookup_db)
+        mock_cross.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
         # Must not raise even with loaded_origin=None
         await record_widget_turn(
             widget_id="00000000-0000-0000-0000-000000000002",
-            org_id=1,
             session_key="test-session-key-2",
             role="assistant",
             content="Response content",

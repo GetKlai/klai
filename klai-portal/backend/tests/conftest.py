@@ -240,6 +240,7 @@ def make_perms(
     platform_unlocked_features: list[str] | None = None,
     is_platform_admin: bool = False,
     provisioning_status: str = "active",
+    status: str = "active",
 ):
     """Synthetic UserPermissions for endpoints that take ``perms=`` directly.
 
@@ -296,4 +297,5 @@ def make_perms(
         effective_kb_limits=get_plan_limits(plan),
         is_platform_admin=is_platform_admin,
         provisioning_status=provisioning_status,
+        status=status,
     )
