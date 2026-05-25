@@ -1,5 +1,7 @@
 """Tests for image extraction from Unstructured partition results."""
 
+import zipfile
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 from app.services.parser import parse_document_with_images
@@ -57,6 +59,25 @@ class TestParseDocumentWithImages:
         result = parse_document_with_images(b"fake bytes", "doc.docx")
 
         assert result.images == []
+
+    @patch("app.services.parser.partition")
+    def test_docx_bytes_without_extension_use_binary_parser(self, mock_partition):
+        """Google Docs exports can arrive as DOCX bytes with a title-only filename."""
+        text_elem = MagicMock()
+        text_elem.__str__ = lambda self: "Extracted paragraph"
+        text_elem.category = "NarrativeText"
+        text_elem.metadata = MagicMock(image_base64=None)
+        mock_partition.return_value = [text_elem]
+
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("word/document.xml", "<w:document />")
+
+        result = parse_document_with_images(buffer.getvalue(), "Voorbereiding Frankrijk")
+
+        assert result.text == "Extracted paragraph"
+        called_path = mock_partition.call_args.args[0]
+        assert called_path.endswith(".docx")
 
 
 class TestKnowledgeIngestClientImageUrls:
