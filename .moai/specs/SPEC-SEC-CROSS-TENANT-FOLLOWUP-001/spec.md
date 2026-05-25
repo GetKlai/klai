@@ -18,6 +18,8 @@ issue_number: 0
 | 0.1.0 | 2026-05-24 | platform/backend | Initial draft from cross-tenant audit + PR #672 follow-up. Verification against `origin/main` at commit `f8ee7826` confirms: B-1 (no `assert_platform_unlocked` on partner endpoints) still open; B-2 (`if not allowed_origins: return True` at `widget_auth.py:171`) still open; B-3 partially addressed by `public_share_enabled` check (`partner.py:911`), but rate-limit + Origin gate still missing; B-13/C-1 confirmed open. PR #672 introduced `_platform: UserPermissions = Depends(require_platform_unlocked("widgets"))` on admin CRUD routes at lines 196/262/294/333/374/420 of `admin_widgets.py` but NOT on activity-tab routes at lines 498/558/618 — REQ-13 still applies. |
 | 0.2.0 | 2026-05-24 | orchestrator | Resolved all 5 open questions after production-data check + Klai-pattern review. (1) REQ-2 customer-communication window dropped — production cohort query returned 2 widgets, both inside the `getklai` tenant itself (0 external customers impacted); replaced by automated CI cohort gate (deploy pipeline runs the cohort SQL via SSH and aborts if impacted_widgets > 5 OR any external tenant slug appears). (2) REQ-4 hot-cut chosen over feature-flag — `deprovisioning_orchestrator` pattern is proven, user-delete frequency is low (<5/week at Klai scale), git revert is the rollback plan; feature-flag adds parallel-path complexity without real benefit. (3) REQ-17/REQ-19 cross-repo dependency decoupled — SPEC closes when all klai-portal code REQs land; klai-infra PRs tracked as `cross_repo_dependency` with explicit PR-link cross-reference. (4) REQ-12 inline `user.status` check chosen — `_resolve_caller_with_options` already SELECTs the row; Redis cache adds invalidation edge-cases for a handful of suspended users. (5) REQ-8 retention 90d default with `WIDGET_MESSAGES_RETENTION_DAYS` env-var — no unified Klai retention policy in code; 90d defensible per GDPR legitimate interest. |
 | 0.2.1 | 2026-05-24 | orchestrator | Removed all "operator manual inspect" language per project principle (Klai works fully autonomously; no manual gates between deploy steps). REQ-2 cohort verification is enforced by an automated GitHub Actions step in `.github/workflows/portal-api.yml` that SSHes to core-01, runs `scripts/verify_widget_cohort.sh`, and aborts the deploy if `impacted_widgets > 5 OR impacted_tenants includes any slug outside the platform_org list`. If the deploy aborts, REQ-2 is split into a follow-up SPEC with the standard 7-day comm protocol. No human pre-merge inspection required — the migration's automated branches handle the safe defaults per row. |
+| 0.3.0 | 2026-05-24 | orchestrator | **Window 1 (REQ-1, REQ-2, REQ-3, REQ-9) DELIVERED TO PRODUCTION via PR #674.** Required 4 hotfix PRs to land cleanly; lessons learned saved to CodeIndex memory `5c0ab6a1` for future SPECs. Hotfix chain: (a) PR #675 `fix(ci): inline REQ-2 cohort-gate SQL` — `/opt/klai/` on core-01 has sparse-checkout that does NOT include `klai-portal/backend/scripts/`; inlined the cohort SQL directly in the workflow step. (b) PR #676 `fix(alembic): move widgets ALTER TABLE to klai-superuser post-deploy SQL` — `widgets` and `widget_conversations` are klai-owned (not portal_api), so ALTER TABLE on them goes in post-deploy SQL; alembic migration `a1c2d3e4f5b6` is now a no-op marker. (c) PR #677 `fix(alembic): correct portal_audit_log schema` — column names are `action`/`actor_user_id`/`details`, NOT `event_type`/`actor_type`/`properties` (per `app/models/audit.py`); also removed redundant "REQ-2 + REQ-3 post-deploy SQL" workflow step because `/opt/klai/scripts/deploy-portal-api.sh` already auto-iterates every `alembic/versions/post_deploy_*.sql`. Production verified via 5 curl-tests on `/partner/v1/widget-config` (origin-gate behaves as specified: getklai-subdomain=200, phishing=403, no-Origin=403, unknown-widget=404, public-bot-without-share=404); pg_policy query confirms `WITH CHECK (org_id = _rls_current_org_id())` on portal_templates; container running fresh image `10ccb8fe736f...` since 2026-05-24T19:50Z; VictoriaLogs shows 0 Caddy 5xx since deploy. |
+| 0.4.0 | 2026-05-25 | orchestrator | **Window 2 (REQ-4, REQ-5, REQ-6, REQ-7, REQ-8) IMPLEMENTED on feature branch `feature/SPEC-SEC-CROSS-TENANT-FOLLOWUP-001-window-2`, NOT yet deployed.** 5 commits on branch (`adb2f6e5` REQ-7, `031c6f5c` REQ-6, `ece61ecc` REQ-5, `76e12781` REQ-8, `5c74a6be` REQ-4). Backend test suite at 2804 passing (was 2772 after Window 1 = +32 new tests). Alembic single head `5c6ad9cf7983`. All Window 1 lessons applied: REQ-8 schema change (`widget_messages.content CHECK constraint`) correctly placed in post-deploy SQL (klai-owned table); REQ-4 schema (`portal_users.deletion_status` columns) correctly in alembic upgrade (portal_api-owned); adjacent FakeWidget/FakeOrg mocks updated across all test files (no Window-1-style adjacent regression); portal_audit_log INSERTs use correct column names. REQ-4 state-machine mirrors `deprovisioning_orchestrator` pattern exactly; new endpoint `POST /api/admin/platform/users/{zitadel_user_id}/retry-delete`; self-delete + last-platform-admin guards. REQ-4 implementation also closes REQ-11 (Finding A-5 partial-failure audit event) — flagging for Window 3 scope adjustment. |
 
 ## 1. Problem
 
@@ -517,18 +519,52 @@ Final tag-set will be confirmed during the Run phase per the SPEC-MX-001 protoco
 
 ## 13. Definition of Done
 
-- All 19 REQs have a passing test (`acceptance.md` AC1..AC19).
-- `klai-portal/backend` `uv run pytest -q --tb=short` exits 0.
+### Per-Window status (live as of 2026-05-25)
+
+**Window 1 (REQ-1, REQ-2, REQ-3, REQ-9) — ✅ DELIVERED TO PRODUCTION** via PR #674 + hotfixes #675/#676/#677. Merge commit `fde33d68` on main. Container `klai-core-portal-api-1` running image `10ccb8fe736f...` since `2026-05-24T19:50:47Z`.
+
+- [x] REQ-1 `assert_platform_unlocked` on partner endpoints — code deployed; indirect-verified via cohort-gate working + 5 curl-tests reaching `widget_config` code-path
+- [x] REQ-2 default-deny origins + cohort-gate + data-migration — directly verified via 5 curl-tests on `/partner/v1/widget-config`: getklai-subdomain=200, phishing=403, no-Origin=403, unknown-widget=404, public-bot-without-share=404; the 403 cases were 200 pre-Window-1 (CRIT B-2 closed)
+- [x] REQ-3 `portal_templates` WITH CHECK — directly verified: `SELECT pg_get_expr(polwithcheck, polrelid) FROM pg_policy WHERE polname='tenant_isolation' AND polrelid='portal_templates'::regclass` returns `(org_id = _rls_current_org_id())`
+- [x] REQ-9 ActivityTab scheme-allowlist — bundle `assets/index-BsgXprzL.js` 200 served via Caddy; 18 vitest scenarios green at commit `732d57e9`; admin-UI click-test deferred to Mark's browser session
+- [x] CI cohort gate green on every deploy run since 2026-05-24
+- [x] VictoriaLogs: 0 `service:caddy AND status:>=500` since deploy; 1 pre-existing `service:portal-api AND level:error` (RLS-cleanup warning on `portal_retrieval_gaps`, not REQ-related)
+
+**Window 2 (REQ-4, REQ-5, REQ-6, REQ-7, REQ-8) — 🟡 IMPLEMENTED ON BRANCH** `feature/SPEC-SEC-CROSS-TENANT-FOLLOWUP-001-window-2`. Not yet deployed.
+
+- [x] All 5 REQs have a passing test; backend pytest 2804/2804 (was 2772 = +32 new)
+- [x] Alembic single head `5c6ad9cf7983`; ruff/format/pyright clean
+- [x] REQ-8 schema (CHECK constraint on `widget_messages.content`) correctly placed in post-deploy SQL (klai-owned table — applied Window-1 lesson)
+- [x] REQ-4 schema (`portal_users.deletion_status` + `failure_reason` + `last_attempted_step`) correctly in alembic upgrade (portal_api-owned)
+- [x] Adjacent FakeWidget/FakeOrg mocks updated across all test files (no Window-1-style adjacent regression)
+- [x] REQ-4 closes REQ-11 (Finding A-5 partial-failure audit-event) as a side effect — flag for Window 3 scope adjustment
+- [ ] PR open + admin-merged to main
+- [ ] Deploy to production via portal-api.yml
+- [ ] Live verification (curl tests for REQ-7 rate-limit, SQL check for REQ-4 state-machine columns, etc.)
+
+**Window 3 (REQ-10..19) — ⬜ NOT STARTED** (out of scope until Window 2 lands on production).
+
+### Always-on gates (apply to every Window deploy)
+
+- `klai-portal/backend` `uv run pytest -q --tb=short` exits 0 (FULL suite, not cherry-picked — Window-1 lesson).
 - `klai-portal/backend` `uv run ruff check .` exits 0.
 - `klai-portal/backend` `uv run ruff format --check .` exits 0.
 - `klai-portal/backend` `uv run --with pyright pyright` exits 0.
-- `klai-portal/frontend` `npm run lint` + `npm run test` exit 0 (covers REQ-9, REQ-2 UI bits).
+- `klai-portal/frontend` `npx tsc -b --force` exits 0 (stricter than vitest — Window-1 lesson; caught `id: 1` vs `string` type mismatch).
+- `klai-portal/frontend` `npm run lint` + `npm test -- --run` exit 0.
 - Coverage on new code >= 85% (per `.moai/config/sections/quality.yaml` threshold).
-- security-review skill PASS for REQ-1, REQ-2, REQ-3.
-- Alembic head still single (verify with `alembic heads | wc -l == 1`) — see `alembic-multi-pr-head-split` pitfall.
-- Production smoke-test: after Window 1 deploy, a curl against `/partner/v1/widget-config?id=<widget-of-tenant-with-widgets-disabled>` returns 404; a curl against `/partner/v1/widget-config?id=<widget-of-tenant-with-widgets-enabled>` returns 200.
-- Automated CI cohort gate (GitHub Actions step in `portal-api.yml`) passes on the deploy run for Window 1; the step's output (cohort SQL result) is captured in the workflow log for audit.
-- Cross-repo: klai-infra PRs for REQ-17 + REQ-19 tracked as `cross_repo_dependency` in this SPEC's PR description; deliverable status of this SPEC does NOT block on klai-infra merge — REQ-17 + REQ-19 are marked "delegated to klai-infra" once the cross-repo PR is opened with this SPEC ID in the description.
+- Alembic head single (`alembic heads | wc -l == 1`) — see `alembic-multi-pr-head-split` pitfall.
+- security-review skill PASS for REQ-1, REQ-2, REQ-3 (Window 1 ✓).
+- Cross-repo: klai-infra PRs for REQ-17 + REQ-19 tracked as `cross_repo_dependency`; deliverable status does NOT block on klai-infra merge.
+
+### Lessons learned during Window 1 deploy (captured in CodeIndex memory `5c0ab6a1`)
+
+1. **Schema-FIRST**: read `app/models/*.py` BEFORE writing any SQL — `portal_audit_log` columns are `action`/`actor_user_id`/`resource_type`/`resource_id`/`details`, NOT `event_type`/`actor_type`/`properties`.
+2. **Table ownership**: `widgets`, `widget_conversations`, `widget_messages` are klai-owned (created via post-deploy SQL in earlier work) — ALTER TABLE on them goes in post-deploy SQL, NOT alembic upgrade (`alembic-cannot-drop-non-portal_api-tables` pitfall class). `portal_users` is portal_api-owned (auth table) — normal alembic upgrade is fine.
+3. **deploy-portal-api.sh auto-iterates `alembic/versions/post_deploy_*.sql`** as klai superuser after `alembic upgrade head`. No separate workflow step needed.
+4. **/opt/klai sparse-checkout** does NOT include `klai-portal/backend/scripts/` — bash scripts referenced from workflow YAML must either live in repo root `scripts/` (and be added to deploy-compose.yml sync paths) or be inlined directly in the YAML step.
+5. **Full pytest, not cherry-picked** — adjacent FakeWidget/FakeOrg mocks may need updates when new attribute access lands in production code-path. Window 1 had 13 hidden regressions because I only ran 5 new test files.
+6. **`tsc -b --force` is stricter than vitest** — `id: 1` (number) passes vitest with loose types but fails the build's strict tsc. Always run `npx tsc -b --force` after writing TypeScript tests.
 
 ## 14. Exclusions (What NOT to Build)
 
