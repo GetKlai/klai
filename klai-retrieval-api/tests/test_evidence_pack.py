@@ -135,7 +135,7 @@ def test_evidence_pack_filters_sources_that_do_not_match_query_evidence():
                 "reranker_score": 0.91,
             },
         ],
-        query="Hoe voeg ik een nieuwe user toe?",
+        query="Heej hoe voeg ik een nieuwe gebruiker toe?",
     )
 
     assert [source.title for source in pack.sources] == ["Invite and remove people"]

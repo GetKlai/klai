@@ -437,6 +437,48 @@ def _is_meta_query(text: str) -> bool:
     return bool(_META_QUERY_PATTERNS.match(text.strip()))
 
 
+_TITLE_GENERATION_RE = re.compile(
+    r"(?:"
+    r"\b(?:generate|write|create|provide|give|summarize)\b"
+    r"(?=[\s\S]{0,240}\b(?:title|name|summary)\b)"
+    r"(?=[\s\S]{0,240}\b(?:conversation|chat)\b)"
+    r"|\b(?:title|name)\s+(?:this|the)\s+(?:conversation|chat)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _message_text(message: dict[str, Any]) -> str:
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return ""
+
+
+def _is_title_generation_request(messages: list[dict]) -> bool:
+    """Detect LibreChat's internal conversation-title prompt.
+
+    Title generation is application metadata, not a user KB question. Routing it
+    through retrieval can turn the KB no-citation refusal into the conversation
+    title itself.
+    """
+    for message in messages:
+        if message.get("role") not in {"system", "developer", "user"}:
+            continue
+        text = _message_text(message)
+        if not text or len(text) > 4000:
+            continue
+        if _TITLE_GENERATION_RE.search(text):
+            return True
+    return False
+
+
 _WEB_SEARCH_TOOL_RE = re.compile(
     r"(?:^|[_\-\s])"
     r"(?:web[_\-\s]*search|websearch|search[_\-\s]*web|browser|searx|firecrawl)"
@@ -1781,6 +1823,14 @@ class KlaiKnowledgeHook(CustomLogger):
         if not librechat_user_id:
             return data
 
+        if _is_title_generation_request(messages):
+            logger.info(
+                "title_generation_request_detected org_id=%s user_id=%s",
+                org_id,
+                librechat_user_id,
+            )
+            return data
+
         # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK: fetch active templates
         # before the KB path so they apply on EVERY downstream branch —
         # including early returns when KB retrieval is skipped or fails.
@@ -2146,9 +2196,45 @@ class KlaiKnowledgeHook(CustomLogger):
         chunks = result.get("chunks", [])
         evidence_pack = result.get("evidence_pack")
         has_evidence_pack = isinstance(evidence_pack, dict)
+        if not has_evidence_pack:
+            logger.error(
+                "retrieval_response_missing_evidence_pack org_id=%s user_id=%s chunks=%d",
+                org_id,
+                user_id,
+                len(chunks) if isinstance(chunks, list) else 0,
+            )
+            _prepend_system_prefix(
+                messages, _compose_libre_chat_prefix(templates_block)
+            )
+            data["messages"] = messages
+            original_stream = data.get("stream")
+            render_strategy = _select_kb_render_strategy(original_stream)
+            if render_strategy.force_non_streaming:
+                data["stream"] = False
+            data.setdefault("metadata", {})["_klai_kb_meta"] = {
+                "org_id": org_id,
+                "user_id": user_id,
+                "user_query": query,
+                "chunks_injected": 0,
+                "chunk_ids": [],
+                "allowed_source_urls": [],
+                "allowed_image_urls": [],
+                "citation_source_urls": {},
+                "citation_chunks": [],
+                "trusted_sources": [],
+                "evidence_pack": None,
+                "citable_sources_count": 0,
+                "no_citable_sources": True,
+                "no_citable_reason": "missing_evidence_pack",
+                "original_stream": original_stream,
+                "render_mode": render_strategy.mode,
+                "retrieval_ms": retrieval_ms,
+                "gate_bypassed": False,
+            }
+            return data
         evidence_chunks = _evidence_pack_items_as_chunks(evidence_pack)
         trusted_sources = _normalise_evidence_pack_sources(evidence_pack)
-        context_chunks = evidence_chunks if has_evidence_pack else chunks
+        context_chunks = evidence_chunks
         # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2: confidence band drives the
         # anti-hallucination injection. None on bypass paths (fail-open).
         confidence_band: str | None = result.get("confidence_band")

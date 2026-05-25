@@ -7,6 +7,7 @@ import sys
 import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlparse, urlunparse
 
 import pytest
 
@@ -170,10 +171,111 @@ def _make_user_api_key(org_id="org123"):
     return uak
 
 
-def _make_resp(json_data: dict, status_code: int = 200):
+def _normalise_test_url(url: str) -> str:
+    parsed = urlparse(url.strip())
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    return urlunparse((parsed.scheme.lower(), netloc, parsed.path or "/", "", parsed.query, ""))
+
+
+def _chunk_source_url(chunk: dict) -> str | None:
+    url = chunk.get("source_url")
+    if isinstance(url, str) and url.strip():
+        return _normalise_test_url(url)
+    metadata = chunk.get("metadata")
+    if isinstance(metadata, dict):
+        url = metadata.get("source_url")
+        if isinstance(url, str) and url.strip():
+            return _normalise_test_url(url)
+    source = chunk.get("source")
+    if isinstance(source, dict):
+        url = source.get("url") or source.get("source_url")
+        if isinstance(url, str) and url.strip():
+            return _normalise_test_url(url)
+    return None
+
+
+def _chunk_title(chunk: dict, source_url: str | None) -> str:
+    for key in ("title", "source_label", "context_prefix"):
+        value = chunk.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    metadata = chunk.get("metadata")
+    if isinstance(metadata, dict):
+        value = metadata.get("title")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return source_url or "Source"
+
+
+def _with_default_evidence_pack(json_data: dict) -> dict:
+    if "evidence_pack" in json_data or json_data.get("retrieval_bypassed"):
+        return json_data
+    chunks = json_data.get("chunks")
+    if not isinstance(chunks, list):
+        return json_data
+    items = []
+    source_by_url = {}
+    sources = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        source_url = _chunk_source_url(chunk)
+        if not source_url:
+            continue
+        title = _chunk_title(chunk, source_url)
+        evidence_id = f"E{len(items) + 1}"
+        items.append(
+            {
+                "evidence_id": evidence_id,
+                "chunk_id": chunk.get("chunk_id"),
+                "artifact_id": chunk.get("artifact_id"),
+                "content_type": chunk.get("content_type"),
+                "text": chunk.get("text"),
+                "title": title,
+                "heading_path": chunk.get("heading_path"),
+                "source_url": source_url,
+                "source_label": chunk.get("source_label"),
+                "score": chunk.get("score") or 0.0,
+                "reranker_score": chunk.get("reranker_score"),
+                "final_score": chunk.get("final_score"),
+                "scope": chunk.get("scope"),
+                "image_urls": chunk.get("image_urls"),
+                "is_parent_text": bool(chunk.get("is_parent_text")),
+            }
+        )
+        source_key = source_url.rstrip("/") or source_url
+        if source_key not in source_by_url:
+            source_by_url[source_key] = {
+                "source_id": f"S{len(sources) + 1}",
+                "title": title,
+                "source_url": source_url,
+                "artifact_id": chunk.get("artifact_id"),
+                "source_label": chunk.get("source_label"),
+                "evidence_ids": [],
+                "relevance_score": chunk.get("final_score")
+                or chunk.get("reranker_score")
+                or chunk.get("score")
+                or 0.0,
+            }
+            sources.append(source_by_url[source_key])
+        source_by_url[source_key]["evidence_ids"].append(evidence_id)
+    with_pack = dict(json_data)
+    with_pack["evidence_pack"] = {
+        "items": items,
+        "sources": sources,
+        "no_citable_reason": None if sources else "no_citable_sources",
+    }
+    return with_pack
+
+
+def _make_resp(json_data: dict, status_code: int = 200, *, default_evidence_pack: bool = True):
     resp = MagicMock()
     resp.status_code = status_code
-    resp.json.return_value = json_data
+    resp.json.return_value = (
+        _with_default_evidence_pack(json_data) if default_evidence_pack else json_data
+    )
     resp.raise_for_status = MagicMock()
     return resp
 
@@ -1119,8 +1221,20 @@ class TestKlaiKnowledgeHookKB010:
         ]}
 
         chunks = [
-            {"text": "Org chunk tekst.", "scope": "org", "metadata": {"title": "Org doc"}},
-            {"text": "Persoonlijke notitie.", "scope": "personal", "metadata": {"title": "Mijn notitie"}},
+            {
+                "text": "Org chunk tekst.",
+                "scope": "org",
+                "metadata": {"title": "Org doc"},
+                "source_url": "https://docs.klai.example/org-doc",
+                "chunk_id": "c1",
+            },
+            {
+                "text": "Persoonlijke notitie.",
+                "scope": "personal",
+                "metadata": {"title": "Mijn notitie"},
+                "source_url": "https://docs.klai.example/my-note",
+                "chunk_id": "c2",
+            },
         ]
         retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
 
@@ -1148,7 +1262,15 @@ class TestKlaiKnowledgeHookKB010:
             {"role": "user", "content": "Geef een overzicht van de Q2-resultaten."}
         ]}
 
-        chunks = [{"text": "Q2 resultaten waren positief.", "scope": "org", "metadata": {}}]
+        chunks = [
+            {
+                "text": "Q2 resultaten waren positief.",
+                "scope": "org",
+                "metadata": {},
+                "source_url": "https://docs.klai.example/q2-results",
+                "chunk_id": "c1",
+            }
+        ]
         retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
@@ -2030,11 +2152,15 @@ class TestKlaiKnowledgeHookMultilingualPhase4:
                 "text": "Org-document text.",
                 "scope": "org",
                 "metadata": {"title": "Org doc"},
+                "source_url": "https://docs.klai.example/org-doc",
+                "chunk_id": "c1",
             },
             {
                 "text": "User personal note.",
                 "scope": "personal",
                 "metadata": {"title": "My note"},
+                "source_url": "https://docs.klai.example/my-note",
+                "chunk_id": "c2",
             },
         ]
         retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
@@ -2234,6 +2360,86 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         return msgs[0]["content"]
 
     @pytest.mark.asyncio
+    async def test_librechat_title_generation_skips_kb_pipeline(self, monkeypatch):
+        """Conversation titles are metadata and must not become KB refusals."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Generate a concise title for this conversation:\n"
+                        "User: Heej hoe voeg ik een nieuwe gebruiker toe?\n"
+                        "Assistant: Ik kan dit niet betrouwbaar beantwoorden."
+                    ),
+                }
+            ],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        cls.assert_not_called()
+        assert result["messages"] == data["messages"]
+        assert "_klai_kb_meta" not in result.get("metadata", {})
+
+    @pytest.mark.asyncio
+    async def test_missing_evidence_pack_fails_closed_before_raw_source_fallback(
+        self, monkeypatch, caplog
+    ):
+        """A legacy retrieval response must not render raw chunk URLs as citations."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        caplog.set_level("ERROR", logger="klai_knowledge")
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Heej hoe voeg ik een nieuwe gebruiker toe?"}
+            ],
+        }
+        chunks = [
+            {
+                "text": "Create your first knowledge base and ask Klai questions.",
+                "scope": "org",
+                "title": "Getting started",
+                "source_url": "https://getklai.com/docs/getting-started",
+                "chunk_id": "c1",
+                "reranker_score": 0.91,
+            }
+        ]
+        retrieval_resp = _make_resp(
+            {"chunks": chunks, "retrieval_bypassed": False},
+            default_evidence_pack=False,
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert kb_meta["chunks_injected"] == 0
+        assert kb_meta["trusted_sources"] == []
+        assert kb_meta["citation_chunks"] == []
+        assert kb_meta["no_citable_sources"] is True
+        assert kb_meta["no_citable_reason"] == "missing_evidence_pack"
+        assert "retrieval_response_missing_evidence_pack" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_prompt_forbids_invented_source_urls_and_images(self, monkeypatch):
         """A chunk without URLs/images must tell the model to answer without links/images."""
         mod = _load_hook(monkeypatch)
@@ -2255,7 +2461,27 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                 "reranker_score": 0.91,
             }
         ]
-        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+        retrieval_resp = _make_resp(
+            {
+                "chunks": chunks,
+                "retrieval_bypassed": False,
+                "evidence_pack": {
+                    "items": [
+                        {
+                            "evidence_id": "E1",
+                            "chunk_id": "c1",
+                            "text": "Het molair volume is het volume van een mol gas.",
+                            "title": "Molair volume",
+                            "score": 0.0,
+                            "reranker_score": 0.91,
+                            "scope": "org",
+                        }
+                    ],
+                    "sources": [],
+                    "no_citable_reason": "no_citable_sources",
+                },
+            }
+        )
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2550,7 +2776,12 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             "2": "https://getklai.com/docs/company/steward-ownership",
             "3": "https://getklai.com/docs/company/mission",
         }
-        assert kb_meta["citation_chunks"] == chunks
+        assert [chunk["chunk_id"] for chunk in kb_meta["citation_chunks"]] == ["c1", "c2", "c3"]
+        assert [chunk["source_url"] for chunk in kb_meta["citation_chunks"]] == [
+            "https://getklai.com/docs/company/steward-ownership",
+            "https://getklai.com/docs/company/steward-ownership",
+            "https://getklai.com/docs/company/mission",
+        ]
 
     @pytest.mark.asyncio
     async def test_post_call_guard_composes_deterministic_sources(self, monkeypatch, caplog):

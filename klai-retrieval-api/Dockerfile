@@ -16,6 +16,8 @@ WORKDIR /repo
 COPY --chown=app:app klai-libs/identity-assert klai-libs/identity-assert
 # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-02: shared chat-prompt constant.
 COPY --chown=app:app klai-libs/chat-prompts klai-libs/chat-prompts
+# Shared evidence context + deterministic citation/source helpers.
+COPY --chown=app:app klai-libs/citations klai-libs/citations
 COPY --chown=app:app klai-retrieval-api/pyproject.toml klai-retrieval-api/pyproject.toml
 
 WORKDIR /repo/klai-retrieval-api

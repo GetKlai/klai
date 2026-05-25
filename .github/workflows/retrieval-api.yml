@@ -6,15 +6,19 @@ on:
     paths:
       - 'klai-retrieval-api/**'
       # SPEC-SEC-IDENTITY-ASSERT-001 Phase D: retrieval-api consumes
-      # klai-libs/identity-assert as a path-dep; library updates retrigger
+      # klai-libs as path-deps; library updates retrigger
       # this image build.
       - 'klai-libs/identity-assert/**'
+      - 'klai-libs/chat-prompts/**'
+      - 'klai-libs/citations/**'
       - '.github/workflows/retrieval-api.yml'
   pull_request:
     branches: [main]
     paths:
       - 'klai-retrieval-api/**'
       - 'klai-libs/identity-assert/**'
+      - 'klai-libs/chat-prompts/**'
+      - 'klai-libs/citations/**'
       - '.github/workflows/retrieval-api.yml'
   workflow_dispatch:
 
