@@ -14,10 +14,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 from fastapi import HTTPException
 
 from app.api.partner import public_bot_config, widget_config
+from app.services.widget_auth import session_token_key_id
 
 # ---------------------------------------------------------------------------
 # Shared fakes
@@ -238,16 +240,15 @@ async def test_chat_completion_returns_403_when_widgets_not_unlocked():
 
         # The function should raise 403 due to platform-unlock check
         with pytest.raises(HTTPException) as exc_info:
-            # Use a real-enough JWT that survives the unverified peek
-            import jwt as pyjwt
-
-            token = pyjwt.encode(
+            token = jwt.encode(
                 {"org_id": 42, "wgt_id": "wgt_test", "kb_ids": [1]},
-                "legacy-test-secret-at-least-32-bytes",
+                "test-widget-secret-at-least-32-bytes",
+                headers={"kid": session_token_key_id(42), "typ": "JWT"},
             )
             await _auth_via_session_token(token, db)
 
     assert exc_info.value.status_code == 403
     detail = exc_info.value.detail
+    assert isinstance(detail, dict)
     assert detail.get("error_code") == "feature_not_unlocked"
     assert detail.get("feature") == "widgets"
