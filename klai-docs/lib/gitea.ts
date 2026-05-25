@@ -18,6 +18,7 @@ type GiteaFile = {
 type GiteaCreateOrg = {
   username: string;
   full_name?: string;
+  description?: string;
   visibility?: "public" | "private";
 };
 
@@ -54,13 +55,24 @@ async function giteaFetch(path: string, init?: RequestInit) {
 
 // ─── Organisation & repo management ──────────────────────────────────────────
 
-export async function createOrg(orgName: string, displayName: string) {
+export async function createOrg(orgName: string, displayName: string, description?: string) {
   const body: GiteaCreateOrg = {
     username: orgName,
     full_name: displayName,
     visibility: "private",
   };
+  if (description) body.description = description;
   return giteaFetch("/orgs", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function ensureOrgDescription(orgName: string, description: string): Promise<void> {
+  const org = await giteaFetch(`/orgs/${orgName}`);
+  if (org?.description === description) return;
+
+  await giteaFetch(`/orgs/${orgName}`, {
+    method: "PATCH",
+    body: JSON.stringify({ description }),
+  });
 }
 
 export async function createRepo(orgName: string, repoSlug: string, description = "") {
