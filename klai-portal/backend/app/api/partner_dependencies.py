@@ -34,6 +34,7 @@ from app.models.widgets import Widget, WidgetKbAccess
 from app.services.partner_keys import verify_partner_key
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.redis_client import get_redis_pool
+from app.services.widget_audit import session_key_from_claims, session_key_from_token
 from app.services.widget_auth import decode_session_token
 
 logger = structlog.get_logger()
@@ -58,6 +59,8 @@ class PartnerAuthContext:
     # True when the JWT was minted by the admin preview path so the chat
     # handler can flag the resulting conversation row as is_preview.
     is_preview: bool = False
+    # Salted hash of verified widget JWT jti. API-key auth leaves this None.
+    session_key: str | None = None
 
 
 async def _update_last_used(key_id: str, org_id: int) -> None:
@@ -160,9 +163,11 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     wgt_id: str = payload.get("wgt_id", "")
     kb_ids: list[int] = payload.get("kb_ids", [])
     is_preview: bool = bool(payload.get("is_preview", False))
+    jti: str | None = payload.get("jti") if isinstance(payload.get("jti"), str) else None
 
     if not org_id or not wgt_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+    session_key = session_key_from_claims(org_id=org_id, wgt_id=wgt_id, jti=jti) or session_key_from_token(token)
 
     await set_tenant(db, org.id)
 
@@ -217,6 +222,7 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
         kb_access=kb_access,
         rate_limit_rpm=_SESSION_RATE_LIMIT_RPM,
         is_preview=is_preview,
+        session_key=session_key,
     )
 
 

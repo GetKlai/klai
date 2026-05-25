@@ -24,10 +24,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from contextlib import suppress
 from typing import Any, Literal
 
-import jwt
 import structlog
 from sqlalchemy import text
 
@@ -51,20 +49,23 @@ def hash_audit_value(value: str | None, secret: str | None = None) -> str | None
 
 
 def session_key_from_token(token: str | None, secret: str | None = None) -> str | None:
-    """Stable per-session-token identifier (no raw token stored).
-
-    New widget JWTs carry a random ``jti``. Prefer that claim so the
-    session key is independent of token serialization; fall back to the
-    full token for legacy in-flight tokens minted before the claim existed.
-    """
+    """Legacy stable per-session-token identifier for pre-``jti`` JWTs."""
     if not token:
         return None
-    with suppress(jwt.InvalidTokenError):
-        payload = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
-        jti = payload.get("jti")
-        if isinstance(jti, str) and jti:
-            return hash_audit_value(f"{payload.get('org_id')}:{payload.get('wgt_id')}:{jti}", secret)
     return hash_audit_value(token, secret)
+
+
+def session_key_from_claims(
+    *,
+    org_id: int | str | None,
+    wgt_id: str | None,
+    jti: str | None,
+    secret: str | None = None,
+) -> str | None:
+    """Stable per-session identifier from already verified widget JWT claims."""
+    if not org_id or not wgt_id or not jti:
+        return None
+    return hash_audit_value(f"{org_id}:{wgt_id}:{jti}", secret)
 
 
 async def record_widget_turn(
