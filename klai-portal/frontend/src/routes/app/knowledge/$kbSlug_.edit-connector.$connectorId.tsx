@@ -487,7 +487,8 @@ function EditConnectorPage() {
           </Button>
         </div>
         <p className="text-xs text-gray-400">
-          Voor Google Docs, Sheets en Slides tonen we alleen bestanden van het gekozen type.
+          Kies de hele Drive, een map of losse bestanden. Google Docs, Sheets en Slides
+          worden automatisch omgezet voordat ze worden geindexeerd.
         </p>
         {showGoogleDrivePicker && (
           <GoogleDrivePicker
@@ -1106,8 +1107,8 @@ function EditConnectorPage() {
             </form>
           )}
 
-          {/* Google Drive */}
-          {connector?.connector_type === 'google_drive' && (
+          {/* Google Drive. Legacy google_docs / google_sheets / google_slides rows use the same unified picker. */}
+          {connector && GOOGLE_DRIVE_CONNECTOR_TYPES.has(connector.connector_type) && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
@@ -1215,39 +1216,6 @@ function EditConnectorPage() {
                   onClick={() => { void handleMsDocsReconnect() }}
                 >
                   {m.admin_connectors_ms_docs_reconnect()}
-                </Button>
-              </div>
-            </form>
-          )}
-
-          {/* Google Docs / Sheets / Slides - reuse Google Drive OAuth status */}
-          {connector && ['google_docs', 'google_sheets', 'google_slides'].includes(connector.connector_type) && (
-            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
-                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-              {connector.connector_type === 'google_docs' && (
-                <p className="text-sm text-gray-400">{m.admin_connectors_google_docs_subtitle()}</p>
-              )}
-              {connector.connector_type === 'google_sheets' && (
-                <p className="text-sm text-gray-400">{m.admin_connectors_google_sheets_subtitle()}</p>
-              )}
-              {connector.connector_type === 'google_slides' && (
-                <p className="text-sm text-gray-400">{m.admin_connectors_google_slides_subtitle()}</p>
-              )}
-              {renderGoogleDriveScopePicker()}
-              {renderError()}
-              <div className="flex gap-2 pt-2">
-                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={isReconnecting}
-                  onClick={() => { void handleGoogleDriveReconnect() }}
-                >
-                  {m.admin_connectors_google_drive_reconnect()}
                 </Button>
               </div>
             </form>

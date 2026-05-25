@@ -24,6 +24,13 @@ export const VALID_PRESELECT_TYPES = new Set<ConnectorType>([
   'airtable', 'confluence', 'ms_docs', 'web_crawler',
 ])
 
+export function normalizeConnectorPreselectType(type?: ConnectorType): ConnectorType | undefined {
+  if (type === 'google_docs' || type === 'google_sheets' || type === 'google_slides') {
+    return 'google_drive'
+  }
+  return type
+}
+
 // Valid `?step=` URL-param values for the edit-connector route. Used
 // by the route's validateSearch to deep-link into the auth-setup or
 // selector wizard step.

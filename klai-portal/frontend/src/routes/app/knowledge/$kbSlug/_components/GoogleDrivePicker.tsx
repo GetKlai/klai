@@ -203,16 +203,6 @@ export function GoogleDrivePicker({
     chain<{ setSelectFolderEnabled?: (enabled: boolean) => unknown }>(
       view.setSelectFolderEnabled(mode === 'folder'),
     )
-    if (mode === 'files') {
-      view.setMimeTypes(
-        [
-          'application/vnd.google-apps.document',
-          'application/vnd.google-apps.spreadsheet',
-          'application/vnd.google-apps.presentation',
-          'application/pdf',
-        ].join(','),
-      )
-    }
     if (view.setMode && pickerApi.DocsViewMode?.LIST) {
       view.setMode(pickerApi.DocsViewMode.LIST)
     }
@@ -262,8 +252,8 @@ export function GoogleDrivePicker({
       <div className="border-b border-gray-200 px-3 py-2">
         <p className="text-sm font-medium text-gray-900">Kies wat je wilt syncen</p>
         <p className="text-xs text-gray-400 mt-0.5">
-          Kies een map of losse bestanden met Google Drive. Google geeft Klai alleen toegang
-          tot wat je hier selecteert.
+          Kies een map of losse bestanden met Google Drive. Docs, Sheets en Slides worden
+          automatisch naar een indexeerbaar formaat omgezet.
         </p>
       </div>
 
