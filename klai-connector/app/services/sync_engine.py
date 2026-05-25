@@ -482,6 +482,9 @@ class SyncEngine:
                     extra={"connector_id": str(connector_id)},
                 )
 
+            if documents_failed > 0 and status == SyncStatus.COMPLETED:
+                status = SyncStatus.FAILED
+
             duration = time.monotonic() - start_time
             completed_at = datetime.now(UTC)
             sync_run.status = status
@@ -778,6 +781,7 @@ class SyncEngine:
             .where(
                 SyncRun.connector_id == connector_id,
                 SyncRun.status == SyncStatus.COMPLETED,
+                SyncRun.documents_failed == 0,
             )
             .order_by(SyncRun.started_at.desc())
             .limit(1)
