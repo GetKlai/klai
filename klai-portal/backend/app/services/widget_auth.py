@@ -21,6 +21,7 @@ SPEC-SEC-HYGIENE-001 REQ-24:
 
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -91,6 +92,7 @@ def generate_session_token(
         org_id: organisation integer id
         kb_ids: list of knowledge base ids the widget may access
         exp: expiry timestamp (UTC, 1 hour from now)
+        jti: per-mint nonce used to derive audit session keys
 
     Args:
         wgt_id: The widget_id string (e.g. wgt_abcdef...)
@@ -116,6 +118,7 @@ def generate_session_token(
         "org_id": org_id,
         "kb_ids": kb_ids,
         "exp": int(exp.timestamp()),
+        "jti": secrets.token_urlsafe(24),
         "is_preview": is_preview,
     }
 

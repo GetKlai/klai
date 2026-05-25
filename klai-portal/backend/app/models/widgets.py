@@ -125,7 +125,7 @@ class WidgetConversation(Base):
     )
     widget_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
-        ForeignKey("widgets.id", ondelete="CASCADE"),
+        ForeignKey("widgets.id", ondelete="NO ACTION"),
         nullable=False,
     )
     session_key: Mapped[str] = mapped_column(Text, nullable=False)
@@ -138,6 +138,7 @@ class WidgetConversation(Base):
     user_agent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     first_user_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     language_detected: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    is_preview: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     # REQ-2 (Finding B-2): record origin of each conversation for audit visibility.
     # Truncated to 200 chars. NULL when Origin header was absent (e.g. direct API call).
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2

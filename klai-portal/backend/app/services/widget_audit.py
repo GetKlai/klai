@@ -24,8 +24,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from contextlib import suppress
 from typing import Any, Literal
 
+import jwt
 import structlog
 from sqlalchemy import text
 
@@ -51,19 +53,24 @@ def hash_audit_value(value: str | None, secret: str | None = None) -> str | None
 def session_key_from_token(token: str | None, secret: str | None = None) -> str | None:
     """Stable per-session-token identifier (no raw token stored).
 
-    Every ``generate_session_token`` call produces a fresh JWT, so the
-    sha256 of the token uniquely identifies one widget-load. Salting
-    again with the deploy secret prevents cross-tenant collisions.
+    New widget JWTs carry a random ``jti``. Prefer that claim so the
+    session key is independent of token serialization; fall back to the
+    full token for legacy in-flight tokens minted before the claim existed.
     """
     if not token:
         return None
+    with suppress(jwt.InvalidTokenError):
+        payload = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+        jti = payload.get("jti")
+        if isinstance(jti, str) and jti:
+            return hash_audit_value(f"{payload.get('org_id')}:{payload.get('wgt_id')}:{jti}", secret)
     return hash_audit_value(token, secret)
 
 
 async def record_widget_turn(
     *,
     widget_id: str,  # UUID-as-string from widgets.id
-    session_key: str,  # sha256(jwt token), stable per widget-load
+    session_key: str,  # salted hash of widget JWT jti, stable per widget-load
     role: Literal["user", "assistant"],
     content: str,
     sources: list[dict[str, Any]] | None = None,

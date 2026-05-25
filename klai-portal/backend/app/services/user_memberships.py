@@ -23,6 +23,13 @@ class UserMembershipSummary:
     is_platform_admin: bool
 
 
+@dataclass(frozen=True)
+class UserGlobalMembershipState:
+    total_count: int
+    active_count: int
+    admin_count: int
+
+
 async def get_user_membership_summary(
     zitadel_user_id: str,
     *,
@@ -50,4 +57,25 @@ async def get_user_membership_summary(
         total_count=len(rows),
         remaining_count=len(remaining),
         is_platform_admin=is_platform_admin,
+    )
+
+
+async def get_user_global_membership_state(zitadel_user_id: str) -> UserGlobalMembershipState:
+    """Return global active/admin membership facts for one Zitadel identity."""
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(PortalUser.org_id, PortalUser.role, PortalUser.status)
+            .join(PortalOrg, PortalOrg.id == PortalUser.org_id)
+            .where(
+                PortalUser.zitadel_user_id == zitadel_user_id,
+                PortalOrg.deleted_at.is_(None),
+            )
+        )
+        rows = result.all()
+
+    return UserGlobalMembershipState(
+        total_count=len(rows),
+        active_count=sum(1 for row in rows if row.status == "active"),
+        admin_count=sum(1 for row in rows if row.role == "admin" and row.status != "offboarded"),
     )

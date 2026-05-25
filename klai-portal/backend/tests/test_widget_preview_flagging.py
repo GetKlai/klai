@@ -54,6 +54,34 @@ class TestPreviewJWTClaim:
         payload = decode_session_token(token, self.SECRET, self.TENANT)
         assert payload.get("is_preview", False) is False
 
+    def test_each_minted_token_has_unique_jti(self) -> None:
+        """Audit session keys must not collapse two mints in the same exp second."""
+        from app.services.widget_audit import session_key_from_token
+
+        token_a = generate_session_token(
+            wgt_id="wgt_x",
+            org_id=42,
+            kb_ids=[1, 2],
+            secret=self.SECRET,
+            tenant_slug=self.TENANT,
+            is_preview=True,
+        )
+        token_b = generate_session_token(
+            wgt_id="wgt_x",
+            org_id=42,
+            kb_ids=[1, 2],
+            secret=self.SECRET,
+            tenant_slug=self.TENANT,
+            is_preview=True,
+        )
+        payload_a = decode_session_token(token_a, self.SECRET, self.TENANT)
+        payload_b = decode_session_token(token_b, self.SECRET, self.TENANT)
+
+        assert payload_a["jti"]
+        assert payload_b["jti"]
+        assert payload_a["jti"] != payload_b["jti"]
+        assert session_key_from_token(token_a) != session_key_from_token(token_b)
+
     def test_preview_token_decodes_with_correct_tenant_key(self) -> None:
         """HKDF-per-tenant binding still holds even with the new claim."""
         token = generate_session_token(
@@ -175,8 +203,9 @@ def test_widget_activity_stats_sql_filters_preview_rows() -> None:
     from app.api.admin_widgets import widget_activity_stats
 
     source = inspect.getsource(widget_activity_stats)
-    # All four SQL bodies in the handler must reference is_preview = false
-    assert source.count("is_preview = false") >= 4, (
+    # All six SQL bodies in the handler must reference is_preview = false:
+    # totals/top/hourly, each with cutoff and all-time branches.
+    assert source.count("is_preview = false") >= 6, (
         "widget_activity_stats must filter every aggregate on is_preview = false; "
         f"found {source.count('is_preview = false')} occurrences. "
         "REQ-15 requires the stats query to exclude admin-preview conversations."

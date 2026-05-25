@@ -93,6 +93,28 @@ async def test_get_widget_or_404_excludes_soft_deleted_by_default() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_widgets_excludes_soft_deleted_rows() -> None:
+    """AC16.2 — admin list endpoint must not return soft-deleted widgets."""
+    from app.api.admin_widgets import list_widgets
+    from tests.conftest import make_perms
+
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=result)
+
+    got = await list_widgets(
+        perms=make_perms(role="admin", org_id=42, platform_unlocked_features=["widgets"]),
+        db=db,
+    )
+
+    assert got == []
+    stmt = db.execute.await_args.args[0]
+    rendered = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "deleted_at IS NULL" in rendered, f"list_widgets WHERE clause missing deleted_at IS NULL: {rendered}"
+
+
+@pytest.mark.asyncio
 async def test_get_widget_or_404_include_deleted_returns_soft_deleted() -> None:
     """AC16.3 — audit-trail endpoints opt-in via include_deleted=True."""
     from app.api.admin_widgets import _get_widget_or_404

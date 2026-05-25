@@ -291,7 +291,7 @@ async def list_widgets(
     db: AsyncSession = Depends(get_db),
 ) -> list[WidgetResponse]:
     """List all widgets for the caller's org."""
-    result = await db.execute(select(Widget).where(Widget.org_id == perms.org_id))
+    result = await db.execute(select(Widget).where(Widget.org_id == perms.org_id, Widget.deleted_at.is_(None)))
     widgets = result.scalars().all()
     if not widgets:
         return []
@@ -723,6 +723,7 @@ async def widget_activity_stats(
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND first_user_query IS NOT NULL "
+                "AND is_preview = false "
                 "AND started_at >= :cutoff "
                 "GROUP BY first_user_query "
                 "ORDER BY c DESC, q ASC LIMIT 10"
@@ -750,6 +751,7 @@ async def widget_activity_stats(
                 "SELECT EXTRACT(HOUR FROM started_at)::int AS hour, COUNT(*) AS c "
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND is_preview = false "
                 "AND started_at >= :cutoff "
                 "GROUP BY hour"
             ),
