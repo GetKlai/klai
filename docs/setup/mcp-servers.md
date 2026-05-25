@@ -74,7 +74,8 @@ It is **cross-platform** — all platform-specific settings live in local config
     },
     "victorialogs": {
       "type": "stdio",
-      "command": "/Users/mark/bin/mcp-victorialogs",
+      "command": "node",
+      "args": [".claude/scripts/victorialogs-launcher.mjs"],
       "env": {
         "VL_INSTANCE_ENTRYPOINT": "http://localhost:9428",
         "VL_INSTANCE_HEADERS": "Authorization=Basic ${VICTORIALOGS_BASIC_AUTH_B64}"
@@ -388,18 +389,26 @@ to your shell profile:
 export VICTORIALOGS_BASIC_AUTH_B64="<base64-encoded user:password>"
 ```
 
-**Start the SSH tunnel:**
+**SSH tunnel behavior:**
 
-VictoriaLogs is only accessible on Docker's internal network on core-01. The tunnel forwards
-the port to your local machine:
+VictoriaLogs is only accessible on Docker's internal network on core-01. The
+MCP config uses `.claude/scripts/victorialogs-launcher.mjs`, which starts a
+dedicated SSH tunnel on a free local port for every MCP process. This is
+parallel-safe across Conductor/Claude sessions and avoids sharing
+`localhost:9428`.
+
+The manual tunnel script is still available for direct curl/debug use:
 
 ```bash
 ./scripts/victorialogs-tunnel.sh          # start (auto-reconnect, health check)
 ./scripts/victorialogs-tunnel.sh --check  # verify tunnel is up
 ./scripts/victorialogs-tunnel.sh --stop   # stop tunnel
+
+# Optional: run an isolated manual tunnel on a custom port.
+VICTORIALOGS_LOCAL_PORT=19428 ./scripts/victorialogs-tunnel.sh
 ```
 
-The tunnel must be running before starting Claude Code (or before making log queries).
+The manual tunnel no longer needs to be running before starting Claude Code.
 
 **Verify:**
 
