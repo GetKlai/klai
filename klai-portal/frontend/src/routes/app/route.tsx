@@ -1,7 +1,6 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
 import { MessageSquare, Mic, BookMarked, Brain, Sliders } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
-import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 
@@ -54,7 +53,6 @@ function AppLayout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
-      <HelpButton />
     </div>
   )
 }
