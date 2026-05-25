@@ -1481,6 +1481,8 @@ def _render_kb_citation_content(
         registry,
         allowed_image_urls=allowed_image_urls,
     )
+    if not rendered.sources:
+        return _no_citable_sources_message(user_query), 0, True
     return rendered.content, len(rendered.sources), False
 
 

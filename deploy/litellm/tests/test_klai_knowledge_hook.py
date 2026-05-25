@@ -2643,6 +2643,65 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "kb_citations_no_citable_sources" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_post_call_guard_refuses_irrelevant_citable_sources(self, monkeypatch, caplog):
+        """Do not cite the first retrieved URLs when none support the generated answer."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        caplog.set_level("WARNING", logger="klai_knowledge")
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=(
+                            "Je voegt een extra gebruiker toe via de admin-functie. "
+                            "Een admin kan nieuwe gebruikers uitnodigen of hun rol aanpassen."
+                        )
+                    )
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Hoe voeg ik een nieuwe user toe?",
+                    "chunks_injected": 3,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "title": "Add sources",
+                            "source_url": "https://docs.getklai.com/add-sources",
+                            "text": "Connect Notion, Google Drive, websites, and other knowledge sources.",
+                        },
+                        {
+                            "title": "Getting started",
+                            "source_url": "https://docs.getklai.com/getting-started",
+                            "text": "Create your first knowledge base and ask Klai questions.",
+                        },
+                        {
+                            "title": "Build a knowledge base",
+                            "source_url": "https://docs.getklai.com/build-a-knowledge-base",
+                            "text": "Add documents, websites, and integrations to improve knowledge retrieval.",
+                        },
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        content = response.choices[0].message.content
+        assert content == "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+        assert "add-sources" not in content
+        assert "getting-started" not in content
+        assert "build-a-knowledge-base" not in content
+        assert "kb_citations_no_citable_sources" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_streaming_post_call_buffers_until_deterministic_sources(self, monkeypatch):
         """Streaming chunks must not leak model-authored links before final composition."""
         mod = _load_hook(monkeypatch)

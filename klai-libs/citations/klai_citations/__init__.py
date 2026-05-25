@@ -73,6 +73,7 @@ _SOURCE_RELEVANCE_STOPWORDS = {
     "dat",
     "een",
     "for",
+    "klai",
     "het",
     "met",
     "not",
@@ -416,7 +417,7 @@ def _select_document_sources(
         if (score := _source_relevance_score(answer_tokens, source)) > 0
     ]
     if not scored:
-        return sources[:max_sources]
+        return sources[:1] if len(sources) == 1 else []
 
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [source for _, _, source in scored[:max_sources]]
