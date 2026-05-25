@@ -2206,13 +2206,56 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "example.com" not in format_section
         assert "![afbeelding" not in format_section
         kb_meta = result["metadata"]["_klai_kb_meta"]
-        assert result["stream"] is False
-        assert kb_meta["render_mode"] == "deterministic_non_streaming"
+        assert "stream" not in result
+        assert kb_meta["render_mode"] == "legacy_stream_guard"
         assert kb_meta["original_stream"] is None
         assert kb_meta["citable_sources_count"] == 0
         assert kb_meta["user_query"] == "Heb je hier ook een afbeelding bij?"
         assert kb_meta["allowed_source_urls"] == []
         assert kb_meta["allowed_image_urls"] == []
+
+    @pytest.mark.asyncio
+    async def test_streaming_chat_keeps_stream_contract(self, monkeypatch):
+        """LibreChat/LangGraph streaming calls must not be converted to response-message calls."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "stream": True,
+            "messages": [
+                {"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}
+            ],
+        }
+        chunks = [
+            {
+                "text": "Gebruikers kunnen via Instellingen worden toegevoegd.",
+                "scope": "org",
+                "metadata": {"title": "Gebruikersbeheer"},
+                "source_url": "https://docs.getklai.com/users",
+                "chunk_id": "c1",
+                "reranker_score": 0.91,
+            }
+        ]
+        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert result["stream"] is True
+        assert kb_meta["original_stream"] is True
+        assert kb_meta["render_mode"] == "legacy_stream_guard"
+        assert kb_meta["citable_sources_count"] == 1
 
     @pytest.mark.asyncio
     async def test_prompt_only_exposes_images_from_chunk_image_urls(self, monkeypatch):
@@ -2257,7 +2300,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         )
         assert "ALWAYS include them literally" not in sys_content
         kb_meta = result["metadata"]["_klai_kb_meta"]
-        assert result["stream"] is False
+        assert "stream" not in result
+        assert kb_meta["render_mode"] == "legacy_stream_guard"
         assert kb_meta["citable_sources_count"] == 1
         assert kb_meta["allowed_source_urls"] == ["https://docs.getklai.com/diagram"]
         assert kb_meta["allowed_image_urls"] == [
@@ -2321,7 +2365,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "www.getklai.com" not in sys_content
 
         kb_meta = result["metadata"]["_klai_kb_meta"]
-        assert result["stream"] is False
+        assert "stream" not in result
+        assert kb_meta["render_mode"] == "legacy_stream_guard"
         assert kb_meta["citable_sources_count"] == 2
         assert kb_meta["allowed_source_urls"] == [
             "https://getklai.com/docs/company/mission",
