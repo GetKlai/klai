@@ -2206,6 +2206,11 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "example.com" not in format_section
         assert "![afbeelding" not in format_section
         kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert result["stream"] is False
+        assert kb_meta["render_mode"] == "deterministic_non_streaming"
+        assert kb_meta["original_stream"] is None
+        assert kb_meta["citable_sources_count"] == 0
+        assert kb_meta["user_query"] == "Heb je hier ook een afbeelding bij?"
         assert kb_meta["allowed_source_urls"] == []
         assert kb_meta["allowed_image_urls"] == []
 
@@ -2252,6 +2257,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         )
         assert "ALWAYS include them literally" not in sys_content
         kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert result["stream"] is False
+        assert kb_meta["citable_sources_count"] == 1
         assert kb_meta["allowed_source_urls"] == ["https://docs.getklai.com/diagram"]
         assert kb_meta["allowed_image_urls"] == [
             "https://getklai.getklai.com/kb-images/org/images/support/diagram.png"
@@ -2314,6 +2321,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "www.getklai.com" not in sys_content
 
         kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert result["stream"] is False
+        assert kb_meta["citable_sources_count"] == 2
         assert kb_meta["allowed_source_urls"] == [
             "https://getklai.com/docs/company/mission",
             "https://getklai.com/docs/company/steward-ownership",
@@ -2373,6 +2382,44 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "![fake]" not in content
 
     @pytest.mark.asyncio
+    async def test_post_call_guard_refuses_answer_without_citable_sources(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Klai is open source.")
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Hoe open is Klai?",
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "title": "Open",
+                            "text": "Klai is open source.",
+                        }
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        assert response.choices[0].message.content == (
+            "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+        )
+
+    @pytest.mark.asyncio
     async def test_streaming_post_call_buffers_until_deterministic_sources(self, monkeypatch):
         """Streaming chunks must not leak model-authored links before final composition."""
         mod = _load_hook(monkeypatch)
@@ -2385,6 +2432,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
+                    "render_mode": "legacy_stream_guard",
                     "allowed_source_urls": ["https://docs.getklai.com/diagram"],
                     "allowed_image_urls": [],
                     "citation_chunks": [
@@ -2433,6 +2481,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
+                    "render_mode": "legacy_stream_guard",
                     "allowed_image_urls": [],
                     "citation_chunks": [
                         {
