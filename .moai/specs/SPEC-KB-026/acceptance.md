@@ -9,15 +9,13 @@ trusted source URLs,
 **And** the rendered source list SHALL contain only URLs from the citation
 registry.
 
-## AC-2 — LibreChat KB Path Is Non-Streaming
+## AC-2 — LibreChat KB Path Keeps Streaming Contract
 
-**Given** `KLAI_KB_CHAT_RENDER_MODE=deterministic_non_streaming`,
-**When** retrieval returns at least one citable chunk for a regular LibreChat
-request,
-**Then** the LiteLLM hook SHALL set the outgoing model request to
-`stream=false`,
-**And** the response SHALL be rendered once through the Markdown citation
-renderer.
+**Given** a regular LibreChat KB request arrives with `stream=true`,
+**When** retrieval returns at least one citable chunk,
+**Then** the LiteLLM hook SHALL preserve `stream=true`,
+**And** the final streamed content SHALL be rendered through the Markdown
+citation renderer.
 
 ## AC-3 — General Chat Streaming Preserved
 
@@ -61,8 +59,8 @@ container before the deploy is considered healthy.
 
 **Given** `KLAI_KB_CHAT_RENDER_MODE=legacy_stream_guard`,
 **When** a KB-enriched LibreChat request is made,
-**Then** the previous guarded streaming path SHALL remain available during the
-rollout window.
+**Then** the value SHALL be accepted as an alias for `streaming_guard` during
+the rollout window.
 
 ## AC-9 — Observability
 
@@ -78,4 +76,3 @@ rendered and the count of rendered sources.
 citable Klai source documents,
 **Then** the answer SHALL include a deterministic source list,
 **And** the answer SHALL NOT include hallucinated source names or URLs.
-

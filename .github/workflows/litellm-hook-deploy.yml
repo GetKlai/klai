@@ -53,3 +53,8 @@ jobs:
       # pitfall `bind-mount-content-vs-python-module-cache`.
       - name: Recreate LiteLLM container
         run: ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh --force-recreate litellm"
+
+      - name: Smoke LiteLLM hook imports
+        run: |
+          ssh klai@${{ secrets.CORE01_HOST }} \
+            "docker exec klai-core-litellm-1 python -c 'import klai_knowledge, klai_citations; print(\"litellm hook imports ok\")'"

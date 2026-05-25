@@ -2478,10 +2478,11 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert kb_meta["citation_chunks"] == chunks
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_composes_deterministic_sources(self, monkeypatch):
+    async def test_post_call_guard_composes_deterministic_sources(self, monkeypatch, caplog):
         """The proxy post-call hook replaces model links with retrieved sources."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
+        caplog.set_level("WARNING", logger="klai_knowledge")
         response = SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -2523,11 +2524,14 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "Zie bron en fake (1)." in content
         assert "https://example.com" not in content
         assert "![fake]" not in content
+        assert "kb_citations_rendered_markdown" in caplog.text
+        assert "rendered_sources=1" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_refuses_answer_without_citable_sources(self, monkeypatch):
+    async def test_post_call_guard_refuses_answer_without_citable_sources(self, monkeypatch, caplog):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
+        caplog.set_level("WARNING", logger="klai_knowledge")
         response = SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -2561,6 +2565,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert response.choices[0].message.content == (
             "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
         )
+        assert "kb_citations_no_citable_sources" in caplog.text
 
     @pytest.mark.asyncio
     async def test_streaming_post_call_buffers_until_deterministic_sources(self, monkeypatch):

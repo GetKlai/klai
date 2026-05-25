@@ -230,8 +230,8 @@ def _compose_citations_from_sources(
     if not cleaned or not sources:
         return ComposedCitations(content=cleaned, sources=[])
 
-    used_labels_by_key: dict[str, str] = {}
-    used_order: list[CitationSource] = []
+    labels_by_key = {source.key: str(index) for index, source in enumerate(sources, 1)}
+    cited_keys: set[str] = set()
     output_lines: list[str] = []
     has_cited_any_segment = False
 
@@ -245,21 +245,22 @@ def _compose_citations_from_sources(
         scored = [
             (score, source)
             for source in sources
-            if source.key not in used_labels_by_key and (score := _segment_score(segment_tokens, source)) > 0
+            if source.key not in cited_keys and (score := _segment_score(segment_tokens, source)) > 0
         ]
         scored.sort(key=lambda item: item[0], reverse=True)
         candidates = [source for _, source in scored[:max_sources_per_segment]]
 
         if not candidates and not has_cited_any_segment:
-            candidates = [source for source in sources if source.key not in used_labels_by_key][:1]
+            candidates = [source for source in sources if source.key not in cited_keys][:1]
 
         labels: list[str] = []
         for source in candidates:
-            if len(used_order) >= max_sources:
+            if len(cited_keys) >= max_sources:
                 break
-            label = str(len(used_order) + 1)
-            used_labels_by_key[source.key] = label
-            used_order.append(source)
+            label = labels_by_key.get(source.key)
+            if not label:
+                continue
+            cited_keys.add(source.key)
             labels.append(label)
 
         if labels:
@@ -268,9 +269,7 @@ def _compose_citations_from_sources(
         else:
             output_lines.append(line)
 
-    rendered_sources = [
-        {"label": str(index), "title": source.title, "url": source.url} for index, source in enumerate(used_order, 1)
-    ]
+    rendered_sources = render_structured_sources(CitationRegistry(sources=sources))
     return ComposedCitations(content="\n".join(output_lines), sources=rendered_sources)
 
 
