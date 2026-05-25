@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import zipfile
 from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 
 from app.core.logging import get_logger
@@ -13,6 +15,26 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 # Text-based formats that can be decoded directly without Unstructured
 _PLAIN_TEXT_SUFFIXES = {".md", ".txt", ".rst", ".csv"}
+
+
+def _infer_binary_suffix(content: bytes) -> str | None:
+    """Infer common binary document formats when providers omit extensions."""
+    if content.startswith(b"%PDF"):
+        return ".pdf"
+    if not zipfile.is_zipfile(BytesIO(content)):
+        return None
+    try:
+        with zipfile.ZipFile(BytesIO(content)) as archive:
+            names = set(archive.namelist())
+    except zipfile.BadZipFile:
+        return None
+    if "word/document.xml" in names:
+        return ".docx"
+    if "xl/workbook.xml" in names:
+        return ".xlsx"
+    if "ppt/presentation.xml" in names:
+        return ".pptx"
+    return None
 
 
 def partition(filepath: str) -> list:  # type: ignore[type-arg]
@@ -48,13 +70,21 @@ def parse_document_with_images(content: bytes, filename: str) -> ParseResult:
         raise ValueError(f"File too large: {len(content)} bytes (max {MAX_FILE_SIZE} bytes)")
 
     suffix = Path(filename).suffix.lower()
+    inferred_suffix = _infer_binary_suffix(content)
 
-    if not suffix or " " in suffix or len(suffix) > 10 or suffix in _PLAIN_TEXT_SUFFIXES:
+    if (
+        inferred_suffix is None
+        and (not suffix or " " in suffix or len(suffix) > 10 or suffix in _PLAIN_TEXT_SUFFIXES)
+    ):
         text = content.decode("utf-8", errors="replace")
         logger.info("Parsed text document %s: %d characters", filename, len(text))
         return ParseResult(text=text)
 
-    elements = _partition_with_cleanup(content, filename)
+    parser_filename = filename
+    if inferred_suffix and (not suffix or " " in suffix or len(suffix) > 10):
+        parser_filename = f"{filename}{inferred_suffix}"
+
+    elements = _partition_with_cleanup(content, parser_filename)
 
     text_parts: list[str] = []
     images: list[dict[str, str]] = []

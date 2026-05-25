@@ -171,6 +171,7 @@ async def upsert_chunks(
     tags: list[str] | None = None,
     has_taxonomy: bool = False,
     content_label: list[str] | None = None,
+    parent_chunk_ids: list[int | None] | None = None,
 ) -> None:
     """Upsert raw chunks (before enrichment). Uses vector_chunk named vector.
     Backward compatible: called by the ingest pipeline before enrichment runs.
@@ -221,14 +222,20 @@ async def upsert_chunks(
         base_payload["content_label"] = content_label
     base_payload.update(_extra_payload_for_qdrant(extra_payload))
 
-    points = [
-        PointStruct(
-            id=str(uuid.uuid4()),
-            vector={"vector_chunk": vector},
-            payload={**base_payload, "text": chunk, "chunk_index": i},
+    points = []
+    for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=False)):
+        payload = {**base_payload, "text": chunk, "chunk_index": i}
+        if parent_chunk_ids is not None and i < len(parent_chunk_ids):
+            pid = parent_chunk_ids[i]
+            if pid is not None:
+                payload["parent_chunk_id"] = int(pid)
+        points.append(
+            PointStruct(
+                id=str(uuid.uuid4()),
+                vector={"vector_chunk": vector},
+                payload=payload,
+            )
         )
-        for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=False))
-    ]
     await client.upsert(COLLECTION, points=points)
 
 

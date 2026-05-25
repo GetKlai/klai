@@ -349,6 +349,10 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         return {"status": "skipped", "reason": "content unchanged", "chunks": 0}
 
     # Determine chunks: skip_chunking uses pre-provided chunks or content as single chunk
+    parent_chunk_ids: list[int | None] | None = None
+    parent_index_per_child: list[int | None] | None = None
+    parents_serialised: list[dict] | None = None
+
     if req.skip_chunking:
         if req.chunks:
             texts = req.chunks
@@ -379,8 +383,8 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         if not chunks:
             return {"status": "skipped", "reason": "empty document", "chunks": 0}
         texts = [c.text for c in chunks]
-        [c.parent_index for c in chunks]
-        [
+        parent_index_per_child = [c.parent_index for c in chunks]
+        parents_serialised = [
             {
                 "text": p.text,
                 "token_count": chunker._approx_token_count(p.text),
@@ -534,6 +538,20 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
                     count=len(image_refs),
                 )
 
+    if parents_serialised and parent_index_per_child:
+        inserted_parent_ids = await pg_store.insert_parent_chunks(
+            conn,
+            artifact_id=artifact_id,
+            org_id=req.org_id,
+            parents=parents_serialised,
+        )
+        parent_chunk_ids = []
+        for parent_idx in parent_index_per_child:
+            if parent_idx is not None and 0 <= parent_idx < len(inserted_parent_ids):
+                parent_chunk_ids.append(inserted_parent_ids[parent_idx])
+            else:
+                parent_chunk_ids.append(None)
+
     visibility = await kb_config.get_kb_visibility(conn, req.org_id, req.kb_slug)
 
     extra_payload: dict = {"title": title, "artifact_id": artifact_id}
@@ -600,6 +618,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         taxonomy_node_ids=taxonomy_node_ids if has_taxonomy else None,
         tags=merged_tags if merged_tags else None,
         has_taxonomy=has_taxonomy,
+        parent_chunk_ids=parent_chunk_ids,
     )
 
     # SPEC-KB-022 R4: Taxonomy proposal generation runs in batch mode only —

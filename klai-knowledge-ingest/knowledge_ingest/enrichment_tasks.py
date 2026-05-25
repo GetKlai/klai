@@ -482,6 +482,7 @@ async def _enrich_document(
             if parents and parent_index_per_child:
                 from knowledge_ingest import pg_store
 
+                await pg_store.delete_parent_chunks_for_artifact(conn, artifact_id)
                 inserted_ids = await pg_store.insert_parent_chunks(
                     conn,
                     artifact_id=artifact_id,

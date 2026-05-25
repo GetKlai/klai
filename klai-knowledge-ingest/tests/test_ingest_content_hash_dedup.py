@@ -95,6 +95,11 @@ async def test_proceeds_when_content_changed():
         ),
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
+            "knowledge_ingest.pg_store.insert_parent_chunks",
+            new_callable=AsyncMock,
+            return_value=[1],
+        ),
+        patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,
             return_value=[[0.1] * 10],
@@ -154,6 +159,11 @@ async def test_proceeds_when_no_previous_artifact():
         ),
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
+            "knowledge_ingest.pg_store.insert_parent_chunks",
+            new_callable=AsyncMock,
+            return_value=[1],
+        ),
+        patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,
             return_value=[[0.1] * 10],
@@ -211,6 +221,11 @@ async def test_content_hash_stored_on_create():
         patch("knowledge_ingest.pg_store.soft_delete_artifact", new_callable=AsyncMock),
         patch("knowledge_ingest.pg_store.create_artifact", mock_create),
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
+        patch(
+            "knowledge_ingest.pg_store.insert_parent_chunks",
+            new_callable=AsyncMock,
+            return_value=[1],
+        ),
         patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,

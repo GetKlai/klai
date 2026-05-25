@@ -46,6 +46,26 @@ async def test_upsert_chunks_includes_quality_fields(mock_qdrant_client):
 
 
 @pytest.mark.asyncio
+async def test_upsert_chunks_includes_parent_chunk_id(mock_qdrant_client):
+    """Raw chunks should carry parent ids before enrichment completes."""
+    with patch("knowledge_ingest.qdrant_store.get_client", return_value=mock_qdrant_client):
+        from knowledge_ingest.qdrant_store import upsert_chunks
+
+        await upsert_chunks(
+            org_id="org1",
+            kb_slug="test-kb",
+            path="/doc.md",
+            chunks=["Hello world"],
+            vectors=[[0.1] * 10],
+            artifact_id="art1",
+            parent_chunk_ids=[42],
+        )
+
+        points = mock_qdrant_client.upsert.call_args.kwargs["points"]
+        assert points[0].payload["parent_chunk_id"] == 42
+
+
+@pytest.mark.asyncio
 async def test_upsert_enriched_chunks_includes_quality_fields(mock_qdrant_client):
     """upsert_enriched_chunks must set quality_score=0.5 and feedback_count=0 on every point."""
     with patch("knowledge_ingest.qdrant_store.get_client", return_value=mock_qdrant_client):
