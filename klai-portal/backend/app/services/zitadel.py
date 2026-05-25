@@ -384,6 +384,30 @@ class ZitadelClient:
         )
         resp.raise_for_status()
 
+    # REQ-12 (Finding A-6, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): lock / unlock
+    # helpers wrap Zitadel's _deactivate / _reactivate endpoints. portal-admin
+    # calls these whenever portal_users.status transitions to/from "suspended"
+    # so the JWT-direct services (retrieval-api, connector) cannot keep
+    # accepting tokens for a paused account.
+    # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
+    async def lock_user(self, zitadel_user_id: str, org_id: str) -> None:
+        """Lock a Zitadel user (cannot login). Reversible via ``unlock_user``."""
+        resp = await self._http.post(
+            f"/management/v1/users/{zitadel_user_id}/_deactivate",
+            headers={"x-zitadel-orgid": org_id},
+            json={},
+        )
+        resp.raise_for_status()
+
+    async def unlock_user(self, zitadel_user_id: str, org_id: str) -> None:
+        """Unlock a Zitadel user (login re-enabled). Inverse of ``lock_user``."""
+        resp = await self._http.post(
+            f"/management/v1/users/{zitadel_user_id}/_reactivate",
+            headers={"x-zitadel-orgid": org_id},
+            json={},
+        )
+        resp.raise_for_status()
+
     # ── Token introspection ───────────────────────────────────────────────────
 
     # @MX:ANCHOR fan_in=8 — called by /api/me, _get_caller_org, get_current_user_id, and others

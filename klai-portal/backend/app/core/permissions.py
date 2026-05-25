@@ -92,6 +92,11 @@ class UserPermissions:
     # constructors that pre-date Phase 4 still build without an explicit
     # arg. The resolver always passes the real value.
     seat_type: str = "chat"
+    # REQ-12 (Finding A-6, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): carry the
+    # caller's portal_users.status so the auth resolver can deny suspended
+    # users at the gate. Default "active" so existing test constructors that
+    # pre-date REQ-12 still build without an explicit arg.
+    status: str = "active"
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +208,7 @@ async def resolve_user_permissions(zitadel_user_id: str, db: AsyncSession) -> Us
         effective_kb_limits=kb_limits,
         is_platform_admin=is_platform_admin,
         provisioning_status=org.provisioning_status,
+        status=user.status,
     )
 
 
@@ -243,6 +249,20 @@ async def _resolve_caller_with_options(
             detail={
                 "error": "tenant_deleting",
                 "message": "This organisation is being deleted. No further actions are permitted.",
+            },
+        )
+
+    # REQ-12 (Finding A-6, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): suspended
+    # users may NOT keep using a valid bearer token. 403 (not 401) so the
+    # client distinguishes "your token is fine, your account is paused"
+    # from "your token is invalid" — UX-actionable, no token-refresh loop.
+    # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
+    if perms.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "user_suspended",
+                "message": "User account is suspended. Contact the organisation admin to reactivate.",
             },
         )
 

@@ -32,10 +32,10 @@ from urllib.parse import urlparse
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db, set_tenant, tenant_scoped_session
+from app.core.database import cross_org_session, get_db, tenant_scoped_session
 from app.core.permissions import UserPermissions, require_platform_admin
 from app.core.seats import suggest_seat
 from app.models.portal import PortalOrg, PortalUser
@@ -111,6 +111,14 @@ class MessageResponse(BaseModel):
 
 class RoleUpdateResponse(MessageResponse):
     """Response for role-change endpoints; carries zitadel_sync_failed flag (REQ-5)."""
+
+    zitadel_sync_failed: bool = False
+
+
+class SuspendResponse(MessageResponse):
+    """Response for suspend/reactivate endpoints; carries zitadel_sync_failed
+    flag (REQ-12) so the admin UI can warn when the Zitadel lock/unlock
+    out-of-sync state needs manual recovery."""
 
     zitadel_sync_failed: bool = False
 
@@ -245,13 +253,13 @@ async def platform_update_role(
 
 @router.post(
     "/organizations/{org_id}/users/{zitadel_user_id}/suspend",
-    response_model=MessageResponse,
+    response_model=SuspendResponse,
 )
 async def platform_suspend(
     org_id: int,
     zitadel_user_id: str,
     perms: UserPermissions = Depends(require_platform_admin()),
-) -> MessageResponse:
+) -> SuspendResponse:
     async with tenant_scoped_session(org_id) as db:
         user = (
             await db.execute(
@@ -271,6 +279,30 @@ async def platform_suspend(
         user.status = "suspended"
         await db.commit()
 
+    # REQ-12 (Finding A-6): lock the Zitadel identity AFTER the DB commit so
+    # the desync-window favours "DB committed, Zitadel still active" (caller
+    # remains logged in until token expiry) over "DB rolled back, Zitadel
+    # locked" (caller mysteriously locked out with no DB trace).
+    # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
+    zitadel_sync_failed = False
+    try:
+        await zitadel.lock_user(
+            zitadel_user_id=zitadel_user_id,
+            org_id=settings_zitadel_portal_org_id(),
+        )
+    except Exception as exc:
+        logger.exception("platform_suspend_zitadel_lock_failed", zitadel_user_id=zitadel_user_id)
+        await _emit_audit_safe(
+            action="platform_admin.suspend_zitadel_desync",
+            details={
+                "target_zitadel_user_id": zitadel_user_id,
+                "target_org_id": org_id,
+                "error": str(exc)[:200],
+            },
+            perms=perms,
+        )
+        zitadel_sync_failed = True
+
     fire_role_change_notification(zitadel_user_id)
     await log_event(
         org_id=perms.org_id,
@@ -278,20 +310,23 @@ async def platform_suspend(
         action="platform_admin.user_suspended",
         resource_type="user",
         resource_id=zitadel_user_id,
-        details={"target_org_id": org_id},
+        details={"target_org_id": org_id, "zitadel_sync_failed": zitadel_sync_failed},
     )
-    return MessageResponse(message="Gebruiker gesuspendeerd.")
+    return SuspendResponse(
+        message="Gebruiker gesuspendeerd.",
+        zitadel_sync_failed=zitadel_sync_failed,
+    )
 
 
 @router.post(
     "/organizations/{org_id}/users/{zitadel_user_id}/reactivate",
-    response_model=MessageResponse,
+    response_model=SuspendResponse,
 )
 async def platform_reactivate(
     org_id: int,
     zitadel_user_id: str,
     perms: UserPermissions = Depends(require_platform_admin()),
-) -> MessageResponse:
+) -> SuspendResponse:
     async with tenant_scoped_session(org_id) as db:
         user = (
             await db.execute(
@@ -311,6 +346,28 @@ async def platform_reactivate(
         user.status = "active"
         await db.commit()
 
+    # REQ-12 (Finding A-6): unlock Zitadel after DB commit (same ordering rationale
+    # as platform_suspend — DB is source-of-truth, Zitadel mirrors).
+    # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
+    zitadel_sync_failed = False
+    try:
+        await zitadel.unlock_user(
+            zitadel_user_id=zitadel_user_id,
+            org_id=settings_zitadel_portal_org_id(),
+        )
+    except Exception as exc:
+        logger.exception("platform_reactivate_zitadel_unlock_failed", zitadel_user_id=zitadel_user_id)
+        await _emit_audit_safe(
+            action="platform_admin.reactivate_zitadel_desync",
+            details={
+                "target_zitadel_user_id": zitadel_user_id,
+                "target_org_id": org_id,
+                "error": str(exc)[:200],
+            },
+            perms=perms,
+        )
+        zitadel_sync_failed = True
+
     fire_role_change_notification(zitadel_user_id)
     await log_event(
         org_id=perms.org_id,
@@ -318,9 +375,12 @@ async def platform_reactivate(
         action="platform_admin.user_reactivated",
         resource_type="user",
         resource_id=zitadel_user_id,
-        details={"target_org_id": org_id},
+        details={"target_org_id": org_id, "zitadel_sync_failed": zitadel_sync_failed},
     )
-    return MessageResponse(message="Gebruiker geheractiveerd.")
+    return SuspendResponse(
+        message="Gebruiker geheractiveerd.",
+        zitadel_sync_failed=zitadel_sync_failed,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -688,8 +748,10 @@ async def platform_create_tenant(
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Owner-setup mislukt: {exc}") from exc
 
-    # 3. PortalOrg + owner PortalUser. Org insert needs no tenant; the
-    # user insert needs set_tenant for the portal_users RLS check.
+    # 3a. PortalOrg insert on the request-scoped session. portal_orgs is
+    # portal_api-owned (no per-tenant RLS), so no tenant context needed.
+    # Commit immediately so the org_id is durable + visible to the
+    # tenant-scoped session that follows.
     owner_email_domain = body.owner_email.split("@")[-1].strip().lower()
     org_row = PortalOrg(
         zitadel_org_id=zitadel_org_id,
@@ -700,24 +762,55 @@ async def platform_create_tenant(
     )
     try:
         db.add(org_row)
-        await db.flush()
-        await set_tenant(db, org_row.id)
-        db.add(
-            PortalUser(
-                zitadel_user_id=owner_user_id,
-                org_id=org_row.id,
-                role="admin",
-                seat_type=str(suggest_seat("admin")),
-                preferred_language=body.preferred_language,
-            )
-        )
         await db.commit()
     except Exception as exc:
         await db.rollback()
-        logger.exception("platform_create_tenant_db_failed", email=body.owner_email)
+        logger.exception("platform_create_tenant_org_db_failed", email=body.owner_email)
         await _rollback_zitadel_user(owner_user_id)
         await _rollback_zitadel_org()
-        raise HTTPException(status_code=502, detail=f"Opslaan mislukt: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Opslaan org mislukt: {exc}") from exc
+
+    # 3b. Owner PortalUser insert in a SEPARATE tenant_scoped_session per REQ-10
+    # (Finding A-3, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001). The request-scoped
+    # session is NEVER mutated with set_tenant — this matches standards.md § 3
+    # and mirrors platform_invite.
+    # @MX:NOTE: REQ-10 — tenant_scoped_session opens a fresh AsyncSession +
+    # sets app.current_org_id; the request session stays at NULL GUC so a
+    # future read between this block and handler-return cannot accidentally
+    # land on the wrong tenant.
+    # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-10 (Finding A-3)
+    try:
+        async with tenant_scoped_session(org_row.id) as tdb:
+            tdb.add(
+                PortalUser(
+                    zitadel_user_id=owner_user_id,
+                    org_id=org_row.id,
+                    role="admin",
+                    seat_type=str(suggest_seat("admin")),
+                    preferred_language=body.preferred_language,
+                )
+            )
+            await tdb.commit()
+    except Exception as exc:
+        logger.exception("platform_create_tenant_owner_user_db_failed", email=body.owner_email)
+        # Org row was committed above; remove it via cross_org_session so the
+        # tenant doesn't survive as an owner-less shell. portal_orgs has no
+        # FK rows yet (provisioning has not started), so a flat DELETE is safe.
+        try:
+            async with cross_org_session() as cdb:
+                await cdb.execute(
+                    text("DELETE FROM portal_orgs WHERE id = :id"),
+                    {"id": org_row.id},
+                )
+                await cdb.commit()
+        except Exception:
+            logger.exception(
+                "platform_create_tenant_org_cleanup_failed",
+                org_id=org_row.id,
+            )
+        await _rollback_zitadel_user(owner_user_id)
+        await _rollback_zitadel_org()
+        raise HTTPException(status_code=502, detail=f"Opslaan owner mislukt: {exc}") from exc
 
     invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
     mail_sent = True

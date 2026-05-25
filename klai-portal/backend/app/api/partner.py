@@ -199,9 +199,9 @@ async def _audit_streaming_wrapper(
     inner: AsyncGenerator[bytes],
     *,
     widget_id: str,
-    org_id: int,
     session_key: str,
     loaded_origin: str | None = None,
+    is_preview: bool = False,
 ) -> AsyncGenerator[bytes]:
     """Tee the SSE stream, capture composed text + sources, log the
     assistant turn once the generator completes.
@@ -229,12 +229,12 @@ async def _audit_streaming_wrapper(
             task = asyncio.create_task(
                 record_widget_turn(
                     widget_id=widget_id,
-                    org_id=org_id,
                     session_key=session_key,
                     role="assistant",
                     content=final_text,
                     sources=composed_sources or None,
                     loaded_origin=loaded_origin,
+                    is_preview=is_preview,
                 )
             )
             _pending.add(task)
@@ -422,13 +422,13 @@ async def chat_completions(
                 task = asyncio.create_task(
                     record_widget_turn(
                         widget_id=audit_widget_id,
-                        org_id=auth.org_id,
                         session_key=audit_session_key,
                         role="user",
                         content=last_user_msg,
                         ip_hash=audit_ip_hash,
                         user_agent_hash=audit_ua_hash,
                         loaded_origin=http_request.headers.get("origin") or None,
+                        is_preview=getattr(auth, "is_preview", False),
                     )
                 )
                 _pending.add(task)
@@ -457,9 +457,9 @@ async def chat_completions(
             streaming_gen = _audit_streaming_wrapper(
                 streaming_gen,
                 widget_id=audit_widget_id,  # type: ignore[arg-type]
-                org_id=auth.org_id,
                 session_key=audit_session_key,  # type: ignore[arg-type]
                 loaded_origin=http_request.headers.get("origin") or None,
+                is_preview=getattr(auth, "is_preview", False),
             )
         return StreamingResponse(
             content=streaming_gen,
@@ -488,12 +488,12 @@ async def chat_completions(
             task = asyncio.create_task(
                 record_widget_turn(
                     widget_id=audit_widget_id,  # type: ignore[arg-type]
-                    org_id=auth.org_id,
                     session_key=audit_session_key,  # type: ignore[arg-type]
                     role="assistant",
                     content=assistant_text,
                     sources=assistant_sources,
                     loaded_origin=http_request.headers.get("origin") or None,
+                    is_preview=getattr(auth, "is_preview", False),
                 )
             )
             _pending.add(task)
@@ -833,7 +833,8 @@ async def widget_config(
             )
 
     # Look up widget by public widget_id (SPEC-WIDGET-002: own table)
-    result = await db.execute(select(Widget).where(Widget.widget_id == id))
+    # REQ-16: soft-deleted widgets are 404 to the public/partner endpoints.
+    result = await db.execute(select(Widget).where(Widget.widget_id == id, Widget.deleted_at.is_(None)))
     widget_row = result.scalar_one_or_none()
 
     if widget_row is None:
@@ -954,7 +955,8 @@ async def public_bot_config(
                 headers={"Retry-After": str(retry_after)},
             )
 
-    result = await db.execute(select(Widget).where(Widget.widget_id == id))
+    # REQ-16: soft-deleted widgets are 404 to the public/partner endpoints.
+    result = await db.execute(select(Widget).where(Widget.widget_id == id, Widget.deleted_at.is_(None)))
     widget_row = result.scalar_one_or_none()
     if widget_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
@@ -1035,7 +1037,8 @@ async def widget_config_preflight(
     minimal-changes scope.
     @MX:SPEC: SPEC-WIDGET-001
     """
-    result = await db.execute(select(Widget).where(Widget.widget_id == id))
+    # REQ-16: soft-deleted widgets are 404 to the public/partner endpoints.
+    result = await db.execute(select(Widget).where(Widget.widget_id == id, Widget.deleted_at.is_(None)))
     widget_row = result.scalar_one_or_none()
 
     if widget_row is None:

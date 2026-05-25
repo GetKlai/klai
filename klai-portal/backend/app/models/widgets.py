@@ -76,6 +76,11 @@ class Widget(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    # REQ-16 (Finding B-14, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): soft-delete
+    # so admin "wipe traces" no longer destroys the conversation/messages audit
+    # trail. NULL = active widget; NOT NULL = soft-deleted at that timestamp.
+    # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-16
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class WidgetKbAccess(Base):
