@@ -1965,6 +1965,22 @@ class KlaiKnowledgeHook(CustomLogger):
             )
         return response
 
+    async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
+        kb_meta = request_data.get("metadata", {}).get("_klai_kb_meta")
+        if not kb_meta or kb_meta.get("gate_bypassed"):
+            async for item in response:
+                yield item
+            return
+
+        async for item in response:
+            composed_count = _compose_kb_response(item, kb_meta)
+            if composed_count:
+                logger.warning(
+                    "KB output guard composed deterministic citations for %d streaming response chunks",
+                    composed_count,
+                )
+            yield item
+
     async def async_post_call_failure_hook(self, *args, **kwargs):
         pass
 

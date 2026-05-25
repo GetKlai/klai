@@ -235,6 +235,10 @@ services:
       # → all chat traffic 500s with "Connection error". Same vendoring
       # rationale as klai_service_auth.py / klai_chat_prompts.py.
       - ./litellm/klai_retrieval_telemetry.py:/app/klai_retrieval_telemetry.py:ro
+      # Shared deterministic citation rendering used by klai_knowledge.py.
+      # Keep this mount in sync with deploy/litellm/klai_citations.py; missing
+      # it causes ModuleNotFoundError at LiteLLM startup.
+      - ./litellm/klai_citations.py:/app/klai_citations.py:ro
     environment:
       PYTHONPATH: /app
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
