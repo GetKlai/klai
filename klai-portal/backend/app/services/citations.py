@@ -4,7 +4,7 @@ The implementation lives in ``klai-citations`` so portal/widget code and the
 LiteLLM hook use the same composer. Keep this module for existing imports.
 """
 
-from klai_citations import (  # noqa: F401
+from klai_citations import (
     CitationSource,
     ComposedCitations,
     citation_sources_from_chunks,
