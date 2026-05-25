@@ -120,9 +120,15 @@ def webhook_client(mock_pool):
 
 
 def test_docs_source_extra_builds_public_reader_url():
-    from knowledge_ingest.routes.ingest import docs_source_extra
+    from knowledge_ingest.docs_provenance import build_docs_source_extra
 
-    assert docs_source_extra("org-getklai/klai-help", "klai-help", "users/invite people.md") == {
+    extra = build_docs_source_extra(
+        "org-getklai/klai-help",
+        "klai-help",
+        "users/invite people.md",
+    )
+
+    assert extra == {
         "source_url": "https://getklai.getklai.com/docs/klai-help/users/invite%20people",
         "source_ref": "https://getklai.getklai.com/docs/klai-help/users/invite%20people",
     }

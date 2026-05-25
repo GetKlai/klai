@@ -10,8 +10,8 @@ from knowledge_ingest.chunker import (
     Chunk,
     ParentChunk,
     chunk_markdown_with_parents,
-    normalize_document_for_chunking,
 )
+from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 
 # A short document that fits in one parent — exercises the trivial case.
 _SHORT_DOC = """\

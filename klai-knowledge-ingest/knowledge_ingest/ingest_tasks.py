@@ -42,10 +42,10 @@ def register_ingest_tasks(procrastinate_app: object) -> None:
         """
         # Lazy imports to avoid circular dependencies and psycopg at module level
         from knowledge_ingest.db import tenant_scoped_connection
+        from knowledge_ingest.docs_provenance import build_docs_source_extra
         from knowledge_ingest.models import IngestRequest
         from knowledge_ingest.routes.ingest import (
             _fetch_gitea_file,
-            docs_source_extra,
             ingest_document,
         )
 
@@ -64,7 +64,7 @@ def register_ingest_tasks(procrastinate_app: object) -> None:
             source_type="docs",
             content_type="kb_article",
             user_id=user_id,
-            extra=docs_source_extra(gitea_repo, kb_slug, path),
+            extra=build_docs_source_extra(gitea_repo, kb_slug, path),
         )
         async with tenant_scoped_connection(org_id) as conn:
             result = await ingest_document(conn, req)
