@@ -154,9 +154,7 @@ class TestGoogleDrivePickerToken:
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
             db.get = AsyncMock(return_value=mock_connector)
-            mock_store.decrypt_credentials = AsyncMock(
-                return_value={"refresh_token": "placeholder-refresh-token"}
-            )
+            mock_store.decrypt_credentials = AsyncMock(return_value={"refresh_token": "placeholder-refresh-token"})
 
             result = await google_drive_picker_token(
                 connector_id="conn-uuid-picker",

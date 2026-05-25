@@ -362,9 +362,9 @@ async def google_drive_picker_token(
             token_response.raise_for_status()
             token_data = token_response.json()
     except httpx.HTTPStatusError as exc:
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning(
-            "google_picker_token_refresh_failed: connector_id=%s status=%s",
-            connector_id,
+            "google_picker_token_refresh_failed: status=%s",
             exc.response.status_code,
         )
         raise HTTPException(
