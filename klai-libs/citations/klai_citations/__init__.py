@@ -19,6 +19,7 @@ class CitationSource:
     url: str
     title: str
     chunk_texts: list[str] = field(default_factory=list)
+    retrieval_score: float | None = None
 
 
 @dataclass
@@ -67,7 +68,6 @@ _SOURCE_HEADING_RE = re.compile(r"^\s*(?:bronnen?|sources?|references?)\s*:?\s*$
 _SOURCE_LIST_LINE_RE = re.compile(r"^\s*(?:\(\s*\d{1,3}\s*\)|\[\s*\d{1,3}\s*\]|\d{1,3}[.)])\s*(.+)$")
 _BULLET_LINE_RE = re.compile(r"^\s*[-*+•]\s+(.+?)\s*$")
 _DEFAULT_MAX_SOURCES = 2
-_SUPPORTED_SOURCE_KEEP_RATIO = 0.90
 _SIMPLE_ANSWER_SOURCE_TOKEN_LIMIT = 80
 _SOURCE_RELEVANCE_STOPWORDS = {
     "aan",
@@ -91,42 +91,6 @@ _SOURCE_RELEVANCE_STOPWORDS = {
     "voor",
     "with",
     "you",
-}
-_TOKEN_SYNONYMS = {
-    "colleague": "user",
-    "colleagues": "user",
-    "e-mail": "email",
-    "emails": "email",
-    "gebruiker": "user",
-    "gebruikers": "user",
-    "iemand": "user",
-    "invite": "invite",
-    "invited": "invite",
-    "invites": "invite",
-    "inviting": "invite",
-    "mailadres": "email",
-    "medewerker": "user",
-    "medewerkers": "user",
-    "mensen": "user",
-    "people": "user",
-    "persoon": "user",
-    "personen": "user",
-    "role": "role",
-    "roles": "role",
-    "rol": "role",
-    "rollen": "role",
-    "teamlid": "user",
-    "teamleden": "user",
-    "voeg": "invite",
-    "toevoegen": "invite",
-    "toegevoegd": "invite",
-    "toe": "invite",
-    "uitgenodigd": "invite",
-    "uitnodigen": "invite",
-    "user": "user",
-    "users": "user",
-    "verwijder": "remove",
-    "verwijderen": "remove",
 }
 
 
@@ -207,6 +171,31 @@ def _metadata(chunk: dict) -> dict:
 
 def _string_value(value: object) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _optional_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _chunk_retrieval_score(chunk: dict[str, Any]) -> float | None:
+    metadata = _metadata(chunk)
+    for key in ("final_score", "reranker_score", "relevance_score", "score"):
+        score = _optional_float(chunk.get(key))
+        if score is not None:
+            return score
+        score = _optional_float(metadata.get(key))
+        if score is not None:
+            return score
+    return None
 
 
 def _split_section_path(value: object) -> list[str]:
@@ -354,8 +343,18 @@ def citation_sources_from_chunks(chunks: list[dict]) -> list[CitationSource]:
             continue
         source = sources_by_key.get(key)
         if source is None:
-            source = CitationSource(key=key, url=url, title=_chunk_source_title(chunk))
+            source = CitationSource(
+                key=key,
+                url=url,
+                title=_chunk_source_title(chunk),
+                retrieval_score=_chunk_retrieval_score(chunk),
+            )
             sources_by_key[key] = source
+        else:
+            score = _chunk_retrieval_score(chunk)
+            if score is not None:
+                current = source.retrieval_score
+                source.retrieval_score = score if current is None else max(current, score)
         for item in evidence_chunks_from_chunks([chunk]):
             source.chunk_texts.append(item.content)
     return list(sources_by_key.values())
@@ -486,13 +485,9 @@ def strip_model_citation_artifacts(
     return cleaned.strip()
 
 
-def _canonical_token(token: str) -> str:
-    return _TOKEN_SYNONYMS.get(token.lower(), token.lower())
-
-
 def _tokens(text: str) -> set[str]:
     return {
-        _canonical_token(token)
+        token.lower()
         for token in _TOKEN_RE.findall(text)
         if not token.isdigit() and token.lower() not in _SOURCE_RELEVANCE_STOPWORDS
     }
@@ -520,7 +515,7 @@ def _source_title_set(sources: list[CitationSource]) -> set[str]:
     return {source.title for source in sources if source.title.strip()}
 
 
-def _query_intent_tokens(query_text: str | None, sources: list[CitationSource]) -> set[str]:
+def _query_support_tokens(query_text: str | None, sources: list[CitationSource]) -> set[str]:
     query_tokens = _tokens(query_text or "")
     if not query_tokens:
         return set()
@@ -552,15 +547,15 @@ def _select_document_sources(
 
     answer_tokens = _tokens(cleaned_answer)
     scored = [
-        (score, index, source)
+        (source.retrieval_score if source.retrieval_score is not None else 0.0, score, index, source)
         for index, source in enumerate(sources)
         if (score := _source_relevance_score(answer_tokens, source)) > 0
     ]
     if not scored:
         return sources[:1] if len(sources) == 1 else []
 
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [source for _, _, source in scored[:effective_max_sources]]
+    scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    return [source for _, _, _, source in scored[:effective_max_sources]]
 
 
 def _source_decision_entry(
@@ -576,6 +571,7 @@ def _source_decision_entry(
         "url": source.url,
         "selected": selected,
         "reason": reason,
+        "retrieval_score": source.retrieval_score,
         "query_score": query_score,
         "answer_score": answer_score,
     }
@@ -608,25 +604,25 @@ def _select_supported_sources_with_decision(
         return [], decision
     answer_tokens = _tokens(cleaned_answer)
     query_tokens = _tokens(query_text or "")
-    query_intent_tokens = _query_intent_tokens(query_text, sources)
-    min_query_overlap = min(2, len(query_intent_tokens)) if query_intent_tokens else 0
-    decision["query_intent_tokens"] = sorted(query_intent_tokens)
+    query_support_tokens = _query_support_tokens(query_text, sources)
+    min_query_overlap = min(2, len(query_support_tokens)) if query_support_tokens else 0
+    decision["query_support_tokens"] = sorted(query_support_tokens)
     decision["min_query_overlap"] = min_query_overlap
-    scored: list[tuple[int, int, int, int, CitationSource]] = []
+    scored: list[tuple[float, int, int, int, CitationSource]] = []
     for index, source in enumerate(sources):
         support_tokens = _source_support_tokens(source)
         query_score = (
-            len(query_intent_tokens & support_tokens)
-            if query_intent_tokens
+            len(query_support_tokens & support_tokens)
+            if query_support_tokens
             else len(query_tokens & support_tokens) if query_tokens else 0
         )
         answer_score = _source_relevance_score(answer_tokens, source)
-        if query_intent_tokens and query_score < min_query_overlap:
+        if query_support_tokens and query_score < min_query_overlap:
             decision["rejected"].append(
                 _source_decision_entry(
                     source,
                     selected=False,
-                    reason="query_intent_not_supported",
+                    reason="query_not_supported",
                     query_score=query_score,
                     answer_score=answer_score,
                 )
@@ -643,53 +639,17 @@ def _select_supported_sources_with_decision(
                 )
             )
             continue
-        scored.append((query_score * 3 + answer_score, query_score, answer_score, index, source))
-    scored.sort(key=lambda item: (-item[0], item[3]))
-    if query_intent_tokens and scored:
-        best_query_score = scored[0][1]
-        query_supported_scored: list[tuple[int, int, int, int, CitationSource]] = []
-        for item in scored:
-            _, query_score, answer_score, _, source = item
-            if query_score == best_query_score:
-                query_supported_scored.append(item)
-                continue
-            decision["rejected"].append(
-                _source_decision_entry(
-                    source,
-                    selected=False,
-                    reason="weaker_query_intent_support",
-                    query_score=query_score,
-                    answer_score=answer_score,
-                )
-            )
-        scored = query_supported_scored
-
-    if query_intent_tokens and scored:
-        best_score = scored[0][0]
-        kept_scored: list[tuple[int, int, int, int, CitationSource]] = []
-        for item in scored:
-            score, query_score, answer_score, _, source = item
-            if score >= best_score * _SUPPORTED_SOURCE_KEEP_RATIO:
-                kept_scored.append(item)
-                continue
-            decision["rejected"].append(
-                _source_decision_entry(
-                    source,
-                    selected=False,
-                    reason="weaker_than_best_supported_source",
-                    query_score=query_score,
-                    answer_score=answer_score,
-                )
-            )
-        scored = kept_scored
+        retrieval_score = source.retrieval_score if source.retrieval_score is not None else 0.0
+        scored.append((retrieval_score, answer_score, query_score, index, source))
+    scored.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
     effective_max_sources = _effective_max_sources(cleaned_answer, max_sources)
     if effective_max_sources is None:
         selected_scored = scored
-        overflow_scored: list[tuple[int, int, int, int, CitationSource]] = []
+        overflow_scored: list[tuple[float, int, int, int, CitationSource]] = []
     else:
         selected_scored = scored[:effective_max_sources]
         overflow_scored = scored[effective_max_sources:]
-    for _, query_score, answer_score, _, source in selected_scored:
+    for _, answer_score, query_score, _, source in selected_scored:
         decision["selected"].append(
             _source_decision_entry(
                 source,
@@ -699,7 +659,7 @@ def _select_supported_sources_with_decision(
                 answer_score=answer_score,
             )
         )
-    for _, query_score, answer_score, _, source in overflow_scored:
+    for _, answer_score, query_score, _, source in overflow_scored:
         decision["rejected"].append(
             _source_decision_entry(
                 source,
@@ -897,6 +857,46 @@ def _source_evidence_texts(
     return texts
 
 
+def _source_evidence_scores(
+    source: dict[str, Any],
+    evidence_chunks: list[dict[str, Any]],
+) -> list[float]:
+    evidence_ids = {
+        str(evidence_id)
+        for evidence_id in source.get("evidence_ids") or []
+        if isinstance(evidence_id, str | int)
+    }
+    source_url = source_url_key(source.get("url"))
+    scores: list[float] = []
+    for chunk in evidence_chunks:
+        if not isinstance(chunk, dict):
+            continue
+        chunk_evidence_id = chunk.get("evidence_id")
+        chunk_url = source_url_key(chunk.get("source_url") or chunk.get("url"))
+        evidence_matches = evidence_ids and str(chunk_evidence_id) in evidence_ids
+        url_matches = source_url and chunk_url == source_url
+        if not evidence_matches and not url_matches:
+            continue
+        if (score := _chunk_retrieval_score(chunk)) is not None:
+            scores.append(score)
+    return scores
+
+
+def _source_retrieval_score(
+    source: dict[str, Any],
+    evidence_chunks: list[dict[str, Any]],
+) -> float | None:
+    explicit_score = None
+    for key in ("relevance_score", "score"):
+        explicit_score = _optional_float(source.get(key))
+        if explicit_score is not None:
+            break
+    scores = _source_evidence_scores(source, evidence_chunks)
+    if explicit_score is not None:
+        scores.append(explicit_score)
+    return max(scores) if scores else None
+
+
 def _trusted_candidate_sources(
     trusted_sources: list[dict[str, Any]],
     evidence_chunks: list[dict[str, Any]],
@@ -917,6 +917,7 @@ def _trusted_candidate_sources(
                 url=url,
                 title=str(source.get("title") or "Source"),
                 chunk_texts=evidence_texts,
+                retrieval_score=_source_retrieval_score(source, evidence_chunks),
             )
         )
         seen_keys.add(key)
@@ -945,6 +946,7 @@ def _trusted_candidate_sources(
                 url=url,
                 title=_chunk_source_title(chunk),
                 chunk_texts=texts,
+                retrieval_score=_chunk_retrieval_score(chunk),
             )
         )
         seen_keys.add(key)
