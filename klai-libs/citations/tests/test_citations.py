@@ -479,6 +479,63 @@ def test_trusted_source_composition_uses_query_intent_not_surface_overlap() -> N
     assert composed.decision["rejected"][0]["reason"] == "query_intent_not_supported"
 
 
+def test_trusted_source_composition_keeps_simple_answers_to_best_source() -> None:
+    composed = compose_answer_with_trusted_sources(
+        (
+            "Ga naar Admin > Users, klik op Invite and remove people en voeg de "
+            "nieuwe gebruiker toe met de juiste rol."
+        ),
+        [
+            {
+                "label": "1",
+                "title": "The five roles",
+                "url": "https://getklai.getklai.com/docs/klai-help/the-five-roles",
+                "evidence_ids": ["E1"],
+            },
+            {
+                "label": "2",
+                "title": "Build a knowledge base",
+                "url": "https://getklai.getklai.com/docs/klai-help/build-a-knowledge-base",
+                "evidence_ids": ["E2"],
+            },
+            {
+                "label": "3",
+                "title": "For admins",
+                "url": "https://getklai.getklai.com/docs/klai-help/for-admins",
+                "evidence_ids": ["E3"],
+            },
+        ],
+        query_text="Hoe voeg ik een nieuwe gebruiker toe?",
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "source_url": "https://getklai.getklai.com/docs/klai-help/the-five-roles",
+                "text": "Admins assign roles to users from Admin > Users.",
+            },
+            {
+                "evidence_id": "E2",
+                "source_url": "https://getklai.getklai.com/docs/klai-help/build-a-knowledge-base",
+                "text": "Admins can invite users after setting up a knowledge base.",
+            },
+            {
+                "evidence_id": "E3",
+                "source_url": "https://getklai.getklai.com/docs/klai-help/for-admins",
+                "text": "Admins invite users from Admin > Users and assign the right role.",
+            },
+        ],
+    )
+
+    assert composed.sources == [
+        {
+            "label": "1",
+            "title": "For admins",
+            "url": "https://getklai.getklai.com/docs/klai-help/for-admins",
+        }
+    ]
+    rejected_titles = {item["title"] for item in composed.decision["rejected"]}
+    assert rejected_titles >= {"The five roles", "Build a knowledge base"}
+
+
 def test_trusted_source_composition_uses_evidence_items_and_strips_model_source_bullets() -> None:
     composed = compose_answer_with_trusted_sources(
         (
@@ -547,5 +604,5 @@ def test_trusted_source_composition_uses_evidence_items_and_strips_model_source_
         }
     ]
     assert {item["reason"] for item in composed.decision["rejected"]} >= {
-        "weaker_than_best_supported_source"
+        "weaker_query_intent_support"
     }

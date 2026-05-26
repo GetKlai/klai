@@ -66,8 +66,9 @@ _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
 _SOURCE_HEADING_RE = re.compile(r"^\s*(?:bronnen?|sources?|references?)\s*:?\s*$", re.IGNORECASE)
 _SOURCE_LIST_LINE_RE = re.compile(r"^\s*(?:\(\s*\d{1,3}\s*\)|\[\s*\d{1,3}\s*\]|\d{1,3}[.)])\s*(.+)$")
 _BULLET_LINE_RE = re.compile(r"^\s*[-*+•]\s+(.+?)\s*$")
-_DEFAULT_MAX_SOURCES = 3
-_SUPPORTED_SOURCE_KEEP_RATIO = 0.70
+_DEFAULT_MAX_SOURCES = 2
+_SUPPORTED_SOURCE_KEEP_RATIO = 0.90
+_SIMPLE_ANSWER_SOURCE_TOKEN_LIMIT = 80
 _SOURCE_RELEVANCE_STOPWORDS = {
     "aan",
     "als",
@@ -520,15 +521,24 @@ def _source_title_set(sources: list[CitationSource]) -> set[str]:
     return {source.title for source in sources if source.title.strip()}
 
 
+def _effective_max_sources(cleaned_answer: str, max_sources: int | None) -> int | None:
+    if max_sources is None or max_sources <= 1:
+        return max_sources
+    if len(_tokens(cleaned_answer)) <= _SIMPLE_ANSWER_SOURCE_TOKEN_LIMIT:
+        return 1
+    return max_sources
+
+
 def _select_document_sources(
     cleaned_answer: str,
     sources: list[CitationSource],
     *,
     max_sources: int | None,
 ) -> list[CitationSource]:
-    if max_sources is None:
+    effective_max_sources = _effective_max_sources(cleaned_answer, max_sources)
+    if effective_max_sources is None:
         return sources
-    if max_sources <= 0:
+    if effective_max_sources <= 0:
         return []
 
     answer_tokens = _tokens(cleaned_answer)
@@ -541,7 +551,7 @@ def _select_document_sources(
         return sources[:1] if len(sources) == 1 else []
 
     scored.sort(key=lambda item: (-item[0], item[1]))
-    return [source for _, _, source in scored[:max_sources]]
+    return [source for _, _, source in scored[:effective_max_sources]]
 
 
 def _source_decision_entry(
@@ -627,6 +637,25 @@ def _select_supported_sources_with_decision(
         scored.append((query_score * 3 + answer_score, query_score, answer_score, index, source))
     scored.sort(key=lambda item: (-item[0], item[3]))
     if query_intent_tokens and scored:
+        best_query_score = scored[0][1]
+        query_supported_scored: list[tuple[int, int, int, int, CitationSource]] = []
+        for item in scored:
+            _, query_score, answer_score, _, source = item
+            if query_score == best_query_score:
+                query_supported_scored.append(item)
+                continue
+            decision["rejected"].append(
+                _source_decision_entry(
+                    source,
+                    selected=False,
+                    reason="weaker_query_intent_support",
+                    query_score=query_score,
+                    answer_score=answer_score,
+                )
+            )
+        scored = query_supported_scored
+
+    if query_intent_tokens and scored:
         best_score = scored[0][0]
         kept_scored: list[tuple[int, int, int, int, CitationSource]] = []
         for item in scored:
@@ -644,12 +673,13 @@ def _select_supported_sources_with_decision(
                 )
             )
         scored = kept_scored
-    if max_sources is None:
+    effective_max_sources = _effective_max_sources(cleaned_answer, max_sources)
+    if effective_max_sources is None:
         selected_scored = scored
         overflow_scored: list[tuple[int, int, int, int, CitationSource]] = []
     else:
-        selected_scored = scored[:max_sources]
-        overflow_scored = scored[max_sources:]
+        selected_scored = scored[:effective_max_sources]
+        overflow_scored = scored[effective_max_sources:]
     for _, query_score, answer_score, _, source in selected_scored:
         decision["selected"].append(
             _source_decision_entry(
