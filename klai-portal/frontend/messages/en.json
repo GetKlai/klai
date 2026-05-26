@@ -1591,7 +1591,7 @@
   "instructions_intro_heading": "What are instructions?",
   "instructions_intro_body": "An instruction is a piece of text you turn on before a chat. Klai picks it up as the starting point, so you don't have to type the same setup every time.",
   "instructions_intro_examples_heading": "For example:",
-  "instructions_intro_example_1": "a weekly Whatsapp update to customers with a fixed tone and structure,",
+  "instructions_intro_example_1": "customer-support replies with a fixed tone and clear escalation rules,",
   "instructions_intro_example_2": "or a sales follow-up after a demo that opens with the agreed next step.",
   "instructions_intro_invoke": "Turn one on from the Instructions button at the bottom of the chat. You can have several active at once.",
   "instructions_empty_title": "No instructions yet",
