@@ -1,7 +1,7 @@
 """Tests for knowledge_ingest.graph module."""
 from __future__ import annotations
 
-import asyncio
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,6 +35,30 @@ def _make_episode_result(uuid: str = "ep-001") -> MagicMock:
     result.nodes = []
     result.edges = []
     return result
+
+
+def test_graphiti_retry_delay_rate_limit_waits_for_minute_window():
+    reason, wait = graph_module._graphiti_retry_delay(Exception("Mistral 429 rate limit"), 0)
+
+    assert reason == "rate_limited"
+    assert wait == 65.0
+
+
+def test_graphiti_retry_delay_provider_unavailable_uses_long_backoff():
+    reason, wait = graph_module._graphiti_retry_delay(
+        Exception('MistralException - {"code":"3800","raw_status_code":503}'),
+        1,
+    )
+
+    assert reason == "provider_unavailable"
+    assert wait == 60.0
+
+
+def test_graphiti_retry_delay_other_errors_stay_short():
+    reason, wait = graph_module._graphiti_retry_delay(Exception("validation failed"), 1)
+
+    assert reason == "transient"
+    assert wait == 2.0
 
 
 @pytest.mark.asyncio
@@ -137,8 +161,6 @@ async def test_ingest_episode_all_retries_fail():
 @pytest.mark.asyncio
 async def test_ingest_episode_reference_time_matches_belief_time_start():
     """reference_time is derived from belief_time_start (AC-1)."""
-    from datetime import datetime, timezone
-
     mock_graphiti = AsyncMock()
     mock_graphiti.add_episode = AsyncMock(return_value=_make_episode_result("ep-time"))
 
@@ -158,5 +180,5 @@ async def test_ingest_episode_reference_time_matches_belief_time_start():
         )
 
     call_kwargs = mock_graphiti.add_episode.call_args.kwargs
-    expected_dt = datetime.fromtimestamp(1700000000, tz=timezone.utc)
+    expected_dt = datetime.fromtimestamp(1700000000, tz=UTC)
     assert call_kwargs["reference_time"] == expected_dt
