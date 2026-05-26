@@ -52,6 +52,7 @@ from klai_chat_prompts import (
 from klai_citations import (
     compose_answer_with_trusted_sources,
     evidence_pack_items_as_chunks,
+    format_sources_markdown,
     render_evidence_context,
     trusted_sources_from_evidence_pack,
 )
@@ -1553,6 +1554,16 @@ def _render_kb_citation_content(
     return composed.content, composed.sources, False, composed.decision
 
 
+def _append_visible_sources_section(content: str, sources: list[dict[str, str]]) -> str:
+    """Append backend-selected sources for clients that ignore structured metadata."""
+    if not sources:
+        return content
+    sources_markdown = format_sources_markdown(sources).strip()
+    if not sources_markdown:
+        return content
+    return f"{content.rstrip()}\n\n**Bronnen**\n{sources_markdown}"
+
+
 def _log_kb_citation_render(
     kb_meta: dict[str, Any],
     stats: _KbCitationRenderStats,
@@ -1608,7 +1619,7 @@ def _flush_citation_stream_buffer(
         delta = _get_choice_message(choice, "delta")
         if delta is None:
             continue
-        _set_message_content(delta, rendered_content)
+        _set_message_content(delta, _append_visible_sources_section(rendered_content, sources))
         _set_message_field(delta, "sources", sources)
         stream_parts.clear()
         stats.mutated_messages += 1
@@ -1645,7 +1656,7 @@ def _compose_non_streaming_kb_response(
                 evidence_chunks=citation_chunks,
             )
             if rendered_content != content or sources:
-                _set_message_content(message, rendered_content)
+                _set_message_content(message, _append_visible_sources_section(rendered_content, sources))
                 _set_message_field(message, "sources", sources)
                 stats.mutated_messages += 1
                 stats.rendered_messages += 1
