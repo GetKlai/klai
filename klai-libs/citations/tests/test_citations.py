@@ -580,6 +580,95 @@ def test_trusted_source_composition_keeps_simple_answers_to_best_source() -> Non
     assert rejected_titles >= {"The five roles", "Build a knowledge base"}
 
 
+def test_trusted_source_composition_allows_more_sources_for_complex_supported_answers() -> None:
+    composed = compose_answer_with_trusted_sources(
+        (
+            "The onboarding process covers workspace setup, role assignment, privacy controls, "
+            "billing ownership, audit exports, connector configuration, retention settings, "
+            "and support escalation. Admins should verify the workspace policy, review the "
+            "role policy, confirm the privacy policy, check billing policy ownership, and "
+            "document the support policy before rollout across departments."
+        ),
+        [
+            {
+                "title": "Workspace policy",
+                "url": "https://docs.getklai.com/workspace-policy",
+                "evidence_ids": ["E1"],
+                "relevance_score": 0.98,
+            },
+            {
+                "title": "Role policy",
+                "url": "https://docs.getklai.com/role-policy",
+                "evidence_ids": ["E2"],
+                "relevance_score": 0.95,
+            },
+            {
+                "title": "Privacy policy",
+                "url": "https://docs.getklai.com/privacy-policy",
+                "evidence_ids": ["E3"],
+                "relevance_score": 0.91,
+            },
+            {
+                "title": "Billing policy",
+                "url": "https://docs.getklai.com/billing-policy",
+                "evidence_ids": ["E4"],
+                "relevance_score": 0.88,
+            },
+            {
+                "title": "Support policy",
+                "url": "https://docs.getklai.com/support-policy",
+                "evidence_ids": ["E5"],
+                "relevance_score": 0.50,
+            },
+        ],
+        query_text=(
+            "Summarize workspace policy, role policy, privacy policy, billing policy, "
+            "and support policy for onboarding."
+        ),
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "source_url": "https://docs.getklai.com/workspace-policy",
+                "text": "The workspace policy covers workspace setup and connector configuration.",
+                "final_score": 0.98,
+            },
+            {
+                "evidence_id": "E2",
+                "source_url": "https://docs.getklai.com/role-policy",
+                "text": "The role policy covers role assignment and rollout controls.",
+                "final_score": 0.95,
+            },
+            {
+                "evidence_id": "E3",
+                "source_url": "https://docs.getklai.com/privacy-policy",
+                "text": "The privacy policy covers privacy controls and retention settings.",
+                "final_score": 0.91,
+            },
+            {
+                "evidence_id": "E4",
+                "source_url": "https://docs.getklai.com/billing-policy",
+                "text": "The billing policy covers billing ownership.",
+                "final_score": 0.88,
+            },
+            {
+                "evidence_id": "E5",
+                "source_url": "https://docs.getklai.com/support-policy",
+                "text": "The support policy covers support escalation.",
+                "final_score": 0.50,
+            },
+        ],
+    )
+
+    assert [source["title"] for source in composed.sources] == [
+        "Workspace policy",
+        "Role policy",
+        "Privacy policy",
+        "Billing policy",
+    ]
+    rejected = {item["title"]: item["reason"] for item in composed.decision["rejected"]}
+    assert rejected["Support policy"] == "max_sources_exceeded"
+
+
 def test_trusted_source_composition_uses_evidence_items_and_strips_model_source_bullets() -> None:
     composed = compose_answer_with_trusted_sources(
         (

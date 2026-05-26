@@ -67,8 +67,10 @@ _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
 _SOURCE_HEADING_RE = re.compile(r"^\s*(?:bronnen?|sources?|references?)\s*:?\s*$", re.IGNORECASE)
 _SOURCE_LIST_LINE_RE = re.compile(r"^\s*(?:\(\s*\d{1,3}\s*\)|\[\s*\d{1,3}\s*\]|\d{1,3}[.)])\s*(.+)$")
 _BULLET_LINE_RE = re.compile(r"^\s*[-*+•]\s+(.+?)\s*$")
-_DEFAULT_MAX_SOURCES = 2
-_SIMPLE_ANSWER_SOURCE_TOKEN_LIMIT = 80
+_DEFAULT_MAX_SOURCES = 4
+_SIMPLE_ANSWER_SOURCE_TOKEN_LIMIT = 20
+_COMPLEX_ANSWER_SOURCE_TOKEN_LIMIT = 30
+_EXTRA_SOURCE_KEEP_RATIO = 0.85
 _SOURCE_RELEVANCE_STOPWORDS = {
     "aan",
     "als",
@@ -530,7 +532,43 @@ def _effective_max_sources(cleaned_answer: str, max_sources: int | None) -> int 
         return max_sources
     if len(_tokens(cleaned_answer)) <= _SIMPLE_ANSWER_SOURCE_TOKEN_LIMIT:
         return 1
+    if len(_tokens(cleaned_answer)) <= _COMPLEX_ANSWER_SOURCE_TOKEN_LIMIT:
+        return min(max_sources, 2)
     return max_sources
+
+
+def _split_selected_by_quality(
+    scored: list[tuple[float, int, int, int, CitationSource]],
+    max_sources: int | None,
+) -> tuple[
+    list[tuple[float, int, int, int, CitationSource]],
+    list[tuple[float, int, int, int, CitationSource]],
+]:
+    if max_sources is None:
+        return scored, []
+    selected: list[tuple[float, int, int, int, CitationSource]] = []
+    overflow: list[tuple[float, int, int, int, CitationSource]] = []
+    best_retrieval_score = scored[0][0] if scored else 0.0
+    has_retrieval_scores = any(source.retrieval_score is not None for *_rest, source in scored)
+    for item in scored:
+        retrieval_score, answer_score, query_score, _index, _source = item
+        if len(selected) >= max_sources:
+            overflow.append(item)
+            continue
+        if len(selected) < 2:
+            selected.append(item)
+            continue
+        if (
+            has_retrieval_scores
+            and best_retrieval_score > 0
+            and retrieval_score >= best_retrieval_score * _EXTRA_SOURCE_KEEP_RATIO
+            and answer_score > 0
+            and query_score > 0
+        ):
+            selected.append(item)
+            continue
+        overflow.append(item)
+    return selected, overflow
 
 
 def _select_document_sources(
@@ -643,12 +681,7 @@ def _select_supported_sources_with_decision(
         scored.append((retrieval_score, answer_score, query_score, index, source))
     scored.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
     effective_max_sources = _effective_max_sources(cleaned_answer, max_sources)
-    if effective_max_sources is None:
-        selected_scored = scored
-        overflow_scored: list[tuple[float, int, int, int, CitationSource]] = []
-    else:
-        selected_scored = scored[:effective_max_sources]
-        overflow_scored = scored[effective_max_sources:]
+    selected_scored, overflow_scored = _split_selected_by_quality(scored, effective_max_sources)
     for _, answer_score, query_score, _, source in selected_scored:
         decision["selected"].append(
             _source_decision_entry(
