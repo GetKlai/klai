@@ -81,6 +81,7 @@ SEAT_FEATURES: dict[SeatType, frozenset[str]] = {
             "kb.members",
             "kb.taxonomy",
             "kb.gaps",
+            "templates.manage_org",
             "scribe",
             "docs",
         }
@@ -102,6 +103,7 @@ CAPABILITY_TO_SEAT_FEATURE: dict[str, str] = {
     "kb.members": "knowledge.full",
     "kb.taxonomy": "knowledge.full",
     "kb.gaps": "knowledge.full",
+    "templates.manage_org": "knowledge.full",
 }
 
 
@@ -199,8 +201,8 @@ def effective_capabilities(role: str, seat_type: SeatType) -> frozenset[str]:
     Examples (v0.5.0 — role-derives-tier means kb_manager always has
     KNOWLEDGE in production, but the (kb_manager, CHAT) cell stays a
     defined point in the matrix for admin-tooling correctness):
-      - ``kb_manager`` + ``KNOWLEDGE`` -> all 6 capabilities (knowledge.full
-        unlocks the four KB-management caps; both connector caps unlocked).
+      - ``kb_manager`` + ``KNOWLEDGE`` -> full knowledge-tier capabilities
+        (knowledge.full unlocks KB-management + org-template caps; both connector caps unlocked).
       - ``kb_manager`` + ``CHAT``      -> only ``kb.connectors`` (knowledge.full
         not unlocked by chat tier, and ``kb.connectors.external`` requires
         the external feature which chat-tier lacks). Reachable only via

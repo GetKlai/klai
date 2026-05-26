@@ -1,4 +1,4 @@
-"""App-level gap dashboard API (admin-only)."""
+"""App-level gap dashboard API."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_capability
 from app.core.database import get_db
-from app.core.permissions import UserPermissions, get_caller_at_least
-from app.core.profiles import Capability, ProfileRole
+from app.core.permissions import UserPermissions, get_caller
+from app.core.profiles import Capability
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.taxonomy import PortalTaxonomyNode
 
@@ -62,7 +62,7 @@ async def list_gaps(
     taxonomy_node_id: int | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     include_resolved: bool = Query(default=False),
-    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> GapsResponse:
     """List gap events for the caller's org, grouped by query text.
@@ -116,7 +116,7 @@ async def list_gaps(
 
 @router.get("/gaps/summary", response_model=GapSummaryResponse)
 async def get_gap_summary(
-    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> GapSummaryResponse:
     """Return gap summary stats for the caller's org (last 7 days)."""
@@ -146,7 +146,7 @@ async def get_gap_summary(
 @router.get("/gaps/by-taxonomy", response_model=GapsByTaxonomyResponse)
 async def get_gaps_by_taxonomy(
     days: int = Query(default=30, ge=1, le=90),
-    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> GapsByTaxonomyResponse:
     """Aggregate open gaps per taxonomy node.

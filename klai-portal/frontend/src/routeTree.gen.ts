@@ -43,35 +43,35 @@ import { Route as AdminDangerZoneRouteImport } from './routes/admin/danger-zone'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
-import { Route as AppInstructionsIndexRouteImport } from './routes/app/instructions/index'
 import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/index'
+import { Route as AppInstructionsIndexRouteImport } from './routes/app/instructions/index'
 import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
 import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AdminWidgetsIndexRouteImport } from './routes/admin/widgets/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
-import { Route as AdminInstructionsIndexRouteImport } from './routes/admin/instructions/index'
 import { Route as AdminProfilesIndexRouteImport } from './routes/admin/profiles/index'
 import { Route as AdminPlatformIndexRouteImport } from './routes/admin/platform/index'
 import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
+import { Route as AdminInstructionsIndexRouteImport } from './routes/admin/instructions/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
 import { Route as AdminApiKeysIndexRouteImport } from './routes/admin/api-keys/index'
 import { Route as LocaleSignupIndexRouteImport } from './routes/$locale/signup/index'
 import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
-import { Route as AppInstructionsNewRouteImport } from './routes/app/instructions/new'
 import { Route as AppMeetingsStartRouteImport } from './routes/app/meetings/start'
 import { Route as AppMeetingsMeetingIdRouteImport } from './routes/app/meetings/$meetingId'
 import { Route as AppKnowledgeNewRouteImport } from './routes/app/knowledge/new'
+import { Route as AppInstructionsNewRouteImport } from './routes/app/instructions/new'
 import { Route as AppFocusSplatRouteImport } from './routes/app/focus/$'
 import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
 import { Route as AdminWidgetsNewRouteImport } from './routes/admin/widgets/new'
 import { Route as AdminWidgetsIdRouteImport } from './routes/admin/widgets/$id'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
-import { Route as AdminInstructionsNewRouteImport } from './routes/admin/instructions/new'
 import { Route as AdminPlatformOnboardingHowtoRouteImport } from './routes/admin/platform/onboarding-howto'
 import { Route as AdminPlatformNewRouteImport } from './routes/admin/platform/new'
 import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
 import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
+import { Route as AdminInstructionsNewRouteImport } from './routes/admin/instructions/new'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
 import { Route as AdminApiKeysNewRouteImport } from './routes/admin/api-keys/new'
 import { Route as AdminApiKeysIdRouteImport } from './routes/admin/api-keys/$id'
@@ -83,7 +83,6 @@ import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowle
 import { Route as AppDocsKbSlugIndexRouteImport } from './routes/app/docs/$kbSlug/index'
 import { Route as AdminProfilesProfileIndexRouteImport } from './routes/admin/profiles/$profile/index'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
-import { Route as AppInstructionsSlugEditRouteImport } from './routes/app/instructions/$slug.edit'
 import { Route as AppKnowledgeKbSlugAddSourceRouteImport } from './routes/app/knowledge/$kbSlug_.add-source'
 import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
 import { Route as AppKnowledgeKbSlugTaxonomyRouteImport } from './routes/app/knowledge/$kbSlug/taxonomy'
@@ -96,13 +95,14 @@ import { Route as AppKnowledgeKbSlugInsightsRouteImport } from './routes/app/kno
 import { Route as AppKnowledgeKbSlugConnectorsRouteImport } from './routes/app/knowledge/$kbSlug/connectors'
 import { Route as AppKnowledgeKbSlugBronnenRouteImport } from './routes/app/knowledge/$kbSlug/bronnen'
 import { Route as AppKnowledgeKbSlugAdvancedRouteImport } from './routes/app/knowledge/$kbSlug/advanced'
+import { Route as AppInstructionsSlugEditRouteImport } from './routes/app/instructions/$slug.edit'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
 import { Route as AppDocsKbSlugPageIdRouteImport } from './routes/app/docs/$kbSlug/$pageId'
 import { Route as AdminWidgetsIdTestRouteImport } from './routes/admin/widgets/$id_.test'
 import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
-import { Route as AdminInstructionsSlugEditRouteImport } from './routes/admin/instructions/$slug.edit'
 import { Route as AdminProfilesProfileAddMemberRouteImport } from './routes/admin/profiles/$profile/add-member'
 import { Route as AdminPlatformOrgsOrgIdRouteImport } from './routes/admin/platform/orgs.$orgId'
+import { Route as AdminInstructionsSlugEditRouteImport } from './routes/admin/instructions/$slug.edit'
 import { Route as AdminGroupsGroupIdEditRouteImport } from './routes/admin/groups/$groupId/edit'
 import { Route as AdminGroupsGroupIdAddMemberRouteImport } from './routes/admin/groups/$groupId/add-member'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
@@ -278,14 +278,14 @@ const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
   path: '/transcribe/',
   getParentRoute: () => AppRouteRoute,
 } as any)
-const AppInstructionsIndexRoute = AppInstructionsIndexRouteImport.update({
-  id: '/templates/',
-  path: '/templates/',
-  getParentRoute: () => AppRouteRoute,
-} as any)
 const AppKnowledgeIndexRoute = AppKnowledgeIndexRouteImport.update({
   id: '/knowledge/',
   path: '/knowledge/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInstructionsIndexRoute = AppInstructionsIndexRouteImport.update({
+  id: '/instructions/',
+  path: '/instructions/',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppGapsIndexRoute = AppGapsIndexRouteImport.update({
@@ -308,11 +308,6 @@ const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
   path: '/users/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminInstructionsIndexRoute = AdminInstructionsIndexRouteImport.update({
-  id: '/templates/',
-  path: '/templates/',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
 const AdminProfilesIndexRoute = AdminProfilesIndexRouteImport.update({
   id: '/profiles/',
   path: '/profiles/',
@@ -326,6 +321,11 @@ const AdminPlatformIndexRoute = AdminPlatformIndexRouteImport.update({
 const AdminMcpsIndexRoute = AdminMcpsIndexRouteImport.update({
   id: '/mcps/',
   path: '/mcps/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminInstructionsIndexRoute = AdminInstructionsIndexRouteImport.update({
+  id: '/instructions/',
+  path: '/instructions/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminGroupsIndexRoute = AdminGroupsIndexRouteImport.update({
@@ -354,11 +354,6 @@ const AppTranscribeTranscriptionIdRoute =
     path: '/transcribe/$transcriptionId',
     getParentRoute: () => AppRouteRoute,
   } as any)
-const AppInstructionsNewRoute = AppInstructionsNewRouteImport.update({
-  id: '/templates/new',
-  path: '/templates/new',
-  getParentRoute: () => AppRouteRoute,
-} as any)
 const AppMeetingsStartRoute = AppMeetingsStartRouteImport.update({
   id: '/meetings/start',
   path: '/meetings/start',
@@ -372,6 +367,11 @@ const AppMeetingsMeetingIdRoute = AppMeetingsMeetingIdRouteImport.update({
 const AppKnowledgeNewRoute = AppKnowledgeNewRouteImport.update({
   id: '/knowledge/new',
   path: '/knowledge/new',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInstructionsNewRoute = AppInstructionsNewRouteImport.update({
+  id: '/instructions/new',
+  path: '/instructions/new',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppFocusSplatRoute = AppFocusSplatRouteImport.update({
@@ -399,11 +399,6 @@ const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
   path: '/users/invite',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminInstructionsNewRoute = AdminInstructionsNewRouteImport.update({
-  id: '/templates/new',
-  path: '/templates/new',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
 const AdminPlatformOnboardingHowtoRoute =
   AdminPlatformOnboardingHowtoRouteImport.update({
     id: '/platform/onboarding-howto',
@@ -423,6 +418,11 @@ const AdminMcpsNewRoute = AdminMcpsNewRouteImport.update({
 const AdminMcpsServerIdRoute = AdminMcpsServerIdRouteImport.update({
   id: '/mcps/$serverId',
   path: '/mcps/$serverId',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminInstructionsNewRoute = AdminInstructionsNewRouteImport.update({
+  id: '/instructions/new',
+  path: '/instructions/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminGroupsNewRoute = AdminGroupsNewRouteImport.update({
@@ -480,11 +480,6 @@ const AdminGroupsGroupIdIndexRoute = AdminGroupsGroupIdIndexRouteImport.update({
   id: '/groups/$groupId/',
   path: '/groups/$groupId/',
   getParentRoute: () => AdminRouteRoute,
-} as any)
-const AppInstructionsSlugEditRoute = AppInstructionsSlugEditRouteImport.update({
-  id: '/templates/$slug/edit',
-  path: '/templates/$slug/edit',
-  getParentRoute: () => AppRouteRoute,
 } as any)
 const AppKnowledgeKbSlugAddSourceRoute =
   AppKnowledgeKbSlugAddSourceRouteImport.update({
@@ -557,6 +552,11 @@ const AppKnowledgeKbSlugAdvancedRoute =
     path: '/advanced',
     getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
   } as any)
+const AppInstructionsSlugEditRoute = AppInstructionsSlugEditRouteImport.update({
+  id: '/instructions/$slug/edit',
+  path: '/instructions/$slug/edit',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppDocsKbSlugEditRoute = AppDocsKbSlugEditRouteImport.update({
   id: '/docs/$kbSlug_/edit',
   path: '/docs/$kbSlug/edit',
@@ -579,11 +579,6 @@ const AdminUsersUserIdEditRoute = AdminUsersUserIdEditRouteImport.update({
   path: '/users/$userId/edit',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminInstructionsSlugEditRoute = AdminInstructionsSlugEditRouteImport.update({
-  id: '/templates/$slug/edit',
-  path: '/templates/$slug/edit',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
 const AdminProfilesProfileAddMemberRoute =
   AdminProfilesProfileAddMemberRouteImport.update({
     id: '/profiles/$profile/add-member',
@@ -595,6 +590,12 @@ const AdminPlatformOrgsOrgIdRoute = AdminPlatformOrgsOrgIdRouteImport.update({
   path: '/platform/orgs/$orgId',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminInstructionsSlugEditRoute =
+  AdminInstructionsSlugEditRouteImport.update({
+    id: '/instructions/$slug/edit',
+    path: '/instructions/$slug/edit',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
 const AdminGroupsGroupIdEditRoute = AdminGroupsGroupIdEditRouteImport.update({
   id: '/groups/$groupId/edit',
   path: '/groups/$groupId/edit',
@@ -654,45 +655,46 @@ export interface FileRoutesByFullPath {
   '/admin/api-keys/$id': typeof AdminApiKeysIdRoute
   '/admin/api-keys/new': typeof AdminApiKeysNewRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
+  '/admin/instructions/new': typeof AdminInstructionsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/platform/new': typeof AdminPlatformNewRoute
   '/admin/platform/onboarding-howto': typeof AdminPlatformOnboardingHowtoRoute
-  '/admin/instructions/new': typeof AdminInstructionsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
   '/admin/widgets/new': typeof AdminWidgetsNewRoute
   '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$': typeof AppFocusSplatRoute
+  '/app/instructions/new': typeof AppInstructionsNewRoute
   '/app/knowledge/new': typeof AppKnowledgeNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
-  '/app/instructions/new': typeof AppInstructionsNewRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/$locale/signup/': typeof LocaleSignupIndexRoute
   '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
+  '/admin/instructions/': typeof AdminInstructionsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/platform/': typeof AdminPlatformIndexRoute
   '/admin/profiles/': typeof AdminProfilesIndexRoute
-  '/admin/instructions/': typeof AdminInstructionsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
-  '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/instructions/': typeof AppInstructionsIndexRoute
+  '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/instructions/$slug/edit': typeof AdminInstructionsSlugEditRoute
   '/admin/platform/orgs/$orgId': typeof AdminPlatformOrgsOrgIdRoute
   '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
-  '/admin/instructions/$slug/edit': typeof AdminInstructionsSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/admin/widgets/$id/test': typeof AdminWidgetsIdTestRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
+  '/app/instructions/$slug/edit': typeof AppInstructionsSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
   '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
@@ -705,7 +707,6 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
-  '/app/instructions/$slug/edit': typeof AppInstructionsSlugEditRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
@@ -748,45 +749,46 @@ export interface FileRoutesByTo {
   '/admin/api-keys/$id': typeof AdminApiKeysIdRoute
   '/admin/api-keys/new': typeof AdminApiKeysNewRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
+  '/admin/instructions/new': typeof AdminInstructionsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/platform/new': typeof AdminPlatformNewRoute
   '/admin/platform/onboarding-howto': typeof AdminPlatformOnboardingHowtoRoute
-  '/admin/instructions/new': typeof AdminInstructionsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
   '/admin/widgets/new': typeof AdminWidgetsNewRoute
   '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$': typeof AppFocusSplatRoute
+  '/app/instructions/new': typeof AppInstructionsNewRoute
   '/app/knowledge/new': typeof AppKnowledgeNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
-  '/app/instructions/new': typeof AppInstructionsNewRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/$locale/signup': typeof LocaleSignupIndexRoute
   '/admin/api-keys': typeof AdminApiKeysIndexRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
+  '/admin/instructions': typeof AdminInstructionsIndexRoute
   '/admin/mcps': typeof AdminMcpsIndexRoute
   '/admin/platform': typeof AdminPlatformIndexRoute
   '/admin/profiles': typeof AdminProfilesIndexRoute
-  '/admin/instructions': typeof AdminInstructionsIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/admin/widgets': typeof AdminWidgetsIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
   '/app/gaps': typeof AppGapsIndexRoute
-  '/app/knowledge': typeof AppKnowledgeIndexRoute
   '/app/instructions': typeof AppInstructionsIndexRoute
+  '/app/knowledge': typeof AppKnowledgeIndexRoute
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/instructions/$slug/edit': typeof AdminInstructionsSlugEditRoute
   '/admin/platform/orgs/$orgId': typeof AdminPlatformOrgsOrgIdRoute
   '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
-  '/admin/instructions/$slug/edit': typeof AdminInstructionsSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/admin/widgets/$id/test': typeof AdminWidgetsIdTestRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
+  '/app/instructions/$slug/edit': typeof AppInstructionsSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
   '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
@@ -799,7 +801,6 @@ export interface FileRoutesByTo {
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
-  '/app/instructions/$slug/edit': typeof AppInstructionsSlugEditRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
   '/admin/profiles/$profile': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugIndexRoute
@@ -848,45 +849,46 @@ export interface FileRoutesById {
   '/admin/api-keys/$id': typeof AdminApiKeysIdRoute
   '/admin/api-keys/new': typeof AdminApiKeysNewRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
+  '/admin/instructions/new': typeof AdminInstructionsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/platform/new': typeof AdminPlatformNewRoute
   '/admin/platform/onboarding-howto': typeof AdminPlatformOnboardingHowtoRoute
-  '/admin/instructions/new': typeof AdminInstructionsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/admin/widgets/$id': typeof AdminWidgetsIdRoute
   '/admin/widgets/new': typeof AdminWidgetsNewRoute
   '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$': typeof AppFocusSplatRoute
+  '/app/instructions/new': typeof AppInstructionsNewRoute
   '/app/knowledge/new': typeof AppKnowledgeNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
-  '/app/instructions/new': typeof AppInstructionsNewRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/$locale/signup/': typeof LocaleSignupIndexRoute
   '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
+  '/admin/instructions/': typeof AdminInstructionsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/platform/': typeof AdminPlatformIndexRoute
   '/admin/profiles/': typeof AdminProfilesIndexRoute
-  '/admin/instructions/': typeof AdminInstructionsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
-  '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/instructions/': typeof AppInstructionsIndexRoute
+  '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
+  '/admin/instructions/$slug/edit': typeof AdminInstructionsSlugEditRoute
   '/admin/platform/orgs/$orgId': typeof AdminPlatformOrgsOrgIdRoute
   '/admin/profiles/$profile/add-member': typeof AdminProfilesProfileAddMemberRoute
-  '/admin/instructions/$slug/edit': typeof AdminInstructionsSlugEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/admin/widgets/$id_/test': typeof AdminWidgetsIdTestRoute
   '/app/docs/$kbSlug/$pageId': typeof AppDocsKbSlugPageIdRoute
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
+  '/app/instructions/$slug/edit': typeof AppInstructionsSlugEditRoute
   '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
   '/app/knowledge/$kbSlug/bronnen': typeof AppKnowledgeKbSlugBronnenRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
@@ -899,7 +901,6 @@ export interface FileRoutesById {
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug_/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug_/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
-  '/app/instructions/$slug/edit': typeof AppInstructionsSlugEditRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
@@ -949,45 +950,46 @@ export interface FileRouteTypes {
     | '/admin/api-keys/$id'
     | '/admin/api-keys/new'
     | '/admin/groups/new'
+    | '/admin/instructions/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/platform/new'
     | '/admin/platform/onboarding-howto'
-    | '/admin/instructions/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
     | '/admin/widgets/new'
     | '/app/docs/new'
     | '/app/focus/$'
+    | '/app/instructions/new'
     | '/app/knowledge/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
-    | '/app/instructions/new'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/$locale/signup/'
     | '/admin/api-keys/'
     | '/admin/groups/'
+    | '/admin/instructions/'
     | '/admin/mcps/'
     | '/admin/platform/'
     | '/admin/profiles/'
-    | '/admin/instructions/'
     | '/admin/users/'
     | '/admin/widgets/'
     | '/app/docs/'
     | '/app/gaps/'
-    | '/app/knowledge/'
     | '/app/instructions/'
+    | '/app/knowledge/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/instructions/$slug/edit'
     | '/admin/platform/orgs/$orgId'
     | '/admin/profiles/$profile/add-member'
-    | '/admin/instructions/$slug/edit'
     | '/admin/users/$userId/edit'
     | '/admin/widgets/$id/test'
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
+    | '/app/instructions/$slug/edit'
     | '/app/knowledge/$kbSlug/advanced'
     | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
@@ -1000,7 +1002,6 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
     | '/app/knowledge/$kbSlug/add-source'
-    | '/app/instructions/$slug/edit'
     | '/admin/groups/$groupId/'
     | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
@@ -1043,45 +1044,46 @@ export interface FileRouteTypes {
     | '/admin/api-keys/$id'
     | '/admin/api-keys/new'
     | '/admin/groups/new'
+    | '/admin/instructions/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/platform/new'
     | '/admin/platform/onboarding-howto'
-    | '/admin/instructions/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
     | '/admin/widgets/new'
     | '/app/docs/new'
     | '/app/focus/$'
+    | '/app/instructions/new'
     | '/app/knowledge/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
-    | '/app/instructions/new'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/$locale/signup'
     | '/admin/api-keys'
     | '/admin/groups'
+    | '/admin/instructions'
     | '/admin/mcps'
     | '/admin/platform'
     | '/admin/profiles'
-    | '/admin/instructions'
     | '/admin/users'
     | '/admin/widgets'
     | '/app/docs'
     | '/app/gaps'
-    | '/app/knowledge'
     | '/app/instructions'
+    | '/app/knowledge'
     | '/app/transcribe'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/instructions/$slug/edit'
     | '/admin/platform/orgs/$orgId'
     | '/admin/profiles/$profile/add-member'
-    | '/admin/instructions/$slug/edit'
     | '/admin/users/$userId/edit'
     | '/admin/widgets/$id/test'
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug/edit'
+    | '/app/instructions/$slug/edit'
     | '/app/knowledge/$kbSlug/advanced'
     | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
@@ -1094,7 +1096,6 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
     | '/app/knowledge/$kbSlug/add-source'
-    | '/app/instructions/$slug/edit'
     | '/admin/groups/$groupId'
     | '/admin/profiles/$profile'
     | '/app/docs/$kbSlug'
@@ -1142,45 +1143,46 @@ export interface FileRouteTypes {
     | '/admin/api-keys/$id'
     | '/admin/api-keys/new'
     | '/admin/groups/new'
+    | '/admin/instructions/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/platform/new'
     | '/admin/platform/onboarding-howto'
-    | '/admin/instructions/new'
     | '/admin/users/invite'
     | '/admin/widgets/$id'
     | '/admin/widgets/new'
     | '/app/docs/new'
     | '/app/focus/$'
+    | '/app/instructions/new'
     | '/app/knowledge/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
-    | '/app/instructions/new'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/$locale/signup/'
     | '/admin/api-keys/'
     | '/admin/groups/'
+    | '/admin/instructions/'
     | '/admin/mcps/'
     | '/admin/platform/'
     | '/admin/profiles/'
-    | '/admin/instructions/'
     | '/admin/users/'
     | '/admin/widgets/'
     | '/app/docs/'
     | '/app/gaps/'
-    | '/app/knowledge/'
     | '/app/instructions/'
+    | '/app/knowledge/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
+    | '/admin/instructions/$slug/edit'
     | '/admin/platform/orgs/$orgId'
     | '/admin/profiles/$profile/add-member'
-    | '/admin/instructions/$slug/edit'
     | '/admin/users/$userId/edit'
     | '/admin/widgets/$id_/test'
     | '/app/docs/$kbSlug/$pageId'
     | '/app/docs/$kbSlug_/edit'
+    | '/app/instructions/$slug/edit'
     | '/app/knowledge/$kbSlug/advanced'
     | '/app/knowledge/$kbSlug/bronnen'
     | '/app/knowledge/$kbSlug/connectors'
@@ -1193,7 +1195,6 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug_/add-connector'
     | '/app/knowledge/$kbSlug_/add-source'
-    | '/app/instructions/$slug/edit'
     | '/admin/groups/$groupId/'
     | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
@@ -1464,18 +1465,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTranscribeIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/app/instructions/': {
-      id: '/app/instructions/'
-      path: '/templates'
-      fullPath: '/app/instructions/'
-      preLoaderRoute: typeof AppInstructionsIndexRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
     '/app/knowledge/': {
       id: '/app/knowledge/'
       path: '/knowledge'
       fullPath: '/app/knowledge/'
       preLoaderRoute: typeof AppKnowledgeIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/instructions/': {
+      id: '/app/instructions/'
+      path: '/instructions'
+      fullPath: '/app/instructions/'
+      preLoaderRoute: typeof AppInstructionsIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/gaps/': {
@@ -1506,13 +1507,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/instructions/': {
-      id: '/admin/instructions/'
-      path: '/templates'
-      fullPath: '/admin/instructions/'
-      preLoaderRoute: typeof AdminInstructionsIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
     '/admin/profiles/': {
       id: '/admin/profiles/'
       path: '/profiles'
@@ -1532,6 +1526,13 @@ declare module '@tanstack/react-router' {
       path: '/mcps'
       fullPath: '/admin/mcps/'
       preLoaderRoute: typeof AdminMcpsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/instructions/': {
+      id: '/admin/instructions/'
+      path: '/instructions'
+      fullPath: '/admin/instructions/'
+      preLoaderRoute: typeof AdminInstructionsIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/groups/': {
@@ -1569,13 +1570,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTranscribeTranscriptionIdRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/app/instructions/new': {
-      id: '/app/instructions/new'
-      path: '/templates/new'
-      fullPath: '/app/instructions/new'
-      preLoaderRoute: typeof AppInstructionsNewRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
     '/app/meetings/start': {
       id: '/app/meetings/start'
       path: '/meetings/start'
@@ -1595,6 +1589,13 @@ declare module '@tanstack/react-router' {
       path: '/knowledge/new'
       fullPath: '/app/knowledge/new'
       preLoaderRoute: typeof AppKnowledgeNewRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/instructions/new': {
+      id: '/app/instructions/new'
+      path: '/instructions/new'
+      fullPath: '/app/instructions/new'
+      preLoaderRoute: typeof AppInstructionsNewRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/focus/$': {
@@ -1632,13 +1633,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersInviteRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/instructions/new': {
-      id: '/admin/instructions/new'
-      path: '/templates/new'
-      fullPath: '/admin/instructions/new'
-      preLoaderRoute: typeof AdminInstructionsNewRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
     '/admin/platform/onboarding-howto': {
       id: '/admin/platform/onboarding-howto'
       path: '/platform/onboarding-howto'
@@ -1665,6 +1659,13 @@ declare module '@tanstack/react-router' {
       path: '/mcps/$serverId'
       fullPath: '/admin/mcps/$serverId'
       preLoaderRoute: typeof AdminMcpsServerIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/instructions/new': {
+      id: '/admin/instructions/new'
+      path: '/instructions/new'
+      fullPath: '/admin/instructions/new'
+      preLoaderRoute: typeof AdminInstructionsNewRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/groups/new': {
@@ -1743,13 +1744,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/groups/$groupId/'
       preLoaderRoute: typeof AdminGroupsGroupIdIndexRouteImport
       parentRoute: typeof AdminRouteRoute
-    }
-    '/app/instructions/$slug/edit': {
-      id: '/app/instructions/$slug/edit'
-      path: '/templates/$slug/edit'
-      fullPath: '/app/instructions/$slug/edit'
-      preLoaderRoute: typeof AppInstructionsSlugEditRouteImport
-      parentRoute: typeof AppRouteRoute
     }
     '/app/knowledge/$kbSlug_/add-source': {
       id: '/app/knowledge/$kbSlug_/add-source'
@@ -1835,6 +1829,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugAdvancedRouteImport
       parentRoute: typeof AppKnowledgeKbSlugRouteRoute
     }
+    '/app/instructions/$slug/edit': {
+      id: '/app/instructions/$slug/edit'
+      path: '/instructions/$slug/edit'
+      fullPath: '/app/instructions/$slug/edit'
+      preLoaderRoute: typeof AppInstructionsSlugEditRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/docs/$kbSlug_/edit': {
       id: '/app/docs/$kbSlug_/edit'
       path: '/docs/$kbSlug/edit'
@@ -1863,13 +1864,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersUserIdEditRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/instructions/$slug/edit': {
-      id: '/admin/instructions/$slug/edit'
-      path: '/templates/$slug/edit'
-      fullPath: '/admin/instructions/$slug/edit'
-      preLoaderRoute: typeof AdminInstructionsSlugEditRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
     '/admin/profiles/$profile/add-member': {
       id: '/admin/profiles/$profile/add-member'
       path: '/profiles/$profile/add-member'
@@ -1882,6 +1876,13 @@ declare module '@tanstack/react-router' {
       path: '/platform/orgs/$orgId'
       fullPath: '/admin/platform/orgs/$orgId'
       preLoaderRoute: typeof AdminPlatformOrgsOrgIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/instructions/$slug/edit': {
+      id: '/admin/instructions/$slug/edit'
+      path: '/instructions/$slug/edit'
+      fullPath: '/admin/instructions/$slug/edit'
+      preLoaderRoute: typeof AdminInstructionsSlugEditRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/groups/$groupId/edit': {
@@ -1946,27 +1947,27 @@ interface AdminRouteRouteChildren {
   AdminApiKeysIdRoute: typeof AdminApiKeysIdRoute
   AdminApiKeysNewRoute: typeof AdminApiKeysNewRoute
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
+  AdminInstructionsNewRoute: typeof AdminInstructionsNewRoute
   AdminMcpsServerIdRoute: typeof AdminMcpsServerIdRoute
   AdminMcpsNewRoute: typeof AdminMcpsNewRoute
   AdminPlatformNewRoute: typeof AdminPlatformNewRoute
   AdminPlatformOnboardingHowtoRoute: typeof AdminPlatformOnboardingHowtoRoute
-  AdminInstructionsNewRoute: typeof AdminInstructionsNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminWidgetsIdRoute: typeof AdminWidgetsIdRoute
   AdminWidgetsNewRoute: typeof AdminWidgetsNewRoute
   AdminApiKeysIndexRoute: typeof AdminApiKeysIndexRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
+  AdminInstructionsIndexRoute: typeof AdminInstructionsIndexRoute
   AdminMcpsIndexRoute: typeof AdminMcpsIndexRoute
   AdminPlatformIndexRoute: typeof AdminPlatformIndexRoute
   AdminProfilesIndexRoute: typeof AdminProfilesIndexRoute
-  AdminInstructionsIndexRoute: typeof AdminInstructionsIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminWidgetsIndexRoute: typeof AdminWidgetsIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
   AdminGroupsGroupIdEditRoute: typeof AdminGroupsGroupIdEditRoute
+  AdminInstructionsSlugEditRoute: typeof AdminInstructionsSlugEditRoute
   AdminPlatformOrgsOrgIdRoute: typeof AdminPlatformOrgsOrgIdRoute
   AdminProfilesProfileAddMemberRoute: typeof AdminProfilesProfileAddMemberRoute
-  AdminInstructionsSlugEditRoute: typeof AdminInstructionsSlugEditRoute
   AdminUsersUserIdEditRoute: typeof AdminUsersUserIdEditRoute
   AdminWidgetsIdTestRoute: typeof AdminWidgetsIdTestRoute
   AdminGroupsGroupIdIndexRoute: typeof AdminGroupsGroupIdIndexRoute
@@ -1983,27 +1984,27 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminApiKeysIdRoute: AdminApiKeysIdRoute,
   AdminApiKeysNewRoute: AdminApiKeysNewRoute,
   AdminGroupsNewRoute: AdminGroupsNewRoute,
+  AdminInstructionsNewRoute: AdminInstructionsNewRoute,
   AdminMcpsServerIdRoute: AdminMcpsServerIdRoute,
   AdminMcpsNewRoute: AdminMcpsNewRoute,
   AdminPlatformNewRoute: AdminPlatformNewRoute,
   AdminPlatformOnboardingHowtoRoute: AdminPlatformOnboardingHowtoRoute,
-  AdminInstructionsNewRoute: AdminInstructionsNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminWidgetsIdRoute: AdminWidgetsIdRoute,
   AdminWidgetsNewRoute: AdminWidgetsNewRoute,
   AdminApiKeysIndexRoute: AdminApiKeysIndexRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
+  AdminInstructionsIndexRoute: AdminInstructionsIndexRoute,
   AdminMcpsIndexRoute: AdminMcpsIndexRoute,
   AdminPlatformIndexRoute: AdminPlatformIndexRoute,
   AdminProfilesIndexRoute: AdminProfilesIndexRoute,
-  AdminInstructionsIndexRoute: AdminInstructionsIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminWidgetsIndexRoute: AdminWidgetsIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
   AdminGroupsGroupIdEditRoute: AdminGroupsGroupIdEditRoute,
+  AdminInstructionsSlugEditRoute: AdminInstructionsSlugEditRoute,
   AdminPlatformOrgsOrgIdRoute: AdminPlatformOrgsOrgIdRoute,
   AdminProfilesProfileAddMemberRoute: AdminProfilesProfileAddMemberRoute,
-  AdminInstructionsSlugEditRoute: AdminInstructionsSlugEditRoute,
   AdminUsersUserIdEditRoute: AdminUsersUserIdEditRoute,
   AdminWidgetsIdTestRoute: AdminWidgetsIdTestRoute,
   AdminGroupsGroupIdIndexRoute: AdminGroupsGroupIdIndexRoute,
@@ -2083,21 +2084,21 @@ interface AppRouteRouteChildren {
   AppDocsKbSlugRouteRoute: typeof AppDocsKbSlugRouteRouteWithChildren
   AppKnowledgeKbSlugRouteRoute: typeof AppKnowledgeKbSlugRouteRouteWithChildren
   AppDocsNewRoute: typeof AppDocsNewRoute
+  AppInstructionsNewRoute: typeof AppInstructionsNewRoute
   AppKnowledgeNewRoute: typeof AppKnowledgeNewRoute
   AppMeetingsMeetingIdRoute: typeof AppMeetingsMeetingIdRoute
   AppMeetingsStartRoute: typeof AppMeetingsStartRoute
-  AppInstructionsNewRoute: typeof AppInstructionsNewRoute
   AppTranscribeTranscriptionIdRoute: typeof AppTranscribeTranscriptionIdRoute
   AppTranscribeAddRoute: typeof AppTranscribeAddRoute
   AppDocsIndexRoute: typeof AppDocsIndexRoute
   AppGapsIndexRoute: typeof AppGapsIndexRoute
-  AppKnowledgeIndexRoute: typeof AppKnowledgeIndexRoute
   AppInstructionsIndexRoute: typeof AppInstructionsIndexRoute
+  AppKnowledgeIndexRoute: typeof AppKnowledgeIndexRoute
   AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
   AppDocsKbSlugEditRoute: typeof AppDocsKbSlugEditRoute
+  AppInstructionsSlugEditRoute: typeof AppInstructionsSlugEditRoute
   AppKnowledgeKbSlugAddConnectorRoute: typeof AppKnowledgeKbSlugAddConnectorRoute
   AppKnowledgeKbSlugAddSourceRoute: typeof AppKnowledgeKbSlugAddSourceRoute
-  AppInstructionsSlugEditRoute: typeof AppInstructionsSlugEditRoute
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
 }
 
@@ -2111,21 +2112,21 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppDocsKbSlugRouteRoute: AppDocsKbSlugRouteRouteWithChildren,
   AppKnowledgeKbSlugRouteRoute: AppKnowledgeKbSlugRouteRouteWithChildren,
   AppDocsNewRoute: AppDocsNewRoute,
+  AppInstructionsNewRoute: AppInstructionsNewRoute,
   AppKnowledgeNewRoute: AppKnowledgeNewRoute,
   AppMeetingsMeetingIdRoute: AppMeetingsMeetingIdRoute,
   AppMeetingsStartRoute: AppMeetingsStartRoute,
-  AppInstructionsNewRoute: AppInstructionsNewRoute,
   AppTranscribeTranscriptionIdRoute: AppTranscribeTranscriptionIdRoute,
   AppTranscribeAddRoute: AppTranscribeAddRoute,
   AppDocsIndexRoute: AppDocsIndexRoute,
   AppGapsIndexRoute: AppGapsIndexRoute,
-  AppKnowledgeIndexRoute: AppKnowledgeIndexRoute,
   AppInstructionsIndexRoute: AppInstructionsIndexRoute,
+  AppKnowledgeIndexRoute: AppKnowledgeIndexRoute,
   AppTranscribeIndexRoute: AppTranscribeIndexRoute,
   AppDocsKbSlugEditRoute: AppDocsKbSlugEditRoute,
+  AppInstructionsSlugEditRoute: AppInstructionsSlugEditRoute,
   AppKnowledgeKbSlugAddConnectorRoute: AppKnowledgeKbSlugAddConnectorRoute,
   AppKnowledgeKbSlugAddSourceRoute: AppKnowledgeKbSlugAddSourceRoute,
-  AppInstructionsSlugEditRoute: AppInstructionsSlugEditRoute,
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute:
     AppKnowledgeKbSlugEditConnectorConnectorIdRoute,
 }

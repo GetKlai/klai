@@ -1,13 +1,13 @@
 """App-facing CRUD API for prompt templates.
 
     GET    /api/app/templates          list templates (personal + org-scope)
-    POST   /api/app/templates          create (admin required for scope="org")
+    POST   /api/app/templates          create (templates.manage_org required for scope="org")
     GET    /api/app/templates/{slug}   fetch one
-    PATCH  /api/app/templates/{slug}   update (owner or admin)
-    DELETE /api/app/templates/{slug}   delete (owner or admin)
+    PATCH  /api/app/templates/{slug}   update (personal: owner/admin; org: templates.manage_org)
+    DELETE /api/app/templates/{slug}   delete (personal: owner/admin; org: templates.manage_org)
 
 Per SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-CRUD:
-- Admin-gate on scope="org" POST (NL message on 403).
+- Capability-gate on scope="org" writes (NL message on 403).
 - Rate-limit 10 req/s per org via partner_rate_limit Redis sliding-window.
 - Cache-invalidation on every write: SCAN+DEL for org-scope, single DEL
   for personal-scope. Fire-and-forget.
@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller
+from app.core.profiles import Capability
 from app.models.portal import PortalUser
 from app.models.templates import PortalTemplate
 from app.services.default_templates import ensure_default_templates
@@ -150,6 +151,35 @@ def _librechat_user_id_or_none(user: PortalUser | None) -> str | None:
     return getattr(user, "librechat_user_id", None)
 
 
+def _can_manage_org_templates(perms: UserPermissions) -> bool:
+    return Capability.TEMPLATES_MANAGE_ORG in perms.effective_capabilities
+
+
+def _raise_org_template_forbidden() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Alleen KB-beheerders of beheerders mogen organisatie-templates beheren",
+    )
+
+
+def _require_can_create_template(scope: str, perms: UserPermissions) -> None:
+    if scope == "org" and not _can_manage_org_templates(perms):
+        _raise_org_template_forbidden()
+
+
+def _require_can_mutate_template(template: PortalTemplate, perms: UserPermissions) -> None:
+    if template.scope == "org":
+        if not _can_manage_org_templates(perms):
+            _raise_org_template_forbidden()
+        return
+
+    if template.created_by != perms.user_id and perms.role != ProfileRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Alleen de maker of een beheerder mag deze persoonlijke template beheren",
+        )
+
+
 # -- Endpoints ----------------------------------------------------------------
 
 
@@ -197,12 +227,8 @@ async def create_template(
     """Create a new prompt template."""
     await _enforce_rate_limit(perms.org_id)
 
-    # REQ-TEMPLATES-CRUD-E1: admin-gate on scope="org".
-    if body.scope == "org" and perms.role != ProfileRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Alleen beheerders mogen organisatie-templates aanmaken",
-        )
+    # REQ-TEMPLATES-CRUD-E1: org-scope template management is capability-gated.
+    _require_can_create_template(body.scope, perms)
 
     slug = slugify(body.name)
     if not slug:
@@ -280,22 +306,14 @@ async def update_template(
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> TemplateOut:
-    """Update a template. Only the creator or an org-admin may update."""
+    """Update a template. Personal templates are owner/admin; org templates are capability-gated."""
     await _enforce_rate_limit(perms.org_id)
     template = await _get_template_or_404(slug, perms.org_id, db)
 
-    if template.created_by != perms.user_id and perms.role != ProfileRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Alleen de maker of een beheerder mag deze template aanpassen",
-        )
+    _require_can_mutate_template(template, perms)
 
-    # Admin-gate still applies when promoting a personal template to org-scope.
-    if body.scope == "org" and perms.role != ProfileRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Alleen beheerders mogen organisatie-templates aanmaken",
-        )
+    # Capability gate still applies when promoting a personal template to org-scope.
+    _require_can_create_template(body.scope or template.scope, perms)
 
     previous_scope = template.scope
 
@@ -372,11 +390,7 @@ async def delete_template(
     await _enforce_rate_limit(perms.org_id)
     template = await _get_template_or_404(slug, perms.org_id, db)
 
-    if template.created_by != perms.user_id and perms.role != ProfileRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Alleen de maker of een beheerder mag deze template verwijderen",
-        )
+    _require_can_mutate_template(template, perms)
 
     scope = template.scope
     template_id = template.id

@@ -86,6 +86,7 @@ class TestSeatFeaturesContents:
             "kb.members",
             "kb.taxonomy",
             "kb.gaps",
+            "templates.manage_org",
         ):
             assert extra in know, f"{extra!r} missing from KNOWLEDGE seat"
 
@@ -227,8 +228,8 @@ class TestEffectiveFeatures:
 class TestEffectiveCapabilities:
     def test_kb_manager_plus_knowledge_seat_gets_full_caps(self) -> None:
         caps = effective_capabilities("kb_manager", SeatType.KNOWLEDGE)
-        # All six Capability members are unlocked: both connector caps via
-        # their direct features, four KB-management caps via knowledge.full.
+        # All knowledge-tier Capability members are unlocked: both connector
+        # caps via their direct features; KB-management + org-template caps via knowledge.full.
         assert caps == {
             Capability.KB_CONNECTORS,
             Capability.KB_CONNECTORS_EXTERNAL,
@@ -236,6 +237,7 @@ class TestEffectiveCapabilities:
             Capability.KB_MEMBERS,
             Capability.KB_TAXONOMY,
             Capability.KB_GAPS,
+            Capability.TEMPLATES_MANAGE_ORG,
         }
 
     def test_kb_manager_plus_chat_seat_keeps_only_basic_connector(self) -> None:
