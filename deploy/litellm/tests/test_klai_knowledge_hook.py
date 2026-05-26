@@ -2872,12 +2872,22 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
                     "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "evidence_id": "E1",
+                            "title": "Invite and remove people",
+                            "source_url": "https://docs.getklai.com/admin/invite-remove-people",
+                            "text": "Je kunt iemand uitnodigen via het beheerscherm.",
+                            "final_score": 0.91,
+                        }
+                    ],
                     "trusted_sources": [
                         {
                             "label": "1",
                             "title": "Invite and remove people",
                             "url": "https://docs.getklai.com/admin/invite-remove-people",
                             "evidence_ids": ["E1"],
+                            "relevance_score": 0.91,
                         }
                     ],
                 }
