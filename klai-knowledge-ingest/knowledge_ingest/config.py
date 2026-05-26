@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     ingest_debounce_seconds: int = 180
     enrichment_model: str = "klai-fast"
     enrichment_timeout: float = 15.0
-    enrichment_max_concurrent: int = 2  # Mistral account limit: 60 RPM shared across all aliases
+    enrichment_max_concurrent: int = 2
     # Larger docs keep raw chunk vectors; per-chunk LLM fan-out is not viable.
     enrichment_max_chunks: int = 200
     enrichment_max_document_tokens: int = 2000
@@ -80,12 +80,13 @@ class Settings(BaseSettings):
     graphiti_enabled: bool = True
     graphiti_llm_model: str = "klai-fast"
     graphiti_max_concurrent: int = 1  # concurrent episodes; increase with paid LLM plan
-    graphiti_episode_delay: float = 5.0
+    graphiti_episode_delay: float = 10.0
     # Token bucket rate limit for LLM calls inside add_episode().
     # Graphiti makes ~5 sequential HTTP calls per episode; this ensures they never
     # exceed the upstream API limit regardless of LLM response time.
-    # Mistral org limit = 1 req/s → default 1.0. Raise for providers with higher limits.
-    graphiti_llm_rps: float = 1.0
+    # Mistral Small is 100 RPM / 100k TPM for our production key. Keep Graphiti
+    # below that because enrichment and user-facing calls share klai-fast.
+    graphiti_llm_rps: float = 0.5
     # Portal integration for taxonomy (SPEC-KB-021)
     portal_url: str = "http://portal-api:8000"
     # Bearer token for outbound calls to portal-api internal endpoints

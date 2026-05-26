@@ -6,8 +6,11 @@ model_list:
     litellm_params:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY
-    rpm: 500
-    tpm: 400000
+    # Mistral headers measured in prod on 2026-05-26:
+    # mistral-small-2603 = 100 RPM / 100k TPM. klai-primary and klai-fast
+    # share that same upstream model, so split the budget between aliases.
+    rpm: 45
+    tpm: 45000
 
   # Fast: Mistral Small — bypasses custom_router.py routing
   # Use for lightweight, latency-sensitive user-facing calls
@@ -15,8 +18,8 @@ model_list:
     litellm_params:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY
-    rpm: 500
-    tpm: 400000
+    rpm: 45
+    tpm: 45000
 
   # Large: Mistral Large — agentic / tool use flows
   # Auto-selected by custom_router.py when tool call history is detected
@@ -24,8 +27,10 @@ model_list:
     litellm_params:
       model: mistral/mistral-large-2512
       api_key: os.environ/MISTRAL_API_KEY
-    rpm: 200
-    tpm: 400000
+    # Mistral headers measured in prod on 2026-05-26:
+    # mistral-large-2512 = 15 RPM / 400k TPM.
+    rpm: 13
+    tpm: 360000
 
   # Medium: Mistral Medium 3.5 — middle-tier between klai-fast and klai-large.
   # Use for tasks where klai-fast hits its output-token ceiling but klai-large
@@ -36,8 +41,10 @@ model_list:
     litellm_params:
       model: mistral/mistral-medium-3.5
       api_key: os.environ/MISTRAL_API_KEY
-    rpm: 200
-    tpm: 400000
+    # Mistral headers measured in prod on 2026-05-26:
+    # mistral-medium-3.5 = 1000 RPM / 500k TPM.
+    rpm: 900
+    tpm: 450000
 
   # Embeddings: BGE-M3 via TEI on gpu-01. Distinct model TYPE (not a
   # text-completion tier) — exposes the TEI endpoint already used by
@@ -61,16 +68,16 @@ search_tools:
 router_settings:
   routing_strategy: simple-shuffle
   optional_pre_call_checks:
-    - enforce_model_rate_limits  # Queue requests when provider budget is hit
-  provider_budget_config:
-    mistral:
-      rpm_limit: 500
-      tpm_limit: 400000
+    - enforce_model_rate_limits  # Queue requests when model RPM/TPM is hit
+  allowed_fails: 2
+  cooldown_time: 60
 
 litellm_settings:
   drop_params: true             # vLLM/Ollama does not accept all OpenAI params
   request_timeout: 120
-  num_retries: 2
+  # Avoid retry storms against Mistral when the upstream is already returning
+  # 429/503. Callers with semantic retry needs keep their own backoff.
+  num_retries: 1
   callbacks:
     - klai_knowledge.klai_knowledge_hook
     - custom_router.token_router

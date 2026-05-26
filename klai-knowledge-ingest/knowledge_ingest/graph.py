@@ -177,6 +177,21 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _episode_semaphore
 
 
+def _graphiti_retry_delay(exc: Exception, attempt: int) -> tuple[str, float]:
+    exc_str = str(exc).lower()
+    if "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str:
+        return "rate_limited", 65.0 * (2**attempt)
+    if (
+        "503" in exc_str
+        or "service unavailable" in exc_str
+        or "internal_server_error" in exc_str
+        or "code\":\"3800" in exc_str
+        or "code': '3800" in exc_str
+    ):
+        return "provider_unavailable", 30.0 * (2**attempt)
+    return "transient", 1.0 * (2**attempt)
+
+
 _graphiti_client: Graphiti | None = None
 
 
@@ -616,14 +631,8 @@ async def ingest_episode(
                 break
 
             except Exception as exc:
-                exc_str = str(exc).lower()
-                is_rate_limit = (
-                    "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str
-                )
                 if attempt < max_attempts - 1:
-                    # Rate limit: back off long enough for Mistral's sliding window to reset.
-                    # Other errors: short exponential backoff (1s, 2s).
-                    wait = 30 * (2**attempt) if is_rate_limit else 2**attempt  # 30s/60s or 1s/2s
+                    retry_reason, wait = _graphiti_retry_delay(exc, attempt)
                     logger.warning(
                         "graphiti_ingest_retry",
                         attempt=attempt + 1,
@@ -631,7 +640,7 @@ async def ingest_episode(
                         artifact_id=artifact_id,
                         error=str(exc),
                         wait_s=wait,
-                        rate_limited=is_rate_limit,
+                        retry_reason=retry_reason,
                     )
                     await asyncio.sleep(wait)
                 else:

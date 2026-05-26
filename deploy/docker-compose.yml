@@ -1387,6 +1387,11 @@ services:
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
+      # Mistral Small is 100 RPM / 100k TPM for our production key. Graphiti
+      # performs several sequential LLM calls per episode, while enrichment and
+      # user-facing traffic share the same klai-fast upstream budget.
+      GRAPHITI_LLM_RPS: ${GRAPHITI_LLM_RPS:-0.5}
+      GRAPHITI_EPISODE_DELAY: ${GRAPHITI_EPISODE_DELAY:-10.0}
       PORTAL_URL: http://portal-api:8010
       PORTAL_INTERNAL_TOKEN: ${PORTAL_API_INTERNAL_SECRET}
       # SPEC-RAG-EVAL-001 — RAGAS evaluation harness calls /retrieve on
