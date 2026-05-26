@@ -98,21 +98,14 @@ export function InstructionsPage() {
       </div>
       <p className="text-sm text-gray-400 mb-6">{m.instructions_page_subtitle()}</p>
 
-      {/* Intro / uitleg — vaste sectie boven de lijst zodat nieuwe gebruikers
-          direct snappen wat een instructie is en hoe je 'm gebruikt. */}
-      <div className="mb-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] p-5">
-        <h2 className="text-sm font-display-bold text-gray-900 mb-2">
-          {m.instructions_intro_heading()}
-        </h2>
-        <p className="text-sm text-gray-700 mb-3">{m.instructions_intro_body()}</p>
-        <p className="text-xs font-semibold text-gray-500 mb-1.5">
-          {m.instructions_intro_examples_heading()}
+      {/* Korte uitleg boven de lijst — geen kader, gewoon tekst. */}
+      <div className="mb-8 space-y-3 text-sm text-gray-600">
+        <p>{m.instructions_intro_body()}</p>
+        <p>
+          <span className="text-gray-500">{m.instructions_intro_examples_heading()}</span>{' '}
+          {m.instructions_intro_example_1()} {m.instructions_intro_example_2()}
         </p>
-        <ul className="list-disc pl-5 text-sm text-gray-700 space-y-1 mb-3">
-          <li>{m.instructions_intro_example_1()}</li>
-          <li>{m.instructions_intro_example_2()}</li>
-        </ul>
-        <p className="text-sm text-gray-700">{m.instructions_intro_invoke()}</p>
+        <p>{m.instructions_intro_invoke()}</p>
       </div>
 
       {instructionsQuery.isLoading && (
