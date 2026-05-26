@@ -87,13 +87,13 @@ export function InstructionFormPage({
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { data: currentUser } = useCurrentUser()
-  const isAdmin = currentUser?.isAdmin ?? false
+  const canManageOrgTemplates = currentUser?.hasCapability('templates.manage_org') ?? false
 
-  // Non-admins are forced to personal scope. Do NOT mutate initialForm in
+  // Users without org-template management are forced to personal scope. Do NOT mutate initialForm in
   // place - we honour its scope on the first render so the edit flow can
   // inspect an org-scope template without accidentally flipping it.
   const [form, setForm] = useState<InstructionFormState>(() => {
-    if (mode === 'new' && !isAdmin && initialForm.scope === 'org') {
+    if (mode === 'new' && !canManageOrgTemplates && initialForm.scope === 'org') {
       return { ...initialForm, scope: 'personal' }
     }
     return initialForm
@@ -240,12 +240,12 @@ export function InstructionFormPage({
             value={form.scope}
             onChange={(e) => setForm((f) => ({ ...f, scope: e.target.value as InstructionScope }))}
           >
-            <option value="org" disabled={!isAdmin} title={!isAdmin ? m.instructions_form_scope_org_disabled_tooltip() : undefined}>
+            <option value="org" disabled={!canManageOrgTemplates} title={!canManageOrgTemplates ? m.instructions_form_scope_org_disabled_tooltip() : undefined}>
               {m.instructions_list_scope_org()}
             </option>
             <option value="personal">{m.instructions_list_scope_personal()}</option>
           </Select>
-          {!isAdmin && (
+          {!canManageOrgTemplates && (
             <p className="text-xs text-gray-400">{m.instructions_form_scope_org_disabled_tooltip()}</p>
           )}
         </div>

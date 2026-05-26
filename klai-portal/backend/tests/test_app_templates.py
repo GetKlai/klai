@@ -6,7 +6,7 @@ need Postgres. Full integration-style RLS + migration tests live alongside
 the other RLS-smoke-tests (out of scope for this file).
 
 Covers SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-CRUD:
-- Admin-gate on scope="org" POST (NL message).
+- Capability-gate on scope="org" POST (NL message).
 - Slug rejection for empty/punctuation-only names.
 - Rate-limit fail-open when Redis is unavailable.
 - Cache invalidation dispatch (org-wide vs single user).
@@ -54,13 +54,13 @@ def _mock_template(
 
 
 # ---------------------------------------------------------------------------
-# Admin-gate on scope="org" create
+# Capability-gate on scope="org" create
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_post_scope_org_as_non_admin_returns_403_nl(monkeypatch):
-    """REQ-TEMPLATES-CRUD-E1: non-admin POST scope='org' → 403 with NL message."""
+    """REQ-TEMPLATES-CRUD-E1: caller without templates.manage_org POST scope='org' → 403."""
     from app.api import app_templates
 
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
@@ -72,7 +72,39 @@ async def test_post_scope_org_as_non_admin_returns_403_nl(monkeypatch):
         await app_templates.create_template(body=body, perms=perms, db=MagicMock())
 
     assert exc.value.status_code == 403
-    assert "beheerders" in exc.value.detail.lower()
+    assert "organisatie-templates" in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_post_scope_org_as_kb_manager_allowed(monkeypatch):
+    """REQ-TEMPLATES-CRUD-E1: kb_manager has templates.manage_org and can create org templates."""
+    from app.api import app_templates
+
+    monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
+    monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
+
+    db = MagicMock()
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.commit = AsyncMock()
+
+    async def _refresh(obj):
+        obj.id = 1
+        obj.slug = "x"
+        obj.scope = "org"
+        obj.created_by = "user-1"
+        obj.is_active = True
+        obj.created_at = datetime(2026, 4, 23, 12, 0, 0)
+        obj.updated_at = datetime(2026, 4, 23, 12, 0, 0)
+
+    db.refresh = AsyncMock(side_effect=_refresh)
+
+    perms = make_perms(role="kb_manager", user_id="user-1", org_id=42)
+    body = app_templates.TemplateCreate(name="X", prompt_text="y", scope="org")
+    out = await app_templates.create_template(body=body, perms=perms, db=db)
+
+    assert out.scope == "org"
+    app_templates.invalidate_templates.assert_awaited_once_with(42)
 
 
 @pytest.mark.asyncio
@@ -282,8 +314,8 @@ async def test_patch_happy_path_flushes_and_refreshes_before_commit(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_patch_promoting_personal_to_org_requires_admin(monkeypatch):
-    """REQ-TEMPLATES-CRUD-E1 applies on PATCH too: promoting to scope='org' needs admin."""
+async def test_patch_promoting_personal_to_org_requires_org_template_capability(monkeypatch):
+    """REQ-TEMPLATES-CRUD-E1 applies on PATCH too: promoting to scope='org' needs capability."""
     from app.api import app_templates
 
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())

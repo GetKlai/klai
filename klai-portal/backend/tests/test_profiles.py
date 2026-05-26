@@ -84,6 +84,16 @@ class TestProfileCapabilities:
 
         assert "kb.members" not in PROFILE_CAPABILITIES["personal"]
 
+    def test_personal_lacks_org_template_management(self):
+        from app.core.profiles import PROFILE_CAPABILITIES
+
+        assert "templates.manage_org" not in PROFILE_CAPABILITIES["personal"]
+
+    def test_kb_manager_can_manage_org_templates(self):
+        from app.core.profiles import PROFILE_CAPABILITIES
+
+        assert "templates.manage_org" in PROFILE_CAPABILITIES["kb_manager"]
+
     # Removed in v0.2.0: kb.create_personal is a direct role check, not a capability.
     def test_personal_does_not_have_kb_create_personal(self):
         """kb.create_personal was removed from PROFILE_CAPABILITIES in v0.2.0."""

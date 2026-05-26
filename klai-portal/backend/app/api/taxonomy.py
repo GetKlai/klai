@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _load_org_or_500, get_kb_with_access, require_capability
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
-from app.core.permissions import ProfileRole, UserPermissions, get_caller, get_caller_at_least
+from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import Capability
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
@@ -1045,10 +1045,14 @@ def _make_coverage_response(
     )
 
 
-@router.get("/{kb_slug}/taxonomy/coverage", response_model=CoverageResponse, dependencies=[Depends(get_kb_with_access)])
+@router.get(
+    "/{kb_slug}/taxonomy/coverage",
+    response_model=CoverageResponse,
+    dependencies=[Depends(require_capability(Capability.KB_TAXONOMY)), Depends(get_kb_with_access)],
+)
 async def taxonomy_coverage(
     kb_slug: str,
-    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> CoverageResponse:
     """Coverage dashboard: per-node chunk counts, gap counts, health status.

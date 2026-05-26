@@ -181,6 +181,7 @@ class TestPlanLimitsTable:
             "kb.members",
             "kb.taxonomy",
             "kb.gaps",
+            "templates.manage_org",
         }
         assert PLAN_LIMITS["knowledge"].capabilities == frozenset(expected)
 

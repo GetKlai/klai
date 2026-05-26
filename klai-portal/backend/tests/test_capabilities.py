@@ -112,7 +112,15 @@ class TestGetEffectiveCapabilities:
         from app.api.dependencies import get_effective_capabilities
 
         caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("knowledge", "kb_manager"))
-        expected = {"kb.connectors", "kb.connectors.external", "kb.create_org", "kb.members", "kb.taxonomy", "kb.gaps"}
+        expected = {
+            "kb.connectors",
+            "kb.connectors.external",
+            "kb.create_org",
+            "kb.members",
+            "kb.taxonomy",
+            "kb.gaps",
+            "templates.manage_org",
+        }
         assert caps == expected
 
     @pytest.mark.asyncio
@@ -137,7 +145,15 @@ class TestGetEffectiveCapabilities:
         from app.api.dependencies import get_effective_capabilities
 
         caps = await get_effective_capabilities(user_id="u", db=_make_db_with_user("chat", "admin"))
-        expected = {"kb.connectors", "kb.connectors.external", "kb.create_org", "kb.members", "kb.taxonomy", "kb.gaps"}
+        expected = {
+            "kb.connectors",
+            "kb.connectors.external",
+            "kb.create_org",
+            "kb.members",
+            "kb.taxonomy",
+            "kb.gaps",
+            "templates.manage_org",
+        }
         assert caps == expected
 
     @pytest.mark.asyncio
@@ -217,7 +233,14 @@ class TestRequireCapability:
         """Admin bypass: admin on core plan passes any capability check."""
         from app.api.dependencies import require_capability
 
-        for cap in ["kb.connectors", "kb.connectors.external", "kb.members", "kb.taxonomy", "kb.gaps"]:
+        for cap in [
+            "kb.connectors",
+            "kb.connectors.external",
+            "kb.members",
+            "kb.taxonomy",
+            "kb.gaps",
+            "templates.manage_org",
+        ]:
             dep = require_capability(cap)
             await dep(user_id="u", db=_make_db_with_user("chat", "admin"))
 

@@ -65,10 +65,9 @@ const GAP_TYPE_CLASSES: Record<string, string> = {
 function GapsPage() {
   const auth = useAuth()
   const { user } = useCurrentUser()
-  const isAdmin = user?.isAdmin === true
   // SPEC-PORTAL-UNIFY-KB-001: kb.gaps capability gate.
-  // Admins bypass; core/professional see grayed unavailable state.
-  const hasGapsCapability = !user || user.hasCapability('kb.gaps')
+  // Admins bypass through hasCapability; users without kb.gaps see a grayed unavailable state.
+  const hasGapsCapability = user?.hasCapability('kb.gaps') === true
   const navigate = useNavigate({ from: '/app/gaps/' })
 
   const { days: daysParam, gapType: gapTypeParam } = Route.useSearch()
@@ -88,41 +87,33 @@ function GapsPage() {
         throw err
       }
     },
-    enabled: auth.isAuthenticated && isAdmin,
+    enabled: auth.isAuthenticated && hasGapsCapability,
     retry: false,
   })
 
   const { data: kbsData } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases-for-gaps'],
     queryFn: async () => apiFetch<KBsResponse>('/api/app/knowledge-bases'),
-    enabled: auth.isAuthenticated && isAdmin,
+    enabled: auth.isAuthenticated && hasGapsCapability,
     retry: false,
   })
 
   const orgKbs = (kbsData?.knowledge_bases ?? []).filter((kb) => kb.owner_type === 'org')
 
-  if (!isAdmin) {
-    // Non-admins without kb.gaps capability see a grayed unavailable state (D4).
-    if (!hasGapsCapability) {
-      return (
-        <div className="p-6 max-w-2xl opacity-50 cursor-default select-none" aria-disabled="true">
-          <div className="flex items-start gap-3 mb-4">
-            <AlertTriangle className="h-7 w-7 text-gray-900" />
-            <h1 className="page-title text-xl/none font-semibold text-gray-900">
-              {m.gaps_page_title()}
-            </h1>
-          </div>
-          <Tooltip label={m.capability_tooltip_knowledge_only()}>
-            <p className="text-sm text-gray-400">
-              {m.capability_tooltip_knowledge_only()}
-            </p>
-          </Tooltip>
-        </div>
-      )
-    }
+  if (!hasGapsCapability) {
     return (
-      <div className="p-6 max-w-2xl">
-        <p className="text-gray-400">Admin access required.</p>
+      <div className="p-6 max-w-2xl opacity-50 cursor-default select-none" aria-disabled="true">
+        <div className="flex items-start gap-3 mb-4">
+          <AlertTriangle className="h-7 w-7 text-gray-900" />
+          <h1 className="page-title text-xl/none font-semibold text-gray-900">
+            {m.gaps_page_title()}
+          </h1>
+        </div>
+        <Tooltip label={m.capability_tooltip_knowledge_only()}>
+          <p className="text-sm text-gray-400">
+            {m.capability_tooltip_knowledge_only()}
+          </p>
+        </Tooltip>
       </div>
     )
   }

@@ -34,6 +34,7 @@ class Capability(StrEnum):
     KB_MEMBERS = "kb.members"
     KB_TAXONOMY = "kb.taxonomy"
     KB_GAPS = "kb.gaps"
+    TEMPLATES_MANAGE_ORG = "templates.manage_org"
 
 
 class ProfileRole(StrEnum):
@@ -96,6 +97,7 @@ _KB_FULL_CAPS: frozenset[str] = _KB_BASIC_CAPS | frozenset(
         Capability.KB_MEMBERS,
         Capability.KB_TAXONOMY,
         Capability.KB_GAPS,
+        Capability.TEMPLATES_MANAGE_ORG,
     }
 )
 

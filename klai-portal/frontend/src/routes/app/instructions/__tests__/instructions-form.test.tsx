@@ -12,7 +12,12 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 
 // useCurrentUser mock - toggles per test.
-const currentUserValue: { isAdmin: boolean; user_id: string } = { isAdmin: true, user_id: 'u1' }
+const currentUserValue: { isAdmin: boolean; user_id: string; capabilities: string[]; hasCapability: (cap: string) => boolean } = {
+  isAdmin: true,
+  user_id: 'u1',
+  capabilities: [],
+  hasCapability: (cap: string) => currentUserValue.isAdmin || currentUserValue.capabilities.includes(cap),
+}
 vi.mock('@/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ data: currentUserValue }),
 }))
@@ -32,6 +37,9 @@ function Wrapper({ children }: { children: ReactNode }) {
 beforeEach(() => {
   navigate.mockReset()
   apiFetchMock.mockReset()
+  currentUserValue.isAdmin = true
+  currentUserValue.user_id = 'u1'
+  currentUserValue.capabilities = []
 })
 
 describe('InstructionFormPage - design compliance', () => {
@@ -75,8 +83,8 @@ describe('InstructionFormPage - design compliance', () => {
   })
 })
 
-describe('InstructionFormPage - admin-gate on scope="org"', () => {
-  it('admin sees "Organisatie" enabled + default scope', () => {
+describe('InstructionFormPage - org-template capability gate', () => {
+  it('admin sees "Organisatie" enabled + default scope via capability bypass', () => {
     currentUserValue.isAdmin = true
     render(
       <Wrapper>
@@ -105,6 +113,22 @@ describe('InstructionFormPage - admin-gate on scope="org"', () => {
     const scopeSelect = screen.getByLabelText(/bereik|scope/i) as HTMLSelectElement
     expect(scopeSelect.value).toBe('personal')
   })
+
+  it('non-admin with templates.manage_org sees "Organisatie" enabled', () => {
+    currentUserValue.isAdmin = false
+    currentUserValue.capabilities = ['templates.manage_org']
+    render(
+      <Wrapper>
+        <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
+      </Wrapper>,
+    )
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const orgOption = screen.getByRole('option', { name: /organisatie|organization/i }) as HTMLOptionElement
+    expect(orgOption.disabled).toBe(false)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const scopeSelect = screen.getByLabelText(/bereik|scope/i) as HTMLSelectElement
+    expect(scopeSelect.value).toBe('org')
+  })
 })
 
 describe('InstructionFormPage - client-side validation', () => {
@@ -115,7 +139,7 @@ describe('InstructionFormPage - client-side validation', () => {
         <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
       </Wrapper>,
     )
-    fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: 'some text' } })
+    fireEvent.change(screen.getByLabelText(/instruction|prompt/i), { target: { value: 'some text' } })
     fireEvent.click(screen.getByRole('button', { name: /save|opslaan/i }))
 
     expect(apiFetchMock).not.toHaveBeenCalled()
@@ -134,7 +158,7 @@ describe('InstructionFormPage - client-side validation', () => {
     fireEvent.click(screen.getByRole('button', { name: /save|opslaan/i }))
 
     expect(apiFetchMock).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert').textContent?.toLowerCase()).toContain('prompt')
+    expect(screen.getByRole('alert').textContent?.toLowerCase()).toMatch(/instruction|prompt/)
   })
 
   it('prompt_text > 8000 chars shows prompt-too-long error', () => {
@@ -145,7 +169,7 @@ describe('InstructionFormPage - client-side validation', () => {
       </Wrapper>,
     )
     fireEvent.change(screen.getByLabelText(/^(naam|name)$/i), { target: { value: 'x' } })
-    fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: 'a'.repeat(8001) } })
+    fireEvent.change(screen.getByLabelText(/instruction|prompt/i), { target: { value: 'a'.repeat(8001) } })
     fireEvent.click(screen.getByRole('button', { name: /save|opslaan/i }))
 
     expect(apiFetchMock).not.toHaveBeenCalled()

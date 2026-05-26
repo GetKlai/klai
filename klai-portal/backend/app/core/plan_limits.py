@@ -78,6 +78,7 @@ PLAN_LIMITS: dict[str, KBLimits] = {
                 "kb.members",
                 "kb.taxonomy",
                 "kb.gaps",
+                "templates.manage_org",
             }
         ),
     ),

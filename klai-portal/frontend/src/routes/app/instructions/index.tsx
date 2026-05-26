@@ -41,6 +41,7 @@ export function InstructionsPage() {
   const queryClient = useQueryClient()
   const { data: currentUser } = useCurrentUser()
   const isAdmin = currentUser?.isAdmin ?? false
+  const canManageOrgTemplates = currentUser?.hasCapability('templates.manage_org') ?? false
   const callerZitadelId = currentUser?.user_id
 
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<number | null>(null)
@@ -70,12 +71,13 @@ export function InstructionsPage() {
   const activeIds = new Set(prefQuery.data?.active_template_ids ?? [])
 
   function canMutate(t: Instruction): boolean {
+    if (t.scope === 'org') return canManageOrgTemplates
     if (isAdmin) return true
     if (!callerZitadelId) return false
     return t.created_by === callerZitadelId
   }
 
-  const createLabel = isAdmin
+  const createLabel = canManageOrgTemplates
     ? m.instructions_list_create_button()
     : m.instructions_list_create_personal_button()
 

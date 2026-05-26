@@ -17,7 +17,12 @@ vi.mock('@/lib/apiFetch', async () => {
   return { ...actual, apiFetch: (...args: unknown[]) => apiFetchMock(...args) }
 })
 
-const currentUserValue: { isAdmin: boolean; user_id: string } = { isAdmin: false, user_id: 'me' }
+const currentUserValue: { isAdmin: boolean; user_id: string; capabilities: string[]; hasCapability: (cap: string) => boolean } = {
+  isAdmin: false,
+  user_id: 'me',
+  capabilities: [],
+  hasCapability: (cap: string) => currentUserValue.isAdmin || currentUserValue.capabilities.includes(cap),
+}
 vi.mock('@/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ data: currentUserValue }),
 }))
@@ -36,6 +41,9 @@ function Wrapper({ children }: { children: ReactNode }) {
 beforeEach(() => {
   navigate.mockReset()
   apiFetchMock.mockReset()
+  currentUserValue.isAdmin = false
+  currentUserValue.user_id = 'me'
+  currentUserValue.capabilities = []
 })
 
 function mockInstructions(instructions: Array<Record<string, unknown>>) {
@@ -92,6 +100,23 @@ describe('InstructionsPage - CTA label depends on role', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /nieuwe persoonlijke instructie|new personal instruction/i })).toBeTruthy()
+    })
+  })
+
+  it('kb manager capability gets the org-template CTA label', async () => {
+    currentUserValue.isAdmin = false
+    currentUserValue.capabilities = ['templates.manage_org']
+    mockInstructions([])
+
+    render(
+      <Wrapper>
+        <InstructionsPage />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      const btns = screen.getAllByRole('button', { name: /^nieuwe instructie$|^new instruction$/i })
+      expect(btns.length).toBeGreaterThan(0)
     })
   })
 })
@@ -153,6 +178,26 @@ describe('InstructionsPage - populated list', () => {
     const deleteBtn = screen.getByRole('button', { name: /verwijderen|delete/i }) as HTMLButtonElement
     expect(deleteBtn.disabled).toBe(false)
   })
+
+  it('non-admin with templates.manage_org can delete org templates', async () => {
+    currentUserValue.isAdmin = false
+    currentUserValue.user_id = 'kb-manager-id'
+    currentUserValue.capabilities = ['templates.manage_org']
+    mockInstructions([
+      { id: 1, name: 'Organisatie', slug: 'organisatie', description: null, prompt_text: '', scope: 'org', created_by: 'not-me', is_active: true, created_at: '', updated_at: '' },
+    ])
+
+    render(
+      <Wrapper>
+        <InstructionsPage />
+      </Wrapper>,
+    )
+
+    await waitFor(() => expect(screen.getByText('Organisatie')).toBeTruthy())
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const deleteBtn = screen.getByRole('button', { name: /verwijderen|delete/i }) as HTMLButtonElement
+    expect(deleteBtn.disabled).toBe(false)
+  })
 })
 
 describe('InstructionsPage - design compliance', () => {
@@ -166,7 +211,7 @@ describe('InstructionsPage - design compliance', () => {
       </Wrapper>,
     )
 
-    await waitFor(() => expect(screen.getByText('Instructies')).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('heading', { name: /instructies|instructions/i })).toBeTruthy())
     const outer = container.querySelector('.mx-auto.max-w-3xl')
     expect(outer).not.toBeNull()
   })
@@ -181,7 +226,7 @@ describe('InstructionsPage - design compliance', () => {
       </Wrapper>,
     )
 
-    await waitFor(() => expect(screen.getByText('Instructies')).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('heading', { name: /instructies|instructions/i })).toBeTruthy())
     const html = container.outerHTML
     expect(html).not.toMatch(/\buppercase\b/)
     expect(html).not.toMatch(/tracking-wider/)
