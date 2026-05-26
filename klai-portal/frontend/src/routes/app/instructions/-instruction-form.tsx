@@ -14,19 +14,19 @@ import * as m from '@/paraglide/messages'
 // `scope="org"` is defensive UX - server-side backend (SPEC-CHAT-TEMPLATES-001)
 // is the authority via HTTP 403.
 //
-// @MX:ANCHOR fan_in=2 - rendered by both /app/templates/new and
-//     /app/templates/$slug/edit route wrappers.
+// @MX:ANCHOR fan_in=2 - rendered by both /app/instructions/new and
+//     /app/instructions/$slug/edit route wrappers.
 
-export type TemplateScope = 'org' | 'personal'
+export type InstructionScope = 'org' | 'personal'
 
-export interface TemplateFormState {
+export interface InstructionFormState {
   name: string
   description: string
   prompt_text: string
-  scope: TemplateScope
+  scope: InstructionScope
 }
 
-export const EMPTY_TEMPLATE_FORM: TemplateFormState = {
+export const EMPTY_INSTRUCTION_FORM: InstructionFormState = {
   name: '',
   description: '',
   prompt_text: '',
@@ -38,23 +38,23 @@ export const NAME_MAX_LENGTH = 128
 export const DESCRIPTION_MAX_LENGTH = 500
 const WARNING_THRESHOLD = 7800
 
-interface TemplateFormPageProps {
+interface InstructionFormPageProps {
   mode: 'new' | 'edit'
-  initialForm: TemplateFormState
-  /** When editing, the slug of the existing template (used for PATCH). */
+  initialForm: InstructionFormState
+  /** When editing, the slug of the existing instruction (used for PATCH). */
   slug?: string
-  /** Path to navigate back to on success / cancel. Defaults to `/app/templates`. */
-  backPath?: '/app/templates' | '/admin/templates'
+  /** Path to navigate back to on success / cancel. Defaults to `/app/instructions`. */
+  backPath?: '/app/instructions' | '/admin/instructions'
 }
 
-interface TemplatePayload {
+interface InstructionPayload {
   name: string
   description: string | null
   prompt_text: string
-  scope: TemplateScope
+  scope: InstructionScope
 }
 
-function toPayload(form: TemplateFormState): TemplatePayload {
+function toPayload(form: InstructionFormState): InstructionPayload {
   return {
     name: form.name.trim(),
     description: form.description.trim() || null,
@@ -67,23 +67,23 @@ function toPayload(form: TemplateFormState): TemplatePayload {
 // unknown status codes fall back to the generic message.
 function resolveBackendError(status: number, detail: string | undefined): string {
   if (status === 403) {
-    return m.templates_form_error_org_admin_only()
+    return m.instructions_form_error_org_admin_only()
   }
   if (status === 409) {
-    return m.templates_form_error_slug_conflict()
+    return m.instructions_form_error_slug_conflict()
   }
   if (status === 400 && detail && detail.toLowerCase().includes('prompt_text')) {
-    return m.templates_form_error_prompt_too_long()
+    return m.instructions_form_error_prompt_too_long()
   }
-  return m.templates_form_error_generic()
+  return m.instructions_form_error_generic()
 }
 
-export function TemplateFormPage({
+export function InstructionFormPage({
   mode,
   initialForm,
   slug,
-  backPath = '/app/templates',
-}: TemplateFormPageProps) {
+  backPath = '/app/instructions',
+}: InstructionFormPageProps) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { data: currentUser } = useCurrentUser()
@@ -92,7 +92,7 @@ export function TemplateFormPage({
   // Non-admins are forced to personal scope. Do NOT mutate initialForm in
   // place - we honour its scope on the first render so the edit flow can
   // inspect an org-scope template without accidentally flipping it.
-  const [form, setForm] = useState<TemplateFormState>(() => {
+  const [form, setForm] = useState<InstructionFormState>(() => {
     if (mode === 'new' && !isAdmin && initialForm.scope === 'org') {
       return { ...initialForm, scope: 'personal' }
     }
@@ -105,39 +105,39 @@ export function TemplateFormPage({
   const promptWarning = promptLength >= WARNING_THRESHOLD && !promptOverLimit
 
   const createMutation = useMutation({
-    mutationFn: async (body: TemplatePayload) =>
+    mutationFn: async (body: InstructionPayload) =>
       apiFetch('/api/app/templates', {
         method: 'POST',
         body: JSON.stringify(body),
       }),
     onSuccess: () => {
-      toast.success(m.templates_form_created_toast())
+      toast.success(m.instructions_form_created_toast())
       void invalidateAndLeave()
     },
     onError: (err: unknown) => setErrorKey(asErrorMessage(err)),
   })
 
   const updateMutation = useMutation({
-    mutationFn: async (body: TemplatePayload) =>
+    mutationFn: async (body: InstructionPayload) =>
       apiFetch(`/api/app/templates/${slug}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
     onSuccess: () => {
-      toast.success(m.templates_form_updated_toast())
+      toast.success(m.instructions_form_updated_toast())
       void invalidateAndLeave()
     },
     onError: (err: unknown) => setErrorKey(asErrorMessage(err)),
   })
 
   async function invalidateAndLeave() {
-    // Await invalidation BEFORE navigating so the templates list page
+    // Await invalidation BEFORE navigating so the instructions list page
     // mounts with fresh data. Without the await the user landed on
-    // /app/templates with the stale cached list - "ik zie de template
+    // /app/instructions with the stale cached list - "ik zie de instructie
     // niet gelijk" (2026-05-20).
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['app-templates'] }),
-      queryClient.invalidateQueries({ queryKey: ['app-templates-for-bar'] }),
+      queryClient.invalidateQueries({ queryKey: ['app-instructions'] }),
+      queryClient.invalidateQueries({ queryKey: ['app-instructions-for-bar'] }),
       queryClient.invalidateQueries({ queryKey: ['kb-preference'] }),
     ])
     void navigate({ to: backPath })
@@ -147,13 +147,13 @@ export function TemplateFormPage({
     if (err instanceof ApiError) {
       return resolveBackendError(err.status, err.message)
     }
-    return m.templates_form_error_generic()
+    return m.instructions_form_error_generic()
   }
 
   function validate(): string | null {
-    if (!form.name.trim()) return m.templates_form_error_name_required()
-    if (!form.prompt_text.trim()) return m.templates_form_error_prompt_required()
-    if (promptOverLimit) return m.templates_form_error_prompt_too_long()
+    if (!form.name.trim()) return m.instructions_form_error_name_required()
+    if (!form.prompt_text.trim()) return m.instructions_form_error_prompt_required()
+    if (promptOverLimit) return m.instructions_form_error_prompt_too_long()
     return null
   }
 
@@ -174,43 +174,43 @@ export function TemplateFormPage({
   }
 
   const isSaving = createMutation.isPending || updateMutation.isPending
-  const submitLabel = isSaving ? m.templates_form_saving() : m.templates_form_submit()
-  const title = mode === 'new' ? m.templates_form_new_title() : m.templates_form_edit_title()
+  const submitLabel = isSaving ? m.instructions_form_saving() : m.instructions_form_submit()
+  const title = mode === 'new' ? m.instructions_form_new_title() : m.instructions_form_edit_title()
 
   return (
     <div className="mx-auto max-w-lg px-6 py-10">
       <div className="mb-2">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">{title}</h1>
       </div>
-      <p className="text-sm text-gray-400 mb-6">{m.templates_form_subtitle()}</p>
+      <p className="text-sm text-gray-400 mb-6">{m.instructions_form_subtitle()}</p>
 
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <div className="space-y-1.5">
-          <Label htmlFor="template-name">{m.templates_form_name_label()}</Label>
+          <Label htmlFor="instruction-name">{m.instructions_form_name_label()}</Label>
           <Input
-            id="template-name"
+            id="instruction-name"
             value={form.name}
             maxLength={NAME_MAX_LENGTH}
-            placeholder={m.templates_form_name_placeholder()}
+            placeholder={m.instructions_form_name_placeholder()}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             required
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="template-description">{m.templates_form_description_label()}</Label>
+          <Label htmlFor="instruction-description">{m.instructions_form_description_label()}</Label>
           <Input
-            id="template-description"
+            id="instruction-description"
             value={form.description}
             maxLength={DESCRIPTION_MAX_LENGTH}
-            placeholder={m.templates_form_description_placeholder()}
+            placeholder={m.instructions_form_description_placeholder()}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           />
         </div>
 
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <Label htmlFor="template-prompt">{m.templates_form_prompt_label()}</Label>
+            <Label htmlFor="instruction-prompt">{m.instructions_form_prompt_label()}</Label>
             <span
               className={
                 promptOverLimit
@@ -221,32 +221,32 @@ export function TemplateFormPage({
               }
               data-testid="prompt-char-count"
             >
-              {m.templates_form_prompt_char_count({ current: String(promptLength) })}
+              {m.instructions_form_prompt_char_count({ current: String(promptLength) })}
             </span>
           </div>
           <textarea
-            id="template-prompt"
+            id="instruction-prompt"
             value={form.prompt_text}
-            placeholder={m.templates_form_prompt_placeholder()}
+            placeholder={m.instructions_form_prompt_placeholder()}
             onChange={(e) => setForm((f) => ({ ...f, prompt_text: e.target.value }))}
             className="w-full min-h-[200px] max-h-[480px] rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)] resize-y"
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="template-scope">{m.templates_form_scope_label()}</Label>
+          <Label htmlFor="instruction-scope">{m.instructions_form_scope_label()}</Label>
           <Select
-            id="template-scope"
+            id="instruction-scope"
             value={form.scope}
-            onChange={(e) => setForm((f) => ({ ...f, scope: e.target.value as TemplateScope }))}
+            onChange={(e) => setForm((f) => ({ ...f, scope: e.target.value as InstructionScope }))}
           >
-            <option value="org" disabled={!isAdmin} title={!isAdmin ? m.templates_form_scope_org_disabled_tooltip() : undefined}>
-              {m.templates_list_scope_org()}
+            <option value="org" disabled={!isAdmin} title={!isAdmin ? m.instructions_form_scope_org_disabled_tooltip() : undefined}>
+              {m.instructions_list_scope_org()}
             </option>
-            <option value="personal">{m.templates_list_scope_personal()}</option>
+            <option value="personal">{m.instructions_list_scope_personal()}</option>
           </Select>
           {!isAdmin && (
-            <p className="text-xs text-gray-400">{m.templates_form_scope_org_disabled_tooltip()}</p>
+            <p className="text-xs text-gray-400">{m.instructions_form_scope_org_disabled_tooltip()}</p>
           )}
         </div>
 
@@ -269,7 +269,7 @@ export function TemplateFormPage({
             onClick={() => void navigate({ to: backPath })}
             className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
           >
-            {m.templates_form_cancel()}
+            {m.instructions_form_cancel()}
           </button>
         </div>
       </form>

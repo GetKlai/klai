@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { EMPTY_TEMPLATE_FORM, TemplateFormPage } from '../-template-form'
+import { EMPTY_INSTRUCTION_FORM, InstructionFormPage } from '../-instruction-form'
 
 // @tanstack/react-router would otherwise require a full router context.
 // The form only uses useNavigate, so we stub that alone.
@@ -34,12 +34,12 @@ beforeEach(() => {
   apiFetchMock.mockReset()
 })
 
-describe('TemplateFormPage - design compliance', () => {
+describe('InstructionFormPage - design compliance', () => {
   it('uses mx-auto max-w-lg container on new form', () => {
     currentUserValue.isAdmin = true
     const { container } = render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={EMPTY_TEMPLATE_FORM} />
+        <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
       </Wrapper>,
     )
     const outer = container.querySelector('.mx-auto.max-w-lg')
@@ -52,7 +52,7 @@ describe('TemplateFormPage - design compliance', () => {
     currentUserValue.isAdmin = true
     render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={EMPTY_TEMPLATE_FORM} />
+        <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
       </Wrapper>,
     )
     const submit = screen.getByRole('button', { name: /save|opslaan/i })
@@ -65,7 +65,7 @@ describe('TemplateFormPage - design compliance', () => {
     currentUserValue.isAdmin = true
     const { container } = render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={EMPTY_TEMPLATE_FORM} />
+        <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
       </Wrapper>,
     )
     const html = container.outerHTML
@@ -75,12 +75,12 @@ describe('TemplateFormPage - design compliance', () => {
   })
 })
 
-describe('TemplateFormPage - admin-gate on scope="org"', () => {
+describe('InstructionFormPage - admin-gate on scope="org"', () => {
   it('admin sees "Organisatie" enabled + default scope', () => {
     currentUserValue.isAdmin = true
     render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={EMPTY_TEMPLATE_FORM} />
+        <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
       </Wrapper>,
     )
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
@@ -95,7 +95,7 @@ describe('TemplateFormPage - admin-gate on scope="org"', () => {
     currentUserValue.isAdmin = false
     render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={EMPTY_TEMPLATE_FORM} />
+        <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
       </Wrapper>,
     )
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
@@ -107,12 +107,12 @@ describe('TemplateFormPage - admin-gate on scope="org"', () => {
   })
 })
 
-describe('TemplateFormPage - client-side validation', () => {
+describe('InstructionFormPage - client-side validation', () => {
   it('empty name shows name-required error and does NOT call apiFetch', () => {
     currentUserValue.isAdmin = true
     render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={EMPTY_TEMPLATE_FORM} />
+        <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
       </Wrapper>,
     )
     fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: 'some text' } })
@@ -127,7 +127,7 @@ describe('TemplateFormPage - client-side validation', () => {
     currentUserValue.isAdmin = true
     render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={EMPTY_TEMPLATE_FORM} />
+        <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
       </Wrapper>,
     )
     fireEvent.change(screen.getByLabelText(/^(naam|name)$/i), { target: { value: 'Some name' } })
@@ -141,7 +141,7 @@ describe('TemplateFormPage - client-side validation', () => {
     currentUserValue.isAdmin = true
     render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={EMPTY_TEMPLATE_FORM} />
+        <InstructionFormPage mode="new" initialForm={EMPTY_INSTRUCTION_FORM} />
       </Wrapper>,
     )
     fireEvent.change(screen.getByLabelText(/^(naam|name)$/i), { target: { value: 'x' } })
@@ -153,12 +153,12 @@ describe('TemplateFormPage - client-side validation', () => {
   })
 })
 
-describe('TemplateFormPage - char counter', () => {
+describe('InstructionFormPage - char counter', () => {
   it('counter renders in gray when well below threshold', () => {
     currentUserValue.isAdmin = true
     render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={{ ...EMPTY_TEMPLATE_FORM, prompt_text: 'a'.repeat(100) }} />
+        <InstructionFormPage mode="new" initialForm={{ ...EMPTY_INSTRUCTION_FORM, prompt_text: 'a'.repeat(100) }} />
       </Wrapper>,
     )
     const counter = screen.getByTestId('prompt-char-count')
@@ -169,7 +169,7 @@ describe('TemplateFormPage - char counter', () => {
     currentUserValue.isAdmin = true
     render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={{ ...EMPTY_TEMPLATE_FORM, prompt_text: 'a'.repeat(7800) }} />
+        <InstructionFormPage mode="new" initialForm={{ ...EMPTY_INSTRUCTION_FORM, prompt_text: 'a'.repeat(7800) }} />
       </Wrapper>,
     )
     const counter = screen.getByTestId('prompt-char-count')
@@ -180,7 +180,7 @@ describe('TemplateFormPage - char counter', () => {
     currentUserValue.isAdmin = true
     render(
       <Wrapper>
-        <TemplateFormPage mode="new" initialForm={{ ...EMPTY_TEMPLATE_FORM, prompt_text: 'a'.repeat(8001) }} />
+        <InstructionFormPage mode="new" initialForm={{ ...EMPTY_INSTRUCTION_FORM, prompt_text: 'a'.repeat(8001) }} />
       </Wrapper>,
     )
     const counter = screen.getByTestId('prompt-char-count')

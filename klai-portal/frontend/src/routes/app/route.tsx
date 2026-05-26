@@ -12,9 +12,9 @@ const PRODUCT_ROUTES: Record<string, string[]> = {
   '/app/transcribe': ['scribe'],
   '/app/knowledge': ['knowledge'],
   '/app/docs': ['docs'],
-  // Templates is intentionally NOT in this map - every authenticated
+  // Instructions is intentionally NOT in this map - every authenticated
   // user sees it. Permission gating happens per-row via canMutate()
-  // on /app/templates (admins can edit org-wide; everyone can edit
+  // on /app/instructions (admins can edit org-wide; everyone can edit
   // their own personal). SPEC-PORTAL-IA-2026.
 }
 
@@ -27,7 +27,7 @@ function AppLayout() {
 
   const allNavItems = [
     { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
-    { to: '/app/templates', label: m.templates_page_title(), icon: Sliders },
+    { to: '/app/instructions', label: m.instructions_page_title(), icon: Sliders },
     { to: '/app/transcribe', label: m.app_tool_transcribe_title(), icon: Mic },
     { to: '/app/knowledge', label: m.app_tool_knowledge_title(), icon: Brain },
     { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
