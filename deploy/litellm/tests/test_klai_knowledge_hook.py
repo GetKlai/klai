@@ -2835,7 +2835,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         content = response.choices[0].message.content
         assert "Zie het diagram bron en fake." in content
         assert "https://example.com" not in content
-        assert "https://docs.getklai.com/diagram" not in content
+        assert "**Bronnen**" in content
+        assert "- [Diagram](https://docs.getklai.com/diagram)" in content
         assert "![fake]" not in content
         assert response.choices[0].message.sources == [
             {
@@ -2888,7 +2889,11 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert returned is response
         content = response.choices[0].message.content
         assert "Je kunt iemand uitnodigen via het beheerscherm." in content
-        assert "https://docs.getklai.com/admin/invite-remove-people" not in content
+        assert "**Bronnen**" in content
+        assert (
+            "- [Invite and remove people](https://docs.getklai.com/admin/invite-remove-people)"
+            in content
+        )
         assert response.choices[0].message.sources == [
             {
                 "label": "1",
@@ -3086,7 +3091,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert second.choices[0].delta.content == ""
         assert "https://bad.example" not in final.choices[0].delta.content
         assert "Zie diagram fake." in final.choices[0].delta.content
-        assert "https://docs.getklai.com/diagram" not in final.choices[0].delta.content
+        assert "**Bronnen**" in final.choices[0].delta.content
+        assert "- [Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
         assert final.choices[0].delta.sources == [
             {
                 "label": "1",
@@ -3180,8 +3186,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
         assert streamed == [only]
-        assert "Zie diagram." in streamed[0]["choices"][0]["delta"]["content"]
-        assert "https://docs.getklai.com/diagram" not in streamed[0]["choices"][0]["delta"]["content"]
+        content = streamed[0]["choices"][0]["delta"]["content"]
+        assert "Zie diagram." in content
+        assert "**Bronnen**" in content
+        assert "- [Diagram](https://docs.getklai.com/diagram)" in content
         assert streamed[0]["choices"][0]["delta"]["sources"] == [
             {
                 "label": "1",
