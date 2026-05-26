@@ -15,7 +15,7 @@ import * as m from '@/paraglide/messages'
 import { useWidgets, useDeleteWidget } from './-hooks'
 import type { WidgetResponse } from './-types'
 
-// Matches the canonical admin-list pattern used by /admin/templates:
+// Matches the canonical admin-list pattern used by /app/instructions:
 // divider-rows, no leading icon, name + optional badge inline, optional
 // description below, action icons right-aligned with gray-400 idle and
 // semantic-colour hover. Same paddings, same dividers, same hover.

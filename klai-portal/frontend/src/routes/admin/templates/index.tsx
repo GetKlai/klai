@@ -1,11 +1,10 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
-// Templates is samengevoegd met /app/templates - één canonical surface
-// met scope-tabs en per-rij edit-rechten (canMutate gate; admins kunnen
-// org-wide, iedereen kan persoonlijk). Deze route blijft bestaan voor
-// oude bookmarks en email-links en redirect naar de /app variant.
+// "Templates" is hernoemd naar "Instructies" (Phase 1 van de rename).
+// Deze route houdt /admin/templates levend voor oude bookmarks en
+// redirect naar /app/instructions (de admin variant is samengevoegd in /app).
 export const Route = createFileRoute('/admin/templates/')({
   beforeLoad: () => {
-    throw redirect({ to: '/app/templates' })
+    throw redirect({ to: '/app/instructions' })
   },
 })

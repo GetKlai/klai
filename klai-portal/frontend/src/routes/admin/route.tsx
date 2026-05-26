@@ -13,7 +13,7 @@ export const Route = createFileRoute('/admin')({
 })
 
 // SPEC-PORTAL-PROFILES-001 P3.2: per-tab minimum role on the admin sidebar.
-// kb_manager and group_manager can enter /admin for groups + templates.
+// kb_manager and group_manager can enter /admin for groups + instructions.
 // Everything else remains admin-only.
 //
 // SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 4: api-keys, widgets, and mcps are
@@ -40,9 +40,9 @@ const ADMIN_NAV_ITEMS: Array<{
   { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard, minRole: 'admin' },
   { to: '/admin/api-keys', label: m.admin_nav_api_keys(), icon: Key, minRole: 'admin', requiresFeature: 'partner_api' },
   { to: '/admin/widgets', label: m.admin_nav_widgets(), icon: MessageSquare, minRole: 'admin', requiresFeature: 'widgets' },
-  // Templates is samengevoegd met /app/templates (één pagina, scope-tabs,
-  // per-rij edit-rechten via canMutate). De /admin/templates routes
-  // redirecten naar de /app variant. Admins zien Templates voortaan in
+  // Instructies is samengevoegd met /app/instructions (één pagina, scope-tabs,
+  // per-rij edit-rechten via canMutate). De /admin/instructions routes
+  // redirecten naar de /app variant. Admins zien Instructies voortaan in
   // het /app sidebar.
   { to: '/admin/mcps', label: m.admin_nav_mcps(), icon: Puzzle, minRole: 'admin', requiresFeature: 'custom_mcps' },
   { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings, minRole: 'admin' },

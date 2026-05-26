@@ -1,11 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { ProductGuard } from '@/components/layout/ProductGuard'
-import { EMPTY_TEMPLATE_FORM, TemplateFormPage } from './-template-form'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
+// Zie ./index.tsx voor rationale. /app/templates/new → /app/instructions/new.
 export const Route = createFileRoute('/app/templates/new')({
-  component: () => (
-    <ProductGuard product="chat">
-      <TemplateFormPage mode="new" initialForm={EMPTY_TEMPLATE_FORM} />
-    </ProductGuard>
-  ),
+  beforeLoad: () => {
+    throw redirect({ to: '/app/instructions/new' })
+  },
 })

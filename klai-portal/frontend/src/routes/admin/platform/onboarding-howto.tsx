@@ -67,9 +67,9 @@ function OnboardingHowtoPage() {
       expect: m.platform_onboarding_step_knowledge_expect(),
     },
     {
-      title: m.platform_onboarding_step_templates_title(),
-      body: m.platform_onboarding_step_templates_body(),
-      expect: m.platform_onboarding_step_templates_expect(),
+      title: m.platform_onboarding_step_instructions_title(),
+      body: m.platform_onboarding_step_instructions_body(),
+      expect: m.platform_onboarding_step_instructions_expect(),
     },
     {
       title: m.platform_onboarding_step_invite_title(),

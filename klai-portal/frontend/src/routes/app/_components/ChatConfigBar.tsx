@@ -7,10 +7,10 @@ import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 
 // Superdock-style config bar above the LibreChat iframe.
-// Collections picker (active KBs) + optional Templates multi-select picker.
+// Collections picker (active KBs) + optional Instructions multi-select picker.
 // Backed by existing /api/app/knowledge-bases + /api/app/account/kb-preference.
-// Templates dropdown hidden when no templates are configured (backend not
-// required until SPEC-TEMPLATES-INJECTION-001).
+// Instructions dropdown hidden when no instructions are configured (backend not
+// required until SPEC-TEMPLATES-INJECTION-001 — endpoint nog /api/app/templates).
 
 interface KBPref {
   kb_retrieval_enabled: boolean
@@ -26,7 +26,7 @@ interface OrgKB {
   name: string
 }
 
-interface Template {
+interface Instruction {
   id: number
   name: string
   slug: string
@@ -36,7 +36,7 @@ interface Template {
 export function ChatConfigBar() {
   const queryClient = useQueryClient()
   const [collOpen, setCollOpen] = useState(false)
-  const [tmplOpen, setTmplOpen] = useState(false)
+  const [instrOpen, setInstrOpen] = useState(false)
   const [modeInfoOpen, setModeInfoOpen] = useState(false)
 
   const { data: pref } = useQuery<KBPref>({
@@ -49,9 +49,9 @@ export function ChatConfigBar() {
     queryFn: async () => apiFetch<{ knowledge_bases: OrgKB[] }>('/api/app/knowledge-bases'),
   })
 
-  const { data: templatesData } = useQuery<Template[]>({
-    queryKey: ['app-templates-for-bar'],
-    queryFn: async () => apiFetch<Template[]>('/api/app/templates'),
+  const { data: instructionsData } = useQuery<Instruction[]>({
+    queryKey: ['app-instructions-for-bar'],
+    queryFn: async () => apiFetch<Instruction[]>('/api/app/templates'),
     retry: false,
   })
 
@@ -119,25 +119,25 @@ export function ChatConfigBar() {
     if (currentSlugs.includes(kb.slug)) activeNames.push(kb.name)
   }
 
-  const allTemplates = templatesData ?? []
-  const activeTemplateIds: number[] = pref.active_template_ids ?? []
-  const activeTemplates = allTemplates.filter((t) => activeTemplateIds.includes(t.id))
+  const allInstructions = instructionsData ?? []
+  const activeInstructionIds: number[] = pref.active_template_ids ?? []
+  const activeInstructions = allInstructions.filter((t) => activeInstructionIds.includes(t.id))
 
-  function toggleTemplate(id: number) {
-    const next = activeTemplateIds.includes(id)
-      ? activeTemplateIds.filter((x) => x !== id)
-      : [...activeTemplateIds, id]
+  function toggleInstruction(id: number) {
+    const next = activeInstructionIds.includes(id)
+      ? activeInstructionIds.filter((x) => x !== id)
+      : [...activeInstructionIds, id]
     mutation.mutate({ active_template_ids: next.length === 0 ? null : next })
   }
 
-  function clearTemplates() {
+  function clearInstructions() {
     mutation.mutate({ active_template_ids: null })
   }
 
   return (
     <div className="flex shrink-0 items-center gap-6 bg-[var(--color-sidebar)] border-b border-[var(--color-sidebar-border)] pl-4 pr-4 pt-3 pb-3">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
-      {tmplOpen && <div className="fixed inset-0 z-40" onClick={() => setTmplOpen(false)} />}
+      {instrOpen && <div className="fixed inset-0 z-40" onClick={() => setInstrOpen(false)} />}
 
       {/* Chat met: (knowledge collections) */}
       <div className="flex items-center gap-2 min-w-0">
@@ -295,48 +295,48 @@ export function ChatConfigBar() {
         </div>
       </div>
 
-      {/* Templates: multi-select. Hidden when backend has no templates yet. */}
-      {allTemplates.length > 0 && (
+      {/* Instructions: multi-select. Hidden when backend has no instructions yet. */}
+      {allInstructions.length > 0 && (
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[13px] text-gray-400 whitespace-nowrap">
-            {m.chatbar_templates_label()}:
+            {m.chatbar_instructions_label()}:
           </span>
 
           <div className="relative z-50 min-w-0">
             <button
               type="button"
-              onClick={() => setTmplOpen((v) => !v)}
+              onClick={() => setInstrOpen((v) => !v)}
               className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-700 hover:text-gray-900 transition-colors truncate"
             >
               <span className="truncate">
-                {activeTemplates.length > 0
-                  ? activeTemplates.map((t) => t.name).join(', ')
-                  : m.chatbar_templates_empty()}
+                {activeInstructions.length > 0
+                  ? activeInstructions.map((t) => t.name).join(', ')
+                  : m.chatbar_instructions_empty()}
               </span>
               <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-40" />
             </button>
 
-            {tmplOpen && (
+            {instrOpen && (
               <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg">
                 <div className="flex items-center justify-between px-3 py-1.5">
                   <span className="text-[10px] font-semibold tracking-wide text-gray-400">
-                    {m.chatbar_templates_label()}
+                    {m.chatbar_instructions_label()}
                   </span>
                   <button
                     type="button"
-                    onClick={clearTemplates}
+                    onClick={clearInstructions}
                     className="text-[10px] font-semibold tracking-wide text-gray-500 hover:text-gray-900 transition-colors"
                   >
-                    {m.chatbar_templates_clear()}
+                    {m.chatbar_instructions_clear()}
                   </button>
                 </div>
-                {allTemplates.map((t) => {
-                  const active = activeTemplateIds.includes(t.id)
+                {allInstructions.map((t) => {
+                  const active = activeInstructionIds.includes(t.id)
                   return (
                     <button
                       key={t.id}
                       type="button"
-                      onClick={() => toggleTemplate(t.id)}
+                      onClick={() => toggleInstruction(t.id)}
                       className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] klai-hover text-left"
                     >
                       <span
@@ -350,11 +350,11 @@ export function ChatConfigBar() {
                 })}
                 <div className="mt-1 border-t border-gray-100 pt-1">
                   <Link
-                    to="/app/templates"
-                    onClick={() => setTmplOpen(false)}
+                    to="/app/instructions"
+                    onClick={() => setInstrOpen(false)}
                     className="block px-3 py-2 text-[12px] text-[var(--color-rl-accent-dark)] hover:underline"
                   >
-                    {m.chatbar_templates_manage()}
+                    {m.chatbar_instructions_manage()}
                   </Link>
                 </div>
               </div>
