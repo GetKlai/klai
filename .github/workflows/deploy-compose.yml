@@ -70,9 +70,17 @@ jobs:
               deploy/grafana/provisioning \
               deploy/scripts \
               deploy/systemd \
+              klai-libs/citations/klai_citations \
               scripts
             cp deploy/docker-compose.yml /opt/klai/docker-compose.yml
             cp deploy/docker-compose.override.yml /opt/klai/docker-compose.override.yml
+
+            # LiteLLM uses the canonical citations package via bind mount.
+            # Keep it present before compose can recreate litellm with the
+            # directory mount; the LiteLLM hook workflow also syncs this path
+            # for citations-only changes.
+            mkdir -p /opt/klai/litellm/klai_citations
+            rsync -a --delete klai-libs/citations/klai_citations/ /opt/klai/litellm/klai_citations/
 
             # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 + REQ-5: sync
             # deploy-wrapper + audit scripts to /opt/klai/scripts/ so

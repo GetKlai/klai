@@ -479,6 +479,50 @@ def test_trusted_source_composition_uses_query_intent_not_surface_overlap() -> N
     assert composed.decision["rejected"][0]["reason"] == "query_intent_not_supported"
 
 
+def test_trusted_source_composition_derives_query_intent_from_candidates() -> None:
+    composed = compose_answer_with_trusted_sources(
+        "De privacy policy beschrijft hoe Klai data verwerkt.",
+        [
+            {
+                "label": "1",
+                "title": "Billing policy",
+                "url": "https://docs.getklai.com/billing-policy",
+                "evidence_ids": ["E1"],
+            },
+            {
+                "label": "2",
+                "title": "Privacy policy",
+                "url": "https://docs.getklai.com/privacy-policy",
+                "evidence_ids": ["E2"],
+            },
+        ],
+        query_text="Waar vind ik de privacy policy?",
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "source_url": "https://docs.getklai.com/billing-policy",
+                "text": "The billing policy explains invoices and subscriptions.",
+            },
+            {
+                "evidence_id": "E2",
+                "source_url": "https://docs.getklai.com/privacy-policy",
+                "text": "The privacy policy explains how Klai processes data.",
+            },
+        ],
+    )
+
+    assert composed.sources == [
+        {
+            "label": "1",
+            "title": "Privacy policy",
+            "url": "https://docs.getklai.com/privacy-policy",
+        }
+    ]
+    assert composed.decision["query_intent_tokens"] == ["policy", "privacy"]
+    assert composed.decision["rejected"][0]["title"] == "Billing policy"
+    assert composed.decision["rejected"][0]["reason"] == "query_intent_not_supported"
+
+
 def test_trusted_source_composition_keeps_simple_answers_to_best_source() -> None:
     composed = compose_answer_with_trusted_sources(
         (

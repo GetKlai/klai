@@ -92,7 +92,6 @@ _SOURCE_RELEVANCE_STOPWORDS = {
     "with",
     "you",
 }
-_QUERY_INTENT_TOKENS = {"admin", "email", "invite", "remove", "role", "user"}
 _TOKEN_SYNONYMS = {
     "colleague": "user",
     "colleagues": "user",
@@ -521,6 +520,16 @@ def _source_title_set(sources: list[CitationSource]) -> set[str]:
     return {source.title for source in sources if source.title.strip()}
 
 
+def _query_intent_tokens(query_text: str | None, sources: list[CitationSource]) -> set[str]:
+    query_tokens = _tokens(query_text or "")
+    if not query_tokens:
+        return set()
+    supported_tokens: set[str] = set()
+    for source in sources:
+        supported_tokens |= query_tokens & _source_support_tokens(source)
+    return supported_tokens
+
+
 def _effective_max_sources(cleaned_answer: str, max_sources: int | None) -> int | None:
     if max_sources is None or max_sources <= 1:
         return max_sources
@@ -599,7 +608,7 @@ def _select_supported_sources_with_decision(
         return [], decision
     answer_tokens = _tokens(cleaned_answer)
     query_tokens = _tokens(query_text or "")
-    query_intent_tokens = query_tokens & _QUERY_INTENT_TOKENS
+    query_intent_tokens = _query_intent_tokens(query_text, sources)
     min_query_overlap = min(2, len(query_intent_tokens)) if query_intent_tokens else 0
     decision["query_intent_tokens"] = sorted(query_intent_tokens)
     decision["min_query_overlap"] = min_query_overlap
