@@ -520,6 +520,7 @@ async def chat_completions(
             citation_output=citation_output,
             source_query=knowledge.query if knowledge is not None else None,
             emit_sources=knowledge.include_sources if knowledge is not None else True,
+            page_context=page_context,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -549,6 +550,7 @@ async def chat_completions(
         trusted_sources=trusted_sources,
         citation_output=citation_output,
         source_query=knowledge.query if knowledge is not None else None,
+        page_context=page_context,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:

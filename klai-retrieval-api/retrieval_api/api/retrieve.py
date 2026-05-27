@@ -70,7 +70,7 @@ def _normalise_page_context_url(raw_url: str | None) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
     path = parsed.path.rstrip("/") or "/"
-    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), path, "", parsed.query, ""))
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), path, "", "", ""))
 
 
 def _same_page_context_path(source_url: str, page_url: str) -> bool:
@@ -88,6 +88,8 @@ def _same_page_context_path(source_url: str, page_url: str) -> bool:
 def _apply_page_context_boost(
     chunks: list[dict],
     page_context: dict[str, str] | None,
+    *,
+    mark: bool = True,
 ) -> tuple[list[dict], int]:
     page_url = _normalise_page_context_url((page_context or {}).get("url"))
     if not page_url:
@@ -114,7 +116,8 @@ def _apply_page_context_boost(
                 if score_key == "reranker_score"
                 else boosted_score
             )
-            chunk["_page_context_boosted"] = True
+            if mark:
+                chunk["_page_context_boosted"] = True
 
     if boosted_count:
         chunks.sort(
@@ -257,6 +260,7 @@ async def retrieve(
             req = req.model_copy(update={"scope": "personal", "kb_slugs": None})
         elif req.kb_slugs is not None:
             req = req.model_copy(update={"kb_slugs": None})
+    page_context = req.page_context.model_dump(exclude_none=True) if req.page_context else None
 
     # SPEC-SEC-010 REQ-3 + SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: cross-user /
     # cross-org guard. JWT callers are matched against their JWT claims;
@@ -462,11 +466,19 @@ async def retrieve(
                 if incoming > 0:
                     r["score"] = r["score"] + settings.link_authority_boost * math.log(1 + incoming)
 
+        raw_results, page_context_candidate_boosted = _apply_page_context_boost(
+            raw_results,
+            page_context,
+            mark=False,
+        )
+        decision_record["page_context_candidates_boosted"] = page_context_candidate_boosted
+
         # 5. Rerank (skip when reranker disabled)
         if raw_results and settings.reranker_enabled:
             t_rerank = time.perf_counter()
             rerank_input = raw_results[: settings.reranker_candidates]
-            reranked = await reranker.rerank(query_resolved, rerank_input, req.top_k)
+            rerank_top_n = min(len(rerank_input), max(req.top_k, req.top_k * 3))
+            reranked = await reranker.rerank(query_resolved, rerank_input, rerank_top_n)
             rerank_ms = (time.perf_counter() - t_rerank) * 1000
             step_latency_seconds.labels(step="rerank").observe(rerank_ms / 1000)
             reranked_to = len(reranked)
@@ -487,10 +499,13 @@ async def retrieve(
             boost=settings.link_expand_score_boost,
             enabled=settings.link_expand_enabled,
         )
-        reranked, page_context_boosted = _apply_page_context_boost(
-            reranked,
-            req.page_context,
-        )
+        if settings.reranker_enabled:
+            reranked, page_context_boosted = _apply_page_context_boost(
+                reranked,
+                page_context,
+            )
+        else:
+            page_context_boosted = page_context_candidate_boosted
         decision_record["page_context_boosted"] = page_context_boosted
 
         # 5a-bis. Quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07).

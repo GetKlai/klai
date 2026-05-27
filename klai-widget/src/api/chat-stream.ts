@@ -89,20 +89,38 @@ function collectPageExcerpt(): string | undefined {
   return cleanContextValue(clone.innerText, MAX_PAGE_EXCERPT_CHARS);
 }
 
+function cleanContextUrl(rawUrl: string | undefined): string | undefined {
+  if (!rawUrl) {
+    return undefined;
+  }
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined;
+    }
+    url.search = "";
+    url.hash = "";
+    return url.toString().slice(0, MAX_PAGE_CONTEXT_VALUE_CHARS);
+  } catch {
+    return undefined;
+  }
+}
+
 export function collectPageContext(): PageContext | undefined {
   if (typeof window === "undefined" || typeof document === "undefined") {
     return undefined;
   }
 
   try {
-    const currentUrl = new URL(window.location.href);
-    currentUrl.hash = "";
+    const currentUrl = cleanContextUrl(window.location.href);
+    if (!currentUrl) {
+      return undefined;
+    }
 
     return {
-      url: currentUrl.toString().slice(0, MAX_PAGE_CONTEXT_VALUE_CHARS),
+      url: currentUrl,
       path: window.location.pathname.slice(0, 512),
       title: cleanContextValue(document.title),
-      referrer: cleanContextValue(document.referrer),
       excerpt: collectPageExcerpt(),
     };
   } catch {
