@@ -18,6 +18,49 @@ export interface WidgetConfig {
   collect_user_info: boolean
   page_context_enabled: boolean
   widget_position: 'left' | 'right'
+  integrations?: WidgetIntegrations
+}
+
+export type HubSpotIntegrationStatusValue =
+  | 'not_configured'
+  | 'not_connected'
+  | 'connected'
+  | 'disconnected'
+  | 'error'
+
+export interface HubSpotWidgetIntegration {
+  status: Exclude<HubSpotIntegrationStatusValue, 'not_configured'>
+  portal_id: string | null
+  channel_id: string | null
+  channel_account_id: string | null
+  inbox_id: string | null
+  help_desk_url: string | null
+  last_connected_at: string | null
+  last_disconnected_at: string | null
+  last_rebuilt_at: string | null
+  last_tested_at: string | null
+  last_test_thread_id: string | null
+  last_error: string | null
+}
+
+export interface WidgetIntegrations {
+  hubspot: HubSpotWidgetIntegration
+}
+
+export interface HubSpotIntegrationStatus {
+  configured: boolean
+  status: HubSpotIntegrationStatusValue
+  portal_id: string | null
+  channel_id: string | null
+  channel_account_id: string | null
+  inbox_id: string | null
+  help_desk_url: string | null
+  last_connected_at: string | null
+  last_disconnected_at: string | null
+  last_rebuilt_at: string | null
+  last_tested_at: string | null
+  last_test_thread_id: string | null
+  last_error: string | null
 }
 
 export interface KbAccess {

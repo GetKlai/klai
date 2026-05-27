@@ -146,6 +146,74 @@ async def test_update_widget_patches_config():
 
 
 @pytest.mark.asyncio
+async def test_hubspot_status_reports_not_configured_for_platform_org():
+    """GET integration status is available but reports server config state."""
+    from app.api.admin_widgets import get_hubspot_integration_status
+
+    widget = FakeWidgetRow()
+    db = AsyncMock()
+    setup_db(db, [FakeResult([widget])])
+
+    result = await get_hubspot_integration_status(
+        widget_id="widget-uuid-1",
+        perms=make_perms(
+            role="admin",
+            user_id="user-1",
+            org_id=1,
+            org_slug="getklai",
+            platform_unlocked_features=["widgets"],
+        ),
+        db=db,
+    )
+
+    assert result.status == "not_configured"
+    assert result.configured is False
+
+
+@pytest.mark.asyncio
+async def test_hubspot_connect_persists_channel_account():
+    """POST connect creates/reuses a HubSpot channel account and stores IDs."""
+    from app.api.admin_widgets import connect_hubspot_integration
+    from app.services.hubspot_custom_channel import HubSpotChannelAccount
+
+    widget = FakeWidgetRow()
+    db = AsyncMock()
+    setup_db(db, [FakeResult([widget])])
+    account = HubSpotChannelAccount(
+        id="3307400689",
+        channel_id="2930388",
+        inbox_id="1364799639",
+        name="Klai Webchat Support",
+        active=True,
+        authorized=True,
+        archived=False,
+    )
+
+    with (
+        patch("app.api.admin_widgets.ensure_channel_account", AsyncMock(return_value=account)),
+        patch("app.api.admin_widgets.hubspot_webchat_configured", return_value=True),
+        patch("app.api.admin_widgets.emit_event"),
+    ):
+        result = await connect_hubspot_integration(
+            widget_id="widget-uuid-1",
+            perms=make_perms(
+                role="admin",
+                user_id="user-1",
+                org_id=1,
+                org_slug="getklai",
+                platform_unlocked_features=["widgets"],
+            ),
+            db=db,
+        )
+
+    assert result.status == "connected"
+    assert result.channel_account_id == "3307400689"
+    assert widget.widget_config["integrations"]["hubspot"]["status"] == "connected"
+    assert widget.widget_config["integrations"]["hubspot"]["channel_account_id"] == "3307400689"
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_delete_widget_soft_deletes_widget_keeps_audit_trail():
     """REQ-16 (Finding B-14): DELETE /api/admin/widgets/{id} soft-deletes the
     widget (sets deleted_at) and revokes kb_access, but does NOT physically
