@@ -3271,3 +3271,237 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                 "url": "https://docs.getklai.com/diagram",
             }
         ]
+
+
+# ─── 2026-05-27: Open/Strict mode zero-chunks behaviour ─────────────────────
+#
+# Bug discovered when Jantine pointed at the ChatConfigBar Modus toggle and
+# said "open en strikt doen niet wat ik verwacht". Investigation found two
+# symmetric defects in the ``if not chunks:`` branch of
+# ``KlaiKnowledgeHook.async_pre_call_hook``:
+#
+#   1. Strict (``kb_narrow=True``) + zero chunks: the mode-aware header
+#      was only injected when chunks were present (line 2100 path). Zero
+#      chunks fell through to the generic
+#      ``_compose_libre_chat_prefix(templates_block)`` which carries
+#      ``GROUNDED_CHAT_SYSTEM_PROMPT``'s soft "don't fill the gap with
+#      general knowledge" rule but no explicit "this query returned zero
+#      results, refuse and tell the user it isn't in the KB" instruction.
+#      Model behaviour was non-deterministic — sometimes "not in KB",
+#      sometimes a hedged answer from general knowledge. The Strict
+#      popover promise ("Model antwoordt uitsluitend uit de kennisbank.
+#      Staat het er niet in, dan zegt het model dat eerlijk") was not
+#      reliably honoured.
+#
+#   2. Open (``kb_narrow=False``) + zero chunks: same generic prefix →
+#      GROUNDED_CHAT_SYSTEM_PROMPT explicitly tells the model NOT to fall
+#      back to general knowledge. That contradicts the Open popover
+#      promise ("Model gebruikt de kennisbank als context en mag
+#      aanvullen met eigen algemene kennis"). When retrieval returns
+#      zero chunks the user expects a general-knowledge answer with a
+#      brief "I didn't find this in your KB" disclaimer — instead they
+#      got "Dat staat niet in de kennisbank" with no fallback.
+#
+# Fix: in the ``if not chunks:`` branch inject a mode-aware header that
+# matches the per-mode contract the chunks-present branch already
+# enforces AND surface the zero-results signal explicitly. Also populate
+# ``_klai_kb_meta`` so telemetry can distinguish "Strict refused" from
+# "Open KB-empty fallback".
+
+
+class TestKlaiKnowledgeHookZeroChunksMode:
+    """Mode-aware behaviour when retrieval returns zero chunks.
+
+    These tests pin the contract between the ChatConfigBar Modus toggle
+    (``kb_narrow`` boolean) and the system-prompt header the hook
+    injects when retrieval-api returns ``{"chunks": []}``. The contract
+    MUST hold in both modes so the popover descriptions remain truthful.
+    """
+
+    def _system_msg(self, result: dict) -> str:
+        msgs = [m for m in result["messages"] if m["role"] == "system"]
+        assert len(msgs) == 1, (
+            f"expected exactly one system message, got {len(msgs)}"
+        )
+        return msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_zero_chunks_strict_forces_refusal_header(self, monkeypatch):
+        """Strict + zero chunks: model MUST be told to refuse with a
+        "not in your knowledge base" reply, NOT to fall back to general
+        knowledge. Matches the Strict popover promise.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is ons retourbeleid?"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False}
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        # Discriminator that proves mode-aware injection happened on the
+        # zero-chunks path. Stable enough to survive copy edits but
+        # specific enough that the bugged build (which falls back to the
+        # generic libre-chat prefix) cannot match.
+        assert "Klai Knowledge Base — zero results" in sys_content, (
+            "Strict + zero chunks must inject the explicit zero-results "
+            "header; falling through to the generic prefix is the bug."
+        )
+        # Strict-mode binding: refuse, do not paper over with general
+        # knowledge.
+        assert "do not answer from general knowledge" in sys_content.lower()
+        # Must NOT carry the Open/Broad fallback wording — that would
+        # mean the modes got crossed.
+        assert (
+            "may answer from your general knowledge"
+            not in sys_content.lower()
+        )
+
+    @pytest.mark.asyncio
+    async def test_zero_chunks_open_allows_general_knowledge_with_disclaimer(
+        self, monkeypatch
+    ):
+        """Open + zero chunks: model MUST be allowed to answer from
+        general knowledge AND told to surface a brief "not found in
+        your KB" disclaimer first. Matches the Open popover promise.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        # kb_narrow defaults to False in _make_cache's feat dict.
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Hoe werkt fotosynthese?"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False}
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "Klai Knowledge Base — zero results" in sys_content, (
+            "Open + zero chunks must inject the explicit zero-results "
+            "header so the model knows it's allowed to fall back."
+        )
+        # Open-mode binding: explicit license to answer from general
+        # knowledge, with a disclaimer up front.
+        assert (
+            "may answer from your general knowledge" in sys_content.lower()
+        )
+        # Disclaimer instruction: model must tell the user the answer is
+        # NOT from their KB. Either phrasing is acceptable.
+        assert (
+            "tell the user" in sys_content.lower()
+            or "begin your answer" in sys_content.lower()
+        )
+        # Must NOT carry the Strict refusal wording — that would mean
+        # the modes got crossed.
+        assert (
+            "do not answer from general knowledge"
+            not in sys_content.lower()
+        )
+
+    @pytest.mark.asyncio
+    async def test_zero_chunks_metadata_records_mode_strict(self, monkeypatch):
+        """Zero-chunks return path MUST populate ``_klai_kb_meta`` with
+        ``chunks_injected=0`` AND the kb_narrow flag, mirroring the
+        sibling fail-loud branches. Without this, downstream telemetry
+        cannot distinguish "Strict refused" from "Open KB-empty
+        fallback".
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Iets specifieks"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False}
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result.get("metadata", {}).get("_klai_kb_meta")
+        assert meta is not None, (
+            "zero-chunks branch must set _klai_kb_meta"
+        )
+        assert meta["chunks_injected"] == 0
+        assert meta["kb_narrow"] is True
+
+    @pytest.mark.asyncio
+    async def test_zero_chunks_metadata_records_mode_open(self, monkeypatch):
+        """Companion to the strict-mode metadata test: Open mode records
+        kb_narrow=False so telemetry can attribute fallback answers."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Iets generieks"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False}
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result.get("metadata", {}).get("_klai_kb_meta")
+        assert meta is not None
+        assert meta["chunks_injected"] == 0
+        assert meta["kb_narrow"] is False

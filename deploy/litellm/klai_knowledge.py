@@ -2263,10 +2263,60 @@ class KlaiKnowledgeHook(CustomLogger):
             _fire_retrieval_log(org_id, user_id, chunk_ids, reranker_scores, query)
 
         if not context_chunks:
-            # Zero chunks but templates may still apply. Multilingual
-            # foundation still applies — REQ-10.
+            # Zero chunks: inject a mode-aware "zero results" header so
+            # the ChatConfigBar Modus toggle (kb_narrow) actually drives
+            # behaviour. Without this branch's awareness of kb_narrow,
+            # the user's Strict/Open choice was silently ignored when
+            # retrieval came up empty:
+            #
+            #   - Strict + zero chunks USED to fall through to
+            #     ``_compose_libre_chat_prefix(templates_block)``. That
+            #     gave GROUNDED_CHAT_SYSTEM_PROMPT alone, which softly
+            #     discourages general-knowledge fallback but does NOT
+            #     command an explicit "this isn't in your KB" reply.
+            #     Mistral Small would sometimes refuse, sometimes hedge
+            #     with general knowledge anyway — breaking the Strict
+            #     popover promise.
+            #
+            #   - Open + zero chunks hit the SAME generic prefix, which
+            #     forbids general-knowledge fallback. That contradicted
+            #     the Open popover promise ("may complement with general
+            #     knowledge"); the user got "Dat staat niet in de
+            #     kennisbank" even when they explicitly wanted the model
+            #     to answer from general knowledge with a disclaimer.
+            #
+            # The per-mode header below makes the two paths deterministic.
+            # See ``TestKlaiKnowledgeHookZeroChunksMode`` for the contract.
+            # Multilingual foundation still applies — REQ-10.
+            if kb_narrow:
+                empty_kb_header = (
+                    "[Klai Knowledge Base — zero results for this query. "
+                    "Tell the user in their detected language that the "
+                    "answer is not in their knowledge base (e.g. "
+                    "'I cannot find this in the knowledge base' / "
+                    "'Dat staat niet in de kennisbank' / "
+                    "'Das steht nicht in der Wissensdatenbank'). "
+                    "Do not answer from general knowledge. "
+                    "Suggest the user rephrase the question or add "
+                    "documents to the knowledge base.]\n"
+                )
+            else:
+                empty_kb_header = (
+                    "[Klai Knowledge Base — zero results for this query. "
+                    "You may answer from your general knowledge instead. "
+                    "Begin your answer with a brief note in the user's "
+                    "detected language that nothing was found in their "
+                    "knowledge base (e.g. 'I couldn't find this in your "
+                    "knowledge base, but here is a general answer:' / "
+                    "'Dit staat niet in jouw kennisbank, maar hier is "
+                    "een algemeen antwoord:' / "
+                    "'Ich konnte dies nicht in Ihrer Wissensdatenbank "
+                    "finden, aber hier ist eine allgemeine Antwort:'), "
+                    "then answer normally.]\n"
+                )
             _prepend_system_prefix(
-                messages, _compose_libre_chat_prefix(templates_block)
+                messages,
+                _compose_libre_chat_prefix(templates_block, empty_kb_header),
             )
             data["messages"] = messages
             if has_evidence_pack:
@@ -2296,6 +2346,7 @@ class KlaiKnowledgeHook(CustomLogger):
                     "render_mode": render_strategy.mode,
                     "retrieval_ms": retrieval_ms,
                     "gate_bypassed": False,
+                    "kb_narrow": kb_narrow,
                 }
             return data
 
