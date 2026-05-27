@@ -1056,26 +1056,32 @@ function FeedbackItemDetailForm({
   const [owner, setOwner] = useState(item.owner ?? '')
   const [githubUrl, setGithubUrl] = useState(item.external_tracker_url ?? '')
   const [publicFeedbackUrl, setPublicFeedbackUrl] = useState(item.public_feedback_url ?? '')
+  const saveItem = () => {
+    updateItem.mutate({
+      itemId: item.id,
+      kind,
+      status,
+      title: title.trim(),
+      summary: summary.trim() || null,
+      area: area.trim() || null,
+      owner: owner.trim() || null,
+      target_window: targetWindow.trim() || null,
+      public_title: publicTitle.trim() || null,
+      public_summary: publicSummary.trim() || null,
+      external_tracker_type: githubUrl.trim() ? 'github' : null,
+      external_tracker_url: githubUrl.trim() || null,
+      public_feedback_url: publicFeedbackUrl.trim() || null,
+    })
+  }
 
   return (
-    <div className="space-y-6">
-      <section className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-gray-200 p-3">
-          <p className="text-xs text-gray-400">Organisaties</p>
-          <p className="mt-1 text-2xl font-medium text-gray-900">{item.org_count}</p>
+    <div className="space-y-5">
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+          <Badge variant="outline">{item.org_count} orgs</Badge>
+          <Badge variant="outline">{item.user_count} users</Badge>
+          <Badge variant="secondary">score {item.priority_score}</Badge>
         </div>
-        <div className="rounded-lg border border-gray-200 p-3">
-          <p className="text-xs text-gray-400">Gebruikers</p>
-          <p className="mt-1 text-2xl font-medium text-gray-900">{item.user_count}</p>
-        </div>
-        <div className="rounded-lg border border-gray-200 p-3">
-          <p className="text-xs text-gray-400">Score</p>
-          <p className="mt-1 text-2xl font-medium text-gray-900">{item.priority_score}</p>
-        </div>
-      </section>
-
-      <section className="space-y-3 border-t border-gray-200 pt-5">
-        <h3 className="text-sm font-medium text-gray-900">Intern item</h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <Select value={kind} onChange={(event) => setKind(event.target.value)}>
             <option value="feature">Feature</option>
@@ -1097,10 +1103,33 @@ function FeedbackItemDetailForm({
         <Textarea
           value={summary}
           onChange={(event) => setSummary(event.target.value)}
-          rows={4}
-          placeholder="Interne samenvatting"
+          rows={3}
+          placeholder="Korte notitie"
         />
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            disabled={updateItem.isPending || title.trim().length < 3}
+            onClick={saveItem}
+          >
+            {updateItem.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            Opslaan
+          </Button>
+          {updateItem.isSuccess && (
+            <p className="text-sm text-green-700">Roadmap item opgeslagen.</p>
+          )}
+        </div>
+      </section>
+
+      <details className="rounded-lg border border-gray-200 bg-white">
+        <summary className="cursor-pointer px-3 py-3 text-sm font-medium text-gray-900">
+          Planning
+        </summary>
+        <div className="grid gap-3 border-t border-gray-200 p-3 sm:grid-cols-3">
           <Input value={area} onChange={(event) => setArea(event.target.value)} placeholder="Productgebied" />
           <Input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Owner" />
           <Input
@@ -1109,63 +1138,36 @@ function FeedbackItemDetailForm({
             placeholder="Target window"
           />
         </div>
-      </section>
+      </details>
 
-      <section className="space-y-3 border-t border-gray-200 pt-5">
-        <h3 className="text-sm font-medium text-gray-900">Publiek en execution</h3>
-        <Input
-          value={publicTitle}
-          onChange={(event) => setPublicTitle(event.target.value)}
-          placeholder="Publieke titel"
-        />
-        <Textarea
-          value={publicSummary}
-          onChange={(event) => setPublicSummary(event.target.value)}
-          rows={3}
-          placeholder="Publieke samenvatting"
-        />
-        <Input
-          value={githubUrl}
-          onChange={(event) => setGithubUrl(event.target.value)}
-          placeholder="GitHub issue URL"
-        />
-        <Input
-          value={publicFeedbackUrl}
-          onChange={(event) => setPublicFeedbackUrl(event.target.value)}
-          placeholder="feedback.getklai.com URL"
-        />
-        <Button
-          type="button"
-          disabled={updateItem.isPending || title.trim().length < 3}
-          onClick={() => {
-            updateItem.mutate({
-              itemId: item.id,
-              kind,
-              status,
-              title: title.trim(),
-              summary: summary.trim() || null,
-              area: area.trim() || null,
-              owner: owner.trim() || null,
-              target_window: targetWindow.trim() || null,
-              public_title: publicTitle.trim() || null,
-              public_summary: publicSummary.trim() || null,
-              external_tracker_type: githubUrl.trim() ? 'github' : null,
-              external_tracker_url: githubUrl.trim() || null,
-              public_feedback_url: publicFeedbackUrl.trim() || null,
-            })
-          }}
-        >
-          {updateItem.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          Opslaan
-        </Button>
-        {updateItem.isSuccess && (
-          <p className="text-sm text-green-700">Roadmap item opgeslagen.</p>
-        )}
-      </section>
+      <details className="rounded-lg border border-gray-200 bg-white">
+        <summary className="cursor-pointer px-3 py-3 text-sm font-medium text-gray-900">
+          Links en publicatie
+        </summary>
+        <div className="space-y-3 border-t border-gray-200 p-3">
+          <Input
+            value={githubUrl}
+            onChange={(event) => setGithubUrl(event.target.value)}
+            placeholder="GitHub issue URL"
+          />
+          <Input
+            value={publicFeedbackUrl}
+            onChange={(event) => setPublicFeedbackUrl(event.target.value)}
+            placeholder="feedback.getklai.com URL"
+          />
+          <Input
+            value={publicTitle}
+            onChange={(event) => setPublicTitle(event.target.value)}
+            placeholder="Publieke titel"
+          />
+          <Textarea
+            value={publicSummary}
+            onChange={(event) => setPublicSummary(event.target.value)}
+            rows={3}
+            placeholder="Publieke samenvatting"
+          />
+        </div>
+      </details>
 
       <section className="space-y-3 border-t border-gray-200 pt-5">
         <h3 className="text-sm font-medium text-gray-900">
