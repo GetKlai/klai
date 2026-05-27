@@ -18,10 +18,9 @@ Cross-tenant read-only overview of users, organisations, bots
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Literal
-
-import asyncio
 
 import httpx
 import structlog
@@ -31,7 +30,6 @@ from sqlalchemy import bindparam, or_, select, text
 
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
-from app.services.platform_subdomains import KLAI_SUBDOMAINS
 from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackSubmission
 from app.klai_feedback.service import (
     FeedbackItemNotFoundError,
@@ -46,6 +44,7 @@ from app.klai_feedback.service import (
 )
 from app.models.portal import PortalOrg as PortalOrgModel
 from app.services.audit import log_event
+from app.services.platform_subdomains import KLAI_SUBDOMAINS
 from app.services.zitadel import zitadel
 
 logger = structlog.get_logger()
@@ -1304,7 +1303,7 @@ async def list_subdomains(
     all_items = curated_items + tenant_items
 
     # Parallel liveness probes. Timeout is per-request; gather sees the
-    # max of all timeouts which for 3s × ~50 items in parallel is ~3s.
+    # max of all timeouts which for 3s x ~50 items in parallel is ~3s.
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(3.0, connect=2.0),
         verify=True,
