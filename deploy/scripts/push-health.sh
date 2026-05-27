@@ -100,10 +100,36 @@ push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://librechat-getklai:3080/health')\"" \
     "${KUMA_TOKEN_CHAT:-}" "Chat"
 
-# Scribe: scribe-api receives audio, calls whisper-server internally
-push_exec "$PORTAL_API" \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://scribe-api:8020/health')\"" \
-    "${KUMA_TOKEN_SCRIBE:-}" "Scribe"
+# Scribe: receives audio (upload via scribe-api OR live Vexa-bot via api-gateway),
+# transcribes via gpu-01 Vexa workers, summarizes via LiteLLM. Composite check —
+# product is only healthy when BOTH the upload-path entry (scribe-api) AND the
+# meeting-bot entry (api-gateway) are responding. Granular per-component
+# detail lives in the "Meeting recordings & transcripts" group.
+scribe_composite_status() {
+    # Probe 1: scribe-api /health (upload path)
+    if ! docker exec "$PORTAL_API" \
+        python3 -c "import urllib.request; urllib.request.urlopen('http://scribe-api:8020/health', timeout=5)" 2>/dev/null; then
+        echo "down&msg=scribe-api-unreachable"
+        return
+    fi
+    # Probe 2: Vexa api-gateway healthcheck (live-bot path)
+    if [ -z "$MEETING" ]; then
+        echo "down&msg=api-gateway-missing"
+        return
+    fi
+    local health
+    health=$(docker inspect --format='{{.State.Health.Status}}' "$MEETING" 2>/dev/null | tr -d '\n\r' || echo missing)
+    if [ "$health" != "healthy" ]; then
+        echo "down&msg=meeting-bot-${health}"
+        return
+    fi
+    echo "up&msg=OK"
+}
+if [ -n "${KUMA_TOKEN_SCRIBE:-}" ]; then
+    SCRIBE_STATUS=$(scribe_composite_status)
+    curl -sf "${KUMA}/${KUMA_TOKEN_SCRIBE}?status=${SCRIBE_STATUS}" -o /dev/null
+    [[ "$SCRIBE_STATUS" == down* ]] && echo "$(date -Iseconds) WARN Scribe: ${SCRIBE_STATUS#down&msg=}" >> "$LOG"
+fi
 
 # Docs: Next.js app — check TCP reachability (no /health route)
 push_exec "$PORTAL_API" \
