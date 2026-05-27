@@ -24,6 +24,7 @@ from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, crawl_site
 from knowledge_ingest.models import IngestRequest
+from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
 from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
     detect_anonymous_auth_wall,
@@ -45,12 +46,17 @@ _VALID_LOGIN_WALL_MODES = ("reject", "degrade", "audit_only")
 DIRTY_CONTENT_REASON = "boilerplate_or_authwall_dominant"
 CRAWL_BUDGET_EXHAUSTED_REASON = "crawl_budget_exhausted"
 CRAWL_FRONTIER_INCOMPLETE_REASON = "crawl_frontier_incomplete"
+AUTH_WALL_DETECTED_REASON = "auth_wall_detected"
 
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
 
 _DIRTY_CONTENT_SUGGESTION = (
     "Re-run preview from the connector edit page. The site likely now requires "
     "authentication or the content_selector is no longer matching."
+)
+_AUTH_WALL_WITH_AUTH_SUGGESTION = (
+    "Configured authentication did not unlock all crawled pages. Refresh the "
+    "saved cookies from the connector edit page before syncing again."
 )
 
 
@@ -156,6 +162,16 @@ def _crawl_warning_terminal_status(crawl_warning: dict | None) -> str:
     }:
         return "failed_partial"
     return ""
+
+
+def _header_value(headers: dict | None, name: str) -> str | None:
+    if not headers:
+        return None
+    needle = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == needle:
+            return str(value)
+    return None
 
 
 def _attach_crawl_warning(summary: dict, crawl_warning: dict | None) -> dict:
@@ -466,6 +482,24 @@ async def run_crawl_job(
                 int(time.time()),
                 job_id,
             )
+        elif auth_wall_pages and (cookies or login_indicator_selector):
+            terminal_status = "failed_partial"
+            summary_json = json.dumps(
+                _attach_crawl_warning({
+                    "reason": AUTH_WALL_DETECTED_REASON,
+                    "login_walls_skipped": len(auth_wall_pages),
+                    "sample_urls": auth_wall_pages[:10],
+                    "suggestion": _AUTH_WALL_WITH_AUTH_SUGGESTION,
+                }, crawl_outcome_warning)
+            )
+            await conn.execute(
+                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
+                "updated_at=$3 WHERE id=$4",
+                terminal_status,
+                summary_json,
+                int(time.time()),
+                job_id,
+            )
         elif _crawl_warning_terminal_status(crawl_outcome_warning):
             terminal_status = _crawl_warning_terminal_status(crawl_outcome_warning)
             summary_payload = dict(crawl_outcome_warning or {})
@@ -676,15 +710,38 @@ async def _ingest_crawl_result(
     if page_simhash == 0:
         page_simhash = None
 
+    # SPEC-CONNECTOR-INPUT-VALIDATION-001 / REQ-4 — shared auth-wall
+    # classifier at sync time. This catches single embedded protected-section
+    # gates inside otherwise-large pages before they are written as content.
+    login_wall_signal: AuthWallSignal | None = None
+    login_wall_mode: str | None = None
+    if settings.ingest_login_wall_detect_enabled:
+        auth_wall = classify_auth_wall(
+            response_status_code=None,
+            redirect_target_url=None,
+            set_cookie_header=_header_value(result.response_headers, "set-cookie"),
+            word_count=result.word_count,
+            fit_markdown=text,
+            raw_html=raw_html,
+        )
+        if auth_wall.is_walled:
+            login_wall_signal = AuthWallSignal(
+                pattern="auth_wall_classifier",
+                evidence=auth_wall.match_reasons,
+                confidence=0.95,
+            )
+
     # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-02 — anonymous-crawl auth-wall
     # detection by SimHash near-duplicate clustering. Runs AFTER dedup (don't
     # waste work on already-seen pages) and BEFORE image upload + Qdrant
-    # write (cheaper to bail early). Skipped when login_indicator_selector
-    # is set — the authenticated path has its own halt-on-success=False
-    # guard above and we don't want to double-detect.
-    login_wall_signal: AuthWallSignal | None = None
-    login_wall_mode: str | None = None
-    if settings.ingest_login_wall_detect_enabled and login_indicator_selector is None:
+    # write (cheaper to bail early). Skipped when a direct classifier signal
+    # already fired, and when login_indicator_selector is set because that path
+    # has its own wait_for guard.
+    if (
+        settings.ingest_login_wall_detect_enabled
+        and login_wall_signal is None
+        and login_indicator_selector is None
+    ):
         login_wall_signal = await detect_anonymous_auth_wall(
             result.raw_markdown or "",
             fit_markdown=result.fit_markdown or None,
@@ -695,37 +752,40 @@ async def _ingest_crawl_result(
             cluster_min=settings.ingest_template_cluster_min,
             target_simhash=page_simhash,
         )
-        if login_wall_signal is not None:
-            login_wall_mode = _resolve_login_wall_mode()
-            if login_wall_mode == "reject":
-                logger.info(
-                    "login_wall_reject",
-                    url=url,
-                    org_id=org_id,
-                    kb_slug=kb_slug,
-                    pattern=login_wall_signal.pattern,
-                    confidence=login_wall_signal.confidence,
-                )
-                raise AnonymousAuthWallDetected(url, login_wall_signal)
-            if login_wall_mode == "degrade":
-                logger.info(
-                    "login_wall_degrade",
-                    url=url,
-                    org_id=org_id,
-                    kb_slug=kb_slug,
-                    pattern=login_wall_signal.pattern,
-                    confidence=login_wall_signal.confidence,
-                )
-            else:  # audit_only
-                logger.warning(
-                    "login_wall_detected",
-                    url=url,
-                    org_id=org_id,
-                    kb_slug=kb_slug,
-                    pattern=login_wall_signal.pattern,
-                    confidence=login_wall_signal.confidence,
-                    mode="audit_only",
-                )
+    if login_wall_signal is not None:
+        login_wall_mode = _resolve_login_wall_mode()
+        if login_wall_mode == "reject":
+            logger.info(
+                "login_wall_reject",
+                url=url,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                pattern=login_wall_signal.pattern,
+                evidence=login_wall_signal.evidence,
+                confidence=login_wall_signal.confidence,
+            )
+            raise AnonymousAuthWallDetected(url, login_wall_signal)
+        if login_wall_mode == "degrade":
+            logger.info(
+                "login_wall_degrade",
+                url=url,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                pattern=login_wall_signal.pattern,
+                evidence=login_wall_signal.evidence,
+                confidence=login_wall_signal.confidence,
+            )
+        else:  # audit_only
+            logger.warning(
+                "login_wall_detected",
+                url=url,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                pattern=login_wall_signal.pattern,
+                evidence=login_wall_signal.evidence,
+                confidence=login_wall_signal.confidence,
+                mode="audit_only",
+            )
 
     extra: dict = {"source_url": url, "crawled_at": int(time.time())}
     # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-03 — degrade mode pushes

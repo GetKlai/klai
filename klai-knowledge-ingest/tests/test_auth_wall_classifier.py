@@ -15,9 +15,12 @@ or relaxing an existing one MUST be paired with a test here.
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from knowledge_ingest.utils.auth_wall_classifier import (
+    AUTH_WALL_EMBEDDED_GATE_MARKERS,
     AUTH_WALL_END_OF_BODY_MARKERS,
     AuthWallClassification,
     classify_auth_wall,
@@ -327,9 +330,9 @@ def test_classification_is_immutable() -> None:
         fit_markdown="",
         raw_html="",
     )
-    with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
+    with pytest.raises(FrozenInstanceError):
         result.is_walled = False  # type: ignore[misc]
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         result.match_reasons = ()  # type: ignore[misc]
 
 
@@ -352,6 +355,8 @@ def test_marker_list_is_module_level_constant() -> None:
     addition without code restructuring."""
     assert isinstance(AUTH_WALL_END_OF_BODY_MARKERS, (list, tuple))
     assert len(AUTH_WALL_END_OF_BODY_MARKERS) >= 5  # NL + EN starter set
+    assert isinstance(AUTH_WALL_EMBEDDED_GATE_MARKERS, (list, tuple))
+    assert len(AUTH_WALL_EMBEDDED_GATE_MARKERS) >= 1
 
 
 def test_classification_dataclass_shape() -> None:
@@ -393,6 +398,51 @@ def test_repeated_login_marker_anywhere_in_body_classified_as_walled() -> None:
     )
     assert result.is_walled is True
     assert "repeated_login_marker_in_body" in result.match_reasons
+
+
+def test_single_embedded_login_gate_in_body_classified_as_walled() -> None:
+    """REGRESSION (production 2026-05-27): a crawl can return one protected
+    content block in the middle of a large otherwise-public page. That block
+    must prevent ingest; storing it as article text pollutes RAG."""
+    body = (
+        "## Handleiding - CGM\n"
+        + "Public CRM integration content with lots of useful words. " * 80
+        + "\n## [Log in](https://wiki.redcactus.cloud/login?redirect_to=...) "
+        "when you want to read this article\n"
+        "This article is providing information to users of our software. "
+        "Information that contains things like, how to install our software, "
+        "how to use certain options and more. If you want to read this article, "
+        "you will have to log in with your Red Cactus account.\n"
+        + "Trailing public content that pushes the marker out of the tail. " * 50
+    )
+    result = classify_auth_wall(
+        response_status_code=200,
+        redirect_target_url=None,
+        set_cookie_header=None,
+        word_count=900,
+        fit_markdown=body,
+        raw_html="<html></html>",
+    )
+    assert result.is_walled is True
+    assert "embedded_login_gate" in result.match_reasons
+
+
+def test_nav_login_link_in_long_article_does_not_trigger_embedded_gate() -> None:
+    """A plain login nav link without nearby gated-content wording is not
+    enough for the embedded-gate rule."""
+    body = (
+        "[Log in](https://example.com/login) | [Support](/support)\n\n"
+        + "This article explains public CRM implementation steps. " * 120
+    )
+    result = classify_auth_wall(
+        response_status_code=200,
+        redirect_target_url=None,
+        set_cookie_header=None,
+        word_count=900,
+        fit_markdown=body,
+        raw_html="<html></html>",
+    )
+    assert result.is_walled is False
 
 
 def test_single_login_reference_does_not_trigger_repeated_rule() -> None:
