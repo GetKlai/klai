@@ -17,6 +17,9 @@ export interface WidgetLabels {
   handoffButton: string
   handoffConnecting: string
   handoffConnected: string
+  userInfoName: string
+  userInfoEmail: string
+  userInfoHelp: string
 }
 
 const nl: WidgetLabels = {
@@ -33,6 +36,9 @@ const nl: WidgetLabels = {
   handoffButton: "Praat met een medewerker",
   handoffConnecting: "Ik verbind je met een medewerker.",
   handoffConnected: "Je bent verbonden met een medewerker.",
+  userInfoName: "Naam",
+  userInfoEmail: "E-mail",
+  userInfoHelp: "Laat je gegevens achter voor opvolging.",
 }
 
 const en: WidgetLabels = {
@@ -49,6 +55,9 @@ const en: WidgetLabels = {
   handoffButton: "Talk to a human",
   handoffConnecting: "I am connecting you with a human agent.",
   handoffConnected: "You are connected with a human agent.",
+  userInfoName: "Name",
+  userInfoEmail: "Email",
+  userInfoHelp: "Leave your details for follow-up.",
 }
 
 const locales: Record<string, WidgetLabels> = { nl, en }

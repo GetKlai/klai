@@ -90,6 +90,7 @@ async function bootstrap(): Promise<void> {
         conversationStarters: config.conversation_starters,
         hideDisclaimer: config.hide_disclaimer,
         welcomeMessage: config.welcome_message,
+        collectUserInfo: config.collect_user_info,
       }),
       target as HTMLElement,
     );
