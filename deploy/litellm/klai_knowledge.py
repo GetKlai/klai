@@ -1966,9 +1966,28 @@ class KlaiKnowledgeHook(CustomLogger):
         # Translate (kb_personal, kb_slugs) → retrieval-api `scope` + optional
         # `kb_slugs` filter.
         if kb_personal and kb_slugs == []:
-            # Personal-only: no org KBs at all.
+            # User picked the "Persoonlijk" entry in the chat dropdown.
+            #
+            # Bug fixed 2026-05-27: this branch used to send
+            # ``kb_slugs_for_request = None`` together with scope=personal.
+            # Retrieval-api then returned every chunk where
+            # ``visibility=private`` AND ``owner_user_id`` matched the
+            # requester — which includes user-created KBs (e.g. "test2")
+            # that the user explicitly deselected as separate items in
+            # the SAME dropdown. The UI semantic is "Persoonlijk = the
+            # canonical 'Persoonlijk' KB only", so narrow the request to
+            # the auto-provisioned slug for this user.
+            #
+            # The canonical slug pattern lives in portal_knowledge_bases
+            # for owner_type='user' rows whose slug starts with
+            # ``personal-<zitadel_user_id>``. The hook already has
+            # ``user_id`` resolved by the identity-verify step above.
+            #
+            # Retrieval-api filters on kb_slug through the same code path
+            # it uses for org-scope kb_slugs — see ``_scope_filter`` in
+            # klai-retrieval-api/retrieval_api/services/search.py.
             scope = "personal"
-            kb_slugs_for_request: list[str] | None = None
+            kb_slugs_for_request: list[str] | None = [f"personal-{user_id}"]
         else:
             scope = "both" if kb_personal else "org"
             kb_slugs_for_request = kb_slugs if kb_slugs else None
