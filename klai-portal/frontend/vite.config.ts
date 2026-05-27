@@ -18,7 +18,10 @@ export default defineConfig(({ mode }) => {
         outdir: './src/paraglide',
         emitTsDeclarations: true,
       }),
-      TanStackRouterVite({ routesDirectory: './src/routes' }),
+      TanStackRouterVite({
+        routesDirectory: './src/routes',
+        routeFileIgnorePattern: String.raw`(^|/)__tests__(/|$)|(^|/|\.)_[^_/][^/]*(/|\.|$)`,
+      }),
       react(),
       tailwindcss(),
       // Upload source maps to GlitchTip at build time and delete them from dist/.
