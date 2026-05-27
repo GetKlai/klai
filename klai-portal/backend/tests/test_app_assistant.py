@@ -83,7 +83,6 @@ async def test_submit_feedback_persists_and_emits_first_party_event(monkeypatch)
             "org_id": 42,
             "user_id": "user-123",
             "properties": {
-                "raw_text": "Maak het makkelijker om feedback te geven.",
                 "page_url": "https://app.getklai.com/app/chat",
                 "route_id": "/app/chat",
                 "locale": "nl",
@@ -135,3 +134,4 @@ async def test_submit_problem_report_persists_and_emits_separate_event(monkeypat
     assert properties["severity"] == "blocked"
     assert properties["source"] == "klai_assistant"
     assert properties["viewport"] == "1440x900"
+    assert "raw_text" not in properties

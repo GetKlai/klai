@@ -96,6 +96,17 @@ def _base_properties(
     }
 
 
+def _analytics_properties_without_text(
+    body: AssistantContextIn,
+    *,
+    perms: UserPermissions,
+    request: Request,
+) -> dict:
+    properties = _base_properties(body, perms=perms, request=request)
+    properties.pop("raw_text", None)
+    return properties
+
+
 @router.post(
     "/questions",
     status_code=status.HTTP_201_CREATED,
@@ -152,7 +163,7 @@ async def submit_feedback(
         org_id=perms.org_id,
         user_id=perms.user_id,
         properties={
-            **_base_properties(body, perms=perms, request=request),
+            **_analytics_properties_without_text(body, perms=perms, request=request),
             "feedback_type": body.type,
         },
     )
@@ -195,7 +206,7 @@ async def submit_problem_report(
         org_id=perms.org_id,
         user_id=perms.user_id,
         properties={
-            **_base_properties(body, perms=perms, request=request),
+            **_analytics_properties_without_text(body, perms=perms, request=request),
             "severity": body.severity,
         },
     )
