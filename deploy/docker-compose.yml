@@ -580,6 +580,10 @@ services:
       MS_DOCS_CLIENT_ID: ${MS_DOCS_CLIENT_ID:-}
       MS_DOCS_CLIENT_SECRET: ${MS_DOCS_CLIENT_SECRET:-}
       MS_DOCS_TENANT_ID: ${MS_DOCS_TENANT_ID:-common}
+      # ─── HubSpot — internal widget human handoff pilot ──────────
+      HUBSPOT_WEBCHAT_CLIENT_ID: ${PORTAL_API_HUBSPOT_WEBCHAT_CLIENT_ID:-}
+      HUBSPOT_WEBCHAT_CLIENT_SECRET: ${PORTAL_API_HUBSPOT_WEBCHAT_CLIENT_SECRET:-}
+      HUBSPOT_WEBCHAT_REFRESH_TOKEN: ${PORTAL_API_HUBSPOT_WEBCHAT_REFRESH_TOKEN:-}
       # ─── GitHub (org offboarding) ───────────────────────────────
       GITHUB_ADMIN_PAT: ${GITHUB_ADMIN_PAT}
       GITHUB_ORG: GetKlai
