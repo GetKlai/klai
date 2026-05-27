@@ -11,8 +11,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
+from app.klai_feedback.service import create_feedback_submission
 from app.services.events import emit_event
 
 router = APIRouter(prefix="/api/app/assistant", tags=["app-assistant"])
@@ -56,6 +59,21 @@ def _request_context(request: Request) -> dict[str, str | None]:
         "user_agent": request.headers.get("user-agent"),
         "referer": _strip_url_query_and_fragment(referer) if referer else None,
         "client_host": client_host,
+    }
+
+
+def _feedback_metadata(
+    *,
+    perms: UserPermissions,
+    request_context: dict[str, str | None],
+    extra: dict[str, str],
+) -> dict[str, str | None]:
+    return {
+        "org_slug": perms.org_slug,
+        "role": perms.effective_role.value,
+        "source": "klai_assistant",
+        "client_host": request_context.get("client_host"),
+        **extra,
     }
 
 
@@ -107,8 +125,28 @@ async def submit_feedback(
     body: AssistantFeedbackIn,
     request: Request,
     perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
 ) -> AssistantSubmitResponse:
     """Capture Klai product feedback from authenticated portal users."""
+    request_context = _request_context(request)
+    await create_feedback_submission(
+        db,
+        source="assistant_feedback",
+        raw_text=body.raw_text,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
+        page_url=_strip_url_query_and_fragment(body.page_url),
+        route_id=body.route_id,
+        locale=body.locale,
+        viewport=body.viewport,
+        user_agent=request_context.get("user_agent"),
+        referrer=request_context.get("referer"),
+        metadata_json=_feedback_metadata(
+            perms=perms,
+            request_context=request_context,
+            extra={"feedback_type": body.type},
+        ),
+    )
     emit_event(
         "klai_assistant.feedback",
         org_id=perms.org_id,
@@ -130,8 +168,28 @@ async def submit_problem_report(
     body: AssistantProblemReportIn,
     request: Request,
     perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
 ) -> AssistantSubmitResponse:
     """Capture a Klai problem report with basic diagnostic context."""
+    request_context = _request_context(request)
+    await create_feedback_submission(
+        db,
+        source="assistant_problem",
+        raw_text=body.raw_text,
+        org_id=perms.org_id,
+        user_id=perms.user_id,
+        page_url=_strip_url_query_and_fragment(body.page_url),
+        route_id=body.route_id,
+        locale=body.locale,
+        viewport=body.viewport,
+        user_agent=request_context.get("user_agent"),
+        referrer=request_context.get("referer"),
+        metadata_json=_feedback_metadata(
+            perms=perms,
+            request_context=request_context,
+            extra={"severity": body.severity},
+        ),
+    )
     emit_event(
         "klai_assistant.problem_report",
         org_id=perms.org_id,

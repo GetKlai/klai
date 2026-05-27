@@ -38,7 +38,7 @@ async def test_platform_feedback_submissions_reads_assistant_events(monkeypatch)
             org_name="Acme",
             org_slug="acme",
             user_id="user-123",
-            event_type="klai_assistant.feedback",
+            source="assistant_feedback",
             raw_text="Maak het makkelijker om feedback te geven.",
             feedback_type="improvement",
             severity=None,
