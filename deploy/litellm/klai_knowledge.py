@@ -2357,7 +2357,23 @@ class KlaiKnowledgeHook(CustomLogger):
                     "trusted_sources": [],
                     "evidence_pack": evidence_pack,
                     "citable_sources_count": 0,
-                    "no_citable_sources": True,
+                    # Bug fix 2026-05-27: PR #697 set ``no_citable_sources=True``
+                    # here. The structured-citation post-call render reads that
+                    # flag (as ``force_no_citable``) and runs
+                    # ``_render_kb_citation_content`` even when there are no
+                    # chunks. In Strict mode (kb_narrow=True) that path replaces
+                    # the model's answer with the English-only
+                    # ``_no_citable_sources_message`` — clobbering the
+                    # mode-aware multilingual instruction this branch already
+                    # injected into the system prompt above. Setting the flag
+                    # to False here lets the post-call render short-circuit
+                    # (``not trusted_sources and not force_no_citable and not
+                    # citation_chunks`` is now True), and the model's
+                    # mode-correct, language-correct answer passes through
+                    # unchanged. The ``no_citable_reason`` from
+                    # retrieval-api's evidence_pack is still recorded for
+                    # observability.
+                    "no_citable_sources": False,
                     "no_citable_reason": evidence_pack.get("no_citable_reason")
                     if isinstance(evidence_pack, dict)
                     else None,
@@ -2365,7 +2381,6 @@ class KlaiKnowledgeHook(CustomLogger):
                     "render_mode": render_strategy.mode,
                     "retrieval_ms": retrieval_ms,
                     "gate_bypassed": False,
-                    "kb_narrow": kb_narrow,
                 }
             return data
 
