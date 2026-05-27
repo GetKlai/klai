@@ -19,11 +19,13 @@ class _Session:
     def __init__(self, rows):
         self.rows = rows
         self.params = None
+        self.closed = False
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *_exc):
+        self.closed = True
         return None
 
     async def execute(self, _query, params=None):
@@ -60,6 +62,17 @@ def _feedback_item(**overrides):
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+class _SessionBound:
+    def __init__(self, session, **values):
+        self._session = session
+        self._values = values
+
+    def __getattr__(self, name):
+        if self._session.closed:
+            raise AssertionError(f"{name} was read after the DB session closed")
+        return self._values[name]
 
 
 @pytest.mark.asyncio
@@ -124,7 +137,7 @@ async def test_platform_feedback_dismiss_updates_submission(monkeypatch):
     async def fake_dismiss(db, submission_id):
         assert db is session
         assert submission_id == 123
-        return SimpleNamespace(id=123, status="dismissed")
+        return _SessionBound(session, id=123, status="dismissed")
 
     monkeypatch.setattr(platform, "_audit", fake_audit)
     monkeypatch.setattr(platform, "cross_org_session", lambda: session)
@@ -157,7 +170,10 @@ async def test_platform_feedback_create_item_links_submission(monkeypatch):
             "area": "platform",
             "link_type": "evidence",
         }
-        return SimpleNamespace(id=123, status="linked"), SimpleNamespace(id=456)
+        return (
+            _SessionBound(session, id=123, status="linked"),
+            _SessionBound(session, id=456),
+        )
 
     monkeypatch.setattr(platform, "_audit", fake_audit)
     monkeypatch.setattr(platform, "cross_org_session", lambda: session)
@@ -176,6 +192,34 @@ async def test_platform_feedback_create_item_links_submission(monkeypatch):
 
     assert result.status == "linked"
     assert result.item_id == 456
+
+
+@pytest.mark.asyncio
+async def test_platform_feedback_items_materializes_before_session_closes(monkeypatch):
+    session = _Session([])
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_search_items(db, **kwargs):
+        assert db is session
+        assert kwargs == {"search": None, "limit": 25}
+        return [_SessionBound(session, **_feedback_item().__dict__)]
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "search_feedback_items", fake_search_items)
+
+    result = await platform.platform_feedback_items(
+        search=None,
+        limit=25,
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert session.closed is True
+    assert len(result) == 1
+    assert result[0].id == 456
+    assert result[0].title == "Betere triage"
 
 
 @pytest.mark.asyncio
@@ -210,7 +254,7 @@ async def test_platform_feedback_item_detail_returns_linked_customer_evidence(mo
     async def fake_get_item(db, item_id):
         assert db is session
         assert item_id == 456
-        return _feedback_item()
+        return _SessionBound(session, **_feedback_item().__dict__)
 
     monkeypatch.setattr(platform, "_audit", fake_audit)
     monkeypatch.setattr(platform, "cross_org_session", lambda: session)
@@ -247,11 +291,14 @@ async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
             "external_tracker_url": "https://github.com/getklai/klai/issues/123",
             "public_feedback_url": None,
         }
-        return _feedback_item(
-            status="planned",
-            owner="Maaike",
-            target_window="Q3",
-            external_tracker_url="https://github.com/getklai/klai/issues/123",
+        return _SessionBound(
+            session,
+            **_feedback_item(
+                status="planned",
+                owner="Maaike",
+                target_window="Q3",
+                external_tracker_url="https://github.com/getklai/klai/issues/123",
+            ).__dict__,
         )
 
     monkeypatch.setattr(platform, "_audit", fake_audit)

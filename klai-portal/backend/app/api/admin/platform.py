@@ -983,8 +983,7 @@ async def platform_feedback_items(
         except Exception:
             logger.warning("platform_feedback_items_query_failed", exc_info=True)
             return []
-
-    return [_platform_feedback_item(item) for item in items]
+        return [_platform_feedback_item(item) for item in items]
 
 
 @router.get("/feedback/items/{item_id}", response_model=PlatformFeedbackItemDetail)
@@ -1030,31 +1029,31 @@ async def platform_feedback_item_detail(
         except FeedbackItemNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback item not found") from exc
 
-    return PlatformFeedbackItemDetail(
-        item=_platform_feedback_item(item),
-        submissions=[
-            PlatformFeedbackLinkedSubmission(
-                id=r.id,
-                org_id=r.org_id,
-                org_name=r.org_name,
-                org_slug=r.org_slug,
-                user_id=r.user_id,
-                event_type=_feedback_event_type(r.source),
-                status=r.status,
-                raw_text=r.raw_text,
-                feedback_type=r.feedback_type,
-                severity=r.severity,
-                page_url=r.page_url,
-                route_id=r.route_id,
-                locale=r.locale,
-                viewport=r.viewport,
-                created_at=r.created_at,
-                link_type=r.link_type,
-                linked_at=r.linked_at,
-            )
-            for r in rows
-        ],
-    )
+        return PlatformFeedbackItemDetail(
+            item=_platform_feedback_item(item),
+            submissions=[
+                PlatformFeedbackLinkedSubmission(
+                    id=r.id,
+                    org_id=r.org_id,
+                    org_name=r.org_name,
+                    org_slug=r.org_slug,
+                    user_id=r.user_id,
+                    event_type=_feedback_event_type(r.source),
+                    status=r.status,
+                    raw_text=r.raw_text,
+                    feedback_type=r.feedback_type,
+                    severity=r.severity,
+                    page_url=r.page_url,
+                    route_id=r.route_id,
+                    locale=r.locale,
+                    viewport=r.viewport,
+                    created_at=r.created_at,
+                    link_type=r.link_type,
+                    linked_at=r.linked_at,
+                )
+                for r in rows
+            ],
+        )
 
 
 @router.patch("/feedback/items/{item_id}", response_model=PlatformFeedbackItem)
@@ -1070,7 +1069,7 @@ async def platform_feedback_update_item(
             item = await update_feedback_item(db, item_id, values)
         except FeedbackItemNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback item not found") from exc
-    return _platform_feedback_item(item)
+        return _platform_feedback_item(item)
 
 
 @router.post(
@@ -1087,7 +1086,7 @@ async def platform_feedback_dismiss_submission(
             submission = await dismiss_feedback_submission(db, submission_id)
         except FeedbackSubmissionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback submission not found") from exc
-    return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status)
+        return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status)
 
 
 @router.post(
@@ -1104,7 +1103,7 @@ async def platform_feedback_mark_support(
             submission = await mark_feedback_submission_support(db, submission_id)
         except FeedbackSubmissionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback submission not found") from exc
-    return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status)
+        return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status)
 
 
 @router.post(
@@ -1130,7 +1129,7 @@ async def platform_feedback_create_item(
             )
         except FeedbackSubmissionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback submission not found") from exc
-    return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status, item_id=item.id)
+        return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status, item_id=item.id)
 
 
 @router.post(
@@ -1155,7 +1154,7 @@ async def platform_feedback_link_item(
             raise HTTPException(status_code=404, detail="Feedback submission not found") from exc
         except FeedbackItemNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback item not found") from exc
-    return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status, item_id=item.id)
+        return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status, item_id=item.id)
 
 
 def _platform_feedback_item(item: FeedbackItem) -> PlatformFeedbackItem:
