@@ -24,7 +24,7 @@ import { InlineEdit } from '@/components/ui/inline-edit'
 import * as m from '@/paraglide/messages'
 import { SourceContent } from './-sources-content'
 import { SourceRowActions } from './-sources-row-actions'
-import { mapSourceStatus, SourceIcon, StatusBadge } from './-sources-helpers'
+import { SourceIcon, StatusBadge } from './-sources-helpers'
 import { useSourceRename } from './-sources-hooks'
 import type { Source } from './-sources-types'
 
@@ -38,7 +38,6 @@ interface SourceRowProps {
 }
 
 export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }: SourceRowProps) {
-  const status = mapSourceStatus(source)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
   const [draftName, setDraftName] = useState(source.name)
@@ -110,7 +109,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
           </div>
         </div>
 
-        <StatusBadge status={status} />
+        <StatusBadge source={source} />
 
         {/* Actions cell with rename-overlay slot.
             When renaming, SourceRowActions fades out and the Save/Cancel
