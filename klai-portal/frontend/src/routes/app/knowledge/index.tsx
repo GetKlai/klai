@@ -249,6 +249,13 @@ function KnowledgePage() {
         </Link>
       </div>
 
+      {/* Korte uitleg — geen kader, gewoon tekst. Zelfde stijl als /app/instructions. */}
+      <div className="space-y-3 text-sm text-gray-600">
+        <p>{m.kb_intro_body()}</p>
+        <p>{m.kb_intro_examples()}</p>
+        <p>{m.kb_intro_invoke()}</p>
+      </div>
+
       {/* Search */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
