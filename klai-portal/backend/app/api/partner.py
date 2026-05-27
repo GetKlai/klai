@@ -398,9 +398,7 @@ async def chat_completions(
     is_widget_chat = str(auth.key_id).startswith("wgt_")
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
     page_context = (
-        request.page_context.model_dump(exclude_none=True)
-        if page_context_enabled and request.page_context
-        else None
+        request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
     )
 
     try:
