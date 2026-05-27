@@ -418,22 +418,29 @@ async def record_hubspot_agent_reply(db: AsyncSession, payload: dict[str, Any]) 
     if not thread_id or not message_id or not content:
         return {"status": "ignored", "reason": "missing_required_fields"}
 
-    session = (
-        await db.execute(
-            text(
-                """
-                SELECT id, org_id
-                  FROM widget_handoff_sessions
-                 WHERE provider = :provider
-                   AND hubspot_conversations_thread_id = :thread_id
-                   AND status = 'active'
-                 ORDER BY id DESC
-                 LIMIT 1
-                """
-            ),
-            {"provider": _PROVIDER, "thread_id": thread_id},
-        )
-    ).first()
+    # HubSpot webhooks are not tenant-authenticated requests. We must first map
+    # the globally unique HubSpot thread id to a Klai tenant, then switch back to
+    # normal tenant RLS before writing the visible agent message.
+    await db.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
+    try:
+        session = (
+            await db.execute(
+                text(
+                    """
+                    SELECT id, org_id
+                      FROM widget_handoff_sessions
+                     WHERE provider = :provider
+                       AND hubspot_conversations_thread_id = :thread_id
+                       AND status = 'active'
+                     ORDER BY id DESC
+                     LIMIT 1
+                    """
+                ),
+                {"provider": _PROVIDER, "thread_id": thread_id},
+            )
+        ).first()
+    finally:
+        await db.execute(text("SELECT set_config('app.cross_org_admin', '', false)"))
     if session is None:
         logger.info(
             "hubspot_custom_channel_webhook_unmapped",
