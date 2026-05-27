@@ -163,3 +163,86 @@ class TestPersonalRoleRewrite:
         )
         result = _apply_role_rewrite(req)
         assert result.scope == "org"
+
+
+# ---------------------------------------------------------------------------
+# Integration: role-rewrite + scope-filter chain (SPEC-RAG-PERSONAL-SCOPE-001 REQ-5)
+# ---------------------------------------------------------------------------
+
+
+class TestPersonalRoleRewriteChainsIntoCanonicalNarrow:
+    """The personal-role kb_slugs strip (RBAC, REQ-17 of
+    SPEC-PORTAL-RBAC-REFACTOR-001) MUST NOT defeat the canonical-slug
+    narrowing introduced by SPEC-RAG-PERSONAL-SCOPE-001 REQ-2.
+
+    Chain: client request → ``_apply_role_rewrite`` → ``_scope_filter``.
+    Even though the strip removes ``kb_slugs`` for personal-role callers,
+    ``_scope_filter`` must still append the canonical-slug filter.
+    """
+
+    def test_personal_role_stripped_slugs_still_canonical_narrowed(self) -> None:
+        from qdrant_client.models import FieldCondition
+
+        from retrieval_api.models import RetrieveRequest
+        from retrieval_api.services.search import _scope_filter
+
+        # Start from a personal-role caller's "I want canonical Persoonlijk
+        # only" intent — but with org-side kb_slugs that the strip should
+        # remove. Pre-SPEC, this leaked: scope became personal, kb_slugs
+        # became None, and _scope_filter's user_id-OR-kb_slug let test2
+        # chunks through via the user_id branch.
+        req = RetrieveRequest(
+            query="wie is jantine?",
+            org_id="o1",
+            scope="org",
+            kb_slugs=["sneaky-org-kb"],
+            user_id="u1",
+            effective_role="personal",
+        )
+
+        # Apply the rewrite (strips kb_slugs, forces scope to personal).
+        rewritten = _apply_role_rewrite(req)
+        assert rewritten.scope == "personal"
+        assert rewritten.kb_slugs is None
+
+        # The canonical narrow MUST be present in the filter conditions.
+        conditions = _scope_filter(rewritten)
+        slug_conditions = [
+            c for c in conditions if isinstance(c, FieldCondition) and c.key == "kb_slug"
+        ]
+        assert len(slug_conditions) == 1, (
+            f"expected exactly one canonical kb_slug filter after the chain, "
+            f"got {len(slug_conditions)}"
+        )
+        assert slug_conditions[0].match.value == "personal-u1"
+
+    def test_personal_role_with_canonical_kb_slugs_strip_then_narrow(self) -> None:
+        from qdrant_client.models import FieldCondition
+
+        from retrieval_api.models import RetrieveRequest
+        from retrieval_api.services.search import _scope_filter
+
+        # Edge case: the LiteLLM hook (post-PR-#715) sends
+        # kb_slugs=["personal-u1"] together with scope=personal AND
+        # effective_role=personal. The RBAC strip removes kb_slugs (it
+        # doesn't distinguish canonical from non-canonical). Server-side
+        # canonical narrow then re-applies it. End-state: caller's
+        # intent is preserved despite the strip.
+        req = RetrieveRequest(
+            query="q",
+            org_id="o1",
+            scope="personal",
+            kb_slugs=["personal-u1"],
+            user_id="u1",
+            effective_role="personal",
+        )
+        rewritten = _apply_role_rewrite(req)
+        # Strip removed the client-supplied filter
+        assert rewritten.kb_slugs is None
+        # Server-side canonical narrow recovers it
+        conditions = _scope_filter(rewritten)
+        slug_conditions = [
+            c for c in conditions if isinstance(c, FieldCondition) and c.key == "kb_slug"
+        ]
+        assert len(slug_conditions) == 1
+        assert slug_conditions[0].match.value == "personal-u1"
