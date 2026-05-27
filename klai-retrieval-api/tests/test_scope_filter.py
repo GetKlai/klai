@@ -36,11 +36,31 @@ class TestScopeFilterVisibility:
         conditions = _scope_filter(req)
         assert _find_visibility_filter(conditions) is not None
 
-    def test_personal_scope_no_visibility_filter(self):
-        """personal scope already restricts to one user — no extra visibility gate needed."""
+    def test_personal_scope_matches_user_id_or_canonical_slug(self):
+        """personal scope: chunk matches if EITHER user_id OR
+        ``kb_slug == personal-<user_id>`` matches.
+
+        Bug fix 2026-05-27: previously this branch only matched on
+        ``user_id``. Connectors like web_crawler ingest into a personal
+        KB without passing user_id, so chunks landed in Qdrant with
+        ``user_id=None`` and the owner could not retrieve their own
+        content. The slug-based fallback restores ownership matching
+        via the structural slug pattern (``personal-<user_id>``)
+        without weakening any other scope's filter.
+        """
         req = _make_request(scope="personal", user_id="user-1")
         conditions = _scope_filter(req)
-        assert _find_visibility_filter(conditions) is None
+        nested = _find_visibility_filter(conditions)
+        assert nested is not None, "personal scope must add an ownership Filter"
+        assert nested.should is not None
+        assert len(nested.should) == 2, (
+            f"expected 2-branch should (user_id, kb_slug), got {len(nested.should)}"
+        )
+        # The two branches: user_id == user_id AND kb_slug == personal-<user_id>
+        keys = {c.key for c in nested.should if isinstance(c, FieldCondition)}
+        assert keys == {"user_id", "kb_slug"}, (
+            f"expected branches on user_id + kb_slug, got {keys}"
+        )
 
     def test_org_scope_without_user_only_public_branch(self):
         """Without user_id, only the not-private branch is present (no own-private exception)."""

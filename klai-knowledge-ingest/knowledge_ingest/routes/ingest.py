@@ -482,6 +482,23 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row)
     await pg_store.soft_delete_artifact(conn, req.org_id, req.kb_slug, req.path)
 
+    # Derive user_id from canonical personal-KB slug when the caller did not
+    # supply one. Connectors like ``web_crawler`` ingest into a personal KB
+    # without passing ``user_id`` because they have no concept of an owning
+    # user (the connector only knows org + kb_slug). Without this fallback
+    # the chunk lands in Qdrant with ``user_id=None``, and the artifact in
+    # PG also lacks user_id, which makes the ``scope=personal`` retrieval
+    # filter exclude the chunk from its own owner's searches. Slug pattern
+    # is ``personal-<zitadel_user_id>``; the substring after the prefix is
+    # the owner. Bug fix 2026-05-27. See
+    # ``klai-knowledge-ingest/knowledge_ingest/kb_config.py::get_kb_visibility``
+    # for the symmetric visibility override.
+    chunk_user_id = req.user_id
+    if not chunk_user_id and req.kb_slug.startswith("personal-"):
+        derived = req.kb_slug[len("personal-"):]
+        if derived:
+            chunk_user_id = derived
+
     # Merge connector provenance fields into extra so PG tracks the same metadata as Qdrant.
     # This enables delete_connector_artifacts() to find and remove PG records by connector.
     pg_extra: dict = dict(req.extra or {})
@@ -509,7 +526,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         confidence=kf["confidence"],
         belief_time_start=kf["belief_time_start"],
         belief_time_end=kf["belief_time_end"],
-        user_id=req.user_id,
+        user_id=chunk_user_id,
         content_type=req.content_type,
         extra=pg_extra or None,
         content_hash=content_hash,
@@ -614,7 +631,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         vectors=vectors,
         artifact_id=artifact_id,
         extra_payload=extra_payload,
-        user_id=req.user_id,
+        user_id=chunk_user_id,
         taxonomy_node_ids=taxonomy_node_ids if has_taxonomy else None,
         tags=merged_tags if merged_tags else None,
         has_taxonomy=has_taxonomy,
