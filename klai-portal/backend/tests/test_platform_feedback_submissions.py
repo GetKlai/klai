@@ -128,6 +128,31 @@ async def test_platform_feedback_submissions_reads_assistant_events(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_platform_feedback_submissions_open_filter_includes_new_and_suggested(monkeypatch):
+    session = _Session([])
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+
+    result = await platform.platform_feedback_submissions(
+        search=None,
+        status_filter="open",
+        kind=None,
+        limit=100,
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert result == []
+    assert session.params == {
+        "limit": 100,
+        "statuses": ["new", "triage_suggested"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_platform_feedback_dismiss_updates_submission(monkeypatch):
     session = _Session([])
 

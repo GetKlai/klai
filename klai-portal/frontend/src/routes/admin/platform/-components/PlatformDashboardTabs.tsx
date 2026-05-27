@@ -11,6 +11,7 @@ import {
   Loader2,
   PlusCircle,
   Save,
+  Search,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -705,7 +706,7 @@ function feedbackStatusLabel(status: string): string {
   if (status === 'linked') return 'Gekoppeld'
   if (status === 'dismissed') return 'Genegeerd'
   if (status === 'support') return 'Support'
-  if (status === 'triage_suggested') return 'Suggestie'
+  if (status === 'triage_suggested') return 'AI voorstel'
   return 'Nieuw'
 }
 
@@ -1035,11 +1036,18 @@ function FeedbackDetailSheet({
                   <h3 className="text-sm font-medium text-gray-900">Koppel aan bestaand item</h3>
                   {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
                 </div>
-                <Input
-                  value={itemSearch}
-                  onChange={(event) => setItemSearch(event.target.value)}
-                  placeholder="Zoek roadmap item"
-                />
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-gray-500">Zoek roadmap item</span>
+                  <span className="relative block">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                    <Input
+                      value={itemSearch}
+                      onChange={(event) => setItemSearch(event.target.value)}
+                      placeholder="Titel, onderwerp of route"
+                      className="pl-9"
+                    />
+                  </span>
+                </label>
                 <div className="space-y-2">
                   {(items.data ?? []).map((existing) => (
                     <div
@@ -1083,6 +1091,11 @@ function FeedbackDetailSheet({
                       </Button>
                     </div>
                   ))}
+                  {!items.isFetching && (items.data ?? []).length === 0 && (
+                    <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
+                      Geen bestaand roadmap item gevonden.
+                    </p>
+                  )}
                 </div>
               </section>
 
