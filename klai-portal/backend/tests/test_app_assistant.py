@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from fastapi import BackgroundTasks
 
 from app.api import app_assistant
 
@@ -41,6 +42,7 @@ async def test_submit_feedback_persists_and_emits_first_party_event(monkeypatch)
 
     async def fake_create_feedback_submission(db, **kwargs):
         persisted.append({"db": db, **kwargs})
+        return SimpleNamespace(id=321)
 
     monkeypatch.setattr(app_assistant, "emit_event", fake_emit_event)
     monkeypatch.setattr(app_assistant, "create_feedback_submission", fake_create_feedback_submission)
@@ -52,7 +54,7 @@ async def test_submit_feedback_persists_and_emits_first_party_event(monkeypatch)
         type="improvement",
     )
     db = object()
-    response = await app_assistant.submit_feedback(body, _request(), _perms(), db)
+    response = await app_assistant.submit_feedback(body, _request(), BackgroundTasks(), _perms(), db)
 
     assert response.ok is True
     assert persisted == [
@@ -100,6 +102,34 @@ async def test_submit_feedback_persists_and_emits_first_party_event(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_submit_feedback_schedules_triage(monkeypatch):
+    async def fake_create_feedback_submission(*_args, **_kwargs):
+        return SimpleNamespace(id=321)
+
+    monkeypatch.setattr(app_assistant, "emit_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(app_assistant, "create_feedback_submission", fake_create_feedback_submission)
+
+    background_tasks = BackgroundTasks()
+    body = app_assistant.AssistantFeedbackIn(
+        raw_text="Maak het makkelijker om feedback te geven.",
+        page_url="https://app.getklai.com/app/chat",
+    )
+
+    response = await app_assistant.submit_feedback(
+        body,
+        _request(),
+        background_tasks,
+        _perms(),
+        object(),
+    )
+
+    assert response.ok is True
+    assert len(background_tasks.tasks) == 1
+    assert background_tasks.tasks[0].func is app_assistant.run_feedback_triage_for_submission
+    assert background_tasks.tasks[0].args == (321,)
+
+
+@pytest.mark.asyncio
 async def test_submit_problem_report_persists_and_emits_separate_event(monkeypatch):
     emitted = []
     persisted = []
@@ -109,6 +139,7 @@ async def test_submit_problem_report_persists_and_emits_separate_event(monkeypat
 
     async def fake_create_feedback_submission(db, **kwargs):
         persisted.append({"db": db, **kwargs})
+        return SimpleNamespace(id=654)
 
     monkeypatch.setattr(app_assistant, "emit_event", fake_emit_event)
     monkeypatch.setattr(app_assistant, "create_feedback_submission", fake_create_feedback_submission)
@@ -121,7 +152,7 @@ async def test_submit_problem_report_persists_and_emits_separate_event(monkeypat
         viewport="1440x900",
     )
     db = object()
-    response = await app_assistant.submit_problem_report(body, _request(), _perms(), db)
+    response = await app_assistant.submit_problem_report(body, _request(), BackgroundTasks(), _perms(), db)
 
     assert response.ok is True
     assert persisted[0]["source"] == "assistant_problem"

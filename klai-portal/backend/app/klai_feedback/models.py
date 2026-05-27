@@ -130,6 +130,7 @@ class FeedbackTriageSuggestion(Base):
     __table_args__ = (
         Index("ix_feedback_triage_suggestions_submission", "submission_id"),
         Index("ix_feedback_triage_suggestions_created", "created_at"),
+        Index("uq_feedback_triage_suggestions_submission_model", "submission_id", "model", unique=True),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

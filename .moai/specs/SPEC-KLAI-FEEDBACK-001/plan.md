@@ -91,7 +91,6 @@ Geverifieerd:
 
 Nog niet gebouwd:
 
-- AI triage en duplicate detectie.
 - Suggestiekaart in Platform.
 - Accept/correct workflow voor AI-suggesties.
 - Downstream sync naar GitHub Issues of feedback.getklai.com.
@@ -334,23 +333,28 @@ Acceptatie:
 
 ### Fase 3 - AI triage en duplicate detectie
 
-Status: eerstvolgende productstap, maar in twee kleinere delen bouwen.
+Status: Fase 3a is gebouwd in code. Fase 3b is de eerstvolgende productstap.
 
 #### Fase 3a - Suggesties genereren
 
-- Background job of synchronous enqueue na elke submission.
-- Idempotent: dezelfde submission krijgt maximaal één actieve suggestie per
+- Background task wordt ingepland na elke feedback/probleem submission.
+- Idempotent: dezelfde submission krijgt maximaal één suggestie per
   model/config versie.
 - Output wordt opgeslagen in `feedback_triage_suggestions`; geen automatische
   wijziging aan `feedback_items` of `feedback_submissions` behalve eventueel
   status `triage_suggested`.
 - Als AI faalt, blijft de handmatige workflow werken.
+- Model/config versie wordt opgeslagen als `model:feedback-triage-v1`.
+- Er is een unieke index op `submission_id + model` om race conditions te
+  voorkomen.
 
 Acceptatie:
 
 - Nieuwe feedback krijgt een suggestie zonder dat staff iets hoeft in te vullen.
 - Een AI-fout veroorzaakt geen submit-failure voor de gebruiker.
 - Suggestie bevat model/config metadata zodat output later te auditen is.
+- Targeted tests dekken idempotentie, AI-failure fallback en duplicate
+  candidate filtering.
 
 #### Fase 3b - Suggesties gebruiken in Platform
 
@@ -453,30 +457,30 @@ Acceptatie:
 - [x] Platform Feedback tab uitbreiden met detail drawer.
 - [x] Acties: dismiss, create item, link to item, mark support.
 - [x] Eenvoudige non-AI duplicate search.
-- [ ] AI triage job pas daarna.
+- [x] AI triage job met idempotente suggestie-opslag.
 
 ## Eerstvolgende stap
 
-Bouw Fase 3a: AI-triage suggesties genereren, zonder automatische acties.
+Bouw Fase 3b: toon AI-triage suggesties in Platform als compacte voorstelkaart,
+zonder nieuwe handmatige formulierchaos.
 
 Concreet:
 
-1. Maak een backend service/job die per nieuwe `feedback_submission` een
-   `feedback_triage_suggestions` row schrijft.
-2. Laat de suggestie minimaal bevatten:
+1. Voeg in de feedback detail drawer een "AI voorstel" kaart toe.
+2. Laat de kaart minimaal zien:
    - korte samenvatting;
    - voorgesteld type/kind;
    - productgebied;
    - urgency/severity;
    - duplicate candidates met confidence;
    - voorgestelde actie: link, nieuw item, support of negeer.
-3. Voeg tests toe voor:
-   - idempotentie;
-   - AI-failure fallback;
-   - duplicate candidate shape;
-   - geen cross-tenant leakage.
-4. Toon daarna pas de suggestie in Platform als compacte "AI voorstel" kaart.
-5. Voeg daarna acties toe om het voorstel te accepteren of te corrigeren.
+3. Voeg acties toe om het voorstel te accepteren:
+   - link met bestaand item;
+   - maak nieuw item vanuit voorstel;
+   - markeer als support;
+   - negeer.
+4. Alleen correcties vragen input; standaard toont de UI vooral keuzes.
+5. Voeg endpoint- en UI-tests toe voor Platform-gating en response-shape.
 6. Pas daarna one-click sync toe naar GitHub Issues of feedback.getklai.com,
    altijd vanaf het canonical `feedback_item`.
 
