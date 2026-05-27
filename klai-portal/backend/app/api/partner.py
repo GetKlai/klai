@@ -380,6 +380,12 @@ def _mapping(row: Any) -> dict[str, Any]:
         return {}
 
 
+def _isoformat(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value.isoformat())
+
+
 def _message_payload(row: Any) -> dict[str, Any]:
     data = _mapping(row)
     return {
@@ -391,7 +397,7 @@ def _message_payload(row: Any) -> dict[str, Any]:
         "model_alias": data.get("model_alias"),
         "completion_id": data.get("completion_id"),
         "sequence": data.get("sequence"),
-        "created_at": data.get("created_at").isoformat() if data.get("created_at") else None,
+        "created_at": _isoformat(data.get("created_at")),
     }
 
 
@@ -406,9 +412,9 @@ def _session_payload(row: Any, messages: list[dict[str, Any]]) -> dict[str, Any]
         "subject": data.get("subject_snapshot"),
         "status": data.get("status"),
         "message_count": data.get("message_count") or len(messages),
-        "created_at": data.get("created_at").isoformat() if data.get("created_at") else None,
-        "updated_at": data.get("updated_at").isoformat() if data.get("updated_at") else None,
-        "last_message_at": data.get("last_message_at").isoformat() if data.get("last_message_at") else None,
+        "created_at": _isoformat(data.get("created_at")),
+        "updated_at": _isoformat(data.get("updated_at")),
+        "last_message_at": _isoformat(data.get("last_message_at")),
         "messages": messages,
     }
 
