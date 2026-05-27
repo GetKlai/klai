@@ -8,6 +8,7 @@ import type {
   PlatformOrg,
   PlatformBot,
   PlatformChatError,
+  PlatformFeedbackSubmission,
   PlatformOrgDetail,
   PlatformKB,
   PlatformTemplate,
@@ -112,6 +113,20 @@ export function usePlatformChatErrors() {
     queryKey: ['platform-chat-errors'],
     queryFn: async () =>
       apiFetch<PlatformChatError[]>('/api/admin/platform/chat-errors?limit=100'),
+    enabled: auth.isAuthenticated,
+  })
+}
+
+export function usePlatformFeedbackSubmissions(search: string) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-feedback-submissions', search],
+    queryFn: async () =>
+      apiFetch<PlatformFeedbackSubmission[]>(
+        `/api/admin/platform/feedback-submissions?limit=200${
+          search ? `&search=${encodeURIComponent(search)}` : ''
+        }`,
+      ),
     enabled: auth.isAuthenticated,
   })
 }

@@ -103,6 +103,23 @@ class PlatformChatError(BaseModel):
     created_at: datetime
 
 
+class PlatformFeedbackSubmission(BaseModel):
+    id: int
+    org_id: int | None
+    org_name: str | None
+    org_slug: str | None
+    user_id: str | None
+    event_type: str
+    raw_text: str | None
+    feedback_type: str | None
+    severity: str | None
+    page_url: str | None
+    route_id: str | None
+    locale: str | None
+    viewport: str | None
+    created_at: datetime
+
+
 class PlatformKB(BaseModel):
     id: int
     name: str
@@ -746,6 +763,98 @@ async def platform_chat_errors(
             org_name=r.org_name,
             event_type=r.event_type,
             detail=r.detail,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/feedback-submissions", response_model=list[PlatformFeedbackSubmission])
+async def platform_feedback_submissions(
+    search: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> list[PlatformFeedbackSubmission]:
+    """Recent first-party assistant submissions across tenants.
+
+    This is the first visibility slice for SPEC-KLAI-FEEDBACK-001. It reads the
+    existing product event capture so current and historical assistant form
+    submissions appear in Platform before the dedicated feedback tables land.
+    """
+    await _audit(perms, "feedback", search)
+    params: dict[str, object] = {"limit": limit}
+    search_sql = ""
+    if search:
+        params["q"] = f"%{search}%"
+        search_sql = """
+          AND (
+            o.name ILIKE :q
+            OR o.slug ILIKE :q
+            OR e.user_id ILIKE :q
+            OR e.event_type ILIKE :q
+            OR e.properties->>'raw_text' ILIKE :q
+            OR e.properties->>'page_url' ILIKE :q
+            OR e.properties->>'route_id' ILIKE :q
+          )
+        """
+
+    async with cross_org_session() as db:
+        try:
+            rows = (
+                await db.execute(
+                    text(
+                        """
+                        SELECT
+                          e.id,
+                          e.org_id,
+                          o.name AS org_name,
+                          o.slug AS org_slug,
+                          e.user_id,
+                          e.event_type,
+                          e.properties->>'raw_text' AS raw_text,
+                          e.properties->>'feedback_type' AS feedback_type,
+                          e.properties->>'severity' AS severity,
+                          e.properties->>'page_url' AS page_url,
+                          e.properties->>'route_id' AS route_id,
+                          e.properties->>'locale' AS locale,
+                          e.properties->>'viewport' AS viewport,
+                          e.created_at
+                        FROM product_events e
+                        LEFT JOIN portal_orgs o ON o.id = e.org_id
+                        WHERE e.event_type IN (
+                          'klai_assistant.question',
+                          'klai_assistant.feedback',
+                          'klai_assistant.problem_report'
+                        )
+                        """
+                        + search_sql
+                        + """
+                        ORDER BY e.created_at DESC
+                        LIMIT :limit
+                        """
+                    ),
+                    params,
+                )
+            ).all()
+        except Exception:
+            logger.warning("platform_feedback_submissions_query_failed", exc_info=True)
+            return []
+
+    return [
+        PlatformFeedbackSubmission(
+            id=r.id,
+            org_id=r.org_id,
+            org_name=r.org_name,
+            org_slug=r.org_slug,
+            user_id=r.user_id,
+            event_type=r.event_type,
+            raw_text=r.raw_text,
+            feedback_type=r.feedback_type,
+            severity=r.severity,
+            page_url=r.page_url,
+            route_id=r.route_id,
+            locale=r.locale,
+            viewport=r.viewport,
             created_at=r.created_at,
         )
         for r in rows
