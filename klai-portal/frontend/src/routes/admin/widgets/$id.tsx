@@ -5,6 +5,7 @@ import {
   Shield,
   Palette,
   Code2,
+  Plug,
   Activity,
   AlertTriangle,
   Loader2,
@@ -17,16 +18,18 @@ import { DetailsTab } from './_components/tabs/DetailsTab'
 import { KnowledgeBasesTab } from './_components/tabs/KnowledgeBasesTab'
 import { AppearanceTab } from './_components/tabs/AppearanceTab'
 import { EmbedTab } from './_components/tabs/EmbedTab'
+import { IntegrationsTab } from './_components/tabs/IntegrationsTab'
 import { ActivityTab } from './_components/tabs/ActivityTab'
 import { DangerTab } from './_components/tabs/DangerTab'
 
-type TabId = 'details' | 'kbs' | 'appearance' | 'embed' | 'activity' | 'danger'
+type TabId = 'details' | 'kbs' | 'appearance' | 'embed' | 'integrations' | 'activity' | 'danger'
 
 const VALID_TABS = new Set<TabId>([
   'details',
   'kbs',
   'appearance',
   'embed',
+  'integrations',
   'activity',
   'danger',
 ])
@@ -51,7 +54,13 @@ function WidgetDetailPage() {
 
   const { data: widget, isLoading, error, refetch } = useWidget(id)
 
-  const activeTab: TabId = search.tab ?? 'details'
+  const showInternalIntegrations =
+    typeof window !== 'undefined' && window.location.hostname === 'getklai.getklai.com'
+  const requestedTab: TabId = search.tab ?? 'details'
+  const activeTab: TabId =
+    requestedTab === 'integrations' && !showInternalIntegrations
+      ? 'details'
+      : requestedTab
 
   if (isLoading) {
     return (
@@ -82,6 +91,9 @@ function WidgetDetailPage() {
     { id: 'kbs', label: m.admin_shared_wizard_step_kb_access(), icon: Shield },
     { id: 'appearance', label: m.admin_widgets_wizard_step_appearance(), icon: Palette },
     { id: 'embed', label: m.admin_widgets_wizard_step_embed(), icon: Code2 },
+    ...(showInternalIntegrations
+      ? [{ id: 'integrations' as const, label: m.admin_widgets_integrations_tab(), icon: Plug }]
+      : []),
     { id: 'activity', label: 'Activiteit', icon: Activity },
     { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
   ]
@@ -118,7 +130,7 @@ function WidgetDetailPage() {
         </Button>
       </div>
 
-      <div className="border-b border-gray-200">
+      <div className="overflow-x-auto border-b border-gray-200">
         <nav className="-mb-px flex gap-6">
           {tabs.map(({ id: tabId, label, icon: TabIcon }) => {
             const isActive = tabId === activeTab
@@ -129,7 +141,7 @@ function WidgetDetailPage() {
                 variant="link"
                 onClick={() => setTab(tabId)}
                 className={[
-                  'h-auto rounded-none px-0 pb-3 text-sm font-medium no-underline border-b-2 transition-colors hover:no-underline',
+                  'h-auto shrink-0 rounded-none px-0 pb-3 text-sm font-medium no-underline border-b-2 transition-colors hover:no-underline',
                   isActive
                     ? 'border-gray-200 text-gray-900'
                     : 'border-transparent text-gray-400 hover:text-gray-900',
@@ -147,6 +159,9 @@ function WidgetDetailPage() {
       {activeTab === 'kbs' && <KnowledgeBasesTab widget={widget} />}
       {activeTab === 'appearance' && <AppearanceTab widget={widget} />}
       {activeTab === 'embed' && <EmbedTab widget={widget} />}
+      {activeTab === 'integrations' && showInternalIntegrations && (
+        <IntegrationsTab widget={widget} />
+      )}
       {activeTab === 'activity' && <ActivityTab widget={widget} />}
       {activeTab === 'danger' && <DangerTab widget={widget} />}
     </div>
