@@ -29,6 +29,15 @@ from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess, generate_widget_id
 from app.services.events import emit_event
+from app.services.hubspot_custom_channel import (
+    HubSpotAPIError,
+    HubSpotChannelAccount,
+    HubSpotNotConfiguredError,
+    ensure_channel_account,
+    hubspot_webchat_configured,
+    send_test_message,
+    set_channel_account_authorized,
+)
 from app.services.widget_auth import generate_session_token
 
 logger = structlog.get_logger()
@@ -39,6 +48,25 @@ router = APIRouter(prefix="/api/admin/widgets", tags=["Widgets Admin"])
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
+
+
+class HubSpotWidgetIntegration(BaseModel):
+    status: Literal["not_connected", "connected", "disconnected", "error"] = "not_connected"
+    portal_id: str | None = None
+    channel_id: str | None = None
+    channel_account_id: str | None = None
+    inbox_id: str | None = None
+    help_desk_url: str | None = None
+    last_connected_at: str | None = None
+    last_disconnected_at: str | None = None
+    last_rebuilt_at: str | None = None
+    last_tested_at: str | None = None
+    last_test_thread_id: str | None = None
+    last_error: str | None = None
+
+
+class WidgetIntegrations(BaseModel):
+    hubspot: HubSpotWidgetIntegration = Field(default_factory=HubSpotWidgetIntegration)
 
 
 class WidgetConfig(BaseModel):
@@ -70,6 +98,7 @@ class WidgetConfig(BaseModel):
     collect_user_info: bool = False
     page_context_enabled: bool = False
     widget_position: str = "right"  # 'left' | 'right'
+    integrations: WidgetIntegrations = Field(default_factory=lambda: WidgetIntegrations())
 
 
 class CreateWidgetRequest(BaseModel):
@@ -115,6 +144,22 @@ class UpdateWidgetRequest(BaseModel):
     allow_any_origin: bool | None = None
 
 
+class HubSpotIntegrationStatusResponse(BaseModel):
+    configured: bool
+    status: Literal["not_configured", "not_connected", "connected", "disconnected", "error"]
+    portal_id: str | None = None
+    channel_id: str | None = None
+    channel_account_id: str | None = None
+    inbox_id: str | None = None
+    help_desk_url: str | None = None
+    last_connected_at: str | None = None
+    last_disconnected_at: str | None = None
+    last_rebuilt_at: str | None = None
+    last_tested_at: str | None = None
+    last_test_thread_id: str | None = None
+    last_error: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -143,6 +188,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             collect_user_info=config.get("collect_user_info", False),
             page_context_enabled=config.get("page_context_enabled", False),
             widget_position=config.get("widget_position", "right"),
+            integrations=config.get("integrations", {}),
         ),
         public_share_enabled=widget.public_share_enabled,
         allow_any_origin=getattr(widget, "allow_any_origin", False),
@@ -152,6 +198,84 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
         created_at=str(widget.created_at),
         created_by=widget.created_by,
     )
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _assert_internal_hubspot_allowed(perms: UserPermissions) -> None:
+    if perms.org_slug != settings.platform_org_slug:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Integration not found")
+
+
+def _hubspot_from_widget(widget: Widget) -> HubSpotWidgetIntegration:
+    config = widget.widget_config or {}
+    integrations = config.get("integrations") if isinstance(config.get("integrations"), dict) else {}
+    hubspot = integrations.get("hubspot") if isinstance(integrations, dict) else {}
+    if not isinstance(hubspot, dict):
+        hubspot = {}
+    return HubSpotWidgetIntegration(**hubspot)
+
+
+def _store_hubspot_on_widget(widget: Widget, hubspot: HubSpotWidgetIntegration) -> None:
+    config = dict(widget.widget_config or {})
+    integrations = dict(config.get("integrations") or {})
+    integrations["hubspot"] = hubspot.model_dump()
+    config["integrations"] = integrations
+    widget.widget_config = config
+
+
+def _hubspot_status_response(hubspot: HubSpotWidgetIntegration) -> HubSpotIntegrationStatusResponse:
+    configured = hubspot_webchat_configured()
+    status_value: Literal["not_configured", "not_connected", "connected", "disconnected", "error"]
+    if not configured:
+        status_value = "not_configured"
+    else:
+        status_value = hubspot.status
+    return HubSpotIntegrationStatusResponse(
+        configured=configured,
+        status=status_value,
+        portal_id=hubspot.portal_id or settings.hubspot_webchat_portal_id or None,
+        channel_id=hubspot.channel_id or settings.hubspot_webchat_custom_channel_id or None,
+        channel_account_id=hubspot.channel_account_id,
+        inbox_id=hubspot.inbox_id or settings.hubspot_webchat_inbox_id or None,
+        help_desk_url=hubspot.help_desk_url or settings.hubspot_webchat_help_desk_url or None,
+        last_connected_at=hubspot.last_connected_at,
+        last_disconnected_at=hubspot.last_disconnected_at,
+        last_rebuilt_at=hubspot.last_rebuilt_at,
+        last_tested_at=hubspot.last_tested_at,
+        last_test_thread_id=hubspot.last_test_thread_id,
+        last_error=hubspot.last_error,
+    )
+
+
+def _connected_hubspot_from_account(
+    account: HubSpotChannelAccount,
+    previous: HubSpotWidgetIntegration,
+    *,
+    connected_at: str | None = None,
+    rebuilt_at: str | None = None,
+) -> HubSpotWidgetIntegration:
+    return previous.model_copy(
+        update={
+            "status": "connected",
+            "portal_id": settings.hubspot_webchat_portal_id,
+            "channel_id": account.channel_id,
+            "channel_account_id": account.id,
+            "inbox_id": account.inbox_id,
+            "help_desk_url": settings.hubspot_webchat_help_desk_url,
+            "last_connected_at": connected_at or previous.last_connected_at or _now_iso(),
+            "last_rebuilt_at": rebuilt_at or previous.last_rebuilt_at,
+            "last_error": None,
+        }
+    )
+
+
+def _hubspot_http_error(exc: HubSpotAPIError | HubSpotNotConfiguredError) -> HTTPException:
+    if isinstance(exc, HubSpotNotConfiguredError):
+        return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
 
 async def _get_widget_or_404(
@@ -393,6 +517,167 @@ async def widget_preview_session(
         chat_endpoint="/partner/v1/chat/completions",
         session_expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
     )
+
+
+# ---------------------------------------------------------------------------
+# HubSpot integration lifecycle (internal getklai org only)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{widget_id}/integrations/hubspot", response_model=HubSpotIntegrationStatusResponse)
+async def get_hubspot_integration_status(
+    widget_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> HubSpotIntegrationStatusResponse:
+    _assert_internal_hubspot_allowed(perms)
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    return _hubspot_status_response(_hubspot_from_widget(widget))
+
+
+@router.post("/{widget_id}/integrations/hubspot/connect", response_model=HubSpotIntegrationStatusResponse)
+async def connect_hubspot_integration(
+    widget_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> HubSpotIntegrationStatusResponse:
+    _assert_internal_hubspot_allowed(perms)
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    previous = _hubspot_from_widget(widget)
+    try:
+        account = await ensure_channel_account(previous.channel_account_id)
+    except (HubSpotAPIError, HubSpotNotConfiguredError) as exc:
+        failed = previous.model_copy(update={"status": "error", "last_error": str(exc)})
+        _store_hubspot_on_widget(widget, failed)
+        await db.commit()
+        raise _hubspot_http_error(exc) from exc
+
+    next_state = _connected_hubspot_from_account(account, previous, connected_at=_now_iso())
+    _store_hubspot_on_widget(widget, next_state)
+    await db.commit()
+    emit_event(
+        "widget.hubspot_connected",
+        org_id=perms.org_id,
+        user_id=perms.user_id,
+        properties={"widget_id": widget.id, "channel_account_id": account.id},
+    )
+    return _hubspot_status_response(next_state)
+
+
+@router.post("/{widget_id}/integrations/hubspot/disconnect", response_model=HubSpotIntegrationStatusResponse)
+async def disconnect_hubspot_integration(
+    widget_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> HubSpotIntegrationStatusResponse:
+    _assert_internal_hubspot_allowed(perms)
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    previous = _hubspot_from_widget(widget)
+    if previous.channel_account_id:
+        try:
+            await set_channel_account_authorized(previous.channel_account_id, authorized=False)
+        except (HubSpotAPIError, HubSpotNotConfiguredError) as exc:
+            failed = previous.model_copy(update={"status": "error", "last_error": str(exc)})
+            _store_hubspot_on_widget(widget, failed)
+            await db.commit()
+            raise _hubspot_http_error(exc) from exc
+
+    next_state = previous.model_copy(
+        update={
+            "status": "disconnected",
+            "last_disconnected_at": _now_iso(),
+            "last_error": None,
+        }
+    )
+    _store_hubspot_on_widget(widget, next_state)
+    await db.commit()
+    emit_event(
+        "widget.hubspot_disconnected",
+        org_id=perms.org_id,
+        user_id=perms.user_id,
+        properties={"widget_id": widget.id, "channel_account_id": previous.channel_account_id},
+    )
+    return _hubspot_status_response(next_state)
+
+
+@router.post("/{widget_id}/integrations/hubspot/rebuild", response_model=HubSpotIntegrationStatusResponse)
+async def rebuild_hubspot_integration(
+    widget_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> HubSpotIntegrationStatusResponse:
+    _assert_internal_hubspot_allowed(perms)
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    previous = _hubspot_from_widget(widget)
+    try:
+        account = await ensure_channel_account(previous.channel_account_id)
+    except (HubSpotAPIError, HubSpotNotConfiguredError) as exc:
+        failed = previous.model_copy(update={"status": "error", "last_error": str(exc)})
+        _store_hubspot_on_widget(widget, failed)
+        await db.commit()
+        raise _hubspot_http_error(exc) from exc
+
+    next_state = _connected_hubspot_from_account(account, previous, rebuilt_at=_now_iso())
+    _store_hubspot_on_widget(widget, next_state)
+    await db.commit()
+    emit_event(
+        "widget.hubspot_rebuilt",
+        org_id=perms.org_id,
+        user_id=perms.user_id,
+        properties={"widget_id": widget.id, "channel_account_id": account.id},
+    )
+    return _hubspot_status_response(next_state)
+
+
+@router.post("/{widget_id}/integrations/hubspot/test-message", response_model=HubSpotIntegrationStatusResponse)
+async def test_hubspot_integration(
+    widget_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> HubSpotIntegrationStatusResponse:
+    _assert_internal_hubspot_allowed(perms)
+    widget = await _get_widget_or_404(widget_id, perms.org_id, db)
+    previous = _hubspot_from_widget(widget)
+    if not previous.channel_account_id or previous.status != "connected":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="HubSpot is not connected")
+    try:
+        message = await send_test_message(
+            previous.channel_account_id,
+            widget_name=widget.name,
+            widget_public_id=widget.widget_id,
+        )
+    except (HubSpotAPIError, HubSpotNotConfiguredError) as exc:
+        failed = previous.model_copy(update={"status": "error", "last_error": str(exc)})
+        _store_hubspot_on_widget(widget, failed)
+        await db.commit()
+        raise _hubspot_http_error(exc) from exc
+
+    next_state = previous.model_copy(
+        update={
+            "status": "connected",
+            "last_tested_at": _now_iso(),
+            "last_test_thread_id": str(message.get("conversationsThreadId") or ""),
+            "last_error": None,
+        }
+    )
+    _store_hubspot_on_widget(widget, next_state)
+    await db.commit()
+    emit_event(
+        "widget.hubspot_test_message_sent",
+        org_id=perms.org_id,
+        user_id=perms.user_id,
+        properties={
+            "widget_id": widget.id,
+            "channel_account_id": previous.channel_account_id,
+            "conversations_thread_id": next_state.last_test_thread_id,
+        },
+    )
+    return _hubspot_status_response(next_state)
 
 
 # ---------------------------------------------------------------------------

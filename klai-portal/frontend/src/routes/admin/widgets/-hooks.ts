@@ -12,6 +12,7 @@ import type {
   ConversationDetail,
   WidgetStats,
   StatsPeriod,
+  HubSpotIntegrationStatus,
 } from './-types'
 
 export function useWidgets() {
@@ -119,6 +120,38 @@ export function useWidgetStats(widgetId: string, period: StatsPeriod) {
         `/api/admin/widgets/${widgetId}/stats?period=${period}`,
       ),
     enabled: auth.isAuthenticated && !!widgetId,
+  })
+}
+
+export function useHubSpotIntegration(widgetId: string) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['admin-widget-hubspot-integration', widgetId],
+    queryFn: async () =>
+      apiFetch<HubSpotIntegrationStatus>(
+        `/api/admin/widgets/${widgetId}/integrations/hubspot`,
+      ),
+    enabled: auth.isAuthenticated && !!widgetId,
+  })
+}
+
+export function useHubSpotIntegrationAction(
+  widgetId: string,
+  action: 'connect' | 'disconnect' | 'rebuild' | 'test-message',
+) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async () =>
+      apiFetch<HubSpotIntegrationStatus>(
+        `/api/admin/widgets/${widgetId}/integrations/hubspot/${action}`,
+        { method: 'POST' },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['admin-widget-hubspot-integration', widgetId],
+      })
+      void queryClient.invalidateQueries({ queryKey: ['admin-widget', widgetId] })
+    },
   })
 }
 

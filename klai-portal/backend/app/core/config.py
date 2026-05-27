@@ -170,6 +170,20 @@ class Settings(BaseSettings):
     ms_docs_client_secret: str = ""
     ms_docs_tenant_id: str = "common"  # multi-tenant default; accepts any M365 tenant
 
+    # HubSpot Custom Channel for internal Klai webchat support fallback.
+    # Empty client/refresh token disables the admin lifecycle API while keeping
+    # the read-only status endpoint available.
+    hubspot_webchat_client_id: str = ""
+    hubspot_webchat_client_secret: str = ""
+    hubspot_webchat_refresh_token: str = ""
+    hubspot_webchat_portal_id: str = "147785398"
+    hubspot_webchat_app_id: str = "40776849"
+    hubspot_webchat_custom_channel_id: str = "2930388"
+    hubspot_webchat_inbox_id: str = "1364799639"
+    hubspot_webchat_channel_account_name: str = "Klai Webchat Support"
+    hubspot_webchat_delivery_identifier: str = "klai-webchat-support"
+    hubspot_webchat_help_desk_url: str = "https://app.hubspot.com/help-desk/147785398/views/all/open"
+
     # SPEC-LAUNCH-SOFTLAUNCH-001 B-2: HMAC key for waitlist invite tokens.
     # Empty in dev/CI — feature degrades to "no bypass possible" rather than
     # crashing. Generate with: openssl rand -base64 48

@@ -85,6 +85,7 @@ def test_widget_config_defaults():
     assert config.welcome_message == ""
     assert config.system_prompt == ""
     assert config.css_variables == {}
+    assert config.integrations.hubspot.status == "not_connected"
     assert "public_share_enabled" not in WidgetConfig.model_fields
 
 
