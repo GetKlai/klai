@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # SPEC-SEC-010 REQ-2.5: maximum allowed length of a single conversation_history entry's
 # content field. Longer strings are rejected with HTTP 422 at the Pydantic layer.
 _CONVERSATION_CONTENT_MAX_CHARS = 8_000
+
+
+class PageContext(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    url: str | None = Field(default=None, max_length=2048)
+    path: str | None = Field(default=None, max_length=512)
+    title: str | None = Field(default=None, max_length=512)
+    referrer: str | None = Field(default=None, max_length=2048)
+    excerpt: str | None = Field(default=None, max_length=2000)
 
 
 class RetrieveRequest(BaseModel):
@@ -24,7 +34,7 @@ class RetrieveRequest(BaseModel):
     conversation_history: list[dict] = Field(default_factory=list, max_length=20)
     # Optional page metadata from embedded widgets. URL is used only as a weak
     # ranking hint; excerpt remains caller context and is never a hard retrieval scope.
-    page_context: dict[str, str] | None = None
+    page_context: PageContext | None = None
     # SPEC-SEC-010 REQ-2.3: kb_slugs list length bounded to 20 entries.
     kb_slugs: list[str] | None = Field(None, max_length=20)
     # SPEC-SEC-010 REQ-2.4: taxonomy_node_ids list length bounded to 50 entries.

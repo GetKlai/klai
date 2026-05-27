@@ -29,6 +29,33 @@ class TestRetrieveRequest:
         assert req.user_id == "user-1"
         assert req.top_k == 3
 
+    def test_page_context_is_bounded_and_drops_unknown_fields(self):
+        req = RetrieveRequest(
+            query="test",
+            org_id="org-1",
+            page_context={
+                "url": "https://example.com/docs/widget",
+                "path": "/docs/widget",
+                "title": "Widget",
+                "ignored": "nope",
+            },
+        )
+
+        assert req.page_context is not None
+        assert req.page_context.model_dump(exclude_none=True) == {
+            "url": "https://example.com/docs/widget",
+            "path": "/docs/widget",
+            "title": "Widget",
+        }
+
+    def test_page_context_rejects_oversized_values(self):
+        with pytest.raises(ValidationError):
+            RetrieveRequest(
+                query="test",
+                org_id="org-1",
+                page_context={"excerpt": "x" * 2001},
+            )
+
     def test_invalid_scope(self):
         with pytest.raises(ValidationError):
             RetrieveRequest(query="hello", org_id="org-1", scope="invalid")
