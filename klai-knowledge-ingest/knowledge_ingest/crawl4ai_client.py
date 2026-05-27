@@ -13,7 +13,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from html import unescape
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urldefrag, urlparse, urlunparse
 
 import httpx
@@ -78,6 +78,39 @@ class CrawlResult:
     error_message: str | None = None
     metadata: dict[str, Any] | None = None
     response_headers: dict[str, str] | None = None
+
+
+DiscoverySourceKind = Literal["start", "sitemap", "page_link"]
+DiscoveryStatus = Literal["queued", "fetched", "omitted"]
+
+
+@dataclass
+class DiscoveredUrl:
+    """One URL in Klai's crawl frontier ledger.
+
+    Crawl4AI renders pages and extracts links; Klai owns the crawl plan.
+    The ledger lets us explain every in-scope discovered URL as fetched or
+    deliberately omitted instead of silently losing URLs inside a third-party
+    BFS frontier.
+    """
+
+    url: str
+    canonical_url: str
+    depth: int
+    discovered_from: str | None
+    source_kind: DiscoverySourceKind
+    priority: int
+    order: int
+    status: DiscoveryStatus = "queued"
+    reason_code: str | None = None
+
+
+_PRIORITY_START = 0
+_PRIORITY_SITEMAP = 10
+_PRIORITY_SECTION_ROOT = 20
+_PRIORITY_LISTING_CHILD = 25
+_PRIORITY_PAGE_LINK = 50
+_LISTING_LINK_THRESHOLD = 50
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +714,194 @@ async def crawl_page(
     return result
 
 
+class CrawlLedger:
+    """Deterministic crawl frontier + audit ledger."""
+
+    def __init__(
+        self,
+        *,
+        start_url: str,
+        base_domain: str,
+        include_patterns: list[str] | None,
+        exclude_patterns: list[str] | None,
+        max_depth: int,
+    ) -> None:
+        self.start_url = start_url
+        self.base_domain = base_domain
+        self.include_patterns = include_patterns
+        self.exclude_patterns = exclude_patterns
+        self.max_depth = max_depth
+        self._by_canonical: dict[str, DiscoveredUrl] = {}
+        self._order = 0
+
+    @property
+    def discovered_count(self) -> int:
+        return len(self._by_canonical)
+
+    def add_start(self) -> None:
+        self.add(
+            self.start_url,
+            depth=0,
+            discovered_from=None,
+            source_kind="start",
+            priority=_PRIORITY_START,
+            force=True,
+        )
+
+    def add_sitemap_urls(self, urls: list[str]) -> None:
+        for url in urls:
+            self.add(
+                url,
+                depth=1,
+                discovered_from=None,
+                source_kind="sitemap",
+                priority=_PRIORITY_SITEMAP,
+            )
+
+    def add_links_from_result(self, result: CrawlResult, *, source_depth: int) -> None:
+        internal = (result.links or {}).get("internal") or []
+        source_listing = _is_listing_source(result)
+        for entry in internal:
+            href = entry.get("href") if isinstance(entry, dict) else None
+            if not href:
+                continue
+            priority = (
+                _PRIORITY_LISTING_CHILD
+                if source_listing
+                else _priority_for_discovered_url(href)
+            )
+            self.add(
+                href,
+                depth=source_depth + 1,
+                discovered_from=result.url,
+                source_kind="page_link",
+                priority=priority,
+            )
+
+    def add(
+        self,
+        url: str,
+        *,
+        depth: int,
+        discovered_from: str | None,
+        source_kind: DiscoverySourceKind,
+        priority: int,
+        force: bool = False,
+    ) -> bool:
+        if not url:
+            return False
+        if not _same_site_domain(urlparse(url).netloc.lower(), self.base_domain):
+            return False
+        url = _coerce_same_site_url_to_base_host(url, self.base_domain)
+        if not force:
+            if not _url_matches_include_patterns(url, self.include_patterns):
+                return False
+            if _url_matches_patterns(url, self.exclude_patterns):
+                return False
+        canonical = _canonicalise_url(url)
+        existing = self._by_canonical.get(canonical)
+        if existing is not None:
+            if depth < existing.depth:
+                existing.depth = depth
+                existing.discovered_from = discovered_from
+                existing.source_kind = source_kind
+            existing.priority = min(existing.priority, priority)
+            return False
+        self._order += 1
+        self._by_canonical[canonical] = DiscoveredUrl(
+            url=url,
+            canonical_url=canonical,
+            depth=depth,
+            discovered_from=discovered_from,
+            source_kind=source_kind,
+            priority=priority,
+            order=self._order,
+        )
+        return True
+
+    def next_batch(self, *, remaining_budget: int) -> list[str]:
+        if remaining_budget <= 0:
+            return []
+        queued = [
+            item
+            for item in self._by_canonical.values()
+            if item.status == "queued" and item.depth <= self.max_depth
+        ]
+        queued.sort(key=lambda i: (i.priority, i.depth, i.order))
+        return [item.url for item in queued[:remaining_budget]]
+
+    def mark_outcome(self, outcome: FetchOutcome) -> None:
+        item = self._by_canonical.get(_canonicalise_url(str(outcome.get("url") or "")))
+        if item is None:
+            return
+        item.status = "fetched"
+        item.reason_code = str(outcome.get("reason_code") or "")
+
+    def depth_for_url(self, url: str) -> int | None:
+        item = self._by_canonical.get(_canonicalise_url(url))
+        return item.depth if item else None
+
+    def mark_unfetched(self, *, fetched_count: int, max_pages: int) -> None:
+        budget_exhausted = fetched_count >= max_pages
+        for item in self._by_canonical.values():
+            if item.status != "queued":
+                continue
+            item.status = "omitted"
+            if item.depth > self.max_depth:
+                item.reason_code = FetchReasonCode.NOT_FETCHED_DEPTH_LIMIT.value
+            elif budget_exhausted:
+                item.reason_code = FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value
+            else:
+                item.reason_code = FetchReasonCode.NOT_FETCHED_DISCOVERY_LIMIT.value
+
+    def omitted_outcomes(self) -> list[FetchOutcome]:
+        omitted = [
+            item
+            for item in self._by_canonical.values()
+            if item.status == "omitted" and item.reason_code
+        ]
+        omitted.sort(key=lambda i: (i.priority, i.depth, i.order))
+        return [
+            {
+                "url": item.url,
+                "reason_code": item.reason_code,
+                "status_code": None,
+                "content_length": 0,
+            }
+            for item in omitted
+        ]
+
+
+def _priority_for_discovered_url(url: str) -> int:
+    segments = _path_segments(url)
+    if 1 < len(segments) <= 2:
+        return _PRIORITY_SECTION_ROOT
+    return _PRIORITY_PAGE_LINK
+
+
+def _is_listing_source(result: CrawlResult) -> bool:
+    internal = (result.links or {}).get("internal") or []
+    if len(internal) >= _LISTING_LINK_THRESHOLD:
+        return True
+    return _is_non_content_listing_page(result)
+
+
+def _crawl_results_from_raw_results(
+    raw_results: list[dict[str, Any]],
+    *,
+    base_domain: str,
+) -> list[CrawlResult]:
+    """Parse successful same-domain responses for follow-up link discovery."""
+    results: list[CrawlResult] = []
+    for page in raw_results:
+        if not page:
+            continue
+        result = _extract_result(page.get("url") or "", page)
+        if result.success and _same_site_domain(urlparse(result.url).netloc.lower(), base_domain):
+            results.append(result)
+    return results
+
+
 async def crawl_site(
     start_url: str,
     selector: str | None = None,
@@ -691,44 +912,11 @@ async def crawl_site(
     login_indicator_selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
-    """Crawl a site via server-side BFS deep crawl + sitemap orphan supplement.
+    """Crawl a site with a Klai-owned deterministic frontier.
 
-    Two-phase architecture:
-
-    1. **Phase 1 — Server-side recursive BFS** (``/crawl/job`` +
-       ``BFSDeepCrawlStrategy``): crawl4ai walks the site link-graph
-       breadth-first up to ``max_depth`` levels and ``max_pages`` total,
-       respecting ``include_patterns`` via ``URLPatternFilter`` (real
-       fnmatch glob, not the substring approximation). crawl4ai's own
-       MemoryAdaptiveDispatcher handles concurrency safely server-side
-       — no client-side ``asyncio.gather`` over a shared connection.
-
-    2. **Phase 2 — Sitemap supplement** (chunked ``/crawl``): URLs in
-       ``sitemap.xml`` that the BFS did not visit (orphans, pages not
-       reachable via internal links from the start_url) are submitted via
-       the chunked-bulk-fetch path (≤100 URLs/request — crawl4ai 0.8
-       enforces that cap on the ``urls`` array). Per-chunk transport
-       failure logged but does not abort remaining chunks.
-
-    Phase 1 alone covers wikis/docs (recursive link-following). Phase 2
-    catches orphans (sitemap-only entries the homepage doesn't link to).
-    Together they reach the BOTH "everything in sitemap" AND "everything
-    reachable by following links" — a property neither alone provides.
-
-    Why two phases (and why the OLD pre-RECONCILE pattern was right):
-
-    - help.voys.nl: 208 sitemap entries, BFS-reachable subset is smaller →
-      Phase 1 covers most, Phase 2 fills the orphans.
-    - wiki.redcactus.cloud: no sitemap, ~150-300 internally-linked pages →
-      Phase 1 covers everything, Phase 2 is a no-op.
-
-    SPEC-INGEST-RECONCILE-001 replaced this pattern with "discovery
-    upfront, no recursion" because the old Phase 2 used
-    ``asyncio.gather(*[crawl_page(u)…], return_exceptions=True)`` which
-    silently dropped pages on concurrent-conn errors. THAT was the bug.
-    Phase 1 (server-side BFS) was always correct. The fix is to keep
-    Phase 1 and replace Phase 2's gather with the chunked-bulk-fetch
-    contract (which serialises work through crawl4ai's own dispatcher).
+    Crawl4AI renders pages and extracts links; Klai owns URL scheduling.
+    Every in-scope discovered URL is either fetched or emitted as a
+    ``not_fetched_*`` outcome, so page-budget/depth limits fail loudly.
 
     Returns ``(crawl_results, outcomes)``:
     - ``crawl_results``: same-domain pages with non-empty markdown.
@@ -743,111 +931,67 @@ async def crawl_site(
         selector,
         login_indicator_selector=login_indicator_selector,
     )
-
-    # ------------------------------------------------------------------
-    # Phase 1 — Server-side BFS deep crawl via crawl4ai BFSDeepCrawlStrategy.
-    # ------------------------------------------------------------------
-    bfs_results, bfs_error = await _bfs_deep_crawl(
+    ledger = CrawlLedger(
         start_url=start_url,
-        crawler_config=crawler_config,
-        max_depth=max_depth,
-        max_pages=max_pages,
+        base_domain=base_domain,
         include_patterns=include_patterns,
         exclude_patterns=exclude_patterns,
-        cookies=cookies,
+        max_depth=max_depth,
     )
-    # Same-domain + explicit-exclude guard: keep this even though
-    # exclude_patterns are also pushed into crawl4ai's BFS filter_chain. It
-    # protects progress counting / dirty-content decisions if crawl4ai changes
-    # filter semantics or sitemap/bulk results include an excluded URL.
-    bfs_results = [
-        r
-        for r in bfs_results
-        if _same_site_domain(urlparse(r.url).netloc.lower(), base_domain)
-        and not _url_matches_patterns(r.url, exclude_patterns)
-    ]
+    ledger.add_start()
 
-    # ------------------------------------------------------------------
-    # Phase 2 — Sitemap supplement: pages in sitemap.xml that BFS missed
-    # (orphans not reachable via internal links from start_url).
-    # ------------------------------------------------------------------
     sitemap_urls = await _fetch_sitemap_urls(start_url)
-    seen_canonicals: set[str] = {_canonicalise_url(start_url)}
-    seen_canonicals.update(_canonicalise_url(r.url) for r in bfs_results)
+    ledger.add_sitemap_urls(sitemap_urls)
 
-    supplement_candidates: list[str] = []
-    remaining_budget = max_pages - len(bfs_results)
-    for u in sitemap_urls:
-        if remaining_budget <= 0:
-            break
-        u = _coerce_same_site_url_to_base_host(u, base_domain)
-        canonical = _canonicalise_url(u)
-        if canonical in seen_canonicals:
-            continue
-        if not _url_matches_include_patterns(u, include_patterns):
-            continue
-        if _url_matches_patterns(u, exclude_patterns):
-            continue
-        if not _same_site_domain(urlparse(u).netloc.lower(), base_domain):
-            continue
-        seen_canonicals.add(canonical)
-        supplement_candidates.append(u)
-        remaining_budget -= 1
+    crawl_results: list[CrawlResult] = []
+    outcomes: list[FetchOutcome] = []
+    fetched_count = 0
 
-    logger.info(
-        "crawl_site_discovery_complete",
+    start_result = await _fetch_seed_page(
         start_url=start_url,
-        bfs_pages=len(bfs_results),
-        bfs_error=str(bfs_error) if bfs_error else None,
-        sitemap_urls=len(sitemap_urls),
-        supplement_candidates=len(supplement_candidates),
-        max_pages=max_pages,
-    )
-
-    supplement_raw_results, supplement_transport_error = await _chunked_bulk_fetch(
-        urls=supplement_candidates,
         crawler_config=crawler_config,
         cookies=cookies,
     )
+    start_outcome = _build_outcome_from_result(start_url, start_result)
+    ledger.mark_outcome(start_outcome)
+    outcomes.append(start_outcome)
+    fetched_count += 1
+    if _result_is_ingestable(start_result, base_domain=base_domain) and not _is_non_content_listing_page(start_result):
+        crawl_results.append(start_result)
+    if start_result.success:
+        ledger.add_links_from_result(start_result, source_depth=0)
 
-    # ------------------------------------------------------------------
-    # Combine BFS results + supplement results into the
-    # (crawl_results, outcomes) contract.
-    # ------------------------------------------------------------------
-    crawl_results: list[CrawlResult] = []
-    outcomes: list[FetchOutcome] = []
+    while fetched_count < max_pages:
+        batch = ledger.next_batch(remaining_budget=max_pages - fetched_count)
+        if not batch:
+            break
 
-    # BFS results: each visited page becomes one outcome + one ingestable
-    # result (when same-domain + non-empty markdown).
-    for r in bfs_results:
-        outcomes.append(_build_outcome_from_result(r.url, r))
-        if _result_is_ingestable(r, base_domain=base_domain) and not _is_non_content_listing_page(r):
-            crawl_results.append(r)
-
-    # If the BFS itself failed (network/timeout/5xx) AND we got no results,
-    # surface a transport_error outcome for start_url so operators see the
-    # failure in fetch_outcomes instead of a silent empty BFS.
-    if bfs_error is not None and not bfs_results:
-        outcomes.append(
-            {
-                "url": start_url,
-                "reason_code": FetchReasonCode.UNKNOWN_EXCEPTION.value,
-                "status_code": None,
-                "content_length": 0,
-            }
+        raw_results, transport_error = await _chunked_bulk_fetch(
+            urls=batch,
+            crawler_config=crawler_config,
+            cookies=cookies,
         )
+        fetched_count += len(batch)
 
-    # Supplement results: canonical-URL matched against the chunked-bulk
-    # response, with positional fallback for redirect cases (matches the
-    # RECONCILE contract).
-    supplement_results, supplement_outcomes = _combine_bulk_responses(
-        candidates=supplement_candidates,
-        raw_results=supplement_raw_results,
-        transport_error=supplement_transport_error,
-        base_domain=base_domain,
-    )
-    crawl_results.extend(supplement_results)
-    outcomes.extend(supplement_outcomes)
+        batch_results, batch_outcomes = _combine_bulk_responses(
+            candidates=batch,
+            raw_results=raw_results,
+            transport_error=transport_error,
+            base_domain=base_domain,
+        )
+        for outcome in batch_outcomes:
+            ledger.mark_outcome(outcome)
+        outcomes.extend(batch_outcomes)
+        crawl_results.extend(batch_results)
+
+        for result in _crawl_results_from_raw_results(raw_results, base_domain=base_domain):
+            source_depth = ledger.depth_for_url(result.url)
+            if source_depth is not None and source_depth < max_depth:
+                ledger.add_links_from_result(result, source_depth=source_depth)
+
+    ledger.mark_unfetched(fetched_count=fetched_count, max_pages=max_pages)
+    omitted_outcomes = ledger.omitted_outcomes()
+    outcomes.extend(omitted_outcomes)
 
     success_count = sum(1 for o in outcomes if o["reason_code"] == FetchReasonCode.SUCCESS.value)
     logger.info(
@@ -857,8 +1001,9 @@ async def crawl_site(
         results=len(crawl_results),
         success_outcomes=success_count,
         non_success_outcomes=len(outcomes) - success_count,
-        bfs_pages=len(bfs_results),
-        supplement_pages=len(supplement_results),
+        discovered_urls=ledger.discovered_count,
+        omitted_urls=len(omitted_outcomes),
+        max_pages=max_pages,
     )
 
     return crawl_results, outcomes
