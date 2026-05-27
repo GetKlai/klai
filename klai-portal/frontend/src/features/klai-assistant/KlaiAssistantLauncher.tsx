@@ -39,8 +39,12 @@ function currentContext(): AssistantContextPayload {
     typeof document !== 'undefined' && document.documentElement.lang
       ? document.documentElement.lang
       : 'nl'
+  const pageUrl =
+    typeof window === 'undefined'
+      ? ''
+      : `${window.location.origin}${window.location.pathname}`
   return {
-    page_url: typeof window === 'undefined' ? '' : window.location.href,
+    page_url: pageUrl,
     route_id: typeof window === 'undefined' ? undefined : window.location.pathname,
     locale,
     viewport:

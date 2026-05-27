@@ -7,6 +7,7 @@ not part of the public partner/widget API surface.
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -52,6 +53,11 @@ def _request_context(request: Request) -> dict[str, str | None]:
     }
 
 
+def _strip_url_query_and_fragment(url: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
 def _base_properties(
     body: AssistantContextIn,
     *,
@@ -60,7 +66,7 @@ def _base_properties(
 ) -> dict:
     return {
         "raw_text": body.raw_text,
-        "page_url": body.page_url,
+        "page_url": _strip_url_query_and_fragment(body.page_url),
         "route_id": body.route_id,
         "locale": body.locale,
         "viewport": body.viewport,
