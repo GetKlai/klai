@@ -20,6 +20,7 @@ export interface WidgetLabels {
   userInfoName: string
   userInfoEmail: string
   userInfoHelp: string
+  handoffConnectedWith: string
 }
 
 const nl: WidgetLabels = {
@@ -39,6 +40,7 @@ const nl: WidgetLabels = {
   userInfoName: "Naam",
   userInfoEmail: "E-mail",
   userInfoHelp: "Laat je gegevens achter voor opvolging.",
+  handoffConnectedWith: "Je praat met {name}.",
 }
 
 const en: WidgetLabels = {
@@ -58,6 +60,7 @@ const en: WidgetLabels = {
   userInfoName: "Name",
   userInfoEmail: "Email",
   userInfoHelp: "Leave your details for follow-up.",
+  handoffConnectedWith: "You are talking to {name}.",
 }
 
 const locales: Record<string, WidgetLabels> = { nl, en }

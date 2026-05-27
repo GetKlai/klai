@@ -66,6 +66,30 @@ def _thread_id_from_hubspot_payload(payload: dict[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+def _agent_name_from_hubspot_payload(payload: dict[str, Any]) -> str | None:
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return None
+
+    candidates: list[Any] = [
+        message.get("sender"),
+        message.get("from"),
+        message.get("createdBy"),
+    ]
+    senders = message.get("senders")
+    if isinstance(senders, list):
+        candidates.extend(senders)
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        for key in ("name", "fullName", "displayName", "email"):
+            value = candidate.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:120]
+    return None
+
+
 async def _publish_handoff_event(session_id: int, payload: dict[str, Any]) -> None:
     redis = await get_redis_pool()
     if redis is None:
@@ -386,7 +410,7 @@ async def list_visible_handoff_messages(
         await db.execute(
             text(
                 """
-                SELECT id, direction, content, hubspot_message_id, created_at
+                SELECT id, direction, content, hubspot_message_id, created_at, agent_name
                   FROM widget_handoff_messages
                  WHERE handoff_session_id = :handoff_session_id
                    AND visible_to_visitor = true
@@ -406,6 +430,7 @@ async def list_visible_handoff_messages(
             "content": str(row[2]),
             "hubspot_message_id": str(row[3]) if row[3] else None,
             "created_at": row[4].isoformat() if hasattr(row[4], "isoformat") else str(row[4]),
+            "agent_name": str(row[5]) if row[5] else None,
         }
         for row in rows
     ]
@@ -415,6 +440,7 @@ async def record_hubspot_agent_reply(db: AsyncSession, payload: dict[str, Any]) 
     thread_id = _thread_id_from_hubspot_payload(payload)
     message_id = _message_id_from_hubspot_payload(payload)
     content = _message_text_from_hubspot_payload(payload)
+    agent_name = _agent_name_from_hubspot_payload(payload)
     if not thread_id or not message_id or not content:
         return {"status": "ignored", "reason": "missing_required_fields"}
 
@@ -457,9 +483,9 @@ async def record_hubspot_agent_reply(db: AsyncSession, payload: dict[str, Any]) 
             text(
                 """
                 INSERT INTO widget_handoff_messages
-                    (handoff_session_id, org_id, direction, content, hubspot_message_id, visible_to_visitor)
+                    (handoff_session_id, org_id, direction, content, hubspot_message_id, visible_to_visitor, agent_name)
                 VALUES
-                    (:session_id, :org_id, 'agent', :content, :hubspot_message_id, true)
+                    (:session_id, :org_id, 'agent', :content, :hubspot_message_id, true, :agent_name)
                 ON CONFLICT (hubspot_message_id) WHERE hubspot_message_id IS NOT NULL DO NOTHING
                 RETURNING id, created_at
                 """
@@ -469,6 +495,7 @@ async def record_hubspot_agent_reply(db: AsyncSession, payload: dict[str, Any]) 
                 "org_id": org_id,
                 "content": content[:10000],
                 "hubspot_message_id": message_id,
+                "agent_name": agent_name,
             },
         )
     ).first()
@@ -482,6 +509,7 @@ async def record_hubspot_agent_reply(db: AsyncSession, payload: dict[str, Any]) 
         "handoff_session_id": session_id,
         "content": content[:10000],
         "hubspot_message_id": message_id,
+        "agent_name": agent_name,
     }
     try:
         await _publish_handoff_event(session_id, event)

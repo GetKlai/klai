@@ -49,6 +49,7 @@ async def test_record_hubspot_agent_reply_records_and_publishes() -> None:
             "id": "hubspot-msg-1",
             "conversationsThreadId": "19615248623",
             "text": "Hier een reactie",
+            "sender": {"name": "Mark Vletter"},
         }
     }
 
@@ -61,6 +62,7 @@ async def test_record_hubspot_agent_reply_records_and_publishes() -> None:
     assert result["handoff_session_id"] == 42
     assert result["id"] == 99
     assert db.execute.await_count == 5
+    assert db.execute.await_args_list[4].args[1]["agent_name"] == "Mark Vletter"
     db.commit.assert_awaited_once()
 
 

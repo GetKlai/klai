@@ -65,6 +65,9 @@ _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
 router = APIRouter(prefix="/partner/v1", tags=["Partner API"])
 
 _ALLOWED_MODELS = {"klai-primary", "klai-fast"}
+_WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
+_HUBSPOT_HANDOFF_DEV_TENANT_SLUG = "getklai"
+_HUBSPOT_HANDOFF_DEV_ORIGIN = "https://getklai.getklai.com"
 
 
 # ---------------------------------------------------------------------------
@@ -1366,6 +1369,36 @@ def _widget_cors_headers(origin: str, *, preflight: bool) -> dict[str, str]:
     return headers
 
 
+def _widget_client_session_id(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    value = request.query_params.get("session_id")
+    if not value:
+        return None
+    return value if _WIDGET_CLIENT_SESSION_RE.fullmatch(value) else None
+
+
+def _hubspot_handoff_enabled_for_widget(
+    *,
+    org: PortalOrg,
+    widget_config_data: dict[str, Any],
+    origin: str | None = None,
+) -> bool:
+    if org.slug != _HUBSPOT_HANDOFF_DEV_TENANT_SLUG:
+        return False
+    if origin is not None and origin != _HUBSPOT_HANDOFF_DEV_ORIGIN:
+        return False
+    integrations = widget_config_data.get("integrations")
+    if not isinstance(integrations, dict):
+        return False
+    hubspot = integrations.get("hubspot")
+    return bool(
+        isinstance(hubspot, dict)
+        and hubspot.get("status") == "connected"
+        and hubspot.get("channel_account_id")
+    )
+
+
 # ---------------------------------------------------------------------------
 # GET /partner/v1/widget-config  (SPEC-WIDGET-001 Task 2)
 # Public endpoint — NO auth dependency
@@ -1502,6 +1535,7 @@ async def widget_config(
         kb_ids=kb_ids,
         secret=settings.widget_jwt_secret,
         tenant_slug=org.slug,
+        session_id=_widget_client_session_id(request),
     )
 
     expires_at = datetime.now(UTC) + timedelta(hours=1)
@@ -1532,11 +1566,10 @@ async def widget_config(
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
         "handoff": {
             "hubspot": {
-                "enabled": bool(
-                    isinstance(widget_config_data.get("integrations"), dict)
-                    and isinstance(widget_config_data["integrations"].get("hubspot"), dict)
-                    and widget_config_data["integrations"]["hubspot"].get("status") == "connected"
-                    and widget_config_data["integrations"]["hubspot"].get("channel_account_id")
+                "enabled": _hubspot_handoff_enabled_for_widget(
+                    org=org,
+                    widget_config_data=widget_config_data,
+                    origin=origin,
                 )
             }
         },
@@ -1645,11 +1678,9 @@ async def public_bot_config(
         "description": widget_row.description or "",
         "handoff": {
             "hubspot": {
-                "enabled": bool(
-                    isinstance(widget_config_data.get("integrations"), dict)
-                    and isinstance(widget_config_data["integrations"].get("hubspot"), dict)
-                    and widget_config_data["integrations"]["hubspot"].get("status") == "connected"
-                    and widget_config_data["integrations"]["hubspot"].get("channel_account_id")
+                "enabled": _hubspot_handoff_enabled_for_widget(
+                    org=org,
+                    widget_config_data=widget_config_data,
                 )
             }
         },

@@ -1,15 +1,66 @@
-import { createSignal, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { ChatWindow } from "./ChatWindow";
-import { chatState } from "../store/chat";
+import { streamHubSpotHandoffEvents } from "../api/handoff";
+import { addAgentMessage, chatState, setChatOpen, setError } from "../store/chat";
 import { t } from "../i18n/labels";
 
 export function ChatBubble() {
   const [isOpen, setIsOpen] = createSignal(false);
+  let handoffAbortController: AbortController | null = null;
+  const seenHandoffMessageIds = new Set<number>();
 
-  const toggle = () => setIsOpen((v) => !v);
-  const close = () => setIsOpen(false);
+  const open = () => {
+    setIsOpen(true);
+    setChatOpen(true);
+  };
+  const close = () => {
+    setIsOpen(false);
+    setChatOpen(false);
+  };
+  const toggle = () => (isOpen() ? close() : open());
 
   const title = () => chatState.config?.title ?? "Chat";
+
+  const connectHandoffStream = () => {
+    if (handoffAbortController || !chatState.sessionToken) {
+      return;
+    }
+    handoffAbortController = new AbortController();
+    void streamHubSpotHandoffEvents({
+      token: chatState.sessionToken,
+      lastEventId: chatState.lastHandoffEventId,
+      abortController: handoffAbortController,
+      callbacks: {
+        onAgentMessage: (content, id, agentName) => {
+          if (id && seenHandoffMessageIds.has(id)) return;
+          if (id) seenHandoffMessageIds.add(id);
+          addAgentMessage(content, { id, agentName });
+        },
+        onError: () => {
+          setError(t().errorGeneric);
+          handoffAbortController = null;
+        },
+      },
+    });
+  };
+
+  createEffect(() => {
+    if (!chatState.handoffActive) {
+      if (handoffAbortController) {
+        handoffAbortController.abort();
+        handoffAbortController = null;
+      }
+      return;
+    }
+    connectHandoffStream();
+  });
+
+  onCleanup(() => {
+    if (handoffAbortController) {
+      handoffAbortController.abort();
+      handoffAbortController = null;
+    }
+  });
 
   return (
     <>
@@ -22,6 +73,7 @@ export function ChatBubble() {
           hideDisclaimer={chatState.config?.hide_disclaimer}
           welcomeMessage={chatState.config?.welcome_message}
           collectUserInfo={chatState.config?.collect_user_info}
+          manageHandoffStream={false}
         />
       </Show>
 
@@ -31,6 +83,11 @@ export function ChatBubble() {
         aria-expanded={isOpen()}
         onClick={toggle}
       >
+        <Show when={!isOpen() && chatState.unreadCount > 0}>
+          <span class="klai-bubble-badge" aria-label={`${chatState.unreadCount} unread messages`}>
+            {chatState.unreadCount > 9 ? "9+" : chatState.unreadCount}
+          </span>
+        </Show>
         <Show
           when={isOpen()}
           fallback={
