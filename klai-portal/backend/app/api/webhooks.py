@@ -46,7 +46,7 @@ def _hubspot_request_uri(request: Request) -> str:
     uri = f"{proto}://{host}{path}"
     for encoded, decoded in _HUBSPOT_URI_DECODE_MAP.items():
         uri = uri.replace(encoded, decoded)
-    return uri
+    return uri  # nosemgrep: python.flask.security.audit.directly-returned-format-string.directly-returned-format-string
 
 
 def _verify_hubspot_signature_v3(
