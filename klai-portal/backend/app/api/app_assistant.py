@@ -90,6 +90,7 @@ async def submit_question(
     )
     return AssistantSubmitResponse()
 
+
 @router.post(
     "/feedback",
     status_code=status.HTTP_201_CREATED,
