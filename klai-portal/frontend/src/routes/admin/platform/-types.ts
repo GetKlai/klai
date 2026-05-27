@@ -90,6 +90,23 @@ export interface PlatformChatError {
   created_at: string
 }
 
+export interface PlatformFeedbackSubmission {
+  id: number
+  org_id: number | null
+  org_name: string | null
+  org_slug: string | null
+  user_id: string | null
+  event_type: string
+  raw_text: string | null
+  feedback_type: string | null
+  severity: string | null
+  page_url: string | null
+  route_id: string | null
+  locale: string | null
+  viewport: string | null
+  created_at: string
+}
+
 export interface PlatformOrgDetail {
   org: PlatformOrg
   users: PlatformUser[]
@@ -120,5 +137,6 @@ export type PlatformTab =
   | 'templates'
   | 'subscriptions'
   | 'bots'
+  | 'feedback'
   | 'chat-errors'
   | 'status'

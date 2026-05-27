@@ -7,6 +7,7 @@ import type {
   ApiKeyDetailResponse,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
+  RotateApiKeyResponse,
   UpdateApiKeyRequest,
   OrgKnowledgeBase,
 } from './-types'
@@ -58,6 +59,22 @@ export function useUpdateApiKey(id: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-api-keys'] })
       void queryClient.invalidateQueries({ queryKey: ['admin-api-key', id] })
+    },
+  })
+}
+
+export function useRotateApiKey(id: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () =>
+      apiFetch<RotateApiKeyResponse>(`/api/admin/api-keys/${id}/rotate`, {
+        method: 'POST',
+      }),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-api-keys'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-api-key', id] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-api-key', String(result.id)] })
     },
   })
 }

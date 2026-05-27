@@ -23,10 +23,12 @@ from datetime import datetime
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import bindparam, or_, select, text
 
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
+from app.models.events import ProductEvent
+from app.models.portal import PortalOrg as PortalOrgModel
 from app.services.audit import log_event
 from app.services.zitadel import zitadel
 
@@ -100,6 +102,23 @@ class PlatformChatError(BaseModel):
     org_name: str | None
     event_type: str
     detail: str | None
+    created_at: datetime
+
+
+class PlatformFeedbackSubmission(BaseModel):
+    id: int
+    org_id: int | None
+    org_name: str | None
+    org_slug: str | None
+    user_id: str | None
+    event_type: str
+    raw_text: str | None
+    feedback_type: str | None
+    severity: str | None
+    page_url: str | None
+    route_id: str | None
+    locale: str | None
+    viewport: str | None
     created_at: datetime
 
 
@@ -746,6 +765,104 @@ async def platform_chat_errors(
             org_name=r.org_name,
             event_type=r.event_type,
             detail=r.detail,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/feedback-submissions", response_model=list[PlatformFeedbackSubmission])
+async def platform_feedback_submissions(
+    search: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> list[PlatformFeedbackSubmission]:
+    """Recent first-party assistant submissions across tenants.
+
+    This is the first visibility slice for SPEC-KLAI-FEEDBACK-001. It reads the
+    existing product event capture so current and historical assistant form
+    submissions appear in Platform before the dedicated feedback tables land.
+    """
+    await _audit(perms, "feedback", search)
+    params: dict[str, object] = {"limit": limit}
+
+    raw_text = ProductEvent.properties["raw_text"].astext
+    feedback_type = ProductEvent.properties["feedback_type"].astext
+    severity = ProductEvent.properties["severity"].astext
+    page_url = ProductEvent.properties["page_url"].astext
+    route_id = ProductEvent.properties["route_id"].astext
+    locale = ProductEvent.properties["locale"].astext
+    viewport = ProductEvent.properties["viewport"].astext
+
+    query = (
+        select(
+            ProductEvent.id.label("id"),
+            ProductEvent.org_id.label("org_id"),
+            PortalOrgModel.name.label("org_name"),
+            PortalOrgModel.slug.label("org_slug"),
+            ProductEvent.user_id.label("user_id"),
+            ProductEvent.event_type.label("event_type"),
+            raw_text.label("raw_text"),
+            feedback_type.label("feedback_type"),
+            severity.label("severity"),
+            page_url.label("page_url"),
+            route_id.label("route_id"),
+            locale.label("locale"),
+            viewport.label("viewport"),
+            ProductEvent.created_at.label("created_at"),
+        )
+        .select_from(ProductEvent)
+        .outerjoin(PortalOrgModel, PortalOrgModel.id == ProductEvent.org_id)
+        .where(
+            ProductEvent.event_type.in_(
+                (
+                    "klai_assistant.question",
+                    "klai_assistant.feedback",
+                    "klai_assistant.problem_report",
+                )
+            )
+        )
+        .order_by(ProductEvent.created_at.desc())
+        .limit(bindparam("limit"))
+    )
+
+    if search:
+        params["q"] = f"%{search}%"
+        q = bindparam("q")
+        query = query.where(
+            or_(
+                PortalOrgModel.name.ilike(q),
+                PortalOrgModel.slug.ilike(q),
+                ProductEvent.user_id.ilike(q),
+                ProductEvent.event_type.ilike(q),
+                raw_text.ilike(q),
+                page_url.ilike(q),
+                route_id.ilike(q),
+            )
+        )
+
+    async with cross_org_session() as db:
+        try:
+            rows = (await db.execute(query, params)).all()
+        except Exception:
+            logger.warning("platform_feedback_submissions_query_failed", exc_info=True)
+            return []
+
+    return [
+        PlatformFeedbackSubmission(
+            id=r.id,
+            org_id=r.org_id,
+            org_name=r.org_name,
+            org_slug=r.org_slug,
+            user_id=r.user_id,
+            event_type=r.event_type,
+            raw_text=r.raw_text,
+            feedback_type=r.feedback_type,
+            severity=r.severity,
+            page_url=r.page_url,
+            route_id=r.route_id,
+            locale=r.locale,
+            viewport=r.viewport,
             created_at=r.created_at,
         )
         for r in rows

@@ -5,6 +5,7 @@ import * as m from '@/paraglide/messages'
 import {
   usePlatformBots,
   usePlatformChatErrors,
+  usePlatformFeedbackSubmissions,
   usePlatformKnowledgeBases,
   usePlatformOrgs,
   usePlatformTemplates,
@@ -499,6 +500,109 @@ export function ChatErrorsTab({
             </td>
             <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
               {fmtDate(e.created_at)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </PlatformTableShell>
+  )
+}
+
+function feedbackKindLabel(eventType: string): string {
+  if (eventType === 'klai_assistant.question') return m.platform_feedback_kind_question()
+  if (eventType === 'klai_assistant.problem_report') return m.platform_feedback_kind_problem()
+  return m.platform_feedback_kind_feedback()
+}
+
+export function FeedbackTab({
+  search,
+  fmtDate,
+}: {
+  search: string
+  fmtDate: (s: string | null) => string
+}) {
+  const { data, isLoading } = usePlatformFeedbackSubmissions(search)
+  const rows = data ?? []
+
+  return (
+    <PlatformTableShell
+      loading={isLoading}
+      empty={rows.length === 0}
+      emptyText={m.platform_empty_feedback()}
+    >
+      <thead>
+        <tr className="border-b border-gray-200">
+          <th className={TH}>{m.platform_col_type()}</th>
+          <th className={TH}>{m.platform_col_organization()}</th>
+          <th className={TH}>{m.platform_col_detail()}</th>
+          <th className={TH}>{m.platform_feedback_context()}</th>
+          <th className={TH}>{m.platform_col_time()}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((item) => (
+          <tr key={item.id} className="border-b border-gray-200 last:border-b-0">
+            <td className={TD}>
+              <div className="flex flex-col items-start gap-2">
+                <Badge
+                  variant={
+                    item.event_type === 'klai_assistant.problem_report'
+                      ? 'destructive'
+                      : item.event_type === 'klai_assistant.feedback'
+                        ? 'success'
+                        : 'outline'
+                  }
+                >
+                  {feedbackKindLabel(item.event_type)}
+                </Badge>
+                {(item.feedback_type || item.severity) && (
+                  <span className="text-xs text-gray-400">
+                    {item.feedback_type || item.severity}
+                  </span>
+                )}
+              </div>
+            </td>
+            <td className={TD}>
+              <span className="font-medium">
+                {item.org_name ?? (item.org_id ? `#${item.org_id}` : '-')}
+              </span>
+              {item.org_slug && (
+                <p className="font-mono text-xs text-gray-400">{item.org_slug}</p>
+              )}
+              {item.user_id && (
+                <p className="mt-1 max-w-[180px] truncate font-mono text-xs text-gray-400">
+                  {item.user_id}
+                </p>
+              )}
+            </td>
+            <td className={`${TD} max-w-md`}>
+              <p className="line-clamp-3 whitespace-pre-wrap text-sm leading-6">
+                {item.raw_text ?? '-'}
+              </p>
+            </td>
+            <td className={`${TD} max-w-xs`}>
+              {item.route_id && (
+                <p className="font-mono text-xs text-gray-500">{item.route_id}</p>
+              )}
+              {item.page_url && (
+                <a
+                  href={item.page_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-flex max-w-full items-center gap-1 text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+                >
+                  <span className="truncate">{item.page_url}</span>
+                  <ExternalLink className="h-3 w-3 shrink-0" />
+                </a>
+              )}
+              {(item.locale || item.viewport) && (
+                <p className="mt-1 text-xs text-gray-400">
+                  {[item.locale, item.viewport].filter(Boolean).join(' / ')}
+                </p>
+              )}
+            </td>
+            <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
+              {fmtDate(item.created_at)}
             </td>
           </tr>
         ))}

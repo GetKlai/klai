@@ -15,6 +15,7 @@ def test_module_imports():
         delete_api_key,
         get_api_key_detail,
         list_api_keys,
+        rotate_api_key,
         router,
         update_api_key,
     )
@@ -24,6 +25,7 @@ def test_module_imports():
     assert callable(list_api_keys)
     assert callable(get_api_key_detail)
     assert callable(update_api_key)
+    assert callable(rotate_api_key)
     assert callable(delete_api_key)
 
 
@@ -67,6 +69,9 @@ def test_response_schema():
     assert "active" not in fields
     assert "key_prefix" in fields
     assert "permissions" in fields
+    assert "rotated_from_key_id" in fields
+    assert "rotated_to_key_id" in fields
+    assert "rotation_started_at" in fields
 
 
 def test_key_to_response_helper():
