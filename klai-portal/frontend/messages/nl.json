@@ -2027,6 +2027,8 @@
   "klai_assistant_question_label": "Waar kunnen we je mee helpen?",
   "klai_assistant_question_placeholder": "Typ je vraag over Klai...",
   "klai_assistant_question_submit": "Vraag versturen",
+  "klai_assistant_question_hero_title": "Welkom, ik help je graag",
+  "klai_assistant_question_hero_desc": "Stel je vraag over Klai. We nemen de huidige pagina automatisch mee als context.",
   "klai_assistant_question_success_title": "Vraag ontvangen",
   "klai_assistant_question_success_desc": "We hebben je vraag met de juiste Klai-context vastgelegd.",
   "klai_assistant_feedback_label": "Wat wil je met ons delen?",
@@ -2049,5 +2051,6 @@
   "klai_assistant_problem_severity_minor": "Klein probleem",
   "klai_assistant_submitting": "Versturen...",
   "klai_assistant_error": "Versturen mislukt. Probeer het opnieuw.",
-  "klai_assistant_add_another": "Nog iets doorgeven"
+  "klai_assistant_add_another": "Nog iets doorgeven",
+  "klai_assistant_disclaimer": "AI-antwoorden kunnen fouten bevatten. Controleer belangrijke informatie altijd bij de bron."
 }
