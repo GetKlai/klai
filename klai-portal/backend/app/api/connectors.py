@@ -592,8 +592,7 @@ async def get_connector_credential_metadata(
     except Exception as exc:
         logger.warning(
             "connector_credential_metadata_decrypt_failed",
-            connector_id=connector_id,
-            org_id=perms.org_id,
+            extra={"connector_id": connector_id, "org_id": perms.org_id},
             exc_info=True,
         )
         raise HTTPException(
