@@ -66,6 +66,31 @@ def _clean_result() -> CrawlResult:
     )
 
 
+def _embedded_gate_result() -> CrawlResult:
+    raw = (
+        "## Public CRM integration\n"
+        + "This public section contains useful implementation detail. " * 80
+        + "\n## [Log in](https://wiki.example.test/login?redirect_to=/private) "
+        "when you want to read this article\n"
+        "This article is available to authenticated users. Sign in to access "
+        "the protected content and documentation.\n"
+        + "More public text after the protected section. " * 50
+    )
+    return CrawlResult(
+        url="https://wiki.example.test/nl/crm-software/example",
+        fit_markdown=raw,
+        raw_markdown=raw,
+        html="<html><body>" + raw + "</body></html>",
+        word_count=900,
+        success=True,
+        error_message=None,
+        response_headers={"content-type": "text/html"},
+        media={},
+        links={},
+        metadata={},
+    )
+
+
 # Common mocks: stub everything except the login-wall branching logic.
 def _patch_chain(*, cluster_simhashes: list[int] | None = None):
     """Patch all external dependencies of ``_ingest_crawl_result``.
@@ -145,11 +170,42 @@ class TestRejectMode:
                 )
 
         assert excinfo.value.url == "https://wiki.redcactus.cloud/nl/crm-software/HubSpot"
-        assert excinfo.value.signal.pattern == "template_cluster"
+        assert excinfo.value.signal.pattern == "auth_wall_classifier"
+        assert "embedded_login_gate" in excinfo.value.signal.evidence
         # ingest_document MUST NOT have been called for a rejected page.
         ingest.assert_not_called()
         # crawled_pages MUST NOT have been updated (no Postgres write either).
         pg.upsert_crawled_page.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_single_embedded_login_gate_raises_before_cluster_detector(self) -> None:
+        walled = _embedded_gate_result()
+        pool, pg, ingest, lg = _patch_chain(cluster_simhashes=[])
+        with (
+            patch("knowledge_ingest.adapters.crawler.pg_store", pg),
+            patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
+            patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
+            patch("knowledge_ingest.link_graph", lg, create=True),
+            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", True),
+            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_mode", "reject"),
+        ):
+            with pytest.raises(AnonymousAuthWallDetected) as excinfo:
+                await _ingest_crawl_result(
+                    pool,
+                    walled,
+                    walled.url,
+                    org_id="100000000000000002",
+                    kb_slug="support",
+                    stored=None,
+                    login_indicator_selector=None,
+                )
+
+        assert excinfo.value.url == walled.url
+        assert excinfo.value.signal.pattern == "auth_wall_classifier"
+        assert "embedded_login_gate" in excinfo.value.signal.evidence
+        ingest.assert_not_called()
+        pg.upsert_crawled_page.assert_not_called()
+        pool.fetch.assert_not_called()
 
 
 class TestDegradeMode:

@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 __all__ = [
+    "AUTH_WALL_EMBEDDED_GATE_MARKERS",
     "AUTH_WALL_END_OF_BODY_MARKERS",
     "LOGIN_PATH_REGEX",
     "SESSION_COOKIE_REGEX",
@@ -60,6 +61,25 @@ AUTH_WALL_END_OF_BODY_MARKERS: tuple[re.Pattern[str], ...] = tuple(
         # Dutch — full clause "inloggen om verder te lezen"
         r"inloggen om (verder|dit) (te lezen|te bekijken)",
         r"aanmelden om (verder|dit) (te lezen|te bekijken)",
+    )
+)
+
+# Embedded login gates. These may appear once in the middle of an otherwise
+# large page when a public page contains one protected section/tab. To avoid
+# false positives from nav links or articles about logging in, the marker
+# requires a real login link/URL plus a nearby "read/view/access content"
+# directive inside the same short block.
+AUTH_WALL_EMBEDDED_GATE_MARKERS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\[(?:[^\]]{0,80})?"
+        r"(?:log\s*in|sign\s*in|login|signin|inloggen|aanmelden|anmelden|connexion|accedi)"
+        r"[^\]]{0,80}\]\([^)]{0,240}"
+        r"(?:login|signin|sign-?in|inloggen|aanmelden|anmelden|connexion|accedi)"
+        r"[^)]{0,240}\)[\s\S]{0,500}"
+        r"(?:read|view|continue|access|see|open|lezen|bekijken|verder|toegang)"
+        r"[\s\S]{0,120}"
+        r"(?:article|page|content|document|artikel|pagina|inhoud|document)",
     )
 )
 
@@ -127,7 +147,7 @@ def classify_auth_wall(
     fit_markdown: str,
     raw_html: str,
 ) -> AuthWallClassification:
-    """Apply six sub-rules and return the aggregate classification.
+    """Apply auth-wall sub-rules and return the aggregate classification.
 
     Sub-rules (any match flips ``is_walled`` to True):
 
@@ -141,7 +161,9 @@ def classify_auth_wall(
     4. ``end_of_body_login_marker`` — last
        ``_END_OF_BODY_WINDOW_CHARS`` of ``fit_markdown`` matches any
        pattern in ``AUTH_WALL_END_OF_BODY_MARKERS``.
-    5. ``password_form_minimal_body`` — ``raw_html`` contains an
+    5. ``embedded_login_gate`` — ``fit_markdown`` contains an isolated
+       login link/URL with a nearby read/view/access-content directive.
+    6. ``password_form_minimal_body`` — ``raw_html`` contains an
        ``<input type="password">`` AND ``word_count`` is below the
        threshold.
 
@@ -212,6 +234,16 @@ def classify_auth_wall(
         )
         if marker_hits >= 2 and "end_of_body_login_marker" not in reasons:
             reasons.append("repeated_login_marker_in_body")
+
+    # Rule 4c — embedded protected section anywhere in body. A single protected
+    # section can sit in the middle of otherwise-long extracted content.
+    # Tail-only and repeated-marker checks miss this; requiring a login link
+    # plus a nearby content-access directive keeps the rule generic and tight.
+    if fit_markdown:
+        for pattern in AUTH_WALL_EMBEDDED_GATE_MARKERS:
+            if pattern.search(fit_markdown):
+                reasons.append("embedded_login_gate")
+                break
 
     # Rule 5 — password form on a thin page
     if (

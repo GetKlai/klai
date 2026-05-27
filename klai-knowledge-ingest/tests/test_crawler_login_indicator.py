@@ -17,11 +17,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from knowledge_ingest.adapters.crawler import (
+    AnonymousAuthWallDetected,
     AuthWallDetected,
     _ingest_crawl_result,
     run_crawl_job,
 )
 from knowledge_ingest.crawl4ai_client import CrawlResult, build_crawl_config
+from knowledge_ingest.utils.auth_wall_detector import AuthWallSignal
 
 
 class TestBuildCrawlConfigWithLoginIndicator:
@@ -213,3 +215,81 @@ class TestRunCrawlJobAuthWall:
         assert failed_updates, (
             f"Expected a failed status update with auth_wall_detected, got {update_calls}"
         )
+
+    @pytest.mark.asyncio()
+    async def test_saved_cookies_with_login_wall_fail_loudly(self) -> None:
+        walled = CrawlResult(
+            url="https://wiki.example/private",
+            fit_markdown="[Log in](https://wiki.example/login) to read this article",
+            raw_markdown="[Log in](https://wiki.example/login) to read this article",
+            html="<html></html>",
+            word_count=8,
+            success=True,
+        )
+        outcomes = [
+            {
+                "url": walled.url,
+                "reason_code": "success",
+                "status_code": 200,
+                "content_length": len(walled.html or ""),
+            },
+            {
+                "url": "https://wiki.example/omitted",
+                "reason_code": "not_fetched_budget_exhausted",
+                "status_code": None,
+                "content_length": 0,
+            },
+        ]
+
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock(return_value=None)
+        mock_conn.fetch = AsyncMock(return_value=[])
+        mock_conn.fetchval = AsyncMock(return_value=None)
+        mock_conn.fetchrow = AsyncMock(return_value=None)
+
+        wall_exc = AnonymousAuthWallDetected(
+            walled.url,
+            AuthWallSignal(
+                pattern="auth_wall_classifier",
+                evidence=("embedded_login_gate",),
+                confidence=0.95,
+            ),
+        )
+        with (
+            patch(
+                "knowledge_ingest.adapters.crawler.crawl_site",
+                new=AsyncMock(return_value=([walled], outcomes)),
+            ),
+            patch(
+                "knowledge_ingest.adapters.crawler.pg_store.get_crawled_page_hashes",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "knowledge_ingest.adapters.crawler._ingest_crawl_result",
+                new=AsyncMock(side_effect=wall_exc),
+            ),
+        ):
+            await run_crawl_job(
+                mock_conn,
+                job_id="job-1",
+                org_id="org",
+                kb_slug="support",
+                start_url="https://wiki.example",
+                cookies=[{"name": "session", "value": "dummy"}],
+            )
+
+        terminal_updates = [
+            c
+            for c in mock_conn.execute.await_args_list
+            if len(c.args) >= 3
+            and isinstance(c.args[0], str)
+            and "UPDATE knowledge.crawl_jobs" in c.args[0]
+            and "status=$1" in c.args[0]
+            and c.args[1] == "failed_partial"
+            and isinstance(c.args[2], str)
+        ]
+        assert terminal_updates
+        summary = terminal_updates[-1].args[2]
+        assert '"reason": "auth_wall_detected"' in summary
+        assert '"reason": "crawl_budget_exhausted"' in summary
+        assert "Refresh the saved cookies" in summary
