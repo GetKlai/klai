@@ -28,6 +28,12 @@ export function IntegrationsTab({ widget }: Props) {
     rebuildMutation.isPending ||
     testMutation.isPending
   const isConnected = status?.status === 'connected'
+  const canConnect = Boolean(status?.configured) && status?.status !== 'connected'
+  const canRebuild = Boolean(status?.configured) && (
+    status?.status === 'connected' ||
+    status?.status === 'disconnected' ||
+    status?.status === 'error'
+  )
   const canUseActions = Boolean(status?.configured) && !isBusy
   const error =
     statusQuery.error ||
@@ -60,98 +66,71 @@ export function IntegrationsTab({ widget }: Props) {
       </div>
 
       <div className="grid gap-3">
-        <article className="rounded-lg border border-gray-200 bg-white p-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex min-w-0 gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#ff7a59]/10 text-[#ff7a59]">
+        <article className="rounded-lg border border-gray-200 bg-white p-5">
+          <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[#ff7a59]/10 text-[#ff7a59]">
                 <MessageSquareText className="h-5 w-5" />
               </div>
-              <div className="min-w-0 space-y-2">
+              <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-semibold text-gray-900">HubSpot</h3>
+                  <h3 className="text-base font-semibold text-gray-900">HubSpot</h3>
                   <StatusBadge status={status?.status} loading={statusQuery.isLoading} />
                 </div>
-                <p className="max-w-2xl text-sm text-gray-500">
-                  {m.admin_widgets_integrations_hubspot_description()}
+                <p className="text-sm text-gray-500">
+                  {statusSummary(status?.status)}
                 </p>
-                <dl className="grid gap-2 pt-1 text-xs text-gray-400 sm:grid-cols-3">
-                  <div>
-                    <dt className="font-medium text-gray-500">
-                      {m.admin_widgets_integrations_target_label()}
-                    </dt>
-                    <dd>{status?.inbox_id ? 'HubSpot Help Desk' : '-'}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-medium text-gray-500">
-                      {m.admin_widgets_integrations_channel_label()}
-                    </dt>
-                    <dd>{status?.channel_id ? 'Klai Webchat Support' : '-'}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-medium text-gray-500">
-                      {m.admin_widgets_integrations_mode_label()}
-                    </dt>
-                    <dd>{m.admin_widgets_integrations_mode_realtime()}</dd>
-                  </div>
-                </dl>
-                {status?.channel_account_id && (
-                  <p className="text-xs text-gray-400">
-                    {m.admin_widgets_integrations_channel_account_label()}: {status.channel_account_id}
-                  </p>
-                )}
-                {status?.last_test_thread_id && (
-                  <p className="text-xs text-gray-400">
-                    {m.admin_widgets_integrations_last_test_thread_label()}: {status.last_test_thread_id}
-                  </p>
-                )}
-                {status?.last_error && (
-                  <p className="text-xs text-[var(--color-destructive)]">
-                    {status.last_error}
-                  </p>
-                )}
               </div>
             </div>
-            <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-              <Button
-                type="button"
-                variant={isConnected ? 'secondary' : 'default'}
-                size="sm"
-                disabled={!canUseActions || isConnected}
-                onClick={() => runAction(connectMutation, m.admin_widgets_integrations_connect_success())}
-              >
-                {connectMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
-                {m.admin_widgets_integrations_connect()}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={!canUseActions}
-                onClick={() => runAction(rebuildMutation, m.admin_widgets_integrations_rebuild_success())}
-              >
-                {rebuildMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-                {m.admin_widgets_integrations_rebuild()}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={!canUseActions || !isConnected}
-                onClick={() => runAction(testMutation, m.admin_widgets_integrations_test_success())}
-              >
-                {testMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                {m.admin_widgets_integrations_test_message()}
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                disabled={!canUseActions || !isConnected}
-                onClick={() => runAction(disconnectMutation, m.admin_widgets_integrations_disconnect_success())}
-              >
-                {disconnectMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unplug className="h-4 w-4" />}
-                {m.admin_widgets_integrations_disconnect()}
-              </Button>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              {canConnect && (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  disabled={!canUseActions}
+                  onClick={() => runAction(connectMutation, m.admin_widgets_integrations_connect_success())}
+                >
+                  {connectMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
+                  {m.admin_widgets_integrations_connect()}
+                </Button>
+              )}
+              {isConnected && (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  disabled={!canUseActions}
+                  onClick={() => runAction(testMutation, m.admin_widgets_integrations_test_success())}
+                >
+                  {testMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {m.admin_widgets_integrations_test_message()}
+                </Button>
+              )}
+              {canRebuild && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!canUseActions}
+                  onClick={() => runAction(rebuildMutation, m.admin_widgets_integrations_rebuild_success())}
+                >
+                  {rebuildMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                  {m.admin_widgets_integrations_rebuild()}
+                </Button>
+              )}
+              {isConnected && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!canUseActions}
+                  onClick={() => runAction(disconnectMutation, m.admin_widgets_integrations_disconnect_success())}
+                >
+                  {disconnectMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unplug className="h-4 w-4" />}
+                  {m.admin_widgets_integrations_disconnect()}
+                </Button>
+              )}
               {status?.help_desk_url && (
                 <Button type="button" variant="secondary" size="sm" asChild>
                   <a href={status.help_desk_url} target="_blank" rel="noreferrer">
@@ -161,7 +140,55 @@ export function IntegrationsTab({ widget }: Props) {
                 </Button>
               )}
             </div>
-          </div>
+          </header>
+          <p className="mt-4 max-w-3xl text-sm leading-6 text-gray-500">
+            {m.admin_widgets_integrations_hubspot_description()}
+          </p>
+          <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+            <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <dt className="text-xs font-medium text-gray-400">
+                {m.admin_widgets_integrations_target_label()}
+              </dt>
+              <dd className="mt-1 font-medium text-gray-800">
+                {status?.inbox_id ? 'HubSpot Help Desk' : '-'}
+              </dd>
+            </div>
+            <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <dt className="text-xs font-medium text-gray-400">
+                {m.admin_widgets_integrations_channel_label()}
+              </dt>
+              <dd className="mt-1 font-medium text-gray-800">
+                {status?.channel_id ? 'Klai Webchat Support' : '-'}
+              </dd>
+            </div>
+            <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <dt className="text-xs font-medium text-gray-400">
+                {m.admin_widgets_integrations_mode_label()}
+              </dt>
+              <dd className="mt-1 font-medium text-gray-800">
+                {m.admin_widgets_integrations_mode_realtime()}
+              </dd>
+            </div>
+          </dl>
+          {(status?.channel_account_id || status?.last_test_thread_id) && (
+            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-xs text-gray-400">
+              {status?.channel_account_id && (
+                <span>
+                  {m.admin_widgets_integrations_channel_account_label()}: {status.channel_account_id}
+                </span>
+              )}
+              {status?.last_test_thread_id && (
+                <span>
+                  {m.admin_widgets_integrations_last_test_thread_label()}: {status.last_test_thread_id}
+                </span>
+              )}
+            </div>
+          )}
+          {status?.last_error && (
+            <p className="mt-4 rounded-md border border-[var(--color-destructive-bg)] bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">
+              {status.last_error}
+            </p>
+          )}
           {status?.status === 'not_configured' && (
             <p className="mt-4 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
               {m.admin_widgets_integrations_not_configured_help()}
@@ -176,6 +203,22 @@ export function IntegrationsTab({ widget }: Props) {
       </div>
     </section>
   )
+}
+
+function statusSummary(status: string | undefined) {
+  if (status === 'connected') {
+    return m.admin_widgets_integrations_status_summary_connected()
+  }
+  if (status === 'disconnected') {
+    return m.admin_widgets_integrations_status_summary_disconnected()
+  }
+  if (status === 'error') {
+    return m.admin_widgets_integrations_status_summary_error()
+  }
+  if (status === 'not_configured') {
+    return m.admin_widgets_integrations_status_summary_not_configured()
+  }
+  return m.admin_widgets_integrations_status_summary_not_connected()
 }
 
 function StatusBadge({
