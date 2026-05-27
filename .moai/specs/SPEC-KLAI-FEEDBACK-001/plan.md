@@ -1,6 +1,6 @@
 # SPEC-KLAI-FEEDBACK-001 - Klai feedback intake, triage en roadmap workflow
 
-Status: proposed
+Status: in_progress
 Date: 2026-05-27
 
 ## Doel
@@ -20,7 +20,16 @@ Klai-staff zo klein mogelijk. De gewenste workflow is:
 - De first-party assistant staat in
   `klai-portal/frontend/src/features/klai-assistant/KlaiAssistantLauncher.tsx`.
 - De huidige intake-API staat in `klai-portal/backend/app/api/app_assistant.py`.
-- Submissions worden nu alleen als product events opgeslagen:
+- De assistant-hub is live met drie opties:
+  - `Stel een vraag`
+  - `Geef feedback`
+  - `Meld een probleem`
+- `Stel een vraag` opent weer de bestaande Klai Help webchat via
+  `/widget/klai-chat.js`; de tijdelijke custom chatflow in de hub is verwijderd.
+- Feedback en probleemmeldingen posten naar authenticated first-party endpoints:
+  - `/api/app/assistant/feedback`
+  - `/api/app/assistant/problem-reports`
+- Submissions worden op dit moment nog als product events opgeslagen:
   - `klai_assistant.question`
   - `klai_assistant.feedback`
   - `klai_assistant.problem_report`
@@ -31,6 +40,43 @@ Klai-staff zo klein mogelijk. De gewenste workflow is:
   - backend: `klai-portal/backend/app/api/admin/platform*.py`
 - Platform is nu zichtbaar via de admin sidebar met `platformAdminOnly: true`.
   Backend endpoints gebruiken `require_platform_admin()` en lezen cross-tenant.
+- De Platform Feedback-tab is live als read-only view op recente assistant
+  submissions via `/api/admin/platform/feedback-submissions`.
+- RLS op `product_events` staat Platform cross-org reads toe via expliciete
+  `app.cross_org_admin=true`, niet via een generieke open policy.
+- Security/privacy-hardening die al is toegepast:
+  - submit endpoints zijn authenticated via `get_caller`;
+  - Platform read endpoint gebruikt `require_platform_admin()`;
+  - SQL gebruikt SQLAlchemy `select()` + bindings, geen string-concat query;
+  - `page_url` en `referer` worden zonder querystring/hash opgeslagen;
+  - Platform reads worden geaudit via `_audit(...)`.
+
+## Huidige implementatiestatus
+
+Live op `main`:
+
+- `6d5e628e` - assistant kleur/UI herstel en planbasis.
+- `7b541120` - `Stel een vraag` opent de bestaande Klai Help widget-flow.
+- `543239b1` - Platform Feedback-tab toont assistant submissions.
+- `6945da1e` - Platform feedback query naar SQLAlchemy `select()` omgezet.
+- `515ecdc9` - RLS policy laat Platform `product_events` cross-org lezen.
+- `c4c5bed8` - feedback context stript query/hash uit `page_url`.
+- `41c4efc9` - feedback context stript query/hash uit `referer`.
+
+Geverifieerd:
+
+- Frontend build en deploy groen.
+- Portal API quality, Semgrep, Trivy, RLS smoke test en deploy groen.
+- Live submit en Platform Feedback-tab werken.
+
+Nog niet gebouwd:
+
+- Echte feedback-tabellen (`feedback_submissions`, `feedback_items`, links,
+  triage suggestions).
+- Triage-acties in Platform (`dismiss`, `create item`, `link`, `support`).
+- Canonical feedback items / upvote-evidence model.
+- AI triage en duplicate detectie.
+- Downstream sync naar Linear/GitHub/Plane.
 
 ## Belangrijke correctie
 
@@ -176,6 +222,18 @@ AI-output die staff kan accepteren of corrigeren.
 
 ### Fase 1 - Persistente intake
 
+Status: gedeeltelijk klaar.
+
+Klaar:
+
+- First-party assistant endpoints bestaan en zijn authenticated.
+- Feedback/probleemmeldingen worden tijdelijk betrouwbaar vastgelegd via
+  `product_events`.
+- Platform kan deze events cross-org lezen via gated admin endpoint.
+- Context wordt beperkt opgeslagen zonder URL querystrings/fragments.
+
+Nog te doen:
+
 - Voeg echte feedbacktabellen toe naast `product_events`.
 - Laat `/api/app/assistant/feedback` en `/problem-reports` naar
   `feedback_submissions` schrijven.
@@ -190,8 +248,18 @@ Acceptatie:
 
 ### Fase 2 - Platform Feedback tab
 
-- Voeg `Feedback` toe aan de tabs in `/admin/platform`.
-- Nieuwe endpointgroep:
+Status: read-only basis klaar, triage UI nog niet klaar.
+
+Klaar:
+
+- `Feedback` tab bestaat in `/admin/platform`.
+- Read-only endpoint bestaat:
+  `/api/admin/platform/feedback-submissions`.
+- Search/refresh basis is aanwezig.
+
+Nog te doen:
+
+- Vervang het tijdelijke read-only endpoint door een feedback endpointgroep:
   `/api/admin/platform/feedback/submissions`,
   `/api/admin/platform/feedback/items`,
   `/api/admin/platform/feedback/link`,
@@ -275,14 +343,44 @@ Acceptatie:
 
 ## Eerste implementatiepakket
 
-1. Kleur/UI-correctie van de assistant widget.
-2. Alembic migratie + SQLAlchemy models voor `feedback_submissions`,
-   `feedback_items`, `feedback_item_links`, `feedback_triage_suggestions`.
-3. Verplaats assistant feedback persistence naar `app/klai_feedback`.
-4. Platform Feedback tab met read-only inbox + detail.
-5. Acties: dismiss, create item, link to item.
-6. Eenvoudige non-AI duplicate search.
-7. AI triage job pas daarna.
+- [x] Kleur/UI-correctie van de assistant widget.
+- [x] `Stel een vraag` teruggezet naar de bestaande Klai Help widget-flow.
+- [x] Feedback/probleem forms werkend gemaakt in de Klai assistant.
+- [x] Tijdelijke persistence via `product_events`.
+- [x] Platform Feedback tab met read-only event inbox.
+- [x] Security fix: Platform read endpoint gated met `require_platform_admin()`.
+- [x] RLS fix: `product_events` cross-org read alleen via
+  `app.cross_org_admin=true`.
+- [x] Privacy fix: `page_url` en `referer` zonder querystring/hash.
+- [ ] Alembic migratie + SQLAlchemy models voor `feedback_submissions`,
+  `feedback_items`, `feedback_item_links`, `feedback_triage_suggestions`.
+- [ ] Verplaats assistant feedback persistence naar `app/klai_feedback`.
+- [ ] Platform Feedback tab uitbreiden met detail drawer.
+- [ ] Acties: dismiss, create item, link to item, mark support.
+- [ ] Eenvoudige non-AI duplicate search.
+- [ ] AI triage job pas daarna.
+
+## Eerstvolgende stap
+
+Maak Fase 1 af met echte, private feedback persistence naast `product_events`:
+
+1. Voeg Alembic migratie en ORM models toe voor:
+   - `feedback_submissions`
+   - `feedback_items`
+   - `feedback_item_links`
+   - `feedback_triage_suggestions`
+2. Laat `/api/app/assistant/feedback` en `/problem-reports` synchroon naar
+   `feedback_submissions` schrijven, zodat een succesvolle submit ook echt
+   persisted is.
+3. Blijf daarnaast `product_events` emitten voor analytics/audit, maar gebruik
+   `feedback_submissions` als bron voor Platform.
+4. Verplaats feedback-specifieke backendcode naar
+   `klai-portal/backend/app/klai_feedback/`.
+5. Pas de Platform Feedback-tab aan om uit de nieuwe tabellen te lezen.
+
+Waarom dit eerst: zolang Platform uit `product_events` leest, hebben we een
+werkende tijdelijke inbox, maar nog geen robuuste basis voor status, merge,
+triage, assignees, roadmap-items of retention.
 
 ## Risico's
 
