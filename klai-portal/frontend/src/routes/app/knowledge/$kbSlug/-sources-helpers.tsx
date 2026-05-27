@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   File,
   FileText,
@@ -10,6 +11,18 @@ import { SiAirtable, SiConfluence, SiGithub, SiGoogledrive, SiNotion } from '@ic
 import { Badge } from '@/components/ui/badge'
 import * as m from '@/paraglide/messages'
 import type { Source } from './-sources-types'
+
+/**
+ * Threshold (minutes) after which a 'pending' source is considered stuck.
+ * Below this we just show "Bezig sinds Xm" as informational; at/above it
+ * the badge flips to a warning ("Hangt al Xm") so the user knows to retry.
+ *
+ * Lives here (not in a backend SPEC) until SPEC-KB-INGEST-RELIABILITY-001
+ * adds a proper backend timeout + auto-fail reaper for url/upload sources.
+ * Mirrors the connector-side `sync_run_reaper._FORCE_FAIL_AFTER_S` logic
+ * but on the frontend only, so it's an indicator — not enforcement.
+ */
+const STUCK_THRESHOLD_MINUTES = 10
 
 export type SourceStatus = 'synced' | 'pending' | 'not_synced'
 
@@ -32,7 +45,64 @@ export function mapSourceStatus(source: Source): SourceStatus {
   return 'not_synced'
 }
 
-export function StatusBadge({ status }: { status: SourceStatus }) {
+/**
+ * Returns whole minutes since `iso`, or null if `iso` is missing/unparsable.
+ * Negative results (clock skew, future timestamp) clamp to 0.
+ */
+function elapsedMinutes(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return null
+  const diff = Date.now() - t
+  return Math.max(0, Math.floor(diff / 60_000))
+}
+
+/**
+ * Re-render hook that fires every 30s so elapsed-minute labels stay fresh
+ * without the parent having to pass `now` down. One interval per badge
+ * instance — acceptable at the scale of a sources list (~10-50 rows).
+ */
+function useTickEveryHalfMinute(): void {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
+}
+
+export function StatusBadge({ source }: { source: Source }) {
+  useTickEveryHalfMinute()
+  const status = mapSourceStatus(source)
+
+  // Stale-indicator for sources stuck in 'pending'. last_sync_at is the
+  // best signal of "when did this attempt start" — falls back to created_at
+  // for sources that have never completed a sync yet (the common case for
+  // the bug this fixes: a freshly-added URL that never finished ingesting).
+  if (status === 'pending') {
+    const minutes = elapsedMinutes(source.last_sync_at ?? source.created_at)
+    if (minutes !== null && minutes >= STUCK_THRESHOLD_MINUTES) {
+      return (
+        <Badge
+          variant="destructive"
+          title={m.kb_status_stuck_tooltip()}
+        >
+          {m.kb_status_stuck({ minutes: String(minutes) })}
+        </Badge>
+      )
+    }
+    if (minutes !== null && minutes >= 1) {
+      return (
+        <span className="inline-flex items-center gap-1.5">
+          <Badge variant="secondary">{m.kb_status_bezig()}</Badge>
+          <span className="text-xs text-gray-400">
+            {m.kb_status_bezig_elapsed({ minutes: String(minutes) })}
+          </span>
+        </span>
+      )
+    }
+    return <Badge variant="secondary">{m.kb_status_bezig()}</Badge>
+  }
+
   const labelMap = {
     synced: m.kb_status_klaar(),
     pending: m.kb_status_bezig(),
