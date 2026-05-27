@@ -2406,13 +2406,17 @@ class KlaiKnowledgeHook(CustomLogger):
                 "knowledge.]\n"
             )
         source_link_instruction = (
-            "[ANSWER FORMAT — always follow this:\n"
-            "1. Begin with a short TL;DR (2-3 sentences) of the answer. "
-            "Write it as normal prose, not as a Markdown heading. "
-            "Use the standard short-summary label in the SAME LANGUAGE as the "
-            "user's question — NOT the language of the source documents. "
-            "'TL;DR' is universally understood and is a safe default in any "
-            "language.\n"
+            "[ANSWER FORMAT — always follow this, EXCEPT where an "
+            "active Klai Template (see block below) directs a "
+            "different tone, structure, or opening:\n"
+            "1. Default opening is a short TL;DR (2-3 sentences) of "
+            "the answer. Write it as normal prose, not as a Markdown "
+            "heading. Use the standard short-summary label in the "
+            "SAME LANGUAGE as the user's question — NOT the language "
+            "of the source documents. 'TL;DR' is universally "
+            "understood and is a safe default in any language. SKIP "
+            "this opening when an active template asks for a "
+            "creative / narrative / story-style answer (e.g. 'Creatief').\n"
             "2. Do not write source lists, URLs, Markdown links, footnotes, "
             "or citation numbers. The application adds citations after "
             "generation from retrieved metadata.\n"
@@ -2441,6 +2445,22 @@ class KlaiKnowledgeHook(CustomLogger):
             "- Do NOT add images in the TL;DR (section 1).]\n"
         )
         lines = [header, source_link_instruction]
+        # SPEC-CHAT-TEMPLATES-001 follow-up 2026-05-27: surface the
+        # active Klai-templates block AFTER the [ANSWER FORMAT] rules
+        # so the model treats template tone/style/opening directives
+        # as the most-recent (and therefore highest-attention)
+        # instruction layer before the chunks themselves. Previously
+        # the template block sat between GROUNDED_CHAT_SYSTEM_PROMPT
+        # and the KB context (composed via _compose_libre_chat_prefix
+        # at the bottom), which placed templates earlier than the
+        # hardcoded "Begin with TL;DR" rule. The model then followed
+        # the more-recent format rule and ignored the template — e.g.
+        # the "Creatief" template returned a clipped TL;DR every time.
+        # Keeping the block here (still inside the system prompt,
+        # before chunks) keeps every existing chunks-present test path
+        # working while flipping the relative ordering.
+        if templates_block:
+            lines.append(templates_block)
         citation_source_urls: dict[int, str] = {}
         for chunk_index, chunk in enumerate(context_chunks, 1):
             source_url = _chunk_source_url(chunk)
@@ -2508,7 +2528,16 @@ class KlaiKnowledgeHook(CustomLogger):
         # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-E1: templates → KB → existing.
         # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): GROUNDED_CHAT_SYSTEM_PROMPT
         # leads — same contract as paths B (partner_chat) and C (retrieval-api /chat).
-        prefix = _compose_libre_chat_prefix(templates_block, context_block)
+        #
+        # Note 2026-05-27: ``templates_block`` is now appended INSIDE
+        # ``lines`` (after ``source_link_instruction``) so the templates
+        # show up AFTER the [ANSWER FORMAT] rules — see comment at the
+        # ``lines.append(templates_block)`` site above. We therefore do
+        # NOT pass templates_block to ``_compose_libre_chat_prefix`` here
+        # any more; doing so would duplicate the block in the system
+        # prompt, once high (between GROUNDED and the KB header) and
+        # once low (right before the chunks).
+        prefix = _compose_libre_chat_prefix(context_block)
         _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
         original_stream = data.get("stream")
