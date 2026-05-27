@@ -80,6 +80,12 @@ class FeedbackItem(Base):
     external_tracker_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     external_tracker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     external_tracker_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    public_feedback_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    public_title: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    public_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_window: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

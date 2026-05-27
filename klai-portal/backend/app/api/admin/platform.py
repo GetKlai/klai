@@ -28,15 +28,17 @@ from sqlalchemy import bindparam, or_, select, text
 
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
-from app.klai_feedback.models import FeedbackItem, FeedbackSubmission
+from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackSubmission
 from app.klai_feedback.service import (
     FeedbackItemNotFoundError,
     FeedbackSubmissionNotFoundError,
     create_feedback_item_from_submission,
     dismiss_feedback_submission,
+    get_feedback_item,
     link_feedback_submission_to_item,
     mark_feedback_submission_support,
     search_feedback_items,
+    update_feedback_item,
 )
 from app.models.portal import PortalOrg as PortalOrgModel
 from app.services.audit import log_event
@@ -143,8 +145,27 @@ class PlatformFeedbackItem(BaseModel):
     priority_score: int
     org_count: int
     user_count: int
+    external_tracker_type: str | None
+    external_tracker_id: str | None
+    external_tracker_url: str | None
+    public_feedback_url: str | None
+    public_title: str | None
+    public_summary: str | None
+    target_window: str | None
+    owner: str | None
+    shipped_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class PlatformFeedbackLinkedSubmission(PlatformFeedbackSubmission):
+    link_type: str
+    linked_at: datetime
+
+
+class PlatformFeedbackItemDetail(BaseModel):
+    item: PlatformFeedbackItem
+    submissions: list[PlatformFeedbackLinkedSubmission]
 
 
 class PlatformFeedbackActionResult(BaseModel):
@@ -167,6 +188,24 @@ class PlatformFeedbackCreateItemIn(BaseModel):
 class PlatformFeedbackLinkItemIn(BaseModel):
     item_id: int
     link_type: Literal["upvote", "evidence", "bug_repro", "support_signal"] = "evidence"
+
+
+class PlatformFeedbackItemPatchIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    kind: Literal["feature", "bug", "ux_confusion", "docs", "support_pattern"] | None = None
+    title: str | None = Field(default=None, min_length=3, max_length=256)
+    summary: str | None = Field(default=None, max_length=4000)
+    status: Literal["inbox", "under_review", "planned", "in_progress", "shipped", "wont_do"] | None = None
+    area: str | None = Field(default=None, max_length=128)
+    external_tracker_type: str | None = Field(default=None, max_length=32)
+    external_tracker_id: str | None = Field(default=None, max_length=128)
+    external_tracker_url: str | None = Field(default=None, max_length=2048)
+    public_feedback_url: str | None = Field(default=None, max_length=2048)
+    public_title: str | None = Field(default=None, max_length=256)
+    public_summary: str | None = Field(default=None, max_length=4000)
+    target_window: str | None = Field(default=None, max_length=64)
+    owner: str | None = Field(default=None, max_length=128)
 
 
 class PlatformKB(BaseModel):
@@ -948,6 +987,95 @@ async def platform_feedback_items(
     return [_platform_feedback_item(item) for item in items]
 
 
+@router.get("/feedback/items/{item_id}", response_model=PlatformFeedbackItemDetail)
+async def platform_feedback_item_detail(
+    item_id: int,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> PlatformFeedbackItemDetail:
+    """Return a canonical feedback item plus all linked customer evidence."""
+    await _audit(perms, "feedback:item_detail", str(item_id))
+    feedback_type = FeedbackSubmission.metadata_json["feedback_type"].astext
+    severity = FeedbackSubmission.metadata_json["severity"].astext
+    async with cross_org_session() as db:
+        try:
+            item = await get_feedback_item(db, item_id)
+            rows = (
+                await db.execute(
+                    select(
+                        FeedbackSubmission.id.label("id"),
+                        FeedbackSubmission.org_id.label("org_id"),
+                        PortalOrgModel.name.label("org_name"),
+                        PortalOrgModel.slug.label("org_slug"),
+                        FeedbackSubmission.user_id.label("user_id"),
+                        FeedbackSubmission.source.label("source"),
+                        FeedbackSubmission.status.label("status"),
+                        FeedbackSubmission.raw_text.label("raw_text"),
+                        feedback_type.label("feedback_type"),
+                        severity.label("severity"),
+                        FeedbackSubmission.page_url.label("page_url"),
+                        FeedbackSubmission.route_id.label("route_id"),
+                        FeedbackSubmission.locale.label("locale"),
+                        FeedbackSubmission.viewport.label("viewport"),
+                        FeedbackSubmission.created_at.label("created_at"),
+                        FeedbackItemLink.link_type.label("link_type"),
+                        FeedbackItemLink.created_at.label("linked_at"),
+                    )
+                    .select_from(FeedbackItemLink)
+                    .join(FeedbackSubmission, FeedbackSubmission.id == FeedbackItemLink.submission_id)
+                    .outerjoin(PortalOrgModel, PortalOrgModel.id == FeedbackSubmission.org_id)
+                    .where(FeedbackItemLink.item_id == item_id)
+                    .order_by(FeedbackItemLink.created_at.desc())
+                )
+            ).all()
+        except FeedbackItemNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Feedback item not found") from exc
+
+    return PlatformFeedbackItemDetail(
+        item=_platform_feedback_item(item),
+        submissions=[
+            PlatformFeedbackLinkedSubmission(
+                id=r.id,
+                org_id=r.org_id,
+                org_name=r.org_name,
+                org_slug=r.org_slug,
+                user_id=r.user_id,
+                event_type=_feedback_event_type(r.source),
+                status=r.status,
+                raw_text=r.raw_text,
+                feedback_type=r.feedback_type,
+                severity=r.severity,
+                page_url=r.page_url,
+                route_id=r.route_id,
+                locale=r.locale,
+                viewport=r.viewport,
+                created_at=r.created_at,
+                link_type=r.link_type,
+                linked_at=r.linked_at,
+            )
+            for r in rows
+        ],
+    )
+
+
+@router.patch("/feedback/items/{item_id}", response_model=PlatformFeedbackItem)
+async def platform_feedback_update_item(
+    item_id: int,
+    body: PlatformFeedbackItemPatchIn,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> PlatformFeedbackItem:
+    await _audit(perms, "feedback:update_item", str(item_id))
+    values = {
+        key: _blank_to_none(value)
+        for key, value in body.model_dump(exclude_unset=True).items()
+    }
+    async with cross_org_session() as db:
+        try:
+            item = await update_feedback_item(db, item_id, values)
+        except FeedbackItemNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Feedback item not found") from exc
+    return _platform_feedback_item(item)
+
+
 @router.post(
     "/feedback/submissions/{submission_id}/dismiss",
     response_model=PlatformFeedbackActionResult,
@@ -1044,9 +1172,24 @@ def _platform_feedback_item(item: FeedbackItem) -> PlatformFeedbackItem:
         priority_score=item.priority_score,
         org_count=item.org_count,
         user_count=item.user_count,
+        external_tracker_type=item.external_tracker_type,
+        external_tracker_id=item.external_tracker_id,
+        external_tracker_url=item.external_tracker_url,
+        public_feedback_url=item.public_feedback_url,
+        public_title=item.public_title,
+        public_summary=item.public_summary,
+        target_window=item.target_window,
+        owner=item.owner,
+        shipped_at=item.shipped_at,
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
+
+
+def _blank_to_none(value: object) -> object:
+    if isinstance(value, str) and value == "":
+        return None
+    return value
 
 
 __all__ = ["router"]

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,6 +62,13 @@ async def get_feedback_submission(db: AsyncSession, submission_id: int) -> Feedb
     return submission
 
 
+async def get_feedback_item(db: AsyncSession, item_id: int) -> FeedbackItem:
+    item = (await db.execute(select(FeedbackItem).where(FeedbackItem.id == item_id))).scalar_one_or_none()
+    if item is None:
+        raise FeedbackItemNotFoundError()
+    return item
+
+
 async def search_feedback_items(
     db: AsyncSession,
     *,
@@ -77,6 +86,23 @@ async def search_feedback_items(
             )
         )
     return list((await db.execute(query)).scalars().all())
+
+
+async def update_feedback_item(
+    db: AsyncSession,
+    item_id: int,
+    values: dict[str, object],
+) -> FeedbackItem:
+    item = await get_feedback_item(db, item_id)
+    next_status = values.get("status")
+    if next_status == "shipped" and item.status != "shipped" and item.shipped_at is None:
+        item.shipped_at = datetime.now(UTC)
+    elif next_status is not None and next_status != "shipped":
+        item.shipped_at = None
+    for key, value in values.items():
+        setattr(item, key, value)
+    await db.commit()
+    return item
 
 
 async def dismiss_feedback_submission(db: AsyncSession, submission_id: int) -> FeedbackSubmission:
@@ -137,9 +163,7 @@ async def link_feedback_submission_to_item(
     link_type: str,
 ) -> tuple[FeedbackSubmission, FeedbackItem]:
     submission = await get_feedback_submission(db, submission_id)
-    item = (await db.execute(select(FeedbackItem).where(FeedbackItem.id == item_id))).scalar_one_or_none()
-    if item is None:
-        raise FeedbackItemNotFoundError()
+    item = await get_feedback_item(db, item_id)
 
     existing = (
         await db.execute(
