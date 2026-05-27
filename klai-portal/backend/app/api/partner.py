@@ -1373,7 +1373,7 @@ def _widget_client_session_id(request: Request | None) -> str | None:
     if request is None:
         return None
     value = request.query_params.get("session_id")
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     return value if _WIDGET_CLIENT_SESSION_RE.fullmatch(value) else None
 
