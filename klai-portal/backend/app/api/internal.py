@@ -46,6 +46,7 @@ from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.models.templates import PortalTemplate
 from app.services.connector_credentials import credential_store
+from app.services.default_knowledge_bases import personal_kb_slug
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
 from app.services.gap_rescorer import schedule_rescore
@@ -697,6 +698,13 @@ class KnowledgeFeatureResponse(BaseModel):
     # qdrant chunks (klai-portal/backend/app/api/knowledge.py:172-204), so
     # the personal-scope filter also works.
     zitadel_user_id: str | None = None
+    # Canonical slug of this user's auto-provisioned personal KB. Returned
+    # so the LiteLLM hook can scope a "Persoonlijk"-only retrieval call to
+    # exactly that one KB without reconstructing the slug from string parts
+    # (the `personal-<zitadel_user_id>` template lives in
+    # `app.services.default_knowledge_bases.personal_kb_slug` — single
+    # source of truth on the portal-api side).
+    personal_kb_slug: str | None = None
     # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: per-tenant telemetry mode threaded
     # through to the LiteLLM hook + knowledge-mcp. Default 'shadow' for
     # backwards compatibility — when the field is absent in cached responses
@@ -820,6 +828,7 @@ async def get_knowledge_feature(
         kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
         zitadel_user_id=user.zitadel_user_id,
+        personal_kb_slug=personal_kb_slug(user.zitadel_user_id) if user.zitadel_user_id else None,
         telemetry_level=org_telemetry_level,
     )
 
