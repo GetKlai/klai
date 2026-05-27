@@ -8,7 +8,7 @@ Verifies that:
 
 from unittest.mock import MagicMock
 
-from app.api.connectors import _connector_out
+from app.api.connectors import _connector_out, _cookie_names_from_credentials
 from app.services.connector_credentials import SENSITIVE_FIELDS
 
 # Test-only placeholder values (NOT real credentials)
@@ -80,6 +80,20 @@ class TestConnectorOutMasking:
         out = _connector_out(connector)
         assert out.has_saved_credentials is True
         assert "cookies" not in out.config
+
+
+def test_cookie_names_from_credentials_returns_names_without_values() -> None:
+    names = _cookie_names_from_credentials(
+        {
+            "cookies": [
+                {"name": "prod-knowledgebase-session", "value": FAKE_TOKEN},
+                {"name": "XSRF-TOKEN", "value": FAKE_TOKEN},
+                {"name": "XSRF-TOKEN", "value": "duplicate"},
+            ]
+        }
+    )
+    assert names == ["prod-knowledgebase-session", "XSRF-TOKEN"]
+    assert FAKE_TOKEN not in names
 
     def test_all_connector_types_mask_correctly(self) -> None:
         """Every connector type in SENSITIVE_FIELDS has its fields masked."""
