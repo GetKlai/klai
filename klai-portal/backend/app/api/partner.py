@@ -151,11 +151,14 @@ class HandoffTranscriptMessage(BaseModel):
 
 class StartHubSpotHandoffRequest(BaseModel):
     summary: str | None = Field(default=None, max_length=4000)
+    visitor_name: str | None = Field(default=None, max_length=120)
+    visitor_email: str | None = Field(default=None, max_length=254)
     messages: list[HandoffTranscriptMessage] = Field(default_factory=list, max_length=50)
 
 
 class SendHubSpotHandoffMessageRequest(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
+    visitor_name: str | None = Field(default=None, max_length=120)
 
 
 class HubSpotHandoffResponse(BaseModel):
@@ -999,6 +1002,8 @@ async def start_widget_hubspot_handoff(
             widget_public_id=str(auth.key_id),
             session_key=auth.session_key or "",
             summary=request.summary,
+            visitor_name=request.visitor_name,
+            visitor_email=request.visitor_email,
             messages=[message.model_dump() for message in request.messages],
         )
     except Exception as exc:
@@ -1024,6 +1029,7 @@ async def send_widget_hubspot_handoff_message(
             widget_public_id=str(auth.key_id),
             session_key=auth.session_key or "",
             content=request.content,
+            visitor_name=request.visitor_name,
         )
     except RuntimeError as exc:
         raise HTTPException(

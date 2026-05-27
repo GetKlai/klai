@@ -18,6 +18,8 @@ export interface ChatState {
   unreadCount: number;
   isOpen: boolean;
   agentName: string | null;
+  visitorName: string;
+  visitorEmail: string;
 }
 
 const initialState: ChatState = {
@@ -34,6 +36,8 @@ const initialState: ChatState = {
   unreadCount: 0,
   isOpen: false,
   agentName: null,
+  visitorName: "",
+  visitorEmail: "",
 };
 
 export const [chatState, setChatState] = createStore<ChatState>(initialState);
@@ -46,6 +50,8 @@ interface PersistedChatState {
   lastHandoffEventId: number;
   unreadCount: number;
   agentName: string | null;
+  visitorName: string;
+  visitorEmail: string;
 }
 
 function storageKey(widgetId: string): string {
@@ -70,6 +76,8 @@ function loadPersistedState(widgetId: string): PersistedChatState | null {
       lastHandoffEventId: Number(parsed.lastHandoffEventId || 0),
       unreadCount: Number(parsed.unreadCount || 0),
       agentName: typeof parsed.agentName === "string" && parsed.agentName.trim() ? parsed.agentName : null,
+      visitorName: typeof parsed.visitorName === "string" ? parsed.visitorName.slice(0, 120) : "",
+      visitorEmail: typeof parsed.visitorEmail === "string" ? parsed.visitorEmail.slice(0, 254) : "",
     };
   } catch {
     return null;
@@ -87,6 +95,8 @@ function persistState(): void {
       lastHandoffEventId: chatState.lastHandoffEventId,
       unreadCount: chatState.unreadCount,
       agentName: chatState.agentName,
+      visitorName: chatState.visitorName,
+      visitorEmail: chatState.visitorEmail,
     };
     window.localStorage.setItem(storageKey(chatState.widgetId), JSON.stringify(payload));
   } catch {
@@ -120,7 +130,19 @@ export function initStore(widgetId: string, config: WidgetConfig, clientSessionI
     lastHandoffEventId: persisted?.lastHandoffEventId ?? 0,
     unreadCount: persisted?.unreadCount ?? 0,
     agentName: persisted?.agentName ?? null,
+    visitorName: persisted?.visitorName ?? "",
+    visitorEmail: persisted?.visitorEmail ?? "",
   });
+  schedulePersist();
+}
+
+export function setVisitorIdentity(identity: { name?: string; email?: string }): void {
+  if (identity.name !== undefined) {
+    setChatState("visitorName", identity.name.slice(0, 120));
+  }
+  if (identity.email !== undefined) {
+    setChatState("visitorEmail", identity.email.slice(0, 254));
+  }
   schedulePersist();
 }
 
