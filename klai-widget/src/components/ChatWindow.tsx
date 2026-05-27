@@ -16,6 +16,8 @@ import {
   setHandoffActive,
   setHandoffConnecting,
   setVisitorIdentity,
+  setRememberIdentity,
+  clearStoredIdentity,
   startNewConversation,
   switchConversation,
 } from "../store/chat";
@@ -543,6 +545,27 @@ export function ChatWindow(props: ChatWindowProps) {
                 }}
               />
             </div>
+            <label class="klai-remember-me">
+              <input
+                type="checkbox"
+                checked={chatState.rememberIdentity}
+                onChange={(e) => setRememberIdentity(e.currentTarget.checked)}
+              />
+              <span>{t().rememberMe}</span>
+            </label>
+            <Show when={chatState.rememberIdentity && (visitorName() || visitorEmail())}>
+              <button
+                type="button"
+                class="klai-clear-identity"
+                onClick={() => {
+                  setVisitorName("");
+                  setVisitorEmail("");
+                  clearStoredIdentity();
+                }}
+              >
+                {t().clearStoredIdentity}
+              </button>
+            </Show>
           </div>
         </Show>
         <textarea
