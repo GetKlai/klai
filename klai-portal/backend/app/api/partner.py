@@ -1393,9 +1393,7 @@ def _hubspot_handoff_enabled_for_widget(
         return False
     hubspot = integrations.get("hubspot")
     return bool(
-        isinstance(hubspot, dict)
-        and hubspot.get("status") == "connected"
-        and hubspot.get("channel_account_id")
+        isinstance(hubspot, dict) and hubspot.get("status") == "connected" and hubspot.get("channel_account_id")
     )
 
 
