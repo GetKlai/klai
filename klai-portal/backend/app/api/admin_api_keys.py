@@ -18,6 +18,7 @@ No `active` / revoke action — DELETE is the only way to end a key.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
@@ -72,10 +73,17 @@ class ApiKeyResponse(BaseModel):
     last_used_at: str | None
     created_at: str
     created_by: str
+    rotated_from_key_id: str | None = None
+    rotated_to_key_id: str | None = None
+    rotation_started_at: str | None = None
 
 
 class CreateApiKeyResponse(ApiKeyResponse):
     api_key: str  # Full plaintext key — only in create response
+
+
+class RotateApiKeyResponse(CreateApiKeyResponse):
+    old_key_id: str
 
 
 class ApiKeyDetailResponse(ApiKeyResponse):
@@ -96,6 +104,10 @@ class UpdateApiKeyRequest(BaseModel):
 
 
 def _key_to_response(key: PartnerAPIKey, kb_access_count: int) -> ApiKeyResponse:
+    rotated_from_key_id = getattr(key, "rotated_from_key_id", None)
+    rotated_to_key_id = getattr(key, "rotated_to_key_id", None)
+    rotation_started_at = getattr(key, "rotation_started_at", None)
+
     return ApiKeyResponse(
         id=key.id,
         name=key.name,
@@ -107,6 +119,9 @@ def _key_to_response(key: PartnerAPIKey, kb_access_count: int) -> ApiKeyResponse
         last_used_at=str(key.last_used_at) if key.last_used_at else None,
         created_at=str(key.created_at),
         created_by=key.created_by,
+        rotated_from_key_id=rotated_from_key_id if isinstance(rotated_from_key_id, str) else None,
+        rotated_to_key_id=rotated_to_key_id if isinstance(rotated_to_key_id, str) else None,
+        rotation_started_at=str(rotation_started_at) if isinstance(rotation_started_at, datetime) else None,
     )
 
 
@@ -150,6 +165,11 @@ async def _count_kb_access(key_id: str, db: AsyncSession) -> int:
         .where(PartnerApiKeyKbAccess.partner_api_key_id == key_id)
     )
     return result.scalar() or 0
+
+
+def _rotated_key_name(name: str, now: datetime) -> str:
+    suffix = f" (rotated {now.date().isoformat()})"
+    return f"{name[: 128 - len(suffix)]}{suffix}"
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +308,9 @@ async def get_api_key_detail(
         }
         for access, kb in kb_result
     ]
+    rotated_from_key_id = getattr(key, "rotated_from_key_id", None)
+    rotated_to_key_id = getattr(key, "rotated_to_key_id", None)
+    rotation_started_at = getattr(key, "rotation_started_at", None)
 
     return ApiKeyDetailResponse(
         id=key.id,
@@ -300,7 +323,104 @@ async def get_api_key_detail(
         last_used_at=str(key.last_used_at) if key.last_used_at else None,
         created_at=str(key.created_at),
         created_by=key.created_by,
+        rotated_from_key_id=rotated_from_key_id if isinstance(rotated_from_key_id, str) else None,
+        rotated_to_key_id=rotated_to_key_id if isinstance(rotated_to_key_id, str) else None,
+        rotation_started_at=str(rotation_started_at) if isinstance(rotation_started_at, datetime) else None,
         kb_access=kb_access_list,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/api-keys/{id}/rotate
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{key_id}/rotate", status_code=status.HTTP_201_CREATED)
+async def rotate_api_key(
+    key_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("partner_api")),
+    db: AsyncSession = Depends(get_db),
+) -> RotateApiKeyResponse:
+    """Create a replacement key with the same permissions and KB access.
+
+    The old key remains valid until the admin deletes it, giving customers a
+    zero-downtime rotation window.
+    """
+    source_key = await _get_key_or_404(key_id, perms.org_id, db)
+    if source_key.rotated_to_key_id is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="API key already has a pending rotation",
+        )
+
+    kb_result = await db.execute(
+        select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == source_key.id)
+    )
+    kb_rows = list(kb_result.scalars().all())
+
+    now = datetime.now(UTC)
+    plaintext_key, key_hash = generate_partner_key()
+    new_key_id = str(uuid.uuid4())
+
+    new_key = PartnerAPIKey(
+        id=new_key_id,
+        org_id=perms.org_id,
+        name=_rotated_key_name(source_key.name, now),
+        description=source_key.description,
+        key_prefix=plaintext_key[:12],
+        key_hash=key_hash,
+        permissions=dict(source_key.permissions),
+        rate_limit_rpm=source_key.rate_limit_rpm,
+        created_by=perms.user_id,
+        rotated_from_key_id=source_key.id,
+    )
+    db.add(new_key)
+
+    for row in kb_rows:
+        db.add(
+            PartnerApiKeyKbAccess(
+                partner_api_key_id=new_key_id,
+                kb_id=row.kb_id,
+                access_level=row.access_level,
+            )
+        )
+
+    source_key.rotated_to_key_id = new_key_id
+    source_key.rotation_started_at = now
+
+    await db.flush()
+    await db.refresh(new_key)
+    await db.commit()
+
+    emit_event(
+        "api_key.rotated",
+        org_id=perms.org_id,
+        user_id=perms.user_id,
+        properties={
+            "api_key_id": source_key.id,
+            "rotated_to_key_id": new_key_id,
+            "name": source_key.name,
+        },
+    )
+    logger.info("API key rotated", api_key_id=source_key.id, rotated_to_key_id=new_key_id, org_id=perms.org_id)
+
+    return RotateApiKeyResponse(
+        id=new_key.id,
+        old_key_id=source_key.id,
+        name=new_key.name,
+        description=new_key.description,
+        key_prefix=new_key.key_prefix,
+        permissions=new_key.permissions,
+        kb_access_count=len(kb_rows),
+        rate_limit_rpm=new_key.rate_limit_rpm,
+        last_used_at=None,
+        created_at=str(new_key.created_at),
+        created_by=new_key.created_by,
+        rotated_from_key_id=source_key.id,
+        rotated_to_key_id=None,
+        rotation_started_at=None,
+        api_key=plaintext_key,
     )
 
 
