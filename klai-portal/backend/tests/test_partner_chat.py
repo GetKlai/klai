@@ -284,6 +284,84 @@ async def test_kb_id_to_slug_translation():
 
 
 @pytest.mark.asyncio
+async def test_knowledge_options_override_retrieval_query_kbs_and_top_k():
+    """Klai knowledge extension keeps OpenAI messages for generation while
+    sending an explicit clean query to retrieval.
+    """
+    from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
+
+    fake_kbs = [FakeKB(id=20, name="Support", slug="support", org_id=42)]
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
+
+    req = ChatCompletionsRequest(
+        messages=[
+            {"role": "system", "content": "Draft a concise support reply."},
+            {"role": "user", "content": "HubSpot ticket data and formatting instructions."},
+        ],
+        model="klai-primary",
+        stream=False,
+        knowledge=KnowledgeOptions(
+            query="Bubble Zoho CRM gespreksnotities AI-transcripts worden niet doorgezet",
+            knowledge_base_ids=[20],
+            top_k=20,
+        ),
+    )
+
+    litellm_response = {
+        "id": "chatcmpl-123",
+        "object": "chat.completion",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+    }
+
+    with (
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
+        patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response) as mock_chat,
+        patch("app.api.partner.asyncio"),
+    ):
+        await chat_completions(
+            request=req,
+            http_request=_http_request_stub(),
+            auth=make_partner_auth(kb_access={10: "read", 20: "read"}),
+            db=db,
+        )
+
+    assert mock_retrieve.call_args.kwargs["kb_slugs"] == ["support"]
+    assert (
+        mock_retrieve.call_args.kwargs["retrieval_query"]
+        == "Bubble Zoho CRM gespreksnotities AI-transcripts worden niet doorgezet"
+    )
+    assert mock_retrieve.call_args.kwargs["top_k"] == 20
+    assert (
+        mock_chat.call_args.kwargs["source_query"]
+        == "Bubble Zoho CRM gespreksnotities AI-transcripts worden niet doorgezet"
+    )
+
+
+@pytest.mark.asyncio
+async def test_knowledge_options_validate_kb_access():
+    """KB access checks also apply to the nested knowledge extension."""
+    from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hello"}],
+        model="klai-primary",
+        stream=False,
+        knowledge=KnowledgeOptions(query="hello", knowledge_base_ids=[99]),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_completions(
+            request=req,
+            http_request=_http_request_stub(),
+            auth=make_partner_auth(kb_access={10: "read"}),
+            db=AsyncMock(),
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_widget_system_prompt_loaded_for_widget_auth():
     """Widget JWT calls load private behaviour instructions from widget_config."""
     from app.api.partner import _widget_system_prompt
@@ -1733,6 +1811,95 @@ async def test_retrieve_context_sends_caller_service_header(monkeypatch):
         "X-Caller-Service header missing — retrieval-api 400s and partner chat returns no KB context. See pitfalls."
     )
     assert captured["headers"].get("X-Internal-Secret") == "test-retrieval-secret"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_uses_explicit_query_and_top_k(monkeypatch):
+    """Partner API callers can decouple generation messages from RAG search."""
+    from app.services.partner_chat import retrieve_context
+
+    captured: dict = {}
+
+    class _MockResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"chunks": []}
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, json=None, headers=None):
+            captured["body"] = json
+            return _MockResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    fake_settings.retrieval_api_internal_secret = "secret"
+    fake_settings.internal_secret = "fallback"
+
+    await retrieve_context(
+        org_id=42,
+        zitadel_org_id="z-1",
+        kb_slugs=["support"],
+        messages=[
+            {"role": "system", "content": "Draft a support reply."},
+            {"role": "user", "content": "Full ticket context with adapter metadata."},
+        ],
+        settings=fake_settings,
+        retrieval_query="clean customer question",
+        top_k=20,
+    )
+
+    assert captured["body"]["query"] == "clean customer question"
+    assert captured["body"]["top_k"] == 20
+    assert captured["body"]["kb_slugs"] == ["support"]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_can_disable_retrieval(monkeypatch):
+    """knowledge.enabled=false must not call retrieval-api."""
+    from app.services.partner_chat import retrieve_context
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, *_, **__):
+            raise AssertionError("retrieval-api should not be called")
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    fake_settings.retrieval_api_internal_secret = "secret"
+    fake_settings.internal_secret = "fallback"
+
+    chunks, system_prompt, trusted_sources = await retrieve_context(
+        org_id=42,
+        zitadel_org_id="z-1",
+        kb_slugs=["support"],
+        messages=[
+            {"role": "system", "content": "Use this exact instruction."},
+            {"role": "user", "content": "hello"},
+        ],
+        settings=fake_settings,
+        retrieval_enabled=False,
+    )
+
+    assert chunks == []
+    assert trusted_sources == []
+    assert system_prompt == "Use this exact instruction."
 
 
 # ---------------------------------------------------------------------------

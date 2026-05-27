@@ -1,0 +1,8 @@
+{
+  "uid": "klai_email_support_app_function",
+  "type": "app-function",
+  "config": {
+    "entrypoint": "/app/functions/NewFunction.js",
+    "secretKeys": ["KLAI_PARTNER_API_KEY"]
+  }
+}
