@@ -1456,6 +1456,7 @@
   "admin_api_keys_rotate_modal_title": "API key rotated",
   "admin_api_keys_rotate_modal_description": "Store this replacement key in your secrets manager, then update your applications. The old key keeps working until you delete it.",
   "admin_api_keys_rotate_modal_confirm": "I have saved the replacement key",
+  "admin_api_keys_tab_rotation": "Rotation",
   "admin_shared_save": "Save changes",
   "admin_shared_success_updated": "Integration updated",
   "admin_widgets_widget_embed_title": "Embed snippet",
