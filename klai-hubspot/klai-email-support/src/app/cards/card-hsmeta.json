@@ -1,0 +1,13 @@
+{
+  "uid": "klai_email_support_card",
+  "type": "card",
+  "config": {
+    "name": "Klai Email Support",
+    "description": "Generate a Klai concept reply for this Help Desk ticket.",
+    "location": "helpdesk.sidebar",
+    "entrypoint": "/app/cards/NewCard.tsx",
+    "objectTypes": [
+      "tickets"
+    ]
+  }
+}

@@ -74,6 +74,14 @@ class PageContext(BaseModel):
     excerpt: str | None = Field(default=None, max_length=2000)
 
 
+class KnowledgeOptions(BaseModel):
+    enabled: bool = True
+    query: str | None = None
+    knowledge_base_ids: list[int] | None = None
+    top_k: int | None = Field(default=None, ge=1, le=50)
+    include_sources: bool = True
+
+
 class ChatCompletionsRequest(BaseModel):
     messages: list[dict] = Field(..., min_length=1)
     model: str = "klai-primary"
@@ -81,6 +89,7 @@ class ChatCompletionsRequest(BaseModel):
     temperature: float = 0.7
     knowledge_base_ids: list[int] | None = None
     page_context: PageContext | None = None
+    knowledge: KnowledgeOptions | None = None
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -359,8 +368,16 @@ async def chat_completions(
             detail={"error": {"type": "invalid_request", "message": "Messages must contain at least one user message"}},
         )
 
-    # 4. Validate KB access
-    kb_ids = validate_kb_access(auth, request.knowledge_base_ids)
+    # 4. Validate KB access. ``knowledge`` is a Klai extension on top of the
+    # OpenAI-compatible request shape. Top-level knowledge_base_ids remains
+    # supported for existing partner clients.
+    knowledge = request.knowledge
+    requested_kb_ids = (
+        knowledge.knowledge_base_ids
+        if knowledge is not None and knowledge.knowledge_base_ids is not None
+        else request.knowledge_base_ids
+    )
+    kb_ids = validate_kb_access(auth, requested_kb_ids)
 
     # 5. Translate kb_ids -> kb_slugs
     kb_slugs = await _resolve_kb_slugs(kb_ids, auth.org_id, db)
@@ -412,6 +429,9 @@ async def chat_completions(
             widget_system_prompt=widget_system_prompt,
             page_context=page_context,
             backend_managed_citations=True,
+            retrieval_query=knowledge.query if knowledge is not None else None,
+            top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
+            retrieval_enabled=knowledge.enabled if knowledge is not None else True,
         )
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
@@ -498,6 +518,8 @@ async def chat_completions(
             citation_chunks=chunks,
             trusted_sources=trusted_sources,
             citation_output=citation_output,
+            source_query=knowledge.query if knowledge is not None else None,
+            emit_sources=knowledge.include_sources if knowledge is not None else True,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -526,7 +548,13 @@ async def chat_completions(
         citation_chunks=chunks,
         trusted_sources=trusted_sources,
         citation_output=citation_output,
+        source_query=knowledge.query if knowledge is not None else None,
     )
+    if knowledge is not None and not knowledge.include_sources:
+        for choice in result.get("choices") or []:
+            message = choice.get("message") if isinstance(choice, dict) else None
+            if isinstance(message, dict):
+                message.pop("sources", None)
     if audit_ready:
         assistant_text, assistant_sources = _extract_assistant_text_and_sources(result)
         if assistant_text:

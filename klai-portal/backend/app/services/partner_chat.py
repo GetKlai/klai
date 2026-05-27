@@ -1161,6 +1161,7 @@ async def _chat_completion_streaming_with_composed_citations(
     user_query: str,
     trusted_sources: list[dict[str, Any]] | None,
     citation_chunks: list[dict] | None,
+    emit_sources: bool = True,
 ) -> AsyncGenerator[bytes]:
     """Collect widget text, compose deterministic citations, then stream once."""
     raw_text_parts: list[str] = []
@@ -1210,7 +1211,7 @@ async def _chat_completion_streaming_with_composed_citations(
         selected_count=len(sources),
         decision=decision,
     )
-    if not sources:
+    if not sources or not emit_sources:
         yield _sse_content_delta(content)
         yield b"data: [DONE]\n\n"
         _emit_language_correctness_log(
@@ -1302,6 +1303,9 @@ async def retrieve_context(
     widget_system_prompt: str | None = None,
     page_context: PageContext | None = None,
     backend_managed_citations: bool = False,
+    retrieval_query: str | None = None,
+    top_k: int = 8,
+    retrieval_enabled: bool = True,
 ) -> tuple[list[dict], str, list[dict[str, Any]]]:
     """Call retrieval-api and return (chunks, augmented_system_prompt).
 
@@ -1317,12 +1321,21 @@ async def retrieve_context(
     ``product_event_skipped_no_identity`` warning branch in retrieve.py.
     Audit ref: .moai/audits/retrieval-coupling-2026-05-06/findings/F2-...md.
     """
-    query = _last_user_message(messages)
-    if not query:
+    # Extract original system message if present. It remains the generation
+    # instruction even when callers provide a separate retrieval query.
+    original_system = None
+    for msg in messages:
+        if msg.get("role") == "system":
+            original_system = msg.get("content", "")
+            break
+
+    query = (retrieval_query or "").strip() or _last_user_message(messages)
+    if not retrieval_enabled or not query:
         return (
             [],
             _build_system_prompt(
                 [],
+                original_system,
                 widget_system_prompt=widget_system_prompt,
                 page_context=page_context,
                 backend_managed_citations=backend_managed_citations,
@@ -1332,18 +1345,11 @@ async def retrieve_context(
 
     conversation_history = _build_conversation_history(messages)
 
-    # Extract original system message if present
-    original_system = None
-    for msg in messages:
-        if msg.get("role") == "system":
-            original_system = msg.get("content", "")
-            break
-
     retrieve_body: dict = {
         "query": query,
         "org_id": zitadel_org_id,  # retrieval-api expects string org_id
         "scope": "org",
-        "top_k": 8,
+        "top_k": top_k,
         "conversation_history": conversation_history,
     }
     if kb_slugs:
@@ -1433,6 +1439,7 @@ async def chat_completion_non_streaming(
     citation_chunks: list[dict] | None = None,
     trusted_sources: list[dict[str, Any]] | None = None,
     citation_output: CitationOutput = "links",
+    source_query: str | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -1474,7 +1481,7 @@ async def chat_completion_non_streaming(
                     content,
                     trusted_sources,
                     citation_chunks,
-                    _last_user_message(messages) or "",
+                    source_query or _last_user_message(messages) or "",
                 )
                 logger.info(
                     "partner_chat_citation_selection_decision",
@@ -1525,6 +1532,8 @@ async def chat_completion_streaming(
     citation_chunks: list[dict] | None = None,
     trusted_sources: list[dict[str, Any]] | None = None,
     citation_output: CitationOutput = "links",
+    source_query: str | None = None,
+    emit_sources: bool = True,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with KB-source URL sanitization.
 
@@ -1535,7 +1544,7 @@ async def chat_completion_streaming(
     """
 
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt)
-    user_query = _last_user_message(messages) or ""
+    user_query = source_query or _last_user_message(messages) or ""
 
     if citation_output == "markers":
         async for chunk in _chat_completion_streaming_with_composed_citations(
@@ -1547,6 +1556,7 @@ async def chat_completion_streaming(
             user_query=user_query,
             trusted_sources=trusted_sources,
             citation_chunks=citation_chunks,
+            emit_sources=emit_sources,
         ):
             yield chunk
         return
