@@ -137,16 +137,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for table in (
-        "feedback_triage_suggestions",
-        "feedback_item_links",
-        "feedback_items",
-        "feedback_submissions",
-    ):
-        op.execute(f"DROP POLICY IF EXISTS {table}_select ON {table}")
-        op.execute(f"DROP POLICY IF EXISTS {table}_insert ON {table}")
-        op.execute(f"DROP POLICY IF EXISTS {table}_update ON {table}")
-        op.execute(f"DROP POLICY IF EXISTS {table}_delete ON {table}")
+    op.execute("DROP POLICY IF EXISTS feedback_triage_suggestions_select ON feedback_triage_suggestions")
+    op.execute("DROP POLICY IF EXISTS feedback_triage_suggestions_insert ON feedback_triage_suggestions")
+    op.execute("DROP POLICY IF EXISTS feedback_triage_suggestions_update ON feedback_triage_suggestions")
+    op.execute("DROP POLICY IF EXISTS feedback_triage_suggestions_delete ON feedback_triage_suggestions")
+    op.execute("DROP POLICY IF EXISTS feedback_item_links_select ON feedback_item_links")
+    op.execute("DROP POLICY IF EXISTS feedback_item_links_insert ON feedback_item_links")
+    op.execute("DROP POLICY IF EXISTS feedback_item_links_update ON feedback_item_links")
+    op.execute("DROP POLICY IF EXISTS feedback_item_links_delete ON feedback_item_links")
+    op.execute("DROP POLICY IF EXISTS feedback_items_select ON feedback_items")
+    op.execute("DROP POLICY IF EXISTS feedback_items_insert ON feedback_items")
+    op.execute("DROP POLICY IF EXISTS feedback_items_update ON feedback_items")
+    op.execute("DROP POLICY IF EXISTS feedback_items_delete ON feedback_items")
+    op.execute("DROP POLICY IF EXISTS feedback_submissions_select ON feedback_submissions")
+    op.execute("DROP POLICY IF EXISTS feedback_submissions_insert ON feedback_submissions")
+    op.execute("DROP POLICY IF EXISTS feedback_submissions_update ON feedback_submissions")
 
     op.drop_index("ix_feedback_triage_suggestions_created", table_name="feedback_triage_suggestions")
     op.drop_index("ix_feedback_triage_suggestions_submission", table_name="feedback_triage_suggestions")
@@ -187,27 +192,74 @@ def _enable_rls() -> None:
             WITH CHECK (current_setting('app.cross_org_admin', true) = 'true')
     """)
 
-    for table in ("feedback_items", "feedback_item_links", "feedback_triage_suggestions"):
-        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
-        op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
-        op.execute(f"""
-            CREATE POLICY {table}_select ON {table}
-                FOR SELECT
-                USING (current_setting('app.cross_org_admin', true) = 'true')
-        """)
-        op.execute(f"""
-            CREATE POLICY {table}_insert ON {table}
-                FOR INSERT
-                WITH CHECK (current_setting('app.cross_org_admin', true) = 'true')
-        """)
-        op.execute(f"""
-            CREATE POLICY {table}_update ON {table}
-                FOR UPDATE
-                USING (current_setting('app.cross_org_admin', true) = 'true')
-                WITH CHECK (current_setting('app.cross_org_admin', true) = 'true')
-        """)
-        op.execute(f"""
-            CREATE POLICY {table}_delete ON {table}
-                FOR DELETE
-                USING (current_setting('app.cross_org_admin', true) = 'true')
-        """)
+    op.execute("ALTER TABLE feedback_items ENABLE ROW LEVEL SECURITY")
+    op.execute("ALTER TABLE feedback_items FORCE ROW LEVEL SECURITY")
+    op.execute("""
+        CREATE POLICY feedback_items_select ON feedback_items
+            FOR SELECT
+            USING (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+    op.execute("""
+        CREATE POLICY feedback_items_insert ON feedback_items
+            FOR INSERT
+            WITH CHECK (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+    op.execute("""
+        CREATE POLICY feedback_items_update ON feedback_items
+            FOR UPDATE
+            USING (current_setting('app.cross_org_admin', true) = 'true')
+            WITH CHECK (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+    op.execute("""
+        CREATE POLICY feedback_items_delete ON feedback_items
+            FOR DELETE
+            USING (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+
+    op.execute("ALTER TABLE feedback_item_links ENABLE ROW LEVEL SECURITY")
+    op.execute("ALTER TABLE feedback_item_links FORCE ROW LEVEL SECURITY")
+    op.execute("""
+        CREATE POLICY feedback_item_links_select ON feedback_item_links
+            FOR SELECT
+            USING (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+    op.execute("""
+        CREATE POLICY feedback_item_links_insert ON feedback_item_links
+            FOR INSERT
+            WITH CHECK (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+    op.execute("""
+        CREATE POLICY feedback_item_links_update ON feedback_item_links
+            FOR UPDATE
+            USING (current_setting('app.cross_org_admin', true) = 'true')
+            WITH CHECK (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+    op.execute("""
+        CREATE POLICY feedback_item_links_delete ON feedback_item_links
+            FOR DELETE
+            USING (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+
+    op.execute("ALTER TABLE feedback_triage_suggestions ENABLE ROW LEVEL SECURITY")
+    op.execute("ALTER TABLE feedback_triage_suggestions FORCE ROW LEVEL SECURITY")
+    op.execute("""
+        CREATE POLICY feedback_triage_suggestions_select ON feedback_triage_suggestions
+            FOR SELECT
+            USING (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+    op.execute("""
+        CREATE POLICY feedback_triage_suggestions_insert ON feedback_triage_suggestions
+            FOR INSERT
+            WITH CHECK (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+    op.execute("""
+        CREATE POLICY feedback_triage_suggestions_update ON feedback_triage_suggestions
+            FOR UPDATE
+            USING (current_setting('app.cross_org_admin', true) = 'true')
+            WITH CHECK (current_setting('app.cross_org_admin', true) = 'true')
+    """)
+    op.execute("""
+        CREATE POLICY feedback_triage_suggestions_delete ON feedback_triage_suggestions
+            FOR DELETE
+            USING (current_setting('app.cross_org_admin', true) = 'true')
+    """)
