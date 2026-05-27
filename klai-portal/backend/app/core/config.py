@@ -243,6 +243,7 @@ class Settings(BaseSettings):
     litellm_base_url: str = "http://litellm:4000"
     extraction_model: str = "klai-fast"
     synthesis_model: str = "klai-primary"
+    feedback_triage_model: str = "klai-fast"
 
     # SPEC-INFRA-TENANT-DELETE-001: Garage S3 for Scribe artifact deletion.
     # Feature-flag pattern: empty endpoint = step disabled (no S3 configured).

@@ -9,13 +9,14 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.klai_feedback.service import create_feedback_submission
+from app.klai_feedback.triage import run_feedback_triage_for_submission
 from app.services.events import emit_event
 
 router = APIRouter(prefix="/api/app/assistant", tags=["app-assistant"])
@@ -135,12 +136,13 @@ async def submit_question(
 async def submit_feedback(
     body: AssistantFeedbackIn,
     request: Request,
+    background_tasks: BackgroundTasks,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AssistantSubmitResponse:
     """Capture Klai product feedback from authenticated portal users."""
     request_context = _request_context(request)
-    await create_feedback_submission(
+    submission = await create_feedback_submission(
         db,
         source="assistant_feedback",
         raw_text=body.raw_text,
@@ -167,6 +169,7 @@ async def submit_feedback(
             "feedback_type": body.type,
         },
     )
+    background_tasks.add_task(run_feedback_triage_for_submission, submission.id)
     return AssistantSubmitResponse()
 
 
@@ -178,12 +181,13 @@ async def submit_feedback(
 async def submit_problem_report(
     body: AssistantProblemReportIn,
     request: Request,
+    background_tasks: BackgroundTasks,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> AssistantSubmitResponse:
     """Capture a Klai problem report with basic diagnostic context."""
     request_context = _request_context(request)
-    await create_feedback_submission(
+    submission = await create_feedback_submission(
         db,
         source="assistant_problem",
         raw_text=body.raw_text,
@@ -210,4 +214,5 @@ async def submit_problem_report(
             "severity": body.severity,
         },
     )
+    background_tasks.add_task(run_feedback_triage_for_submission, submission.id)
     return AssistantSubmitResponse()

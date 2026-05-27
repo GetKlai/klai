@@ -28,29 +28,29 @@ async def create_feedback_submission(
     user_agent: str | None,
     referrer: str | None,
     metadata_json: dict | None = None,
-) -> None:
+) -> FeedbackSubmission:
     """Persist a raw first-party feedback submission synchronously.
 
     The caller's request session is already tenant-scoped by get_caller/get_db.
     A successful form response should therefore mean the durable feedback row
     exists; product_events remains a secondary audit/analytics signal.
     """
-    db.add(
-        FeedbackSubmission(
-            source=source,
-            raw_text=raw_text,
-            org_id=org_id,
-            user_id=user_id,
-            page_url=page_url,
-            route_id=route_id,
-            locale=locale,
-            viewport=viewport,
-            user_agent=user_agent,
-            referrer=referrer,
-            metadata_json=metadata_json or {},
-        )
+    submission = FeedbackSubmission(
+        source=source,
+        raw_text=raw_text,
+        org_id=org_id,
+        user_id=user_id,
+        page_url=page_url,
+        route_id=route_id,
+        locale=locale,
+        viewport=viewport,
+        user_agent=user_agent,
+        referrer=referrer,
+        metadata_json=metadata_json or {},
     )
+    db.add(submission)
     await db.commit()
+    return submission
 
 
 async def get_feedback_submission(db: AsyncSession, submission_id: int) -> FeedbackSubmission:
