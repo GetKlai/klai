@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import time
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -21,10 +22,22 @@ def hubspot_client(monkeypatch: pytest.MonkeyPatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    from app.core.database import get_db
+
     monkeypatch.setattr(webhooks.settings, "hubspot_webchat_client_secret", "test-hubspot-client-secret")
+    monkeypatch.setattr(
+        webhooks,
+        "record_hubspot_agent_reply",
+        AsyncMock(return_value={"status": "recorded", "handoff_session_id": 123}),
+    )
 
     app = FastAPI()
     app.include_router(webhooks.router)
+
+    async def _fake_db():
+        yield object()
+
+    app.dependency_overrides[get_db] = _fake_db
     with TestClient(app, base_url="https://getklai.getklai.com") as client:
         yield client
 

@@ -11,6 +11,8 @@ export interface ChatState {
   isStreaming: boolean;
   config: WidgetConfig | null;
   error: string | null;
+  handoffActive: boolean;
+  handoffConnecting: boolean;
 }
 
 const initialState: ChatState = {
@@ -20,6 +22,8 @@ const initialState: ChatState = {
   isStreaming: false,
   config: null,
   error: null,
+  handoffActive: false,
+  handoffConnecting: false,
 };
 
 export const [chatState, setChatState] = createStore<ChatState>(initialState);
@@ -38,6 +42,8 @@ export function initStore(widgetId: string, config: WidgetConfig): void {
     ],
     isStreaming: false,
     error: null,
+    handoffActive: false,
+    handoffConnecting: false,
   });
 }
 
@@ -83,6 +89,7 @@ export function finishStreaming(): void {
 export function setError(message: string): void {
   setChatState("error", message);
   setChatState("isStreaming", false);
+  setChatState("handoffConnecting", false);
 }
 
 export function clearError(): void {
@@ -92,4 +99,22 @@ export function clearError(): void {
 export function updateSessionToken(token: string): void {
   // Update token in memory — never persist to storage
   setChatState("sessionToken", token);
+}
+
+export function addAgentMessage(content: string): void {
+  setChatState("messages", (msgs) => [...msgs, { role: "agent", content }]);
+}
+
+export function addAssistantNotice(content: string): void {
+  setChatState("messages", (msgs) => [...msgs, { role: "assistant", content }]);
+}
+
+export function setHandoffConnecting(value: boolean): void {
+  setChatState("handoffConnecting", value);
+}
+
+export function setHandoffActive(value: boolean): void {
+  setChatState("handoffActive", value);
+  setChatState("handoffConnecting", false);
+  setChatState("isStreaming", false);
 }

@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg
 from app.services.moneybird import MoneybirdService
+from app.services.widget_handoff import record_hubspot_agent_reply
 
 logger = logging.getLogger(__name__)
 _structlog_logger = structlog.get_logger()
@@ -107,7 +108,10 @@ def _hubspot_event_log_fields(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/hubspot/custom-channel")
-async def hubspot_custom_channel_webhook(request: Request) -> Response:
+async def hubspot_custom_channel_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
     request_body = await request.body()
     signature = request.headers.get("x-hubspot-signature-v3")
     timestamp = request.headers.get("x-hubspot-request-timestamp")
@@ -134,6 +138,13 @@ async def hubspot_custom_channel_webhook(request: Request) -> Response:
     _structlog_logger.info(
         "hubspot_custom_channel_webhook_received",
         **_hubspot_event_log_fields(payload),
+    )
+    result = await record_hubspot_agent_reply(db, payload)
+    _structlog_logger.info(
+        "hubspot_custom_channel_webhook_processed",
+        status=result.get("status"),
+        reason=result.get("reason"),
+        handoff_session_id=result.get("handoff_session_id"),
     )
     return Response(status_code=204)
 

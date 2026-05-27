@@ -183,7 +183,7 @@ export function MessageList(props: MessageListProps) {
             <Show when={!isEmpty}>
               <div
                 class={`klai-message klai-message--${message.role}`}
-                aria-label={`${message.role === "user" ? "You" : "Assistant"}: ${message.content}`}
+                aria-label={`${message.role === "user" ? "You" : message.role === "agent" ? "Agent" : "Assistant"}: ${message.content}`}
               >
                 {message.role === "user" ? (
                   message.content

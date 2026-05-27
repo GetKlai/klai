@@ -204,3 +204,48 @@ async def send_test_message(channel_account_id: str, *, widget_name: str, widget
     if payload is None:
         raise HubSpotAPIError(502, "HubSpot returned no message")
     return payload
+
+
+async def publish_incoming_message(
+    *,
+    channel_account_id: str,
+    integration_thread_id: str,
+    text: str,
+    visitor_id: str,
+    visitor_name: str = "Klai visitor",
+    idempotency_id: str | None = None,
+) -> dict[str, Any]:
+    channel_id = settings.hubspot_webchat_custom_channel_id
+    payload = await _request(
+        "POST",
+        f"/conversations/custom-channels/2026-03/{channel_id}/messages",
+        json_body={
+            "channelAccountId": channel_account_id,
+            "messageDirection": "INCOMING",
+            "integrationThreadId": integration_thread_id,
+            "integrationIdempotencyId": idempotency_id or str(uuid4()),
+            "text": text[:10000],
+            "timestamp": datetime.now(UTC).isoformat(),
+            "senders": [
+                {
+                    "name": visitor_name,
+                    "deliveryIdentifier": {
+                        "type": "CHANNEL_SPECIFIC_OPAQUE_ID",
+                        "value": visitor_id,
+                    },
+                }
+            ],
+            "recipients": [
+                {
+                    "name": "Voys support",
+                    "deliveryIdentifier": {
+                        "type": "CHANNEL_SPECIFIC_OPAQUE_ID",
+                        "value": settings.hubspot_webchat_delivery_identifier,
+                    },
+                }
+            ],
+        },
+    )
+    if payload is None:
+        raise HubSpotAPIError(502, "HubSpot returned no message")
+    return payload

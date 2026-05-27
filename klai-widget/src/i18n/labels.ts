@@ -14,6 +14,9 @@ export interface WidgetLabels {
   errorGeneric: string
   errorSessionExpired: string
   disclaimer: string
+  handoffButton: string
+  handoffConnecting: string
+  handoffConnected: string
 }
 
 const nl: WidgetLabels = {
@@ -27,6 +30,9 @@ const nl: WidgetLabels = {
   errorGeneric: "Er ging iets mis. Probeer het opnieuw.",
   errorSessionExpired: "Sessie verlopen. Herlaad de pagina.",
   disclaimer: "AI-antwoorden kunnen fouten bevatten. Verifieer belangrijke informatie altijd bij de bron.",
+  handoffButton: "Praat met een medewerker",
+  handoffConnecting: "Ik verbind je met een medewerker.",
+  handoffConnected: "Je bent verbonden met een medewerker.",
 }
 
 const en: WidgetLabels = {
@@ -40,6 +46,9 @@ const en: WidgetLabels = {
   errorGeneric: "Something went wrong. Please try again.",
   errorSessionExpired: "Session expired. Reload the page.",
   disclaimer: "AI answers can contain mistakes. Always verify important information at the source.",
+  handoffButton: "Talk to a human",
+  handoffConnecting: "I am connecting you with a human agent.",
+  handoffConnected: "You are connected with a human agent.",
 }
 
 const locales: Record<string, WidgetLabels> = { nl, en }
