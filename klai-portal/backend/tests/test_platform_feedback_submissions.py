@@ -14,6 +14,9 @@ class _Result:
     def all(self):
         return self._rows
 
+    def scalars(self):
+        return _Result([])
+
 
 class _Session:
     def __init__(self, rows):
@@ -29,7 +32,8 @@ class _Session:
         return None
 
     async def execute(self, _query, params=None):
-        self.params = params
+        if params is not None:
+            self.params = params
         return _Result(self.rows)
 
     async def commit(self):
@@ -125,6 +129,78 @@ async def test_platform_feedback_submissions_reads_assistant_events(monkeypatch)
     assert result[0].raw_text == "Maak het makkelijker om feedback te geven."
     assert result[0].feedback_type == "improvement"
     assert result[0].route_id == "/app/knowledge"
+    assert result[0].triage_suggestion is None
+
+
+@pytest.mark.asyncio
+async def test_platform_feedback_submissions_includes_ai_suggestion(monkeypatch):
+    created_at = datetime(2026, 5, 27, 10, 0, tzinfo=UTC)
+    rows = [
+        SimpleNamespace(
+            id=123,
+            org_id=42,
+            org_name="Acme",
+            org_slug="acme",
+            user_id="user-123",
+            source="assistant_feedback",
+            status="triage_suggested",
+            raw_text="Ik wil meerdere kennisbanken tegelijk selecteren.",
+            feedback_type="improvement",
+            severity=None,
+            page_url="https://acme.getklai.com/admin/platform",
+            route_id="/admin/platform",
+            locale="nl",
+            viewport="1440x900",
+            created_at=created_at,
+        )
+    ]
+    session = _Session(rows)
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_suggestions(_db, submission_ids):
+        assert submission_ids == [123]
+        return {
+            123: platform.PlatformFeedbackTriageSuggestion(
+                classification="feature",
+                summary="Meerdere kennisbanken selecteren.",
+                suggested_area="knowledge",
+                suggested_severity="medium",
+                suggested_action="create_item",
+                duplicate_candidates=[
+                    platform.PlatformFeedbackDuplicateCandidate(
+                        item_id=456,
+                        confidence=0.82,
+                        reason="Vergelijkbaar verzoek",
+                        title="Multi-KB chat",
+                        kind="feature",
+                        status="inbox",
+                        area="chat",
+                    )
+                ],
+                model="test-model:feedback-triage-v1",
+                created_at=created_at,
+            )
+        }
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "_platform_feedback_triage_suggestions", fake_suggestions)
+
+    result = await platform.platform_feedback_submissions(
+        search=None,
+        status_filter="open",
+        kind=None,
+        limit=100,
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    suggestion = result[0].triage_suggestion
+    assert suggestion is not None
+    assert suggestion.summary == "Meerdere kennisbanken selecteren."
+    assert suggestion.suggested_action == "create_item"
+    assert suggestion.duplicate_candidates[0].title == "Multi-KB chat"
 
 
 @pytest.mark.asyncio

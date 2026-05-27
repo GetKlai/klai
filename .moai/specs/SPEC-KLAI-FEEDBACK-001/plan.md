@@ -91,8 +91,7 @@ Geverifieerd:
 
 Nog niet gebouwd:
 
-- Suggestiekaart in Platform.
-- Accept/correct workflow voor AI-suggesties.
+- Volledige correctie-flow voor AI-suggesties na eerste live gebruik.
 - Downstream sync naar GitHub Issues of feedback.getklai.com.
 
 ## Kritische herijking na huidige progressie
@@ -333,7 +332,8 @@ Acceptatie:
 
 ### Fase 3 - AI triage en duplicate detectie
 
-Status: Fase 3a is gebouwd in code. Fase 3b is de eerstvolgende productstap.
+Status: Fase 3a en de eerste Fase 3b zijn gebouwd in code. De eerstvolgende
+productstap is de correctie-flow verfijnen op basis van live gebruik.
 
 #### Fase 3a - Suggesties genereren
 
@@ -357,6 +357,18 @@ Acceptatie:
   candidate filtering.
 
 #### Fase 3b - Suggesties gebruiken in Platform
+
+Gebouwd:
+
+- Platform response bevat de nieuwste AI-suggestie per submission.
+- Duplicate candidates worden verrijkt met itemtitel, status, kind en area.
+- Feedback detail drawer toont een compacte "AI voorstel" kaart.
+- Staff kan het voorstel accepteren via bestaande flows:
+  - link met bestaand item;
+  - maak nieuw item;
+  - markeer als support;
+  - negeer.
+- Handmatige correctie blijft beschikbaar onder het voorstel.
 
 - Output:
   - korte samenvatting;
@@ -458,30 +470,24 @@ Acceptatie:
 - [x] Acties: dismiss, create item, link to item, mark support.
 - [x] Eenvoudige non-AI duplicate search.
 - [x] AI triage job met idempotente suggestie-opslag.
+- [x] AI voorstelkaart in Platform met acceptactie via bestaande flows.
 
 ## Eerstvolgende stap
 
-Bouw Fase 3b: toon AI-triage suggesties in Platform als compacte voorstelkaart,
-zonder nieuwe handmatige formulierchaos.
+Verfijn de Fase 3b correctie-flow na eerste live gebruik, zonder nieuwe
+handmatige formulierchaos.
 
 Concreet:
 
-1. Voeg in de feedback detail drawer een "AI voorstel" kaart toe.
-2. Laat de kaart minimaal zien:
-   - korte samenvatting;
-   - voorgesteld type/kind;
-   - productgebied;
-   - urgency/severity;
-   - duplicate candidates met confidence;
-   - voorgestelde actie: link, nieuw item, support of negeer.
-3. Voeg acties toe om het voorstel te accepteren:
-   - link met bestaand item;
-   - maak nieuw item vanuit voorstel;
-   - markeer als support;
-   - negeer.
-4. Alleen correcties vragen input; standaard toont de UI vooral keuzes.
-5. Voeg endpoint- en UI-tests toe voor Platform-gating en response-shape.
-6. Pas daarna one-click sync toe naar GitHub Issues of feedback.getklai.com,
+1. Observeer echte AI-voorstellen: hoeveel zijn link, nieuw item, support of
+   negeer?
+2. Maak de primaire knop specifieker waar nodig, bijvoorbeeld "Koppel aan
+   Multi-KB chat" of "Maak feature-item".
+3. Voeg alleen extra correctie-acties toe als ze in echt gebruik nodig blijken,
+   bijvoorbeeld "kies ander bestaand item" of "maak nieuw item met aangepaste
+   titel".
+4. Houd GitHub Issues en feedback.getklai.com buiten de ruwe inbox.
+5. Pas daarna one-click sync toe naar GitHub Issues of feedback.getklai.com,
    altijd vanaf het canonical `feedback_item`.
 
 ## Risico's

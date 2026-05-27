@@ -90,6 +90,27 @@ export interface PlatformChatError {
   created_at: string
 }
 
+export interface PlatformFeedbackDuplicateCandidate {
+  item_id: number
+  confidence: number | null
+  reason: string | null
+  title: string | null
+  kind: string | null
+  status: string | null
+  area: string | null
+}
+
+export interface PlatformFeedbackTriageSuggestion {
+  classification: string | null
+  summary: string | null
+  suggested_area: string | null
+  suggested_severity: string | null
+  suggested_action: string | null
+  duplicate_candidates: PlatformFeedbackDuplicateCandidate[]
+  model: string | null
+  created_at: string | null
+}
+
 export interface PlatformFeedbackSubmission {
   id: number
   org_id: number | null
@@ -106,6 +127,7 @@ export interface PlatformFeedbackSubmission {
   locale: string | null
   viewport: string | null
   created_at: string
+  triage_suggestion: PlatformFeedbackTriageSuggestion | null
 }
 
 export interface PlatformFeedbackItem {
