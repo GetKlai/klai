@@ -106,6 +106,48 @@ def test_vendored_meta_prompt_matches_canonical() -> None:
     )
 
 
+def test_vendored_dutch_markers_match_canonical() -> None:
+    """``DUTCH_QUERY_MARKERS`` MUST be set-equal between vendored and
+    canonical. The set drives the language choice for the strict-mode
+    refusal in both the LiteLLM hook (path A) and partner_chat.py
+    (path B); drift here means one surface refuses in Dutch while the
+    other refuses in English for the same query.
+    """
+    vendored = _load("_drift_vendored_markers", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_markers", _CANONICAL_PATH)
+
+    assert vendored.DUTCH_QUERY_MARKERS == canonical.DUTCH_QUERY_MARKERS, (
+        "DUTCH_QUERY_MARKERS drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+
+
+def test_vendored_no_citable_sources_message_matches_canonical() -> None:
+    """``no_citable_sources_message`` MUST produce the same output for
+    the same input on both the vendored and canonical copies. Drift here
+    means the LiteLLM hook and partner_chat.py disagree on which language
+    to use for the same canned refusal.
+    """
+    vendored = _load("_drift_vendored_refusal", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_refusal", _CANONICAL_PATH)
+
+    samples = [
+        "Wat is dit?",
+        "What is this?",
+        "Hoeveel kost het?",
+        "How much does it cost?",
+        "",
+        None,
+    ]
+    for sample in samples:
+        assert vendored.no_citable_sources_message(sample) == canonical.no_citable_sources_message(sample), (
+            f"no_citable_sources_message drift for sample={sample!r}.\n"
+            "  Update deploy/litellm/klai_chat_prompts.py to match "
+            "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+        )
+
+
 def test_vendored_module_all_matches_canonical() -> None:
     """``__all__`` must match the canonical library's ``__all__`` exactly.
     If the canonical library adds, removes, or renames an exported

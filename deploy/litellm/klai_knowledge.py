@@ -48,6 +48,7 @@ from klai_chat_prompts import (
     GENERAL_CHAT_SYSTEM_PROMPT,
     GROUNDED_CHAT_SYSTEM_PROMPT,
     META_CHAT_SYSTEM_PROMPT,
+    no_citable_sources_message as _no_citable_sources_message,
 )
 from klai_citations import (
     compose_answer_with_trusted_sources,
@@ -1136,6 +1137,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_narrow": False,
             "version": 0,
             "zitadel_user_id": None,
+            "personal_kb_slug": None,
             # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: fail-open to 'shadow', never 'off'.
             "telemetry_level": "shadow",
         }
@@ -1172,6 +1174,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_narrow": False,
             "version": 0,
             "zitadel_user_id": None,
+            "personal_kb_slug": None,
             # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: fail-open to 'shadow', never 'off'.
             # Silent telemetry is the wrong default during outages.
             "telemetry_level": "shadow",
@@ -1191,6 +1194,12 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
         # personal-KB qdrant filter, and the verify-cache key all match on
         # zitadel_user_id — using the LibreChat ObjectId would 403 every call.
         "zitadel_user_id": data.get("zitadel_user_id"),
+        # Canonical slug of the user's "Persoonlijk" KB. Owned by portal-api
+        # (`app.services.default_knowledge_bases.personal_kb_slug`) so this
+        # service does not reconstruct the slug template from string parts.
+        # Older portal-api builds without the field land at None and the
+        # hook falls back to scope=personal without a kb_slug filter.
+        "personal_kb_slug": data.get("personal_kb_slug"),
         # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: per-tenant telemetry mode.
         # Older portal-api builds without the field land in the default
         # 'shadow' (REQ-4 fail-open) so a mid-deploy state is privacy-safe.
@@ -1472,15 +1481,6 @@ def _set_message_field(message: object, key: str, value: object) -> None:
         message[key] = value
     else:
         setattr(message, key, value)
-
-
-def _no_citable_sources_message(user_query: object) -> str:
-    query = user_query if isinstance(user_query, str) else ""
-    dutch_markers = {"wat", "waar", "welke", "hoe", "waarom", "gegevens", "bronnen", "klopt"}
-    query_tokens = {token.lower() for token in re.findall(r"[a-zA-ZÀ-ÿ]+", query)}
-    if query_tokens & dutch_markers:
-        return "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
-    return "I cannot answer this reliably from the available knowledge sources."
 
 
 def _get_response_choices(response: object) -> object:
@@ -1968,26 +1968,29 @@ class KlaiKnowledgeHook(CustomLogger):
         if kb_personal and kb_slugs == []:
             # User picked the "Persoonlijk" entry in the chat dropdown.
             #
-            # Bug fixed 2026-05-27: this branch used to send
-            # ``kb_slugs_for_request = None`` together with scope=personal.
-            # Retrieval-api then returned every chunk where
-            # ``visibility=private`` AND ``owner_user_id`` matched the
-            # requester — which includes user-created KBs (e.g. "test2")
-            # that the user explicitly deselected as separate items in
-            # the SAME dropdown. The UI semantic is "Persoonlijk = the
-            # canonical 'Persoonlijk' KB only", so narrow the request to
-            # the auto-provisioned slug for this user.
+            # Narrow the request to the auto-provisioned canonical
+            # "Persoonlijk" KB only. Without this filter, retrieval-api
+            # would return every chunk where ``visibility=private`` AND
+            # ``owner_user_id`` matched the requester — which includes
+            # any user-created KBs (e.g. "test2") that the user
+            # explicitly deselected as separate items in the SAME
+            # dropdown.
             #
-            # The canonical slug pattern lives in portal_knowledge_bases
-            # for owner_type='user' rows whose slug starts with
-            # ``personal-<zitadel_user_id>``. The hook already has
-            # ``user_id`` resolved by the identity-verify step above.
-            #
-            # Retrieval-api filters on kb_slug through the same code path
-            # it uses for org-scope kb_slugs — see ``_scope_filter`` in
-            # klai-retrieval-api/retrieval_api/services/search.py.
+            # The slug template (``personal-<zitadel_user_id>``) is owned
+            # by portal-api in
+            # ``app.services.default_knowledge_bases.personal_kb_slug``;
+            # portal returns the resolved slug to us via
+            # ``KnowledgeFeatureResponse.personal_kb_slug`` so this
+            # process never reconstructs it from string parts. If a
+            # mid-deploy portal omits the field, ``personal_kb_slug``
+            # falls through to None and we ship scope=personal without a
+            # kb_slug filter — same wire shape as the pre-2026-05-27
+            # behaviour and preferable to a 0-result silent breakage.
             scope = "personal"
-            kb_slugs_for_request: list[str] | None = [f"personal-{user_id}"]
+            canonical_personal_slug = feature.get("personal_kb_slug")
+            kb_slugs_for_request: list[str] | None = (
+                [canonical_personal_slug] if canonical_personal_slug else None
+            )
         else:
             scope = "both" if kb_personal else "org"
             kb_slugs_for_request = kb_slugs if kb_slugs else None
@@ -2357,23 +2360,20 @@ class KlaiKnowledgeHook(CustomLogger):
                     "trusted_sources": [],
                     "evidence_pack": evidence_pack,
                     "citable_sources_count": 0,
-                    # Bug fix 2026-05-27: PR #697 set ``no_citable_sources=True``
-                    # here. The structured-citation post-call render reads that
-                    # flag (as ``force_no_citable``) and runs
-                    # ``_render_kb_citation_content`` even when there are no
-                    # chunks. In Strict mode (kb_narrow=True) that path replaces
-                    # the model's answer with the English-only
-                    # ``_no_citable_sources_message`` — clobbering the
-                    # mode-aware multilingual instruction this branch already
-                    # injected into the system prompt above. Setting the flag
-                    # to False here lets the post-call render short-circuit
-                    # (``not trusted_sources and not force_no_citable and not
-                    # citation_chunks`` is now True), and the model's
-                    # mode-correct, language-correct answer passes through
-                    # unchanged. The ``no_citable_reason`` from
-                    # retrieval-api's evidence_pack is still recorded for
-                    # observability.
-                    "no_citable_sources": False,
+                    # Strict mode (kb_narrow=True) MUST refuse deterministically
+                    # when there are no citable sources; trusting the model's
+                    # system-prompt instruction to refuse risks a hallucinated
+                    # general-knowledge answer leaking through. We force the
+                    # post-call renderer to replace the model output with the
+                    # language-aware canned refusal from
+                    # ``klai_chat_prompts.no_citable_sources_message``.
+                    #
+                    # Broad mode (kb_narrow=False) lets the model answer from
+                    # general knowledge, so leave the flag False — the post-call
+                    # guard ``not trusted_sources and not force_no_citable and
+                    # not citation_chunks`` short-circuits and the streamed
+                    # tokens reach the client unchanged.
+                    "no_citable_sources": bool(kb_narrow),
                     "no_citable_reason": evidence_pack.get("no_citable_reason")
                     if isinstance(evidence_pack, dict)
                     else None,
