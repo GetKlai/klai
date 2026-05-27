@@ -77,8 +77,34 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
     ]
     if request.scope == "personal":
         if request.user_id:
+            # Match chunks owned by the requester via EITHER signal:
+            #   1. ``user_id`` payload field equals request.user_id (the
+            #      preferred stamping; written by ingest paths that
+            #      thread user_id through).
+            #   2. ``kb_slug`` equals the canonical per-user slug
+            #      ``personal-<user_id>`` (a structural ownership proof
+            #      — the slug name itself encodes the owner).
+            #
+            # The second branch is a defensive fallback for chunks
+            # ingested via connectors that did not pass user_id through
+            # to ``qdrant_store.upsert_chunks`` (e.g. legacy web_crawler
+            # runs on a personal KB before the 2026-05-27 ingest fix).
+            # Without it, those chunks are invisible to the very user
+            # who owns them.
+            canonical_personal_slug = f"personal-{request.user_id}"
             conditions.append(
-                FieldCondition(key="user_id", match=MatchValue(value=request.user_id))
+                Filter(
+                    should=[
+                        FieldCondition(
+                            key="user_id",
+                            match=MatchValue(value=request.user_id),
+                        ),
+                        FieldCondition(
+                            key="kb_slug",
+                            match=MatchValue(value=canonical_personal_slug),
+                        ),
+                    ]
+                )
             )
         # personal scope is already restricted to one user; no visibility filter needed
     else:

@@ -30,7 +30,28 @@ def _cache_key(org_id: str, kb_slug: str) -> str:
 
 
 async def get_kb_visibility(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> str:
-    """Return the visibility for this KB. Defaults to 'internal' when not configured."""
+    """Return the visibility for this KB. Defaults to 'internal' when not configured.
+
+    Canonical personal-KB override (2026-05-27): when ``kb_slug`` matches the
+    auto-provisioned per-user pattern ``personal-<zitadel_user_id>``, force
+    visibility='private' regardless of what kb_config (or its absence) says.
+
+    Why defensive here and not only at the portal side: the per-tenant
+    personal-KB row in ``portal_knowledge_bases`` was created with the
+    default ``visibility='internal'``, and the ingest route trusted
+    kb_config verbatim. Result was a live leak where chunks ingested
+    into a personal KB via web_crawler / other connectors landed with
+    ``visibility=internal`` and were returned by scope=org / scope=both
+    queries from OTHER users in the same org. Anchoring the rule to the
+    slug pattern (which encodes ownership and never drifts) makes that
+    drift impossible to recur.
+    """
+    if kb_slug.startswith("personal-"):
+        key = _cache_key(org_id, kb_slug)
+        if key not in _cache:
+            _cache[key] = "private"
+        return "private"
+
     key = _cache_key(org_id, kb_slug)
     if key in _cache:
         return str(_cache[key])
