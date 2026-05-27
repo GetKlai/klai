@@ -51,6 +51,10 @@ MEETING_RUNTIME=$(resolve_container runtime-api)
 MEETING_ADMIN=$(resolve_container admin-api)
 GARAGE=$(resolve_container garage)
 CAL_COM=$(resolve_container cal-com)
+VAULTWARDEN=$(resolve_container vaultwarden)
+VICTORIALOGS=$(resolve_container victorialogs)
+VICTORIAMETRICS=$(resolve_container victoriametrics)
+ALLOY=$(resolve_container alloy)
 
 # Push based on Docker-native healthcheck status (requires healthcheck: in compose)
 push_healthcheck() {
@@ -236,7 +240,28 @@ push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://crawl4ai:11235/health')\"" \
     "${KUMA_TOKEN_CRAWL4AI:-}" "Web Crawler"
 
+# ── Internal infrastructure (hidden from public status page) ─────────────────
+
+# VictoriaLogs: log retention (Alloy → here). Down = no debugging visibility.
+push_healthcheck "$VICTORIALOGS"    "${KUMA_TOKEN_VICTORIALOGS:-}"     "Log retention (VictoriaLogs)"
+
+# VictoriaMetrics: metrics retention. Down = Grafana data + alerting blind.
+push_healthcheck "$VICTORIAMETRICS" "${KUMA_TOKEN_VICTORIAMETRICS:-}"  "Metrics retention (VictoriaMetrics)"
+
+# Alloy: log shipper (Docker socket → VictoriaLogs). The container has no
+# probe tools (wget/curl absent) and the http endpoint binds to 127.0.0.1
+# inside the container — fall back to bash built-in TCP test against the
+# server-http port. Reachable port = Alloy process listening = up.
+push_exec "$ALLOY" \
+    "bash -c 'exec 3<>/dev/tcp/localhost/12345 && exec 3<&-'" \
+    "${KUMA_TOKEN_ALLOY:-}" "Log shipper core-01 (Alloy)"
+
+# Vaultwarden: team password manager. Internal but critical for team operations.
+push_healthcheck "$VAULTWARDEN"     "${KUMA_TOKEN_VAULTWARDEN:-}"      "Vaultwarden"
+
 # ── GPU Services (gpu-01 via SSH tunnel) ─────────────────────────────────────
 
-# Combined GPU health: tunnel service + all 3 inference endpoints
+# Combined GPU health: tunnel service + all 4 inference endpoints (TEI,
+# Infinity, sparse, transcription LB). Per-worker transcription monitoring
+# is in gpu-health.sh (uses ssh to gpu-01 for individual worker probe).
 [ -x /opt/klai/scripts/gpu-health.sh ] && bash /opt/klai/scripts/gpu-health.sh
