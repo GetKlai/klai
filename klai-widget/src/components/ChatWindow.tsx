@@ -10,7 +10,7 @@ import {
   setError,
   clearError,
 } from "../store/chat";
-import { streamChat } from "../api/chat-stream";
+import { collectPageContext, streamChat } from "../api/chat-stream";
 import { t } from "../i18n/labels";
 
 interface ChatWindowProps {
@@ -61,6 +61,7 @@ export function ChatWindow(props: ChatWindowProps) {
       token: chatState.sessionToken,
       widgetId: chatState.widgetId,
       messages: chatState.messages.slice(0, -1),
+      pageContext: chatState.config?.page_context_enabled ? collectPageContext() : undefined,
       abortController,
       callbacks: {
         onToken: (token) => {

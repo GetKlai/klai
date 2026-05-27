@@ -10,6 +10,7 @@ Covers the core flow:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -110,7 +111,30 @@ async def test_widget_config_happy_path():
     body = response.body.decode()
     assert '"session_token": "fake.jwt.token"' in body
     assert '"title": "Chat"' in body
+    assert '"page_context_enabled": false' in body
     assert "system_prompt" not in body
+
+
+@pytest.mark.asyncio
+async def test_widget_config_returns_page_context_enabled():
+    widget = FakeWidget()
+    widget.widget_config["page_context_enabled"] = True
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["page_context_enabled"] is True
 
 
 @pytest.mark.asyncio

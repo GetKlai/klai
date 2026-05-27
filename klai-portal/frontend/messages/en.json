@@ -1851,6 +1851,8 @@
   "admin_widgets_show_meta_help": "Show users how the answer was assembled.",
   "admin_widgets_collect_user_info_label": "Ask for user details",
   "admin_widgets_collect_user_info_help": "Capture name and email for follow-up.",
+  "admin_widgets_page_context_label": "Use current page as context",
+  "admin_widgets_page_context_help": "Sends the URL, title, and a short visible page excerpt. The AI only uses this when the question is clearly about the current page.",
   "admin_widgets_position_left": "Bottom left",
   "admin_widgets_position_right": "Bottom right",
   "admin_widgets_subtitle": "Build AI agents that help your website visitors with questions about your organisation. Every agent uses your knowledge bases, templates and styling, always cites the source, and can be shared as a link or embedded on any site with one click."

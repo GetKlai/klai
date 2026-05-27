@@ -16,6 +16,7 @@ export interface WidgetConfig {
   show_sources: boolean
   show_meta: boolean
   collect_user_info: boolean
+  page_context_enabled: boolean
   widget_position: 'left' | 'right'
 }
 

@@ -13,6 +13,14 @@ export interface MessageSource {
   url: string;
 }
 
+export interface PageContext {
+  url: string;
+  path: string;
+  title?: string;
+  referrer?: string;
+  excerpt?: string;
+}
+
 export interface StreamCallbacks {
   onToken: (token: string) => void;
   onSources?: (sources: MessageSource[]) => void;
@@ -25,6 +33,7 @@ interface ChatStreamOptions {
   token: string;
   messages: Message[];
   widgetId: string;
+  pageContext?: PageContext;
   callbacks: StreamCallbacks;
   abortController?: AbortController;
 }
@@ -34,6 +43,72 @@ class FatalError extends Error {}
 
 const INVALID_SOURCE_VALUES = new Set(["", "undefined", "null", "none"]);
 const INVALID_SOURCE_PLACEHOLDERS = new Set(["undefined", "null", "none"]);
+const MAX_PAGE_CONTEXT_VALUE_CHARS = 2048;
+const MAX_PAGE_EXCERPT_CHARS = 2000;
+
+function cleanContextValue(
+  value: string | undefined,
+  maxChars = MAX_PAGE_CONTEXT_VALUE_CHARS
+): string | undefined {
+  const cleaned = value?.replace(/\s+/g, " ").trim();
+  if (!cleaned) {
+    return undefined;
+  }
+  return cleaned.slice(0, maxChars);
+}
+
+function collectPageExcerpt(): string | undefined {
+  const root =
+    document.querySelector<HTMLElement>("main, article, [role='main']") ??
+    document.body;
+  if (!root) {
+    return undefined;
+  }
+
+  const clone = root.cloneNode(true) as HTMLElement;
+  const ignoredSelectors = [
+    "script",
+    "style",
+    "noscript",
+    "svg",
+    "nav",
+    "header",
+    "footer",
+    "form",
+    "input",
+    "textarea",
+    "select",
+    "button",
+    "iframe",
+    "#klai-widget-root",
+    ".klai-window",
+    ".klai-inline-root",
+  ].join(", ");
+  clone.querySelectorAll(ignoredSelectors).forEach((node) => node.remove());
+
+  return cleanContextValue(clone.innerText, MAX_PAGE_EXCERPT_CHARS);
+}
+
+export function collectPageContext(): PageContext | undefined {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return undefined;
+  }
+
+  try {
+    const currentUrl = new URL(window.location.href);
+    currentUrl.hash = "";
+
+    return {
+      url: currentUrl.toString().slice(0, MAX_PAGE_CONTEXT_VALUE_CHARS),
+      path: window.location.pathname.slice(0, 512),
+      title: cleanContextValue(document.title),
+      referrer: cleanContextValue(document.referrer),
+      excerpt: collectPageExcerpt(),
+    };
+  } catch {
+    return undefined;
+  }
+}
 
 export function normalizeSourceUrl(raw: unknown): string | null {
   if (typeof raw !== "string") {
@@ -90,7 +165,7 @@ export function normalizeMessageSources(rawSources: unknown): MessageSource[] {
 }
 
 export async function streamChat(options: ChatStreamOptions): Promise<void> {
-  const { endpoint, token, messages, widgetId, callbacks, abortController } = options;
+  const { endpoint, token, messages, widgetId, pageContext, callbacks, abortController } = options;
   let currentToken = token;
   let retried = false;
 
@@ -105,6 +180,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
         body: JSON.stringify({
           messages,
           stream: true,
+          page_context: pageContext,
         }),
         signal: abortController?.signal,
         onopen: async (response) => {
