@@ -83,6 +83,11 @@ function WidgetTestPage() {
       conversationStarters={config.conversation_starters}
       hideDisclaimer={config.hide_disclaimer}
       primaryColor={config.primary_color}
+      theme={config.theme}
+      showSources={config.show_sources}
+      showMeta={config.show_meta}
+      collectUserInfo={config.collect_user_info}
+      pageContextEnabled={config.page_context_enabled}
       variant="admin-preview"
       onClose={() => window.close()}
     />
