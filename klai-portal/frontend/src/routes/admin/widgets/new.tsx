@@ -44,6 +44,7 @@ interface FormState {
   description: string
   template_slug: string
   system_prompt: string
+  page_context_enabled: boolean
   // Kennisbanken
   kb_ids: number[]
   // Vormgeving (widget titel = bot naam; geen apart veld)
@@ -67,6 +68,7 @@ const INITIAL_FORM: FormState = {
   description: '',
   template_slug: '',
   system_prompt: '',
+  page_context_enabled: false,
   kb_ids: [],
   primary_color: '#fcaa2d',
   theme: 'light',
@@ -169,6 +171,7 @@ function NewWidgetPage() {
       title: form.name.trim(),
       welcome_message: form.welcome_message.trim(),
       system_prompt: form.system_prompt.trim(),
+      page_context_enabled: form.page_context_enabled,
       css_variables: {},
       conversation_starters: starters,
       hide_disclaimer: form.hide_disclaimer,
@@ -320,6 +323,15 @@ function NewWidgetPage() {
                     placeholder={m.admin_widgets_widget_system_prompt_placeholder()}
                   />
                 </div>
+                <WidgetToggleCard
+                  id="page-context-enabled"
+                  checked={form.page_context_enabled}
+                  onChange={(v) =>
+                    setForm((p) => ({ ...p, page_context_enabled: v }))
+                  }
+                  label={m.admin_widgets_page_context_label()}
+                  help={m.admin_widgets_page_context_help()}
+                />
               </div>
             </div>
           </section>

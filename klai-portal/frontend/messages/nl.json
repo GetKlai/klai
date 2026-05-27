@@ -1870,6 +1870,8 @@
   "admin_widgets_show_meta_help": "Laat gebruikers zien hoe het antwoord tot stand is gekomen.",
   "admin_widgets_collect_user_info_label": "Vraag gebruikersgegevens",
   "admin_widgets_collect_user_info_help": "Naam en e-mail opvragen voor contactopname.",
+  "admin_widgets_page_context_label": "Gebruik huidige pagina als context",
+  "admin_widgets_page_context_help": "Stuurt URL, titel en een korte zichtbare pagina-excerpt mee. De AI gebruikt dit alleen wanneer de vraag duidelijk over de huidige pagina gaat.",
   "admin_widgets_position_left": "Linksonder",
   "admin_widgets_position_right": "Rechtsonder",
   "admin_widgets_subtitle": "Bouw AI-agents die je website-bezoekers helpen met vragen over je organisatie. Elke agent gebruikt jouw kennisbanken, templates en vormgeving, verwijst altijd naar de bron, en is met één klik te delen via een link of in te sluiten op elke website."

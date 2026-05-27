@@ -22,6 +22,9 @@ class RetrieveRequest(BaseModel):
     top_k: int = Field(8, ge=1, le=50)
     # SPEC-SEC-010 REQ-2.2: conversation_history length bounded to 20 entries.
     conversation_history: list[dict] = Field(default_factory=list, max_length=20)
+    # Optional page metadata from embedded widgets. URL is used only as a weak
+    # ranking hint; excerpt remains caller context and is never a hard retrieval scope.
+    page_context: dict[str, str] | None = None
     # SPEC-SEC-010 REQ-2.3: kb_slugs list length bounded to 20 entries.
     kb_slugs: list[str] | None = Field(None, max_length=20)
     # SPEC-SEC-010 REQ-2.4: taxonomy_node_ids list length bounded to 50 entries.

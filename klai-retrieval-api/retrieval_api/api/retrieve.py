@@ -8,6 +8,7 @@ import math
 import os
 import time
 import uuid
+from urllib.parse import urlparse, urlunparse
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -56,6 +57,71 @@ _RETRIEVAL_QUERY_SCOPE = "klai:internal:retrieval:query"
 # Module-level singleton — avoids ruff B008 ("Depends in default arg") and
 # is the FastAPI-recommended pattern for repeated dependencies.
 _REQUIRE_RETRIEVAL_SCOPE = Depends(require_scope(_RETRIEVAL_QUERY_SCOPE))
+_PAGE_CONTEXT_SCORE_BOOST = 1.08
+
+
+def _normalise_page_context_url(raw_url: str | None) -> str:
+    if not raw_url:
+        return ""
+    try:
+        parsed = urlparse(raw_url.strip())
+    except ValueError:
+        return ""
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    path = parsed.path.rstrip("/") or "/"
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), path, "", parsed.query, ""))
+
+
+def _same_page_context_path(source_url: str, page_url: str) -> bool:
+    source = urlparse(source_url)
+    page = urlparse(page_url)
+    if source.scheme != page.scheme or source.netloc != page.netloc:
+        return False
+    source_path = source.path.rstrip("/") or "/"
+    page_path = page.path.rstrip("/") or "/"
+    if source_path == "/" or page_path == "/":
+        return source_path == page_path
+    return source_path.startswith(f"{page_path}/") or page_path.startswith(f"{source_path}/")
+
+
+def _apply_page_context_boost(
+    chunks: list[dict],
+    page_context: dict[str, str] | None,
+) -> tuple[list[dict], int]:
+    page_url = _normalise_page_context_url((page_context or {}).get("url"))
+    if not page_url:
+        return chunks, 0
+
+    boosted_count = 0
+    for chunk in chunks:
+        source_url = _normalise_page_context_url(chunk.get("source_url"))
+        if not source_url:
+            continue
+        if source_url != page_url and not _same_page_context_path(source_url, page_url):
+            continue
+
+        boosted_count += 1
+        score_key = (
+            "reranker_score"
+            if isinstance(chunk.get("reranker_score"), (int, float))
+            else "score"
+        )
+        if isinstance(chunk.get(score_key), (int, float)):
+            boosted_score = chunk[score_key] * _PAGE_CONTEXT_SCORE_BOOST
+            chunk[score_key] = (
+                min(boosted_score, 1.0)
+                if score_key == "reranker_score"
+                else boosted_score
+            )
+            chunk["_page_context_boosted"] = True
+
+    if boosted_count:
+        chunks.sort(
+            key=lambda c: c.get("reranker_score") or c.get("score") or 0.0,
+            reverse=True,
+        )
+    return chunks, boosted_count
 
 
 def _compute_confidence_band(
@@ -421,6 +487,11 @@ async def retrieve(
             boost=settings.link_expand_score_boost,
             enabled=settings.link_expand_enabled,
         )
+        reranked, page_context_boosted = _apply_page_context_boost(
+            reranked,
+            req.page_context,
+        )
+        decision_record["page_context_boosted"] = page_context_boosted
 
         # 5a-bis. Quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07).
         # Removes chunks explicitly degraded to quality_score=0.0 BEFORE the
