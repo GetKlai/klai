@@ -872,7 +872,7 @@ async def platform_chat_errors(
 @router.get("/feedback-submissions", response_model=list[PlatformFeedbackSubmission])
 async def platform_feedback_submissions(
     search: str | None = Query(default=None),
-    status_filter: Literal["new", "triage_suggested", "linked", "dismissed", "support"] | None = Query(
+    status_filter: Literal["open", "new", "triage_suggested", "linked", "dismissed", "support"] | None = Query(
         default=None,
         alias="status",
     ),
@@ -931,7 +931,10 @@ async def platform_feedback_submissions(
                 FeedbackSubmission.route_id.ilike(q),
             )
         )
-    if status_filter:
+    if status_filter == "open":
+        params["statuses"] = ["new", "triage_suggested"]
+        query = query.where(FeedbackSubmission.status.in_(bindparam("statuses", expanding=True)))
+    elif status_filter:
         params["status"] = status_filter
         query = query.where(FeedbackSubmission.status == bindparam("status"))
     if kind:
@@ -1215,9 +1218,7 @@ class PlatformSubdomainItem(BaseModel):
     """HTTP response code, or null when unreachable."""
 
 
-async def _check_subdomain_status(
-    client: httpx.AsyncClient, url: str
-) -> tuple[str, int | None]:
+async def _check_subdomain_status(client: httpx.AsyncClient, url: str) -> tuple[str, int | None]:
     """One liveness probe per subdomain. Never raises — failures map to
     ``('unreachable', None)`` so a single bad target does not break the
     whole overview.
@@ -1265,12 +1266,7 @@ async def list_subdomains(
     tenant_items: list[dict] = []
     async with cross_org_session() as db:
         result = await db.execute(
-            text(
-                "SELECT slug, name "
-                "FROM portal_orgs "
-                "WHERE deleted_at IS NULL AND slug IS NOT NULL "
-                "ORDER BY slug"
-            )
+            text("SELECT slug, name FROM portal_orgs WHERE deleted_at IS NULL AND slug IS NOT NULL ORDER BY slug")
         )
         for row in result.all():
             slug = row[0]
