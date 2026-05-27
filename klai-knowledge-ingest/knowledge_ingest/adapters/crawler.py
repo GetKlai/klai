@@ -46,6 +46,7 @@ _VALID_LOGIN_WALL_MODES = ("reject", "degrade", "audit_only")
 DIRTY_CONTENT_REASON = "boilerplate_or_authwall_dominant"
 CRAWL_BUDGET_EXHAUSTED_REASON = "crawl_budget_exhausted"
 CRAWL_FRONTIER_INCOMPLETE_REASON = "crawl_frontier_incomplete"
+CRAWL_FETCH_FAILED_REASON = "crawl_fetch_failed"
 AUTH_WALL_DETECTED_REASON = "auth_wall_detected"
 
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
@@ -127,6 +128,21 @@ def _build_crawl_outcome_warning(
     quiet implementation detail inside Crawl4AI. The adapter turns those
     not_fetched outcomes into a compact, operator-readable warning.
     """
+    has_success = any(outcome.get("reason_code") == "success" for outcome in fetch_outcomes)
+    if fetch_outcomes and not has_success:
+        counts = Counter(str(outcome.get("reason_code") or "") for outcome in fetch_outcomes)
+        return {
+            "reason": CRAWL_FETCH_FAILED_REASON,
+            "max_pages": max_pages,
+            "failed_count": len(fetch_outcomes),
+            "failed_reason_counts": dict(counts),
+            "sample_failed_urls": [
+                str(outcome.get("url") or "")
+                for outcome in fetch_outcomes[:10]
+                if outcome.get("url")
+            ],
+        }
+
     omitted = [
         outcome
         for outcome in fetch_outcomes
@@ -159,6 +175,7 @@ def _crawl_warning_terminal_status(crawl_warning: dict | None) -> str:
     if crawl_warning.get("reason") in {
         CRAWL_BUDGET_EXHAUSTED_REASON,
         CRAWL_FRONTIER_INCOMPLETE_REASON,
+        CRAWL_FETCH_FAILED_REASON,
     }:
         return "failed_partial"
     return ""
