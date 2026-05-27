@@ -1,21 +1,4 @@
-"""SPEC-INGEST-RECONCILE-001 Fix 1 — include_patterns filtering on candidates.
-
-The legacy test (pre-Reconcile-001) asserted that ``filter_chain`` was
-JSON-wrapped correctly inside crawl4ai's ``deep_crawl_strategy`` payload.
-That payload no longer exists: ``crawl_site`` now hands a flat URL list
-to ``POST /crawl`` and applies ``include_patterns`` as a candidate-side
-substring filter. These tests pin the new behaviour:
-
-- When ``include_patterns`` is set, only matching candidates reach the
-  bulk request body.
-- When ``include_patterns`` is None, every same-domain candidate from
-  sitemap + BFS-union reaches the request body — but ``start_url`` is
-  NOT in the bulk submission (it is fetched separately as the seed; see
-  followup PR §"redundant start_url fetch").
-- The crawler_config payload no longer carries a ``deep_crawl_strategy``
-  key (regression guard against the legacy BFS path being reintroduced
-  alongside the bulk path).
-"""
+"""crawl_site frontier filtering and Crawl4AI payload shape tests."""
 
 from __future__ import annotations
 
@@ -65,20 +48,21 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
         "https://wiki.redcactus.cloud/en/getting-started",
         "https://wiki.redcactus.cloud/nl/advanced",
     ]
-    bfs_results = [
-        _seed_result("https://wiki.redcactus.cloud", []),
-        _seed_result("https://wiki.redcactus.cloud/nl/blog", []),
-    ]
+    _patch_seed(
+        monkeypatch,
+        _seed_result(
+            "https://wiki.redcactus.cloud",
+            [
+                "https://wiki.redcactus.cloud/nl/blog",
+                "https://wiki.redcactus.cloud/en/blog",
+            ],
+        ),
+    )
 
     async def _fake_sitemap(_base: str) -> list[str]:
         return sitemap_urls
 
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
-
-    async def _fake_bfs(**_kwargs: Any) -> tuple[list[CrawlResult], None]:
-        return bfs_results, None
-
-    monkeypatch.setattr(crawl4ai_client, "_bfs_deep_crawl", _fake_bfs)
 
     captured: dict[str, Any] = {}
 
@@ -112,12 +96,11 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
         assert "/nl/" in u, f"include_patterns leaked a non-/nl/ URL: {u}"
     assert "https://wiki.redcactus.cloud/nl/getting-started" in urls_submitted
     assert "https://wiki.redcactus.cloud/nl/advanced" in urls_submitted
-    assert "https://wiki.redcactus.cloud/nl/blog" not in urls_submitted
+    assert "https://wiki.redcactus.cloud/nl/blog" in urls_submitted
     assert "https://wiki.redcactus.cloud/en/getting-started" not in urls_submitted
     assert "https://wiki.redcactus.cloud/en/blog" not in urls_submitted
     assert "deep_crawl_strategy" not in payload["crawler_config"]["params"]
-    # AC-4: every candidate produces an outcome record. BFS + supplement.
-    assert len(outcomes) == len(bfs_results) + len(urls_submitted)
+    assert len(outcomes) == 1 + len(urls_submitted)
 
 
 @pytest.mark.asyncio
@@ -135,14 +118,7 @@ async def test_crawl_site_no_include_patterns_passes_all_same_domain(
         return sitemap_urls
 
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
-
-    async def _fake_bfs(**_kwargs: Any) -> tuple[list[CrawlResult], None]:
-        return [
-            _seed_result("https://example.com", []),
-            _seed_result("https://example.com/page-c", []),
-        ], None
-
-    monkeypatch.setattr(crawl4ai_client, "_bfs_deep_crawl", _fake_bfs)
+    _patch_seed(monkeypatch, _seed_result("https://example.com", ["https://example.com/page-c"]))
 
     captured: dict[str, Any] = {}
 
@@ -166,7 +142,7 @@ async def test_crawl_site_no_include_patterns_passes_all_same_domain(
     )
     assert "https://example.com/page-a" in urls_submitted
     assert "https://example.com/page-b" in urls_submitted
-    assert "https://example.com/page-c" not in urls_submitted
+    assert "https://example.com/page-c" in urls_submitted
     # Cross-domain entry from sitemap MUST NOT leak through.
     assert "https://other.com/skipped" not in urls_submitted
     assert "deep_crawl_strategy" not in payload["crawler_config"]["params"]
@@ -181,42 +157,40 @@ async def test_crawl_site_excludes_archive_candidates_after_discovery(
         "https://www.getklai.com/blog/article-from-sitemap",
         "https://www.getklai.com/blog/tag/privacy",
     ]
-    bfs_results = [
-        CrawlResult(
-            url="https://www.getklai.com/blog/article-from-bfs",
-            fit_markdown="Article",
-            raw_markdown="Article",
-            html="<html></html>",
-            word_count=1,
-            success=True,
-            links={"internal": []},
-        ),
-        CrawlResult(
-            url="https://www.getklai.com/blog/tag/AI",
-            fit_markdown="Tag archive",
-            raw_markdown="Tag archive",
-            html="<html></html>",
-            word_count=2,
-            success=True,
-            links={"internal": []},
-        ),
-    ]
-
-    async def _fake_bfs(**_kwargs: Any) -> tuple[list[CrawlResult], None]:
-        return bfs_results, None
-
     async def _fake_sitemap(_base: str) -> list[str]:
         return sitemap_urls
 
-    monkeypatch.setattr(crawl4ai_client, "_bfs_deep_crawl", _fake_bfs)
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(
+        monkeypatch,
+        _seed_result(
+            "https://www.getklai.com/blog",
+            [
+                "https://www.getklai.com/blog/article-from-bfs",
+                "https://www.getklai.com/blog/tag/AI",
+            ],
+        ),
+    )
 
     captured: dict[str, Any] = {}
 
     async def _fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
         captured["payload"] = kwargs.get("json")
+        urls = captured["payload"]["urls"]
+        results = [
+            {
+                "url": u,
+                "success": True,
+                "status_code": 200,
+                "html": "<html>Article</html>",
+                "markdown": "Article",
+                "links": {"internal": []},
+                "media": {},
+            }
+            for u in urls
+        ]
         request = httpx.Request("POST", url)
-        return httpx.Response(200, json={"results": []}, request=request)
+        return httpx.Response(200, json={"results": results}, request=request)
 
     with patch("httpx.AsyncClient.post", new=_fake_post):
         results, outcomes = await crawl4ai_client.crawl_site(
@@ -225,12 +199,20 @@ async def test_crawl_site_excludes_archive_candidates_after_discovery(
             exclude_patterns=["/blog/tag/*"],
         )
 
-    assert {r.url for r in results} == {"https://www.getklai.com/blog/article-from-bfs"}
-    assert {o["url"] for o in outcomes} == {
+    assert {r.url for r in results} == {
+        "https://www.getklai.com/blog",
         "https://www.getklai.com/blog/article-from-bfs",
         "https://www.getklai.com/blog/article-from-sitemap",
     }
-    assert captured["payload"]["urls"] == ["https://www.getklai.com/blog/article-from-sitemap"]
+    assert {o["url"] for o in outcomes} == {
+        "https://www.getklai.com/blog",
+        "https://www.getklai.com/blog/article-from-bfs",
+        "https://www.getklai.com/blog/article-from-sitemap",
+    }
+    assert captured["payload"]["urls"] == [
+        "https://www.getklai.com/blog/article-from-sitemap",
+        "https://www.getklai.com/blog/article-from-bfs",
+    ]
 
 
 @pytest.mark.asyncio
