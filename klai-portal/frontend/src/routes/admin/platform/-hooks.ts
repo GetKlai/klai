@@ -119,16 +119,23 @@ export function usePlatformChatErrors() {
   })
 }
 
-export function usePlatformFeedbackSubmissions(search: string) {
+export function usePlatformFeedbackSubmissions(
+  search: string,
+  status: string,
+  kind: string,
+) {
   const auth = useAuth()
   return useQuery({
-    queryKey: ['platform-feedback-submissions', search],
-    queryFn: async () =>
-      apiFetch<PlatformFeedbackSubmission[]>(
-        `/api/admin/platform/feedback-submissions?limit=200${
-          search ? `&search=${encodeURIComponent(search)}` : ''
-        }`,
-      ),
+    queryKey: ['platform-feedback-submissions', search, status, kind],
+    queryFn: async () => {
+      const params = new URLSearchParams({ limit: '200' })
+      if (search) params.set('search', search)
+      if (status) params.set('status', status)
+      if (kind) params.set('kind', kind)
+      return apiFetch<PlatformFeedbackSubmission[]>(
+        `/api/admin/platform/feedback-submissions?${params.toString()}`,
+      )
+    },
     enabled: auth.isAuthenticated,
   })
 }

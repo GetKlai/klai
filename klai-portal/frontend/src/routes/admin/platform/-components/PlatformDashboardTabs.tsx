@@ -552,12 +552,16 @@ function feedbackStatusLabel(status: string): string {
 
 export function FeedbackTab({
   search,
+  status,
+  kind,
   fmtDate,
 }: {
   search: string
+  status: string
+  kind: string
   fmtDate: (s: string | null) => string
 }) {
-  const { data, isLoading } = usePlatformFeedbackSubmissions(search)
+  const { data, isLoading } = usePlatformFeedbackSubmissions(search, status, kind)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const rows = data ?? []
   const selected = rows.find((row) => row.id === selectedId) ?? null

@@ -830,6 +830,11 @@ async def platform_chat_errors(
 @router.get("/feedback-submissions", response_model=list[PlatformFeedbackSubmission])
 async def platform_feedback_submissions(
     search: str | None = Query(default=None),
+    status_filter: Literal["new", "triage_suggested", "linked", "dismissed", "support"] | None = Query(
+        default=None,
+        alias="status",
+    ),
+    kind: Literal["feedback", "problem", "question"] | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=200),
     perms: UserPermissions = Depends(require_platform_admin()),
 ) -> list[PlatformFeedbackSubmission]:
@@ -884,6 +889,17 @@ async def platform_feedback_submissions(
                 FeedbackSubmission.route_id.ilike(q),
             )
         )
+    if status_filter:
+        params["status"] = status_filter
+        query = query.where(FeedbackSubmission.status == bindparam("status"))
+    if kind:
+        source_by_kind = {
+            "feedback": "assistant_feedback",
+            "problem": "assistant_problem",
+            "question": "assistant_question",
+        }
+        params["source"] = source_by_kind[kind]
+        query = query.where(FeedbackSubmission.source == bindparam("source"))
 
     async with cross_org_session() as db:
         try:
