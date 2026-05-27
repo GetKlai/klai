@@ -22,6 +22,11 @@ interface PublicConfig {
   conversation_starters?: string[]
   hide_disclaimer?: boolean
   primary_color?: string
+  theme?: 'light' | 'dark'
+  show_sources?: boolean
+  show_meta?: boolean
+  collect_user_info?: boolean
+  page_context_enabled?: boolean
   name?: string
   description?: string
 }
@@ -77,6 +82,11 @@ function PublicBotPage() {
       conversationStarters={cfg.conversation_starters}
       hideDisclaimer={cfg.hide_disclaimer}
       primaryColor={cfg.primary_color}
+      theme={cfg.theme}
+      showSources={cfg.show_sources}
+      showMeta={cfg.show_meta}
+      collectUserInfo={cfg.collect_user_info}
+      pageContextEnabled={cfg.page_context_enabled}
       shareUrl={window.location.href}
     />
   )

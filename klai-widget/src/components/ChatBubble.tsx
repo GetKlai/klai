@@ -21,6 +21,7 @@ export function ChatBubble() {
           conversationStarters={chatState.config?.conversation_starters}
           hideDisclaimer={chatState.config?.hide_disclaimer}
           welcomeMessage={chatState.config?.welcome_message}
+          collectUserInfo={chatState.config?.collect_user_info}
         />
       </Show>
 

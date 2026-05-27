@@ -18,6 +18,8 @@
   --klai-window-width: 380px;
   --klai-window-height: 560px;
   --klai-z-index: 2147483647;
+  --klai-widget-left: auto;
+  --klai-widget-right: 20px;
 }
 
 :host *,
@@ -40,7 +42,8 @@
 .klai-bubble {
   position: fixed;
   bottom: 20px;
-  right: 20px;
+  right: var(--klai-widget-right);
+  left: var(--klai-widget-left);
   width: var(--klai-bubble-size);
   height: var(--klai-bubble-size);
   border-radius: 50%;
@@ -73,7 +76,8 @@
 .klai-window {
   position: fixed;
   bottom: 88px;
-  right: 20px;
+  right: var(--klai-widget-right);
+  left: var(--klai-widget-left);
   width: var(--klai-window-width);
   height: var(--klai-window-height);
   background-color: var(--klai-background-color);
@@ -436,10 +440,50 @@
   padding: 12px;
   border-top: 1px solid var(--klai-border-color);
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: flex-end;
   flex-shrink: 0;
   background-color: var(--klai-background-color);
+}
+
+.klai-user-info {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.klai-user-info p {
+  color: var(--klai-text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.klai-user-info-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.klai-user-info-input {
+  min-width: 0;
+  border: 1px solid var(--klai-border-color);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: var(--klai-font-family);
+  font-size: 13px;
+  color: var(--klai-text-color);
+  background-color: var(--klai-background-color);
+}
+
+.klai-user-info-input:focus {
+  outline: none;
+  border-color: var(--klai-primary-color);
+}
+
+.klai-user-info-input::placeholder {
+  color: var(--klai-text-muted);
 }
 
 .klai-textarea {
@@ -648,10 +692,10 @@
   padding: 8px 24px 12px;
   text-align: center;
   font-family: inherit;
-  font-size: 11px;
-  line-height: 1.4;
-  color: rgba(25, 25, 24, 0.4);
-}
+	  font-size: 11px;
+	  line-height: 1.4;
+	  color: var(--klai-text-muted);
+	}
 
 .klai-window--inline .klai-disclaimer {
   border-top: none;
