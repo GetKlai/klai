@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { MessageList } from "./MessageList";
 import {
   chatState,
@@ -32,6 +32,7 @@ interface ChatWindowProps {
   hideDisclaimer?: boolean;
   welcomeMessage?: string;
   collectUserInfo?: boolean;
+  manageHandoffStream?: boolean;
 }
 
 // TWD-pattern widget chrome:
@@ -48,6 +49,33 @@ export function ChatWindow(props: ChatWindowProps) {
   let handoffAbortController: AbortController | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
   const seenHandoffMessageIds = new Set<number>();
+
+  const connectHandoffStream = () => {
+    if (props.manageHandoffStream === false || handoffAbortController) {
+      return;
+    }
+    handoffAbortController = new AbortController();
+    void streamHubSpotHandoffEvents({
+      token: chatState.sessionToken,
+      lastEventId: chatState.lastHandoffEventId,
+      abortController: handoffAbortController,
+      callbacks: {
+        onAgentMessage: (content, id, agentName) => {
+          if (id && seenHandoffMessageIds.has(id)) {
+            return;
+          }
+          if (id) {
+            seenHandoffMessageIds.add(id);
+          }
+          addAgentMessage(content, { id, agentName });
+        },
+        onError: () => {
+          setError(t().errorGeneric);
+          handoffAbortController = null;
+        },
+      },
+    });
+  };
 
   const handleStarterClick = (text: string) => {
     if (chatState.isStreaming) return;
@@ -161,29 +189,20 @@ export function ChatWindow(props: ChatWindowProps) {
       });
       setHandoffActive(true);
       addAssistantNotice(t().handoffConnected);
-      handoffAbortController = new AbortController();
-      void streamHubSpotHandoffEvents({
-        token: chatState.sessionToken,
-        abortController: handoffAbortController,
-        callbacks: {
-          onAgentMessage: (content, id) => {
-            if (id && seenHandoffMessageIds.has(id)) {
-              return;
-            }
-            if (id) {
-              seenHandoffMessageIds.add(id);
-            }
-            addAgentMessage(content);
-          },
-          onError: () => {
-            setError(t().errorGeneric);
-          },
-        },
-      });
+      connectHandoffStream();
     } catch {
       setError(t().errorGeneric);
     }
   };
+
+  createEffect(() => {
+    if (props.manageHandoffStream === false) {
+      return;
+    }
+    if (chatState.handoffActive && chatState.sessionToken) {
+      connectHandoffStream();
+    }
+  });
 
   onCleanup(() => {
     if (handoffAbortController) {
@@ -300,6 +319,14 @@ export function ChatWindow(props: ChatWindowProps) {
           isStreaming={chatState.isStreaming}
           error={chatState.error}
         />
+      </Show>
+
+      <Show when={chatState.handoffActive}>
+        <div class="klai-handoff-status">
+          {chatState.agentName
+            ? t().handoffConnectedWith.replace("{name}", chatState.agentName)
+            : t().handoffConnected}
+        </div>
       </Show>
 
       <Show when={hasUserTurn() && chatState.config?.handoff?.hubspot?.enabled && !chatState.handoffActive}>

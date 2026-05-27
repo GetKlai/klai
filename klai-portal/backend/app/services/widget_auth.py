@@ -113,6 +113,7 @@ def generate_session_token(
     tenant_slug: str,
     *,
     is_preview: bool = False,
+    session_id: str | None = None,
 ) -> str:
     """Generate a HS256-signed JWT session token for widget chat.
 
@@ -125,7 +126,7 @@ def generate_session_token(
         org_id: organisation integer id
         kb_ids: list of knowledge base ids the widget may access
         exp: expiry timestamp (UTC, 1 hour from now)
-        jti: per-mint nonce used to derive audit session keys
+        jti: per-session nonce used to derive audit session keys
 
     Header:
         kid: key selector in ``org:<portal_org_id>`` format. The auth path
@@ -157,7 +158,7 @@ def generate_session_token(
         "org_id": org_id,
         "kb_ids": kb_ids,
         "exp": int(exp.timestamp()),
-        "jti": secrets.token_urlsafe(24),
+        "jti": session_id or secrets.token_urlsafe(24),
         "is_preview": is_preview,
     }
 

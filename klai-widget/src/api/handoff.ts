@@ -13,7 +13,7 @@ function endpoint(path: string): string {
 }
 
 export interface HandoffEventCallbacks {
-  onAgentMessage: (content: string, id: number) => void;
+  onAgentMessage: (content: string, id: number, agentName?: string) => void;
   onError: (error: Error) => void;
 }
 
@@ -28,6 +28,7 @@ export async function startHubSpotHandoff(options: {
       Authorization: `Bearer ${options.token}`,
     },
     body: JSON.stringify({
+      summary: buildHandoffSummary(options.messages),
       messages: options.messages
         .filter((message) => message.role === "user" || message.role === "assistant")
         .map((message) => ({
@@ -62,8 +63,14 @@ export async function streamHubSpotHandoffEvents(options: {
   token: string;
   callbacks: HandoffEventCallbacks;
   abortController?: AbortController;
+  lastEventId?: number;
 }): Promise<void> {
-  await fetchEventSource(endpoint("/partner/v1/widget-handoffs/hubspot/events"), {
+  const params = new URLSearchParams();
+  if (options.lastEventId && options.lastEventId > 0) {
+    params.set("last_event_id", String(options.lastEventId));
+  }
+  const path = `/partner/v1/widget-handoffs/hubspot/events${params.toString() ? `?${params.toString()}` : ""}`;
+  await fetchEventSource(endpoint(path), {
     method: "GET",
     headers: {
       Authorization: `Bearer ${options.token}`,
@@ -79,6 +86,7 @@ export async function streamHubSpotHandoffEvents(options: {
           type?: string;
           direction?: string;
           content?: string;
+          agent_name?: string | null;
         };
         if (
           payload.type === "agent_message" ||
@@ -86,7 +94,11 @@ export async function streamHubSpotHandoffEvents(options: {
         ) {
           const content = typeof payload.content === "string" ? payload.content : "";
           if (content) {
-            options.callbacks.onAgentMessage(content, Number(payload.id || 0));
+            const agentName =
+              typeof payload.agent_name === "string" && payload.agent_name.trim()
+                ? payload.agent_name.trim()
+                : undefined;
+            options.callbacks.onAgentMessage(content, Number(payload.id || 0), agentName);
           }
         }
       } catch {
@@ -98,4 +110,25 @@ export async function streamHubSpotHandoffEvents(options: {
       throw error;
     },
   });
+}
+
+function buildHandoffSummary(messages: Message[]): string {
+  const relevant = messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => ({
+      role: message.role,
+      content: message.content.trim(),
+    }))
+    .filter((message) => message.content.length > 0);
+
+  const lastUser = [...relevant].reverse().find((message) => message.role === "user");
+  const lastAssistant = [...relevant].reverse().find((message) => message.role === "assistant");
+  const parts = ["Bezoeker vraagt om live hulp vanuit de Klai widget."];
+  if (lastUser) {
+    parts.push(`Laatste vraag van bezoeker: ${lastUser.content.slice(0, 600)}`);
+  }
+  if (lastAssistant) {
+    parts.push(`Laatste Klai antwoord: ${lastAssistant.content.slice(0, 600)}`);
+  }
+  return parts.join("\n");
 }

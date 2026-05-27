@@ -188,7 +188,12 @@ export function MessageList(props: MessageListProps) {
                 {message.role === "user" ? (
                   message.content
                 ) : (
-                  <div class="klai-markdown" innerHTML={renderMarkdown(message.content, message.sources)} />
+                  <>
+                    <Show when={message.role === "agent" && message.agentName}>
+                      <span class="klai-agent-name">{message.agentName}</span>
+                    </Show>
+                    <div class="klai-markdown" innerHTML={renderMarkdown(message.content, message.sources)} />
+                  </>
                 )}
               </div>
               <Show

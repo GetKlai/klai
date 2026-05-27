@@ -65,6 +65,7 @@ class FakeOrg:
 def _make_request(origin: str | None = "https://example.com") -> MagicMock:
     request = MagicMock()
     request.headers = {"origin": origin} if origin else {}
+    request.query_params = {}
     return request
 
 
@@ -135,6 +136,84 @@ async def test_widget_config_returns_page_context_enabled():
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
     assert json.loads(response.body.decode())["page_context_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_widget_config_hubspot_handoff_visible_only_for_getklai_origin():
+    widget = FakeWidget()
+    widget.widget_config["allowed_origins"] = ["https://getklai.getklai.com"]
+    widget.widget_config["integrations"] = {
+        "hubspot": {
+            "status": "connected",
+            "channel_account_id": "3307400689",
+        }
+    }
+    org = FakeOrg(slug="getklai")
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://getklai.getklai.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["handoff"]["hubspot"]["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_widget_config_hubspot_handoff_hidden_for_non_getklai_tenant():
+    widget = FakeWidget()
+    widget.widget_config["allowed_origins"] = ["https://getklai.getklai.com"]
+    widget.widget_config["integrations"] = {
+        "hubspot": {
+            "status": "connected",
+            "channel_account_id": "3307400689",
+        }
+    }
+    org = FakeOrg(slug="voys")
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://getklai.getklai.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["handoff"]["hubspot"]["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_widget_config_passes_valid_client_session_id_to_token():
+    widget = FakeWidget()
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+    request.query_params = {"session_id": "client-session_1234567890"}
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token") as generate_token,
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert generate_token.call_args.kwargs["session_id"] == "client-session_1234567890"
 
 
 @pytest.mark.asyncio

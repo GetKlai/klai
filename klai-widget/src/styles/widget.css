@@ -72,6 +72,25 @@
   fill: var(--klai-primary-text-color);
 }
 
+.klai-bubble-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  border: 2px solid var(--klai-background-color);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Chat window */
 .klai-window {
   position: fixed;
@@ -241,6 +260,28 @@
 
 .klai-message--agent {
   border: 1px solid color-mix(in srgb, var(--klai-primary-color) 35%, var(--klai-border-color));
+}
+
+.klai-agent-name {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--klai-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.klai-handoff-status {
+  align-self: center;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--klai-primary-color) 30%, var(--klai-border-color));
+  background: color-mix(in srgb, var(--klai-primary-color) 8%, var(--klai-background-color));
+  color: var(--klai-text-muted);
+  font-size: 12px;
+  line-height: 1.2;
+  flex-shrink: 0;
 }
 
 .klai-handoff-bar {

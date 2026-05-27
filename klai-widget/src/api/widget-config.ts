@@ -54,12 +54,19 @@ const WIDGET_CONFIG_BASE_URL =
 
 declare const __WIDGET_CONFIG_BASE_URL__: string;
 
-export async function fetchWidgetConfig(widgetId: string): Promise<WidgetConfig> {
+export async function fetchWidgetConfig(
+  widgetId: string,
+  options: { sessionId?: string } = {},
+): Promise<WidgetConfig> {
   let response: Response;
 
   try {
+    const params = new URLSearchParams({ id: widgetId });
+    if (options.sessionId) {
+      params.set("session_id", options.sessionId);
+    }
     response = await fetch(
-      `${WIDGET_CONFIG_BASE_URL}/partner/v1/widget-config?id=${encodeURIComponent(widgetId)}`,
+      `${WIDGET_CONFIG_BASE_URL}/partner/v1/widget-config?${params.toString()}`,
       {
         method: "GET",
         // No credentials — Origin header sent automatically by browser

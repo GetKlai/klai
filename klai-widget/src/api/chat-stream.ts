@@ -5,6 +5,8 @@ export interface Message {
   role: "user" | "assistant" | "agent";
   content: string;
   sources?: MessageSource[];
+  id?: number;
+  agentName?: string;
 }
 
 export interface MessageSource {
