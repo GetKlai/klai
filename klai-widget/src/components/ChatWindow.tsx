@@ -5,6 +5,8 @@ import {
   addAgentMessage,
   addAssistantNotice,
   addUserMessage,
+  closeCurrentConversation,
+  createConversationSessionId,
   startAssistantMessage,
   appendToLastMessage,
   setLastMessageSources,
@@ -14,8 +16,11 @@ import {
   setHandoffActive,
   setHandoffConnecting,
   setVisitorIdentity,
+  startNewConversation,
+  switchConversation,
 } from "../store/chat";
 import { collectPageContext, streamChat } from "../api/chat-stream";
+import { fetchWidgetConfig } from "../api/widget-config";
 import {
   sendHubSpotHandoffMessage,
   startHubSpotHandoff,
@@ -46,15 +51,25 @@ export function ChatWindow(props: ChatWindowProps) {
   const [inputValue, setInputValue] = createSignal("");
   const [visitorName, setVisitorName] = createSignal(chatState.visitorName);
   const [visitorEmail, setVisitorEmail] = createSignal(chatState.visitorEmail);
+  const [showHistory, setShowHistory] = createSignal(false);
+  const [conversationActionBusy, setConversationActionBusy] = createSignal(false);
   let abortController: AbortController | null = null;
   let handoffAbortController: AbortController | null = null;
+  let handoffStreamToken: string | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
   const seenHandoffMessageIds = new Set<number>();
 
   const connectHandoffStream = () => {
-    if (props.manageHandoffStream === false || handoffAbortController) {
+    if (props.manageHandoffStream === false || !chatState.sessionToken) {
       return;
     }
+    if (handoffAbortController && handoffStreamToken === chatState.sessionToken) {
+      return;
+    }
+    if (handoffAbortController) {
+      handoffAbortController.abort();
+    }
+    handoffStreamToken = chatState.sessionToken;
     handoffAbortController = new AbortController();
     void streamHubSpotHandoffEvents({
       token: chatState.sessionToken,
@@ -73,6 +88,7 @@ export function ChatWindow(props: ChatWindowProps) {
         onError: () => {
           setError(t().errorGeneric);
           handoffAbortController = null;
+          handoffStreamToken = null;
         },
       },
     });
@@ -91,7 +107,11 @@ export function ChatWindow(props: ChatWindowProps) {
     (visitorName().trim().length > 1 && visitorEmail().trim().includes("@"));
 
   const canSend = () =>
-    visitorInfoComplete() && !chatState.isStreaming && !chatState.handoffConnecting;
+    chatState.conversationStatus !== "closed" &&
+    visitorInfoComplete() &&
+    !chatState.isStreaming &&
+    !chatState.handoffConnecting &&
+    !conversationActionBusy();
 
   const withVisitorInfo = (messages: Message[]): Message[] => {
     if (!props.collectUserInfo) return messages;
@@ -178,7 +198,7 @@ export function ChatWindow(props: ChatWindowProps) {
   };
 
   const startHandoff = async () => {
-    if (chatState.handoffActive || chatState.handoffConnecting || chatState.isStreaming) {
+    if (chatState.conversationStatus === "closed" || chatState.handoffActive || chatState.handoffConnecting || chatState.isStreaming) {
       return;
     }
     clearError();
@@ -203,8 +223,14 @@ export function ChatWindow(props: ChatWindowProps) {
     if (props.manageHandoffStream === false) {
       return;
     }
-    if (chatState.handoffActive && chatState.sessionToken) {
+    if (chatState.handoffActive && chatState.sessionToken && chatState.conversationStatus !== "closed") {
       connectHandoffStream();
+      return;
+    }
+    if (handoffAbortController) {
+      handoffAbortController.abort();
+      handoffAbortController = null;
+      handoffStreamToken = null;
     }
   });
 
@@ -212,8 +238,51 @@ export function ChatWindow(props: ChatWindowProps) {
     if (handoffAbortController) {
       handoffAbortController.abort();
       handoffAbortController = null;
+      handoffStreamToken = null;
     }
   });
+
+  const openConversation = async (conversationId: string) => {
+    if (conversationId === chatState.clientSessionId || chatState.isStreaming || conversationActionBusy()) {
+      setShowHistory(false);
+      return;
+    }
+    setConversationActionBusy(true);
+    clearError();
+    try {
+      const config = await fetchWidgetConfig(chatState.widgetId, { sessionId: conversationId });
+      switchConversation(config, conversationId);
+      setShowHistory(false);
+      setInputValue("");
+    } catch {
+      setError(t().errorGeneric);
+    } finally {
+      setConversationActionBusy(false);
+    }
+  };
+
+  const startFreshConversation = async () => {
+    if (chatState.isStreaming || conversationActionBusy()) return;
+    setConversationActionBusy(true);
+    clearError();
+    try {
+      const conversationId = createConversationSessionId();
+      const config = await fetchWidgetConfig(chatState.widgetId, { sessionId: conversationId });
+      startNewConversation(config, conversationId);
+      setInputValue("");
+      setShowHistory(false);
+    } catch {
+      setError(t().errorGeneric);
+    } finally {
+      setConversationActionBusy(false);
+    }
+  };
+
+  const closeConversation = () => {
+    if (chatState.isStreaming || conversationActionBusy()) return;
+    closeCurrentConversation();
+    setShowHistory(false);
+  };
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -264,6 +333,34 @@ export function ChatWindow(props: ChatWindowProps) {
               </Show>
             </div>
           </div>
+          <div class="klai-header-actions">
+            <button
+              class="klai-icon-btn"
+              type="button"
+              aria-label={t().conversationHistory}
+              title={t().conversationHistory}
+              onClick={() => setShowHistory((value) => !value)}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 5h18" />
+                <path d="M3 12h18" />
+                <path d="M3 19h18" />
+              </svg>
+            </button>
+            <button
+              class="klai-icon-btn"
+              type="button"
+              aria-label={t().newConversation}
+              title={t().newConversation}
+              disabled={chatState.isStreaming || conversationActionBusy()}
+              onClick={() => void startFreshConversation()}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </svg>
+            </button>
+          </div>
           <button
             class="klai-close-btn"
             aria-label={t().closeChat}
@@ -276,6 +373,58 @@ export function ChatWindow(props: ChatWindowProps) {
           </button>
         </div>
       )}
+
+      <Show when={showHistory()}>
+        <div class="klai-conversation-panel">
+          <div class="klai-conversation-panel-head">
+            <span>{t().conversationHistory}</span>
+            <button
+              type="button"
+              class="klai-conversation-close-btn"
+              disabled={chatState.conversationStatus === "closed" || chatState.isStreaming}
+              onClick={closeConversation}
+            >
+              {t().closeConversation}
+            </button>
+          </div>
+          <div class="klai-conversation-list">
+            <Show
+              when={chatState.conversations.length > 0}
+              fallback={<p class="klai-conversation-empty">{t().noPreviousConversations}</p>}
+            >
+              {chatState.conversations.map((conversation) => (
+                <button
+                  type="button"
+                  class={
+                    conversation.id === chatState.clientSessionId
+                      ? "klai-conversation-item klai-conversation-item--active"
+                      : "klai-conversation-item"
+                  }
+                  disabled={conversationActionBusy() || chatState.isStreaming}
+                  onClick={() => void openConversation(conversation.id)}
+                >
+                  <span class="klai-conversation-title">{conversation.title}</span>
+                  <span class="klai-conversation-meta">
+                    {conversation.status === "closed"
+                      ? t().conversationClosed
+                      : conversation.status === "handoff_active"
+                        ? t().conversationHandoff
+                        : t().conversationActive}
+                  </span>
+                </button>
+              ))}
+            </Show>
+          </div>
+          <button
+            type="button"
+            class="klai-new-conversation-btn"
+            disabled={chatState.isStreaming || conversationActionBusy()}
+            onClick={() => void startFreshConversation()}
+          >
+            {t().newConversation}
+          </button>
+        </div>
+      </Show>
 
       {/* Empty-state hero — TWD pattern. Shows the bot identity + a
           row of starter chips. The instant the user sends a message
@@ -333,7 +482,11 @@ export function ChatWindow(props: ChatWindowProps) {
         </div>
       </Show>
 
-      <Show when={hasUserTurn() && chatState.config?.handoff?.hubspot?.enabled && !chatState.handoffActive}>
+      <Show when={chatState.conversationStatus === "closed"}>
+        <div class="klai-handoff-status">{t().conversationClosed}</div>
+      </Show>
+
+      <Show when={hasUserTurn() && chatState.config?.handoff?.hubspot?.enabled && !chatState.handoffActive && chatState.conversationStatus !== "closed"}>
         <div class="klai-handoff-bar">
           <Show when={!props.collectUserInfo}>
             <input
@@ -399,7 +552,7 @@ export function ChatWindow(props: ChatWindowProps) {
           value={inputValue()}
           onInput={handleTextareaInput}
           onKeyDown={handleKeyDown}
-          disabled={chatState.isStreaming || chatState.handoffConnecting}
+          disabled={chatState.isStreaming || chatState.handoffConnecting || chatState.conversationStatus === "closed" || conversationActionBusy()}
           rows={1}
           aria-label={t().inputLabel}
         />

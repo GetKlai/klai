@@ -22,6 +22,13 @@ export interface WidgetLabels {
   userInfoHelp: string
   handoffConnectedWith: string
   handoffNamePlaceholder: string
+  conversationHistory: string
+  newConversation: string
+  closeConversation: string
+  conversationClosed: string
+  conversationActive: string
+  conversationHandoff: string
+  noPreviousConversations: string
 }
 
 const nl: WidgetLabels = {
@@ -43,6 +50,13 @@ const nl: WidgetLabels = {
   userInfoHelp: "Laat je gegevens achter voor opvolging.",
   handoffConnectedWith: "Je praat met {name}.",
   handoffNamePlaceholder: "Je naam",
+  conversationHistory: "Gesprekken",
+  newConversation: "Nieuw gesprek",
+  closeConversation: "Sluit gesprek",
+  conversationClosed: "Gesprek gesloten",
+  conversationActive: "Actief",
+  conversationHandoff: "Live support",
+  noPreviousConversations: "Nog geen eerdere gesprekken.",
 }
 
 const en: WidgetLabels = {
@@ -64,6 +78,13 @@ const en: WidgetLabels = {
   userInfoHelp: "Leave your details for follow-up.",
   handoffConnectedWith: "You are talking to {name}.",
   handoffNamePlaceholder: "Your name",
+  conversationHistory: "Conversations",
+  newConversation: "New conversation",
+  closeConversation: "Close conversation",
+  conversationClosed: "Conversation closed",
+  conversationActive: "Active",
+  conversationHandoff: "Live support",
+  noPreviousConversations: "No previous conversations yet.",
 }
 
 const locales: Record<string, WidgetLabels> = { nl, en }

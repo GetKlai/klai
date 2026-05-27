@@ -7,6 +7,7 @@ import { t } from "../i18n/labels";
 export function ChatBubble() {
   const [isOpen, setIsOpen] = createSignal(false);
   let handoffAbortController: AbortController | null = null;
+  let handoffStreamToken: string | null = null;
   const seenHandoffMessageIds = new Set<number>();
 
   const open = () => {
@@ -22,9 +23,16 @@ export function ChatBubble() {
   const title = () => chatState.config?.title ?? "Chat";
 
   const connectHandoffStream = () => {
-    if (handoffAbortController || !chatState.sessionToken) {
+    if (!chatState.sessionToken) {
       return;
     }
+    if (handoffAbortController && handoffStreamToken === chatState.sessionToken) {
+      return;
+    }
+    if (handoffAbortController) {
+      handoffAbortController.abort();
+    }
+    handoffStreamToken = chatState.sessionToken;
     handoffAbortController = new AbortController();
     void streamHubSpotHandoffEvents({
       token: chatState.sessionToken,
@@ -39,16 +47,18 @@ export function ChatBubble() {
         onError: () => {
           setError(t().errorGeneric);
           handoffAbortController = null;
+          handoffStreamToken = null;
         },
       },
     });
   };
 
   createEffect(() => {
-    if (!chatState.handoffActive) {
+    if (!chatState.handoffActive || chatState.conversationStatus === "closed") {
       if (handoffAbortController) {
         handoffAbortController.abort();
         handoffAbortController = null;
+        handoffStreamToken = null;
       }
       return;
     }
@@ -59,6 +69,7 @@ export function ChatBubble() {
     if (handoffAbortController) {
       handoffAbortController.abort();
       handoffAbortController = null;
+      handoffStreamToken = null;
     }
   });
 
