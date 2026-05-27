@@ -66,7 +66,7 @@ class TestEndpointsHavePlatformGate:
         require_platform_unlocked('partner_api') in its FastAPI dependencies."""
         from app.api.admin_api_keys import router
 
-        # router.routes contains the five APIRoute objects.
+        # router.routes contains the six APIRoute objects.
         operation_count = 0
         for route in router.routes:
             # Skip non-APIRoute (e.g. catch-all WebSocket routes — none here).
@@ -81,7 +81,7 @@ class TestEndpointsHavePlatformGate:
                 f"Endpoint {route.path} ({route.methods}) is missing require_platform_unlocked('partner_api') gate"
             )
 
-        assert operation_count == 5, f"Expected 5 /api/admin/api-keys operations, found {operation_count}"
+        assert operation_count == 6, f"Expected 6 /api/admin/api-keys operations, found {operation_count}"
 
 
 def _depends_on_partner_api_unlock(dependant) -> bool:

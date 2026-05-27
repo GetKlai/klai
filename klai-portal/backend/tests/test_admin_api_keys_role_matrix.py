@@ -20,6 +20,7 @@ from app.api.admin_api_keys import (
     delete_api_key,
     get_api_key_detail,
     list_api_keys,
+    rotate_api_key,
     update_api_key,
 )
 from tests.role_matrix_helpers import (
@@ -202,6 +203,46 @@ async def test_update_api_key_unauthenticated() -> None:
         _MODULE,
         key_id="key-test",
         body=_update_body(),
+        credentials=None,
+        db=make_db_mock(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# rotate_api_key — POST /api/admin/api-keys/{key_id}/rotate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rotate_api_key_admin_passes_gate() -> None:
+    await assert_admin_passes_gate(
+        rotate_api_key,
+        _MODULE,
+        key_id="key-test",
+        credentials=None,
+        db=make_db_mock(),
+    )
+
+
+@pytest.mark.parametrize("role", NON_ADMIN_ROLES)
+@pytest.mark.asyncio
+async def test_rotate_api_key_non_admin_blocked(role: str) -> None:
+    await assert_role_blocked_at_gate(
+        rotate_api_key,
+        _MODULE,
+        role,
+        key_id="key-test",
+        credentials=None,
+        db=make_db_mock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_rotate_api_key_unauthenticated() -> None:
+    await assert_unauthenticated_blocked(
+        rotate_api_key,
+        _MODULE,
+        key_id="key-test",
         credentials=None,
         db=make_db_mock(),
     )

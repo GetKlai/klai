@@ -20,6 +20,8 @@ class PartnerAPIKey(Base):
     __table_args__ = (
         Index("ix_partner_api_keys_key_hash", "key_hash", unique=True),
         Index("ix_partner_api_keys_org_id", "org_id"),
+        Index("ix_partner_api_keys_rotated_from_key_id", "rotated_from_key_id"),
+        Index("ix_partner_api_keys_rotated_to_key_id", "rotated_to_key_id"),
     )
 
     id: Mapped[str] = mapped_column(
@@ -42,6 +44,17 @@ class PartnerAPIKey(Base):
         server_default='{"chat": true, "feedback": true, "knowledge_append": false}',
     )
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, nullable=False, server_default="60")
+    rotated_from_key_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("partner_api_keys.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    rotated_to_key_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("partner_api_keys.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    rotation_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)

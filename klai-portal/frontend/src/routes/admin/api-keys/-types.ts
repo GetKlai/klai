@@ -24,6 +24,9 @@ export interface ApiKeyResponse {
   last_used_at: string | null
   created_at: string
   created_by: string
+  rotated_from_key_id: string | null
+  rotated_to_key_id: string | null
+  rotation_started_at: string | null
 }
 
 export interface ApiKeyDetailResponse extends ApiKeyResponse {
@@ -44,6 +47,10 @@ export interface CreateApiKeyRequest {
 
 export interface CreateApiKeyResponse extends ApiKeyDetailResponse {
   api_key: string
+}
+
+export interface RotateApiKeyResponse extends CreateApiKeyResponse {
+  old_key_id: string
 }
 
 export interface UpdateApiKeyRequest {

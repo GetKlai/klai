@@ -21,6 +21,8 @@ type SubmissionState = 'idle' | 'submitting' | 'submitted' | 'error'
 type FeedbackType = 'idea' | 'improvement' | 'confusing' | 'missing' | 'compliment' | 'other'
 type ProblemSeverity = 'blocked' | 'workaround' | 'minor'
 
+const KLAI_HELP_WIDGET_ID = 'wgt_5889c7533b1e558f7e92e251e8cd84b35eefb748'
+
 interface AssistantContextPayload {
   page_url: string
   route_id?: string
@@ -37,14 +39,59 @@ function currentContext(): AssistantContextPayload {
     typeof document !== 'undefined' && document.documentElement.lang
       ? document.documentElement.lang
       : 'nl'
+  const pageUrl =
+    typeof window === 'undefined'
+      ? ''
+      : `${window.location.origin}${window.location.pathname}`
   return {
-    page_url: typeof window === 'undefined' ? '' : window.location.href,
+    page_url: pageUrl,
     route_id: typeof window === 'undefined' ? undefined : window.location.pathname,
     locale,
     viewport:
       typeof window === 'undefined'
         ? ''
         : `${window.innerWidth}x${window.innerHeight}`,
+  }
+}
+
+function injectHiddenWidgetBubble(shadowRoot: ShadowRoot) {
+  if (shadowRoot.getElementById('klai-assistant-hide-widget-bubble')) return
+  const style = document.createElement('style')
+  style.id = 'klai-assistant-hide-widget-bubble'
+  style.textContent = '.klai-bubble { display: none !important; }'
+  shadowRoot.appendChild(style)
+}
+
+async function waitForKlaiWidgetButton(): Promise<HTMLButtonElement> {
+  const deadline = Date.now() + 5000
+
+  while (Date.now() < deadline) {
+    const root = document.getElementById('klai-widget-root')
+    const shadowRoot = root?.shadowRoot
+    const button = shadowRoot?.querySelector<HTMLButtonElement>('.klai-bubble')
+    if (shadowRoot && button) {
+      injectHiddenWidgetBubble(shadowRoot)
+      return button
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 50))
+  }
+
+  throw new Error('Klai help widget did not mount')
+}
+
+async function openKlaiHelpWidget() {
+  if (!document.getElementById('klai-assistant-help-widget-script')) {
+    const script = document.createElement('script')
+    script.id = 'klai-assistant-help-widget-script'
+    script.src = '/widget/klai-chat.js'
+    script.async = true
+    script.dataset.widgetId = KLAI_HELP_WIDGET_ID
+    document.body.appendChild(script)
+  }
+
+  const button = await waitForKlaiWidgetButton()
+  if (button.getAttribute('aria-expanded') !== 'true') {
+    button.click()
   }
 }
 
@@ -57,12 +104,18 @@ export function KlaiAssistantLauncher() {
     setMode('home')
   }
 
+  function openQuestionChat() {
+    closePanel()
+    void openKlaiHelpWidget()
+  }
+
   return (
     <>
       {open && (
         <KlaiAssistantPanel
           mode={mode}
           onModeChange={setMode}
+          onQuestionChat={openQuestionChat}
           onClose={closePanel}
         />
       )}
@@ -91,10 +144,12 @@ export function KlaiAssistantLauncher() {
 function KlaiAssistantPanel({
   mode,
   onModeChange,
+  onQuestionChat,
   onClose,
 }: {
   mode: AssistantMode
   onModeChange: (mode: AssistantMode) => void
+  onQuestionChat: () => void
   onClose: () => void
 }) {
   const showBack = mode !== 'home'
@@ -143,8 +198,12 @@ function KlaiAssistantPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        {mode === 'home' && <AssistantHome onModeChange={onModeChange} />}
-        {mode === 'question' && <QuestionView />}
+        {mode === 'home' && (
+          <AssistantHome
+            onModeChange={onModeChange}
+            onQuestionChat={onQuestionChat}
+          />
+        )}
         {mode === 'feedback' && <FeedbackView />}
         {mode === 'problem' && <ProblemView />}
       </div>
@@ -152,7 +211,13 @@ function KlaiAssistantPanel({
   )
 }
 
-function AssistantHome({ onModeChange }: { onModeChange: (mode: AssistantMode) => void }) {
+function AssistantHome({
+  onModeChange,
+  onQuestionChat,
+}: {
+  onModeChange: (mode: AssistantMode) => void
+  onQuestionChat: () => void
+}) {
   const options: Array<{
     mode: AssistantMode
     icon: LucideIcon
@@ -186,7 +251,13 @@ function AssistantHome({ onModeChange }: { onModeChange: (mode: AssistantMode) =
           key={option.mode}
           type="button"
           variant="secondary"
-          onClick={() => onModeChange(option.mode)}
+          onClick={() => {
+            if (option.mode === 'question') {
+              onQuestionChat()
+            } else {
+              onModeChange(option.mode)
+            }
+          }}
           className="h-auto w-full justify-start rounded-xl border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] px-3 py-3 text-left hover:border-[var(--color-rl-accent)] hover:bg-[var(--color-rl-accent)]/10"
         >
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-rl-accent)]/15 text-[var(--color-rl-dark)]">
@@ -203,21 +274,6 @@ function AssistantHome({ onModeChange }: { onModeChange: (mode: AssistantMode) =
         </Button>
       ))}
     </div>
-  )
-}
-
-function QuestionView() {
-  return (
-    <ChatQuestionForm
-      endpoint="/api/app/assistant/questions"
-      minLength={3}
-      placeholder={m.klai_assistant_question_placeholder()}
-      submitLabel={m.klai_assistant_question_submit()}
-      submittingLabel={m.klai_assistant_submitting()}
-      successTitle={m.klai_assistant_question_success_title()}
-      successDescription={m.klai_assistant_question_success_desc()}
-      buildPayload={(rawText) => ({ raw_text: rawText, ...currentContext() })}
-    />
   )
 }
 
@@ -296,120 +352,6 @@ function ProblemView() {
         </ChipGroup>
       }
     />
-  )
-}
-
-function ChatQuestionForm<TPayload extends IntakePayload>({
-  endpoint,
-  minLength,
-  placeholder,
-  submitLabel,
-  submittingLabel,
-  successTitle,
-  successDescription,
-  buildPayload,
-}: {
-  endpoint: string
-  minLength: number
-  placeholder: string
-  submitLabel: string
-  submittingLabel: string
-  successTitle: string
-  successDescription: string
-  buildPayload: (rawText: string) => TPayload
-}) {
-  const [value, setValue] = useState('')
-  const [state, setState] = useState<SubmissionState>('idle')
-
-  const trimmed = value.trim()
-  const canSubmit = trimmed.length >= minLength && state !== 'submitting'
-
-  async function submit() {
-    if (!canSubmit) return
-    setState('submitting')
-    try {
-      await apiFetch<{ ok: true }>(endpoint, {
-        method: 'POST',
-        body: JSON.stringify(buildPayload(trimmed)),
-      })
-      setState('submitted')
-      setValue('')
-    } catch {
-      setState('error')
-    }
-  }
-
-  return (
-    <div className="-mx-4 -my-4 flex min-h-[540px] flex-col bg-[var(--color-rl-bg)]">
-      <div className="flex flex-1 flex-col items-center justify-center px-8 py-10 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-[var(--color-rl-cream)] text-[var(--color-rl-dark)]">
-          {state === 'submitted' ? (
-            <CheckCircle2 className="h-8 w-8 text-[var(--color-success)]" strokeWidth={1.75} />
-          ) : (
-            <MessageSquare className="h-8 w-8" strokeWidth={1.75} />
-          )}
-        </div>
-        <h3 className="mt-7 text-base font-semibold leading-tight text-[var(--color-rl-dark)]">
-          {state === 'submitted'
-            ? successTitle
-            : m.klai_assistant_question_hero_title()}
-        </h3>
-        <p className="mt-2 max-w-sm text-[13px] leading-5 text-[var(--color-rl-dark)]/60">
-          {state === 'submitted'
-            ? successDescription
-            : m.klai_assistant_question_hero_desc()}
-        </p>
-      </div>
-
-      <form
-        className="border-t border-[var(--color-rl-border)] bg-[var(--color-rl-bg)] px-3 py-3"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void submit()
-        }}
-      >
-        {state === 'error' && (
-          <p className="mb-3 text-sm text-[var(--color-destructive)]">
-            {m.klai_assistant_error()}
-          </p>
-        )}
-        <div className="flex items-end gap-3">
-          <Textarea
-            value={value}
-            onChange={(event) => {
-              setValue(event.target.value)
-              if (state === 'error' || state === 'submitted') setState('idle')
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                void submit()
-              }
-            }}
-            placeholder={placeholder}
-            rows={1}
-            maxLength={4000}
-            aria-label={m.klai_assistant_question_label()}
-            className="max-h-28 min-h-11 resize-none rounded-lg border-[var(--color-rl-border)] bg-[var(--color-rl-bg)] px-3 py-2.5 text-sm text-[var(--color-rl-dark)] placeholder:text-[var(--color-rl-dark)]/60 focus-visible:ring-[var(--color-rl-accent)]"
-          />
-          <Button
-            type="submit"
-            size="icon"
-            disabled={!canSubmit}
-            aria-label={submitLabel}
-            className="h-11 w-11 shrink-0 rounded-lg bg-[var(--color-rl-accent)] text-[var(--color-rl-dark)] hover:bg-[var(--color-rl-accent-hover)]"
-          >
-            <Send className={cn('h-5 w-5', state === 'submitting' && 'animate-pulse')} />
-            <span className="sr-only">
-              {state === 'submitting' ? submittingLabel : submitLabel}
-            </span>
-          </Button>
-        </div>
-        <p className="mt-2 px-3 text-center text-[11px] leading-5 text-[var(--color-rl-dark)]/40">
-          {m.klai_assistant_disclaimer()}
-        </p>
-      </form>
-    </div>
   )
 }
 

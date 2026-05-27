@@ -28,6 +28,16 @@ class FakeKeyRow:
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
     created_by: str = "user-1"
+    rotated_from_key_id: str | None = None
+    rotated_to_key_id: str | None = None
+    rotation_started_at: datetime | None = None
+
+
+@dataclass
+class FakeKbAccessRow:
+    partner_api_key_id: str = "key-uuid-1"
+    kb_id: int = 10
+    access_level: str = "read"
 
 
 @pytest.mark.asyncio
@@ -119,3 +129,50 @@ async def test_delete_api_key_calls_db_delete():
     db.commit.assert_awaited_once()
     # execute called 3 times: SELECT + 2x DELETE
     assert db.execute.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_rotate_api_key_clones_permissions_and_kb_access():
+    """POST /api/admin/api-keys/{id}/rotate creates a replacement key."""
+    from app.api.admin_api_keys import rotate_api_key
+
+    source_key = FakeKeyRow(
+        id="key-old",
+        name="Production API",
+        description="Current prod key",
+        permissions={"chat": True, "feedback": True, "knowledge_append": False},
+        rate_limit_rpm=120,
+    )
+    kb_access = FakeKbAccessRow(partner_api_key_id="key-old", kb_id=123, access_level="read_write")
+    db = AsyncMock()
+    db.add = MagicMock()
+
+    async def fake_refresh(row):
+        row.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    db.refresh = AsyncMock(side_effect=fake_refresh)
+    setup_db(
+        db,
+        [
+            FakeResult([source_key]),  # SELECT source key
+            FakeResult([kb_access]),  # SELECT source KB access rows
+        ],
+    )
+
+    with patch("app.api.admin_api_keys.emit_event"):
+        result = await rotate_api_key(
+            key_id="key-old",
+            perms=make_perms(role="admin", user_id="user-2", org_id=1),
+            db=db,
+        )
+
+    assert result.api_key.startswith("pk_live_")
+    assert result.old_key_id == "key-old"
+    assert result.rotated_from_key_id == "key-old"
+    assert result.permissions == source_key.permissions
+    assert result.rate_limit_rpm == 120
+    assert result.kb_access_count == 1
+    assert source_key.rotated_to_key_id == result.id
+    assert source_key.rotation_started_at is not None
+    db.commit.assert_awaited_once()
+    assert db.add.call_count == 2  # new key row + cloned KB access row
