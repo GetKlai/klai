@@ -116,6 +116,7 @@ function makeWidget(allow_any_origin = false): WidgetDetailResponse {
       show_sources: true,
       show_meta: false,
       collect_user_info: false,
+      page_context_enabled: false,
       widget_position: 'right',
     },
     kb_access: [],

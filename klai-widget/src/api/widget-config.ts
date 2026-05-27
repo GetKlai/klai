@@ -17,6 +17,7 @@ export interface WidgetConfig {
   // assistant message. Admin-controlled in the Vormgeving tab.
   show_sources?: boolean;
   show_meta?: boolean;
+  page_context_enabled?: boolean;
 }
 
 export type KlaiWidgetErrorCode =

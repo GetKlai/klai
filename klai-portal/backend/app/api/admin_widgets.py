@@ -68,6 +68,7 @@ class WidgetConfig(BaseModel):
     show_sources: bool = True
     show_meta: bool = False
     collect_user_info: bool = False
+    page_context_enabled: bool = False
     widget_position: str = "right"  # 'left' | 'right'
 
 
@@ -140,6 +141,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             show_sources=config.get("show_sources", True),
             show_meta=config.get("show_meta", False),
             collect_user_info=config.get("collect_user_info", False),
+            page_context_enabled=config.get("page_context_enabled", False),
             widget_position=config.get("widget_position", "right"),
         ),
         public_share_enabled=widget.public_share_enabled,
