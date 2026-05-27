@@ -233,10 +233,11 @@ function EditConnectorPage() {
         )
       } else if (connector.has_saved_credentials === true) {
         setWcAuthMode('saved')
+        setRequiresLogin(true)
       }
       setClearSavedCredentials(false)
-      // SPEC D-1: requiresLogin is pre-set only for ?step=auth deep-link
-      // (handled above). Otherwise null so the auth-question step always runs.
+      // Existing encrypted web-crawler credentials are an explicit signal that
+      // this connector uses login; the edit wizard can skip the auth question.
       if (cfg.content_selector) setShowAdvancedSelector(true)
       setWcPreviewUrl(String(cfg.base_url ?? ''))
     }
@@ -639,7 +640,14 @@ function EditConnectorPage() {
                       disabled={!name || !webcrawlerConfig.base_url}
                       onClick={() => {
                         setWcPreviewUrl(webcrawlerConfig.base_url)
-                        setWcStep('auth-question')
+                        if (hasSavedWebCrawlerCredentials) {
+                          setRequiresLogin(true)
+                          setWcAuthMode('saved')
+                          setClearSavedCredentials(false)
+                          setWcStep('auth-setup')
+                        } else {
+                          setWcStep('auth-question')
+                        }
                       }}
                     >
                       {m.admin_connectors_webcrawler_next()}
@@ -782,6 +790,21 @@ function EditConnectorPage() {
                           >
                             Replace cookies
                           </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setRequiresLogin(false)
+                              setWcCookieRows([])
+                              setClearSavedCredentials(true)
+                              invalidateAuthProbe()
+                              invalidatePreview()
+                              setWcStep('selector')
+                            }}
+                          >
+                            Use without login
+                          </Button>
                         </div>
                       </div>
                     ) : (
@@ -844,7 +867,12 @@ function EditConnectorPage() {
                     >
                       {m.admin_connectors_webcrawler_next()}
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('auth-question')}>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setWcStep(hasSavedWebCrawlerCredentials ? 'details' : 'auth-question')}
+                    >
                       {m.admin_connectors_webcrawler_back()}
                     </Button>
                   </div>
@@ -864,7 +892,16 @@ function EditConnectorPage() {
                       <button
                         type="button"
                         className="text-xs text-gray-400 hover:text-gray-900"
-                        onClick={() => setWcStep('auth-question')}
+                        onClick={() => {
+                          if (hasSavedWebCrawlerCredentials) {
+                            setRequiresLogin(true)
+                            setWcAuthMode('saved')
+                            setClearSavedCredentials(false)
+                            setWcStep('auth-setup')
+                          } else {
+                            setWcStep('auth-question')
+                          }
+                        }}
                       >
                         Actually, it needs login
                       </button>
