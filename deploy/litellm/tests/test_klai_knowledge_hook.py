@@ -842,8 +842,29 @@ class TestKlaiKnowledgeHookSlugsTriState:
         )
 
     @pytest.mark.asyncio
-    async def test_empty_slugs_and_personal_on_uses_personal_scope(self, monkeypatch):
-        """[] + personal=True → scope=personal, no kb_slugs filter."""
+    async def test_empty_slugs_and_personal_on_narrows_to_canonical_personal_kb(
+        self, monkeypatch
+    ):
+        """[] + personal=True → scope=personal AND kb_slugs=["personal-<user_id>"].
+
+        Bug discovered 2026-05-27 when Jantine flagged that company.csv
+        chunks from a user-created KB called "test2" showed up while
+        she had "Persoonlijk" selected and "test2" explicitly unchecked
+        in the dropdown.
+
+        Root cause: the "Persoonlijk" dropdown entry lists user-created
+        KBs (e.g. "test2") as SEPARATE items. The previous wire contract
+        sent ``kb_slugs=[]`` + scope=personal, which retrieval-api
+        interpreted as "all chunks where owner_user_id matches" —
+        including chunks from user-owned KBs that the user explicitly
+        DESELECTED in the dropdown.
+
+        Fix: when the user picks "Persoonlijk" the hook narrows the
+        retrieve request to the canonical personal KB only by sending
+        kb_slugs=[f"personal-{user_id}"]. The slug follows the
+        auto-provisioned pattern in portal_knowledge_bases for
+        owner_type='user' rows whose slug starts with 'personal-'.
+        """
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(
@@ -874,10 +895,16 @@ class TestKlaiKnowledgeHookSlugsTriState:
             assert mc.post.call_count == 1
             body = mc.post.call_args.kwargs["json"]
             assert body["scope"] == "personal", (
-                f"Expected scope=personal when only personal is enabled, got {body['scope']!r}"
+                f"Expected scope=personal when only personal is enabled, "
+                f"got {body['scope']!r}"
             )
-            assert "kb_slugs" not in body, (
-                "kb_slugs filter MUST NOT be sent in personal-only scope."
+            # NEW behaviour: kb_slugs MUST be the canonical personal KB
+            # slug. Without this filter, retrieval-api returns chunks
+            # from EVERY user-owned KB (the previous bug).
+            assert body.get("kb_slugs") == ["personal-300000000000000002"], (
+                "Personal scope must narrow to the canonical "
+                "'personal-<user_id>' KB. Sending no filter caused "
+                "user-created KBs like 'test2' to leak in."
             )
 
     @pytest.mark.asyncio
