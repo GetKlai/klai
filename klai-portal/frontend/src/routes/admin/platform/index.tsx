@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { BookOpen, Plus, RotateCw, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import { fetchMe } from '@/lib/api-me'
 import { useAuth } from '@/lib/auth'
 import { getLocale } from '@/paraglide/runtime'
@@ -56,6 +57,8 @@ function PlatformConsole() {
   const navigate = useNavigate()
   const [tab, setTab] = useState<PlatformTab>('users')
   const [search, setSearch] = useState('')
+  const [feedbackStatus, setFeedbackStatus] = useState('new')
+  const [feedbackKind, setFeedbackKind] = useState('')
   const auth = useAuth()
   const meQuery = useQuery({
     queryKey: ['me'],
@@ -209,10 +212,40 @@ function PlatformConsole() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={m.platform_search_placeholder()}
+            placeholder={
+              tab === 'feedback'
+                ? 'Zoek in feedback, organisatie, route...'
+                : m.platform_search_placeholder()
+            }
             className="pl-9"
           />
         </div>
+        {tab === 'feedback' && (
+          <>
+            <Select
+              value={feedbackStatus}
+              onChange={(event) => setFeedbackStatus(event.target.value)}
+              className="w-44"
+            >
+              <option value="">Alle statussen</option>
+              <option value="new">Nieuw</option>
+              <option value="triage_suggested">Suggestie</option>
+              <option value="linked">Gekoppeld</option>
+              <option value="support">Support</option>
+              <option value="dismissed">Genegeerd</option>
+            </Select>
+            <Select
+              value={feedbackKind}
+              onChange={(event) => setFeedbackKind(event.target.value)}
+              className="w-40"
+            >
+              <option value="">Alle types</option>
+              <option value="feedback">Feedback</option>
+              <option value="problem">Probleem</option>
+              <option value="question">Vraag</option>
+            </Select>
+          </>
+        )}
         <Button type="button" onClick={refresh} variant="secondary">
           <RotateCw className="h-4 w-4" />
           {m.platform_refresh()}
@@ -229,7 +262,14 @@ function PlatformConsole() {
         <TemplatesTab search={search} fmtDate={fmtDate} />
       )}
       {tab === 'bots' && <BotsTab search={search} fmtDate={fmtDate} />}
-      {tab === 'feedback' && <FeedbackTab search={search} fmtDate={fmtDate} />}
+      {tab === 'feedback' && (
+        <FeedbackTab
+          search={search}
+          status={feedbackStatus}
+          kind={feedbackKind}
+          fmtDate={fmtDate}
+        />
+      )}
       {tab === 'chat-errors' && <ChatErrorsTab fmtDate={fmtDate} />}
       {tab === 'status' && <StatusTab />}
     </div>

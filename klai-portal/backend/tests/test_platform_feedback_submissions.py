@@ -60,11 +60,18 @@ async def test_platform_feedback_submissions_reads_assistant_events(monkeypatch)
 
     result = await platform.platform_feedback_submissions(
         search="acme",
+        status_filter="new",
+        kind="feedback",
         limit=100,
         perms=SimpleNamespace(org_id=1, user_id="staff"),
     )
 
-    assert session.params == {"limit": 100, "q": "%acme%"}
+    assert session.params == {
+        "limit": 100,
+        "q": "%acme%",
+        "status": "new",
+        "source": "assistant_feedback",
+    }
     assert len(result) == 1
     assert result[0].org_name == "Acme"
     assert result[0].event_type == "klai_assistant.feedback"
