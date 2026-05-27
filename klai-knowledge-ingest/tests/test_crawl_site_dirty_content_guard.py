@@ -18,6 +18,7 @@ import pytest
 
 from knowledge_ingest.adapters.crawler import (
     CRAWL_BUDGET_EXHAUSTED_REASON,
+    CRAWL_FETCH_FAILED_REASON,
     DIRTY_CONTENT_REASON,
     _build_crawl_outcome_warning,
     _crawl_warning_terminal_status,
@@ -161,6 +162,27 @@ def test_budget_exhausted_outcomes_build_failed_partial_warning() -> None:
     assert warning["omitted_count"] == 1
     assert warning["omitted_reason_counts"] == {"not_fetched_budget_exhausted": 1}
     assert warning["sample_omitted_urls"] == ["https://example.com/not-fetched"]
+    assert _crawl_warning_terminal_status(warning) == "failed_partial"
+
+
+def test_all_failed_outcomes_build_failed_partial_warning() -> None:
+    warning = _build_crawl_outcome_warning(
+        [
+            {
+                "url": "https://example.com/",
+                "reason_code": "unknown_exception",
+                "status_code": None,
+                "content_length": 0,
+            },
+        ],
+        max_pages=500,
+    )
+
+    assert warning is not None
+    assert warning["reason"] == CRAWL_FETCH_FAILED_REASON
+    assert warning["failed_count"] == 1
+    assert warning["failed_reason_counts"] == {"unknown_exception": 1}
+    assert warning["sample_failed_urls"] == ["https://example.com/"]
     assert _crawl_warning_terminal_status(warning) == "failed_partial"
 
 
