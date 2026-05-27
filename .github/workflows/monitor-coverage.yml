@@ -1,0 +1,25 @@
+name: Monitor coverage audit
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/docker-compose.yml'
+      - 'deploy/docker-compose.gpu.yml'
+      - 'deploy/scripts/push-health.sh'
+      - 'deploy/scripts/push-health-public01.sh'
+      - 'deploy/scripts/gpu-health.sh'
+      - 'deploy/scripts/audit-monitor-coverage.sh'
+      - '.github/workflows/monitor-coverage.yml'
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run monitor coverage audit
+        run: bash deploy/scripts/audit-monitor-coverage.sh
+      - name: Print coverage matrix
+        if: always()
+        run: bash deploy/scripts/audit-monitor-coverage.sh --list || true
