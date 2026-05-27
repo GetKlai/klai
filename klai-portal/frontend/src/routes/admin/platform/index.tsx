@@ -18,6 +18,7 @@ import {
   KbTab,
   OrgsTab,
   StatusTab,
+  SubdomainsTab,
   SubsTab,
   TemplatesTab,
   UsersTab,
@@ -39,6 +40,7 @@ const TABS: { id: PlatformTab; label: () => string }[] = [
   { id: 'feedback', label: m.platform_tab_feedback },
   { id: 'chat-errors', label: m.platform_tab_chat_errors },
   { id: 'status', label: m.platform_tab_status },
+  { id: 'subdomains', label: m.platform_tab_subdomains },
 ]
 
 function fmtDate(iso: string | null): string {
@@ -272,6 +274,7 @@ function PlatformConsole() {
       )}
       {tab === 'chat-errors' && <ChatErrorsTab fmtDate={fmtDate} />}
       {tab === 'status' && <StatusTab />}
+      {tab === 'subdomains' && <SubdomainsTab search={search} />}
     </div>
   )
 }

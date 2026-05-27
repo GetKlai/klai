@@ -21,6 +21,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
+import asyncio
+
+import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,6 +31,7 @@ from sqlalchemy import bindparam, or_, select, text
 
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
+from app.services.platform_subdomains import KLAI_SUBDOMAINS
 from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackSubmission
 from app.klai_feedback.service import (
     FeedbackItemNotFoundError,
@@ -1186,6 +1190,153 @@ def _blank_to_none(value: object) -> object:
     if isinstance(value, str) and value == "":
         return None
     return value
+
+
+# -----------------------------------------------------------------------------
+# Subdomains overview (SPEC-PLATFORM-SUBDOMAINS-001)
+# -----------------------------------------------------------------------------
+
+
+class PlatformSubdomainItem(BaseModel):
+    """Single subdomain entry, including its live-check status."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    subdomain: str
+    url: str
+    label: str
+    description: str
+    category: str
+    host: str
+    owner: str
+    status: str
+    """One of: 'up' (2xx/3xx), 'auth_required' (401/403), 'client_error' (4xx),
+    'server_error' (5xx), 'unreachable' (network failure / timeout)."""
+    status_code: int | None
+    """HTTP response code, or null when unreachable."""
+
+
+async def _check_subdomain_status(
+    client: httpx.AsyncClient, url: str
+) -> tuple[str, int | None]:
+    """One liveness probe per subdomain. Never raises — failures map to
+    ``('unreachable', None)`` so a single bad target does not break the
+    whole overview.
+
+    GET (not HEAD) because several Klai services 405 on HEAD (Vaultwarden,
+    Grafana, Caddy admin endpoints). 3s timeout is conservative — internal
+    services should respond in <500ms; anything slower is essentially down
+    for the user.
+    """
+    try:
+        # follow_redirects=False so a 301 → captive portal doesn't count as up.
+        # Most Klai apex/auth endpoints respond 200/3xx directly.
+        response = await client.get(url, follow_redirects=False)
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError):
+        return ("unreachable", None)
+    code = response.status_code
+    if 200 <= code < 400:
+        return ("up", code)
+    if code in (401, 403):
+        # Vaultwarden, Grafana, mcp etc. legitimately 401/403 on root —
+        # the service is up, it just requires auth.
+        return ("auth_required", code)
+    if 400 <= code < 500:
+        return ("client_error", code)
+    return ("server_error", code)
+
+
+@router.get("/subdomains", response_model=list[PlatformSubdomainItem])
+async def list_subdomains(
+    perms: UserPermissions = Depends(require_platform_admin),
+) -> list[PlatformSubdomainItem]:
+    """Cross-tenant overview of every Klai-controlled subdomain.
+
+    Combines the curated static list (Klai services, tooling, marketing)
+    from ``app.services.platform_subdomains`` with dynamic tenant entries
+    pulled from ``portal_orgs`` (one per active tenant), then probes each
+    URL in parallel with a 3s GET to surface live status.
+
+    Tenant entries are added per-tenant for ``<slug>.getklai.com`` only
+    (the user-visible portal view). The chat- and docs- subdomains are
+    container-instance specific and would explode the list — those live
+    in the tenant detail page instead.
+    """
+    # Dynamic tenant entries — one per active tenant.
+    tenant_items: list[dict] = []
+    async with cross_org_session() as db:
+        result = await db.execute(
+            text(
+                "SELECT slug, name "
+                "FROM portal_orgs "
+                "WHERE deleted_at IS NULL AND slug IS NOT NULL "
+                "ORDER BY slug"
+            )
+        )
+        for row in result.all():
+            slug = row[0]
+            name = row[1] or slug
+            tenant_items.append(
+                {
+                    "subdomain": slug,
+                    "url": f"https://{slug}.getklai.com",
+                    "label": name,
+                    "description": f"Tenant portal voor {name}.",
+                    "category": "tenant",
+                    "host": "core-01",
+                    "owner": "tenant-admin",
+                }
+            )
+
+    # Curated items first, then tenants — UI renders in this order.
+    curated_items = [
+        {
+            "subdomain": s.subdomain,
+            "url": s.url,
+            "label": s.label,
+            "description": s.description,
+            "category": s.category,
+            "host": s.host,
+            "owner": s.owner,
+        }
+        for s in KLAI_SUBDOMAINS
+    ]
+    all_items = curated_items + tenant_items
+
+    # Parallel liveness probes. Timeout is per-request; gather sees the
+    # max of all timeouts which for 3s × ~50 items in parallel is ~3s.
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(3.0, connect=2.0),
+        verify=True,
+        follow_redirects=False,
+        headers={"User-Agent": "klai-platform-subdomain-check/1.0"},
+    ) as client:
+        statuses = await asyncio.gather(
+            *(_check_subdomain_status(client, item["url"]) for item in all_items),
+            return_exceptions=False,
+        )
+
+    logger.info(
+        "platform_subdomains_listed",
+        caller_user_id=perms.user_id,
+        item_count=len(all_items),
+        unreachable_count=sum(1 for s, _ in statuses if s == "unreachable"),
+    )
+
+    return [
+        PlatformSubdomainItem(
+            subdomain=item["subdomain"],
+            url=item["url"],
+            label=item["label"],
+            description=item["description"],
+            category=item["category"],
+            host=item["host"],
+            owner=item["owner"],
+            status=status,
+            status_code=code,
+        )
+        for item, (status, code) in zip(all_items, statuses, strict=True)
+    ]
 
 
 __all__ = ["router"]
