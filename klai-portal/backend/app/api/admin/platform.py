@@ -27,10 +27,11 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import bindparam, or_, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
-from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackSubmission
+from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackSubmission, FeedbackTriageSuggestion
 from app.klai_feedback.service import (
     FeedbackItemNotFoundError,
     FeedbackSubmissionNotFoundError,
@@ -120,6 +121,27 @@ class PlatformChatError(BaseModel):
     created_at: datetime
 
 
+class PlatformFeedbackDuplicateCandidate(BaseModel):
+    item_id: int
+    confidence: float | None = None
+    reason: str | None = None
+    title: str | None = None
+    kind: str | None = None
+    status: str | None = None
+    area: str | None = None
+
+
+class PlatformFeedbackTriageSuggestion(BaseModel):
+    classification: str | None
+    summary: str | None
+    suggested_area: str | None
+    suggested_severity: str | None
+    suggested_action: str | None
+    duplicate_candidates: list[PlatformFeedbackDuplicateCandidate]
+    model: str | None
+    created_at: datetime | None
+
+
 class PlatformFeedbackSubmission(BaseModel):
     id: int
     org_id: int | None
@@ -136,6 +158,7 @@ class PlatformFeedbackSubmission(BaseModel):
     locale: str | None
     viewport: str | None
     created_at: datetime
+    triage_suggestion: PlatformFeedbackTriageSuggestion | None = None
 
 
 class PlatformFeedbackItem(BaseModel):
@@ -268,6 +291,100 @@ def _feedback_event_type(source: str) -> str:
     if source == "assistant_question":
         return "klai_assistant.question"
     return "klai_assistant.feedback"
+
+
+def _candidate_item_id(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
+
+
+def _platform_feedback_triage_suggestion(
+    suggestion: FeedbackTriageSuggestion,
+    items_by_id: dict[int, FeedbackItem],
+) -> PlatformFeedbackTriageSuggestion:
+    raw_candidates = suggestion.duplicate_candidates_json.get("candidates", {})
+    if not isinstance(raw_candidates, list):
+        raw_candidates = []
+
+    candidates: list[PlatformFeedbackDuplicateCandidate] = []
+    for candidate in raw_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        item_id = _candidate_item_id(candidate.get("item_id"))
+        if item_id is None:
+            continue
+        item = items_by_id.get(item_id)
+        candidates.append(
+            PlatformFeedbackDuplicateCandidate(
+                item_id=item_id,
+                confidence=float(candidate["confidence"])
+                if isinstance(candidate.get("confidence"), int | float)
+                else None,
+                reason=candidate.get("reason") if isinstance(candidate.get("reason"), str) else None,
+                title=item.title if item else None,
+                kind=item.kind if item else None,
+                status=item.status if item else None,
+                area=item.area if item else None,
+            )
+        )
+
+    return PlatformFeedbackTriageSuggestion(
+        classification=suggestion.classification,
+        summary=suggestion.summary,
+        suggested_area=suggestion.suggested_area,
+        suggested_severity=suggestion.suggested_severity,
+        suggested_action=suggestion.suggested_action,
+        duplicate_candidates=candidates,
+        model=suggestion.model,
+        created_at=suggestion.created_at,
+    )
+
+
+async def _platform_feedback_triage_suggestions(
+    db: AsyncSession,
+    submission_ids: list[int],
+) -> dict[int, PlatformFeedbackTriageSuggestion]:
+    if not submission_ids:
+        return {}
+
+    suggestions = list(
+        (
+            await db.execute(
+                select(FeedbackTriageSuggestion)
+                .where(FeedbackTriageSuggestion.submission_id.in_(submission_ids))
+                .order_by(FeedbackTriageSuggestion.submission_id.asc(), FeedbackTriageSuggestion.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    latest_by_submission: dict[int, FeedbackTriageSuggestion] = {}
+    candidate_item_ids: set[int] = set()
+    for suggestion in suggestions:
+        if suggestion.submission_id in latest_by_submission:
+            continue
+        latest_by_submission[suggestion.submission_id] = suggestion
+        raw_candidates = suggestion.duplicate_candidates_json.get("candidates", {})
+        if isinstance(raw_candidates, list):
+            for candidate in raw_candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                item_id = _candidate_item_id(candidate.get("item_id"))
+                if item_id is not None:
+                    candidate_item_ids.add(item_id)
+
+    items_by_id: dict[int, FeedbackItem] = {}
+    if candidate_item_ids:
+        items = (await db.execute(select(FeedbackItem).where(FeedbackItem.id.in_(candidate_item_ids)))).scalars().all()
+        items_by_id = {item.id: item for item in items}
+
+    return {
+        submission_id: _platform_feedback_triage_suggestion(suggestion, items_by_id)
+        for submission_id, suggestion in latest_by_submission.items()
+    }
 
 
 async def _zitadel_identity_map() -> dict[str, tuple[str | None, str | None]]:
@@ -952,6 +1069,11 @@ async def platform_feedback_submissions(
         except Exception:
             logger.warning("platform_feedback_submissions_query_failed", exc_info=True)
             return []
+        try:
+            triage_suggestions = await _platform_feedback_triage_suggestions(db, [r.id for r in rows])
+        except Exception:
+            logger.warning("platform_feedback_triage_suggestions_query_failed", exc_info=True)
+            triage_suggestions = {}
 
     return [
         PlatformFeedbackSubmission(
@@ -970,6 +1092,7 @@ async def platform_feedback_submissions(
             locale=r.locale,
             viewport=r.viewport,
             created_at=r.created_at,
+            triage_suggestion=triage_suggestions.get(r.id),
         )
         for r in rows
     ]

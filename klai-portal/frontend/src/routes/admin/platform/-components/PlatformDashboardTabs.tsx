@@ -12,6 +12,7 @@ import {
   PlusCircle,
   Save,
   Search,
+  Sparkles,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -729,6 +730,30 @@ function feedbackItemKindLabel(kind: string): string {
   return 'Feature'
 }
 
+function feedbackSuggestionActionLabel(action: string | null | undefined): string {
+  if (action === 'link_existing') return 'Link met bestaand item'
+  if (action === 'create_item') return 'Maak nieuw item'
+  if (action === 'support') return 'Support'
+  if (action === 'dismiss') return 'Negeer'
+  return 'Bekijk handmatig'
+}
+
+function feedbackSuggestionConfidence(value: number | null): string | null {
+  if (value === null) return null
+  const normalized = value <= 1 ? value * 100 : value
+  return `${Math.round(normalized)}%`
+}
+
+function normalizedFeedbackKind(kind: string | null | undefined, fallback: string): string {
+  if (
+    kind &&
+    ['feature', 'bug', 'ux_confusion', 'docs', 'support_pattern'].includes(kind)
+  ) {
+    return kind
+  }
+  return fallback
+}
+
 export function FeedbackTab({
   search,
   status,
@@ -944,11 +969,17 @@ function FeedbackDetailSheet({
 }) {
   const defaultKind =
     item.event_type === 'klai_assistant.problem_report' ? 'bug' : 'feature'
+  const suggestion = item.triage_suggestion
+  const bestCandidate = suggestion?.duplicate_candidates[0] ?? null
+  const suggestedKind = normalizedFeedbackKind(suggestion?.classification, defaultKind)
+  const suggestedTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
   const [itemSearch, setItemSearch] = useState(item.raw_text?.slice(0, 80) ?? '')
-  const [kind, setKind] = useState(defaultKind)
-  const [title, setTitle] = useState(item.raw_text?.slice(0, 90) ?? '')
-  const [summary, setSummary] = useState(item.raw_text ?? '')
-  const [area, setArea] = useState(item.route_id?.replace(/^\/app\//, '') ?? '')
+  const [kind, setKind] = useState(suggestedKind)
+  const [title, setTitle] = useState(suggestedTitle)
+  const [summary, setSummary] = useState(item.raw_text ?? suggestion?.summary ?? '')
+  const [area, setArea] = useState(
+    suggestion?.suggested_area ?? item.route_id?.replace(/^\/app\//, '') ?? '',
+  )
 
   const items = usePlatformFeedbackItems(itemSearch)
   const dismiss = usePlatformFeedbackDismiss()
@@ -961,6 +992,52 @@ function FeedbackDetailSheet({
     createItem.isPending ||
     linkItem.isPending
   const canTriage = item.status === 'new' || item.status === 'triage_suggested'
+  const linkType =
+    item.event_type === 'klai_assistant.problem_report'
+      ? 'bug_repro'
+      : suggestion?.classification === 'support_pattern'
+        ? 'support_signal'
+        : 'evidence'
+  const acceptCreateItem = () => {
+    const fallbackTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
+    createItem.mutate(
+      {
+        submissionId: item.id,
+        kind: suggestedKind,
+        title: fallbackTitle.trim(),
+        summary: item.raw_text || suggestion?.summary || null,
+        area: suggestion?.suggested_area || area.trim() || null,
+        link_type: linkType,
+      },
+      { onSuccess: onClose },
+    )
+  }
+  const acceptSuggestion = () => {
+    if (suggestion?.suggested_action === 'link_existing' && bestCandidate) {
+      linkItem.mutate(
+        {
+          submissionId: item.id,
+          item_id: bestCandidate.item_id,
+          link_type: linkType,
+        },
+        { onSuccess: onClose },
+      )
+      return
+    }
+    if (suggestion?.suggested_action === 'support') {
+      support.mutate(item.id, { onSuccess: onClose })
+      return
+    }
+    if (suggestion?.suggested_action === 'dismiss') {
+      dismiss.mutate(item.id, { onSuccess: onClose })
+      return
+    }
+    acceptCreateItem()
+  }
+  const canAcceptSuggestion =
+    !!suggestion &&
+    (suggestion.suggested_action !== 'link_existing' || bestCandidate !== null) &&
+    (suggestion.suggested_action !== 'create_item' || suggestedTitle.trim().length >= 3)
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
@@ -1008,6 +1085,89 @@ function FeedbackDetailSheet({
 
           {canTriage ? (
             <>
+              {suggestion ? (
+                <section className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-2">
+                      <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-medium text-gray-900">AI voorstel</h3>
+                        <p className="mt-1 text-sm leading-6 text-gray-700">
+                          {suggestion.summary || 'Geen samenvatting beschikbaar.'}
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary">
+                      {feedbackSuggestionActionLabel(suggestion.suggested_action)}
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {suggestion.classification && (
+                      <Badge variant="outline">
+                        {feedbackItemKindLabel(suggestion.classification)}
+                      </Badge>
+                    )}
+                    {suggestion.suggested_area && (
+                      <Badge variant="outline">{suggestion.suggested_area}</Badge>
+                    )}
+                    {suggestion.suggested_severity && (
+                      <Badge variant="outline">{suggestion.suggested_severity}</Badge>
+                    )}
+                  </div>
+                  {suggestion.duplicate_candidates.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-gray-500">
+                        Mogelijke duplicate
+                      </p>
+                      {suggestion.duplicate_candidates.slice(0, 3).map((candidate) => (
+                        <div
+                          key={candidate.item_id}
+                          className="rounded-md border border-amber-200 bg-white px-3 py-2"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="truncate text-sm font-medium text-gray-900">
+                              {candidate.title ?? `Item #${candidate.item_id}`}
+                            </p>
+                            {feedbackSuggestionConfidence(candidate.confidence) && (
+                              <span className="text-xs text-gray-400">
+                                {feedbackSuggestionConfidence(candidate.confidence)}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs text-gray-400">
+                            {[candidate.kind, candidate.status, candidate.area]
+                              .filter(Boolean)
+                              .join(' / ')}
+                          </p>
+                          {candidate.reason && (
+                            <p className="mt-1 text-xs leading-5 text-gray-500">
+                              {candidate.reason}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      disabled={busy || !canAcceptSuggestion}
+                      onClick={acceptSuggestion}
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      Accepteer voorstel
+                    </Button>
+                    <p className="self-center text-xs text-gray-500">
+                      Corrigeren kan via zoeken of nieuw item hieronder.
+                    </p>
+                  </div>
+                </section>
+              ) : (
+                <section className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+                  Nog geen AI voorstel. Je kunt deze melding wel handmatig verwerken.
+                </section>
+              )}
+
               <section className="grid gap-3 sm:grid-cols-2">
                 <Button
                   type="button"
