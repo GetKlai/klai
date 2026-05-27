@@ -25,8 +25,9 @@ def _request():
 
 
 @pytest.mark.asyncio
-async def test_submit_feedback_emits_first_party_event(monkeypatch):
+async def test_submit_feedback_persists_and_emits_first_party_event(monkeypatch):
     emitted = []
+    persisted = []
 
     def fake_emit_event(event_type, org_id=None, user_id=None, properties=None):
         emitted.append(
@@ -38,7 +39,11 @@ async def test_submit_feedback_emits_first_party_event(monkeypatch):
             }
         )
 
+    async def fake_create_feedback_submission(db, **kwargs):
+        persisted.append({"db": db, **kwargs})
+
     monkeypatch.setattr(app_assistant, "emit_event", fake_emit_event)
+    monkeypatch.setattr(app_assistant, "create_feedback_submission", fake_create_feedback_submission)
 
     body = app_assistant.AssistantFeedbackIn(
         raw_text="Maak het makkelijker om feedback te geven.",
@@ -46,9 +51,32 @@ async def test_submit_feedback_emits_first_party_event(monkeypatch):
         route_id="/app/chat",
         type="improvement",
     )
-    response = await app_assistant.submit_feedback(body, _request(), _perms())
+    db = object()
+    response = await app_assistant.submit_feedback(body, _request(), _perms(), db)
 
     assert response.ok is True
+    assert persisted == [
+        {
+            "db": db,
+            "source": "assistant_feedback",
+            "raw_text": "Maak het makkelijker om feedback te geven.",
+            "org_id": 42,
+            "user_id": "user-123",
+            "page_url": "https://app.getklai.com/app/chat",
+            "route_id": "/app/chat",
+            "locale": "nl",
+            "viewport": None,
+            "user_agent": "pytest",
+            "referrer": "https://app.getklai.com/app/chat",
+            "metadata_json": {
+                "org_slug": "acme",
+                "role": "member",
+                "source": "klai_assistant",
+                "client_host": "127.0.0.1",
+                "feedback_type": "improvement",
+            },
+        }
+    ]
     assert emitted == [
         {
             "event_type": "klai_assistant.feedback",
@@ -73,13 +101,18 @@ async def test_submit_feedback_emits_first_party_event(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_submit_problem_report_emits_separate_event(monkeypatch):
+async def test_submit_problem_report_persists_and_emits_separate_event(monkeypatch):
     emitted = []
+    persisted = []
 
     def fake_emit_event(event_type, org_id=None, user_id=None, properties=None):
         emitted.append((event_type, org_id, user_id, properties))
 
+    async def fake_create_feedback_submission(db, **kwargs):
+        persisted.append({"db": db, **kwargs})
+
     monkeypatch.setattr(app_assistant, "emit_event", fake_emit_event)
+    monkeypatch.setattr(app_assistant, "create_feedback_submission", fake_create_feedback_submission)
 
     body = app_assistant.AssistantProblemReportIn(
         raw_text="De pagina blijft laden.",
@@ -88,9 +121,13 @@ async def test_submit_problem_report_emits_separate_event(monkeypatch):
         severity="blocked",
         viewport="1440x900",
     )
-    response = await app_assistant.submit_problem_report(body, _request(), _perms())
+    db = object()
+    response = await app_assistant.submit_problem_report(body, _request(), _perms(), db)
 
     assert response.ok is True
+    assert persisted[0]["source"] == "assistant_problem"
+    assert persisted[0]["metadata_json"]["severity"] == "blocked"
+    assert persisted[0]["page_url"] == "https://app.getklai.com/app/knowledge"
     event_type, org_id, user_id, properties = emitted[0]
     assert event_type == "klai_assistant.problem_report"
     assert org_id == 42

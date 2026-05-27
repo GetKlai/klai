@@ -27,7 +27,7 @@ from sqlalchemy import bindparam, or_, select, text
 
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
-from app.models.events import ProductEvent
+from app.klai_feedback.models import FeedbackSubmission
 from app.models.portal import PortalOrg as PortalOrgModel
 from app.services.audit import log_event
 from app.services.zitadel import zitadel
@@ -171,6 +171,14 @@ async def _audit(perms: UserPermissions, tab: str, search: str | None) -> None:
         resource_id=tab,
         details={"search": search} if search else None,
     )
+
+
+def _feedback_event_type(source: str) -> str:
+    if source == "assistant_problem":
+        return "klai_assistant.problem_report"
+    if source == "assistant_question":
+        return "klai_assistant.question"
+    return "klai_assistant.feedback"
 
 
 async def _zitadel_identity_map() -> dict[str, tuple[str | None, str | None]]:
@@ -779,50 +787,37 @@ async def platform_feedback_submissions(
 ) -> list[PlatformFeedbackSubmission]:
     """Recent first-party assistant submissions across tenants.
 
-    This is the first visibility slice for SPEC-KLAI-FEEDBACK-001. It reads the
-    existing product event capture so current and historical assistant form
-    submissions appear in Platform before the dedicated feedback tables land.
+    SPEC-KLAI-FEEDBACK-001 now uses feedback_submissions as the durable source
+    of truth. product_events still receives secondary audit/analytics events,
+    but Platform must not depend on that event stream for triage.
     """
     await _audit(perms, "feedback", search)
     params: dict[str, object] = {"limit": limit}
 
-    raw_text = ProductEvent.properties["raw_text"].astext
-    feedback_type = ProductEvent.properties["feedback_type"].astext
-    severity = ProductEvent.properties["severity"].astext
-    page_url = ProductEvent.properties["page_url"].astext
-    route_id = ProductEvent.properties["route_id"].astext
-    locale = ProductEvent.properties["locale"].astext
-    viewport = ProductEvent.properties["viewport"].astext
+    feedback_type = FeedbackSubmission.metadata_json["feedback_type"].astext
+    severity = FeedbackSubmission.metadata_json["severity"].astext
 
     query = (
         select(
-            ProductEvent.id.label("id"),
-            ProductEvent.org_id.label("org_id"),
+            FeedbackSubmission.id.label("id"),
+            FeedbackSubmission.org_id.label("org_id"),
             PortalOrgModel.name.label("org_name"),
             PortalOrgModel.slug.label("org_slug"),
-            ProductEvent.user_id.label("user_id"),
-            ProductEvent.event_type.label("event_type"),
-            raw_text.label("raw_text"),
+            FeedbackSubmission.user_id.label("user_id"),
+            FeedbackSubmission.source.label("source"),
+            FeedbackSubmission.raw_text.label("raw_text"),
             feedback_type.label("feedback_type"),
             severity.label("severity"),
-            page_url.label("page_url"),
-            route_id.label("route_id"),
-            locale.label("locale"),
-            viewport.label("viewport"),
-            ProductEvent.created_at.label("created_at"),
+            FeedbackSubmission.page_url.label("page_url"),
+            FeedbackSubmission.route_id.label("route_id"),
+            FeedbackSubmission.locale.label("locale"),
+            FeedbackSubmission.viewport.label("viewport"),
+            FeedbackSubmission.created_at.label("created_at"),
         )
-        .select_from(ProductEvent)
-        .outerjoin(PortalOrgModel, PortalOrgModel.id == ProductEvent.org_id)
-        .where(
-            ProductEvent.event_type.in_(
-                (
-                    "klai_assistant.question",
-                    "klai_assistant.feedback",
-                    "klai_assistant.problem_report",
-                )
-            )
-        )
-        .order_by(ProductEvent.created_at.desc())
+        .select_from(FeedbackSubmission)
+        .outerjoin(PortalOrgModel, PortalOrgModel.id == FeedbackSubmission.org_id)
+        .where(FeedbackSubmission.source.in_(("assistant_feedback", "assistant_problem", "assistant_question")))
+        .order_by(FeedbackSubmission.created_at.desc())
         .limit(bindparam("limit"))
     )
 
@@ -833,11 +828,11 @@ async def platform_feedback_submissions(
             or_(
                 PortalOrgModel.name.ilike(q),
                 PortalOrgModel.slug.ilike(q),
-                ProductEvent.user_id.ilike(q),
-                ProductEvent.event_type.ilike(q),
-                raw_text.ilike(q),
-                page_url.ilike(q),
-                route_id.ilike(q),
+                FeedbackSubmission.user_id.ilike(q),
+                FeedbackSubmission.source.ilike(q),
+                FeedbackSubmission.raw_text.ilike(q),
+                FeedbackSubmission.page_url.ilike(q),
+                FeedbackSubmission.route_id.ilike(q),
             )
         )
 
@@ -855,7 +850,7 @@ async def platform_feedback_submissions(
             org_name=r.org_name,
             org_slug=r.org_slug,
             user_id=r.user_id,
-            event_type=r.event_type,
+            event_type=_feedback_event_type(r.source),
             raw_text=r.raw_text,
             feedback_type=r.feedback_type,
             severity=r.severity,
