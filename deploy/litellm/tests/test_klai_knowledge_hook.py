@@ -3532,3 +3532,99 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         assert meta is not None
         assert meta["chunks_injected"] == 0
         assert meta["kb_narrow"] is False
+
+    @pytest.mark.asyncio
+    async def test_zero_chunks_strict_metadata_lets_post_call_short_circuit(
+        self, monkeypatch
+    ):
+        """Strict + zero chunks MUST NOT set ``no_citable_sources=True``.
+
+        Live incident 2026-05-27 (Jantine, GetKlai): in Strict mode with
+        an empty retrieval, the model received our multilingual refusal
+        instruction and answered "Dat staat niet in de kennisbank" — but
+        the post-call structured-citation render then REPLACED that
+        answer with the English-only ``_no_citable_sources_message``
+        because the metadata flag ``no_citable_sources`` was True.
+
+        Contract: the zero-chunks branch must leave
+        ``no_citable_sources=False`` so the post-call guard
+        ``not trusted_sources and not force_no_citable and not
+        citation_chunks`` short-circuits and the model's mode-aware,
+        language-correct refusal passes through.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wie is Jantine?"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False}
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result.get("metadata", {}).get("_klai_kb_meta")
+        assert meta is not None
+        assert meta["chunks_injected"] == 0
+        assert meta["trusted_sources"] == []
+        assert meta["citation_chunks"] == []
+        # The critical flag — must be False so the post-call renderer
+        # leaves the model's mode-aware answer alone.
+        assert meta["no_citable_sources"] is False, (
+            "Zero-chunks branch must NOT set no_citable_sources=True. "
+            "PR #697 did, and the post-call render then replaced the "
+            "model's Dutch 'Dat staat niet in de kennisbank' with the "
+            "English-only canned message."
+        )
+
+    @pytest.mark.asyncio
+    async def test_zero_chunks_open_metadata_lets_post_call_short_circuit(
+        self, monkeypatch
+    ):
+        """Symmetric to the strict case — Open mode also must not set
+        the flag, otherwise the post-call render would wipe the
+        general-knowledge fallback answer this branch instructed the
+        model to produce.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Iets algemeens"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False}
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result.get("metadata", {}).get("_klai_kb_meta")
+        assert meta is not None
+        assert meta["no_citable_sources"] is False
