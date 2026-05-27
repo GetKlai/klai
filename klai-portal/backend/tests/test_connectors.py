@@ -41,11 +41,17 @@ class TestConnectorUpdateRequest:
         """content_type is optional and defaults to None in update."""
         req = ConnectorUpdateRequest()
         assert req.content_type is None
+        assert req.clear_credentials is False
 
     def test_content_type_can_be_set(self):
         """content_type can be set in update request."""
         req = ConnectorUpdateRequest(content_type="meeting_transcript")
         assert req.content_type == "meeting_transcript"
+
+    def test_clear_credentials_can_be_set(self):
+        """clear_credentials is an explicit opt-in update action."""
+        req = ConnectorUpdateRequest(clear_credentials=True)
+        assert req.clear_credentials is True
 
 
 class TestConnectorOut:
@@ -70,6 +76,7 @@ class TestConnectorOut:
             allowed_assertion_modes=[],
         )
         assert out.content_type == "kb_article"
+        assert out.has_saved_credentials is False
 
     def test_content_type_nullable(self):
         """ConnectorOut allows None content_type."""
@@ -159,9 +166,11 @@ class TestConnectorOutHelper:
         mock_connector.created_at = "2026-01-01T00:00:00Z"
         mock_connector.created_by = "user-1"
         mock_connector.content_type = "kb_article"
+        mock_connector.encrypted_credentials = b"encrypted-placeholder"
 
         out = _connector_out(mock_connector)
         assert out.content_type == "kb_article"
+        assert out.has_saved_credentials is True
 
 
 # -- ConnectorType Literal extension (SPEC-KB-CONNECTORS-001 R6) ---------------

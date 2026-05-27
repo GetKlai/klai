@@ -70,6 +70,21 @@ def test_portal_crawl_preview_response_model_defaults_to_unknown() -> None:
     )
 
 
+def test_portal_preview_and_auth_probe_can_use_saved_credentials() -> None:
+    """Edit flows must be able to test encrypted saved cookies server-side.
+
+    The browser receives only has_saved_credentials from the connector API, so
+    preview/auth-probe need an explicit connector_id + use_saved_credentials
+    contract instead of relying on plaintext cookies in the form.
+    """
+    source = _API_FILE.read_text(encoding="utf-8")
+    assert "use_saved_credentials: bool = False" in source
+    assert "connector_id: str | None = None" in source
+    assert "_load_saved_web_crawler_cookies" in source
+    assert "saved_credentials_conflict" in source
+    assert "credential_store.decrypt_credentials" in source
+
+
 # ---------------------------------------------------------------------------
 # Layer 3 — knowledge_ingest_client.preview_crawl exception fallback
 # ---------------------------------------------------------------------------
