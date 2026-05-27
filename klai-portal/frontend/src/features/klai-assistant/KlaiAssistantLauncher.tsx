@@ -208,10 +208,9 @@ function AssistantHome({ onModeChange }: { onModeChange: (mode: AssistantMode) =
 
 function QuestionView() {
   return (
-    <IntakeForm
+    <ChatQuestionForm
       endpoint="/api/app/assistant/questions"
       minLength={3}
-      label={m.klai_assistant_question_label()}
       placeholder={m.klai_assistant_question_placeholder()}
       submitLabel={m.klai_assistant_question_submit()}
       submittingLabel={m.klai_assistant_submitting()}
@@ -297,6 +296,120 @@ function ProblemView() {
         </ChipGroup>
       }
     />
+  )
+}
+
+function ChatQuestionForm<TPayload extends IntakePayload>({
+  endpoint,
+  minLength,
+  placeholder,
+  submitLabel,
+  submittingLabel,
+  successTitle,
+  successDescription,
+  buildPayload,
+}: {
+  endpoint: string
+  minLength: number
+  placeholder: string
+  submitLabel: string
+  submittingLabel: string
+  successTitle: string
+  successDescription: string
+  buildPayload: (rawText: string) => TPayload
+}) {
+  const [value, setValue] = useState('')
+  const [state, setState] = useState<SubmissionState>('idle')
+
+  const trimmed = value.trim()
+  const canSubmit = trimmed.length >= minLength && state !== 'submitting'
+
+  async function submit() {
+    if (!canSubmit) return
+    setState('submitting')
+    try {
+      await apiFetch<{ ok: true }>(endpoint, {
+        method: 'POST',
+        body: JSON.stringify(buildPayload(trimmed)),
+      })
+      setState('submitted')
+      setValue('')
+    } catch {
+      setState('error')
+    }
+  }
+
+  return (
+    <div className="-mx-4 -my-4 flex min-h-[540px] flex-col bg-[var(--color-rl-cream)]/35">
+      <div className="flex flex-1 flex-col items-center justify-center px-8 py-10 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-gray-900 shadow-sm">
+          {state === 'submitted' ? (
+            <CheckCircle2 className="h-8 w-8 text-[var(--color-success)]" strokeWidth={1.75} />
+          ) : (
+            <MessageSquare className="h-8 w-8" strokeWidth={1.75} />
+          )}
+        </div>
+        <h3 className="mt-7 text-[22px] font-semibold leading-tight text-gray-900">
+          {state === 'submitted'
+            ? successTitle
+            : m.klai_assistant_question_hero_title()}
+        </h3>
+        <p className="mt-3 max-w-sm text-[15px] leading-6 text-gray-500">
+          {state === 'submitted'
+            ? successDescription
+            : m.klai_assistant_question_hero_desc()}
+        </p>
+      </div>
+
+      <form
+        className="border-t border-gray-200 bg-white/70 px-5 py-5"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void submit()
+        }}
+      >
+        {state === 'error' && (
+          <p className="mb-3 text-sm text-[var(--color-destructive)]">
+            {m.klai_assistant_error()}
+          </p>
+        )}
+        <div className="flex items-end gap-3">
+          <Textarea
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value)
+              if (state === 'error' || state === 'submitted') setState('idle')
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                void submit()
+              }
+            }}
+            placeholder={placeholder}
+            rows={1}
+            maxLength={4000}
+            aria-label={m.klai_assistant_question_label()}
+            className="max-h-28 min-h-14 resize-none rounded-2xl bg-white px-4 py-4 text-[15px]"
+          />
+          <Button
+            type="submit"
+            size="icon"
+            disabled={!canSubmit}
+            aria-label={submitLabel}
+            className="h-14 w-14 shrink-0 rounded-2xl"
+          >
+            <Send className={cn('h-5 w-5', state === 'submitting' && 'animate-pulse')} />
+            <span className="sr-only">
+              {state === 'submitting' ? submittingLabel : submitLabel}
+            </span>
+          </Button>
+        </div>
+        <p className="mt-4 px-3 text-center text-xs leading-5 text-gray-400">
+          {m.klai_assistant_disclaimer()}
+        </p>
+      </form>
+    </div>
   )
 }
 
