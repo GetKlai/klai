@@ -43,7 +43,14 @@ POSTGRES=$(resolve_container postgres)
 REDIS=$(resolve_container redis)
 # api-gateway is the public-facing entrypoint to the Vexa V3 meeting stack
 # (replaces the legacy vexa-bot-manager monolith — SPEC-VEXA-001/003).
+# api-gateway healthcheck is self-only (no dependency probe), so meeting-api,
+# runtime-api and admin-api are monitored separately below.
 MEETING=$(resolve_container api-gateway)
+MEETING_API=$(resolve_container meeting-api)
+MEETING_RUNTIME=$(resolve_container runtime-api)
+MEETING_ADMIN=$(resolve_container admin-api)
+GARAGE=$(resolve_container garage)
+CAL_COM=$(resolve_container cal-com)
 
 # Push based on Docker-native healthcheck status (requires healthcheck: in compose)
 push_healthcheck() {
@@ -182,7 +189,20 @@ push_exec "$PORTAL_API" \
 
 # Meeting service: Vexa V3 stack public entrypoint (api-gateway) — Docker healthcheck
 # Replaces legacy vexa-bot-manager monolith (SPEC-VEXA-001/003).
-push_healthcheck "$MEETING" "${KUMA_TOKEN_VEXA:-}" "Meeting service"
+push_healthcheck "$MEETING"         "${KUMA_TOKEN_VEXA:-}"          "Meeting service"
+
+# Vexa V3 internal stack — api-gateway healthcheck is self-only, so probe each
+# internal component independently to surface partial-failure modes.
+push_healthcheck "$MEETING_API"     "${KUMA_TOKEN_VEXA_MEETING:-}"  "Meeting API"
+push_healthcheck "$MEETING_RUNTIME" "${KUMA_TOKEN_VEXA_RUNTIME:-}"  "Meeting Runtime"
+push_healthcheck "$MEETING_ADMIN"   "${KUMA_TOKEN_VEXA_ADMIN:-}"    "Meeting Admin"
+
+# Garage: S3-compatible object storage (kb-images, scribe-uploads, librechat
+# avatars). User-facing impact if down.
+push_healthcheck "$GARAGE"          "${KUMA_TOKEN_GARAGE:-}"        "Object Storage"
+
+# Cal.com: meeting bookings (user-facing booking links).
+push_healthcheck "$CAL_COM"         "${KUMA_TOKEN_CALCOM:-}"        "Bookings"
 
 # ── Knowledge layer (service-level) ──────────────────────────────────────────
 
