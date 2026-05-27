@@ -17,7 +17,10 @@ from __future__ import annotations
 import pytest
 
 from knowledge_ingest.adapters.crawler import (
+    CRAWL_BUDGET_EXHAUSTED_REASON,
     DIRTY_CONTENT_REASON,
+    _build_crawl_outcome_warning,
+    _crawl_warning_terminal_status,
     decide_terminal_status,
 )
 
@@ -132,6 +135,33 @@ def test_summary_contains_actionable_suggestion() -> None:
         "authentication" in suggestion.lower()
         or "content_selector" in suggestion.lower()
     )
+
+
+def test_budget_exhausted_outcomes_build_failed_partial_warning() -> None:
+    warning = _build_crawl_outcome_warning(
+        [
+            {
+                "url": "https://example.com/fetched",
+                "reason_code": "success",
+                "status_code": 200,
+                "content_length": 100,
+            },
+            {
+                "url": "https://example.com/not-fetched",
+                "reason_code": "not_fetched_budget_exhausted",
+                "status_code": None,
+                "content_length": 0,
+            },
+        ],
+        max_pages=200,
+    )
+
+    assert warning is not None
+    assert warning["reason"] == CRAWL_BUDGET_EXHAUSTED_REASON
+    assert warning["omitted_count"] == 1
+    assert warning["omitted_reason_counts"] == {"not_fetched_budget_exhausted": 1}
+    assert warning["sample_omitted_urls"] == ["https://example.com/not-fetched"]
+    assert _crawl_warning_terminal_status(warning) == "failed_partial"
 
 
 @pytest.mark.parametrize("trip_rate_input", [0.31, 0.5, 0.7, 1.0])

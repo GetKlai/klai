@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections import Counter
 
 import asyncpg
 import httpx
@@ -42,6 +43,10 @@ _VALID_LOGIN_WALL_MODES = ("reject", "degrade", "audit_only")
 # when the dirty-content guard trips. REQ-5 surfaces this exact string in the
 # UI badge query, so it MUST stay stable.
 DIRTY_CONTENT_REASON = "boilerplate_or_authwall_dominant"
+CRAWL_BUDGET_EXHAUSTED_REASON = "crawl_budget_exhausted"
+CRAWL_FRONTIER_INCOMPLETE_REASON = "crawl_frontier_incomplete"
+
+_NOT_FETCHED_REASON_PREFIX = "not_fetched_"
 
 _DIRTY_CONTENT_SUGGESTION = (
     "Re-run preview from the connector edit page. The site likely now requires "
@@ -103,6 +108,61 @@ def decide_terminal_status(
         "suggestion": _DIRTY_CONTENT_SUGGESTION,
     }
     return ("failed_partial", summary)
+
+
+def _build_crawl_outcome_warning(
+    fetch_outcomes: list[dict],
+    *,
+    max_pages: int,
+) -> dict | None:
+    """Summarise discovered-but-unfetched URLs for crawl_jobs.error_summary.
+
+    ``crawl_site`` owns URL discovery now, so a page-budget hit is no longer a
+    quiet implementation detail inside Crawl4AI. The adapter turns those
+    not_fetched outcomes into a compact, operator-readable warning.
+    """
+    omitted = [
+        outcome
+        for outcome in fetch_outcomes
+        if str(outcome.get("reason_code") or "").startswith(_NOT_FETCHED_REASON_PREFIX)
+    ]
+    if not omitted:
+        return None
+
+    counts = Counter(str(outcome.get("reason_code") or "") for outcome in omitted)
+    reason = (
+        CRAWL_BUDGET_EXHAUSTED_REASON
+        if counts.get("not_fetched_budget_exhausted", 0) > 0
+        else CRAWL_FRONTIER_INCOMPLETE_REASON
+    )
+    return {
+        "reason": reason,
+        "max_pages": max_pages,
+        "omitted_count": len(omitted),
+        "omitted_reason_counts": dict(counts),
+        "sample_omitted_urls": [
+            str(outcome.get("url") or "") for outcome in omitted[:10] if outcome.get("url")
+        ],
+    }
+
+
+def _crawl_warning_terminal_status(crawl_warning: dict | None) -> str:
+    """Return the terminal status implied by a crawl warning, if any."""
+    if crawl_warning is None:
+        return ""
+    if crawl_warning.get("reason") in {
+        CRAWL_BUDGET_EXHAUSTED_REASON,
+        CRAWL_FRONTIER_INCOMPLETE_REASON,
+    }:
+        return "failed_partial"
+    return ""
+
+
+def _attach_crawl_warning(summary: dict, crawl_warning: dict | None) -> dict:
+    """Attach warning details without replacing a stronger top-level reason."""
+    if crawl_warning is not None:
+        summary["crawl_warning"] = crawl_warning
+    return summary
 
 
 # @MX:ANCHOR: AuthWallDetected -- propagates login-indicator triggers from _ingest_crawl_result
@@ -250,8 +310,8 @@ async def run_crawl_job(
     Crawl a website and ingest each page into the knowledge pipeline.
     Updates knowledge.crawl_jobs progress as pages are processed.
 
-    Seeds the crawl with start_url + sitemap.xml, then recurses to max_depth
-    using Crawl4AI's BFSDeepCrawlStrategy (same strategy as klai-connector).
+    Seeds the crawl with start_url + sitemap.xml, then lets crawl_site's
+    Klai-owned frontier schedule same-domain links to max_depth.
 
     ``exclude_patterns`` is applied after crawl4ai discovery and before
     progress counting / dirty-content decisions. ``rate_limit`` is accepted
@@ -292,6 +352,10 @@ async def run_crawl_job(
             exclude_patterns=exclude_patterns,
             login_indicator_selector=login_indicator_selector,
             cookies=cookies,
+        )
+        crawl_outcome_warning = _build_crawl_outcome_warning(
+            fetch_outcomes,
+            max_pages=max_pages,
         )
         # canary_url / canary_fingerprint are accepted for forwards-compat with
         # the /ingest/v1/crawl/sync request body; they are plumbed here but the
@@ -392,6 +456,22 @@ async def run_crawl_job(
             # REQ-4 reason for forensic logs.
             summary_payload.setdefault("login_walls_skipped", len(auth_wall_pages))
             summary_payload.setdefault("sample_urls", auth_wall_pages[:10])
+            _attach_crawl_warning(summary_payload, crawl_outcome_warning)
+            summary_json = json.dumps(summary_payload)
+            await conn.execute(
+                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
+                "updated_at=$3 WHERE id=$4",
+                terminal_status,
+                summary_json,
+                int(time.time()),
+                job_id,
+            )
+        elif _crawl_warning_terminal_status(crawl_outcome_warning):
+            terminal_status = _crawl_warning_terminal_status(crawl_outcome_warning)
+            summary_payload = dict(crawl_outcome_warning or {})
+            if auth_wall_pages:
+                summary_payload["login_walls_skipped"] = len(auth_wall_pages)
+                summary_payload["sample_urls"] = auth_wall_pages[:10]
             summary_json = json.dumps(summary_payload)
             await conn.execute(
                 "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
@@ -404,10 +484,10 @@ async def run_crawl_job(
         elif auth_wall_pages and pages_done == 0:
             terminal_status = "failed_partial"
             summary_json = json.dumps(
-                {
+                _attach_crawl_warning({
                     "login_walls_skipped": len(auth_wall_pages),
                     "sample_urls": auth_wall_pages[:10],
-                }
+                }, crawl_outcome_warning)
             )
             await conn.execute(
                 "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
@@ -420,16 +500,26 @@ async def run_crawl_job(
         elif auth_wall_pages:
             terminal_status = "completed"
             summary_json = json.dumps(
-                {
+                _attach_crawl_warning({
                     "login_walls_skipped": len(auth_wall_pages),
                     "sample_urls": auth_wall_pages[:10],
-                }
+                }, crawl_outcome_warning)
             )
             await conn.execute(
                 "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
                 "updated_at=$3 WHERE id=$4",
                 terminal_status,
                 summary_json,
+                int(time.time()),
+                job_id,
+            )
+        elif crawl_outcome_warning:
+            terminal_status = "completed"
+            await conn.execute(
+                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
+                "updated_at=$3 WHERE id=$4",
+                terminal_status,
+                json.dumps(crawl_outcome_warning),
                 int(time.time()),
                 job_id,
             )

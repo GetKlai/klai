@@ -343,11 +343,7 @@ async def test_crawl_site_bulk_transport_failure_records_one_outcome_per_candida
         ]
 
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
-
-    async def _fake_bfs(**_kwargs: Any) -> tuple[list[CrawlResult], None]:
-        return [_seed("https://example.com")], None
-
-    monkeypatch.setattr(crawl4ai_client, "_bfs_deep_crawl", _fake_bfs)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
 
     async def _fake_post(self: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
         raise httpx.ReadTimeout("simulated bulk timeout")
@@ -390,11 +386,7 @@ async def test_crawl_site_returns_one_outcome_per_candidate_on_partial_success(
         ]
 
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
-
-    async def _fake_bfs(**_kwargs: Any) -> tuple[list[CrawlResult], None]:
-        return [_seed("https://example.com")], None
-
-    monkeypatch.setattr(crawl4ai_client, "_bfs_deep_crawl", _fake_bfs)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
 
     # Bulk response — start_url is NOT in the request body, so the response
     # body MUST NOT include it either.
@@ -455,6 +447,154 @@ async def test_crawl_site_returns_one_outcome_per_candidate_on_partial_success(
     assert {r.url for r in results} == {"https://example.com", "https://example.com/ok"}
 
 
+@pytest.mark.asyncio
+async def test_crawl_site_frontier_fetches_listing_children(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Links discovered on fetched listing pages must enter the Klai frontier."""
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(
+        monkeypatch,
+        _seed("https://wiki.redcactus.cloud/nl", internal=[
+            "https://wiki.redcactus.cloud/nl/crm-software"
+        ]),
+    )
+
+    async def _fake_bulk_fetch(
+        *,
+        urls: list[str],
+        **_kwargs: Any,
+    ) -> tuple[list[dict[str, Any]], BaseException | None]:
+        pages: list[dict[str, Any]] = []
+        for url in urls:
+            if url == "https://wiki.redcactus.cloud/nl/crm-software":
+                pages.append(
+                    {
+                        "url": url,
+                        "success": True,
+                        "status_code": 200,
+                        "html": "<html>CRM listing</html>",
+                        "markdown": "CRM listing",
+                        "links": {
+                            "internal": [
+                                {
+                                    "href": "https://wiki.redcactus.cloud/nl/crm-software/zoho-bigin",
+                                    "text": "Zoho Bigin",
+                                },
+                                {
+                                    "href": "https://wiki.redcactus.cloud/nl/crm-software/zoho-crm",
+                                    "text": "Zoho CRM",
+                                },
+                                {
+                                    "href": "https://wiki.redcactus.cloud/nl/crm-software/zoho-desk",
+                                    "text": "Zoho Desk",
+                                },
+                            ]
+                        },
+                        "media": {},
+                    }
+                )
+            else:
+                pages.append(
+                    {
+                        "url": url,
+                        "success": True,
+                        "status_code": 200,
+                        "html": f"<html>{url}</html>",
+                        "markdown": url.rsplit("/", 1)[-1],
+                        "links": {"internal": []},
+                        "media": {},
+                    }
+                )
+        return pages, None
+
+    monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_bulk_fetch)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://wiki.redcactus.cloud/nl",
+        max_depth=2,
+        max_pages=10,
+        include_patterns=["/nl/"],
+    )
+
+    outcome_urls = {outcome["url"] for outcome in outcomes}
+    assert "https://wiki.redcactus.cloud/nl/crm-software/zoho-bigin" in outcome_urls
+    assert "https://wiki.redcactus.cloud/nl/crm-software/zoho-crm" in outcome_urls
+    assert "https://wiki.redcactus.cloud/nl/crm-software/zoho-desk" in outcome_urls
+    assert {
+        "https://wiki.redcactus.cloud/nl/crm-software/zoho-bigin",
+        "https://wiki.redcactus.cloud/nl/crm-software/zoho-crm",
+        "https://wiki.redcactus.cloud/nl/crm-software/zoho-desk",
+    }.issubset({result.url for result in results})
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_records_budget_exhausted_for_unfetched_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When max_pages stops the frontier, discovered URLs get explicit outcomes."""
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(
+        monkeypatch,
+        _seed("https://example.com/nl", internal=["https://example.com/nl/crm-software"]),
+    )
+
+    async def _fake_bulk_fetch(
+        *,
+        urls: list[str],
+        **_kwargs: Any,
+    ) -> tuple[list[dict[str, Any]], BaseException | None]:
+        assert urls == ["https://example.com/nl/crm-software"]
+        return [
+            {
+                "url": "https://example.com/nl/crm-software",
+                "success": True,
+                "status_code": 200,
+                "html": "<html>CRM listing</html>",
+                "markdown": "CRM listing",
+                "links": {
+                    "internal": [
+                        {"href": "https://example.com/nl/crm-software/zoho-bigin", "text": ""},
+                        {"href": "https://example.com/nl/crm-software/zoho-crm", "text": ""},
+                        {"href": "https://example.com/nl/crm-software/zoho-desk", "text": ""},
+                    ]
+                },
+                "media": {},
+            }
+        ], None
+
+    monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_bulk_fetch)
+
+    _results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com/nl",
+        max_depth=2,
+        max_pages=2,
+        include_patterns=["/nl/"],
+    )
+
+    by_url = {outcome["url"]: outcome for outcome in outcomes}
+    assert (
+        by_url["https://example.com/nl/crm-software/zoho-bigin"]["reason_code"]
+        == FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value
+    )
+    assert (
+        by_url["https://example.com/nl/crm-software/zoho-crm"]["reason_code"]
+        == FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value
+    )
+    assert (
+        by_url["https://example.com/nl/crm-software/zoho-desk"]["reason_code"]
+        == FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value
+    )
+
+
 # ---------------------------------------------------------------------------
 # Followup PR — start_url is fetched once (no bulk re-fetch)
 # ---------------------------------------------------------------------------
@@ -504,17 +644,17 @@ async def test_seed_config_carries_login_indicator(monkeypatch: pytest.MonkeyPat
     "succeeded" on the login page, the BFS link list became
     login-form anchors, and the bulk ran into AUTH_ERROR on every URL.
     """
-    captured_bfs_config: dict[str, Any] = {}
+    captured_seed_config: dict[str, Any] = {}
 
-    async def _fake_bfs(
+    async def _fake_seed(
         *,
         crawler_config: dict[str, Any],
         **_kwargs: Any,
-    ) -> tuple[list[CrawlResult], None]:
-        captured_bfs_config.update(crawler_config)
-        return [_seed("https://wiki.example")], None
+    ) -> CrawlResult:
+        captured_seed_config.update(crawler_config)
+        return _seed("https://wiki.example")
 
-    monkeypatch.setattr(crawl4ai_client, "_bfs_deep_crawl", _fake_bfs)
+    monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed)
     monkeypatch.setattr(
         crawl4ai_client, "_fetch_sitemap_urls", lambda _base: _async_return([])
     )
@@ -529,9 +669,9 @@ async def test_seed_config_carries_login_indicator(monkeypatch: pytest.MonkeyPat
             login_indicator_selector="#loginForm",
         )
 
-    # The BFS config MUST reflect the login_indicator: build_crawl_config
+    # The seed config MUST reflect the login_indicator: build_crawl_config
     # negates the wait_for expression with the indicator selector when set.
-    wait_for = captured_bfs_config.get("wait_for", "")
+    wait_for = captured_seed_config.get("wait_for", "")
     assert "#loginForm" in wait_for, (
         f"seed config did not propagate login_indicator_selector — wait_for was {wait_for!r}"
     )
