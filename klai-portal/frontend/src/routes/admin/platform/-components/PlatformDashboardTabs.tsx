@@ -702,6 +702,7 @@ function FeedbackDetailSheet({
     support.isPending ||
     createItem.isPending ||
     linkItem.isPending
+  const canTriage = item.status === 'new' || item.status === 'triage_suggested'
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
@@ -747,136 +748,144 @@ function FeedbackDetailSheet({
             </div>
           </section>
 
-          <section className="grid gap-3 sm:grid-cols-2">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={busy}
-              onClick={() => {
-                dismiss.mutate(item.id, { onSuccess: onClose })
-              }}
-            >
-              <ArchiveX className="h-4 w-4" />
-              Negeer
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={busy}
-              onClick={() => {
-                support.mutate(item.id, { onSuccess: onClose })
-              }}
-            >
-              <LifeBuoy className="h-4 w-4" />
-              Support
-            </Button>
-          </section>
-
-          <section className="space-y-3 border-t border-gray-200 pt-5">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-medium text-gray-900">Koppel aan bestaand item</h3>
-              {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
-            </div>
-            <Input
-              value={itemSearch}
-              onChange={(event) => setItemSearch(event.target.value)}
-              placeholder="Zoek roadmap item"
-            />
-            <div className="space-y-2">
-              {(items.data ?? []).map((existing) => (
-                <div
-                  key={existing.id}
-                  className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 p-3"
+          {canTriage ? (
+            <>
+              <section className="grid gap-3 sm:grid-cols-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    dismiss.mutate(item.id, { onSuccess: onClose })
+                  }}
                 >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-gray-900">
-                      {existing.title}
-                    </p>
-                    <p className="mt-1 text-xs text-gray-400">
-                      {[existing.kind, existing.status, existing.area]
-                        .filter(Boolean)
-                        .join(' / ')}
-                    </p>
-                    <p className="mt-1 text-xs text-gray-400">
-                      {existing.org_count} orgs - {existing.user_count} users
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => {
-                      linkItem.mutate(
-                        {
-                          submissionId: item.id,
-                          item_id: existing.id,
-                          link_type:
-                            item.event_type === 'klai_assistant.problem_report'
-                              ? 'bug_repro'
-                              : 'evidence',
-                        },
-                        { onSuccess: onClose },
-                      )
-                    }}
-                  >
-                    <Link2 className="h-4 w-4" />
-                    Link
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </section>
+                  <ArchiveX className="h-4 w-4" />
+                  Negeer
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    support.mutate(item.id, { onSuccess: onClose })
+                  }}
+                >
+                  <LifeBuoy className="h-4 w-4" />
+                  Support
+                </Button>
+              </section>
 
-          <section className="space-y-3 border-t border-gray-200 pt-5">
-            <h3 className="text-sm font-medium text-gray-900">Maak nieuw item</h3>
-            <Select value={kind} onChange={(event) => setKind(event.target.value)}>
-              <option value="feature">Feature</option>
-              <option value="bug">Bug</option>
-              <option value="ux_confusion">UX verwarring</option>
-              <option value="docs">Docs</option>
-              <option value="support_pattern">Support patroon</option>
-            </Select>
-            <Input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Titel"
-            />
-            <Textarea
-              value={summary}
-              onChange={(event) => setSummary(event.target.value)}
-              rows={4}
-              placeholder="Samenvatting"
-            />
-            <Input
-              value={area}
-              onChange={(event) => setArea(event.target.value)}
-              placeholder="Productgebied"
-            />
-            <Button
-              type="button"
-              disabled={busy || title.trim().length < 3}
-              onClick={() => {
-                createItem.mutate(
-                  {
-                    submissionId: item.id,
-                    kind,
-                    title: title.trim(),
-                    summary: summary.trim() || null,
-                    area: area.trim() || null,
-                    link_type:
-                      item.event_type === 'klai_assistant.problem_report'
-                        ? 'bug_repro'
-                        : 'evidence',
-                  },
-                  { onSuccess: onClose },
-                )
-              }}
-            >
-              <PlusCircle className="h-4 w-4" />
-              Maak item
-            </Button>
-          </section>
+              <section className="space-y-3 border-t border-gray-200 pt-5">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-medium text-gray-900">Koppel aan bestaand item</h3>
+                  {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+                </div>
+                <Input
+                  value={itemSearch}
+                  onChange={(event) => setItemSearch(event.target.value)}
+                  placeholder="Zoek roadmap item"
+                />
+                <div className="space-y-2">
+                  {(items.data ?? []).map((existing) => (
+                    <div
+                      key={existing.id}
+                      className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 p-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-900">
+                          {existing.title}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-400">
+                          {[existing.kind, existing.status, existing.area]
+                            .filter(Boolean)
+                            .join(' / ')}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-400">
+                          {existing.org_count} orgs - {existing.user_count} users
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() => {
+                          linkItem.mutate(
+                            {
+                              submissionId: item.id,
+                              item_id: existing.id,
+                              link_type:
+                                item.event_type === 'klai_assistant.problem_report'
+                                  ? 'bug_repro'
+                                  : 'evidence',
+                            },
+                            { onSuccess: onClose },
+                          )
+                        }}
+                      >
+                        <Link2 className="h-4 w-4" />
+                        Link
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="space-y-3 border-t border-gray-200 pt-5">
+                <h3 className="text-sm font-medium text-gray-900">Maak nieuw item</h3>
+                <Select value={kind} onChange={(event) => setKind(event.target.value)}>
+                  <option value="feature">Feature</option>
+                  <option value="bug">Bug</option>
+                  <option value="ux_confusion">UX verwarring</option>
+                  <option value="docs">Docs</option>
+                  <option value="support_pattern">Support patroon</option>
+                </Select>
+                <Input
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="Titel"
+                />
+                <Textarea
+                  value={summary}
+                  onChange={(event) => setSummary(event.target.value)}
+                  rows={4}
+                  placeholder="Samenvatting"
+                />
+                <Input
+                  value={area}
+                  onChange={(event) => setArea(event.target.value)}
+                  placeholder="Productgebied"
+                />
+                <Button
+                  type="button"
+                  disabled={busy || title.trim().length < 3}
+                  onClick={() => {
+                    createItem.mutate(
+                      {
+                        submissionId: item.id,
+                        kind,
+                        title: title.trim(),
+                        summary: summary.trim() || null,
+                        area: area.trim() || null,
+                        link_type:
+                          item.event_type === 'klai_assistant.problem_report'
+                            ? 'bug_repro'
+                            : 'evidence',
+                      },
+                      { onSuccess: onClose },
+                    )
+                  }}
+                >
+                  <PlusCircle className="h-4 w-4" />
+                  Maak item
+                </Button>
+              </section>
+            </>
+          ) : (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+              Deze melding is al afgehandeld als {feedbackStatusLabel(item.status).toLowerCase()}.
+            </div>
+          )}
 
           {(dismiss.isSuccess || support.isSuccess || createItem.isSuccess || linkItem.isSuccess) && (
             <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
