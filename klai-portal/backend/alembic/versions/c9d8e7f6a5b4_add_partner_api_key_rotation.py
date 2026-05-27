@@ -7,9 +7,7 @@ Create Date: 2026-05-27
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects.postgresql import UUID
 
 
 revision: str = "c9d8e7f6a5b4"
@@ -18,35 +16,64 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+UPGRADE_SQL = """
+DO $$
+BEGIN
+    ALTER TABLE partner_api_keys ADD COLUMN IF NOT EXISTS rotated_from_key_id UUID;
+    ALTER TABLE partner_api_keys ADD COLUMN IF NOT EXISTS rotated_to_key_id UUID;
+    ALTER TABLE partner_api_keys ADD COLUMN IF NOT EXISTS rotation_started_at timestamptz;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_partner_api_keys_rotated_from'
+    ) THEN
+        ALTER TABLE partner_api_keys
+            ADD CONSTRAINT fk_partner_api_keys_rotated_from
+            FOREIGN KEY (rotated_from_key_id) REFERENCES partner_api_keys(id)
+            ON DELETE SET NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_partner_api_keys_rotated_to'
+    ) THEN
+        ALTER TABLE partner_api_keys
+            ADD CONSTRAINT fk_partner_api_keys_rotated_to
+            FOREIGN KEY (rotated_to_key_id) REFERENCES partner_api_keys(id)
+            ON DELETE SET NULL;
+    END IF;
+
+    CREATE INDEX IF NOT EXISTS ix_partner_api_keys_rotated_from_key_id
+        ON partner_api_keys (rotated_from_key_id);
+    CREATE INDEX IF NOT EXISTS ix_partner_api_keys_rotated_to_key_id
+        ON partner_api_keys (rotated_to_key_id);
+EXCEPTION
+    WHEN insufficient_privilege THEN
+        RAISE NOTICE 'Skipping partner_api_keys rotation metadata DDL: migration role is not the owner. post_deploy_c9d8e7f6a5b4_add_partner_api_key_rotation.sql must apply it as klai superuser.';
+END
+$$;
+"""
+
+
+DOWNGRADE_SQL = """
+DO $$
+BEGIN
+    DROP INDEX IF EXISTS ix_partner_api_keys_rotated_to_key_id;
+    DROP INDEX IF EXISTS ix_partner_api_keys_rotated_from_key_id;
+    ALTER TABLE partner_api_keys DROP CONSTRAINT IF EXISTS fk_partner_api_keys_rotated_to;
+    ALTER TABLE partner_api_keys DROP CONSTRAINT IF EXISTS fk_partner_api_keys_rotated_from;
+    ALTER TABLE partner_api_keys DROP COLUMN IF EXISTS rotation_started_at;
+    ALTER TABLE partner_api_keys DROP COLUMN IF EXISTS rotated_to_key_id;
+    ALTER TABLE partner_api_keys DROP COLUMN IF EXISTS rotated_from_key_id;
+EXCEPTION
+    WHEN insufficient_privilege THEN
+        RAISE NOTICE 'Skipping partner_api_keys rotation metadata rollback: migration role is not the owner.';
+END
+$$;
+"""
+
+
 def upgrade() -> None:
-    op.add_column("partner_api_keys", sa.Column("rotated_from_key_id", UUID(as_uuid=False), nullable=True))
-    op.add_column("partner_api_keys", sa.Column("rotated_to_key_id", UUID(as_uuid=False), nullable=True))
-    op.add_column("partner_api_keys", sa.Column("rotation_started_at", sa.DateTime(timezone=True), nullable=True))
-    op.create_foreign_key(
-        "fk_partner_api_keys_rotated_from",
-        "partner_api_keys",
-        "partner_api_keys",
-        ["rotated_from_key_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_foreign_key(
-        "fk_partner_api_keys_rotated_to",
-        "partner_api_keys",
-        "partner_api_keys",
-        ["rotated_to_key_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_index("ix_partner_api_keys_rotated_from_key_id", "partner_api_keys", ["rotated_from_key_id"])
-    op.create_index("ix_partner_api_keys_rotated_to_key_id", "partner_api_keys", ["rotated_to_key_id"])
+    op.execute(UPGRADE_SQL)
 
 
 def downgrade() -> None:
-    op.drop_index("ix_partner_api_keys_rotated_to_key_id", table_name="partner_api_keys")
-    op.drop_index("ix_partner_api_keys_rotated_from_key_id", table_name="partner_api_keys")
-    op.drop_constraint("fk_partner_api_keys_rotated_to", "partner_api_keys", type_="foreignkey")
-    op.drop_constraint("fk_partner_api_keys_rotated_from", "partner_api_keys", type_="foreignkey")
-    op.drop_column("partner_api_keys", "rotation_started_at")
-    op.drop_column("partner_api_keys", "rotated_to_key_id")
-    op.drop_column("partner_api_keys", "rotated_from_key_id")
+    op.execute(DOWNGRADE_SQL)
