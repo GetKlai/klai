@@ -178,6 +178,49 @@
   overflow: hidden;
 }
 
+.klai-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.klai-icon-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--klai-primary-text-color) 12%, transparent);
+  color: var(--klai-primary-text-color);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+  transition: opacity 150ms ease, background-color 150ms ease;
+}
+
+.klai-icon-btn:hover:not(:disabled),
+.klai-icon-btn:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--klai-primary-text-color) 20%, transparent);
+}
+
+.klai-icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.klai-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
 .klai-close-btn {
   background: none;
   border: none;
@@ -207,6 +250,113 @@
   stroke: var(--klai-primary-text-color);
   stroke-width: 2;
   fill: none;
+}
+
+.klai-conversation-panel {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--klai-border-color);
+  background: color-mix(in srgb, var(--klai-card-color) 72%, var(--klai-background-color));
+  padding: 10px 12px;
+}
+
+.klai-conversation-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--klai-text-color);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+.klai-conversation-close-btn,
+.klai-new-conversation-btn {
+  border: 1px solid var(--klai-border-color);
+  border-radius: 7px;
+  background: var(--klai-background-color);
+  color: var(--klai-text-color);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 7px 9px;
+}
+
+.klai-conversation-close-btn:hover:not(:disabled),
+.klai-new-conversation-btn:hover:not(:disabled),
+.klai-conversation-close-btn:focus-visible,
+.klai-new-conversation-btn:focus-visible {
+  border-color: var(--klai-primary-color);
+}
+
+.klai-conversation-close-btn:disabled,
+.klai-new-conversation-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.klai-conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 172px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.klai-conversation-empty {
+  color: var(--klai-text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 8px 2px;
+}
+
+.klai-conversation-item {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--klai-text-color);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.klai-conversation-item:hover:not(:disabled),
+.klai-conversation-item:focus-visible,
+.klai-conversation-item--active {
+  border-color: var(--klai-border-color);
+  background: var(--klai-background-color);
+}
+
+.klai-conversation-item:disabled {
+  cursor: default;
+}
+
+.klai-conversation-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.klai-conversation-meta {
+  color: var(--klai-text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.klai-new-conversation-btn {
+  width: 100%;
 }
 
 /* Message list */

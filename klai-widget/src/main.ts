@@ -2,7 +2,7 @@
 import { render } from "solid-js/web";
 import { ChatBubble } from "./components/ChatBubble";
 import { ChatWindow } from "./components/ChatWindow";
-import { initStore, setChatOpen } from "./store/chat";
+import { getInitialConversationSessionId, initStore, setChatOpen } from "./store/chat";
 import { fetchWidgetConfig, KlaiWidgetError } from "./api/widget-config";
 import { initLabels } from "./i18n/labels";
 import widgetCss from "./styles/widget.css?inline";
@@ -40,7 +40,7 @@ async function bootstrap(): Promise<void> {
   const mode = scriptTag.getAttribute("data-mode") ?? "bubble";
   const locale = scriptTag.getAttribute("data-locale") ?? undefined;
   const containerSelector = scriptTag.getAttribute("data-container");
-  const clientSessionId = getOrCreateClientSessionId(widgetId);
+  const clientSessionId = getInitialConversationSessionId(widgetId);
 
   // Init i18n labels (browser locale or data-locale override)
   initLabels(locale);
@@ -114,24 +114,6 @@ async function bootstrap(): Promise<void> {
     shadowRoot.appendChild(mountPoint);
 
     render(() => ChatBubble(), mountPoint);
-  }
-}
-
-function getOrCreateClientSessionId(widgetId: string): string {
-  const key = `klai-widget:${widgetId}:session:v1`;
-  try {
-    const existing = window.localStorage.getItem(key);
-    if (existing && /^[A-Za-z0-9_-]{16,80}$/.test(existing)) {
-      return existing;
-    }
-    const next =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID().replace(/-/g, "")
-        : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 18)}`;
-    window.localStorage.setItem(key, next);
-    return next;
-  } catch {
-    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 18)}`;
   }
 }
 
