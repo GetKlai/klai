@@ -299,6 +299,7 @@ class ConnectorUpdateRequest(BaseModel):
     is_enabled: bool | None = None
     content_type: str | None = None
     allowed_assertion_modes: list[str] | None = None
+    clear_credentials: bool = False
 
 
 class ConnectorOut(BaseModel):
@@ -316,6 +317,7 @@ class ConnectorOut(BaseModel):
     created_by: str
     content_type: str | None
     allowed_assertion_modes: list[str] | None
+    has_saved_credentials: bool = False
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-7 — UI badge signal.
     # Approximation in the absence of cross-DB join: a web_crawler whose
     # latest sync ended 'failed' is flagged. The SPEC's stronger predicate
@@ -408,6 +410,7 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
         created_by=c.created_by,
         content_type=c.content_type,
         allowed_assertion_modes=c.allowed_assertion_modes,
+        has_saved_credentials=getattr(c, "encrypted_credentials", None) is not None,
         needs_reconfiguration=_compute_needs_reconfiguration(c),
     )
 
@@ -550,6 +553,13 @@ async def update_connector(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Connector not found",
         )
+    if body.clear_credentials and body.config is not None:
+        sensitive_fields = set(SENSITIVE_FIELDS.get(connector.connector_type, []))
+        if sensitive_fields.intersection(body.config):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error_code": "clear_credentials_conflicts_with_new_credentials"},
+            )
     if body.name is not None:
         connector.name = body.name
     if body.config is not None:
@@ -571,6 +581,8 @@ async def update_connector(
                 connector.encrypted_credentials = encrypted_blob
         else:
             connector.config = config_for_save
+    if body.clear_credentials:
+        connector.encrypted_credentials = None
     if body.schedule is not None:
         connector.schedule = body.schedule
     if body.is_enabled is not None:

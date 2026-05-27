@@ -33,6 +33,7 @@ class TestConnectorOutMasking:
         c.created_by = "user-1"
         c.content_type = "kb_article"
         c.allowed_assertion_modes = None
+        c.encrypted_credentials = None
         return c
 
     def test_github_sensitive_fields_masked(self) -> None:
@@ -72,6 +73,13 @@ class TestConnectorOutMasking:
         out = _connector_out(self._make_connector("github", config))
         assert out.config["repo"] == "GetKlai/klai"
         assert "access_token" not in out.config
+
+    def test_encrypted_credentials_reported_without_exposing_secret(self) -> None:
+        connector = self._make_connector("web_crawler", {"url": "https://example.com"})
+        connector.encrypted_credentials = b"encrypted-placeholder"
+        out = _connector_out(connector)
+        assert out.has_saved_credentials is True
+        assert "cookies" not in out.config
 
     def test_all_connector_types_mask_correctly(self) -> None:
         """Every connector type in SENSITIVE_FIELDS has its fields masked."""

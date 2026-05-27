@@ -28,6 +28,7 @@ from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb, is_personal_kb
 from app.services.audit import log_event
+from app.services.connector_credentials import credential_store
 from app.services.kb_quota import assert_can_create_org_kb, assert_can_create_personal_kb
 from app.services.zitadel import zitadel
 
@@ -1891,6 +1892,8 @@ class CrawlPreviewRequest(BaseModel):
     content_selector: str | None = None
     try_ai: bool = False
     cookies: list[dict] | None = None
+    connector_id: str | None = None
+    use_saved_credentials: bool = False
 
 
 class CrawlPreviewResponse(BaseModel):
@@ -1908,6 +1911,85 @@ class CrawlPreviewResponse(BaseModel):
     classification_reason: str | None = None
 
 
+async def _load_saved_web_crawler_cookies(
+    kb: PortalKnowledgeBase,
+    connector_id: str | None,
+    org_id: int,
+    db: AsyncSession,
+) -> list[dict]:
+    """Return encrypted web-crawler cookies for preview/probe without exposing them."""
+    if not connector_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": "connector_id_required_for_saved_credentials"},
+        )
+    result = await db.execute(
+        select(PortalConnector).where(
+            PortalConnector.id == connector_id,
+            PortalConnector.kb_id == kb.id,
+            PortalConnector.org_id == org_id,
+            PortalConnector.connector_type == "web_crawler",
+            PortalConnector.state == "active",
+        )
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    if connector.encrypted_credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": "saved_credentials_missing"},
+        )
+    if credential_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "credential_store_unavailable"},
+        )
+    try:
+        credentials = await credential_store.decrypt_credentials(
+            org_id=org_id,
+            encrypted_credentials=bytes(connector.encrypted_credentials),
+            db=db,
+        )
+    except Exception as exc:
+        logger.warning(
+            "saved_web_crawler_credentials_decrypt_failed",
+            connector_id=connector_id,
+            org_id=org_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "saved_credentials_unavailable"},
+        ) from exc
+    cookies = credentials.get("cookies")
+    if not isinstance(cookies, list) or not cookies:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": "saved_credentials_missing"},
+        )
+    return cookies
+
+
+async def _resolve_web_crawler_probe_cookies(
+    *,
+    kb: PortalKnowledgeBase,
+    org_id: int,
+    db: AsyncSession,
+    cookies: list[dict] | None,
+    connector_id: str | None,
+    use_saved_credentials: bool,
+) -> list[dict] | None:
+    if use_saved_credentials and cookies:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": "saved_credentials_conflict"},
+        )
+    if use_saved_credentials:
+        return await _load_saved_web_crawler_cookies(kb, connector_id, org_id, db)
+    return cookies
+
+
 @router.post(
     "/knowledge-bases/{kb_slug}/connectors/crawl-preview",
     response_model=CrawlPreviewResponse,
@@ -1922,6 +2004,14 @@ async def crawl_preview(
     """Preview KB content for a URL using PruningContentFilter. Requires owner role."""
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
     await _require_owner(kb, perms.user_id, db)
+    cookies = await _resolve_web_crawler_probe_cookies(
+        kb=kb,
+        org_id=perms.org_id,
+        db=db,
+        cookies=body.cookies,
+        connector_id=body.connector_id,
+        use_saved_credentials=body.use_saved_credentials,
+    )
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix: knowledge-ingest
     # identity verifier expects the Zitadel resourceowner ID (the
     # 18-digit numeric string, e.g. "100000000000000002"), NOT the
@@ -1935,7 +2025,7 @@ async def crawl_preview(
         content_selector=body.content_selector,
         org_id=org.zitadel_org_id,
         try_ai=body.try_ai,
-        cookies=body.cookies,
+        cookies=cookies,
     )
     return CrawlPreviewResponse(
         url=result.get("url", body.url),
@@ -1955,6 +2045,8 @@ async def crawl_preview(
 class AuthProbeRequest(BaseModel):
     url: str
     cookies: list[dict] | None = None
+    connector_id: str | None = None
+    use_saved_credentials: bool = False
 
 
 class AuthProbeResponse(BaseModel):
@@ -1988,12 +2080,20 @@ async def auth_probe(
     """
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
     await _require_owner(kb, perms.user_id, db)
+    cookies = await _resolve_web_crawler_probe_cookies(
+        kb=kb,
+        org_id=perms.org_id,
+        db=db,
+        cookies=body.cookies,
+        connector_id=body.connector_id,
+        use_saved_credentials=body.use_saved_credentials,
+    )
     # See crawl_preview above for the org_id rationale (Zitadel ID, not int PK).
     org = await _load_org_or_500(db, perms.org_id)
     result = await knowledge_ingest_client.auth_probe(
         url=body.url,
         org_id=org.zitadel_org_id,
-        cookies=body.cookies,
+        cookies=cookies,
     )
     return AuthProbeResponse(
         classification=result.get("classification", "auth_failed_unreachable"),
