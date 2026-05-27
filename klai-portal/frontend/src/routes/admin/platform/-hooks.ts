@@ -10,6 +10,7 @@ import type {
   PlatformChatError,
   PlatformFeedbackActionResult,
   PlatformFeedbackItem,
+  PlatformFeedbackItemDetail,
   PlatformFeedbackSubmission,
   PlatformOrgDetail,
   PlatformKB,
@@ -154,14 +155,59 @@ export function usePlatformFeedbackItems(search: string) {
   })
 }
 
+export function usePlatformFeedbackItem(itemId: number | null) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-feedback-item', itemId],
+    queryFn: async () =>
+      apiFetch<PlatformFeedbackItemDetail>(
+        `/api/admin/platform/feedback/items/${itemId}`,
+      ),
+    enabled: auth.isAuthenticated && itemId !== null,
+  })
+}
+
 function useFeedbackMutation() {
   const qc = useQueryClient()
   return {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['platform-feedback-submissions'] })
       void qc.invalidateQueries({ queryKey: ['platform-feedback-items'] })
+      void qc.invalidateQueries({ queryKey: ['platform-feedback-item'] })
     },
   }
+}
+
+export function usePlatformFeedbackUpdateItem() {
+  const opts = useFeedbackMutation()
+  return useMutation({
+    mutationFn: async (vars: {
+      itemId: number
+      kind?: string
+      title?: string
+      summary?: string | null
+      status?: string
+      area?: string | null
+      external_tracker_type?: string | null
+      external_tracker_id?: string | null
+      external_tracker_url?: string | null
+      public_feedback_url?: string | null
+      public_title?: string | null
+      public_summary?: string | null
+      target_window?: string | null
+      owner?: string | null
+    }) => {
+      const { itemId, ...body } = vars
+      return apiFetch<PlatformFeedbackItem>(
+        `/api/admin/platform/feedback/items/${itemId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        },
+      )
+    },
+    onSuccess: opts.onSuccess,
+  })
 }
 
 export function usePlatformFeedbackDismiss() {

@@ -175,10 +175,16 @@ met optionele sync naar externe tools.
   elegant dan een eigen Platform-tab voor Klai-staff.
 - Quackback: moderne richting met widget, roadmap en AI-triage, maar voelt nog
   te jong om kerninfra op te baseren.
-- Plane/GitHub Issues: goed als downstream execution tracker, niet als intake.
+- GitHub Issues: goede downstream execution tracker voor concrete engineering
+  work, niet als ruwe feedback-inbox.
+- Plane: inhoudelijk geschikt voor projectmanagement/roadmap, maar voorlopig
+  niet toevoegen zolang GitHub Issues al de engineering tracker is. Plane zou
+  een extra bron van waarheid worden.
 
-Beslissing: bouw de primaire feedbacklaag zelf, sync later naar Linear/GitHub
-of Plane. Gebruik Fider alleen als er echt een publiek voting board nodig is.
+Beslissing: bouw de primaire feedback- en roadmaplaag lightweight zelf in
+Platform. Gebruik `feedback_items` als source of truth voor bundeling,
+traceability en klantupdates. Sync later optioneel naar GitHub Issues
+execution en feedback.getklai.com/Fider voor publieke voting.
 
 ## Datamodel
 
@@ -210,6 +216,9 @@ Canonical product needs, bugs of roadmap-items.
 - `priority_score`
 - `org_count`, `user_count`
 - `external_tracker_type`, `external_tracker_id`, `external_tracker_url`
+- `public_feedback_url`: optionele publieke feedback/voting post
+- `public_title`, `public_summary`: gecureerde tekst voor roadmap/voting
+- `target_window`, `owner`: lichte roadmapplanning zonder nieuw extern systeem
 - `created_at`, `updated_at`
 
 ### `feedback_item_links`
@@ -319,6 +328,11 @@ Acceptatie:
 
 - Maak `feedback_items` het canonical product-backlog niveau.
 - Een nieuwe submission wordt meestal evidence/upvote op een bestaand item.
+- Roadmap leeft eerst lightweight in Platform, niet in Plane:
+  - `feedback_items.status` is de roadmapstatus;
+  - itemdetail toont gekoppelde submissions, orgs/users en externe links;
+  - GitHub issue en feedback.getklai.com post zijn optionele links vanaf het
+    item, geen primaire bron.
 - Prioriteit wordt automatisch berekend op:
   - aantal orgs;
   - aantal users;
@@ -331,6 +345,8 @@ Acceptatie:
 
 - Een roadmap-item toont alle gekoppelde feedback snippets.
 - Nieuwe duplicaten verhogen item-signaal zonder nieuwe ticket-chaos.
+- Bij status `shipped` kan Klai alle betrokken orgs/users terugvinden voor
+  close-the-loop communicatie.
 
 ### Fase 5 - Integraties
 
@@ -340,9 +356,10 @@ Acceptatie:
   - enterprise/high-value org feedback;
   - items zonder triage ouder dan X dagen.
 - Daarna execution sync:
-  - Linear als Klai intern Linear gebruikt;
   - GitHub Issues voor repo-bound engineering work;
-  - Plane alleen als open-source/self-hosted tracker gewenst is.
+  - feedback.getklai.com/Fider voor gecureerde publieke voting;
+  - Plane alleen heroverwegen als GitHub Issues niet genoeg blijkt voor
+    execution/roadmap planning.
 
 Acceptatie:
 
@@ -382,16 +399,17 @@ Acceptatie:
 
 ## Eerstvolgende stap
 
-Deploy en verifieer Fase 2, daarna Fase 3 bouwen:
+Maak Fase 4-light bruikbaar voordat AI of externe syncs bepalen wat er gebeurt:
 
-1. Controleer live dat `Geef feedback` en `Meld een probleem` in Platform
-   verschijnen.
-2. Controleer live de acties `Negeer`, `Support`, `Maak item` en `Link`.
+1. Voeg een feedback-item detailview toe met gekoppelde submissions, org/user
+   signalen en externe links.
+2. Voeg lightweight roadmapvelden toe op `feedback_items`: publieke titel,
+   publieke samenvatting, target window, owner, GitHub/feedback URL.
 3. Bouw daarna AI triage als assistent bovenop deze handmatige workflow:
    classifier, korte samenvatting, productgebied, duplicate candidates en
    voorgestelde actie.
-4. Laat staff AI-suggesties accepteren/corrigeren voordat er roadmap- of
-   execution-sync plaatsvindt.
+4. Voeg pas daarna one-click sync toe naar GitHub Issues of
+   feedback.getklai.com, altijd vanaf het canonical `feedback_item`.
 
 ## Risico's
 

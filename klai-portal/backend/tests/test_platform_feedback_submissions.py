@@ -1,8 +1,10 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
 from app.api.admin import platform
+from app.klai_feedback import service as feedback_service
 
 
 class _Result:
@@ -24,9 +26,40 @@ class _Session:
     async def __aexit__(self, *_exc):
         return None
 
-    async def execute(self, _query, params):
+    async def execute(self, _query, params=None):
         self.params = params
         return _Result(self.rows)
+
+    async def commit(self):
+        return None
+
+
+def _feedback_item(**overrides):
+    now = datetime(2026, 5, 27, 10, 0, tzinfo=UTC)
+    values = {
+        "id": 456,
+        "kind": "feature",
+        "title": "Betere triage",
+        "summary": "Bundel dubbele feedback.",
+        "status": "inbox",
+        "area": "platform",
+        "priority_score": 12,
+        "org_count": 2,
+        "user_count": 3,
+        "external_tracker_type": None,
+        "external_tracker_id": None,
+        "external_tracker_url": None,
+        "public_feedback_url": None,
+        "public_title": None,
+        "public_summary": None,
+        "target_window": None,
+        "owner": None,
+        "shipped_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 @pytest.mark.asyncio
@@ -143,3 +176,122 @@ async def test_platform_feedback_create_item_links_submission(monkeypatch):
 
     assert result.status == "linked"
     assert result.item_id == 456
+
+
+@pytest.mark.asyncio
+async def test_platform_feedback_item_detail_returns_linked_customer_evidence(monkeypatch):
+    linked_at = datetime(2026, 5, 27, 11, 0, tzinfo=UTC)
+    rows = [
+        SimpleNamespace(
+            id=123,
+            org_id=42,
+            org_name="Acme",
+            org_slug="acme",
+            user_id="user-123",
+            source="assistant_feedback",
+            status="linked",
+            raw_text="Maak triage minder handmatig.",
+            feedback_type="improvement",
+            severity=None,
+            page_url="https://acme.getklai.com/admin/platform",
+            route_id="/admin/platform",
+            locale="nl",
+            viewport="1440x900",
+            created_at=datetime(2026, 5, 27, 10, 30, tzinfo=UTC),
+            link_type="evidence",
+            linked_at=linked_at,
+        )
+    ]
+    session = _Session(rows)
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_get_item(db, item_id):
+        assert db is session
+        assert item_id == 456
+        return _feedback_item()
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "get_feedback_item", fake_get_item)
+
+    result = await platform.platform_feedback_item_detail(
+        item_id=456,
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert result.item.id == 456
+    assert result.item.title == "Betere triage"
+    assert len(result.submissions) == 1
+    assert result.submissions[0].org_name == "Acme"
+    assert result.submissions[0].event_type == "klai_assistant.feedback"
+    assert result.submissions[0].link_type == "evidence"
+    assert result.submissions[0].raw_text == "Maak triage minder handmatig."
+
+
+@pytest.mark.asyncio
+async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
+    session = _Session([])
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_update_item(db, item_id, values):
+        assert db is session
+        assert item_id == 456
+        assert values == {
+            "status": "planned",
+            "owner": "Maaike",
+            "target_window": "Q3",
+            "external_tracker_url": "https://github.com/getklai/klai/issues/123",
+            "public_feedback_url": None,
+        }
+        return _feedback_item(
+            status="planned",
+            owner="Maaike",
+            target_window="Q3",
+            external_tracker_url="https://github.com/getklai/klai/issues/123",
+        )
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "update_feedback_item", fake_update_item)
+
+    result = await platform.platform_feedback_update_item(
+        item_id=456,
+        body=platform.PlatformFeedbackItemPatchIn(
+            status="planned",
+            owner="Maaike",
+            target_window="Q3",
+            external_tracker_url="https://github.com/getklai/klai/issues/123",
+            public_feedback_url="",
+        ),
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert result.status == "planned"
+    assert result.owner == "Maaike"
+    assert result.target_window == "Q3"
+
+
+@pytest.mark.asyncio
+async def test_update_feedback_item_sets_shipped_at(monkeypatch):
+    session = _Session([])
+    item = _feedback_item(status="planned", shipped_at=None)
+
+    async def fake_get_item(db, item_id):
+        assert db is session
+        assert item_id == 456
+        return item
+
+    monkeypatch.setattr(feedback_service, "get_feedback_item", fake_get_item)
+
+    result = await feedback_service.update_feedback_item(
+        session,
+        456,
+        {"status": "shipped"},
+    )
+
+    assert result.status == "shipped"
+    assert result.shipped_at is not None

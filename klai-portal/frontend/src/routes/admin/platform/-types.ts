@@ -118,8 +118,27 @@ export interface PlatformFeedbackItem {
   priority_score: number
   org_count: number
   user_count: number
+  external_tracker_type: string | null
+  external_tracker_id: string | null
+  external_tracker_url: string | null
+  public_feedback_url: string | null
+  public_title: string | null
+  public_summary: string | null
+  target_window: string | null
+  owner: string | null
+  shipped_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface PlatformFeedbackLinkedSubmission extends PlatformFeedbackSubmission {
+  link_type: string
+  linked_at: string
+}
+
+export interface PlatformFeedbackItemDetail {
+  item: PlatformFeedbackItem
+  submissions: PlatformFeedbackLinkedSubmission[]
 }
 
 export interface PlatformFeedbackActionResult {

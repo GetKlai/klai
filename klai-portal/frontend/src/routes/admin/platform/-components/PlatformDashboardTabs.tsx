@@ -10,6 +10,7 @@ import {
   Link2,
   Loader2,
   PlusCircle,
+  Save,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,17 +30,23 @@ import {
   usePlatformChatErrors,
   usePlatformFeedbackCreateItem,
   usePlatformFeedbackDismiss,
+  usePlatformFeedbackItem,
   usePlatformFeedbackItems,
   usePlatformFeedbackLinkItem,
   usePlatformFeedbackSubmissions,
   usePlatformFeedbackSupport,
+  usePlatformFeedbackUpdateItem,
   usePlatformKnowledgeBases,
   usePlatformOrgs,
   usePlatformTemplates,
   usePlatformUsers,
   usePortalHealth,
 } from '../-hooks'
-import type { PlatformFeedbackSubmission } from '../-types'
+import type {
+  PlatformFeedbackItem,
+  PlatformFeedbackLinkedSubmission,
+  PlatformFeedbackSubmission,
+} from '../-types'
 import { PlatformTableShell } from './PlatformShell'
 
 const TH =
@@ -550,6 +557,15 @@ function feedbackStatusLabel(status: string): string {
   return 'Nieuw'
 }
 
+function feedbackItemStatusLabel(status: string): string {
+  if (status === 'under_review') return 'In review'
+  if (status === 'planned') return 'Gepland'
+  if (status === 'in_progress') return 'In uitvoering'
+  if (status === 'shipped') return 'Verzonden'
+  if (status === 'wont_do') return "Won't do"
+  return 'Inbox'
+}
+
 export function FeedbackTab({
   search,
   status,
@@ -563,11 +579,18 @@ export function FeedbackTab({
 }) {
   const { data, isLoading } = usePlatformFeedbackSubmissions(search, status, kind)
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const rows = data ?? []
   const selected = rows.find((row) => row.id === selectedId) ?? null
 
   return (
     <>
+      <RoadmapItemsPanel
+        search={search}
+        fmtDate={fmtDate}
+        onOpenItem={setSelectedItemId}
+      />
+
       <PlatformTableShell
         loading={isLoading}
         empty={rows.length === 0}
@@ -675,7 +698,75 @@ export function FeedbackTab({
           onClose={() => setSelectedId(null)}
         />
       )}
+      {selectedItemId !== null && (
+        <FeedbackItemDetailSheet
+          itemId={selectedItemId}
+          fmtDate={fmtDate}
+          onClose={() => setSelectedItemId(null)}
+        />
+      )}
     </>
+  )
+}
+
+function RoadmapItemsPanel({
+  search,
+  fmtDate,
+  onOpenItem,
+}: {
+  search: string
+  fmtDate: (s: string | null) => string
+  onOpenItem: (itemId: number) => void
+}) {
+  const items = usePlatformFeedbackItems(search)
+  const rows = items.data ?? []
+
+  return (
+    <section className="mb-6 space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-medium text-gray-900">Roadmap items</h2>
+          <p className="mt-0.5 text-xs text-gray-400">
+            Gebundelde feedback met traceability naar klanten en execution links.
+          </p>
+        </div>
+        {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+      </div>
+      {rows.length === 0 ? (
+        <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
+          Nog geen feedback items gevonden.
+        </p>
+      ) : (
+        <div className="divide-y divide-gray-200">
+          {rows.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="grid w-full grid-cols-[1fr_auto] gap-3 py-3 text-left hover:bg-gray-50"
+              onClick={() => onOpenItem(item.id)}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium text-gray-900">
+                  {item.title}
+                </span>
+                <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                  <Badge variant="outline">{feedbackItemStatusLabel(item.status)}</Badge>
+                  <span>{item.kind}</span>
+                  {item.area && <span>{item.area}</span>}
+                  {item.owner && <span>owner: {item.owner}</span>}
+                </span>
+              </span>
+              <span className="text-right text-xs text-gray-400">
+                <span className="block text-gray-900">
+                  {item.org_count} orgs / {item.user_count} users
+                </span>
+                <span className="block">{fmtDate(item.updated_at)}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -900,5 +991,205 @@ function FeedbackDetailSheet({
         </div>
       </SheetContent>
     </Sheet>
+  )
+}
+
+function FeedbackItemDetailSheet({
+  itemId,
+  fmtDate,
+  onClose,
+}: {
+  itemId: number
+  fmtDate: (s: string | null) => string
+  onClose: () => void
+}) {
+  const detail = usePlatformFeedbackItem(itemId)
+
+  return (
+    <Sheet open onOpenChange={(open) => !open && onClose()}>
+      <SheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-3xl">
+        <SheetHeader>
+          <SheetTitle>Roadmap item</SheetTitle>
+          <SheetDescription>
+            Source of truth voor gebundelde feedback en klantupdates.
+          </SheetDescription>
+        </SheetHeader>
+
+        {detail.isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Laden...
+          </div>
+        ) : detail.data ? (
+          <FeedbackItemDetailForm
+            key={detail.data.item.id}
+            item={detail.data.item}
+            submissions={detail.data.submissions}
+            fmtDate={fmtDate}
+          />
+        ) : (
+          <p className="text-sm text-gray-500">Item niet gevonden.</p>
+        )}
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function FeedbackItemDetailForm({
+  item,
+  submissions,
+  fmtDate,
+}: {
+  item: PlatformFeedbackItem
+  submissions: PlatformFeedbackLinkedSubmission[]
+  fmtDate: (s: string | null) => string
+}) {
+  const updateItem = usePlatformFeedbackUpdateItem()
+  const [kind, setKind] = useState(item.kind)
+  const [status, setStatus] = useState(item.status)
+  const [title, setTitle] = useState(item.title)
+  const [summary, setSummary] = useState(item.summary ?? '')
+  const [area, setArea] = useState(item.area ?? '')
+  const [publicTitle, setPublicTitle] = useState(item.public_title ?? '')
+  const [publicSummary, setPublicSummary] = useState(item.public_summary ?? '')
+  const [targetWindow, setTargetWindow] = useState(item.target_window ?? '')
+  const [owner, setOwner] = useState(item.owner ?? '')
+  const [githubUrl, setGithubUrl] = useState(item.external_tracker_url ?? '')
+  const [publicFeedbackUrl, setPublicFeedbackUrl] = useState(item.public_feedback_url ?? '')
+
+  return (
+    <div className="space-y-6">
+      <section className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-gray-200 p-3">
+          <p className="text-xs text-gray-400">Organisaties</p>
+          <p className="mt-1 text-2xl font-medium text-gray-900">{item.org_count}</p>
+        </div>
+        <div className="rounded-lg border border-gray-200 p-3">
+          <p className="text-xs text-gray-400">Gebruikers</p>
+          <p className="mt-1 text-2xl font-medium text-gray-900">{item.user_count}</p>
+        </div>
+        <div className="rounded-lg border border-gray-200 p-3">
+          <p className="text-xs text-gray-400">Score</p>
+          <p className="mt-1 text-2xl font-medium text-gray-900">{item.priority_score}</p>
+        </div>
+      </section>
+
+      <section className="space-y-3 border-t border-gray-200 pt-5">
+        <h3 className="text-sm font-medium text-gray-900">Intern item</h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Select value={kind} onChange={(event) => setKind(event.target.value)}>
+            <option value="feature">Feature</option>
+            <option value="bug">Bug</option>
+            <option value="ux_confusion">UX verwarring</option>
+            <option value="docs">Docs</option>
+            <option value="support_pattern">Support patroon</option>
+          </Select>
+          <Select value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="inbox">Inbox</option>
+            <option value="under_review">In review</option>
+            <option value="planned">Gepland</option>
+            <option value="in_progress">In uitvoering</option>
+            <option value="shipped">Verzonden</option>
+            <option value="wont_do">Won't do</option>
+          </Select>
+        </div>
+        <Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Titel" />
+        <Textarea
+          value={summary}
+          onChange={(event) => setSummary(event.target.value)}
+          rows={4}
+          placeholder="Interne samenvatting"
+        />
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Input value={area} onChange={(event) => setArea(event.target.value)} placeholder="Productgebied" />
+          <Input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Owner" />
+          <Input
+            value={targetWindow}
+            onChange={(event) => setTargetWindow(event.target.value)}
+            placeholder="Target window"
+          />
+        </div>
+      </section>
+
+      <section className="space-y-3 border-t border-gray-200 pt-5">
+        <h3 className="text-sm font-medium text-gray-900">Publiek en execution</h3>
+        <Input
+          value={publicTitle}
+          onChange={(event) => setPublicTitle(event.target.value)}
+          placeholder="Publieke titel"
+        />
+        <Textarea
+          value={publicSummary}
+          onChange={(event) => setPublicSummary(event.target.value)}
+          rows={3}
+          placeholder="Publieke samenvatting"
+        />
+        <Input
+          value={githubUrl}
+          onChange={(event) => setGithubUrl(event.target.value)}
+          placeholder="GitHub issue URL"
+        />
+        <Input
+          value={publicFeedbackUrl}
+          onChange={(event) => setPublicFeedbackUrl(event.target.value)}
+          placeholder="feedback.getklai.com URL"
+        />
+        <Button
+          type="button"
+          disabled={updateItem.isPending || title.trim().length < 3}
+          onClick={() => {
+            updateItem.mutate({
+              itemId: item.id,
+              kind,
+              status,
+              title: title.trim(),
+              summary: summary.trim() || null,
+              area: area.trim() || null,
+              owner: owner.trim() || null,
+              target_window: targetWindow.trim() || null,
+              public_title: publicTitle.trim() || null,
+              public_summary: publicSummary.trim() || null,
+              external_tracker_type: githubUrl.trim() ? 'github' : null,
+              external_tracker_url: githubUrl.trim() || null,
+              public_feedback_url: publicFeedbackUrl.trim() || null,
+            })
+          }}
+        >
+          {updateItem.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
+          Opslaan
+        </Button>
+        {updateItem.isSuccess && (
+          <p className="text-sm text-green-700">Roadmap item opgeslagen.</p>
+        )}
+      </section>
+
+      <section className="space-y-3 border-t border-gray-200 pt-5">
+        <h3 className="text-sm font-medium text-gray-900">
+          Gekoppelde feedback ({submissions.length})
+        </h3>
+        <div className="space-y-2">
+          {submissions.map((submission) => (
+            <div key={submission.id} className="rounded-lg border border-gray-200 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">{feedbackKindLabel(submission.event_type)}</Badge>
+                <Badge variant="secondary">{submission.link_type}</Badge>
+                <span className="text-xs text-gray-400">{fmtDate(submission.created_at)}</span>
+              </div>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-900">
+                {submission.raw_text}
+              </p>
+              <p className="mt-2 text-xs text-gray-400">
+                {submission.org_name ?? submission.org_slug ?? 'Onbekende org'}
+                {submission.user_id ? ` / ${submission.user_id}` : ''}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
   )
 }
