@@ -286,9 +286,30 @@
 
 .klai-handoff-bar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: center;
   padding: 8px 12px 0;
   flex-shrink: 0;
+}
+
+.klai-handoff-name-input {
+  flex: 1 1 120px;
+  min-width: 120px;
+  border: 1px solid var(--klai-border-color);
+  border-radius: 8px;
+  background: var(--klai-background-color);
+  color: var(--klai-text-color);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.klai-handoff-name-input:focus {
+  border-color: var(--klai-primary-color);
 }
 
 .klai-handoff-btn {

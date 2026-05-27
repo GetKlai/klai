@@ -13,6 +13,7 @@ import {
   clearError,
   setHandoffActive,
   setHandoffConnecting,
+  setVisitorIdentity,
 } from "../store/chat";
 import { collectPageContext, streamChat } from "../api/chat-stream";
 import {
@@ -43,8 +44,8 @@ interface ChatWindowProps {
 //   footer  → AI disclaimer (white-label toggle hides it)
 export function ChatWindow(props: ChatWindowProps) {
   const [inputValue, setInputValue] = createSignal("");
-  const [visitorName, setVisitorName] = createSignal("");
-  const [visitorEmail, setVisitorEmail] = createSignal("");
+  const [visitorName, setVisitorName] = createSignal(chatState.visitorName);
+  const [visitorEmail, setVisitorEmail] = createSignal(chatState.visitorEmail);
   let abortController: AbortController | null = null;
   let handoffAbortController: AbortController | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
@@ -125,6 +126,7 @@ export function ChatWindow(props: ChatWindowProps) {
         await sendHubSpotHandoffMessage({
           token: chatState.sessionToken,
           content,
+          visitorName: visitorName(),
         });
       } catch {
         setError(t().errorGeneric);
@@ -186,6 +188,8 @@ export function ChatWindow(props: ChatWindowProps) {
       await startHubSpotHandoff({
         token: chatState.sessionToken,
         messages: chatState.messages,
+        visitorName: visitorName(),
+        visitorEmail: visitorEmail(),
       });
       setHandoffActive(true);
       addAssistantNotice(t().handoffConnected);
@@ -331,10 +335,24 @@ export function ChatWindow(props: ChatWindowProps) {
 
       <Show when={hasUserTurn() && chatState.config?.handoff?.hubspot?.enabled && !chatState.handoffActive}>
         <div class="klai-handoff-bar">
+          <Show when={!props.collectUserInfo}>
+            <input
+              class="klai-handoff-name-input"
+              type="text"
+              autocomplete="name"
+              placeholder={t().handoffNamePlaceholder}
+              value={visitorName()}
+              onInput={(e) => {
+                const name = e.currentTarget.value;
+                setVisitorName(name);
+                setVisitorIdentity({ name });
+              }}
+            />
+          </Show>
           <button
             type="button"
             class="klai-handoff-btn"
-            disabled={chatState.handoffConnecting || chatState.isStreaming}
+            disabled={chatState.handoffConnecting || chatState.isStreaming || visitorName().trim().length < 2}
             onClick={() => void startHandoff()}
           >
             {t().handoffButton}
@@ -353,7 +371,11 @@ export function ChatWindow(props: ChatWindowProps) {
                 autocomplete="name"
                 placeholder={t().userInfoName}
                 value={visitorName()}
-                onInput={(e) => setVisitorName(e.currentTarget.value)}
+                onInput={(e) => {
+                  const name = e.currentTarget.value;
+                  setVisitorName(name);
+                  setVisitorIdentity({ name });
+                }}
               />
               <input
                 class="klai-user-info-input"
@@ -361,7 +383,11 @@ export function ChatWindow(props: ChatWindowProps) {
                 autocomplete="email"
                 placeholder={t().userInfoEmail}
                 value={visitorEmail()}
-                onInput={(e) => setVisitorEmail(e.currentTarget.value)}
+                onInput={(e) => {
+                  const email = e.currentTarget.value;
+                  setVisitorEmail(email);
+                  setVisitorIdentity({ email });
+                }}
               />
             </div>
           </div>

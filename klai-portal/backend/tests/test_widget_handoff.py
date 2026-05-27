@@ -18,6 +18,8 @@ class _Result:
 def test_build_handoff_context_text_includes_summary_and_recent_transcript() -> None:
     text = build_handoff_context_text(
         summary="Klant wil realtime hulp.",
+        visitor_name="Mark Vletter",
+        visitor_email="mark@example.com",
         messages=[
             {"role": "user", "content": "Hoi"},
             {"role": "assistant", "content": "Waarmee kan ik helpen?"},
@@ -27,6 +29,9 @@ def test_build_handoff_context_text_includes_summary_and_recent_transcript() -> 
     assert "Nieuwe live support overdracht" in text
     assert "Samenvatting:" in text
     assert "Klant wil realtime hulp." in text
+    assert "Bezoeker:" in text
+    assert "Naam: Mark Vletter" in text
+    assert "E-mail: mark@example.com" in text
     assert "Bezoeker: Hoi" in text
     assert "Klai: Waarmee kan ik helpen?" in text
 

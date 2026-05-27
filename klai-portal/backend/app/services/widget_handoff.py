@@ -17,8 +17,26 @@ logger = structlog.get_logger()
 _PROVIDER = "hubspot"
 
 
-def build_handoff_context_text(*, summary: str | None, messages: list[dict[str, str]]) -> str:
+def _clean_visitor_value(value: str | None, *, max_length: int) -> str | None:
+    cleaned = value.strip() if value else ""
+    return cleaned[:max_length] if cleaned else None
+
+
+def build_handoff_context_text(
+    *,
+    summary: str | None,
+    messages: list[dict[str, str]],
+    visitor_name: str | None = None,
+    visitor_email: str | None = None,
+) -> str:
     parts: list[str] = ["Nieuwe live support overdracht vanuit Klai Webchat."]
+    visitor_lines: list[str] = []
+    if visitor_name:
+        visitor_lines.append(f"Naam: {visitor_name}")
+    if visitor_email:
+        visitor_lines.append(f"E-mail: {visitor_email}")
+    if visitor_lines:
+        parts.append("Bezoeker:\n" + "\n".join(visitor_lines))
     if summary and summary.strip():
         parts.append(f"Samenvatting:\n{summary.strip()[:4000]}")
 
@@ -135,8 +153,12 @@ async def start_hubspot_handoff(
     widget_public_id: str,
     session_key: str,
     summary: str | None,
+    visitor_name: str | None,
+    visitor_email: str | None,
     messages: list[dict[str, str]],
 ) -> dict[str, Any]:
+    visitor_name = _clean_visitor_value(visitor_name, max_length=120)
+    visitor_email = _clean_visitor_value(visitor_email, max_length=254)
     widget_row = (
         await db.execute(
             text(
@@ -188,7 +210,13 @@ async def start_hubspot_handoff(
 
     integration_thread_id = f"klai-widget-{widget_public_id}-{conversation_id}"
     channel_account = await ensure_channel_account()
-    handoff_context = build_handoff_context_text(summary=summary, messages=messages)
+    handoff_context = build_handoff_context_text(
+        summary=summary,
+        messages=messages,
+        visitor_name=visitor_name,
+        visitor_email=visitor_email,
+    )
+    hubspot_visitor_name = visitor_name or f"{widget_name} visitor"
 
     inserted = (
         await db.execute(
@@ -225,7 +253,7 @@ async def start_hubspot_handoff(
             idempotency_id=str(uuid4()),
             text=handoff_context,
             visitor_id=f"{widget_public_id}:{conversation_id}",
-            visitor_name=f"{widget_name} visitor",
+            visitor_name=hubspot_visitor_name,
         )
     except Exception:
         await db.execute(
@@ -293,7 +321,9 @@ async def send_handoff_visitor_message(
     widget_public_id: str,
     session_key: str,
     content: str,
+    visitor_name: str | None = None,
 ) -> dict[str, Any]:
+    visitor_name = _clean_visitor_value(visitor_name, max_length=120)
     session = (
         await db.execute(
             text(
@@ -333,6 +363,7 @@ async def send_handoff_visitor_message(
         idempotency_id=idempotency_id,
         text=content,
         visitor_id=f"{widget_public_id}:{conversation_id}",
+        visitor_name=visitor_name or "Klai visitor",
     )
     hubspot_message_id = message_payload.get("id")
     inserted = (

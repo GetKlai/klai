@@ -20,6 +20,8 @@ export interface HandoffEventCallbacks {
 export async function startHubSpotHandoff(options: {
   token: string;
   messages: Message[];
+  visitorName?: string;
+  visitorEmail?: string;
 }): Promise<void> {
   const response = await fetch(endpoint("/partner/v1/widget-handoffs/hubspot/start"), {
     method: "POST",
@@ -29,6 +31,8 @@ export async function startHubSpotHandoff(options: {
     },
     body: JSON.stringify({
       summary: buildHandoffSummary(options.messages),
+      visitor_name: cleanVisitorValue(options.visitorName),
+      visitor_email: cleanVisitorValue(options.visitorEmail),
       messages: options.messages
         .filter((message) => message.role === "user" || message.role === "assistant")
         .map((message) => ({
@@ -45,6 +49,7 @@ export async function startHubSpotHandoff(options: {
 export async function sendHubSpotHandoffMessage(options: {
   token: string;
   content: string;
+  visitorName?: string;
 }): Promise<void> {
   const response = await fetch(endpoint("/partner/v1/widget-handoffs/hubspot/messages"), {
     method: "POST",
@@ -52,7 +57,10 @@ export async function sendHubSpotHandoffMessage(options: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${options.token}`,
     },
-    body: JSON.stringify({ content: options.content }),
+    body: JSON.stringify({
+      content: options.content,
+      visitor_name: cleanVisitorValue(options.visitorName),
+    }),
   });
   if (!response.ok) {
     throw new Error(`HubSpot handoff message failed: ${response.status}`);
@@ -131,4 +139,9 @@ function buildHandoffSummary(messages: Message[]): string {
     parts.push(`Laatste Klai antwoord: ${lastAssistant.content.slice(0, 600)}`);
   }
   return parts.join("\n");
+}
+
+function cleanVisitorValue(value: string | undefined): string | undefined {
+  const cleaned = value?.trim();
+  return cleaned ? cleaned : undefined;
 }
