@@ -1,7 +1,7 @@
 """marker for widget handoff session tables
 
 Revision ID: c6f1e2d3a4b5
-Revises: fb2c3d4e5f6a
+Revises: u6v7w8x9y0z1
 Create Date: 2026-05-27
 
 The tables reference klai-owned widget audit tables and need RLS policy
@@ -12,7 +12,7 @@ from typing import Sequence, Union
 
 
 revision: str = "c6f1e2d3a4b5"
-down_revision: Union[str, Sequence[str], None] = "fb2c3d4e5f6a"
+down_revision: Union[str, Sequence[str], None] = "u6v7w8x9y0z1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
