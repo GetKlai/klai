@@ -18,6 +18,11 @@ export interface WidgetConfig {
   show_sources?: boolean;
   show_meta?: boolean;
   page_context_enabled?: boolean;
+  handoff?: {
+    hubspot?: {
+      enabled?: boolean;
+    };
+  };
 }
 
 export type KlaiWidgetErrorCode =

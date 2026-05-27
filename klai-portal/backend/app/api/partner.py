@@ -50,6 +50,12 @@ from app.services.widget_audit import (
     session_key_from_token,
 )
 from app.services.widget_auth import generate_session_token, origin_allowed
+from app.services.widget_handoff import (
+    get_active_handoff_session_id,
+    list_visible_handoff_messages,
+    send_handoff_visitor_message,
+    start_hubspot_handoff,
+)
 
 logger = structlog.get_logger()
 
@@ -133,6 +139,33 @@ class PartnerKnowledgeRequest(BaseModel):
     content: str = Field(..., max_length=10_485_760)
     source_type: str = "partner_api"
     content_type: str = "text/plain"
+
+
+class HandoffTranscriptMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
+class StartHubSpotHandoffRequest(BaseModel):
+    summary: str | None = Field(default=None, max_length=4000)
+    messages: list[HandoffTranscriptMessage] = Field(default_factory=list, max_length=50)
+
+
+class SendHubSpotHandoffMessageRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=10000)
+
+
+class HubSpotHandoffResponse(BaseModel):
+    id: int
+    status: str
+    integration_thread_id: str
+    hubspot_conversations_thread_id: str | None = None
+
+
+class HubSpotHandoffMessageResponse(BaseModel):
+    id: int | None
+    handoff_session_id: int
+    hubspot_message_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -937,6 +970,136 @@ async def submit_support_feedback(
 
 
 # ---------------------------------------------------------------------------
+# Widget human handoff endpoints
+# ---------------------------------------------------------------------------
+
+
+def _require_widget_auth(auth: PartnerAuthContext) -> None:
+    if not str(auth.key_id).startswith("wgt_") or not auth.session_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"type": "permission_error", "message": "Widget session required"}},
+        )
+
+
+@router.post("/widget-handoffs/hubspot/start", response_model=HubSpotHandoffResponse)
+async def start_widget_hubspot_handoff(
+    request: StartHubSpotHandoffRequest,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+    db: AsyncSession = Depends(get_db),
+) -> HubSpotHandoffResponse:
+    _require_widget_auth(auth)
+    try:
+        result = await start_hubspot_handoff(
+            db,
+            org_id=auth.org_id,
+            widget_public_id=str(auth.key_id),
+            session_key=auth.session_key or "",
+            summary=request.summary,
+            messages=[message.model_dump() for message in request.messages],
+        )
+    except Exception as exc:
+        logger.exception("widget_hubspot_handoff_start_failed", org_id=auth.org_id, widget_id=str(auth.key_id))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": {"type": "handoff_error", "message": "Could not start HubSpot handoff"}},
+        ) from exc
+    return HubSpotHandoffResponse(**result)
+
+
+@router.post("/widget-handoffs/hubspot/messages", response_model=HubSpotHandoffMessageResponse)
+async def send_widget_hubspot_handoff_message(
+    request: SendHubSpotHandoffMessageRequest,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+    db: AsyncSession = Depends(get_db),
+) -> HubSpotHandoffMessageResponse:
+    _require_widget_auth(auth)
+    try:
+        result = await send_handoff_visitor_message(
+            db,
+            org_id=auth.org_id,
+            widget_public_id=str(auth.key_id),
+            session_key=auth.session_key or "",
+            content=request.content,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": {"type": "handoff_error", "message": "No active HubSpot handoff"}},
+        ) from exc
+    except Exception as exc:
+        logger.exception("widget_hubspot_handoff_message_failed", org_id=auth.org_id, widget_id=str(auth.key_id))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": {"type": "handoff_error", "message": "Could not send HubSpot handoff message"}},
+        ) from exc
+    return HubSpotHandoffMessageResponse(**result)
+
+
+@router.get("/widget-handoffs/hubspot/events")
+async def stream_widget_hubspot_handoff_events(
+    last_event_id: int = 0,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    _require_widget_auth(auth)
+    handoff_session_id = await get_active_handoff_session_id(
+        db,
+        org_id=auth.org_id,
+        widget_public_id=str(auth.key_id),
+        session_key=auth.session_key or "",
+    )
+    if handoff_session_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"type": "handoff_error", "message": "No active HubSpot handoff"}},
+        )
+
+    async def _events() -> AsyncGenerator[bytes]:
+        seen_id = last_event_id
+        for message in await list_visible_handoff_messages(
+            db,
+            handoff_session_id=handoff_session_id,
+            after_id=last_event_id,
+        ):
+            seen_id = max(seen_id, int(message["id"]))
+            yield f"id: {message['id']}\nevent: message\ndata: {json.dumps(message)}\n\n".encode()
+
+        redis = await get_redis_pool()
+        if redis is None:
+            while True:
+                await asyncio.sleep(15)
+                yield b": heartbeat\n\n"
+
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(f"widget_handoff:{handoff_session_id}")
+        try:
+            while True:
+                event = await pubsub.get_message(ignore_subscribe_messages=True, timeout=15)
+                if event is None:
+                    yield b": heartbeat\n\n"
+                    continue
+                raw_data = event.get("data")
+                if not isinstance(raw_data, str):
+                    continue
+                try:
+                    payload = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    continue
+                event_id = int(payload.get("id") or 0)
+                if event_id and event_id <= seen_id:
+                    continue
+                if event_id:
+                    seen_id = event_id
+                yield f"id: {event_id}\nevent: message\ndata: {json.dumps(payload)}\n\n".encode()
+        finally:
+            await pubsub.unsubscribe(f"widget_handoff:{handoff_session_id}")
+            await pubsub.aclose()
+
+    return StreamingResponse(_events(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
 # POST /partner/v1/feedback  (TASK-010)
 # ---------------------------------------------------------------------------
 
@@ -1346,6 +1509,16 @@ async def widget_config(
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
+        "handoff": {
+            "hubspot": {
+                "enabled": bool(
+                    isinstance(widget_config_data.get("integrations"), dict)
+                    and isinstance(widget_config_data["integrations"].get("hubspot"), dict)
+                    and widget_config_data["integrations"]["hubspot"].get("status") == "connected"
+                    and widget_config_data["integrations"]["hubspot"].get("channel_account_id")
+                )
+            }
+        },
     }
 
     return Response(
@@ -1445,6 +1618,16 @@ async def public_bot_config(
         "show_meta": widget_config_data.get("show_meta", False),
         "name": widget_row.name,
         "description": widget_row.description or "",
+        "handoff": {
+            "hubspot": {
+                "enabled": bool(
+                    isinstance(widget_config_data.get("integrations"), dict)
+                    and isinstance(widget_config_data["integrations"].get("hubspot"), dict)
+                    and widget_config_data["integrations"]["hubspot"].get("status") == "connected"
+                    and widget_config_data["integrations"]["hubspot"].get("channel_account_id")
+                )
+            }
+        },
     }
     return Response(
         content=json.dumps(body),

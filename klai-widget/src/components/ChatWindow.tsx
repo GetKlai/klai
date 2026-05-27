@@ -1,7 +1,9 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, onCleanup, Show } from "solid-js";
 import { MessageList } from "./MessageList";
 import {
   chatState,
+  addAgentMessage,
+  addAssistantNotice,
   addUserMessage,
   startAssistantMessage,
   appendToLastMessage,
@@ -9,8 +11,15 @@ import {
   finishStreaming,
   setError,
   clearError,
+  setHandoffActive,
+  setHandoffConnecting,
 } from "../store/chat";
 import { collectPageContext, streamChat } from "../api/chat-stream";
+import {
+  sendHubSpotHandoffMessage,
+  startHubSpotHandoff,
+  streamHubSpotHandoffEvents,
+} from "../api/handoff";
 import { t } from "../i18n/labels";
 
 interface ChatWindowProps {
@@ -32,7 +41,9 @@ interface ChatWindowProps {
 export function ChatWindow(props: ChatWindowProps) {
   const [inputValue, setInputValue] = createSignal("");
   let abortController: AbortController | null = null;
+  let handoffAbortController: AbortController | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
+  const seenHandoffMessageIds = new Set<number>();
 
   const handleStarterClick = (text: string) => {
     if (chatState.isStreaming) return;
@@ -42,7 +53,7 @@ export function ChatWindow(props: ChatWindowProps) {
 
   const handleSend = async (override?: string) => {
     const content = (override ?? inputValue()).trim();
-    if (!content || chatState.isStreaming) return;
+    if (!content || chatState.isStreaming || chatState.handoffConnecting) return;
 
     clearError();
     addUserMessage(content);
@@ -50,6 +61,18 @@ export function ChatWindow(props: ChatWindowProps) {
 
     if (textareaRef) {
       textareaRef.style.height = "auto";
+    }
+
+    if (chatState.handoffActive) {
+      try {
+        await sendHubSpotHandoffMessage({
+          token: chatState.sessionToken,
+          content,
+        });
+      } catch {
+        setError(t().errorGeneric);
+      }
+      return;
     }
 
     startAssistantMessage();
@@ -94,6 +117,51 @@ export function ChatWindow(props: ChatWindowProps) {
       finishStreaming();
     }
   };
+
+  const startHandoff = async () => {
+    if (chatState.handoffActive || chatState.handoffConnecting || chatState.isStreaming) {
+      return;
+    }
+    clearError();
+    setHandoffConnecting(true);
+    addAssistantNotice(t().handoffConnecting);
+    try {
+      await startHubSpotHandoff({
+        token: chatState.sessionToken,
+        messages: chatState.messages,
+      });
+      setHandoffActive(true);
+      addAssistantNotice(t().handoffConnected);
+      handoffAbortController = new AbortController();
+      void streamHubSpotHandoffEvents({
+        token: chatState.sessionToken,
+        abortController: handoffAbortController,
+        callbacks: {
+          onAgentMessage: (content, id) => {
+            if (id && seenHandoffMessageIds.has(id)) {
+              return;
+            }
+            if (id) {
+              seenHandoffMessageIds.add(id);
+            }
+            addAgentMessage(content);
+          },
+          onError: () => {
+            setError(t().errorGeneric);
+          },
+        },
+      });
+    } catch {
+      setError(t().errorGeneric);
+    }
+  };
+
+  onCleanup(() => {
+    if (handoffAbortController) {
+      handoffAbortController.abort();
+      handoffAbortController = null;
+    }
+  });
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -205,6 +273,19 @@ export function ChatWindow(props: ChatWindowProps) {
         />
       </Show>
 
+      <Show when={hasUserTurn() && chatState.config?.handoff?.hubspot?.enabled && !chatState.handoffActive}>
+        <div class="klai-handoff-bar">
+          <button
+            type="button"
+            class="klai-handoff-btn"
+            disabled={chatState.handoffConnecting || chatState.isStreaming}
+            onClick={() => void startHandoff()}
+          >
+            {t().handoffButton}
+          </button>
+        </div>
+      </Show>
+
       <div class="klai-input-area">
         <textarea
           ref={textareaRef}
@@ -213,7 +294,7 @@ export function ChatWindow(props: ChatWindowProps) {
           value={inputValue()}
           onInput={handleTextareaInput}
           onKeyDown={handleKeyDown}
-          disabled={chatState.isStreaming}
+          disabled={chatState.isStreaming || chatState.handoffConnecting}
           rows={1}
           aria-label={t().inputLabel}
         />
@@ -223,7 +304,7 @@ export function ChatWindow(props: ChatWindowProps) {
             <button
               class="klai-send-btn"
               aria-label={t().sendMessage}
-              disabled={inputValue().trim() === ""}
+              disabled={inputValue().trim() === "" || chatState.handoffConnecting}
               onClick={() => void handleSend()}
             >
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

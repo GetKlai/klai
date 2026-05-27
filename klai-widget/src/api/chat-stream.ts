@@ -2,7 +2,7 @@ import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { fetchWidgetConfig, KlaiWidgetError } from "./widget-config";
 
 export interface Message {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "agent";
   content: string;
   sources?: MessageSource[];
 }
