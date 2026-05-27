@@ -566,6 +566,14 @@ function feedbackItemStatusLabel(status: string): string {
   return 'Inbox'
 }
 
+function feedbackItemKindLabel(kind: string): string {
+  if (kind === 'bug') return 'Bug'
+  if (kind === 'ux_confusion') return 'UX'
+  if (kind === 'docs') return 'Docs'
+  if (kind === 'support_pattern') return 'Support'
+  return 'Feature'
+}
+
 export function FeedbackTab({
   search,
   status,
@@ -1045,32 +1053,15 @@ function FeedbackItemDetailForm({
   fmtDate: (s: string | null) => string
 }) {
   const updateItem = usePlatformFeedbackUpdateItem()
-  const [kind, setKind] = useState(item.kind)
   const [status, setStatus] = useState(item.status)
   const [title, setTitle] = useState(item.title)
   const [summary, setSummary] = useState(item.summary ?? '')
-  const [area, setArea] = useState(item.area ?? '')
-  const [publicTitle, setPublicTitle] = useState(item.public_title ?? '')
-  const [publicSummary, setPublicSummary] = useState(item.public_summary ?? '')
-  const [targetWindow, setTargetWindow] = useState(item.target_window ?? '')
-  const [owner, setOwner] = useState(item.owner ?? '')
-  const [githubUrl, setGithubUrl] = useState(item.external_tracker_url ?? '')
-  const [publicFeedbackUrl, setPublicFeedbackUrl] = useState(item.public_feedback_url ?? '')
   const saveItem = () => {
     updateItem.mutate({
       itemId: item.id,
-      kind,
       status,
       title: title.trim(),
       summary: summary.trim() || null,
-      area: area.trim() || null,
-      owner: owner.trim() || null,
-      target_window: targetWindow.trim() || null,
-      public_title: publicTitle.trim() || null,
-      public_summary: publicSummary.trim() || null,
-      external_tracker_type: githubUrl.trim() ? 'github' : null,
-      external_tracker_url: githubUrl.trim() || null,
-      public_feedback_url: publicFeedbackUrl.trim() || null,
     })
   }
 
@@ -1078,18 +1069,13 @@ function FeedbackItemDetailForm({
     <div className="space-y-5">
       <section className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+          <Badge variant="outline">{feedbackItemKindLabel(item.kind)}</Badge>
           <Badge variant="outline">{item.org_count} orgs</Badge>
           <Badge variant="outline">{item.user_count} users</Badge>
           <Badge variant="secondary">score {item.priority_score}</Badge>
+          {item.area && <Badge variant="outline">{item.area}</Badge>}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Select value={kind} onChange={(event) => setKind(event.target.value)}>
-            <option value="feature">Feature</option>
-            <option value="bug">Bug</option>
-            <option value="ux_confusion">UX verwarring</option>
-            <option value="docs">Docs</option>
-            <option value="support_pattern">Support patroon</option>
-          </Select>
+        <div className="grid gap-3">
           <Select value={status} onChange={(event) => setStatus(event.target.value)}>
             <option value="inbox">Inbox</option>
             <option value="under_review">In review</option>
@@ -1124,50 +1110,6 @@ function FeedbackItemDetailForm({
           )}
         </div>
       </section>
-
-      <details className="rounded-lg border border-gray-200 bg-white">
-        <summary className="cursor-pointer px-3 py-3 text-sm font-medium text-gray-900">
-          Planning
-        </summary>
-        <div className="grid gap-3 border-t border-gray-200 p-3 sm:grid-cols-3">
-          <Input value={area} onChange={(event) => setArea(event.target.value)} placeholder="Productgebied" />
-          <Input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Owner" />
-          <Input
-            value={targetWindow}
-            onChange={(event) => setTargetWindow(event.target.value)}
-            placeholder="Target window"
-          />
-        </div>
-      </details>
-
-      <details className="rounded-lg border border-gray-200 bg-white">
-        <summary className="cursor-pointer px-3 py-3 text-sm font-medium text-gray-900">
-          Links en publicatie
-        </summary>
-        <div className="space-y-3 border-t border-gray-200 p-3">
-          <Input
-            value={githubUrl}
-            onChange={(event) => setGithubUrl(event.target.value)}
-            placeholder="GitHub issue URL"
-          />
-          <Input
-            value={publicFeedbackUrl}
-            onChange={(event) => setPublicFeedbackUrl(event.target.value)}
-            placeholder="feedback.getklai.com URL"
-          />
-          <Input
-            value={publicTitle}
-            onChange={(event) => setPublicTitle(event.target.value)}
-            placeholder="Publieke titel"
-          />
-          <Textarea
-            value={publicSummary}
-            onChange={(event) => setPublicSummary(event.target.value)}
-            rows={3}
-            placeholder="Publieke samenvatting"
-          />
-        </div>
-      </details>
 
       <section className="space-y-3 border-t border-gray-200 pt-5">
         <h3 className="text-sm font-medium text-gray-900">
