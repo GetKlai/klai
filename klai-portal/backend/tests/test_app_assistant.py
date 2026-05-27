@@ -18,7 +18,7 @@ def _request():
     return SimpleNamespace(
         headers={
             "user-agent": "pytest",
-            "referer": "https://app.getklai.com/app/chat",
+            "referer": "https://app.getklai.com/app/chat?token=secret#section",
         },
         client=SimpleNamespace(host="127.0.0.1"),
     )

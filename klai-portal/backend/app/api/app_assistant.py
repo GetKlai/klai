@@ -44,18 +44,19 @@ class AssistantSubmitResponse(BaseModel):
     ok: bool = True
 
 
-def _request_context(request: Request) -> dict[str, str | None]:
-    client_host = request.client.host if request.client else None
-    return {
-        "user_agent": request.headers.get("user-agent"),
-        "referer": request.headers.get("referer"),
-        "client_host": client_host,
-    }
-
-
 def _strip_url_query_and_fragment(url: str) -> str:
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _request_context(request: Request) -> dict[str, str | None]:
+    client_host = request.client.host if request.client else None
+    referer = request.headers.get("referer")
+    return {
+        "user_agent": request.headers.get("user-agent"),
+        "referer": _strip_url_query_and_fragment(referer) if referer else None,
+        "client_host": client_host,
+    }
 
 
 def _base_properties(
