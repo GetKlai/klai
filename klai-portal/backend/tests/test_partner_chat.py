@@ -73,6 +73,15 @@ def test_llm_messages_strip_widget_metadata():
     assert all(set(message) == {"role", "content"} for message in augmented)
 
 
+def test_no_citable_sources_message_follows_dutch_query_language():
+    from app.services.partner_chat import _no_citable_sources_message
+
+    assert (
+        _no_citable_sources_message("Hoeveel knowledgebases mag ik aanmaken?")
+        == "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+    )
+
+
 @pytest.mark.asyncio
 async def test_invalid_model_returns_400():
     """Model must be klai-primary or klai-fast; anything else -> 400."""

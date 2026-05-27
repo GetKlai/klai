@@ -335,16 +335,16 @@ export function ChatWindow(props: ChatWindowProps) {
           </div>
           <div class="klai-header-actions">
             <button
-              class="klai-icon-btn"
+              class={showHistory() ? "klai-icon-btn klai-icon-btn--active" : "klai-icon-btn"}
               type="button"
               aria-label={t().conversationHistory}
               title={t().conversationHistory}
               onClick={() => setShowHistory((value) => !value)}
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M3 5h18" />
-                <path d="M3 12h18" />
-                <path d="M3 19h18" />
+              <svg class={showHistory() ? "klai-menu-icon klai-menu-icon--open" : "klai-menu-icon"} viewBox="0 0 24 24" aria-hidden="true">
+                <path class="klai-menu-icon-line klai-menu-icon-line--top" d="M4 7h16" />
+                <path class="klai-menu-icon-line klai-menu-icon-line--middle" d="M4 12h16" />
+                <path class="klai-menu-icon-line klai-menu-icon-line--bottom" d="M4 17h16" />
               </svg>
             </button>
             <button

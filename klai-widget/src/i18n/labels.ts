@@ -1,6 +1,6 @@
 /**
  * Widget UI labels in NL and EN.
- * Selected by browser locale or widget_config override.
+ * Selected by explicit widget locale, then widget copy, then page/browser locale.
  */
 
 export interface WidgetLabels {
@@ -91,11 +91,37 @@ const locales: Record<string, WidgetLabels> = { nl, en }
 
 let _labels: WidgetLabels = nl
 
-export function initLabels(locale?: string): void {
-  const lang = locale || navigator.language?.slice(0, 2) || "nl"
+export function initLabels(locale?: string, samples: string[] = []): void {
+  const explicitLang = locale?.slice(0, 2).toLowerCase()
+  const lang =
+    explicitLang ||
+    detectLanguageFromSamples(samples) ||
+    document.documentElement.lang?.slice(0, 2).toLowerCase() ||
+    navigator.language?.slice(0, 2).toLowerCase() ||
+    "nl"
   _labels = locales[lang] ?? locales.en ?? nl
 }
 
 export function t(): WidgetLabels {
   return _labels
+}
+
+function detectLanguageFromSamples(samples: string[]): string | undefined {
+  const text = samples.join(" ").toLowerCase()
+  if (!text) return undefined
+  const dutchMarkers = [
+    " voor ",
+    " vraag ",
+    " vragen ",
+    " gesprek",
+    " gebruiker",
+    " gebruikers",
+    " toevoegen",
+    " kennis",
+    " waarmee",
+    " stel ",
+    " je ",
+    " jij ",
+  ]
+  return dutchMarkers.some((marker) => text.includes(marker)) ? "nl" : undefined
 }
