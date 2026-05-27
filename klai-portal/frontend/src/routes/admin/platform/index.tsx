@@ -1,9 +1,11 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import { BookOpen, Plus, RotateCw, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { fetchMe } from '@/lib/api-me'
+import { useAuth } from '@/lib/auth'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
 import * as m from '@/paraglide/messages'
@@ -54,9 +56,34 @@ function PlatformConsole() {
   const navigate = useNavigate()
   const [tab, setTab] = useState<PlatformTab>('users')
   const [search, setSearch] = useState('')
+  const auth = useAuth()
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: auth.isAuthenticated,
+  })
+  const isPlatformAdmin = meQuery.data?.is_platform_admin === true
 
-  const statsQuery = usePlatformStats()
+  const statsQuery = usePlatformStats(isPlatformAdmin)
   const stats = statsQuery.data
+
+  useEffect(() => {
+    if ((meQuery.data && !isPlatformAdmin) || meQuery.isError) {
+      void navigate({ to: '/admin', replace: true })
+    }
+  }, [isPlatformAdmin, meQuery.data, meQuery.isError, navigate])
+
+  if (
+    meQuery.isLoading ||
+    (auth.isAuthenticated && !meQuery.data && !meQuery.isError) ||
+    !isPlatformAdmin
+  ) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
+      </div>
+    )
+  }
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ['platform-stats'] })
