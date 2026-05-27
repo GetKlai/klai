@@ -73,6 +73,18 @@ function useTickEveryHalfMinute(): void {
 export function StatusBadge({ source }: { source: Source }) {
   useTickEveryHalfMinute()
   const status = mapSourceStatus(source)
+  const rawStatus = (source.status ?? '').toLowerCase()
+
+  if (
+    source.kind === 'connector'
+    && (rawStatus.includes('error') || rawStatus.includes('failed') || rawStatus === 'auth_error' || rawStatus === 'orphan')
+  ) {
+    return (
+      <Badge variant="destructive" title={source.status ?? undefined}>
+        {m.kb_status_probleem()}
+      </Badge>
+    )
+  }
 
   // Stale-indicator for sources stuck in 'pending'. last_sync_at is the
   // best signal of "when did this attempt start" — falls back to created_at

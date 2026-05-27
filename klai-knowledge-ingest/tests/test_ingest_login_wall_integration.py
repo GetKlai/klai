@@ -306,6 +306,39 @@ class TestCleanPageUntouched:
         assert "ingest_warning" not in sent_request.extra
 
 
+class TestAuthenticatedClusterHeuristic:
+    """Authenticated crawls must not reject pages only because templates match."""
+
+    @pytest.mark.asyncio()
+    async def test_authenticated_context_skips_template_cluster_detector(self) -> None:
+        clean = _clean_result()
+        pool, pg, ingest, lg = _patch_chain(cluster_simhashes=_wall_cluster(clean))
+        with (
+            patch("knowledge_ingest.adapters.crawler.pg_store", pg),
+            patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
+            patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
+            patch("knowledge_ingest.link_graph", lg, create=True),
+            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", True),
+            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_mode", "reject"),
+        ):
+            await _ingest_crawl_result(
+                pool,
+                clean,
+                clean.url,
+                org_id="100000000000000002",
+                kb_slug="support",
+                stored=None,
+                login_indicator_selector=None,
+                authenticated_context=True,
+            )
+
+        pool.fetch.assert_not_called()
+        ingest.assert_called_once()
+        sent_request = ingest.call_args.args[1]
+        assert "quality_score" not in sent_request.extra
+        assert "ingest_warning" not in sent_request.extra
+
+
 # ---------------------------------------------------------------------------
 # REQ-05 — Configuration
 # ---------------------------------------------------------------------------

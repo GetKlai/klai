@@ -829,6 +829,7 @@ async def trigger_sync(
 
     # Optimistically mark as running so the UI reflects it immediately.
     connector.last_sync_status = "running"
+    connector.last_sync_at = sync_run.started_at
     await db.commit()
     emit_event(
         "knowledge.uploaded",
