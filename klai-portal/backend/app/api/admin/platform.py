@@ -23,10 +23,12 @@ from datetime import datetime
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import bindparam, or_, select, text
 
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
+from app.models.events import ProductEvent
+from app.models.portal import PortalOrg as PortalOrgModel
 from app.services.audit import log_event
 from app.services.zitadel import zitadel
 
@@ -783,59 +785,65 @@ async def platform_feedback_submissions(
     """
     await _audit(perms, "feedback", search)
     params: dict[str, object] = {"limit": limit}
-    search_sql = ""
+
+    raw_text = ProductEvent.properties["raw_text"].astext
+    feedback_type = ProductEvent.properties["feedback_type"].astext
+    severity = ProductEvent.properties["severity"].astext
+    page_url = ProductEvent.properties["page_url"].astext
+    route_id = ProductEvent.properties["route_id"].astext
+    locale = ProductEvent.properties["locale"].astext
+    viewport = ProductEvent.properties["viewport"].astext
+
+    query = (
+        select(
+            ProductEvent.id.label("id"),
+            ProductEvent.org_id.label("org_id"),
+            PortalOrgModel.name.label("org_name"),
+            PortalOrgModel.slug.label("org_slug"),
+            ProductEvent.user_id.label("user_id"),
+            ProductEvent.event_type.label("event_type"),
+            raw_text.label("raw_text"),
+            feedback_type.label("feedback_type"),
+            severity.label("severity"),
+            page_url.label("page_url"),
+            route_id.label("route_id"),
+            locale.label("locale"),
+            viewport.label("viewport"),
+            ProductEvent.created_at.label("created_at"),
+        )
+        .select_from(ProductEvent)
+        .outerjoin(PortalOrgModel, PortalOrgModel.id == ProductEvent.org_id)
+        .where(
+            ProductEvent.event_type.in_(
+                (
+                    "klai_assistant.question",
+                    "klai_assistant.feedback",
+                    "klai_assistant.problem_report",
+                )
+            )
+        )
+        .order_by(ProductEvent.created_at.desc())
+        .limit(bindparam("limit"))
+    )
+
     if search:
         params["q"] = f"%{search}%"
-        search_sql = """
-          AND (
-            o.name ILIKE :q
-            OR o.slug ILIKE :q
-            OR e.user_id ILIKE :q
-            OR e.event_type ILIKE :q
-            OR e.properties->>'raw_text' ILIKE :q
-            OR e.properties->>'page_url' ILIKE :q
-            OR e.properties->>'route_id' ILIKE :q
-          )
-        """
+        q = bindparam("q")
+        query = query.where(
+            or_(
+                PortalOrgModel.name.ilike(q),
+                PortalOrgModel.slug.ilike(q),
+                ProductEvent.user_id.ilike(q),
+                ProductEvent.event_type.ilike(q),
+                raw_text.ilike(q),
+                page_url.ilike(q),
+                route_id.ilike(q),
+            )
+        )
 
     async with cross_org_session() as db:
         try:
-            rows = (
-                await db.execute(
-                    text(
-                        """
-                        SELECT
-                          e.id,
-                          e.org_id,
-                          o.name AS org_name,
-                          o.slug AS org_slug,
-                          e.user_id,
-                          e.event_type,
-                          e.properties->>'raw_text' AS raw_text,
-                          e.properties->>'feedback_type' AS feedback_type,
-                          e.properties->>'severity' AS severity,
-                          e.properties->>'page_url' AS page_url,
-                          e.properties->>'route_id' AS route_id,
-                          e.properties->>'locale' AS locale,
-                          e.properties->>'viewport' AS viewport,
-                          e.created_at
-                        FROM product_events e
-                        LEFT JOIN portal_orgs o ON o.id = e.org_id
-                        WHERE e.event_type IN (
-                          'klai_assistant.question',
-                          'klai_assistant.feedback',
-                          'klai_assistant.problem_report'
-                        )
-                        """
-                        + search_sql
-                        + """
-                        ORDER BY e.created_at DESC
-                        LIMIT :limit
-                        """
-                    ),
-                    params,
-                )
-            ).all()
+            rows = (await db.execute(query, params)).all()
         except Exception:
             logger.warning("platform_feedback_submissions_query_failed", exc_info=True)
             return []
