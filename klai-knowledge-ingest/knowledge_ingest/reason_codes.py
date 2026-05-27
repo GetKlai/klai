@@ -49,6 +49,11 @@ class FetchReasonCode(StrEnum):
     PARSE_ERROR = "parse_error"
     RATE_LIMITED = "rate_limited"
     NON_CONTENT_LISTING_PAGE = "non_content_listing_page"
+    NOT_FETCHED_BUDGET_EXHAUSTED = "not_fetched_budget_exhausted"
+    NOT_FETCHED_DEPTH_LIMIT = "not_fetched_depth_limit"
+    NOT_FETCHED_DISCOVERY_LIMIT = "not_fetched_discovery_limit"
+    NOT_FETCHED_EXCLUDED = "not_fetched_excluded"
+    NOT_FETCHED_DUPLICATE = "not_fetched_duplicate"
     UNKNOWN_EXCEPTION = "unknown_exception"
 
 
