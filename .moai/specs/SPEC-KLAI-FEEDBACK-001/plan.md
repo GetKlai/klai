@@ -29,19 +29,18 @@ Klai-staff zo klein mogelijk. De gewenste workflow is:
 - Feedback en probleemmeldingen posten naar authenticated first-party endpoints:
   - `/api/app/assistant/feedback`
   - `/api/app/assistant/problem-reports`
-- Submissions worden op dit moment nog als product events opgeslagen:
-  - `klai_assistant.question`
-  - `klai_assistant.feedback`
-  - `klai_assistant.problem_report`
-- `emit_event(...)` schrijft naar `product_events`. Dat is bruikbaar als
-  tijdelijke capture/audit, maar niet als goede triage- of roadmapbron.
+- Feedback en probleemmeldingen worden primair opgeslagen in
+  `feedback_submissions`.
+- `product_events` blijft alleen secundair analytics/audit-signaal. Ruwe
+  feedbacktekst hoort daar niet meer in.
 - De Platform-admin view bestaat al in deze repo:
   - frontend: `klai-portal/frontend/src/routes/admin/platform`
   - backend: `klai-portal/backend/app/api/admin/platform*.py`
 - Platform is nu zichtbaar via de admin sidebar met `platformAdminOnly: true`.
   Backend endpoints gebruiken `require_platform_admin()` en lezen cross-tenant.
-- De Platform Feedback-tab is live als read-only view op recente assistant
-  submissions via `/api/admin/platform/feedback-submissions`.
+- De Platform Feedback-tab is live als triage view op
+  `feedback_submissions`, met acties voor support, negeren, item maken en
+  linken.
 - RLS op `product_events` staat Platform cross-org reads toe via expliciete
   `app.cross_org_admin=true`, niet via een generieke open policy.
 - Security/privacy-hardening die al is toegepast:
@@ -55,27 +54,6 @@ Klai-staff zo klein mogelijk. De gewenste workflow is:
 
 Live op `main`:
 
-- `6d5e628e` - assistant kleur/UI herstel en planbasis.
-- `7b541120` - `Stel een vraag` opent de bestaande Klai Help widget-flow.
-- `543239b1` - Platform Feedback-tab toont assistant submissions.
-- `6945da1e` - Platform feedback query naar SQLAlchemy `select()` omgezet.
-- `515ecdc9` - RLS policy laat Platform `product_events` cross-org lezen.
-- `c4c5bed8` - feedback context stript query/hash uit `page_url`.
-- `41c4efc9` - feedback context stript query/hash uit `referer`.
-
-Geverifieerd:
-
-- Frontend build en deploy groen.
-- Portal API quality, Semgrep, Trivy, RLS smoke test en deploy groen.
-- Live submit en Platform Feedback-tab werken.
-
-Nog niet gebouwd:
-
-- AI triage en duplicate detectie.
-- Downstream sync naar Linear/GitHub/Plane.
-
-Recent toegevoegd op `main`:
-
 - Echte feedback-tabellen met RLS:
   `feedback_submissions`, `feedback_items`, `feedback_item_links`,
   `feedback_triage_suggestions`.
@@ -84,9 +62,6 @@ Recent toegevoegd op `main`:
   `feedback_submissions`.
 - Platform Feedback-tab leest uit `feedback_submissions` in plaats van
   `product_events`.
-
-In deze implementatie toegevoegd, nog niet deployed bij het schrijven:
-
 - Platform detail drawer voor feedback submissions.
 - Platform triage-acties:
   - `dismiss`;
@@ -95,9 +70,6 @@ In deze implementatie toegevoegd, nog niet deployed bij het schrijven:
   - `link to existing feedback item`.
 - Simpele duplicate/item search op bestaande `feedback_items`.
 - Item-signaal via `org_count`, `user_count` en `priority_score`.
-
-Aanvullend live op `main`:
-
 - Platform item-detail toont gekoppelde submissions en item-signaal.
 - `feedback_items` heeft lightweight roadmapvelden voor later gebruik:
   `public_title`, `public_summary`, `public_feedback_url`, `target_window`,
@@ -108,6 +80,48 @@ Aanvullend live op `main`:
   GitHub/Fider-links, owner en target window horen niet als leeg handmatig
   formulier in de eerste workflow. Die moeten door AI/systeem voorgesteld of
   via expliciete acties gezet worden.
+
+Geverifieerd:
+
+- Frontend build en deploy groen.
+- Portal API quality, Semgrep, Trivy, RLS smoke test en deploy groen.
+- Live submit en Platform Feedback-tab werken.
+- Productie-incident met detached ORM instances is gefixt met regressietest:
+  API response-objecten worden binnen de DB-sessie gematerialiseerd.
+
+Nog niet gebouwd:
+
+- AI triage en duplicate detectie.
+- Suggestiekaart in Platform.
+- Accept/correct workflow voor AI-suggesties.
+- Downstream sync naar GitHub Issues of feedback.getklai.com.
+
+## Kritische herijking na huidige progressie
+
+De grootste les uit de huidige implementatie is dat we niet nog meer
+handmatige velden moeten toevoegen. Het risico is niet dat we te weinig data
+kunnen opslaan; het risico is dat Klai-staff alsnog zelf productmanager,
+supportmedewerker en release-manager tegelijk moet spelen.
+
+Daarom gelden vanaf nu deze ontwerpregels:
+
+1. **Mens beslist, systeem vult voor.**
+   Staff kiest vooral status/actie en corrigeert titel/notitie waar nodig.
+   Type, productgebied, duplicate candidates, publieke tekst, GitHub/Fider
+   links, owner en target window zijn suggesties of systeemacties.
+2. **AI mag niet automatisch destructief handelen.**
+   AI mag voorstellen: link met item, maak nieuw item, support, negeer,
+   urgent bug. Staff accepteert of corrigeert.
+3. **Eerst betrouwbaarheid, dan automatisering.**
+   Elke nieuwe triage-actie moet tests hebben die sessie-lifetime, RLS-gating
+   en response-shape afdekken. Productie mag niet opnieuw de eerste plek zijn
+   waar een ORM/session of migratieprobleem zichtbaar wordt.
+4. **Geen extra bron van waarheid.**
+   `feedback_items` blijft canonical. GitHub Issues en feedback.getklai.com
+   krijgen pas later links/sync vanaf een item.
+5. **Meer velden tonen is geen betere workflow.**
+   Velden die staff niet expliciet hoeft te beslissen blijven verborgen of
+   alleen-lezen totdat er een concrete actie voor bestaat.
 
 ## Belangrijke correctie
 
@@ -262,7 +276,7 @@ AI-output die staff kan accepteren of corrigeren.
 
 ### Fase 1 - Persistente intake
 
-Status: klaar in code, pending deploy.
+Status: klaar en live.
 
 Klaar:
 
@@ -320,9 +334,26 @@ Acceptatie:
 
 ### Fase 3 - AI triage en duplicate detectie
 
-Status: eerstvolgende bouwstap.
+Status: eerstvolgende productstap, maar in twee kleinere delen bouwen.
 
-- Background job na elke submission.
+#### Fase 3a - Suggesties genereren
+
+- Background job of synchronous enqueue na elke submission.
+- Idempotent: dezelfde submission krijgt maximaal één actieve suggestie per
+  model/config versie.
+- Output wordt opgeslagen in `feedback_triage_suggestions`; geen automatische
+  wijziging aan `feedback_items` of `feedback_submissions` behalve eventueel
+  status `triage_suggested`.
+- Als AI faalt, blijft de handmatige workflow werken.
+
+Acceptatie:
+
+- Nieuwe feedback krijgt een suggestie zonder dat staff iets hoeft in te vullen.
+- Een AI-fout veroorzaakt geen submit-failure voor de gebruiker.
+- Suggestie bevat model/config metadata zodat output later te auditen is.
+
+#### Fase 3b - Suggesties gebruiken in Platform
+
 - Output:
   - korte samenvatting;
   - type;
@@ -343,8 +374,11 @@ Status: eerstvolgende bouwstap.
 
 Acceptatie:
 
-- Elk nieuw item krijgt binnen korte tijd een suggestie.
+- Elke nieuwe submission krijgt binnen korte tijd een suggestie.
 - Staff kan AI-suggestie accepteren of overschrijven.
+- Accepteren van "link met bestaand item" gebruikt dezelfde bestaande
+  `feedback_item_links` flow.
+- Accepteren van "nieuw item" gebruikt dezelfde bestaande create-item flow.
 
 ### Fase 4 - Roadmap-items en upvotes
 
@@ -423,7 +457,7 @@ Acceptatie:
 
 ## Eerstvolgende stap
 
-Bouw Fase 3: AI-triage als assistent bovenop de bestaande handmatige workflow.
+Bouw Fase 3a: AI-triage suggesties genereren, zonder automatische acties.
 
 Concreet:
 
@@ -436,10 +470,14 @@ Concreet:
    - urgency/severity;
    - duplicate candidates met confidence;
    - voorgestelde actie: link, nieuw item, support of negeer.
-3. Toon die suggestie in Platform als compacte "AI voorstel" kaart bij de
-   submission/detail drawer.
-4. Voeg acties toe om het voorstel te accepteren of te corrigeren.
-5. Pas daarna one-click sync toe naar GitHub Issues of feedback.getklai.com,
+3. Voeg tests toe voor:
+   - idempotentie;
+   - AI-failure fallback;
+   - duplicate candidate shape;
+   - geen cross-tenant leakage.
+4. Toon daarna pas de suggestie in Platform als compacte "AI voorstel" kaart.
+5. Voeg daarna acties toe om het voorstel te accepteren of te corrigeren.
+6. Pas daarna one-click sync toe naar GitHub Issues of feedback.getklai.com,
    altijd vanaf het canonical `feedback_item`.
 
 ## Risico's
