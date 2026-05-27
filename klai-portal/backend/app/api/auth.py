@@ -435,6 +435,8 @@ _STATIC_SYSTEM_SUBDOMAINS: frozenset[str] = frozenset(
         # Observability
         "grafana",
         "errors",
+        # Public-facing system services with their own OIDC apps
+        "feedback",  # Fider feedback portal (Klai OIDC app "Fider Feedback")
     }
 )
 
