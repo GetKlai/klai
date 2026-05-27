@@ -31,9 +31,19 @@ export interface ChatState {
   agentName: string | null;
   visitorName: string;
   visitorEmail: string;
+  // Opt-in flag controlling whether visitorName/visitorEmail are
+  // persisted to localStorage across sessions. False by default — the
+  // current session keeps both in memory and ships them to the handoff
+  // API, but a fresh browser tab on a shared computer starts blank.
+  rememberIdentity: boolean;
   conversationStatus: ConversationStatus;
   conversations: ConversationListItem[];
 }
+
+// Stored identity is wiped after this many milliseconds. The visitor's
+// next visit starts blank and re-prompts. Chosen at 30 days to match
+// the industry convention used by Intercom/Drift for the same opt-in.
+const IDENTITY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface PersistedConversation {
   id: string;
@@ -67,6 +77,21 @@ interface PersistedWidgetStateV2 {
   conversations: PersistedConversation[];
 }
 
+interface PersistedWidgetStateV3 {
+  version: 3;
+  activeConversationId: string;
+  // Visitor identity is only persisted when the visitor explicitly
+  // opted in via the "Remember me" checkbox. The TTL is enforced on
+  // read so an expired entry surfaces as blank without an extra wipe
+  // pass.
+  identity: {
+    name: string;
+    email: string;
+    savedAt: number;
+  } | null;
+  conversations: PersistedConversation[];
+}
+
 const initialState: ChatState = {
   messages: [],
   sessionToken: "",
@@ -83,6 +108,7 @@ const initialState: ChatState = {
   agentName: null,
   visitorName: "",
   visitorEmail: "",
+  rememberIdentity: false,
   conversationStatus: "active",
   conversations: [],
 };
@@ -123,7 +149,12 @@ export function getInitialConversationSessionId(widgetId: string): string {
   try {
     const raw = window.localStorage.getItem(storageKey(widgetId));
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<PersistedWidgetStateV1 | PersistedWidgetStateV2>;
+      const parsed = JSON.parse(raw) as Partial<
+        PersistedWidgetStateV1 | PersistedWidgetStateV2 | PersistedWidgetStateV3
+      >;
+      if (parsed.version === 3 && isValidSessionId(parsed.activeConversationId)) {
+        return parsed.activeConversationId;
+      }
       if (parsed.version === 2 && isValidSessionId(parsed.activeConversationId)) {
         return parsed.activeConversationId;
       }
@@ -178,12 +209,36 @@ function normalizeConversation(value: Partial<PersistedConversation>): Persisted
   };
 }
 
-function loadPersistedState(widgetId: string, fallbackConversationId: string): PersistedWidgetStateV2 | null {
+function normalizeIdentity(
+  raw: unknown,
+  now: number,
+): PersistedWidgetStateV3["identity"] {
+  if (!raw || typeof raw !== "object") return null;
+  const candidate = raw as {
+    name?: unknown;
+    email?: unknown;
+    savedAt?: unknown;
+  };
+  const savedAt = Number(candidate.savedAt ?? 0);
+  if (!savedAt || !Number.isFinite(savedAt)) return null;
+  if (savedAt > now) return null; // future timestamp = corrupted entry
+  if (now - savedAt > IDENTITY_TTL_MS) return null; // expired → wipe on next persist
+  const name = typeof candidate.name === "string" ? candidate.name.slice(0, 120) : "";
+  const email = typeof candidate.email === "string" ? candidate.email.slice(0, 254) : "";
+  if (!name && !email) return null;
+  return { name, email, savedAt };
+}
+
+function loadPersistedState(widgetId: string, fallbackConversationId: string): PersistedWidgetStateV3 | null {
   try {
     const raw = window.localStorage.getItem(storageKey(widgetId));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PersistedWidgetStateV1 | PersistedWidgetStateV2>;
-    if (parsed.version === 2) {
+    const parsed = JSON.parse(raw) as Partial<
+      PersistedWidgetStateV1 | PersistedWidgetStateV2 | PersistedWidgetStateV3
+    >;
+    const now = Date.now();
+
+    if (parsed.version === 3) {
       const conversations = Array.isArray(parsed.conversations)
         ? parsed.conversations
             .map((conversation) => normalizeConversation(conversation))
@@ -191,12 +246,31 @@ function loadPersistedState(widgetId: string, fallbackConversationId: string): P
             .slice(0, 20)
         : [];
       return {
-        version: 2,
+        version: 3,
         activeConversationId: isValidSessionId(parsed.activeConversationId)
           ? parsed.activeConversationId
           : fallbackConversationId,
-        visitorName: typeof parsed.visitorName === "string" ? parsed.visitorName.slice(0, 120) : "",
-        visitorEmail: typeof parsed.visitorEmail === "string" ? parsed.visitorEmail.slice(0, 254) : "",
+        identity: normalizeIdentity(parsed.identity, now),
+        conversations,
+      };
+    }
+
+    if (parsed.version === 2) {
+      // v2 persisted identity unconditionally. Treat the upgrade path as
+      // a privacy reset: drop the identity, keep the conversation list,
+      // and let the visitor re-opt-in via the new checkbox.
+      const conversations = Array.isArray(parsed.conversations)
+        ? parsed.conversations
+            .map((conversation) => normalizeConversation(conversation))
+            .filter((conversation): conversation is PersistedConversation => conversation !== null)
+            .slice(0, 20)
+        : [];
+      return {
+        version: 3,
+        activeConversationId: isValidSessionId(parsed.activeConversationId)
+          ? parsed.activeConversationId
+          : fallbackConversationId,
+        identity: null,
         conversations,
       };
     }
@@ -213,10 +287,9 @@ function loadPersistedState(widgetId: string, fallbackConversationId: string): P
         status: parsed.handoffActive ? "handoff_active" : "active",
       });
       return {
-        version: 2,
+        version: 3,
         activeConversationId: id,
-        visitorName: typeof parsed.visitorName === "string" ? parsed.visitorName.slice(0, 120) : "",
-        visitorEmail: typeof parsed.visitorEmail === "string" ? parsed.visitorEmail.slice(0, 254) : "",
+        identity: null,
         conversations: migrated ? [migrated] : [],
       };
     }
@@ -271,11 +344,22 @@ function persistState(status = chatState.conversationStatus): void {
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, 20);
     persistedConversations = Object.fromEntries(conversations.map((conversation) => [conversation.id, conversation]));
-    const payload: PersistedWidgetStateV2 = {
-      version: 2,
+    // Visitor identity is only persisted when the visitor opted in.
+    // Without the opt-in we ship the current name/email for the live
+    // session (in-memory state) but localStorage stays clean — a
+    // shared computer never leaks a previous visitor's email.
+    const identity: PersistedWidgetStateV3["identity"] =
+      chatState.rememberIdentity && (chatState.visitorName || chatState.visitorEmail)
+        ? {
+            name: chatState.visitorName,
+            email: chatState.visitorEmail,
+            savedAt: Date.now(),
+          }
+        : null;
+    const payload: PersistedWidgetStateV3 = {
+      version: 3,
       activeConversationId: chatState.clientSessionId,
-      visitorName: chatState.visitorName,
-      visitorEmail: chatState.visitorEmail,
+      identity,
       conversations,
     };
     window.localStorage.setItem(storageKey(chatState.widgetId), JSON.stringify(payload));
@@ -324,8 +408,12 @@ export function initStore(widgetId: string, config: WidgetConfig, clientSessionI
     lastHandoffEventId: conversation.lastHandoffEventId,
     unreadCount: conversation.unreadCount,
     agentName: conversation.agentName,
-    visitorName: persisted?.visitorName ?? "",
-    visitorEmail: persisted?.visitorEmail ?? "",
+    visitorName: persisted?.identity?.name ?? "",
+    visitorEmail: persisted?.identity?.email ?? "",
+    // If a persisted identity survived the load (= visitor previously
+    // opted in AND the entry is still within TTL), the checkbox stays
+    // checked on next visit. Otherwise default off.
+    rememberIdentity: persisted?.identity != null,
     conversationStatus: conversation.status,
     conversations: conversationList(),
   });
@@ -417,6 +505,21 @@ export function setVisitorIdentity(identity: { name?: string; email?: string }):
   if (identity.email !== undefined) {
     setChatState("visitorEmail", identity.email.slice(0, 254));
   }
+  schedulePersist();
+}
+
+export function setRememberIdentity(value: boolean): void {
+  setChatState("rememberIdentity", value);
+  schedulePersist();
+}
+
+export function clearStoredIdentity(): void {
+  // Reset both the live session and the persisted entry. The opt-in
+  // flag goes back to off so a fresh "Remember me" tick is needed to
+  // re-persist.
+  setChatState("visitorName", "");
+  setChatState("visitorEmail", "");
+  setChatState("rememberIdentity", false);
   schedulePersist();
 }
 

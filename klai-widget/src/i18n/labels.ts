@@ -22,6 +22,8 @@ export interface WidgetLabels {
   userInfoHelp: string
   handoffConnectedWith: string
   handoffNamePlaceholder: string
+  rememberMe: string
+  clearStoredIdentity: string
   conversationHistory: string
   newConversation: string
   closeConversation: string
@@ -50,6 +52,8 @@ const nl: WidgetLabels = {
   userInfoHelp: "Laat je gegevens achter voor opvolging.",
   handoffConnectedWith: "Je praat met {name}.",
   handoffNamePlaceholder: "Je naam",
+  rememberMe: "Onthoud mijn gegevens (30 dagen)",
+  clearStoredIdentity: "Wis opgeslagen gegevens",
   conversationHistory: "Gesprekken",
   newConversation: "Nieuw gesprek",
   closeConversation: "Sluit gesprek",
@@ -78,6 +82,8 @@ const en: WidgetLabels = {
   userInfoHelp: "Leave your details for follow-up.",
   handoffConnectedWith: "You are talking to {name}.",
   handoffNamePlaceholder: "Your name",
+  rememberMe: "Remember my details (30 days)",
+  clearStoredIdentity: "Clear stored details",
   conversationHistory: "Conversations",
   newConversation: "New conversation",
   closeConversation: "Close conversation",

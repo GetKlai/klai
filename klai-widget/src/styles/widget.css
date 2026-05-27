@@ -717,6 +717,42 @@
   color: var(--klai-text-muted);
 }
 
+.klai-remember-me {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--klai-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.klai-remember-me input[type="checkbox"] {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--klai-primary-color);
+  cursor: pointer;
+}
+
+.klai-clear-identity {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font-family: var(--klai-font-family);
+  font-size: 11px;
+  color: var(--klai-text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.klai-clear-identity:hover {
+  color: var(--klai-text-color);
+}
+
 .klai-textarea {
   flex: 1;
   resize: none;
