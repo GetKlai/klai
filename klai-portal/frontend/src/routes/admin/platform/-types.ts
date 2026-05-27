@@ -97,6 +97,7 @@ export interface PlatformFeedbackSubmission {
   org_slug: string | null
   user_id: string | null
   event_type: string
+  status: string
   raw_text: string | null
   feedback_type: string | null
   severity: string | null
@@ -105,6 +106,27 @@ export interface PlatformFeedbackSubmission {
   locale: string | null
   viewport: string | null
   created_at: string
+}
+
+export interface PlatformFeedbackItem {
+  id: number
+  kind: string
+  title: string
+  summary: string | null
+  status: string
+  area: string | null
+  priority_score: number
+  org_count: number
+  user_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface PlatformFeedbackActionResult {
+  ok: boolean
+  submission_id: number
+  status: string
+  item_id: number | null
 }
 
 export interface PlatformOrgDetail {

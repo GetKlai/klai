@@ -8,6 +8,8 @@ import type {
   PlatformOrg,
   PlatformBot,
   PlatformChatError,
+  PlatformFeedbackActionResult,
+  PlatformFeedbackItem,
   PlatformFeedbackSubmission,
   PlatformOrgDetail,
   PlatformKB,
@@ -128,6 +130,104 @@ export function usePlatformFeedbackSubmissions(search: string) {
         }`,
       ),
     enabled: auth.isAuthenticated,
+  })
+}
+
+export function usePlatformFeedbackItems(search: string) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-feedback-items', search],
+    queryFn: async () =>
+      apiFetch<PlatformFeedbackItem[]>(
+        `/api/admin/platform/feedback/items?limit=25${
+          search ? `&search=${encodeURIComponent(search)}` : ''
+        }`,
+      ),
+    enabled: auth.isAuthenticated,
+  })
+}
+
+function useFeedbackMutation() {
+  const qc = useQueryClient()
+  return {
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-feedback-submissions'] })
+      void qc.invalidateQueries({ queryKey: ['platform-feedback-items'] })
+    },
+  }
+}
+
+export function usePlatformFeedbackDismiss() {
+  const opts = useFeedbackMutation()
+  return useMutation({
+    mutationFn: async (submissionId: number) =>
+      apiFetch<PlatformFeedbackActionResult>(
+        `/api/admin/platform/feedback/submissions/${submissionId}/dismiss`,
+        { method: 'POST' },
+      ),
+    onSuccess: opts.onSuccess,
+  })
+}
+
+export function usePlatformFeedbackSupport() {
+  const opts = useFeedbackMutation()
+  return useMutation({
+    mutationFn: async (submissionId: number) =>
+      apiFetch<PlatformFeedbackActionResult>(
+        `/api/admin/platform/feedback/submissions/${submissionId}/support`,
+        { method: 'POST' },
+      ),
+    onSuccess: opts.onSuccess,
+  })
+}
+
+export function usePlatformFeedbackCreateItem() {
+  const opts = useFeedbackMutation()
+  return useMutation({
+    mutationFn: async (vars: {
+      submissionId: number
+      kind: string
+      title: string
+      summary?: string | null
+      area?: string | null
+      link_type?: string
+    }) =>
+      apiFetch<PlatformFeedbackActionResult>(
+        `/api/admin/platform/feedback/submissions/${vars.submissionId}/items`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            kind: vars.kind,
+            title: vars.title,
+            summary: vars.summary || null,
+            area: vars.area || null,
+            link_type: vars.link_type || 'evidence',
+          }),
+        },
+      ),
+    onSuccess: opts.onSuccess,
+  })
+}
+
+export function usePlatformFeedbackLinkItem() {
+  const opts = useFeedbackMutation()
+  return useMutation({
+    mutationFn: async (vars: {
+      submissionId: number
+      item_id: number
+      link_type?: string
+    }) =>
+      apiFetch<PlatformFeedbackActionResult>(
+        `/api/admin/platform/feedback/submissions/${vars.submissionId}/links`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            item_id: vars.item_id,
+            link_type: vars.link_type || 'evidence',
+          }),
+        },
+      ),
+    onSuccess: opts.onSuccess,
   })
 }
 

@@ -71,12 +71,10 @@ Geverifieerd:
 
 Nog niet gebouwd:
 
-- Triage-acties in Platform (`dismiss`, `create item`, `link`, `support`).
-- Canonical feedback items / upvote-evidence model.
 - AI triage en duplicate detectie.
 - Downstream sync naar Linear/GitHub/Plane.
 
-In deze implementatie toegevoegd, nog niet deployed bij het schrijven:
+Recent toegevoegd op `main`:
 
 - Echte feedback-tabellen met RLS:
   `feedback_submissions`, `feedback_items`, `feedback_item_links`,
@@ -86,6 +84,17 @@ In deze implementatie toegevoegd, nog niet deployed bij het schrijven:
   `feedback_submissions`.
 - Platform Feedback-tab leest uit `feedback_submissions` in plaats van
   `product_events`.
+
+In deze implementatie toegevoegd, nog niet deployed bij het schrijven:
+
+- Platform detail drawer voor feedback submissions.
+- Platform triage-acties:
+  - `dismiss`;
+  - `mark support`;
+  - `create feedback item`;
+  - `link to existing feedback item`.
+- Simpele duplicate/item search op bestaande `feedback_items`.
+- Item-signaal via `org_count`, `user_count` en `priority_score`.
 
 ## Belangrijke correctie
 
@@ -251,7 +260,7 @@ Acceptatie:
 
 ### Fase 2 - Platform Feedback tab
 
-Status: read-only basis klaar, triage UI nog niet klaar.
+Status: klaar in code, pending deploy.
 
 Klaar:
 
@@ -260,26 +269,32 @@ Klaar:
   `/api/admin/platform/feedback-submissions`.
 - Read-only endpoint leest uit `feedback_submissions`.
 - Search/refresh basis is aanwezig.
+- Endpointgroep bestaat onder `/api/admin/platform/feedback/*`:
+  - `/feedback/submissions` als nieuwe alias naast de bestaande
+    `/feedback-submissions`;
+  - `/feedback/items`;
+  - `/feedback/submissions/{id}/dismiss`;
+  - `/feedback/submissions/{id}/support`;
+  - `/feedback/submissions/{id}/items`;
+  - `/feedback/submissions/{id}/links`.
+- Alle endpoints gebruiken `require_platform_admin()`.
+- UI toont inbox, status, detail drawer, org/user/context en acties:
+  `Link`, `Maak item`, `Support`, `Negeer`.
+- Acties werken op `feedback_submissions`, `feedback_items` en
+  `feedback_item_links`.
+- Simpele non-AI duplicate search zoekt op item titel, samenvatting en area.
 
 Nog te doen:
 
-- Vervang het read-only endpoint door een feedback endpointgroep:
-  `/api/admin/platform/feedback/submissions`,
-  `/api/admin/platform/feedback/items`,
-  `/api/admin/platform/feedback/link`,
-  `/api/admin/platform/feedback/dismiss`.
-- Alle endpoints gebruiken `require_platform_admin()`.
-- UI toont:
-  - inbox links;
-  - detail drawer rechts;
-  - org/user/context;
-  - duplicate/item suggestions;
-  - acties: `Merge`, `New item`, `Bug/task`, `Support`, `Dismiss`.
+- Filters uitbreiden naar status, org, type, productgebied en datum.
+- Detail drawer verfijnen met betere labels, item status controls en gekoppelde
+  evidence.
 
 Acceptatie:
 
 - Staff kan zonder SQL feedback bekijken en triageren.
-- Search/filter op status, org, type, productgebied en datum.
+- Search/filter op status, org, type, productgebied en datum wordt in Fase 3/4
+  afgemaakt zodra er meer items en signalen zijn.
 
 ### Fase 3 - AI triage en duplicate detectie
 
@@ -360,23 +375,23 @@ Acceptatie:
   `feedback_items`, `feedback_item_links`, `feedback_triage_suggestions`.
 - [x] Verplaats assistant feedback persistence naar `app/klai_feedback`.
 - [x] Platform Feedback-tab leest uit `feedback_submissions`.
-- [ ] Platform Feedback tab uitbreiden met detail drawer.
-- [ ] Acties: dismiss, create item, link to item, mark support.
-- [ ] Eenvoudige non-AI duplicate search.
+- [x] Platform Feedback tab uitbreiden met detail drawer.
+- [x] Acties: dismiss, create item, link to item, mark support.
+- [x] Eenvoudige non-AI duplicate search.
 - [ ] AI triage job pas daarna.
 
 ## Eerstvolgende stap
 
-Maak Fase 2 af: triage vanuit Platform.
+Deploy en verifieer Fase 2, daarna Fase 3 bouwen:
 
-1. Voeg een detail drawer toe op de Feedback-tab.
-2. Voeg endpoints toe onder `/api/admin/platform/feedback/*` voor:
-   `dismiss`, `mark support`, `create item`, `link to item`.
-3. Laat acties `feedback_submissions.status` bijwerken en waar nodig
-   `feedback_items` + `feedback_item_links` maken.
-4. Voeg eenvoudige duplicate search toe op bestaande `feedback_items`.
-5. Pas daarna AI triage toe, zodat AI suggesties een bestaande menselijke
-   workflow versnellen in plaats van de workflow te definiëren.
+1. Controleer live dat `Geef feedback` en `Meld een probleem` in Platform
+   verschijnen.
+2. Controleer live de acties `Negeer`, `Support`, `Maak item` en `Link`.
+3. Bouw daarna AI triage als assistent bovenop deze handmatige workflow:
+   classifier, korte samenvatting, productgebied, duplicate candidates en
+   voorgestelde actie.
+4. Laat staff AI-suggesties accepteren/corrigeren voordat er roadmap- of
+   execution-sync plaatsvindt.
 
 ## Risico's
 
