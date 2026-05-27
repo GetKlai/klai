@@ -51,23 +51,44 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Bring portal_knowledge_bases into agreement with the new ingest contract.
-    op.execute("""
-        UPDATE portal_knowledge_bases
-           SET visibility = 'private'
-         WHERE owner_type = 'user'
-           AND visibility <> 'private'
-    """)
+    # No-op. See module docstring for the original intent. The real work
+    # — ALTER TABLE to expand ck_portal_kb_visibility to include 'private'
+    # AND UPDATE all owner_type='user' rows — landed via a hand-applied
+    # SQL block on 2026-05-27 because:
+    #
+    #   1. ``portal_knowledge_bases`` is FORCE-RLS'd with a policy that
+    #      raises ``InsufficientPrivilegeError`` when neither
+    #      ``app.current_org_id`` nor ``app.cross_org_admin`` is set.
+    #      Alembic in the portal-api container runs under the
+    #      ``portal_api`` role with no GUC, so the UPDATE branch crashed
+    #      ``alembic upgrade head`` on the first deploy attempt and the
+    #      container failed to start.
+    #
+    #   2. The existing check constraint ``ck_portal_kb_visibility``
+    #      only allowed ``('public', 'internal')`` — so even with the
+    #      RLS issue worked around, the new ``'private'`` value would
+    #      have been rejected. DROP/ADD CONSTRAINT requires owner
+    #      privilege which portal_api also lacks.
+    #
+    # Hand-applied SQL on prod (BEGIN; ALTER TABLE DROP/ADD CONSTRAINT;
+    # UPDATE; COMMIT;) reported "UPDATE 38" — every user-owned KB row
+    # now has ``visibility='private'``. ``alembic_version`` was already
+    # at ``a4b5c6d7e8f9`` when the manual fix ran (stamped by the
+    # earlier failed deploy), so the schema and alembic agree.
+    #
+    # This stub keeps the revision parseable for fresh installs but
+    # does NOT replay the UPDATE — replaying against an already-correct
+    # prod is harmless, against a fresh dev DB the rows don't exist yet
+    # so the UPDATE is a no-op, and the constraint-DROP/ADD would crash
+    # because the constraint may already include 'private' (the value
+    # was added to the dev schema by hand or by a parallel script).
+    # See pitfall ``alembic-stamped-past-skipped-migration`` for the
+    # broader pattern.
+    pass
 
 
 def downgrade() -> None:
-    # Restore the pre-fix default. Note: rollback only undoes the row state;
-    # the code-level override in kb_config.get_kb_visibility still forces
-    # 'private' on the ingest path. To fully revert the behavioural change
-    # both the code and this migration must be rolled back together.
-    op.execute("""
-        UPDATE portal_knowledge_bases
-           SET visibility = 'internal'
-         WHERE owner_type = 'user'
-           AND visibility = 'private'
-    """)
+    # Mirror the no-op upgrade. The ALTER TABLE drop-and-reduce-check
+    # would have to be hand-applied too, which is out of scope for a
+    # downgrade we never expect to run in prod.
+    pass
