@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowLeft,
   Bug,
@@ -21,6 +21,8 @@ type SubmissionState = 'idle' | 'submitting' | 'submitted' | 'error'
 type FeedbackType = 'idea' | 'improvement' | 'confusing' | 'missing' | 'compliment' | 'other'
 type ProblemSeverity = 'blocked' | 'workaround' | 'minor'
 
+const KLAI_HELP_WIDGET_ID = 'wgt_5889c7533b1e558f7e92e251e8cd84b35eefb748'
+
 interface AssistantContextPayload {
   page_url: string
   route_id?: string
@@ -30,6 +32,24 @@ interface AssistantContextPayload {
 
 interface IntakePayload extends AssistantContextPayload {
   raw_text: string
+}
+
+interface ChatConfig {
+  chat_endpoint: string
+  session_token: string
+}
+
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+async function fetchKlaiHelpChatConfig(): Promise<ChatConfig> {
+  const res = await fetch(
+    `/partner/v1/public-bot-config?id=${encodeURIComponent(KLAI_HELP_WIDGET_ID)}`,
+  )
+  if (!res.ok) throw new Error(`config ${res.status}`)
+  return (await res.json()) as ChatConfig
 }
 
 function currentContext(): AssistantContextPayload {
@@ -209,14 +229,8 @@ function AssistantHome({ onModeChange }: { onModeChange: (mode: AssistantMode) =
 function QuestionView() {
   return (
     <ChatQuestionForm
-      endpoint="/api/app/assistant/questions"
-      minLength={3}
       placeholder={m.klai_assistant_question_placeholder()}
       submitLabel={m.klai_assistant_question_submit()}
-      submittingLabel={m.klai_assistant_submitting()}
-      successTitle={m.klai_assistant_question_success_title()}
-      successDescription={m.klai_assistant_question_success_desc()}
-      buildPayload={(rawText) => ({ raw_text: rawText, ...currentContext() })}
     />
   )
 }
@@ -299,66 +313,178 @@ function ProblemView() {
   )
 }
 
-function ChatQuestionForm<TPayload extends IntakePayload>({
-  endpoint,
-  minLength,
+function ChatQuestionForm({
   placeholder,
   submitLabel,
-  submittingLabel,
-  successTitle,
-  successDescription,
-  buildPayload,
 }: {
-  endpoint: string
-  minLength: number
   placeholder: string
   submitLabel: string
-  submittingLabel: string
-  successTitle: string
-  successDescription: string
-  buildPayload: (rawText: string) => TPayload
 }) {
   const [value, setValue] = useState('')
-  const [state, setState] = useState<SubmissionState>('idle')
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null)
+  const [state, setState] = useState<'loading' | 'idle' | 'streaming' | 'error'>('loading')
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const trimmed = value.trim()
-  const canSubmit = trimmed.length >= minLength && state !== 'submitting'
+  const canSubmit = trimmed.length >= 1 && state !== 'loading' && state !== 'streaming'
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages, state])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadConfig() {
+      try {
+        const cfg = await fetchKlaiHelpChatConfig()
+        if (cancelled) return
+        setChatConfig(cfg)
+        setState('idle')
+      } catch {
+        if (!cancelled) setState('error')
+      }
+    }
+
+    void loadConfig()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   async function submit() {
     if (!canSubmit) return
-    setState('submitting')
+    const content = trimmed
+    const cfg = chatConfig
+    if (!cfg) {
+      setState('error')
+      return
+    }
+
+    const userMessage: ChatMessage = { role: 'user', content }
+    const nextMessages = [...messages, userMessage]
+    setMessages([...nextMessages, { role: 'assistant', content: '' }])
+    setValue('')
+    setState('streaming')
+
     try {
-      await apiFetch<{ ok: true }>(endpoint, {
-        method: 'POST',
-        body: JSON.stringify(buildPayload(trimmed)),
-      })
-      setState('submitted')
-      setValue('')
+      const postChat = (config: ChatConfig) =>
+        fetch(config.chat_endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${config.session_token}`,
+          },
+          body: JSON.stringify({
+            messages: nextMessages,
+            stream: true,
+          }),
+        })
+
+      let res = await postChat(cfg)
+      if (res.status === 401) {
+        const freshConfig = await fetchKlaiHelpChatConfig()
+        setChatConfig(freshConfig)
+        res = await postChat(freshConfig)
+      }
+
+      if (!res.ok || !res.body) throw new Error(`chat ${res.status}`)
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { value: chunk, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(chunk, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue
+          const data = line.slice(5).trim()
+          if (!data || data === '[DONE]') continue
+          try {
+            const parsed = JSON.parse(data) as {
+              choices?: Array<{
+                delta?: { content?: string }
+                message?: { content?: string }
+              }>
+              content?: string
+            }
+            const token =
+              parsed.choices?.[0]?.delta?.content ??
+              parsed.choices?.[0]?.message?.content ??
+              parsed.content ??
+              ''
+            if (token) appendAssistantToken(token)
+          } catch {
+            // Ignore malformed streaming chunks.
+          }
+        }
+      }
+      setState('idle')
     } catch {
       setState('error')
+      setMessages((prev) => prev.filter((message) => message.content || message.role === 'user'))
     }
   }
 
+  function appendAssistantToken(token: string) {
+    setMessages((prev) => {
+      const next = [...prev]
+      const last = next[next.length - 1]
+      if (last?.role === 'assistant') {
+        next[next.length - 1] = { ...last, content: last.content + token }
+      }
+      return next
+    })
+  }
+
+  const hasMessages = messages.length > 0
+
   return (
     <div className="-mx-4 -my-4 flex min-h-[540px] flex-col bg-[var(--color-rl-bg)]">
-      <div className="flex flex-1 flex-col items-center justify-center px-8 py-10 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-[var(--color-rl-cream)] text-[var(--color-rl-dark)]">
-          {state === 'submitted' ? (
-            <CheckCircle2 className="h-8 w-8 text-[var(--color-success)]" strokeWidth={1.75} />
-          ) : (
-            <MessageSquare className="h-8 w-8" strokeWidth={1.75} />
-          )}
-        </div>
-        <h3 className="mt-7 text-base font-semibold leading-tight text-[var(--color-rl-dark)]">
-          {state === 'submitted'
-            ? successTitle
-            : m.klai_assistant_question_hero_title()}
-        </h3>
-        <p className="mt-2 max-w-sm text-[13px] leading-5 text-[var(--color-rl-dark)]/60">
-          {state === 'submitted'
-            ? successDescription
-            : m.klai_assistant_question_hero_desc()}
-        </p>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6">
+        {!hasMessages ? (
+          <div className="flex min-h-[360px] flex-col items-center justify-center px-3 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-[var(--color-rl-cream)] text-[var(--color-rl-dark)]">
+              <MessageSquare className="h-8 w-8" strokeWidth={1.75} />
+            </div>
+            <h3 className="mt-7 text-base font-semibold leading-tight text-[var(--color-rl-dark)]">
+              {m.klai_assistant_question_hero_title()}
+            </h3>
+            <p className="mt-2 max-w-sm text-[13px] leading-5 text-[var(--color-rl-dark)]/60">
+              {m.klai_assistant_question_hero_desc()}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {messages.map((message, index) => (
+              <div
+                key={index}
+                className={cn(
+                  'max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6',
+                  message.role === 'user'
+                    ? 'ml-auto bg-[var(--color-rl-accent)] text-[var(--color-rl-dark)]'
+                    : 'mr-auto bg-[var(--color-rl-cream)] text-[var(--color-rl-dark)]',
+                )}
+              >
+                {message.content || (
+                  <span className="inline-flex gap-1">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:120ms]" />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:240ms]" />
+                  </span>
+                )}
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
       </div>
 
       <form
@@ -378,7 +504,7 @@ function ChatQuestionForm<TPayload extends IntakePayload>({
             value={value}
             onChange={(event) => {
               setValue(event.target.value)
-              if (state === 'error' || state === 'submitted') setState('idle')
+              if (state === 'error' && chatConfig) setState('idle')
             }}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -389,6 +515,7 @@ function ChatQuestionForm<TPayload extends IntakePayload>({
             placeholder={placeholder}
             rows={1}
             maxLength={4000}
+            disabled={state === 'loading' || state === 'streaming'}
             aria-label={m.klai_assistant_question_label()}
             className="max-h-28 min-h-11 resize-none rounded-lg border-[var(--color-rl-border)] bg-[var(--color-rl-bg)] px-3 py-2.5 text-sm text-[var(--color-rl-dark)] placeholder:text-[var(--color-rl-dark)]/60 focus-visible:ring-[var(--color-rl-accent)]"
           />
@@ -399,9 +526,9 @@ function ChatQuestionForm<TPayload extends IntakePayload>({
             aria-label={submitLabel}
             className="h-11 w-11 shrink-0 rounded-lg bg-[var(--color-rl-accent)] text-[var(--color-rl-dark)] hover:bg-[var(--color-rl-accent-hover)]"
           >
-            <Send className={cn('h-5 w-5', state === 'submitting' && 'animate-pulse')} />
+            <Send className={cn('h-5 w-5', state === 'streaming' && 'animate-pulse')} />
             <span className="sr-only">
-              {state === 'submitting' ? submittingLabel : submitLabel}
+              {state === 'streaming' ? m.klai_assistant_submitting() : submitLabel}
             </span>
           </Button>
         </div>
