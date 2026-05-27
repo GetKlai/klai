@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   ArrowLeft,
   Bug,
@@ -34,24 +34,6 @@ interface IntakePayload extends AssistantContextPayload {
   raw_text: string
 }
 
-interface ChatConfig {
-  chat_endpoint: string
-  session_token: string
-}
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-}
-
-async function fetchKlaiHelpChatConfig(): Promise<ChatConfig> {
-  const res = await fetch(
-    `/partner/v1/public-bot-config?id=${encodeURIComponent(KLAI_HELP_WIDGET_ID)}`,
-  )
-  if (!res.ok) throw new Error(`config ${res.status}`)
-  return (await res.json()) as ChatConfig
-}
-
 function currentContext(): AssistantContextPayload {
   const locale =
     typeof document !== 'undefined' && document.documentElement.lang
@@ -68,6 +50,47 @@ function currentContext(): AssistantContextPayload {
   }
 }
 
+function injectHiddenWidgetBubble(shadowRoot: ShadowRoot) {
+  if (shadowRoot.getElementById('klai-assistant-hide-widget-bubble')) return
+  const style = document.createElement('style')
+  style.id = 'klai-assistant-hide-widget-bubble'
+  style.textContent = '.klai-bubble { display: none !important; }'
+  shadowRoot.appendChild(style)
+}
+
+async function waitForKlaiWidgetButton(): Promise<HTMLButtonElement> {
+  const deadline = Date.now() + 5000
+
+  while (Date.now() < deadline) {
+    const root = document.getElementById('klai-widget-root')
+    const shadowRoot = root?.shadowRoot
+    const button = shadowRoot?.querySelector<HTMLButtonElement>('.klai-bubble')
+    if (shadowRoot && button) {
+      injectHiddenWidgetBubble(shadowRoot)
+      return button
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 50))
+  }
+
+  throw new Error('Klai help widget did not mount')
+}
+
+async function openKlaiHelpWidget() {
+  if (!document.getElementById('klai-assistant-help-widget-script')) {
+    const script = document.createElement('script')
+    script.id = 'klai-assistant-help-widget-script'
+    script.src = '/widget/klai-chat.js'
+    script.async = true
+    script.dataset.widgetId = KLAI_HELP_WIDGET_ID
+    document.body.appendChild(script)
+  }
+
+  const button = await waitForKlaiWidgetButton()
+  if (button.getAttribute('aria-expanded') !== 'true') {
+    button.click()
+  }
+}
+
 export function KlaiAssistantLauncher() {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<AssistantMode>('home')
@@ -77,12 +100,18 @@ export function KlaiAssistantLauncher() {
     setMode('home')
   }
 
+  function openQuestionChat() {
+    closePanel()
+    void openKlaiHelpWidget()
+  }
+
   return (
     <>
       {open && (
         <KlaiAssistantPanel
           mode={mode}
           onModeChange={setMode}
+          onQuestionChat={openQuestionChat}
           onClose={closePanel}
         />
       )}
@@ -111,10 +140,12 @@ export function KlaiAssistantLauncher() {
 function KlaiAssistantPanel({
   mode,
   onModeChange,
+  onQuestionChat,
   onClose,
 }: {
   mode: AssistantMode
   onModeChange: (mode: AssistantMode) => void
+  onQuestionChat: () => void
   onClose: () => void
 }) {
   const showBack = mode !== 'home'
@@ -163,8 +194,12 @@ function KlaiAssistantPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        {mode === 'home' && <AssistantHome onModeChange={onModeChange} />}
-        {mode === 'question' && <QuestionView />}
+        {mode === 'home' && (
+          <AssistantHome
+            onModeChange={onModeChange}
+            onQuestionChat={onQuestionChat}
+          />
+        )}
         {mode === 'feedback' && <FeedbackView />}
         {mode === 'problem' && <ProblemView />}
       </div>
@@ -172,7 +207,13 @@ function KlaiAssistantPanel({
   )
 }
 
-function AssistantHome({ onModeChange }: { onModeChange: (mode: AssistantMode) => void }) {
+function AssistantHome({
+  onModeChange,
+  onQuestionChat,
+}: {
+  onModeChange: (mode: AssistantMode) => void
+  onQuestionChat: () => void
+}) {
   const options: Array<{
     mode: AssistantMode
     icon: LucideIcon
@@ -206,7 +247,13 @@ function AssistantHome({ onModeChange }: { onModeChange: (mode: AssistantMode) =
           key={option.mode}
           type="button"
           variant="secondary"
-          onClick={() => onModeChange(option.mode)}
+          onClick={() => {
+            if (option.mode === 'question') {
+              onQuestionChat()
+            } else {
+              onModeChange(option.mode)
+            }
+          }}
           className="h-auto w-full justify-start rounded-xl border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] px-3 py-3 text-left hover:border-[var(--color-rl-accent)] hover:bg-[var(--color-rl-accent)]/10"
         >
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-rl-accent)]/15 text-[var(--color-rl-dark)]">
@@ -223,15 +270,6 @@ function AssistantHome({ onModeChange }: { onModeChange: (mode: AssistantMode) =
         </Button>
       ))}
     </div>
-  )
-}
-
-function QuestionView() {
-  return (
-    <ChatQuestionForm
-      placeholder={m.klai_assistant_question_placeholder()}
-      submitLabel={m.klai_assistant_question_submit()}
-    />
   )
 }
 
@@ -310,233 +348,6 @@ function ProblemView() {
         </ChipGroup>
       }
     />
-  )
-}
-
-function ChatQuestionForm({
-  placeholder,
-  submitLabel,
-}: {
-  placeholder: string
-  submitLabel: string
-}) {
-  const [value, setValue] = useState('')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null)
-  const [state, setState] = useState<'loading' | 'idle' | 'streaming' | 'error'>('loading')
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  const trimmed = value.trim()
-  const canSubmit = trimmed.length >= 1 && state !== 'loading' && state !== 'streaming'
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages, state])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadConfig() {
-      try {
-        const cfg = await fetchKlaiHelpChatConfig()
-        if (cancelled) return
-        setChatConfig(cfg)
-        setState('idle')
-      } catch {
-        if (!cancelled) setState('error')
-      }
-    }
-
-    void loadConfig()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  async function submit() {
-    if (!canSubmit) return
-    const content = trimmed
-    const cfg = chatConfig
-    if (!cfg) {
-      setState('error')
-      return
-    }
-
-    const userMessage: ChatMessage = { role: 'user', content }
-    const nextMessages = [...messages, userMessage]
-    setMessages([...nextMessages, { role: 'assistant', content: '' }])
-    setValue('')
-    setState('streaming')
-
-    try {
-      const postChat = (config: ChatConfig) =>
-        fetch(config.chat_endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${config.session_token}`,
-          },
-          body: JSON.stringify({
-            messages: nextMessages,
-            stream: true,
-          }),
-        })
-
-      let res = await postChat(cfg)
-      if (res.status === 401) {
-        const freshConfig = await fetchKlaiHelpChatConfig()
-        setChatConfig(freshConfig)
-        res = await postChat(freshConfig)
-      }
-
-      if (!res.ok || !res.body) throw new Error(`chat ${res.status}`)
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { value: chunk, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(chunk, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data:')) continue
-          const data = line.slice(5).trim()
-          if (!data || data === '[DONE]') continue
-          try {
-            const parsed = JSON.parse(data) as {
-              choices?: Array<{
-                delta?: { content?: string }
-                message?: { content?: string }
-              }>
-              content?: string
-            }
-            const token =
-              parsed.choices?.[0]?.delta?.content ??
-              parsed.choices?.[0]?.message?.content ??
-              parsed.content ??
-              ''
-            if (token) appendAssistantToken(token)
-          } catch {
-            // Ignore malformed streaming chunks.
-          }
-        }
-      }
-      setState('idle')
-    } catch {
-      setState('error')
-      setMessages((prev) => prev.filter((message) => message.content || message.role === 'user'))
-    }
-  }
-
-  function appendAssistantToken(token: string) {
-    setMessages((prev) => {
-      const next = [...prev]
-      const last = next[next.length - 1]
-      if (last?.role === 'assistant') {
-        next[next.length - 1] = { ...last, content: last.content + token }
-      }
-      return next
-    })
-  }
-
-  const hasMessages = messages.length > 0
-
-  return (
-    <div className="-mx-4 -my-4 flex min-h-[540px] flex-col bg-[var(--color-rl-bg)]">
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6">
-        {!hasMessages ? (
-          <div className="flex min-h-[360px] flex-col items-center justify-center px-3 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-[var(--color-rl-cream)] text-[var(--color-rl-dark)]">
-              <MessageSquare className="h-8 w-8" strokeWidth={1.75} />
-            </div>
-            <h3 className="mt-7 text-base font-semibold leading-tight text-[var(--color-rl-dark)]">
-              {m.klai_assistant_question_hero_title()}
-            </h3>
-            <p className="mt-2 max-w-sm text-[13px] leading-5 text-[var(--color-rl-dark)]/60">
-              {m.klai_assistant_question_hero_desc()}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {messages.map((message, index) => (
-              <div
-                key={index}
-                className={cn(
-                  'max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6',
-                  message.role === 'user'
-                    ? 'ml-auto bg-[var(--color-rl-accent)] text-[var(--color-rl-dark)]'
-                    : 'mr-auto bg-[var(--color-rl-cream)] text-[var(--color-rl-dark)]',
-                )}
-              >
-                {message.content || (
-                  <span className="inline-flex gap-1">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:120ms]" />
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:240ms]" />
-                  </span>
-                )}
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
-      </div>
-
-      <form
-        className="border-t border-[var(--color-rl-border)] bg-[var(--color-rl-bg)] px-3 py-3"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void submit()
-        }}
-      >
-        {state === 'error' && (
-          <p className="mb-3 text-sm text-[var(--color-destructive)]">
-            {m.klai_assistant_error()}
-          </p>
-        )}
-        <div className="flex items-end gap-3">
-          <Textarea
-            value={value}
-            onChange={(event) => {
-              setValue(event.target.value)
-              if (state === 'error' && chatConfig) setState('idle')
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                void submit()
-              }
-            }}
-            placeholder={placeholder}
-            rows={1}
-            maxLength={4000}
-            disabled={state === 'loading' || state === 'streaming'}
-            aria-label={m.klai_assistant_question_label()}
-            className="max-h-28 min-h-11 resize-none rounded-lg border-[var(--color-rl-border)] bg-[var(--color-rl-bg)] px-3 py-2.5 text-sm text-[var(--color-rl-dark)] placeholder:text-[var(--color-rl-dark)]/60 focus-visible:ring-[var(--color-rl-accent)]"
-          />
-          <Button
-            type="submit"
-            size="icon"
-            disabled={!canSubmit}
-            aria-label={submitLabel}
-            className="h-11 w-11 shrink-0 rounded-lg bg-[var(--color-rl-accent)] text-[var(--color-rl-dark)] hover:bg-[var(--color-rl-accent-hover)]"
-          >
-            <Send className={cn('h-5 w-5', state === 'streaming' && 'animate-pulse')} />
-            <span className="sr-only">
-              {state === 'streaming' ? m.klai_assistant_submitting() : submitLabel}
-            </span>
-          </Button>
-        </div>
-        <p className="mt-2 px-3 text-center text-[11px] leading-5 text-[var(--color-rl-dark)]/40">
-          {m.klai_assistant_disclaimer()}
-        </p>
-      </form>
-    </div>
   )
 }
 
