@@ -36,7 +36,9 @@ async def test_record_hubspot_agent_reply_records_and_publishes() -> None:
     db = AsyncMock()
     db.execute = AsyncMock(
         side_effect=[
+            _Result(None),  # enable cross-org lookup
             _Result((42, 7)),
+            _Result(None),  # disable cross-org lookup
             _Result(None),  # set_tenant
             _Result((99, "2026-05-27T13:05:31Z")),
         ]
@@ -58,13 +60,20 @@ async def test_record_hubspot_agent_reply_records_and_publishes() -> None:
     assert result["status"] == "recorded"
     assert result["handoff_session_id"] == 42
     assert result["id"] == 99
+    assert db.execute.await_count == 5
     db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_record_hubspot_agent_reply_ignores_unmapped_thread() -> None:
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_Result(None))
+    db.execute = AsyncMock(
+        side_effect=[
+            _Result(None),  # enable cross-org lookup
+            _Result(None),
+            _Result(None),  # disable cross-org lookup
+        ]
+    )
     db.commit = AsyncMock()
     payload = {
         "message": {
@@ -77,4 +86,5 @@ async def test_record_hubspot_agent_reply_ignores_unmapped_thread() -> None:
     result = await record_hubspot_agent_reply(db, payload)
 
     assert result == {"status": "ignored", "reason": "unmapped_thread"}
+    assert db.execute.await_count == 3
     db.commit.assert_not_awaited()
