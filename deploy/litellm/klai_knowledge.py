@@ -1531,14 +1531,47 @@ def _render_kb_citation_content(
     user_query: object,
     trusted_sources: list[dict[str, Any]],
     evidence_chunks: list[dict],
+    kb_narrow: bool,
 ) -> tuple[str, list[dict[str, str]], bool, dict[str, Any]]:
+    """Render the model's answer with deterministic citations.
+
+    When retrieval returned no trusted sources (or the source-selector
+    rejected every candidate), behaviour depends on the user's mode:
+
+    - **Narrow / strict** (``kb_narrow=True``): replace the model's
+      answer with the canned "I cannot answer reliably from the
+      available knowledge sources" string. The user opted into strict-
+      KB-only behaviour, so refusing without citable evidence is the
+      contract.
+
+    - **Broad / open** (``kb_narrow=False``): pass the model's original
+      answer through unchanged. The user opted into general-knowledge
+      fallback, so the model's response is valid even without citable
+      KB sources — clobbering it with a refusal trains users to ignore
+      the open/strict toggle.
+
+    Incident reference: Mijndomein tester 2026-05-27 saw the canned
+    refusal in every mode regardless of toggles because his retrieved
+    chunks produced no trusted sources (`no_trusted_sources`); under
+    broad mode the model's general-knowledge answer is the correct
+    fallback and the canned message hid it.
+    """
     if not trusted_sources:
-        return _no_citable_sources_message(user_query), [], True, {
+        if kb_narrow:
+            return _no_citable_sources_message(user_query), [], True, {
+                "mode": "document_level_supported_sources",
+                "candidate_count": 0,
+                "selected": [],
+                "rejected": [],
+                "no_citable_reason": "no_trusted_sources",
+            }
+        # Broad mode: keep model's answer, no citations appended.
+        return text, [], False, {
             "mode": "document_level_supported_sources",
             "candidate_count": 0,
             "selected": [],
             "rejected": [],
-            "no_citable_reason": "no_trusted_sources",
+            "no_citable_reason": "no_trusted_sources_broad_passthrough",
         }
     composed = compose_answer_with_trusted_sources(
         text,
@@ -1549,8 +1582,13 @@ def _render_kb_citation_content(
     )
     if not composed.content or not composed.sources:
         decision = dict(composed.decision)
-        decision["no_citable_reason"] = "selector_rejected_all_sources"
-        return _no_citable_sources_message(user_query), [], True, decision
+        if kb_narrow:
+            decision["no_citable_reason"] = "selector_rejected_all_sources"
+            return _no_citable_sources_message(user_query), [], True, decision
+        # Broad mode: pass model's answer through even when the source
+        # selector found nothing — general knowledge is still valid.
+        decision["no_citable_reason"] = "selector_rejected_all_sources_broad_passthrough"
+        return text, [], False, decision
     return composed.content, composed.sources, False, composed.decision
 
 
@@ -1613,6 +1651,7 @@ def _flush_citation_stream_buffer(
         user_query=kb_meta.get("user_query"),
         trusted_sources=trusted_sources,
         evidence_chunks=citation_chunks,
+        kb_narrow=bool(kb_meta.get("kb_narrow", False)),
     )
 
     for choice in _get_response_choices(response):
@@ -1654,6 +1693,7 @@ def _compose_non_streaming_kb_response(
                 user_query=kb_meta.get("user_query"),
                 trusted_sources=trusted_sources,
                 evidence_chunks=citation_chunks,
+                kb_narrow=bool(kb_meta.get("kb_narrow", False)),
             )
             if rendered_content != content or sources:
                 _set_message_content(message, _append_visible_sources_section(rendered_content, sources))
@@ -2177,6 +2217,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 "org_id": org_id,
                 "user_id": user_id,
                 "user_query": query,
+                "kb_narrow": kb_narrow,
                 "chunks_injected": 0,
                 "chunk_ids": [],
                 "allowed_source_urls": [],
@@ -2237,6 +2278,7 @@ class KlaiKnowledgeHook(CustomLogger):
                     "org_id": org_id,
                     "user_id": user_id,
                     "user_query": query,
+                    "kb_narrow": kb_narrow,
                     "chunks_injected": 0,
                     "chunk_ids": [],
                     "allowed_source_urls": [],
@@ -2394,6 +2436,7 @@ class KlaiKnowledgeHook(CustomLogger):
             "org_id": org_id,
             "user_id": user_id,
             "user_query": query,
+            "kb_narrow": kb_narrow,
             "chunks_injected": len(context_chunks),
             "chunk_ids": [c.get("chunk_id") for c in context_chunks if c.get("chunk_id")],
             "allowed_source_urls": sorted(allowed_source_urls),

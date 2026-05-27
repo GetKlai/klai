@@ -2913,7 +2913,14 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_refuses_answer_without_citable_sources(self, monkeypatch, caplog):
+    async def test_post_call_guard_refuses_answer_in_narrow_mode_without_citable_sources(
+        self, monkeypatch, caplog
+    ):
+        """Narrow mode: no trusted sources → canned refuse.
+
+        Strict-KB-only mode contract: the user opted into "answer ONLY
+        from the KB", so refusing without citable evidence is correct.
+        """
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         caplog.set_level("WARNING", logger="klai_knowledge")
@@ -2930,6 +2937,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Hoe open is Klai?",
+                    "kb_narrow": True,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
@@ -2953,7 +2961,59 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "kb_citations_no_citable_sources" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_refuses_empty_evidence_pack(self, monkeypatch):
+    async def test_post_call_keeps_model_answer_in_broad_mode_without_citable_sources(
+        self, monkeypatch, caplog
+    ):
+        """Broad mode: no trusted sources → keep the model's answer.
+
+        Mijndomein regression 2026-05-27: tester saw the canned refusal in
+        every mode regardless of toggles because his chunks produced no
+        trusted sources. In broad mode the user explicitly opted into
+        general-knowledge fallback — the model's response is the correct
+        output and the canned refusal hid it.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        caplog.set_level("WARNING", logger="klai_knowledge")
+        original_answer = "Klai is open source."
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=original_answer)
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Hoe open is Klai?",
+                    "kb_narrow": False,
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "title": "Open",
+                            "text": "Klai is open source.",
+                        }
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        # Model's original answer survives — the canned refusal is NOT
+        # substituted in broad mode.
+        assert response.choices[0].message.content == original_answer
+
+    @pytest.mark.asyncio
+    async def test_post_call_guard_refuses_empty_evidence_pack_in_narrow_mode(self, monkeypatch):
+        """Narrow mode: empty evidence pack still triggers the canned refuse."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         response = SimpleNamespace(
@@ -2969,6 +3029,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Hoe voeg ik een nieuwe user toe?",
+                    "kb_narrow": True,
                     "chunks_injected": 0,
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
@@ -2989,8 +3050,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         )
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_refuses_irrelevant_citable_sources(self, monkeypatch, caplog):
-        """Do not cite the first retrieved URLs when none support the generated answer."""
+    async def test_post_call_guard_refuses_irrelevant_citable_sources_in_narrow_mode(
+        self, monkeypatch, caplog
+    ):
+        """Narrow mode: do not cite first retrieved URLs when none support the answer."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         caplog.set_level("WARNING", logger="klai_knowledge")
@@ -3012,6 +3075,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Hoe voeg ik een nieuwe user toe?",
+                    "kb_narrow": True,
                     "chunks_injected": 3,
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
