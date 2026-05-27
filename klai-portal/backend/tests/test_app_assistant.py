@@ -42,7 +42,7 @@ async def test_submit_feedback_emits_first_party_event(monkeypatch):
 
     body = app_assistant.AssistantFeedbackIn(
         raw_text="Maak het makkelijker om feedback te geven.",
-        page_url="https://app.getklai.com/app/chat",
+        page_url="https://app.getklai.com/app/chat?token=secret#section",
         route_id="/app/chat",
         type="improvement",
     )
