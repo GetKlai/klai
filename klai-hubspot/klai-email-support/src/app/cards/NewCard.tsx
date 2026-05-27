@@ -35,6 +35,7 @@ interface DraftResponse {
   body?: string;
   contactId?: string;
   supportSessionId?: string;
+  lowConfidence?: boolean;
   error?: string;
   sources?: DraftSource[];
   customerLinks?: DraftSource[];
@@ -221,6 +222,12 @@ const CrmExtension = ({ context }: { context: HubSpotContext }) => {
       {draft?.body ? (
         <>
           <Text format={{ fontWeight: 'bold' }}>Conceptmail</Text>
+          {draft.lowConfidence ? (
+            <Text>
+              Lage zekerheid: dit is geen klantklare mail. Controleer eerst de
+              juiste bron of vraag dit intern na.
+            </Text>
+          ) : null}
           <Text>{draft.body}</Text>
           <SourceLinks
             title="Links voor klant"
@@ -291,7 +298,7 @@ const CrmExtension = ({ context }: { context: HubSpotContext }) => {
             </Button>
           </List>
           <ConversationHistory entries={conversation} />
-          {draft.contactId ? (
+          {draft.lowConfidence ? null : draft.contactId ? (
             <CrmActionButton
               actionType="SEND_EMAIL"
               actionContext={{
