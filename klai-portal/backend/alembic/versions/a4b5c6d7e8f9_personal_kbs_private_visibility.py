@@ -40,7 +40,12 @@ and the kb_config UPSERT is conditional on owner_type='user'.
 from alembic import op
 
 revision = "a4b5c6d7e8f9"
-down_revision = "z3a4b5c6d7e8"
+# Rebased 2026-05-27 from ``z3a4b5c6d7e8`` to ``e8f9a0b1c2d4``: the
+# original parent was no longer a head (it had been absorbed into a
+# merge migration on a parallel branch), so PR #709 landed a second
+# head and CI's "single head" guard fired on the post-merge deploy.
+# See pitfall ``alembic-multi-pr-head-split`` for the recovery pattern.
+down_revision = "e8f9a0b1c2d4"
 branch_labels = None
 depends_on = None
 
