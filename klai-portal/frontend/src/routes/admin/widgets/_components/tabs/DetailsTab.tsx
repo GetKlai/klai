@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { WidgetToggleCard } from '@/features/widgets/components/WidgetToggleCard'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse, WidgetConfig } from '../../-types'
@@ -27,6 +28,7 @@ export function DetailsTab({ widget }: Props) {
   const [description, setDescription] = useState(widget.description ?? '')
   const [systemPrompt, setSystemPrompt] = useState(config.system_prompt)
   const [templateSlug, setTemplateSlug] = useState<string>(config.template_slug ?? '')
+  const [pageContextEnabled, setPageContextEnabled] = useState(config.page_context_enabled ?? false)
 
   const templatesQuery = useQuery<Template[]>({
     queryKey: ['app-templates'],
@@ -38,13 +40,15 @@ export function DetailsTab({ widget }: Props) {
     setDescription(widget.description ?? '')
     setSystemPrompt(config.system_prompt)
     setTemplateSlug(config.template_slug ?? '')
-  }, [widget.name, widget.description, config.system_prompt, config.template_slug])
+    setPageContextEnabled(config.page_context_enabled ?? false)
+  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled])
 
   const isDirty =
     name.trim() !== widget.name ||
     (description.trim() || null) !== widget.description ||
     systemPrompt.trim() !== config.system_prompt ||
-    (templateSlug || null) !== (config.template_slug ?? null)
+    (templateSlug || null) !== (config.template_slug ?? null) ||
+    pageContextEnabled !== (config.page_context_enabled ?? false)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -57,6 +61,7 @@ export function DetailsTab({ widget }: Props) {
       title: name.trim(),
       system_prompt: systemPrompt.trim(),
       template_slug: templateSlug || null,
+      page_context_enabled: pageContextEnabled,
     }
     updateMutation.mutate(
       {
@@ -137,6 +142,13 @@ export function DetailsTab({ widget }: Props) {
               placeholder={m.admin_widgets_widget_system_prompt_placeholder()}
             />
           </div>
+          <WidgetToggleCard
+            id="page-context-enabled"
+            checked={pageContextEnabled}
+            onChange={setPageContextEnabled}
+            label={m.admin_widgets_page_context_label()}
+            help={m.admin_widgets_page_context_help()}
+          />
         </div>
       </section>
 

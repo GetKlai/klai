@@ -66,12 +66,21 @@ _ALLOWED_MODELS = {"klai-primary", "klai-fast"}
 # ---------------------------------------------------------------------------
 
 
+class PageContext(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+    path: str = Field(..., min_length=1, max_length=512)
+    title: str | None = Field(default=None, max_length=512)
+    referrer: str | None = Field(default=None, max_length=2048)
+    excerpt: str | None = Field(default=None, max_length=2000)
+
+
 class ChatCompletionsRequest(BaseModel):
     messages: list[dict] = Field(..., min_length=1)
     model: str = "klai-primary"
     stream: bool = True
     temperature: float = 0.7
     knowledge_base_ids: list[int] | None = None
+    page_context: PageContext | None = None
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -190,6 +199,20 @@ async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> s
 
     parts = [p for p in (base_str, template_text) if p]
     return "\n\n".join(parts) if parts else None
+
+
+async def _widget_page_context_enabled(auth: PartnerAuthContext, db: AsyncSession) -> bool:
+    """Return whether this widget may send current-page context."""
+    if not str(auth.key_id).startswith("wgt_"):
+        return False
+    result = await db.execute(
+        select(Widget.widget_config).where(
+            Widget.widget_id == auth.key_id,
+            Widget.org_id == auth.org_id,
+        )
+    )
+    config = result.scalar_one_or_none() or {}
+    return bool(config.get("page_context_enabled")) if isinstance(config, dict) else False
 
 
 def _citation_runtime_options(
@@ -373,6 +396,10 @@ async def chat_completions(
         partner_user_id = None
     widget_system_prompt = await _widget_system_prompt(auth, db)
     is_widget_chat = str(auth.key_id).startswith("wgt_")
+    page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
+    page_context = (
+        request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
+    )
 
     try:
         chunks, system_prompt, trusted_sources = await retrieve_context(
@@ -383,6 +410,7 @@ async def chat_completions(
             settings=settings,
             partner_user_id=partner_user_id,
             widget_system_prompt=widget_system_prompt,
+            page_context=page_context,
             backend_managed_citations=True,
         )
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
@@ -925,6 +953,7 @@ async def widget_config(
         # under each assistant message based on these flags.
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
+        "page_context_enabled": widget_config_data.get("page_context_enabled", False),
     }
 
     return Response(
