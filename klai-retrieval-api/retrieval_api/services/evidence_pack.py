@@ -138,13 +138,33 @@ def build_evidence_pack(
     if not chunks:
         return EvidencePack(no_citable_reason="no_evidence")
 
-    candidates: list[tuple[EvidenceItem, str, str, float]] = []
+    candidates: list[tuple[EvidenceItem, str, str | None, float]] = []
     below_threshold_count = 0
     for chunk in chunks:
         source_url = _source_url(chunk)
-        source_key = source_url_key(source_url) if source_url else ""
+        # Derive a stable source_key. PUBLIC sources (web crawl, MS-Docs,
+        # Notion) carry a real URL — use the URL's normalised key. PRIVATE
+        # uploads (PDFs, plain-text snippets a user pastes into their
+        # personal KB) have NO public URL; their chunks land in qdrant
+        # with ``source_url=None``. Before 2026-05-27 those chunks were
+        # filtered out entirely below ("if not source_url: continue"),
+        # which meant a user's CV / contract / handbook could be
+        # retrieved by the reranker but disappeared from the evidence
+        # pack — and therefore from the citation list — leaving the
+        # model answering "Dat staat niet in de kennisbank" from chunks
+        # that explicitly mention the requested content. Fall back to
+        # the chunk's ``artifact_id`` (always present for uploads): all
+        # chunks from the same PDF share one artifact and therefore
+        # collapse into one source in the citations panel.
+        artifact_id = _string_value(_chunk_value(chunk, "artifact_id"))
+        if source_url:
+            source_key = source_url_key(source_url)
+        elif artifact_id:
+            source_key = f"artifact:{artifact_id}"
+        else:
+            source_key = ""
         title = _title(chunk, source_url)
-        if not source_url or not source_key:
+        if not source_key:
             continue
         relevance_score = _relevance_score(chunk)
         if (
@@ -216,21 +236,34 @@ def build_evidence_pack(
 
 
 def evidence_pack_sources_payload(pack: EvidencePack) -> list[dict[str, object]]:
-    """Return the structured source shape used by chat/portal clients."""
-    return [
-        {
-            "label": str(index),
-            "title": source.title,
-            "url": source.source_url,
-            "source_id": source.source_id,
-            "evidence_ids": source.evidence_ids,
-            "artifact_id": source.artifact_id,
-            "source_label": source.source_label,
-            "relevance_score": source.relevance_score,
-        }
-        for index, source in enumerate(pack.sources, 1)
-        if source.source_url
-    ]
+    """Return the structured source shape used by chat/portal clients.
+
+    Includes sources without a ``source_url`` (uploaded documents — PDFs,
+    pasted text — that have no public address). The chat client decides
+    how to render a URL-less source: typically as a non-clickable label
+    showing the filename / artifact title, with the option to open it via
+    the portal's KB browse view. Filtering URL-less sources out here would
+    re-introduce the 2026-05-27 bug where a user's uploaded CV was
+    retrieved but never appeared in the citations panel.
+    """
+    payload: list[dict[str, object]] = []
+    for index, source in enumerate(pack.sources, 1):
+        if not source.source_url and not source.artifact_id:
+            # No URL and no artifact: nothing addressable to cite.
+            continue
+        payload.append(
+            {
+                "label": str(index),
+                "title": source.title,
+                "url": source.source_url,
+                "source_id": source.source_id,
+                "evidence_ids": source.evidence_ids,
+                "artifact_id": source.artifact_id,
+                "source_label": source.source_label,
+                "relevance_score": source.relevance_score,
+            }
+        )
+    return payload
 
 
 def evidence_pack_items_as_chunks(pack: EvidencePack) -> list[dict[str, Any]]:
