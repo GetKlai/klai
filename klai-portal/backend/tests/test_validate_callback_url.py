@@ -436,6 +436,7 @@ async def test_idn_punycode_subdomain_rejected() -> None:
         "grafana.getklai.com",
         "errors.getklai.com",
         "auth.getklai.com",
+        "feedback.getklai.com",
     ],
 )
 @pytest.mark.asyncio
@@ -529,7 +530,7 @@ def test_static_system_subdomains_set_includes_known_oidc_apps() -> None:
     ``_STATIC_SYSTEM_SUBDOMAINS`` for the curl command operators run
     quarterly to re-audit.
     """
-    expected = {"chat", "chat-dev", "dev", "grafana", "errors", "auth"}
+    expected = {"chat", "chat-dev", "dev", "grafana", "errors", "auth", "feedback"}
     assert auth_module._STATIC_SYSTEM_SUBDOMAINS == frozenset(expected), (
         "If you added a new Zitadel OIDC app with a redirect URI under "
         "*.getklai.com, extend `_STATIC_SYSTEM_SUBDOMAINS` AND update this "
