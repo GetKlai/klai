@@ -18,12 +18,12 @@ import type {
   CreateTenantResult,
 } from './-types'
 
-export function usePlatformStats() {
+export function usePlatformStats(enabled = true) {
   const auth = useAuth()
   return useQuery({
     queryKey: ['platform-stats'],
     queryFn: async () => apiFetch<PlatformStats>('/api/admin/platform/stats'),
-    enabled: auth.isAuthenticated,
+    enabled: auth.isAuthenticated && enabled,
   })
 }
 
