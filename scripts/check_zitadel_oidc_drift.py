@@ -66,6 +66,7 @@ DEFAULT_EXPECTED_STATIC: frozenset[str] = frozenset({
     "grafana",
     "errors",
     "auth",
+    "feedback",
 })
 
 
