@@ -26,7 +26,12 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 import structlog
-from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+from klai_chat_prompts import (
+    GROUNDED_CHAT_SYSTEM_PROMPT,
+)
+from klai_chat_prompts import (
+    no_citable_sources_message as _no_citable_sources_message,
+)
 
 from app.core.config import Settings
 from app.services.citations import (
@@ -1139,40 +1144,6 @@ def _sse_content_delta(text: str) -> bytes:
 def _sse_sources_delta(sources: list[dict[str, str]]) -> bytes:
     payload = {"choices": [{"delta": {"sources": sources}}]}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
-
-
-def _no_citable_sources_message(user_query: str) -> str:
-    dutch_markers = {
-        "aanmaken",
-        "antwoord",
-        "bronnen",
-        "de",
-        "een",
-        "gegevens",
-        "heb",
-        "het",
-        "hoe",
-        "hoeveel",
-        "ik",
-        "je",
-        "jij",
-        "kan",
-        "kennisbank",
-        "kennisbanken",
-        "klopt",
-        "mag",
-        "mijn",
-        "u",
-        "vraag",
-        "waar",
-        "waarom",
-        "wat",
-        "welke",
-    }
-    query_tokens = {token.lower() for token in re.findall(r"[a-zA-ZÀ-ÿ]+", user_query)}
-    if query_tokens & dutch_markers:
-        return "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
-    return "I cannot answer this reliably from the available knowledge sources."
 
 
 def _compose_backend_managed_answer(

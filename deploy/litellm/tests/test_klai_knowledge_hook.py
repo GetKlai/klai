@@ -845,7 +845,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
     async def test_empty_slugs_and_personal_on_narrows_to_canonical_personal_kb(
         self, monkeypatch
     ):
-        """[] + personal=True → scope=personal AND kb_slugs=["personal-<user_id>"].
+        """[] + personal=True + portal provides slug → scope=personal AND kb_slugs=[slug].
 
         Bug discovered 2026-05-27 when Jantine flagged that company.csv
         chunks from a user-created KB called "test2" showed up while
@@ -859,11 +859,12 @@ class TestKlaiKnowledgeHookSlugsTriState:
         including chunks from user-owned KBs that the user explicitly
         DESELECTED in the dropdown.
 
-        Fix: when the user picks "Persoonlijk" the hook narrows the
-        retrieve request to the canonical personal KB only by sending
-        kb_slugs=[f"personal-{user_id}"]. The slug follows the
-        auto-provisioned pattern in portal_knowledge_bases for
-        owner_type='user' rows whose slug starts with 'personal-'.
+        Fix: portal-api returns the canonical "Persoonlijk" KB slug as
+        ``personal_kb_slug`` in the knowledge-feature response (single
+        source of truth — owned by
+        ``app.services.default_knowledge_bases.personal_kb_slug``). The
+        hook narrows the retrieve request to that exact slug, with no
+        string reconstruction on this side.
         """
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
@@ -876,6 +877,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "kb_narrow": False,
                 "version": 0,
                 "zitadel_user_id": "300000000000000002",
+                "personal_kb_slug": "personal-300000000000000002",
             }
         )
         data = {"user": "u1" * 12, "messages": [
@@ -899,13 +901,61 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 f"got {body['scope']!r}"
             )
             # NEW behaviour: kb_slugs MUST be the canonical personal KB
-            # slug. Without this filter, retrieval-api returns chunks
-            # from EVERY user-owned KB (the previous bug).
+            # slug as provided by portal-api. Without this filter,
+            # retrieval-api returns chunks from EVERY user-owned KB
+            # (the previous bug).
             assert body.get("kb_slugs") == ["personal-300000000000000002"], (
                 "Personal scope must narrow to the canonical "
                 "'personal-<user_id>' KB. Sending no filter caused "
                 "user-created KBs like 'test2' to leak in."
             )
+
+    @pytest.mark.asyncio
+    async def test_empty_slugs_and_personal_on_falls_through_when_portal_omits_slug(
+        self, monkeypatch
+    ):
+        """[] + personal=True + portal omits slug → scope=personal, kb_slugs absent.
+
+        Backwards-compatible fall-through for a mid-deploy state where
+        portal-api hasn't shipped ``personal_kb_slug`` yet. Same wire
+        shape as the pre-2026-05-27 contract; preferable to a 0-result
+        silent breakage when the field is None.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": [],
+                "kb_narrow": False,
+                "version": 0,
+                "zitadel_user_id": "300000000000000002",
+                # personal_kb_slug intentionally omitted
+            }
+        )
+        data = {"user": "u1" * 12, "messages": [
+            {"role": "user", "content": "Wat staat er in mijn persoonlijke kennisbank?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+        assert mc.post.call_count >= 1
+        body = mc.post.call_args.kwargs["json"]
+        assert body["scope"] == "personal"
+        assert "kb_slugs" not in body or body["kb_slugs"] is None, (
+            "When portal omits personal_kb_slug we fall through to "
+            "scope=personal without a kb_slug filter — never invent the slug."
+        )
 
     @pytest.mark.asyncio
     async def test_null_slugs_keeps_both_scope_no_filter(self, monkeypatch):
@@ -3534,23 +3584,17 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         assert meta["kb_narrow"] is False
 
     @pytest.mark.asyncio
-    async def test_zero_chunks_strict_metadata_lets_post_call_short_circuit(
+    async def test_zero_chunks_strict_metadata_forces_deterministic_refusal(
         self, monkeypatch
     ):
-        """Strict + zero chunks MUST NOT set ``no_citable_sources=True``.
+        """Strict + zero chunks MUST force the post-call renderer to refuse.
 
-        Live incident 2026-05-27 (Jantine, GetKlai): in Strict mode with
-        an empty retrieval, the model received our multilingual refusal
-        instruction and answered "Dat staat niet in de kennisbank" — but
-        the post-call structured-citation render then REPLACED that
-        answer with the English-only ``_no_citable_sources_message``
-        because the metadata flag ``no_citable_sources`` was True.
-
-        Contract: the zero-chunks branch must leave
-        ``no_citable_sources=False`` so the post-call guard
-        ``not trusted_sources and not force_no_citable and not
-        citation_chunks`` short-circuits and the model's mode-aware,
-        language-correct refusal passes through.
+        Without ``no_citable_sources=True`` the contract degrades from
+        "deterministic refusal" to "model is asked nicely to refuse via
+        its system prompt", which Mistral hallucinates around. The
+        post-call renderer reads this flag as ``force_no_citable`` and
+        replaces the model output with the language-aware canned refusal
+        from ``klai_chat_prompts.no_citable_sources_message``.
         """
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
@@ -3582,23 +3626,20 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         assert meta["chunks_injected"] == 0
         assert meta["trusted_sources"] == []
         assert meta["citation_chunks"] == []
-        # The critical flag — must be False so the post-call renderer
-        # leaves the model's mode-aware answer alone.
-        assert meta["no_citable_sources"] is False, (
-            "Zero-chunks branch must NOT set no_citable_sources=True. "
-            "PR #697 did, and the post-call render then replaced the "
-            "model's Dutch 'Dat staat niet in de kennisbank' with the "
-            "English-only canned message."
+        # Strict mode MUST force the canned refusal to ship — the model
+        # cannot be trusted to refuse on its own.
+        assert meta["no_citable_sources"] is True, (
+            "Strict + zero chunks must set no_citable_sources=True so the "
+            "post-call renderer ships the deterministic refusal."
         )
 
     @pytest.mark.asyncio
     async def test_zero_chunks_open_metadata_lets_post_call_short_circuit(
         self, monkeypatch
     ):
-        """Symmetric to the strict case — Open mode also must not set
-        the flag, otherwise the post-call render would wipe the
-        general-knowledge fallback answer this branch instructed the
-        model to produce.
+        """Open mode + zero chunks lets the model answer from general
+        knowledge — leave the flag False so the post-call renderer
+        short-circuits and the streamed tokens reach the client unchanged.
         """
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()

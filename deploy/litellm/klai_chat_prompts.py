@@ -72,13 +72,93 @@ customer-support surface where extra confirmation friction pays off.
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 __all__ = [
+    "DUTCH_QUERY_MARKERS",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
     "META_CHAT_SYSTEM_PROMPT",
+    "no_citable_sources_message",
 ]
+
+
+# Curated set of Dutch-unique high-frequency tokens used to detect whether
+# a user's most recent query was Dutch. Single source of truth — both the
+# LiteLLM hook (path A) and partner_chat.py (path B) import this same set
+# so the language choice for the "no citable sources" refusal stays
+# identical across surfaces.
+#
+# Selection rule: every token below is unambiguously Dutch and does NOT
+# collide with common English words or names. Single-letter tokens and
+# Dutch words that double as English nicknames or noun fragments
+# (e.g. "ben" / "Ben", "kan" / "Khan") are intentionally excluded to keep
+# false-positive rate near zero on English queries.
+DUTCH_QUERY_MARKERS: Final[frozenset[str]] = frozenset({
+    # Articles
+    "de", "het", "een",
+    # Personal pronouns
+    "ik", "jij", "je", "wij", "jullie", "zij", "mij", "jou", "ons",
+    # Possessive pronouns
+    "mijn", "jouw", "onze",
+    # Demonstratives
+    "deze", "dit",
+    # Forms of "zijn" (to be) — Dutch-only conjugations
+    "bent", "zijn", "waren",
+    # Forms of "hebben" (to have)
+    "heb", "hebt", "heeft", "hebben", "hadden",
+    # Modal verbs — Dutch-only conjugations
+    "kunt", "kunnen", "konden",
+    "moet", "moeten", "moest", "moesten",
+    "zal", "zult", "zullen", "zou", "zouden",
+    # Forms of "worden" (passive / become)
+    "wordt", "worden", "werd", "werden",
+    # Common verbs — Dutch-only conjugations
+    "gaat", "gaan", "staat", "staan", "doet", "doen",
+    # Question words
+    "wie", "wat", "waar", "wanneer", "waarom", "hoe",
+    "welke", "welk", "hoeveel",
+    # Negation
+    "niet", "geen",
+    # Common prepositions / connectives — Dutch-only spellings
+    "naar", "uit", "voor", "bij", "tegen", "tussen",
+    "omdat", "maar", "want", "dus", "echter",
+    # Klai-domain vocabulary (high-signal for our chat surface)
+    "kennisbank", "kennisbanken", "bronnen", "gegevens",
+    "vraag", "antwoord", "klopt", "aanmaken",
+})
+
+_DUTCH_REFUSAL: Final[str] = (
+    "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+)
+_ENGLISH_REFUSAL: Final[str] = (
+    "I cannot answer this reliably from the available knowledge sources."
+)
+
+_TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZÀ-ÿ]+")
+
+
+def no_citable_sources_message(user_query: object) -> str:
+    """Pick the language for the canned strict-mode refusal.
+
+    Returns the Dutch refusal when the query contains any token from
+    :data:`DUTCH_QUERY_MARKERS`, otherwise English. Inputs that are not
+    strings (None, dicts from upstream meta) fall through to English so
+    the refusal is never empty.
+
+    The detection is intentionally a curated wordlist match rather than
+    a general language-detector dependency: we only need to choose
+    between two languages for one canned sentence, and a wordlist keeps
+    the latency at microseconds with no model-load cost.
+    """
+    query = user_query if isinstance(user_query, str) else ""
+    if not query:
+        return _ENGLISH_REFUSAL
+    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
+    if tokens & DUTCH_QUERY_MARKERS:
+        return _DUTCH_REFUSAL
+    return _ENGLISH_REFUSAL
 
 
 # Shared language-detection contract (SPEC-RAG-MULTILINGUAL-CHAT-001
