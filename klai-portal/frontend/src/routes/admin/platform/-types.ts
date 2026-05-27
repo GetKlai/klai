@@ -191,6 +191,6 @@ export interface PlatformSubdomainItem {
   category: 'klai_service' | 'tooling' | 'marketing' | 'tenant'
   host: 'core-01' | 'public-01' | 'gpu-01' | 'external'
   owner: string
-  status: 'up' | 'auth_required' | 'client_error' | 'server_error' | 'unreachable'
+  status: 'up' | 'auth_required' | 'client_error' | 'server_error' | 'unreachable' | 'not_probed'
   status_code: number | null
 }
