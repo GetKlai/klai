@@ -308,6 +308,40 @@ Never use a modal for table row actions.
 
 ---
 
+## Route code splitting
+
+The portal uses TanStack Router's automatic route code splitting in
+`vite.config.ts`. Treat this as the default performance pattern for all
+new route work.
+
+### Route file rules
+
+- Keep route components unexported. Exporting a route component prevents
+  TanStack's splitter from treating it as route-local implementation.
+- Do not import directly from another route file. Move shared code into
+  a `-`-prefixed helper at the smallest shared scope.
+- Keep heavy UI dependencies inside the route/component that needs them;
+  avoid importing editor, markdown, table, drag-and-drop, or picker
+  libraries from app-wide layout files.
+- Manual `.lazy.tsx` split files are still allowed when a route needs
+  explicit control over the critical path.
+
+### Manual split shape
+
+Use this when a route has critical matching/loading logic plus heavy UI:
+
+- `<route>.tsx`: `createFileRoute`, `validateSearch`, `beforeLoad`,
+  `loader`, redirects, and tiny route constants.
+- `<route>.lazy.tsx`: `createLazyFileRoute`, component, hooks, UI
+  imports, icons, markdown/editor/table libraries, and page-local state.
+
+In lazy files, do not import the critical route file's `Route`. Use the
+lazy file's own `Route` object, or `getRouteApi('/path')` when typed
+route hooks are needed without pulling critical config back into the
+lazy chunk.
+
+---
+
 ## File organization for shared types and helpers
 
 When two or more route files share types, constants, or non-route helpers,

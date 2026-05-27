@@ -21,6 +21,7 @@ export default defineConfig(({ mode }) => {
       TanStackRouterVite({
         routesDirectory: './src/routes',
         routeFileIgnorePattern: String.raw`(^|/)__tests__(/|$)|(^|/|\.)_[^_/][^/]*(/|\.|$)`,
+        autoCodeSplitting: true,
       }),
       react(),
       tailwindcss(),
