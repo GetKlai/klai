@@ -79,7 +79,7 @@ export function KlaiAssistantLauncher() {
               setOpen(true)
             }
           }}
-          className="h-12 w-12 shadow-lg"
+          className="h-14 w-14 rounded-full border border-[var(--color-rl-border)] bg-[var(--color-rl-accent)] text-[var(--color-rl-dark)] shadow-lg hover:bg-[var(--color-rl-accent-hover)]"
         >
           {open ? <X className="h-5 w-5" /> : <Sparkles className="h-5 w-5" />}
         </Button>
@@ -102,9 +102,9 @@ function KlaiAssistantPanel({
   return (
     <section
       aria-label={m.klai_assistant_title()}
-      className="fixed bottom-20 right-4 z-[10002] flex max-h-[min(720px,calc(100vh-7rem))] w-[calc(100vw-2rem)] max-w-[420px] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl sm:right-6"
+      className="fixed bottom-24 right-4 z-[10002] flex max-h-[min(720px,calc(100vh-7rem))] w-[calc(100vw-2rem)] max-w-[420px] flex-col overflow-hidden rounded-xl border border-[var(--color-rl-border)] bg-[var(--color-rl-bg)] text-[var(--color-rl-dark)] shadow-2xl sm:right-6"
     >
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-4">
+      <div className="flex min-h-16 shrink-0 items-center justify-between bg-[var(--color-rl-accent)] px-4 py-3 text-[var(--color-rl-dark)]">
         <div className="flex min-w-0 items-center gap-2.5">
           {showBack && (
             <Button
@@ -113,19 +113,19 @@ function KlaiAssistantPanel({
               size="icon"
               onClick={() => onModeChange('home')}
               aria-label={m.klai_assistant_back()}
-              className="h-8 w-8 shrink-0"
+              className="h-8 w-8 shrink-0 text-[var(--color-rl-dark)] hover:bg-[var(--color-rl-dark)]/10"
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
           )}
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-900 text-white">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[var(--color-rl-dark)]/10 text-[var(--color-rl-dark)]">
             <Sparkles className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-gray-900">
+            <h2 className="truncate text-sm font-semibold text-[var(--color-rl-dark)]">
               {m.klai_assistant_title()}
             </h2>
-            <p className="truncate text-[11px] text-gray-400">
+            <p className="truncate text-[11px] text-[var(--color-rl-dark)]/70">
               {m.klai_assistant_subtitle()}
             </p>
           </div>
@@ -136,7 +136,7 @@ function KlaiAssistantPanel({
           size="icon"
           onClick={onClose}
           aria-label={m.klai_assistant_close()}
-          className="h-8 w-8 shrink-0"
+          className="h-8 w-8 shrink-0 text-[var(--color-rl-dark)] hover:bg-[var(--color-rl-dark)]/10"
         >
           <X className="h-4 w-4" />
         </Button>
@@ -187,16 +187,16 @@ function AssistantHome({ onModeChange }: { onModeChange: (mode: AssistantMode) =
           type="button"
           variant="secondary"
           onClick={() => onModeChange(option.mode)}
-          className="h-auto w-full justify-start rounded-xl px-3 py-3 text-left"
+          className="h-auto w-full justify-start rounded-xl border border-[var(--color-rl-border)] bg-[var(--color-rl-cream)] px-3 py-3 text-left hover:border-[var(--color-rl-accent)] hover:bg-[var(--color-rl-accent)]/10"
         >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-700">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-rl-accent)]/15 text-[var(--color-rl-dark)]">
             <option.icon className="h-4 w-4" />
           </span>
           <span className="min-w-0">
-            <span className="block text-sm font-semibold text-gray-900">
+            <span className="block text-sm font-semibold text-[var(--color-rl-dark)]">
               {option.title}
             </span>
-            <span className="mt-0.5 block whitespace-normal text-xs font-normal leading-5 text-gray-500">
+            <span className="mt-0.5 block whitespace-normal text-xs font-normal leading-5 text-[var(--color-rl-dark)]/60">
               {option.description}
             </span>
           </span>
@@ -340,21 +340,21 @@ function ChatQuestionForm<TPayload extends IntakePayload>({
   }
 
   return (
-    <div className="-mx-4 -my-4 flex min-h-[540px] flex-col bg-[var(--color-rl-cream)]/35">
+    <div className="-mx-4 -my-4 flex min-h-[540px] flex-col bg-[var(--color-rl-bg)]">
       <div className="flex flex-1 flex-col items-center justify-center px-8 py-10 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-gray-900 shadow-sm">
+        <div className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-[var(--color-rl-cream)] text-[var(--color-rl-dark)]">
           {state === 'submitted' ? (
             <CheckCircle2 className="h-8 w-8 text-[var(--color-success)]" strokeWidth={1.75} />
           ) : (
             <MessageSquare className="h-8 w-8" strokeWidth={1.75} />
           )}
         </div>
-        <h3 className="mt-7 text-[22px] font-semibold leading-tight text-gray-900">
+        <h3 className="mt-7 text-base font-semibold leading-tight text-[var(--color-rl-dark)]">
           {state === 'submitted'
             ? successTitle
             : m.klai_assistant_question_hero_title()}
         </h3>
-        <p className="mt-3 max-w-sm text-[15px] leading-6 text-gray-500">
+        <p className="mt-2 max-w-sm text-[13px] leading-5 text-[var(--color-rl-dark)]/60">
           {state === 'submitted'
             ? successDescription
             : m.klai_assistant_question_hero_desc()}
@@ -362,7 +362,7 @@ function ChatQuestionForm<TPayload extends IntakePayload>({
       </div>
 
       <form
-        className="border-t border-gray-200 bg-white/70 px-5 py-5"
+        className="border-t border-[var(--color-rl-border)] bg-[var(--color-rl-bg)] px-3 py-3"
         onSubmit={(event) => {
           event.preventDefault()
           void submit()
@@ -390,14 +390,14 @@ function ChatQuestionForm<TPayload extends IntakePayload>({
             rows={1}
             maxLength={4000}
             aria-label={m.klai_assistant_question_label()}
-            className="max-h-28 min-h-14 resize-none rounded-2xl bg-white px-4 py-4 text-[15px]"
+            className="max-h-28 min-h-11 resize-none rounded-lg border-[var(--color-rl-border)] bg-[var(--color-rl-bg)] px-3 py-2.5 text-sm text-[var(--color-rl-dark)] placeholder:text-[var(--color-rl-dark)]/60 focus-visible:ring-[var(--color-rl-accent)]"
           />
           <Button
             type="submit"
             size="icon"
             disabled={!canSubmit}
             aria-label={submitLabel}
-            className="h-14 w-14 shrink-0 rounded-2xl"
+            className="h-11 w-11 shrink-0 rounded-lg bg-[var(--color-rl-accent)] text-[var(--color-rl-dark)] hover:bg-[var(--color-rl-accent-hover)]"
           >
             <Send className={cn('h-5 w-5', state === 'submitting' && 'animate-pulse')} />
             <span className="sr-only">
@@ -405,7 +405,7 @@ function ChatQuestionForm<TPayload extends IntakePayload>({
             </span>
           </Button>
         </div>
-        <p className="mt-4 px-3 text-center text-xs leading-5 text-gray-400">
+        <p className="mt-2 px-3 text-center text-[11px] leading-5 text-[var(--color-rl-dark)]/40">
           {m.klai_assistant_disclaimer()}
         </p>
       </form>
