@@ -96,6 +96,19 @@ In deze implementatie toegevoegd, nog niet deployed bij het schrijven:
 - Simpele duplicate/item search op bestaande `feedback_items`.
 - Item-signaal via `org_count`, `user_count` en `priority_score`.
 
+Aanvullend live op `main`:
+
+- Platform item-detail toont gekoppelde submissions en item-signaal.
+- `feedback_items` heeft lightweight roadmapvelden voor later gebruik:
+  `public_title`, `public_summary`, `public_feedback_url`, `target_window`,
+  `owner`, `shipped_at` en external tracker velden.
+- De item-detail UI is bewust teruggebracht naar menselijke beslissingen:
+  status, titel en korte interne notitie.
+- Productgebied, type/classificatie, duplicate candidates, publieke tekst,
+  GitHub/Fider-links, owner en target window horen niet als leeg handmatig
+  formulier in de eerste workflow. Die moeten door AI/systeem voorgesteld of
+  via expliciete acties gezet worden.
+
 ## Belangrijke correctie
 
 `Stel een vraag` moet niet automatisch in product-feedback terechtkomen.
@@ -269,7 +282,7 @@ Acceptatie:
 
 ### Fase 2 - Platform Feedback tab
 
-Status: klaar in code, pending deploy.
+Status: klaar en live.
 
 Klaar:
 
@@ -296,8 +309,8 @@ Klaar:
 Nog te doen:
 
 - Filters uitbreiden naar status, org, type, productgebied en datum.
-- Detail drawer verfijnen met betere labels, item status controls en gekoppelde
-  evidence.
+- Detail drawer verder verfijnen op basis van echt gebruik, maar geen extra
+  lege invoervelden toevoegen zonder duidelijke handmatige beslissing.
 
 Acceptatie:
 
@@ -307,6 +320,8 @@ Acceptatie:
 
 ### Fase 3 - AI triage en duplicate detectie
 
+Status: eerstvolgende bouwstap.
+
 - Background job na elke submission.
 - Output:
   - korte samenvatting;
@@ -315,6 +330,13 @@ Acceptatie:
   - severity/urgency;
   - duplicate candidates;
   - voorgestelde actie.
+- UI toont suggesties als voorstel, niet als verplicht formulier:
+  - "lijkt op bestaand item X";
+  - "maak nieuw item";
+  - "support";
+  - "negeer";
+  - "bug met hoge urgentie".
+- Staff accepteert of corrigeert de suggestie; alleen correcties vragen input.
 - Duplicate detectie start simpel:
   - tekst-normalisatie + existing item title/summary vergelijking;
   - later embeddings via bestaande AI/embedding infra of aparte Qdrant collectie.
@@ -325,6 +347,8 @@ Acceptatie:
 - Staff kan AI-suggestie accepteren of overschrijven.
 
 ### Fase 4 - Roadmap-items en upvotes
+
+Status: Fase 4-light klaar; verdere roadmapautomatisering na Fase 3.
 
 - Maak `feedback_items` het canonical product-backlog niveau.
 - Een nieuwe submission wordt meestal evidence/upvote op een bestaand item.
@@ -399,17 +423,24 @@ Acceptatie:
 
 ## Eerstvolgende stap
 
-Maak Fase 4-light bruikbaar voordat AI of externe syncs bepalen wat er gebeurt:
+Bouw Fase 3: AI-triage als assistent bovenop de bestaande handmatige workflow.
 
-1. Voeg een feedback-item detailview toe met gekoppelde submissions, org/user
-   signalen en externe links.
-2. Voeg lightweight roadmapvelden toe op `feedback_items`: publieke titel,
-   publieke samenvatting, target window, owner, GitHub/feedback URL.
-3. Bouw daarna AI triage als assistent bovenop deze handmatige workflow:
-   classifier, korte samenvatting, productgebied, duplicate candidates en
-   voorgestelde actie.
-4. Voeg pas daarna one-click sync toe naar GitHub Issues of
-   feedback.getklai.com, altijd vanaf het canonical `feedback_item`.
+Concreet:
+
+1. Maak een backend service/job die per nieuwe `feedback_submission` een
+   `feedback_triage_suggestions` row schrijft.
+2. Laat de suggestie minimaal bevatten:
+   - korte samenvatting;
+   - voorgesteld type/kind;
+   - productgebied;
+   - urgency/severity;
+   - duplicate candidates met confidence;
+   - voorgestelde actie: link, nieuw item, support of negeer.
+3. Toon die suggestie in Platform als compacte "AI voorstel" kaart bij de
+   submission/detail drawer.
+4. Voeg acties toe om het voorstel te accepteren of te corrigeren.
+5. Pas daarna one-click sync toe naar GitHub Issues of feedback.getklai.com,
+   altijd vanaf het canonical `feedback_item`.
 
 ## Risico's
 
