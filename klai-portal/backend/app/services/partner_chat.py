@@ -1142,7 +1142,33 @@ def _sse_sources_delta(sources: list[dict[str, str]]) -> bytes:
 
 
 def _no_citable_sources_message(user_query: str) -> str:
-    dutch_markers = {"wat", "waar", "welke", "hoe", "waarom", "gegevens", "bronnen", "klopt"}
+    dutch_markers = {
+        "aanmaken",
+        "antwoord",
+        "bronnen",
+        "de",
+        "een",
+        "gegevens",
+        "heb",
+        "het",
+        "hoe",
+        "hoeveel",
+        "ik",
+        "je",
+        "jij",
+        "kan",
+        "kennisbank",
+        "kennisbanken",
+        "klopt",
+        "mag",
+        "mijn",
+        "u",
+        "vraag",
+        "waar",
+        "waarom",
+        "wat",
+        "welke",
+    }
     query_tokens = {token.lower() for token in re.findall(r"[a-zA-ZÀ-ÿ]+", user_query)}
     if query_tokens & dutch_markers:
         return "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."

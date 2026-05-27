@@ -201,7 +201,8 @@
 }
 
 .klai-icon-btn:hover:not(:disabled),
-.klai-icon-btn:focus-visible {
+.klai-icon-btn:focus-visible,
+.klai-icon-btn--active {
   opacity: 1;
   background: color-mix(in srgb, var(--klai-primary-text-color) 20%, transparent);
 }
@@ -219,6 +220,24 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   fill: none;
+}
+
+.klai-menu-icon-line {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 180ms ease, opacity 140ms ease;
+}
+
+.klai-menu-icon--open .klai-menu-icon-line--top {
+  transform: translateY(5px) rotate(45deg);
+}
+
+.klai-menu-icon--open .klai-menu-icon-line--middle {
+  opacity: 0;
+}
+
+.klai-menu-icon--open .klai-menu-icon-line--bottom {
+  transform: translateY(-5px) rotate(-45deg);
 }
 
 .klai-close-btn {
@@ -423,7 +442,7 @@
 
 .klai-handoff-status {
   align-self: center;
-  margin: 8px 12px 0;
+  margin: 10px 12px 12px;
   padding: 6px 10px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--klai-primary-color) 30%, var(--klai-border-color));

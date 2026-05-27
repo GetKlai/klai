@@ -42,9 +42,6 @@ async function bootstrap(): Promise<void> {
   const containerSelector = scriptTag.getAttribute("data-container");
   const clientSessionId = getInitialConversationSessionId(widgetId);
 
-  // Init i18n labels (browser locale or data-locale override)
-  initLabels(locale);
-
   let config;
   try {
     config = await fetchWidgetConfig(widgetId, { sessionId: clientSessionId });
@@ -56,6 +53,14 @@ async function bootstrap(): Promise<void> {
     }
     return;
   }
+
+  // Init i18n labels after config so the widget copy can hint the locale.
+  initLabels(locale, [
+    config.title,
+    config.description ?? "",
+    config.welcome_message,
+    ...(config.conversation_starters ?? []),
+  ]);
 
   // Apply css_variables from config as custom properties overrides
   const cssVariableOverrides = Object.entries(config.css_variables)
