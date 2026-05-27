@@ -11,7 +11,7 @@
 #   2. Add KUMA_TOKEN_<NAME>=<token> to your config.env and redeploy (deploy.sh main)
 #   3. Add push_healthcheck or push_exec line below using the variable
 #   4. Run: crontab -e  (entry is already present — no change needed)
-set -uo pipefail
+set -eo pipefail
 
 # Load push tokens from main env (deployed from config.sops.env)
 # shellcheck source=/dev/null
@@ -34,18 +34,29 @@ resolve_container() {
 
 # Resolve exec proxy and healthcheck containers once at startup
 PORTAL_API=$(resolve_container portal-api)
-LIBRECHAT=$(resolve_container librechat-klai)
+# librechat-getklai is the Klai-tenant LibreChat instance (renamed from
+# librechat-klai after SPEC-PROVISIONING introduced per-tenant slug naming).
+LIBRECHAT=$(resolve_container librechat-getklai)
 LITELLM=$(resolve_container litellm)
 MONGODB=$(resolve_container mongodb)
 POSTGRES=$(resolve_container postgres)
 REDIS=$(resolve_container redis)
-VEXA=$(resolve_container vexa-bot-manager)
+# api-gateway is the public-facing entrypoint to the Vexa V3 meeting stack
+# (replaces the legacy vexa-bot-manager monolith — SPEC-VEXA-001/003).
+MEETING=$(resolve_container api-gateway)
 
 # Push based on Docker-native healthcheck status (requires healthcheck: in compose)
 push_healthcheck() {
     local container="$1" token="$2" label="$3"
+    [ -z "$token" ] && return      # skip if no token configured
+    [ -z "$container" ] && {       # container not found — report down
+        curl -sf "${KUMA}/${token}?status=down&msg=container-not-found" -o /dev/null
+        echo "$(date -Iseconds) WARN ${label}: container not found" >> "$LOG"
+        return
+    }
     local health
     health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "missing")
+    health=$(echo "$health" | tr -d '\n\r')  # strip newlines — prevent curl URL parse failure
     if [ "$health" = "healthy" ]; then
         curl -sf "${KUMA}/${token}?status=up&msg=OK" -o /dev/null
     else
@@ -57,6 +68,7 @@ push_healthcheck() {
 # Push based on connectivity test via docker exec (for services on isolated networks)
 push_exec() {
     local container="$1" cmd="$2" token="$3" label="$4"
+    [ -z "$token" ] && return  # skip if no token configured
     if [ -z "$container" ]; then
         curl -sf "${KUMA}/${token}?status=down&msg=container-not-found" -o /dev/null
         echo "$(date -Iseconds) WARN ${label}: container not found" >> "$LOG"
@@ -72,20 +84,20 @@ push_exec() {
 
 # ── Products ──────────────────────────────────────────────────────────────────
 
-# Chat: LibreChat health endpoint
+# Chat: LibreChat health endpoint (Klai-tenant instance)
 push_exec "$PORTAL_API" \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://librechat-klai:3080/health')\"" \
-    "${KUMA_TOKEN_CHAT}" "Chat"
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://librechat-getklai:3080/health')\"" \
+    "${KUMA_TOKEN_CHAT:-}" "Chat"
 
 # Scribe: scribe-api receives audio, calls whisper-server internally
 push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://scribe-api:8020/health')\"" \
-    "${KUMA_TOKEN_SCRIBE}" "Scribe"
+    "${KUMA_TOKEN_SCRIBE:-}" "Scribe"
 
 # Docs: Next.js app — check TCP reachability (no /health route)
 push_exec "$PORTAL_API" \
     "python3 -c \"import socket; s=socket.create_connection(('docs-app',3010),timeout=5); s.close()\"" \
-    "${KUMA_TOKEN_DOCS}" "Docs"
+    "${KUMA_TOKEN_DOCS:-}" "Docs"
 
 # Knowledge: knowledge-ingest product-level (RAG ingestion pipeline)
 push_exec "$PORTAL_API" \
@@ -100,28 +112,28 @@ push_exec "$PORTAL_API" \
     "${KUMA_TOKEN_PORTAL_API:-}" "Portal API"
 
 # MongoDB: conversation store (Chat)
-push_healthcheck "$MONGODB"  "${KUMA_TOKEN_MONGODB}"  "Conversations Database"
+push_healthcheck "$MONGODB"  "${KUMA_TOKEN_MONGODB:-}"  "Conversations Database"
 
 # PostgreSQL: accounts, meetings, knowledge (shared)
-push_healthcheck "$POSTGRES" "${KUMA_TOKEN_POSTGRES}" "Account Database"
+push_healthcheck "$POSTGRES" "${KUMA_TOKEN_POSTGRES:-}" "Account Database"
 
 # Redis: LLM request cache + LibreChat session store
-push_healthcheck "$REDIS"    "${KUMA_TOKEN_REDIS}"    "AI Request Cache"
+push_healthcheck "$REDIS"    "${KUMA_TOKEN_REDIS:-}"    "AI Request Cache"
 
-# Meilisearch: LibreChat message search index
-push_exec "$LIBRECHAT" \
-    "wget -qO- http://meilisearch:7700/health 2>/dev/null | grep -q available" \
-    "${KUMA_TOKEN_MEILI}" "Message Search"
+# Meilisearch: LibreChat message search index (probed from portal-api network)
+push_exec "$PORTAL_API" \
+    "python3 -c \"import urllib.request, json; d=json.loads(urllib.request.urlopen('http://meilisearch:7700/health').read()); assert d['status']=='available'\"" \
+    "${KUMA_TOKEN_MEILI:-}" "Message Search"
 
 # Ollama: local fallback LLM (backup for LiteLLM)
 push_exec "$LITELLM" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://ollama:11434/')\"" \
-    "${KUMA_TOKEN_OLLAMA}" "Backup Language Model"
+    "${KUMA_TOKEN_OLLAMA:-}" "Backup Language Model"
 
-# Whisper: transcription engine (Scribe + Meetings via portal-api)
+# Whisper: transcription engine (now on gpu-01 via SSH tunnel at 172.18.0.1:8000)
 push_exec "$PORTAL_API" \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://whisper-server:8000/health')\"" \
-    "${KUMA_TOKEN_WHISPER}" "Transcription Engine"
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://172.18.0.1:8000/health')\"" \
+    "${KUMA_TOKEN_WHISPER:-}" "Transcription Engine"
 
 # Docling: document-to-markdown conversion (knowledge-ingest only since SPEC-PORTAL-UNIFY-KB-001)
 push_exec "$PORTAL_API" \
@@ -131,29 +143,34 @@ push_exec "$PORTAL_API" \
 # Gitea: docs content store (Docs product, Knowledge webhook source)
 push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://gitea:3000/api/healthz')\"" \
-    "${KUMA_TOKEN_GITEA}" "Docs Storage"
+    "${KUMA_TOKEN_GITEA:-}" "Docs Storage"
 
 # Qdrant: vector store for Knowledge retrieval
 push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://qdrant:6333/healthz')\"" \
     "${KUMA_TOKEN_QDRANT:-}" "Vector Database"
 
-# TEI: text embeddings (Knowledge ingestion + Focus retrieval)
+# TEI: dense text embeddings (TEI on gpu-01 via SSH tunnel at 172.18.0.1:7997)
 push_exec "$PORTAL_API" \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://tei:8080/health')\"" \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://172.18.0.1:7997/health')\"" \
     "${KUMA_TOKEN_TEI:-}" "Embeddings"
 
-# Infinity Reranker: cross-encoder reranking for Chat RAG retrieval
+# Infinity Reranker: cross-encoder reranking (Infinity on gpu-01 via SSH tunnel at 172.18.0.1:7998)
 push_exec "$PORTAL_API" \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://infinity-reranker:7997/health')\"" \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://172.18.0.1:7998/health')\"" \
     "${KUMA_TOKEN_RERANKER:-}" "Reranker"
+
+# BGE-M3 sparse: sparse embeddings (gpu-01 via SSH tunnel at 172.18.0.1:8001)
+push_exec "$PORTAL_API" \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://172.18.0.1:8001/health')\"" \
+    "${KUMA_TOKEN_BGE_SPARSE:-}" "BGE-M3 Sparse"
 
 # Firecrawl: web content fetcher (Chat web mode)
 push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://firecrawl-api:3002/')\"" \
     "${KUMA_TOKEN_FIRECRAWL:-}" "Web Content Fetcher"
 
-# SearXNG: privacy-preserving web search (Chat + Focus)
+# SearXNG: privacy-preserving web search
 push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://searxng:8080/')\"" \
     "${KUMA_TOKEN_SEARXNG:-}" "Web Search"
@@ -163,8 +180,9 @@ push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://klai-mailer:8000/health')\"" \
     "${KUMA_TOKEN_MAILER:-}" "Email Service"
 
-# Vexa bot manager: meeting bot lifecycle (Docker-native healthcheck)
-push_healthcheck "$VEXA" "${KUMA_TOKEN_VEXA:-}" "Meeting Bot Manager"
+# Meeting service: Vexa V3 stack public entrypoint (api-gateway) — Docker healthcheck
+# Replaces legacy vexa-bot-manager monolith (SPEC-VEXA-001/003).
+push_healthcheck "$MEETING" "${KUMA_TOKEN_VEXA:-}" "Meeting service"
 
 # ── Knowledge layer (service-level) ──────────────────────────────────────────
 
@@ -192,3 +210,13 @@ push_exec "$PORTAL_API" \
 push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://retrieval-api:8040/health')\"" \
     "${KUMA_TOKEN_RETRIEVAL_API:-}" "Retrieval API"
+
+# Crawl4AI: shared web crawler container (REST API at crawl4ai:11235)
+push_exec "$PORTAL_API" \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://crawl4ai:11235/health')\"" \
+    "${KUMA_TOKEN_CRAWL4AI:-}" "Web Crawler"
+
+# ── GPU Services (gpu-01 via SSH tunnel) ─────────────────────────────────────
+
+# Combined GPU health: tunnel service + all 3 inference endpoints
+[ -x /opt/klai/scripts/gpu-health.sh ] && bash /opt/klai/scripts/gpu-health.sh
