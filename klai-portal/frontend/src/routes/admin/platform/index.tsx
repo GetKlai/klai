@@ -11,6 +11,7 @@ import { usePlatformStats } from './-hooks'
 import {
   BotsTab,
   ChatErrorsTab,
+  FeedbackTab,
   KbTab,
   OrgsTab,
   StatusTab,
@@ -32,6 +33,7 @@ const TABS: { id: PlatformTab; label: () => string }[] = [
   { id: 'templates', label: m.platform_tab_templates },
   { id: 'subscriptions', label: m.platform_tab_subscriptions },
   { id: 'bots', label: m.platform_tab_bots },
+  { id: 'feedback', label: m.platform_tab_feedback },
   { id: 'chat-errors', label: m.platform_tab_chat_errors },
   { id: 'status', label: m.platform_tab_status },
 ]
@@ -64,6 +66,7 @@ function PlatformConsole() {
     void queryClient.invalidateQueries({ queryKey: ['platform-kbs'] })
     void queryClient.invalidateQueries({ queryKey: ['platform-templates'] })
     void queryClient.invalidateQueries({ queryKey: ['platform-chat-errors'] })
+    void queryClient.invalidateQueries({ queryKey: ['platform-feedback-submissions'] })
   }
 
   return (
@@ -199,6 +202,7 @@ function PlatformConsole() {
         <TemplatesTab search={search} fmtDate={fmtDate} />
       )}
       {tab === 'bots' && <BotsTab search={search} fmtDate={fmtDate} />}
+      {tab === 'feedback' && <FeedbackTab search={search} fmtDate={fmtDate} />}
       {tab === 'chat-errors' && <ChatErrorsTab fmtDate={fmtDate} />}
       {tab === 'status' && <StatusTab />}
     </div>
