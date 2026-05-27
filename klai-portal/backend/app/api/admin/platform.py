@@ -1064,10 +1064,7 @@ async def platform_feedback_update_item(
     perms: UserPermissions = Depends(require_platform_admin()),
 ) -> PlatformFeedbackItem:
     await _audit(perms, "feedback:update_item", str(item_id))
-    values = {
-        key: _blank_to_none(value)
-        for key, value in body.model_dump(exclude_unset=True).items()
-    }
+    values = {key: _blank_to_none(value) for key, value in body.model_dump(exclude_unset=True).items()}
     async with cross_org_session() as db:
         try:
             item = await update_feedback_item(db, item_id, values)
