@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { KlaiAssistantLauncher } from '@/features/klai-assistant/KlaiAssistantLauncher'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 import { getAccessibleAppTools } from './-app-tools'
 
@@ -31,6 +32,7 @@ function AppLayout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+      <KlaiAssistantLauncher />
     </div>
   )
 }
