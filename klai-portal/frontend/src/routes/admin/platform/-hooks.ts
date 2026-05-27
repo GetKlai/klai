@@ -14,10 +14,24 @@ import type {
   PlatformFeedbackSubmission,
   PlatformOrgDetail,
   PlatformKB,
+  PlatformSubdomainItem,
   PlatformTemplate,
   CreateTenantPayload,
   CreateTenantResult,
 } from './-types'
+
+export function usePlatformSubdomains(enabled = true) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-subdomains'],
+    queryFn: async () => apiFetch<PlatformSubdomainItem[]>('/api/admin/platform/subdomains'),
+    // Liveness probes run server-side on every fetch (3s timeout × N items
+    // in parallel = ~3s total). Cache briefly so flipping tabs does not
+    // re-fire the whole probe storm.
+    staleTime: 30_000,
+    enabled: auth.isAuthenticated && enabled,
+  })
+}
 
 export function usePlatformStats(enabled = true) {
   const auth = useAuth()

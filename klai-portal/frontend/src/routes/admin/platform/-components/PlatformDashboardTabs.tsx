@@ -38,6 +38,7 @@ import {
   usePlatformFeedbackUpdateItem,
   usePlatformKnowledgeBases,
   usePlatformOrgs,
+  usePlatformSubdomains,
   usePlatformTemplates,
   usePlatformUsers,
   usePortalHealth,
@@ -46,12 +47,163 @@ import type {
   PlatformFeedbackItem,
   PlatformFeedbackLinkedSubmission,
   PlatformFeedbackSubmission,
+  PlatformSubdomainItem,
 } from '../-types'
 import { PlatformTableShell } from './PlatformShell'
 
 const TH =
   'py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide whitespace-nowrap'
 const TD = 'py-3.5 pr-4 align-top text-gray-900'
+
+// --- Subdomains overview ---------------------------------------------------
+//
+// Catalogue of every Klai-controlled subdomain (Caddyfile + Coolify +
+// Hetzner DNS) so we can spot when a service drops off the radar. Combines
+// the curated static list with live tenant entries from portal_orgs, plus
+// a 3s liveness probe per URL.
+
+const SUBDOMAIN_SECTIONS: {
+  category: PlatformSubdomainItem['category']
+  title: () => string
+  description: () => string
+}[] = [
+  {
+    category: 'klai_service',
+    title: () => m.platform_subdomains_section_klai_services(),
+    description: () => m.platform_subdomains_section_klai_services_description(),
+  },
+  {
+    category: 'tooling',
+    title: () => m.platform_subdomains_section_tooling(),
+    description: () => m.platform_subdomains_section_tooling_description(),
+  },
+  {
+    category: 'marketing',
+    title: () => m.platform_subdomains_section_marketing(),
+    description: () => m.platform_subdomains_section_marketing_description(),
+  },
+  {
+    category: 'tenant',
+    title: () => m.platform_subdomains_section_tenants(),
+    description: () => m.platform_subdomains_section_tenants_description(),
+  },
+]
+
+function SubdomainStatusBadge({ item }: { item: PlatformSubdomainItem }) {
+  const code = item.status_code !== null ? ` ${item.status_code}` : ''
+  switch (item.status) {
+    case 'up':
+      return <Badge variant="success">{m.platform_subdomains_status_up()}{code}</Badge>
+    case 'auth_required':
+      return <Badge variant="secondary">{m.platform_subdomains_status_auth()}{code}</Badge>
+    case 'client_error':
+      return <Badge variant="secondary">{m.platform_subdomains_status_client_error()}{code}</Badge>
+    case 'server_error':
+      return <Badge variant="destructive">{m.platform_subdomains_status_server_error()}{code}</Badge>
+    case 'unreachable':
+      return <Badge variant="destructive">{m.platform_subdomains_status_unreachable()}</Badge>
+  }
+}
+
+export function SubdomainsTab({ search }: { search: string }) {
+  const { data, isLoading, isError } = usePlatformSubdomains()
+  const items = data ?? []
+  const needle = search.trim().toLowerCase()
+  const filtered = needle
+    ? items.filter(
+        (i) =>
+          i.subdomain.toLowerCase().includes(needle) ||
+          i.label.toLowerCase().includes(needle) ||
+          i.url.toLowerCase().includes(needle) ||
+          i.description.toLowerCase().includes(needle) ||
+          i.owner.toLowerCase().includes(needle),
+      )
+    : items
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-sm text-gray-400">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        {m.platform_subdomains_loading()}
+      </div>
+    )
+  }
+  if (isError) {
+    return (
+      <p className="py-16 text-center text-sm text-[var(--color-destructive)]">
+        {m.platform_subdomains_load_error()}
+      </p>
+    )
+  }
+  if (filtered.length === 0) {
+    return <p className="py-16 text-center text-sm text-gray-400">{m.platform_subdomains_empty()}</p>
+  }
+
+  return (
+    <div className="space-y-10">
+      {SUBDOMAIN_SECTIONS.map((section) => {
+        const rows = filtered.filter((i) => i.category === section.category)
+        if (rows.length === 0) return null
+        return (
+          <section key={section.category} className="space-y-3">
+            <div>
+              <h2 className="text-[15px] font-display-bold text-gray-900">{section.title()}</h2>
+              <p className="text-sm text-gray-400">{section.description()}</p>
+            </div>
+            <PlatformTableShell
+              loading={false}
+              empty={false}
+              emptyText=""
+            >
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className={TH}>{m.platform_subdomains_col_subdomain()}</th>
+                  <th className={TH}>{m.platform_subdomains_col_label()}</th>
+                  <th className={TH}>{m.platform_subdomains_col_host()}</th>
+                  <th className={TH}>{m.platform_subdomains_col_owner()}</th>
+                  <th className={TH}>{m.platform_subdomains_col_status()}</th>
+                  <th className={TH}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((item) => (
+                  <tr key={item.url} className="border-b border-gray-200 last:border-b-0">
+                    <td className={TD}>
+                      <p className="font-mono text-xs text-gray-900">{item.subdomain || '(apex)'}</p>
+                      <p className="mt-1 text-xs text-gray-400">{item.description}</p>
+                    </td>
+                    <td className={TD}>
+                      <span className="text-sm">{item.label}</span>
+                    </td>
+                    <td className={TD}>
+                      <span className="text-xs font-mono text-gray-400">{item.host}</span>
+                    </td>
+                    <td className={TD}>
+                      <span className="text-sm text-gray-700">{item.owner}</span>
+                    </td>
+                    <td className={TD}>
+                      <SubdomainStatusBadge item={item} />
+                    </td>
+                    <td className={TD + ' text-right'}>
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--color-rl-accent-dark)] hover:underline"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </PlatformTableShell>
+          </section>
+        )
+      })}
+    </div>
+  )
+}
 
 export function StatusTab() {
   const health = usePortalHealth()
