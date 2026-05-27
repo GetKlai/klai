@@ -15,9 +15,21 @@ interface CreatedKeyModalProps {
   apiKey: string
   open: boolean
   onConfirm: () => void
+  title?: string
+  warning?: string
+  description?: string
+  confirmLabel?: string
 }
 
-export function CreatedKeyModal({ apiKey, open, onConfirm }: CreatedKeyModalProps) {
+export function CreatedKeyModal({
+  apiKey,
+  open,
+  onConfirm,
+  title,
+  warning,
+  description,
+  confirmLabel,
+}: CreatedKeyModalProps) {
   const [copied, setCopied] = useState(false)
 
   async function handleCopy() {
@@ -30,14 +42,14 @@ export function CreatedKeyModal({ apiKey, open, onConfirm }: CreatedKeyModalProp
     <AlertDialog open={open}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{m.admin_api_keys_key_modal_title()}</AlertDialogTitle>
+          <AlertDialogTitle>{title ?? m.admin_api_keys_key_modal_title()}</AlertDialogTitle>
           <AlertDialogDescription className="space-y-3">
             <span className="flex items-center gap-2 text-[var(--color-destructive)] font-medium">
               <AlertTriangle className="h-4 w-4 shrink-0" />
-              {m.admin_api_keys_key_modal_warning()}
+              {warning ?? m.admin_api_keys_key_modal_warning()}
             </span>
             <span className="block">
-              {m.admin_api_keys_key_modal_description()}
+              {description ?? m.admin_api_keys_key_modal_description()}
             </span>
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -63,7 +75,7 @@ export function CreatedKeyModal({ apiKey, open, onConfirm }: CreatedKeyModalProp
 
         <AlertDialogFooter>
           <Button onClick={onConfirm}>
-            {m.admin_api_keys_key_modal_confirm()}
+            {confirmLabel ?? m.admin_api_keys_key_modal_confirm()}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
