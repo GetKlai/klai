@@ -1011,24 +1011,22 @@ function EditConnectorPage() {
                         : m.admin_connectors_webcrawler_run_preview()
                       }
                     </Button>
-                    {!webcrawlerConfig.content_selector && (
-                      <button
-                        type="button"
-                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-50"
-                        disabled={previewMutation.isPending || !wcPreviewUrl}
-                        onClick={() => {
-                          invalidatePreview()
-                          previewMutation.mutate({
-                            url: wcPreviewUrl,
-                            try_ai: true,
-                            ...previewAuthPayload(),
-                          })
-                        }}
-                      >
-                        <Sparkles className="h-3 w-3" />
-                        {m.admin_connectors_webcrawler_try_ai()}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-50"
+                      disabled={previewMutation.isPending || !wcPreviewUrl}
+                      onClick={() => {
+                        invalidatePreview()
+                        previewMutation.mutate({
+                          url: wcPreviewUrl,
+                          try_ai: true,
+                          ...previewAuthPayload(),
+                        })
+                      }}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      {m.admin_connectors_webcrawler_try_ai()}
+                    </button>
                   </div>
 
                   {/* Preview feedback - classification-driven single source of truth */}
@@ -1085,7 +1083,7 @@ function EditConnectorPage() {
 
                       {/* Inline "Try AI find selector" CTA for applicable classifications */}
                       {(previewResult.classification === 'selector_required' || previewResult.classification === 'selector_returns_empty') &&
-                        !webcrawlerConfig.content_selector && previewResult.selector_source !== 'ai' && (
+                        previewResult.selector_source !== 'ai' && (
                         <button
                           type="button"
                           className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-50"

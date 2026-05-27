@@ -195,6 +195,7 @@ class TestRunCrawlJobAuthWall:
             "support",
             stored=None,
             login_indicator_selector="#login-form",
+            authenticated_context=True,
             connector_id=None,
         )
 
@@ -267,7 +268,7 @@ class TestRunCrawlJobAuthWall:
             patch(
                 "knowledge_ingest.adapters.crawler._ingest_crawl_result",
                 new=AsyncMock(side_effect=wall_exc),
-            ),
+            ) as ingest_mock,
         ):
             await run_crawl_job(
                 mock_conn,
@@ -277,6 +278,18 @@ class TestRunCrawlJobAuthWall:
                 start_url="https://wiki.example",
                 cookies=[{"name": "session", "value": "dummy"}],
             )
+
+        ingest_mock.assert_awaited_with(
+            mock_conn,
+            walled,
+            walled.url,
+            "org",
+            "support",
+            stored=None,
+            login_indicator_selector=None,
+            authenticated_context=True,
+            connector_id=None,
+        )
 
         terminal_updates = [
             c

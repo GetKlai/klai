@@ -11,6 +11,7 @@ at sys.modules level before importing app.api.connectors so collection succeeds.
 """
 
 import sys
+from datetime import UTC, datetime
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -68,9 +69,9 @@ def _make_db(kb: MagicMock, connector: MagicMock) -> AsyncMock:
     connector_result = MagicMock()
     connector_result.scalar_one_or_none.return_value = connector
 
-    # First execute → KB lookup (via _get_kb_with_owner_check / _get_kb_or_404)
-    # Second execute → connector lookup
-    db.execute.side_effect = [kb_result, connector_result]
+    # These tests patch _get_kb_with_owner_check, so trigger_sync's only
+    # direct db.execute call is the connector lookup.
+    db.execute.side_effect = [connector_result]
     return db
 
 
@@ -126,6 +127,7 @@ class TestTriggerSyncItemQuota:
         db = _make_db(kb, connector)
 
         fake_sync_run = MagicMock()
+        fake_sync_run.started_at = datetime(2026, 5, 27, 19, 48, tzinfo=UTC)
 
         with (
             patch(
@@ -158,6 +160,8 @@ class TestTriggerSyncItemQuota:
             )
 
         assert result is fake_sync_run
+        assert connector.last_sync_status == "running"
+        assert connector.last_sync_at == fake_sync_run.started_at
 
     @pytest.mark.asyncio
     async def test_complete_plan_is_not_limited(self) -> None:

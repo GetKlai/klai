@@ -419,6 +419,7 @@ async def run_crawl_job(
                     kb_slug,
                     stored=known_hashes.get(url),
                     login_indicator_selector=login_indicator_selector,
+                    authenticated_context=bool(cookies or login_indicator_selector),
                     connector_id=connector_id,
                 )
                 pages_done += 1
@@ -633,6 +634,7 @@ async def _ingest_crawl_result(
     kb_slug: str,
     stored: pg_store.PageHashes | None | object = _UNSET,
     login_indicator_selector: str | None = None,
+    authenticated_context: bool = False,
     connector_id: str | None = None,
 ) -> None:
     """Process a crawl result: dedup, extract links, ingest.
@@ -715,6 +717,7 @@ async def _ingest_crawl_result(
     # gates inside otherwise-large pages before they are written as content.
     login_wall_signal: AuthWallSignal | None = None
     login_wall_mode: str | None = None
+    effective_authenticated_context = authenticated_context or login_indicator_selector is not None
     if settings.ingest_login_wall_detect_enabled:
         auth_wall = classify_auth_wall(
             response_status_code=None,
@@ -735,12 +738,13 @@ async def _ingest_crawl_result(
     # detection by SimHash near-duplicate clustering. Runs AFTER dedup (don't
     # waste work on already-seen pages) and BEFORE image upload + Qdrant
     # write (cheaper to bail early). Skipped when a direct classifier signal
-    # already fired, and when login_indicator_selector is set because that path
-    # has its own wait_for guard.
+    # already fired, and in authenticated contexts. Template clustering is a
+    # useful anonymous-only heuristic, but authenticated knowledge bases often
+    # have many legitimate pages with near-identical structure.
     if (
         settings.ingest_login_wall_detect_enabled
         and login_wall_signal is None
-        and login_indicator_selector is None
+        and not effective_authenticated_context
     ):
         login_wall_signal = await detect_anonymous_auth_wall(
             result.raw_markdown or "",
