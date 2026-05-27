@@ -1305,6 +1305,24 @@ def _merge_css_variables(widget_config: dict) -> dict[str, str]:
     silently so a malformed admin field can never poison the stylesheet.
     """
     css_vars: dict[str, str] = {}
+    if widget_config.get("theme") == "dark":
+        css_vars.update(
+            {
+                "--klai-text-color": "#fffef2",
+                "--klai-text-muted": "#fffef299",
+                "--klai-background-color": "#191918",
+                "--klai-card-color": "#27251f",
+                "--klai-border-color": "#3a3831",
+            }
+        )
+
+    if widget_config.get("widget_position") == "left":
+        css_vars["--klai-widget-left"] = "20px"
+        css_vars["--klai-widget-right"] = "auto"
+    elif widget_config.get("widget_position") == "right":
+        css_vars["--klai-widget-left"] = "auto"
+        css_vars["--klai-widget-right"] = "20px"
+
     primary = widget_config.get("primary_color")
     if isinstance(primary, str) and _HEX_COLOR_RE.match(primary):
         css_vars["--klai-primary-color"] = primary
@@ -1504,6 +1522,9 @@ async def widget_config(
         "name": widget_row.name,
         "description": widget_row.description or "",
         "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
+        "theme": widget_config_data.get("theme", "light"),
+        "collect_user_info": widget_config_data.get("collect_user_info", False),
+        "widget_position": widget_config_data.get("widget_position", "right"),
         # Display toggles: widget renders the sources block / meta line
         # under each assistant message based on these flags.
         "show_sources": widget_config_data.get("show_sources", True),
@@ -1614,8 +1635,12 @@ async def public_bot_config(
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
         "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
+        "theme": widget_config_data.get("theme", "light"),
+        "collect_user_info": widget_config_data.get("collect_user_info", False),
+        "widget_position": widget_config_data.get("widget_position", "right"),
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
+        "page_context_enabled": widget_config_data.get("page_context_enabled", False),
         "name": widget_row.name,
         "description": widget_row.description or "",
         "handoff": {

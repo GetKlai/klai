@@ -23,6 +23,9 @@ export interface WidgetConfig {
       enabled?: boolean;
     };
   };
+  theme?: "light" | "dark";
+  collect_user_info?: boolean;
+  widget_position?: "left" | "right";
 }
 
 export type KlaiWidgetErrorCode =

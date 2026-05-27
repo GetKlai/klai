@@ -21,6 +21,7 @@ import {
   streamHubSpotHandoffEvents,
 } from "../api/handoff";
 import { t } from "../i18n/labels";
+import type { Message } from "../api/chat-stream";
 
 interface ChatWindowProps {
   title: string;
@@ -30,6 +31,7 @@ interface ChatWindowProps {
   conversationStarters?: string[];
   hideDisclaimer?: boolean;
   welcomeMessage?: string;
+  collectUserInfo?: boolean;
 }
 
 // TWD-pattern widget chrome:
@@ -40,6 +42,8 @@ interface ChatWindowProps {
 //   footer  → AI disclaimer (white-label toggle hides it)
 export function ChatWindow(props: ChatWindowProps) {
   const [inputValue, setInputValue] = createSignal("");
+  const [visitorName, setVisitorName] = createSignal("");
+  const [visitorEmail, setVisitorEmail] = createSignal("");
   let abortController: AbortController | null = null;
   let handoffAbortController: AbortController | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
@@ -48,12 +52,37 @@ export function ChatWindow(props: ChatWindowProps) {
   const handleStarterClick = (text: string) => {
     if (chatState.isStreaming) return;
     setInputValue(text);
-    void handleSend(text);
+    if (canSend()) {
+      void handleSend(text);
+    }
+  };
+
+  const visitorInfoComplete = () =>
+    !props.collectUserInfo ||
+    (visitorName().trim().length > 1 && visitorEmail().trim().includes("@"));
+
+  const canSend = () =>
+    visitorInfoComplete() && !chatState.isStreaming && !chatState.handoffConnecting;
+
+  const withVisitorInfo = (messages: Message[]): Message[] => {
+    if (!props.collectUserInfo) return messages;
+    const name = visitorName().trim();
+    const email = visitorEmail().trim();
+    if (!name || !email) return messages;
+    let added = false;
+    return messages.map((message) => {
+      if (added || message.role !== "user") return message;
+      added = true;
+      return {
+        ...message,
+        content: `Visitor details:\nName: ${name}\nEmail: ${email}\n\nMessage:\n${message.content}`,
+      };
+    });
   };
 
   const handleSend = async (override?: string) => {
     const content = (override ?? inputValue()).trim();
-    if (!content || chatState.isStreaming || chatState.handoffConnecting) return;
+    if (!content || !canSend()) return;
 
     clearError();
     addUserMessage(content);
@@ -83,7 +112,7 @@ export function ChatWindow(props: ChatWindowProps) {
       endpoint: chatState.config!.chat_endpoint,
       token: chatState.sessionToken,
       widgetId: chatState.widgetId,
-      messages: chatState.messages.slice(0, -1),
+      messages: withVisitorInfo(chatState.messages.slice(0, -1)),
       pageContext: chatState.config?.page_context_enabled ? collectPageContext() : undefined,
       abortController,
       callbacks: {
@@ -287,6 +316,29 @@ export function ChatWindow(props: ChatWindowProps) {
       </Show>
 
       <div class="klai-input-area">
+        <Show when={props.collectUserInfo}>
+          <div class="klai-user-info" aria-label={t().userInfoHelp}>
+            <p>{t().userInfoHelp}</p>
+            <div class="klai-user-info-fields">
+              <input
+                class="klai-user-info-input"
+                type="text"
+                autocomplete="name"
+                placeholder={t().userInfoName}
+                value={visitorName()}
+                onInput={(e) => setVisitorName(e.currentTarget.value)}
+              />
+              <input
+                class="klai-user-info-input"
+                type="email"
+                autocomplete="email"
+                placeholder={t().userInfoEmail}
+                value={visitorEmail()}
+                onInput={(e) => setVisitorEmail(e.currentTarget.value)}
+              />
+            </div>
+          </div>
+        </Show>
         <textarea
           ref={textareaRef}
           class="klai-textarea"
@@ -304,7 +356,7 @@ export function ChatWindow(props: ChatWindowProps) {
             <button
               class="klai-send-btn"
               aria-label={t().sendMessage}
-              disabled={inputValue().trim() === "" || chatState.handoffConnecting}
+              disabled={inputValue().trim() === "" || !canSend()}
               onClick={() => void handleSend()}
             >
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
