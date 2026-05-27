@@ -1965,6 +1965,7 @@
   "platform_subdomains_status_client_error": "Client error",
   "platform_subdomains_status_server_error": "Server error",
   "platform_subdomains_status_unreachable": "Niet bereikbaar",
+  "platform_subdomains_status_not_probed": "DNS-only",
   "platform_subdomains_loading": "Subdomeinen checken...",
   "platform_subdomains_load_error": "Subdomeinen-lijst kon niet worden geladen.",
   "platform_subdomains_empty": "Geen subdomeinen gevonden.",

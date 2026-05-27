@@ -103,6 +103,8 @@ function SubdomainStatusBadge({ item }: { item: PlatformSubdomainItem }) {
       return <Badge variant="destructive">{m.platform_subdomains_status_server_error()}{code}</Badge>
     case 'unreachable':
       return <Badge variant="destructive">{m.platform_subdomains_status_unreachable()}</Badge>
+    case 'not_probed':
+      return <Badge variant="outline">{m.platform_subdomains_status_not_probed()}</Badge>
   }
 }
 

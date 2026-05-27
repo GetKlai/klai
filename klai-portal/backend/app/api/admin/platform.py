@@ -1213,9 +1213,41 @@ class PlatformSubdomainItem(BaseModel):
     owner: str
     status: str
     """One of: 'up' (2xx/3xx), 'auth_required' (401/403), 'client_error' (4xx),
-    'server_error' (5xx), 'unreachable' (network failure / timeout)."""
+    'server_error' (5xx), 'unreachable' (network failure / timeout),
+    'not_probed' (external/DNS-only entry that has no HTTP surface)."""
     status_code: int | None
-    """HTTP response code, or null when unreachable."""
+    """HTTP response code, or null when unreachable / not probed."""
+
+
+# Per-probe hard cap. The first ship used 3s/2s but mail.getklai.com (MX-only,
+# no A record) and other DNS-only entries can hang DNS resolution longer than
+# httpx's connect timeout in practice — we now skip those entries entirely
+# (see `_should_probe`) and keep this conservative so probed entries return
+# fast even on a real connect-stall.
+_PROBE_PER_REQUEST_TIMEOUT_S = 2.0
+_PROBE_CONNECT_TIMEOUT_S = 1.5
+
+# Outer cap on the whole gather. asyncio.wait_for guarantees the endpoint
+# responds within this wall-clock budget regardless of any pathological
+# upstream — partial results win over a spinning frontend.
+_PROBE_TOTAL_TIMEOUT_S = 6.0
+
+
+def _should_probe(item: dict) -> bool:
+    """Skip liveness probes for entries that have no HTTP surface.
+
+    The catalogue tracks DNS-only entries (MX records, dead aliases) for
+    inventory completeness, but probing them with HTTP either hangs on
+    DNS resolution (no A record) or returns a meaningless 404 from the
+    default nginx that resolves the alias. Either way the result is
+    noise, not signal.
+    """
+    if item["category"] == "external":
+        # All external entries are DNS-only in the current catalogue
+        # (mail., cdn.). If a real external HTTP service joins, change
+        # its category or add an explicit "probe" flag here.
+        return False
+    return True
 
 
 async def _check_subdomain_status(client: httpx.AsyncClient, url: str) -> tuple[str, int | None]:
@@ -1224,15 +1256,17 @@ async def _check_subdomain_status(client: httpx.AsyncClient, url: str) -> tuple[
     whole overview.
 
     GET (not HEAD) because several Klai services 405 on HEAD (Vaultwarden,
-    Grafana, Caddy admin endpoints). 3s timeout is conservative — internal
-    services should respond in <500ms; anything slower is essentially down
-    for the user.
+    Grafana, Caddy admin endpoints). The conservative per-request timeout
+    plus the outer wait_for cap in ``list_subdomains`` ensures the endpoint
+    always returns within ~6s wall-clock even with multiple hanging upstreams.
     """
     try:
         # follow_redirects=False so a 301 → captive portal doesn't count as up.
         # Most Klai apex/auth endpoints respond 200/3xx directly.
         response = await client.get(url, follow_redirects=False)
     except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError):
+        return ("unreachable", None)
+    except Exception:
         return ("unreachable", None)
     code = response.status_code
     if 200 <= code < 400:
@@ -1298,18 +1332,38 @@ async def list_subdomains(
     ]
     all_items = curated_items + tenant_items
 
-    # Parallel liveness probes. Timeout is per-request; gather sees the
-    # max of all timeouts which for 3s x ~50 items in parallel is ~3s.
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(3.0, connect=2.0),
-        verify=True,
-        follow_redirects=False,
-        headers={"User-Agent": "klai-platform-subdomain-check/1.0"},
-    ) as client:
-        statuses = await asyncio.gather(
-            *(_check_subdomain_status(client, item["url"]) for item in all_items),
-            return_exceptions=False,
-        )
+    # Parallel liveness probes for entries that have an HTTP surface.
+    # DNS-only / external entries (mail., cdn.) are skipped — see
+    # _should_probe — so we don't burn the timeout budget on resolution
+    # hangs that have no answer for the user.
+    probe_indices = [i for i, item in enumerate(all_items) if _should_probe(item)]
+    statuses: list[tuple[str, int | None]] = [("not_probed", None)] * len(all_items)
+
+    if probe_indices:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(_PROBE_PER_REQUEST_TIMEOUT_S, connect=_PROBE_CONNECT_TIMEOUT_S),
+            verify=True,
+            follow_redirects=False,
+            headers={"User-Agent": "klai-platform-subdomain-check/1.0"},
+        ) as client:
+            try:
+                probed = await asyncio.wait_for(
+                    asyncio.gather(
+                        *(_check_subdomain_status(client, all_items[i]["url"]) for i in probe_indices),
+                        return_exceptions=False,
+                    ),
+                    timeout=_PROBE_TOTAL_TIMEOUT_S,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "platform_subdomains_probe_total_timeout",
+                    timeout_s=_PROBE_TOTAL_TIMEOUT_S,
+                    probe_count=len(probe_indices),
+                )
+                probed = [("unreachable", None)] * len(probe_indices)
+
+        for probe_idx, result in zip(probe_indices, probed, strict=True):
+            statuses[probe_idx] = result
 
     logger.info(
         "platform_subdomains_listed",
