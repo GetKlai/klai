@@ -1456,7 +1456,7 @@
   "admin_api_keys_rotate_modal_title": "API key geroteerd",
   "admin_api_keys_rotate_modal_description": "Bewaar deze vervangende key in je secret manager en werk daarna je applicaties bij. De oude key blijft werken totdat je hem verwijdert.",
   "admin_api_keys_rotate_modal_confirm": "Ik heb de vervangende key opgeslagen",
-  "admin_api_keys_tab_rotation": "Rotatie",
+  "admin_api_keys_tab_rotation": "Vervang key",
   "admin_shared_save": "Wijzigingen opslaan",
   "admin_shared_success_updated": "Integratie bijgewerkt",
   "admin_widgets_widget_embed_title": "Embed snippet",
