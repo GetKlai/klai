@@ -62,6 +62,7 @@ const GOOGLE_DRIVE_CONNECTOR_TYPES = new Set([
 
 type EditSearch = { step?: StepDeepLink; show?: 'picker' }
 type WebCrawlerAuthMode = 'saved' | 'replace'
+type SavedCredentialMetadata = { cookie_names: string[] }
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug_/edit-connector/$connectorId')({
   validateSearch: (search: Record<string, unknown>): EditSearch => ({
@@ -96,6 +97,15 @@ function EditConnectorPage() {
   const connector = connectors.find((c) => c.id === connectorId)
   const hasSavedWebCrawlerCredentials =
     connector?.connector_type === 'web_crawler' && connector.has_saved_credentials === true
+
+  const { data: savedCredentialMetadata } = useQuery<SavedCredentialMetadata>({
+    queryKey: ['connector-credential-metadata', kbSlug, connectorId],
+    queryFn: async () =>
+      apiFetch<SavedCredentialMetadata>(
+        `/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}/credential-metadata`,
+      ),
+    enabled: auth.isAuthenticated && hasSavedWebCrawlerCredentials,
+  })
 
   const [name, setName] = useState('')
   const [webcrawlerConfig, setWebcrawlerConfig] = useState<WebCrawlerConfig>({
@@ -200,6 +210,20 @@ function EditConnectorPage() {
       domain,
       path: '/',
     }))
+  }
+
+  function savedCookieNameRows(): CookieRow[] {
+    const names = savedCredentialMetadata?.cookie_names ?? []
+    return names.map((name) => ({ name, value: '' }))
+  }
+
+  function startReplacingSavedCookies() {
+    setWcAuthMode('replace')
+    const rows = savedCookieNameRows()
+    if (rows.length > 0) setWcCookieRows(rows)
+    setClearSavedCredentials(false)
+    invalidateAuthProbe()
+    invalidatePreview()
   }
 
   useEffect(() => {
@@ -781,14 +805,11 @@ function EditConnectorPage() {
                             type="button"
                             size="sm"
                             variant="ghost"
-                            onClick={() => {
-                              setWcAuthMode('replace')
-                              setClearSavedCredentials(false)
-                              invalidateAuthProbe()
-                              invalidatePreview()
-                            }}
-                          >
-                            Replace cookies
+                          onClick={() => {
+                            startReplacingSavedCookies()
+                          }}
+                        >
+                          Replace cookies
                           </Button>
                           <Button
                             type="button"
@@ -819,6 +840,11 @@ function EditConnectorPage() {
                             invalidatePreview()
                           }}
                         />
+                        {hasSavedWebCrawlerCredentials && (savedCredentialMetadata?.cookie_names?.length ?? 0) > 0 && (
+                          <p className="text-xs text-gray-400">
+                            Cookie names are prefilled from saved authentication. Paste fresh values only.
+                          </p>
+                        )}
                         <Button
                           type="button"
                           size="sm"

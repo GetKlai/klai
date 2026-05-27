@@ -329,6 +329,10 @@ class ConnectorOut(BaseModel):
     needs_reconfiguration: bool = False
 
 
+class ConnectorCredentialMetadataOut(BaseModel):
+    cookie_names: list[str] = Field(default_factory=list)
+
+
 # -- Helpers ------------------------------------------------------------------
 
 
@@ -413,6 +417,26 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
         has_saved_credentials=getattr(c, "encrypted_credentials", None) is not None,
         needs_reconfiguration=_compute_needs_reconfiguration(c),
     )
+
+
+def _cookie_names_from_credentials(credentials: dict) -> list[str]:
+    cookies = credentials.get("cookies")
+    if not isinstance(cookies, list):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        name = cookie.get("name")
+        if not isinstance(name, str):
+            continue
+        cleaned = name.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        names.append(cleaned)
+    return names
 
 
 # -- Endpoints ----------------------------------------------------------------
@@ -522,6 +546,61 @@ async def create_connector(
     await db.commit()
     await db.refresh(connector)
     return _connector_out(connector)
+
+
+@router.get("/{connector_id}/credential-metadata", response_model=ConnectorCredentialMetadataOut)
+async def get_connector_credential_metadata(
+    kb_slug: str,
+    connector_id: str,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> ConnectorCredentialMetadataOut:
+    """Return non-secret credential metadata for edit UX.
+
+    Cookie values remain encrypted and never leave the backend. Cookie names are
+    safe enough to prefill when an owner intentionally replaces expired cookies.
+    """
+    kb = await _get_kb_with_owner_check(
+        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
+    )
+    result = await db.execute(
+        select(PortalConnector).where(
+            PortalConnector.id == connector_id,
+            PortalConnector.kb_id == kb.id,
+            PortalConnector.state == "active",
+        )
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Connector not found",
+        )
+    if connector.connector_type != "web_crawler" or connector.encrypted_credentials is None:
+        return ConnectorCredentialMetadataOut()
+    if credential_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "credential_store_unavailable"},
+        )
+    try:
+        credentials = await credential_store.decrypt_credentials(
+            org_id=perms.org_id,
+            encrypted_credentials=bytes(connector.encrypted_credentials),
+            db=db,
+        )
+    except Exception as exc:
+        logger.warning(
+            "connector_credential_metadata_decrypt_failed",
+            connector_id=connector_id,
+            org_id=perms.org_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "saved_credentials_unavailable"},
+        ) from exc
+    return ConnectorCredentialMetadataOut(cookie_names=_cookie_names_from_credentials(credentials))
 
 
 @router.patch("/{connector_id}", response_model=ConnectorOut)
