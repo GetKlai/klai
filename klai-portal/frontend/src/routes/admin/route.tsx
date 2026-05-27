@@ -2,6 +2,7 @@ import { createFileRoute, Outlet } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Skull, ShieldCheck, Globe2, type LucideIcon } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { KlaiAssistantLauncher } from '@/features/klai-assistant/KlaiAssistantLauncher'
 import * as m from '@/paraglide/messages'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 import { meetsMinRole, type ProfileRole } from '@/lib/profiles'
@@ -100,6 +101,7 @@ function AdminLayout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+      <KlaiAssistantLauncher />
     </div>
   )
 }
