@@ -555,6 +555,19 @@ def _split_selected_by_quality(
         if len(selected) >= max_sources:
             overflow.append(item)
             continue
+        if not selected:
+            selected.append(item)
+            continue
+        if has_retrieval_scores and best_retrieval_score > 0:
+            if (
+                retrieval_score >= best_retrieval_score * _EXTRA_SOURCE_KEEP_RATIO
+                and answer_score > 0
+                and query_score > 0
+            ):
+                selected.append(item)
+            else:
+                overflow.append(item)
+            continue
         if len(selected) < 2:
             selected.append(item)
             continue

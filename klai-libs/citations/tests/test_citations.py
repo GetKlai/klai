@@ -729,6 +729,61 @@ def test_trusted_source_composition_allows_more_sources_for_complex_supported_an
     assert rejected["Support policy"] == "max_sources_exceeded"
 
 
+def test_trusted_source_composition_rejects_weak_retrieval_side_source() -> None:
+    composed = compose_answer_with_trusted_sources(
+        (
+            "Frank Wolters is eigenaar voor Organisatorische Readiness en "
+            "Data Readiness, en is betrokken bij Governance & Ethiek."
+        ),
+        [
+            {
+                "title": "Verantwoordelijkheden per bouwblok.pdf",
+                "url": "",
+                "artifact_id": "responsibilities",
+                "evidence_ids": ["E1"],
+                "relevance_score": 0.10,
+            },
+            {
+                "title": "AI-Blueprint.pdf",
+                "url": "",
+                "artifact_id": "blueprint",
+                "evidence_ids": ["E2"],
+                "relevance_score": 0.0002,
+            },
+        ],
+        query_text="Wie is Frank?",
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "artifact_id": "responsibilities",
+                "title": "Verantwoordelijkheden per bouwblok.pdf",
+                "text": (
+                    "Frank Wolters is eigenaar / trekker voor Organisatorische "
+                    "Readiness en Data Readiness. Bij Governance & Ethiek is "
+                    "Frank betrokken als ethiek- of compliance-contact."
+                ),
+                "final_score": 0.10,
+            },
+            {
+                "evidence_id": "E2",
+                "artifact_id": "blueprint",
+                "title": "AI-Blueprint.pdf",
+                "text": (
+                    "Frank gebruikt AI Blueprint voor Organisatorische Readiness, "
+                    "Data Readiness en Governance & Ethiek als bouwstenen."
+                ),
+                "final_score": 0.0002,
+            },
+        ],
+    )
+
+    assert composed.sources == [
+        {"label": "1", "title": "Verantwoordelijkheden per bouwblok.pdf", "url": ""}
+    ]
+    rejected = {item["title"]: item["reason"] for item in composed.decision["rejected"]}
+    assert rejected["AI-Blueprint.pdf"] == "max_sources_exceeded"
+
+
 def test_trusted_source_composition_uses_evidence_items_and_strips_model_source_bullets() -> None:
     composed = compose_answer_with_trusted_sources(
         (
