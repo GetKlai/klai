@@ -97,16 +97,20 @@ async def test_enrich_chunk_http_error_raises():
 
 
 @pytest.mark.asyncio
-async def test_enrich_chunks_propagates_enrichment_error():
-    """If any chunk fails enrichment, EnrichmentError propagates from enrich_chunks."""
+async def test_enrich_chunks_falls_back_when_chunk_enrichment_fails():
+    """A bad LLM response for one chunk must not fail the whole document."""
     chunks = ["chunk A", "chunk B"]
 
     async def fail_enrich(*args, **kwargs):
         raise EnrichmentError("LLM timeout")
 
     with patch("knowledge_ingest.enrichment.enrich_chunk", side_effect=fail_enrich):
-        with pytest.raises(EnrichmentError):
-            await enrich_chunks("doc text", chunks, "title", "path.md")
+        results = await enrich_chunks("doc text", chunks, "title", "path.md")
+
+    assert [r.original_text for r in results] == chunks
+    assert [r.context_prefix for r in results] == ["", ""]
+    assert [r.questions for r in results] == [[], []]
+    assert [r.chunk_type for r in results] == ["reference", "reference"]
 
 
 @pytest.mark.asyncio
