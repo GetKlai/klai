@@ -1617,8 +1617,10 @@ function FeedbackItemDetailForm({
   )
   const [notifyInApp, setNotifyInApp] = useState(true)
   const [notifyEmail, setNotifyEmail] = useState(false)
+  const [resolveNotice, setResolveNotice] = useState<string | null>(null)
+  const [resolveError, setResolveError] = useState<string | null>(null)
   const resolveLabel = feedbackResolveLabel(item.kind)
-  const isClosed = CLOSED_FEEDBACK_ITEM_STATUSES.has(item.status)
+  const isClosed = CLOSED_FEEDBACK_ITEM_STATUSES.has(status)
   const saveItem = () => {
     updateItem.mutate({
       itemId: item.id,
@@ -1631,6 +1633,8 @@ function FeedbackItemDetailForm({
     const channels: Array<'in_app' | 'email'> = []
     if (notifyInApp) channels.push('in_app')
     if (notifyEmail) channels.push('email')
+    setResolveNotice('Update wordt aangemaakt...')
+    setResolveError(null)
     resolveItem.mutate(
       {
         itemId: item.id,
@@ -1642,6 +1646,12 @@ function FeedbackItemDetailForm({
         onSuccess: (result) => {
           setStatus(result.item.status)
           setResolutionSummary(result.item.resolution_summary ?? '')
+          setResolveNotice(`Update aangemaakt voor ${result.notifications.length} ontvanger(s).`)
+          setResolveError(null)
+        },
+        onError: (error) => {
+          setResolveNotice(null)
+          setResolveError(feedbackActionErrorMessage(error))
         },
       },
     )
@@ -1719,9 +1729,9 @@ function FeedbackItemDetailForm({
             Sluit dit item en stuur gekoppelde melders een update in hun account.
           </p>
         </div>
-        {isClosed && item.resolution_summary && (
+        {isClosed && resolutionSummary && (
           <div className="rounded-md border border-green-200 bg-white px-3 py-2 text-sm text-green-800">
-            {item.resolution_summary}
+            {resolutionSummary}
           </div>
         )}
         <Textarea
@@ -1758,13 +1768,18 @@ function FeedbackItemDetailForm({
             ) : (
               <CheckCircle2 className="h-4 w-4" />
             )}
-            {isClosed ? 'Update opnieuw sturen' : resolveLabel.button}
+            {resolveItem.isPending
+              ? 'Bezig met sluiten...'
+              : isClosed
+                ? 'Update opnieuw sturen'
+                : resolveLabel.button}
           </Button>
-          {resolveItem.isSuccess && (
+          {resolveNotice && (
             <p className="text-sm text-green-700">
-              Update aangemaakt voor {resolveItem.data.notifications.length} ontvanger(s).
+              {resolveNotice}
             </p>
           )}
+          {resolveError && <p className="text-sm text-red-700">{resolveError}</p>}
         </div>
       </section>
 
@@ -1815,6 +1830,13 @@ function feedbackResolveLabel(kind: string) {
     button: 'Sluit melding en bericht gebruiker',
     subject: 'Melding verwerkt',
   }
+}
+
+function feedbackActionErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return 'Actie mislukt. Probeer opnieuw of open de console voor details.'
 }
 
 function defaultResolutionSummary(item: PlatformFeedbackItem) {
