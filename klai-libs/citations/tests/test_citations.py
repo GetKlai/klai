@@ -460,6 +460,41 @@ def test_trusted_sources_include_compact_evidence_snippets() -> None:
     assert "E9" not in {item["evidence_id"] for item in sources[0]["evidence"]}
 
 
+def test_trusted_source_evidence_snippets_are_deduped() -> None:
+    pack = {
+        "items": [
+            {
+                "evidence_id": "E1",
+                "chunk_id": "chunk-1",
+                "text": "Frank Wolters is de trekker voor Data Readiness.",
+            },
+            {
+                "evidence_id": "E2",
+                "chunk_id": "chunk-2",
+                "text": "Frank Wolters is de trekker voor Data Readiness.",
+            },
+            {
+                "evidence_id": "E3",
+                "chunk_id": "chunk-3",
+                "text": "Ciska Buijze is de datacontactpersoon.",
+            },
+        ],
+        "sources": [
+            {
+                "source_id": "S1",
+                "title": "Responsibilities.pdf",
+                "artifact_id": "artifact-1",
+                "evidence_ids": ["E1", "E2", "E3"],
+            }
+        ],
+    }
+
+    evidence = trusted_sources_from_evidence_pack(pack)[0]["evidence"]
+
+    assert [item["evidence_id"] for item in evidence] == ["E1", "E3"]
+    assert [item["chunk_id"] for item in evidence] == ["chunk-1", "chunk-3"]
+
+
 def test_trusted_source_composition_supports_uploaded_documents_without_url() -> None:
     composed = compose_answer_with_trusted_sources(
         "Frank Wolters is verantwoordelijk voor Data Readiness.",
