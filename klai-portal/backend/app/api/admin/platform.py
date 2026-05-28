@@ -1136,6 +1136,19 @@ async def platform_feedback_submissions(
 @router.get("/feedback/items", response_model=list[PlatformFeedbackItem])
 async def platform_feedback_items(
     search: str | None = Query(default=None),
+    status: Literal[
+        "all",
+        "active",
+        "closed",
+        "inbox",
+        "under_review",
+        "planned",
+        "in_progress",
+        "shipped",
+        "resolved",
+        "wont_do",
+    ] = Query(default="active"),
+    kind: Literal["all", "feature", "bug", "ux_confusion", "docs", "support_pattern"] = Query(default="all"),
     limit: int = Query(default=25, ge=1, le=100),
     perms: UserPermissions = Depends(require_platform_admin()),
 ) -> list[PlatformFeedbackItem]:
@@ -1143,7 +1156,13 @@ async def platform_feedback_items(
     await _audit(perms, "feedback:items", search)
     async with cross_org_session() as db:
         try:
-            items = await search_feedback_items(db, search=search, limit=limit)
+            items = await search_feedback_items(
+                db,
+                search=search,
+                status=status,
+                kind=kind,
+                limit=limit,
+            )
         except Exception:
             logger.warning("platform_feedback_items_query_failed", exc_info=True)
             return []
