@@ -2088,7 +2088,10 @@ def _format_visible_agent_activity(
         lines.append(f"- Gebruikte bronnen: {', '.join(source_titles[:3])}.")
 
     if isinstance(confidence_band, str) and confidence_band:
-        lines.append(f"- Retrieval confidence: {confidence_band}.")
+        if sources:
+            lines.append(f"- Retrieval score: {confidence_band}; bronfragmenten gekoppeld.")
+        else:
+            lines.append(f"- Retrieval score: {confidence_band}.")
 
     if not sources and isinstance(no_citable_reason, str) and no_citable_reason:
         lines.append(f"- Citeerbaarheid: geen bruikbare bron geselecteerd ({no_citable_reason}).")
