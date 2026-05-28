@@ -5,6 +5,7 @@ Covers AC-1, AC-2, C1.1, C1.3, R7/C7.2.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -50,6 +51,7 @@ class TestPrimaryDomainSetAtSignup:
         from app.api.signup import SignupRequest, signup
 
         mock_db = AsyncMock()
+        mock_db.add = MagicMock()
         body = SignupRequest(**_BASE)
         with (
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
@@ -73,6 +75,7 @@ class TestPrimaryDomainSetAtSignup:
         from app.api.signup import SignupRequest, signup
 
         mock_db = AsyncMock()
+        mock_db.add = MagicMock()
         body = SignupRequest(**_BASE)
         with (
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
@@ -95,6 +98,7 @@ class TestPrimaryDomainSetAtSignup:
         from app.api.signup import SignupRequest, signup
 
         mock_db = AsyncMock()
+        mock_db.add = MagicMock()
         body = SignupRequest(**{**_BASE, "email": "founder@BEDRIJF.NL"})
         with (
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
@@ -110,6 +114,33 @@ class TestPrimaryDomainSetAtSignup:
             await signup(body=body, background_tasks=MagicMock(), db=mock_db)
             kw = morg.call_args.kwargs
             assert kw.get("primary_domain") == "bedrijf.nl"
+
+    @pytest.mark.asyncio
+    async def test_invited_free_email_signup_does_not_claim_primary_domain(self) -> None:
+        """Invite bypass can create a workspace, but must not reserve gmail.com."""
+        from app.api.signup import SignupRequest, signup
+
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+        body = SignupRequest(**{**_BASE, "email": "user@gmail.com", "invite_token": "valid-token"})
+        with (
+            patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
+            patch(
+                "app.api.signup.verify_invite_token",
+                return_value=SimpleNamespace(email="user@gmail.com", company="Private Contact", exp=1),
+            ),
+            patch("app.api.signup.zitadel") as mz,
+            patch("app.api.signup.provision_tenant"),
+            patch("app.api.signup.emit_event"),
+            patch("app.api.signup.invalidate_tenant_slug_cache"),
+            patch("app.api.signup.set_tenant", AsyncMock()),
+            patch("app.api.signup.PortalOrg") as morg,
+            patch("app.api.signup.PortalUser"),
+        ):
+            _mock_deps(mz, morg)
+            await signup(body=body, background_tasks=MagicMock(), db=mock_db)
+            kw = morg.call_args.kwargs
+            assert kw.get("primary_domain") == ""
 
 
 class TestFreeEmailSignupRejected:

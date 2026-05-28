@@ -43,6 +43,7 @@ from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
 from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.default_knowledge_bases import create_default_personal_kb
+from app.services.domain_validation import primary_domain_for_email_domain
 from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.provisioning import provision_tenant
 from app.services.user_deletion_orchestrator import delete_user_with_state_machine
@@ -807,7 +808,7 @@ async def platform_create_tenant(
         zitadel_org_id=zitadel_org_id,
         name=body.company_name,
         slug=_to_slug(body.company_name, zitadel_org_id),
-        primary_domain=owner_email_domain,
+        primary_domain=primary_domain_for_email_domain(owner_email_domain),
         auto_accept_same_domain=False,
     )
     try:
