@@ -20,6 +20,7 @@ from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
 from app.core.features import FEATURE_MIN_PROFILE, PLAN_FEATURES
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
+from app.services.domain_validation import primary_domain_for_email_domain
 
 # Set of user-facing product keys (= keys that appear in derive_user_products
 # output). Used by the deprecated /settings/addons GET facade to return only
@@ -71,6 +72,18 @@ class PlanChangeRequest(BaseModel):
     plan: str
 
 
+def _settings_out(org) -> OrgSettingsOut:
+    primary_domain = primary_domain_for_email_domain(org.primary_domain or "")
+    return OrgSettingsOut(
+        name=org.name,
+        default_language=org.default_language,
+        mfa_policy=org.mfa_policy,
+        auto_accept_same_domain=bool(org.auto_accept_same_domain) if primary_domain else False,
+        primary_domain=primary_domain or None,
+        telemetry_level=org.telemetry_level,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -82,14 +95,7 @@ async def get_org_settings(
     db: AsyncSession = Depends(get_db),
 ) -> OrgSettingsOut:
     org = await _load_org_or_500(db, perms.org_id)
-    return OrgSettingsOut(
-        name=org.name,
-        default_language=org.default_language,
-        mfa_policy=org.mfa_policy,
-        auto_accept_same_domain=bool(org.auto_accept_same_domain),
-        primary_domain=org.primary_domain or None,
-        telemetry_level=org.telemetry_level,
-    )
+    return _settings_out(org)
 
 
 @router.patch("/settings", response_model=OrgSettingsOut)
@@ -105,17 +111,12 @@ async def update_org_settings(
         org.mfa_policy = body.mfa_policy
     # C5.1: only update when explicitly provided
     if body.auto_accept_same_domain is not None:
-        org.auto_accept_same_domain = body.auto_accept_same_domain
+        org.auto_accept_same_domain = bool(body.auto_accept_same_domain) and bool(
+            primary_domain_for_email_domain(org.primary_domain or "")
+        )
     await db.commit()
     logger.info("Org settings updated: org_id=%d", perms.org_id)
-    return OrgSettingsOut(
-        name=org.name,
-        default_language=org.default_language,
-        mfa_policy=org.mfa_policy,
-        auto_accept_same_domain=bool(org.auto_accept_same_domain),
-        primary_domain=org.primary_domain or None,
-        telemetry_level=org.telemetry_level,
-    )
+    return _settings_out(org)
 
 
 @router.patch("/plan", response_model=MessageResponse)
