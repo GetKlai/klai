@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 # never hold the primary UI hostage when knowledge-ingest is busy.
 _DERIVED_READ_TIMEOUT = httpx.Timeout(1.0, connect=0.3)
 
+# Canonical UI data — the Sources tab IS this response, not an enrichment
+# badge. A 1s budget guarantees a timeout on cold queries (the artifacts-
+# join-parent_chunks scan measured 14-28s on prod 2026-05-28), which lands
+# in the UI as a misleading empty state. A generous budget paired with the
+# fail-loud branch in list_kb_sources lets the user see real data on warm
+# calls and a real error on the rare cold-and-slow path.
+_CANONICAL_READ_TIMEOUT = httpx.Timeout(30.0, connect=2.0)
+
 
 async def get_graph_stats(org_id: str) -> dict[str, int | None]:
     """Fetch entity/edge counts from knowledge-ingest (FalkorDB graph).
@@ -435,8 +443,15 @@ async def get_kb_sources(org_id: str, kb_slug: str) -> dict | None:
 
     Returns ``{"connectors": [{connector_id, items_count, chunks_count}, ...],
     "uploads": [{id, path, content_type, created_at, chunks_count}, ...]}``
-    on success, ``None`` on transport / decode failure (caller can fall back
-    to an empty UI state).
+    on success, ``None`` on transport / decode failure (caller MUST raise
+    503 — see ``list_kb_sources``; an empty fallback misleads the user into
+    thinking their upload disappeared).
+
+    Uses ``_CANONICAL_READ_TIMEOUT`` (30s), not ``_DERIVED_READ_TIMEOUT`` (1s):
+    this endpoint backs the Sources tab and its query joins
+    ``knowledge.artifacts`` with ``knowledge.parent_chunks`` — measured at
+    14-28s cold, 13ms warm on prod 2026-05-28. A 1s budget guaranteed
+    timeouts on every cold call.
     """
     try:
         async with httpx.AsyncClient(
@@ -446,7 +461,7 @@ async def get_kb_sources(org_id: str, kb_slug: str) -> dict | None:
                 "X-Caller-Service": "portal-api",
                 **get_trace_headers(),
             },
-            timeout=_DERIVED_READ_TIMEOUT,
+            timeout=_CANONICAL_READ_TIMEOUT,
         ) as client:
             resp = await client.get(
                 f"/knowledge/v1/kb/{kb_slug}/sources",

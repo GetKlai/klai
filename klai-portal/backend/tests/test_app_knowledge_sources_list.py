@@ -314,8 +314,19 @@ async def test_list_kb_sources_handles_orphan_connector_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_kb_sources_falls_back_to_empty_on_ingest_failure() -> None:
-    """Knowledge-ingest unreachable → still return portal-side connectors."""
+async def test_list_kb_sources_raises_503_on_ingest_failure() -> None:
+    """Knowledge-ingest unreachable → 503, NOT a misleading empty list.
+
+    Regression test for 2026-05-28 incident: a 1s portal-api timeout on the
+    canonical Sources query (knowledge-ingest's join over artifacts +
+    parent_chunks measured 14-28s cold) caused every upload to appear to
+    silently vanish. The old fall-back-to-empty behavior is the bug — the
+    user thinks their just-uploaded source disappeared. Fail-loud lets the
+    frontend's isError branch render "Kon bronnen niet laden — probeer
+    opnieuw" so the user knows it is a transient problem, not data loss.
+    """
+    from fastapi import HTTPException
+
     from app.api.app_knowledge_bases import list_kb_sources
 
     org = _make_org()
@@ -337,18 +348,16 @@ async def test_list_kb_sources_falls_back_to_empty_on_ingest_failure() -> None:
             "app.api.app_knowledge_bases.knowledge_ingest_client.get_kb_sources",
             new=AsyncMock(return_value=None),  # transport failure
         ),
+        pytest.raises(HTTPException) as excinfo,
     ):
-        result = await list_kb_sources(
+        await list_kb_sources(
             kb_slug="kb-a",
             perms=_make_perms(),
             db=db,
         )
 
-    # Connector still surfaced via portal-side list, with zero counts.
-    assert len(result.sources) == 1
-    assert result.sources[0].id == "conn-1"
-    assert result.sources[0].items_count == 0
-    assert result.sources[0].chunks_count == 0
+    assert excinfo.value.status_code == 503
+    assert excinfo.value.detail == {"error_code": "knowledge_ingest_unreachable"}
 
 
 @pytest.mark.asyncio
@@ -575,3 +584,42 @@ async def test_get_source_content_upload_returns_chunks() -> None:
     assert result.chunks[0].position == 0
     assert result.total == 2
     assert result.items == []
+
+
+# -- Timeout choice regression (2026-05-28 personal-KB silent-empty incident) --
+
+
+def test_get_kb_sources_uses_canonical_not_derived_timeout() -> None:
+    """``get_kb_sources`` MUST use the canonical (30s) timeout, not the
+    derived-metric (1s) one.
+
+    The Sources tab IS this response, not an enrichment badge. A 1s budget
+    guaranteed every cold call timed out (production query measured 14-28s
+    cold, 13ms warm on 2026-05-28). The portal silently swallowed the
+    timeout and returned an empty list, making every just-uploaded source
+    appear to vanish.
+
+    This pin protects against future refactors that switch the call back
+    to ``_DERIVED_READ_TIMEOUT`` thinking it is "just enrichment".
+    """
+    from pathlib import Path
+
+    client_file = Path(__file__).parent.parent / "app" / "services" / "knowledge_ingest_client.py"
+    source = client_file.read_text(encoding="utf-8")
+
+    # Find the get_kb_sources function body and assert it carries the
+    # canonical timeout name. We do not assert the literal number — the
+    # value can be re-tuned without changing the contract this test pins.
+    fn_start = source.index("async def get_kb_sources(")
+    fn_end = source.index("\nasync def ", fn_start + 1)
+    body = source[fn_start:fn_end]
+
+    assert "timeout=_CANONICAL_READ_TIMEOUT" in body, (
+        "get_kb_sources must use _CANONICAL_READ_TIMEOUT (30s) — "
+        "this endpoint backs the Sources tab and 1s guarantees cold-call "
+        "timeouts on the artifacts+parent_chunks join. See "
+        "klai-portal/backend/app/services/knowledge_ingest_client.py."
+    )
+    assert "timeout=_DERIVED_READ_TIMEOUT" not in body, (
+        "get_kb_sources must NOT use _DERIVED_READ_TIMEOUT (1s) — see 2026-05-28 personal-KB silent-empty regression."
+    )
