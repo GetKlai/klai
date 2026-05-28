@@ -13,14 +13,23 @@ class _Result:
     def all(self):
         return self._rows
 
+    def scalars(self):
+        return self._rows
+
 
 class _Session:
     def __init__(self, rows):
         self.rows = rows
+        self.calls = 0
         self.query = None
+        self.queries = []
 
     async def execute(self, query):
+        self.calls += 1
         self.query = query
+        self.queries.append(query)
+        if self.calls > 1:
+            return _Result([])
         return _Result(self.rows)
 
 
@@ -64,7 +73,7 @@ async def test_account_feedback_updates_returns_current_user_feedback_reports():
     assert item.item_status == "in_progress"
     assert item.latest_update_at == later
 
-    compiled = str(session.query.compile(compile_kwargs={"literal_binds": True}))
+    compiled = str(session.queries[0].compile(compile_kwargs={"literal_binds": True}))
     assert "feedback_submissions.org_id = 42" in compiled
     assert "feedback_submissions.user_id = 'user-123'" in compiled
     assert "feedback_submissions.source IN ('assistant_problem', 'assistant_feedback')" in compiled

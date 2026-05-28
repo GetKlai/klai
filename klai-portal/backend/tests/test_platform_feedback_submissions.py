@@ -61,6 +61,10 @@ def _feedback_item(**overrides):
         "target_window": None,
         "owner": None,
         "shipped_at": None,
+        "resolution_summary": None,
+        "resolved_at": None,
+        "resolved_by": None,
+        "notification_state": "not_needed",
         "created_at": now,
         "updated_at": now,
     }

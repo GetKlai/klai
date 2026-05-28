@@ -10,7 +10,7 @@ so the next LLM call picks up the new settings without delay.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
-from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackSubmission
+from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackNotification, FeedbackSubmission
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalUser
 from app.models.templates import PortalTemplate
@@ -112,6 +112,9 @@ class AccountFeedbackUpdateOut(BaseModel):
     item_summary: str | None = None
     item_status: str | None = None
     item_updated_at: datetime | None = None
+    notification_id: int | None = None
+    notification_body: str | None = None
+    notification_read_at: datetime | None = None
     latest_update_at: datetime
     unread: bool = False
 
@@ -119,6 +122,12 @@ class AccountFeedbackUpdateOut(BaseModel):
 class AccountFeedbackUpdatesResponse(BaseModel):
     items: list[AccountFeedbackUpdateOut]
     unread_count: int = 0
+
+
+class AccountFeedbackReadResponse(BaseModel):
+    ok: bool = True
+    notification_id: int
+    read_at: datetime
 
 
 async def _validate_and_normalize_template_ids(
@@ -216,10 +225,30 @@ async def get_feedback_updates(
         .limit(safe_limit)
     )
 
+    rows = result.all()
+    item_ids = [row.item_id for row in rows if row.item_id is not None]
+    notifications_by_item: dict[int, FeedbackNotification] = {}
+    if item_ids:
+        notification_rows = (
+            await db.execute(
+                select(FeedbackNotification)
+                .where(
+                    FeedbackNotification.org_id == perms.org_id,
+                    FeedbackNotification.user_id == perms.user_id,
+                    FeedbackNotification.channel == "in_app",
+                    FeedbackNotification.item_id.in_(item_ids),
+                )
+                .order_by(FeedbackNotification.created_at.desc())
+            )
+        ).scalars()
+        for notification in notification_rows:
+            notifications_by_item.setdefault(notification.item_id, notification)
+
     items: list[AccountFeedbackUpdateOut] = []
-    for row in result.all():
+    for row in rows:
         item_updated_at = row.item_updated_at
-        latest_update_at = item_updated_at or row.updated_at
+        notification = notifications_by_item.get(row.item_id) if row.item_id is not None else None
+        latest_update_at = notification.created_at if notification is not None else item_updated_at or row.updated_at
         items.append(
             AccountFeedbackUpdateOut(
                 submission_id=row.submission_id,
@@ -236,12 +265,40 @@ async def get_feedback_updates(
                 item_summary=row.item_summary,
                 item_status=row.item_status,
                 item_updated_at=item_updated_at,
+                notification_id=notification.id if notification is not None else None,
+                notification_body=notification.body if notification is not None else None,
+                notification_read_at=notification.read_at if notification is not None else None,
                 latest_update_at=latest_update_at,
-                unread=False,
+                unread=notification is not None and notification.read_at is None,
             )
         )
 
-    return AccountFeedbackUpdatesResponse(items=items, unread_count=0)
+    unread_count = sum(1 for item in items if item.unread)
+    return AccountFeedbackUpdatesResponse(items=items, unread_count=unread_count)
+
+
+@router.post("/feedback-updates/{notification_id}/read", response_model=AccountFeedbackReadResponse)
+async def mark_feedback_update_read(
+    notification_id: int,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountFeedbackReadResponse:
+    result = await db.execute(
+        select(FeedbackNotification).where(
+            FeedbackNotification.id == notification_id,
+            FeedbackNotification.org_id == perms.org_id,
+            FeedbackNotification.user_id == perms.user_id,
+            FeedbackNotification.channel == "in_app",
+        )
+    )
+    notification = result.scalar_one_or_none()
+    if notification is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback update not found")
+    if notification.read_at is None:
+        notification.read_at = datetime.now(UTC)
+        await db.commit()
+    read_at = notification.read_at or datetime.now(UTC)
+    return AccountFeedbackReadResponse(notification_id=notification.id, read_at=read_at)
 
 
 @router.patch("/kb-preference", response_model=KBPreferenceOut)

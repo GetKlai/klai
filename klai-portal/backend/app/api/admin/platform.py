@@ -41,6 +41,7 @@ from app.klai_feedback.service import (
     get_feedback_item,
     link_feedback_submission_to_item,
     mark_feedback_submission_support,
+    resolve_feedback_item,
     search_feedback_items,
     update_feedback_item,
 )
@@ -181,6 +182,10 @@ class PlatformFeedbackItem(BaseModel):
     target_window: str | None
     owner: str | None
     shipped_at: datetime | None
+    resolution_summary: str | None = None
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
+    notification_state: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -223,7 +228,7 @@ class PlatformFeedbackItemPatchIn(BaseModel):
     kind: Literal["feature", "bug", "ux_confusion", "docs", "support_pattern"] | None = None
     title: str | None = Field(default=None, min_length=3, max_length=256)
     summary: str | None = Field(default=None, max_length=4000)
-    status: Literal["inbox", "under_review", "planned", "in_progress", "shipped", "wont_do"] | None = None
+    status: Literal["inbox", "under_review", "planned", "in_progress", "shipped", "resolved", "wont_do"] | None = None
     area: str | None = Field(default=None, max_length=128)
     external_tracker_type: str | None = Field(default=None, max_length=32)
     external_tracker_id: str | None = Field(default=None, max_length=128)
@@ -233,6 +238,35 @@ class PlatformFeedbackItemPatchIn(BaseModel):
     public_summary: str | None = Field(default=None, max_length=4000)
     target_window: str | None = Field(default=None, max_length=64)
     owner: str | None = Field(default=None, max_length=128)
+
+
+class PlatformFeedbackResolveIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    resolution_summary: str = Field(..., min_length=3, max_length=4000)
+    channels: list[Literal["in_app", "email"]] = Field(default_factory=lambda: ["in_app"])
+    subject: str | None = Field(default=None, max_length=256)
+
+
+class PlatformFeedbackNotificationOut(BaseModel):
+    id: int
+    item_id: int
+    submission_id: int | None
+    org_id: int | None
+    user_id: str | None
+    recipient_email: str | None
+    channel: str
+    status: str
+    subject: str | None
+    body: str
+    sent_at: datetime | None
+    read_at: datetime | None
+    created_at: datetime
+
+
+class PlatformFeedbackResolveOut(BaseModel):
+    item: PlatformFeedbackItem
+    notifications: list[PlatformFeedbackNotificationOut]
 
 
 class PlatformKB(BaseModel):
@@ -1215,6 +1249,48 @@ async def platform_feedback_delete_item(
             raise HTTPException(status_code=404, detail="Feedback item not found") from exc
 
 
+@router.post("/feedback/items/{item_id}/resolve", response_model=PlatformFeedbackResolveOut)
+async def platform_feedback_resolve_item(
+    item_id: int,
+    body: PlatformFeedbackResolveIn,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> PlatformFeedbackResolveOut:
+    await _audit(perms, "feedback:resolve_item", str(item_id))
+    async with cross_org_session() as db:
+        try:
+            item, notifications = await resolve_feedback_item(
+                db,
+                item_id,
+                resolution_summary=body.resolution_summary,
+                resolved_by=perms.user_id,
+                channels=list(body.channels),
+                subject=body.subject,
+            )
+        except FeedbackItemNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Feedback item not found") from exc
+        return PlatformFeedbackResolveOut(
+            item=_platform_feedback_item(item),
+            notifications=[
+                PlatformFeedbackNotificationOut(
+                    id=notification.id,
+                    item_id=notification.item_id,
+                    submission_id=notification.submission_id,
+                    org_id=notification.org_id,
+                    user_id=notification.user_id,
+                    recipient_email=notification.recipient_email,
+                    channel=notification.channel,
+                    status=notification.status,
+                    subject=notification.subject,
+                    body=notification.body,
+                    sent_at=notification.sent_at,
+                    read_at=notification.read_at,
+                    created_at=notification.created_at,
+                )
+                for notification in notifications
+            ],
+        )
+
+
 @router.post(
     "/feedback/submissions/{submission_id}/dismiss",
     response_model=PlatformFeedbackActionResult,
@@ -1320,6 +1396,10 @@ def _platform_feedback_item(item: FeedbackItem) -> PlatformFeedbackItem:
         target_window=item.target_window,
         owner=item.owner,
         shipped_at=item.shipped_at,
+        resolution_summary=item.resolution_summary,
+        resolved_at=item.resolved_at,
+        resolved_by=item.resolved_by,
+        notification_state=item.notification_state,
         created_at=item.created_at,
         updated_at=item.updated_at,
     )

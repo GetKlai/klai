@@ -61,7 +61,7 @@ class FeedbackItem(Base):
             name="ck_feedback_items_kind",
         ),
         CheckConstraint(
-            "status IN ('inbox', 'under_review', 'planned', 'in_progress', 'shipped', 'wont_do')",
+            "status IN ('inbox', 'under_review', 'planned', 'in_progress', 'shipped', 'resolved', 'wont_do')",
             name="ck_feedback_items_status",
         ),
         Index("ix_feedback_items_status_updated", "status", "updated_at"),
@@ -86,6 +86,10 @@ class FeedbackItem(Base):
     target_window: Mapped[str | None] = mapped_column(String(64), nullable=True)
     owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
     shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolution_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notification_state: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'not_needed'"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -152,3 +156,56 @@ class FeedbackTriageSuggestion(Base):
     suggested_action: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class FeedbackNotification(Base):
+    __tablename__ = "feedback_notifications"
+    __table_args__ = (
+        CheckConstraint(
+            "channel IN ('in_app', 'email')",
+            name="ck_feedback_notifications_channel",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'queued', 'sent', 'failed', 'skipped')",
+            name="ck_feedback_notifications_status",
+        ),
+        CheckConstraint(
+            "generated_by IN ('ai', 'staff', 'system')",
+            name="ck_feedback_notifications_generated_by",
+        ),
+        Index("ix_feedback_notifications_user_created", "org_id", "user_id", "created_at"),
+        Index("ix_feedback_notifications_item", "item_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("feedback_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    submission_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("feedback_submissions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    org_id: Mapped[int | None] = mapped_column(
+        ForeignKey("portal_orgs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    recipient_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'draft'"))
+    subject: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    generated_by: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'system'"))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
