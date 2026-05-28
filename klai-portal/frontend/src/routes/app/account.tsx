@@ -189,7 +189,12 @@ function AccountPage() {
                 <TabIcon className="h-4 w-4" />
                 {label}
                 {(unread ?? 0) > 0 && (
-                  <span className="ml-0.5 h-2 w-2 rounded-full bg-emerald-500" aria-label={m.account_feedback_unread()} />
+                  <span
+                    className="ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-medium leading-5 text-white"
+                    aria-label={m.account_feedback_unread()}
+                  >
+                    {unread}
+                  </span>
                 )}
               </button>
             )
@@ -435,7 +440,7 @@ function feedbackStatusLabel(item: AccountFeedbackUpdate): { label: string; clas
   const kind = item.item_kind ?? (item.source === 'assistant_problem' ? 'bug' : 'feedback')
   const baseClass = 'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium'
 
-  if (status === 'shipped') {
+  if (status === 'resolved' || status === 'shipped') {
     return {
       label: kind === 'bug' ? m.account_feedback_status_fixed() : m.account_feedback_status_shipped(),
       className: `${baseClass} bg-emerald-50 text-emerald-700`,

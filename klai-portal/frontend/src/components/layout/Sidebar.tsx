@@ -1,10 +1,12 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/lib/auth'
 import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, UserCircle, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { STORAGE_KEYS } from '@/lib/storage'
+import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 
 export interface NavItem {
@@ -20,13 +22,23 @@ interface SidebarProps {
   navItems: NavItem[]
 }
 
+interface AccountFeedbackUpdatesResponse {
+  unread_count: number
+}
+
 export function Sidebar({ navItems }: SidebarProps) {
   const auth = useAuth()
   const location = useLocation()
   const { user } = useCurrentUser()
+  const { data: feedbackUpdates } = useQuery({
+    queryKey: ['account-feedback-updates'],
+    queryFn: () => apiFetch<AccountFeedbackUpdatesResponse>('/api/app/account/feedback-updates'),
+    enabled: auth.isAuthenticated,
+  })
 
   const inAdmin = location.pathname.startsWith('/admin')
   const isAdmin = inAdmin || user?.isAdmin === true
+  const feedbackUnreadCount = feedbackUpdates?.unread_count ?? 0
 
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.sidebarCollapsed) === 'true'
@@ -178,7 +190,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           to="/app/account"
           title={collapsed ? m.sidebar_account() : undefined}
           className={cn(
-            'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
+            'relative flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
             'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3 px-3'
           )}
@@ -188,6 +200,17 @@ export function Sidebar({ navItems }: SidebarProps) {
         >
           <UserCircle size={18} strokeWidth={1.5} />
           {!collapsed && m.sidebar_account()}
+          {feedbackUnreadCount > 0 && (
+            <span
+              className={cn(
+                'ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-medium leading-5 text-white',
+                collapsed && 'absolute translate-x-3 -translate-y-2 px-1 min-w-4 leading-4 text-[10px]'
+              )}
+              aria-label={m.account_feedback_unread()}
+            >
+              {feedbackUnreadCount}
+            </span>
+          )}
         </Link>
         <button
           onClick={() => {

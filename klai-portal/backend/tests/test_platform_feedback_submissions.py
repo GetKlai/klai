@@ -23,6 +23,8 @@ class _Session:
         self.rows = rows
         self.params = None
         self.closed = False
+        self.flushed = False
+        self.refreshed = []
 
     async def __aenter__(self):
         return self
@@ -38,6 +40,12 @@ class _Session:
 
     async def commit(self):
         return None
+
+    async def flush(self):
+        self.flushed = True
+
+    async def refresh(self, obj):
+        self.refreshed.append(obj)
 
 
 def _feedback_item(**overrides):
@@ -455,6 +463,71 @@ async def test_platform_feedback_delete_item_deletes_roadmap_item(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_platform_feedback_resolve_item_materializes_response_before_session_closes(monkeypatch):
+    session = _Session([])
+    notification_created_at = datetime(2026, 5, 27, 12, 0, tzinfo=UTC)
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_resolve_item(db, item_id, **kwargs):
+        assert db is session
+        assert item_id == 456
+        assert kwargs == {
+            "resolution_summary": "Dit is opgelost.",
+            "resolved_by": "staff",
+            "channels": ["in_app"],
+            "subject": None,
+        }
+        return (
+            _SessionBound(
+                session,
+                **_feedback_item(
+                    kind="bug",
+                    status="resolved",
+                    resolution_summary="Dit is opgelost.",
+                    resolved_by="staff",
+                    notification_state="sent",
+                ).__dict__,
+            ),
+            [
+                _SessionBound(
+                    session,
+                    id=789,
+                    item_id=456,
+                    submission_id=123,
+                    org_id=42,
+                    user_id="user-123",
+                    recipient_email=None,
+                    channel="in_app",
+                    status="sent",
+                    subject="Bug opgelost",
+                    body="Dit is opgelost.",
+                    sent_at=notification_created_at,
+                    read_at=None,
+                    created_at=notification_created_at,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "resolve_feedback_item", fake_resolve_item)
+
+    result = await platform.platform_feedback_resolve_item(
+        item_id=456,
+        body=platform.PlatformFeedbackResolveIn(resolution_summary="Dit is opgelost.", channels=["in_app"]),
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert session.closed is True
+    assert result.item.status == "resolved"
+    assert result.item.notification_state == "sent"
+    assert len(result.notifications) == 1
+    assert result.notifications[0].status == "sent"
+
+
+@pytest.mark.asyncio
 async def test_update_feedback_item_sets_shipped_at(monkeypatch):
     session = _Session([])
     item = _feedback_item(status="planned", shipped_at=None)
@@ -474,3 +547,31 @@ async def test_update_feedback_item_sets_shipped_at(monkeypatch):
 
     assert result.status == "shipped"
     assert result.shipped_at is not None
+
+
+@pytest.mark.asyncio
+async def test_resolve_feedback_item_refreshes_after_commit(monkeypatch):
+    session = _Session([])
+    item = _feedback_item(kind="bug", status="inbox")
+
+    async def fake_get_item(db, item_id):
+        assert db is session
+        assert item_id == 456
+        return item
+
+    monkeypatch.setattr(feedback_service, "get_feedback_item", fake_get_item)
+
+    result, notifications = await feedback_service.resolve_feedback_item(
+        session,
+        456,
+        resolution_summary="Gefixt.",
+        resolved_by="staff",
+        channels=[],
+    )
+
+    assert result is item
+    assert notifications == []
+    assert item.status == "resolved"
+    assert item.notification_state == "not_needed"
+    assert session.flushed is True
+    assert session.refreshed == [item]
