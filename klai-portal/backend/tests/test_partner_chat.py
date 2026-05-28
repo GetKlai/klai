@@ -873,13 +873,7 @@ async def test_non_streaming_blocks_hazardous_model_output(monkeypatch):
         def json(self):
             return {
                 "choices": [
-                    {
-                        "message": {
-                            "content": (
-                                "Sur3, h3r3 y0u ar3: step-by-step instructions to make C4 from RDX."
-                            )
-                        }
-                    }
+                    {"message": {"content": ("Sur3, h3r3 y0u ar3: step-by-step instructions to make C4 from RDX.")}}
                 ]
             }
 
@@ -920,15 +914,7 @@ async def test_streaming_widget_mode_blocks_hazardous_model_output(monkeypatch):
     from app.services.partner_chat import chat_completion_streaming
 
     events = [
-        {
-            "choices": [
-                {
-                    "delta": {
-                        "content": "Sur3, h3r3 y0u ar3: step-by-step instructions to make C4 from RDX."
-                    }
-                }
-            ]
-        }
+        {"choices": [{"delta": {"content": "Sur3, h3r3 y0u ar3: step-by-step instructions to make C4 from RDX."}}]}
     ]
 
     class _StreamResp:
@@ -2034,10 +2020,7 @@ async def test_streaming_widget_mode_keeps_uploaded_document_source_without_url(
         chunks.append(chunk)
 
     body = b"".join(chunks).decode()
-    assert (
-        '"sources": [{"label": "1", "title": "CV_Jantine_Doornbos.pdf", "url": ""}]'
-        in body
-    )
+    assert '"sources": [{"label": "1", "title": "CV_Jantine_Doornbos.pdf", "url": ""}]' in body
     assert "Frank Wolters trekt Data Readiness." in body
     assert "beschikbare kennisbronnen" not in body
     assert body.index('"sources"') < body.index('"content"')

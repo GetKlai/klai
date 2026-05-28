@@ -20,6 +20,8 @@ COPY --chown=app:app klai-libs/chat-prompts klai-libs/chat-prompts
 COPY --chown=app:app klai-libs/kb-slugs klai-libs/kb-slugs
 # Shared evidence context + deterministic citation/source helpers.
 COPY --chown=app:app klai-libs/citations klai-libs/citations
+# SPEC-CHAT-GUARDRAILS-001: shared LLM safety policy path-dep.
+COPY --chown=app:app klai-libs/llm-safety klai-libs/llm-safety
 COPY --chown=app:app klai-retrieval-api/pyproject.toml klai-retrieval-api/pyproject.toml
 
 WORKDIR /repo/klai-retrieval-api

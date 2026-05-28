@@ -26,6 +26,8 @@ COPY klai-libs/chat-prompts klai-libs/chat-prompts
 # SPEC-RAG-PERSONAL-SCOPE-001 REQ-1: canonical personal-KB slug helper.
 COPY klai-libs/kb-slugs klai-libs/kb-slugs
 COPY klai-libs/citations klai-libs/citations
+# SPEC-CHAT-GUARDRAILS-001: shared LLM safety policy path-dep.
+COPY klai-libs/llm-safety klai-libs/llm-safety
 COPY klai-portal/backend/pyproject.toml klai-portal/backend/pyproject.toml
 COPY klai-portal/backend/uv.lock klai-portal/backend/uv.lock
 

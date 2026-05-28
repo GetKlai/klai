@@ -212,6 +212,12 @@ services:
       - ./litellm/config.yaml:/app/config.yaml:ro
       - ./litellm/klai_knowledge.py:/app/klai_knowledge.py:ro
       - ./litellm/custom_router.py:/app/custom_router.py:ro
+      # SPEC-CHAT-GUARDRAILS-001: vendored package copy of klai-libs/llm-safety
+      # (kept byte-identical via deploy/litellm/tests/test_klai_llm_safety_drift.py).
+      # Directory mount at /app/klai_llm_safety puts the package on PYTHONPATH
+      # next to klai_knowledge.py so ``import klai_llm_safety`` resolves
+      # without a custom Dockerfile. Phase D plan: pip install in custom image.
+      - ./litellm/klai_llm_safety:/app/klai_llm_safety:ro
       # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: vendored single-file copy of
       # klai-libs/service-auth (kept in sync via deploy/litellm/tests/
       # test_klai_service_auth_drift.py). Mounting at /app/ puts it on

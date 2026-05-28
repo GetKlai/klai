@@ -16,6 +16,9 @@ COPY klai-libs/log-utils klai-libs/log-utils
 # SPEC-SEC-IDENTITY-ASSERT-002 REQ-3.4: klai-libs/identity-assert is no
 # longer a scribe dependency. scribe trusts BFF-verified headers gated by
 # X-Internal-Secret; portal-api owns identity verification.
+# SPEC-CHAT-GUARDRAILS-001: shared LLM safety policy path-dep for transcript
+# context safety + summary output safety.
+COPY klai-libs/llm-safety klai-libs/llm-safety
 COPY klai-scribe/scribe-api/pyproject.toml klai-scribe/scribe-api/pyproject.toml
 COPY klai-scribe/scribe-api/uv.lock klai-scribe/scribe-api/uv.lock
 
