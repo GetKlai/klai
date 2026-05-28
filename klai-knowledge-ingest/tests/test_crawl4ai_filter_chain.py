@@ -39,6 +39,57 @@ def _patch_seed(monkeypatch: pytest.MonkeyPatch, seed_result: CrawlResult) -> No
 
 
 @pytest.mark.asyncio
+async def test_fetch_seed_retries_relaxed_config_after_minimal_content_antibot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Header-only portfolio pages should not be dropped by chrome stripping."""
+    calls: list[dict[str, Any]] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        calls.append(payload["crawler_config"]["params"])
+        if len(calls) == 1:
+            request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+            response = httpx.Response(
+                500,
+                json={
+                    "detail": "Blocked by anti-bot protection: "
+                    "Structural: minimal_text, 0 chars visible"
+                },
+                request=request,
+            )
+            raise httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+        return {
+            "results": [
+                {
+                    "url": "https://jantinedoornbos.nl/",
+                    "success": True,
+                    "markdown": "Header content is visible after relaxed retry",
+                    "links": {"internal": []},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    result = await crawl4ai_client._fetch_seed_page(
+        start_url="https://jantinedoornbos.nl/",
+        crawler_config=crawl4ai_client.build_crawl_config(None),
+        cookies=None,
+    )
+
+    assert result.success is True
+    assert len(calls) == 2
+    assert "js_code_before_wait" in calls[0]
+    assert "wait_for" in calls[0]
+    assert "js_code_before_wait" not in calls[1]
+    assert "wait_for" not in calls[1]
+    assert calls[1]["excluded_tags"] == ["script", "style"]
+
+
+@pytest.mark.asyncio
 async def test_crawl_site_applies_include_patterns_to_candidates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
