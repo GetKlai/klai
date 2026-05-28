@@ -7,10 +7,10 @@
 #   scripts/codeindex-health.sh --repair --restart-mcp
 #
 # Why this exists:
-# CodeIndex keeps one canonical index per repo. In Conductor worktrees, the
-# current workspace can differ from the canonical repo path stored by CodeIndex.
-# Long-lived `codeindex serve` or stale `codeindex mcp` processes can also keep
-# cached state around, making every agent see the same stale warning.
+# CodeIndex keeps one shared index per repo. In Conductor worktrees, many
+# agents can have different HEADs at once, so the shared index must be pinned
+# to a stable base ref (origin/main by default). Branch/worktree changes are an
+# overlay: use CodeIndex for the base graph, then read local git diffs/files.
 
 set -u
 
@@ -18,6 +18,9 @@ REPAIR=0
 RESTART_MCP=0
 QUIET=0
 PROJECT_NAME="${CODEINDEX_PROJECT_NAME:-klai}"
+BASE_REF="${CODEINDEX_BASE_REF:-origin/main}"
+BASE_WORKTREE="${CODEINDEX_BASE_WORKTREE:-$HOME/.codeindex/_worktrees/${PROJECT_NAME}-main}"
+LOCK_DIR="${CODEINDEX_LOCK_DIR:-$HOME/.codeindex/.locks/${PROJECT_NAME}-main.lock}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -78,6 +81,29 @@ is_locked() {
   grep -qi 'database is locked\|locked by another process'
 }
 
+short_sha() {
+  printf '%s' "$1" | cut -c1-8
+}
+
+base_head() {
+  git rev-parse "$BASE_REF" 2>/dev/null || true
+}
+
+acquire_lock() {
+  local waited=0
+  mkdir -p "$(dirname "$LOCK_DIR")"
+  while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    if [ "$waited" -ge 120 ]; then
+      warn "ERROR: timed out waiting for CodeIndex lock: $LOCK_DIR"
+      return 1
+    fi
+    log "Waiting for CodeIndex lock: $LOCK_DIR"
+    sleep 2
+    waited=$((waited + 2))
+  done
+  trap 'rm -rf "$LOCK_DIR"' EXIT
+}
+
 stop_codeindex_serve() {
   local pids
   pids="$(pgrep -f 'codeindex serve' || true)"
@@ -106,26 +132,46 @@ restart_mcp_processes() {
   sleep 1
 }
 
-run_analyze_from() {
-  local worktree_dir="$1"
-  if [ ! -d "$worktree_dir/.git" ] && [ ! -f "$worktree_dir/.git" ]; then
-    warn "ERROR: CodeIndex worktree path is not a git checkout: $worktree_dir"
+ensure_base_worktree() {
+  local source_dir="$1"
+  mkdir -p "$(dirname "$BASE_WORKTREE")"
+
+  if [ ! -d "$BASE_WORKTREE/.git" ] && [ ! -f "$BASE_WORKTREE/.git" ]; then
+    log "Creating dedicated CodeIndex base worktree: $BASE_WORKTREE"
+    git -C "$source_dir" worktree add --detach "$BASE_WORKTREE" "$BASE_REF"
+  fi
+
+  log "Fetching base ref for CodeIndex: $BASE_REF"
+  # This is a dedicated throwaway worktree owned by CodeIndex health checks.
+  # Generated AGENTS/CLAUDE skill files must not make the shared base drift.
+  git -C "$BASE_WORKTREE" reset --hard --quiet
+  git -C "$BASE_WORKTREE" clean -fd --quiet
+  git -C "$BASE_WORKTREE" fetch origin main --quiet
+  git -C "$BASE_WORKTREE" checkout --detach "$BASE_REF" --quiet
+}
+
+run_analyze_from_base() {
+  local source_dir="$1"
+  ensure_base_worktree "$source_dir" || return 1
+  if [ ! -d "$BASE_WORKTREE/.git" ] && [ ! -f "$BASE_WORKTREE/.git" ]; then
+    warn "ERROR: CodeIndex base worktree path is not a git checkout: $BASE_WORKTREE"
     return 1
   fi
 
-  log "Running codeindex analyze from current worktree: $worktree_dir"
-  (cd "$worktree_dir" && codeindex analyze "$PROJECT_NAME" "$worktree_dir" --force --no-embeddings)
+  log "Running codeindex analyze from shared base worktree: $BASE_WORKTREE"
+  (cd "$BASE_WORKTREE" && codeindex analyze "$PROJECT_NAME" "$BASE_WORKTREE" --force --no-embeddings)
 }
 
 main() {
   require_codeindex
 
-  local status repo_dir worktree_dir current_head indexed_commit
+  local status repo_dir worktree_dir current_head indexed_commit base_commit
   status="$(status_output)"
   repo_dir="$(printf '%s\n' "$status" | canonical_repo_from_status)"
   worktree_dir="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
   current_head="$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || true)"
   indexed_commit="$(printf '%s\n' "$status" | indexed_commit_from_status)"
+  base_commit="$(base_head)"
 
   if [ -z "$repo_dir" ]; then
     warn "$status"
@@ -134,22 +180,23 @@ main() {
   fi
 
   log "$status"
-
-  if printf '%s\n' "$status" | is_up_to_date; then
-    if [ "$RESTART_MCP" -eq 1 ]; then
-      restart_mcp_processes
-    fi
-    exit 0
+  if [ -n "$base_commit" ]; then
+    log "CodeIndex base ref: $BASE_REF ($(short_sha "$base_commit"))"
+  else
+    warn "WARNING: could not resolve CodeIndex base ref: $BASE_REF"
   fi
 
-  # CodeIndex status currently compares a Conductor worktree index against the
-  # canonical checkout's HEAD because both share the same git common-dir. If the
-  # stored index commit matches this worktree's HEAD, the index is healthy for
-  # this workspace even when `codeindex status` prints a stale warning.
-  if [ -n "$current_head" ] && [ -n "$indexed_commit" ]; then
+  # Health is defined against the shared base ref, not against whichever
+  # Conductor worktree the current agent is using and not against the canonical
+  # checkout's possibly-stale HEAD.
+  if [ -n "$base_commit" ] && [ -n "$indexed_commit" ]; then
     case "$current_head" in
-      "$indexed_commit"*)
-        log "CodeIndex indexed commit matches current worktree ($indexed_commit); treating as healthy."
+      "$base_commit"*) ;;
+      *) log "Current worktree differs from $BASE_REF; treat local changes as an overlay on the shared CodeIndex graph." ;;
+    esac
+    case "$base_commit" in
+      "$indexed_commit"*|"$indexed_commit")
+        log "CodeIndex indexed commit matches $BASE_REF ($(short_sha "$indexed_commit")); treating as healthy."
         if [ "$RESTART_MCP" -eq 1 ]; then
           restart_mcp_processes
         fi
@@ -160,7 +207,7 @@ main() {
 
   if [ "$REPAIR" -ne 1 ]; then
     warn ""
-    warn "CodeIndex is not up to date. Run:"
+    warn "CodeIndex shared base index is not up to date. Run:"
     warn "  scripts/codeindex-health.sh --repair"
     warn ""
     warn "If existing agents still show stale context after repair, run:"
@@ -171,17 +218,18 @@ main() {
   # A stale or locked index is usually caused by an old web UI server. Stop it
   # before updating. Do not stop MCP by default: this script is also used by the
   # MCP launcher, and killing the current stdio process would break startup.
+  acquire_lock || exit 1
   stop_codeindex_serve
 
   local update_log
-  update_log="$(run_analyze_from "$worktree_dir" 2>&1)"
+  update_log="$(run_analyze_from_base "$worktree_dir" 2>&1)"
   local update_rc=$?
   log "$update_log"
 
   if [ "$update_rc" -ne 0 ] && printf '%s\n' "$update_log" | is_locked; then
     warn "CodeIndex analyze hit a DB lock; stopping codeindex serve and retrying once."
     stop_codeindex_serve
-    update_log="$(run_analyze_from "$worktree_dir" 2>&1)"
+    update_log="$(run_analyze_from_base "$worktree_dir" 2>&1)"
     update_rc=$?
     log "$update_log"
   fi
@@ -194,20 +242,21 @@ main() {
   status="$(status_output)"
   log "$status"
   indexed_commit="$(printf '%s\n' "$status" | indexed_commit_from_status)"
+  base_commit="$(base_head)"
 
-  if printf '%s\n' "$status" | is_up_to_date; then
-    :
-  elif [ -n "$current_head" ] && [ -n "$indexed_commit" ]; then
-    case "$current_head" in
-      "$indexed_commit"*)
-        log "CodeIndex indexed commit matches current worktree ($indexed_commit); repair succeeded."
+  if [ -n "$base_commit" ] && [ -n "$indexed_commit" ]; then
+    case "$base_commit" in
+      "$indexed_commit"*|"$indexed_commit")
+        log "CodeIndex indexed commit matches $BASE_REF ($(short_sha "$indexed_commit")); repair succeeded."
         ;;
       *)
-        warn "ERROR: CodeIndex still reports stale after repair."
+        warn "ERROR: CodeIndex still does not match $BASE_REF after repair."
         warn "$status"
         exit 1
         ;;
     esac
+  elif printf '%s\n' "$status" | is_up_to_date; then
+    :
   else
     warn "ERROR: CodeIndex still reports stale after repair."
     warn "$status"
