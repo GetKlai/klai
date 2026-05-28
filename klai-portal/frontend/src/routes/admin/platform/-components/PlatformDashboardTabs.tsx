@@ -9,6 +9,7 @@ import {
   LifeBuoy,
   Link2,
   Loader2,
+  Pencil,
   PlusCircle,
   Save,
   Search,
@@ -18,6 +19,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Select } from '@/components/ui/select'
 import {
   Sheet,
@@ -967,6 +969,8 @@ function RoadmapItemsPanel({
   onOpenItem: (itemId: number) => void
 }) {
   const items = usePlatformFeedbackItems(search)
+  const deleteItem = usePlatformFeedbackDeleteItem()
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const rows = items.data ?? []
 
   return (
@@ -985,37 +989,95 @@ function RoadmapItemsPanel({
           Nog geen feedback items gevonden.
         </p>
       ) : (
-        <div className="divide-y divide-gray-200">
-          {rows.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="grid w-full grid-cols-[1fr_auto] gap-3 py-3 text-left hover:bg-gray-50"
-              onClick={() => onOpenItem(item.id)}
-            >
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-gray-900">
-                  {item.title}
-                </span>
-                <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
-                  <Badge variant="outline">{feedbackItemStatusLabel(item.status)}</Badge>
-                  <span>{item.kind}</span>
-                  {item.area && <span>{item.area}</span>}
-                  {item.owner && <span>owner: {item.owner}</span>}
-                </span>
-              </span>
-              <span className="text-right text-xs text-gray-400">
-                <span className="block text-gray-900">
-                  {item.org_count} orgs / {item.user_count} users
-                </span>
-                <span className="block">{fmtDate(item.updated_at)}</span>
-                <span className="mt-1 inline-block text-[var(--color-rl-accent-dark)]">
-                  Bewerk
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
+        <PlatformTableShell loading={false} empty={false} emptyText="">
+          <thead>
+            <tr>
+              <th className={TH}>Item</th>
+              <th className={TH}>Status</th>
+              <th className={TH}>Type</th>
+              <th className={TH}>Impact</th>
+              <th className={TH}>Bijgewerkt</th>
+              <th className={`${TH} text-right`}>Acties</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {rows.map((item) => {
+              const isConfirming = confirmDeleteId === item.id
+              return (
+                <tr
+                  key={item.id}
+                  className={isConfirming ? 'bg-[var(--color-hover)]' : 'hover:bg-gray-50'}
+                >
+                  <td className={`${TD} max-w-xl`}>
+                    <button
+                      type="button"
+                      className="block max-w-full text-left"
+                      onClick={() => onOpenItem(item.id)}
+                    >
+                      <span className="block truncate font-medium text-gray-900">
+                        {item.title}
+                      </span>
+                      <span className="mt-1 block truncate text-xs text-gray-400">
+                        {[item.area, item.owner && `owner: ${item.owner}`]
+                          .filter(Boolean)
+                          .join(' / ')}
+                      </span>
+                    </button>
+                  </td>
+                  <td className={TD}>
+                    <Badge variant="outline">{feedbackItemStatusLabel(item.status)}</Badge>
+                  </td>
+                  <td className={TD}>{feedbackItemKindLabel(item.kind)}</td>
+                  <td className={`${TD} whitespace-nowrap tabular-nums`}>
+                    {item.org_count} orgs / {item.user_count} users
+                  </td>
+                  <td className={`${TD} whitespace-nowrap text-gray-400`}>
+                    {fmtDate(item.updated_at)}
+                  </td>
+                  <td className={`${TD} text-right`}>
+                    <InlineDeleteConfirm
+                      isConfirming={isConfirming}
+                      isPending={deleteItem.isPending && isConfirming}
+                      label="Verwijder"
+                      cancelLabel={m.admin_users_cancel()}
+                      onConfirm={() => {
+                        deleteItem.mutate(item.id, {
+                          onSuccess: () => setConfirmDeleteId(null),
+                        })
+                      }}
+                      onCancel={() => setConfirmDeleteId(null)}
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
+                          aria-label={`Bewerk ${item.title}`}
+                          title="Bewerken"
+                          onClick={() => onOpenItem(item.id)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-md text-gray-400 hover:text-[var(--color-destructive)]"
+                          aria-label={`Verwijder ${item.title}`}
+                          title="Verwijderen"
+                          onClick={() => setConfirmDeleteId(item.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </InlineDeleteConfirm>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </PlatformTableShell>
       )}
     </section>
   )
