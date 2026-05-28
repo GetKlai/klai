@@ -836,6 +836,7 @@ def _source_evidence_items_from_pack(
         return []
 
     evidence: list[dict[str, Any]] = []
+    seen_texts: set[str] = set()
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -845,6 +846,10 @@ def _source_evidence_items_from_pack(
         text = _compact_text(item.get("text"))
         if not text:
             continue
+        text_key = text.lower()
+        if text_key in seen_texts:
+            continue
+        seen_texts.add(text_key)
         entry: dict[str, Any] = {
             "evidence_id": str(evidence_id),
             "chunk_id": item.get("chunk_id"),
