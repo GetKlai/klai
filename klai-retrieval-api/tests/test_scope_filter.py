@@ -145,9 +145,9 @@ class TestScopeFilterVisibility:
         assert "visibility" in keys
         assert "user_id" in keys
 
-    def test_scope_both_own_private_branch_narrows_to_canonical_slug(self):
+    def test_scope_both_own_private_branch_narrows_to_canonical_and_selected_slugs(self):
         """SPEC-RAG-PERSONAL-SCOPE-001 REQ-3: scope=both, personal portion
-        narrows to canonical slug.
+        narrows to canonical + explicitly selected private slugs.
 
         The visibility-should clause for scope=both/org has two branches:
         not_private (org chunks) and (visibility=private + user_id=me)
@@ -156,11 +156,11 @@ class TestScopeFilterVisibility:
         user-created private KBs (e.g. ``test2``). This is the scope=both
         sibling of the scope=personal leak fixed by REQ-2.
 
-        Fix: add ``kb_slug=personal-<user>`` to the private branch's must
-        list so only canonical Persoonlijk-KB chunks pass via the
-        user_id-bypass.
+        Fix: add an allowed-slug condition to the private branch's must
+        list so only canonical Persoonlijk-KB chunks and explicitly selected
+        private KB slugs pass via the user_id-bypass.
         """
-        req = _make_request(scope="both", user_id="user-42", kb_slugs=["engineering"])
+        req = _make_request(scope="both", user_id="user-42", kb_slugs=["engineering", "test2"])
         conditions = _scope_filter(req)
         vis = _find_visibility_filter(conditions)
         assert vis is not None
@@ -168,19 +168,29 @@ class TestScopeFilterVisibility:
         own_branch = vis.should[1]
         assert isinstance(own_branch, Filter)
         assert own_branch.must is not None
-        keys_to_values = {
-            c.key: c.match.value
+        fields_by_key = {
+            c.key: c
             for c in own_branch.must
             if isinstance(c, FieldCondition)
         }
-        assert "visibility" in keys_to_values
-        assert "user_id" in keys_to_values
-        # NEW: canonical slug condition pins the private branch to
-        # canonical Persoonlijk only.
-        assert "kb_slug" in keys_to_values, (
-            "scope=both private branch must carry canonical kb_slug condition"
+        assert "visibility" in fields_by_key
+        assert "user_id" in fields_by_key
+        assert "kb_slug" in fields_by_key, (
+            "scope=both private branch must carry an allowed kb_slug condition"
         )
-        assert keys_to_values["kb_slug"] == "personal-user-42"
+        assert fields_by_key["kb_slug"].match.any == ["personal-user-42", "engineering", "test2"]
+
+    def test_scope_both_without_selected_slugs_blocks_non_canonical_private_kbs(self):
+        """Selecting only Persoonlijk must not leak other user-owned private KBs."""
+        req = _make_request(scope="both", user_id="user-42", kb_slugs=None)
+        conditions = _scope_filter(req)
+        vis = _find_visibility_filter(conditions)
+        own_branch = vis.should[1]
+        slug_cond = next(
+            c for c in own_branch.must
+            if isinstance(c, FieldCondition) and c.key == "kb_slug"
+        )
+        assert slug_cond.match.any == ["personal-user-42"]
 
     def test_scope_org_own_private_branch_does_not_add_canonical_slug(self):
         """scope=org also has the visibility-should clause but is a pure-org
