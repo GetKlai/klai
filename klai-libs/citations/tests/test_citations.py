@@ -351,6 +351,14 @@ def test_trusted_sources_are_projected_only_from_evidence_pack_sources() -> None
             "artifact_id": None,
             "source_label": None,
             "relevance_score": None,
+            "evidence": [
+                {
+                    "evidence_id": "E1",
+                    "chunk_id": "chunk-1",
+                    "text": "Admins can invite users.",
+                    "source_url": "https://docs.getklai.com/invite-people",
+                }
+            ],
         }
     ]
     assert evidence_pack_items_as_chunks(pack) == [
@@ -402,6 +410,54 @@ def test_trusted_sources_include_uploaded_documents_without_source_url() -> None
         }
     ]
     assert format_sources_markdown(sources) == "- CV_Jantine_Doornbos.pdf"
+
+
+def test_trusted_sources_include_compact_evidence_snippets() -> None:
+    pack = {
+        "items": [
+            {
+                "evidence_id": "E1",
+                "chunk_id": "chunk-1",
+                "artifact_id": "artifact-1",
+                "title": "Responsibilities.pdf",
+                "text": "Frank Wolters is de trekker voor Data Readiness.\n\nCiska Buijze is de datacontactpersoon.",
+                "heading_path": "Bouwblokken > Data Readiness",
+                "source_label": "personal-kb",
+                "score": 0.42,
+            },
+            {
+                "evidence_id": "E9",
+                "chunk_id": "chunk-9",
+                "text": "Unrelated evidence from the same retrieval result.",
+            },
+        ],
+        "sources": [
+            {
+                "source_id": "S1",
+                "title": "Responsibilities.pdf",
+                "source_url": None,
+                "artifact_id": "artifact-1",
+                "source_label": "personal-kb",
+                "evidence_ids": ["E1"],
+                "relevance_score": 0.42,
+            }
+        ],
+    }
+
+    sources = trusted_sources_from_evidence_pack(pack)
+
+    assert sources[0]["evidence"] == [
+        {
+            "evidence_id": "E1",
+            "chunk_id": "chunk-1",
+            "text": "Frank Wolters is de trekker voor Data Readiness. Ciska Buijze is de datacontactpersoon.",
+            "artifact_id": "artifact-1",
+            "heading_path": "Bouwblokken > Data Readiness",
+            "source_label": "personal-kb",
+            "score": 0.42,
+        }
+    ]
+    assert "E9" not in {item["evidence_id"] for item in sources[0]["evidence"]}
 
 
 def test_trusted_source_composition_supports_uploaded_documents_without_url() -> None:

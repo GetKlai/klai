@@ -1862,6 +1862,7 @@ def _source_with_metadata(source: dict[str, Any], *, label: str) -> dict[str, An
     for key in (
         "source_id",
         "evidence_ids",
+        "evidence",
         "artifact_id",
         "source_label",
         "relevance_score",
@@ -1895,6 +1896,7 @@ def _merge_source_metadata(
             for key in (
                 "source_id",
                 "evidence_ids",
+                "evidence",
                 "artifact_id",
                 "source_label",
                 "relevance_score",
