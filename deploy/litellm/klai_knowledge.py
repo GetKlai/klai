@@ -1221,6 +1221,8 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
         if cached is not None:
             return cached
 
+    latest_feature_key = f"kb_feature_latest:{org_id}:{user_id}"
+
     # Cache miss — fetch fresh from portal
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
@@ -1232,6 +1234,13 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             resp.raise_for_status()
             data = resp.json()
     except Exception as exc:
+        stale = await cache.async_get_cache(latest_feature_key)
+        if isinstance(stale, dict):
+            logger.warning(
+                "KlaiKnowledgeHook: portal feature fetch failed (%s) — using stale feature cache",
+                exc,
+            )
+            return stale
         logger.warning(
             "KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc
         )
@@ -1273,6 +1282,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     await cache.async_set_cache(
         f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300
     )
+    await cache.async_set_cache(latest_feature_key, result, ttl=86400)
     return result
 
 
