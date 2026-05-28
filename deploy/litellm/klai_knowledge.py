@@ -678,25 +678,6 @@ def _llm_safety_enforces() -> bool:
     return LLM_SAFETY_LITELLM_MODE in {"enforce", "block", "on", "true", "1"}
 
 
-def _message_text(message: dict[str, Any]) -> str:
-    content = message.get("content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(
-            part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
-        )
-    return ""
-
-
-def _conversation_text(messages: list[dict]) -> str:
-    return "\n".join(
-        _message_text(message)
-        for message in messages
-        if message.get("role") in {"user", "assistant", "tool"}
-    )
-
-
 def _chunk_safety_text(chunk: dict[str, Any]) -> str:
     values: list[str] = []
     for key in ("title", "heading_path", "source_label", "text"):
@@ -2661,9 +2642,15 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
 
         safety_metadata = data.setdefault("metadata", {})
+        # Input safety scans ONLY the latest user turn — never the assistant's
+        # prior answers and never the full history. Rescanning the whole
+        # conversation meant a single earlier grey-area turn (or a prior
+        # refusal that named the blocked topics) poisoned every later message,
+        # so innocent follow-ups got refused. Assistant output is the model's
+        # own text and is covered separately, not by the INPUT gate.
         input_safety_decision = _check_llm_safety(
             phase=SafetyPhase.INPUT,
-            text=_conversation_text(messages) or query,
+            text=query,
             query=query,
             org_id=org_id,
             user_id=librechat_user_id,
