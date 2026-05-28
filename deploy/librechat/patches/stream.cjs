@@ -84,6 +84,20 @@ function getChunkContent({ chunk, provider, reasoningKey, }) {
     return ((chunk?.additional_kwargs?.[reasoningKey] ?? '') ||
         chunk?.content);
 }
+function getChunkSources(chunk) {
+    const candidates = [
+        chunk?.sources,
+        chunk?.additional_kwargs?.sources,
+        chunk?.response_metadata?.sources,
+        chunk?.additional_kwargs?.delta?.sources,
+    ];
+    for (const candidate of candidates) {
+        if (Array.isArray(candidate) && candidate.length > 0) {
+            return candidate;
+        }
+    }
+    return undefined;
+}
 class ChatModelStreamHandler {
     async handle(event, data, metadata, graph) {
         if (!graph) {
@@ -191,12 +205,14 @@ hasToolCallChunks: ${hasToolCallChunks}
             return;
         }
         else if (typeof content === 'string') {
+            const sources = getChunkSources(chunk);
             if (agentContext.currentTokenType === _enum.ContentTypes.TEXT) {
                 await graph.dispatchMessageDelta(stepId, {
                     content: [
                         {
                             type: _enum.ContentTypes.TEXT,
                             text: content,
+                            ...(sources ? { sources } : {}),
                         },
                     ],
                 });
@@ -230,6 +246,7 @@ hasToolCallChunks: ${hasToolCallChunks}
                             {
                                 type: _enum.ContentTypes.TEXT,
                                 text: text,
+                                ...(sources ? { sources } : {}),
                             },
                         ],
                     });
@@ -370,6 +387,12 @@ function createContentAggregator() {
             };
             if (contentPart.tool_call_ids) {
                 update.tool_call_ids = contentPart.tool_call_ids;
+            }
+            if (Array.isArray(contentPart.sources) && contentPart.sources.length > 0) {
+                update.sources = contentPart.sources;
+            }
+            else if (Array.isArray(currentContent.sources) && currentContent.sources.length > 0) {
+                update.sources = currentContent.sources;
             }
             contentParts[index] = update;
         }
@@ -588,4 +611,5 @@ function createContentAggregator() {
 exports.ChatModelStreamHandler = ChatModelStreamHandler;
 exports.createContentAggregator = createContentAggregator;
 exports.getChunkContent = getChunkContent;
+exports.getChunkSources = getChunkSources;
 //# sourceMappingURL=stream.cjs.map
