@@ -115,20 +115,29 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
                 FieldCondition(key="visibility", match=MatchValue(value="private")),
                 FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
             ]
-            # SPEC-RAG-PERSONAL-SCOPE-001 REQ-3: scope=both, personal
-            # portion narrows to canonical slug. Without this, the
-            # own-private branch would let ALL user-owned private
-            # chunks pass — including non-canonical user-created
-            # private KBs like ``test2`` — even when the caller picked
-            # "Persoonlijk + specific org KBs" in the dropdown.
-            # scope=org keeps the wider semantic (REQ-3 narrows
-            # scope=both only) because no scope=org consumer models the
-            # Persoonlijk-vs-other-user-KB distinction today.
+            # SPEC-RAG-PERSONAL-SCOPE-001 REQ-3: scope=both must not use
+            # `user_id` as an unconstrained private-KB bypass. It may include
+            # the canonical Persoonlijk KB and any caller-selected KB slugs,
+            # but it must not let every private chunk owned by the user pass.
+            #
+            # This preserves the Jantine fix (selecting only Persoonlijk does
+            # not leak `test2`) while keeping the legitimate case working:
+            # selecting "Persoonlijk + test2" includes both slugs.
+            # scope=org keeps the wider semantic because partner_chat does not
+            # model a Persoonlijk-vs-other-user-KB dropdown today.
             if request.scope == "both":
+                allowed_private_slugs = list(
+                    dict.fromkeys(
+                        [
+                            personal_kb_slug(request.user_id),
+                            *(request.kb_slugs or []),
+                        ]
+                    )
+                )
                 own_private_must.append(
                     FieldCondition(
                         key="kb_slug",
-                        match=MatchValue(value=personal_kb_slug(request.user_id)),
+                        match=MatchAny(any=allowed_private_slugs),
                     )
                 )
             visibility_should.append(Filter(must=own_private_must))

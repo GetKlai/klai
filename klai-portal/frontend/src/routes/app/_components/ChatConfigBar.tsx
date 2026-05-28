@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ChevronDown, Info } from 'lucide-react'
@@ -42,28 +42,35 @@ export function ChatConfigBar() {
   const { data: pref } = useQuery<KBPref>({
     queryKey: ['kb-preference'],
     queryFn: async () => apiFetch<KBPref>('/api/app/account/kb-preference'),
+    staleTime: 30_000,
   })
 
   const { data: kbsData } = useQuery<{ knowledge_bases: OrgKB[] }>({
     queryKey: ['all-kbs-for-bar'],
     queryFn: async () => apiFetch<{ knowledge_bases: OrgKB[] }>('/api/app/knowledge-bases'),
+    staleTime: 5 * 60_000,
   })
 
   const { data: instructionsData } = useQuery<Instruction[]>({
     queryKey: ['app-instructions-for-bar'],
     queryFn: async () => apiFetch<Instruction[]>('/api/app/templates'),
     retry: false,
+    staleTime: 5 * 60_000,
   })
 
   // Exclude every personal-* slug: the caller's own toggles via "Persoonlijk"
   // and other users' personal KBs should never show up in the chat dropdown.
-  const allKbs = (kbsData?.knowledge_bases ?? []).filter((kb) => !kb.slug.startsWith('personal-'))
-  const allSlugs = allKbs.map((kb) => kb.slug)
-  const currentSlugs: string[] = pref
-    ? pref.kb_slugs_filter === null
-      ? allSlugs
-      : pref.kb_slugs_filter.filter((s) => allSlugs.includes(s))
-    : allSlugs
+  const allKbs = useMemo(
+    () => (kbsData?.knowledge_bases ?? []).filter((kb) => !kb.slug.startsWith('personal-')),
+    [kbsData?.knowledge_bases],
+  )
+  const allSlugs = useMemo(() => allKbs.map((kb) => kb.slug), [allKbs])
+  const allSlugSet = useMemo(() => new Set(allSlugs), [allSlugs])
+  const currentSlugs: string[] = useMemo(() => {
+    if (!pref) return allSlugs
+    if (pref.kb_slugs_filter === null) return allSlugs
+    return pref.kb_slugs_filter.filter((s) => allSlugSet.has(s))
+  }, [allSlugSet, allSlugs, pref])
 
   const mutation = useMutation({
     mutationFn: async (patch: Partial<Omit<KBPref, 'kb_pref_version'>>) =>
@@ -111,17 +118,27 @@ export function ChatConfigBar() {
     }
   }
 
-  if (!pref || allKbs.length === 0) return null
+  const activeNames = useMemo(() => {
+    const names: string[] = []
+    if (!pref) return names
+    if (pref.kb_personal_enabled) names.push('Persoonlijk')
+    for (const kb of allKbs) {
+      if (currentSlugs.includes(kb.slug)) names.push(kb.name)
+    }
+    return names
+  }, [allKbs, currentSlugs, pref])
 
-  const activeNames: string[] = []
-  if (pref.kb_personal_enabled) activeNames.push('Persoonlijk')
-  for (const kb of allKbs) {
-    if (currentSlugs.includes(kb.slug)) activeNames.push(kb.name)
-  }
+  const allInstructions = useMemo(() => instructionsData ?? [], [instructionsData])
+  const activeInstructionIds: number[] = useMemo(
+    () => pref?.active_template_ids ?? [],
+    [pref?.active_template_ids],
+  )
+  const activeInstructions = useMemo(
+    () => allInstructions.filter((t) => activeInstructionIds.includes(t.id)),
+    [activeInstructionIds, allInstructions],
+  )
 
-  const allInstructions = instructionsData ?? []
-  const activeInstructionIds: number[] = pref.active_template_ids ?? []
-  const activeInstructions = allInstructions.filter((t) => activeInstructionIds.includes(t.id))
+  if (!pref) return null
 
   function toggleInstruction(id: number) {
     const next = activeInstructionIds.includes(id)
