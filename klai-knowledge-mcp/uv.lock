@@ -304,7 +304,7 @@ wheels = [
 
 [[package]]
 name = "klai-identity-assert"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "../klai-libs/identity-assert" }
 dependencies = [
     { name = "httpx" },
@@ -333,12 +333,33 @@ dev = [
 ]
 
 [[package]]
+name = "klai-kb-slugs"
+version = "0.1.0"
+source = { editable = "../klai-libs/kb-slugs" }
+
+[package.metadata]
+requires-dist = [
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
 name = "klai-knowledge-mcp"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "httpx" },
     { name = "klai-identity-assert" },
+    { name = "klai-kb-slugs" },
     { name = "klai-log-utils" },
     { name = "klai-retrieval-telemetry" },
     { name = "mcp", extra = ["cli"] },
@@ -358,6 +379,7 @@ dev = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "klai-identity-assert", editable = "../klai-libs/identity-assert" },
+    { name = "klai-kb-slugs", editable = "../klai-libs/kb-slugs" },
     { name = "klai-log-utils", editable = "../klai-libs/log-utils" },
     { name = "klai-retrieval-telemetry", editable = "../klai-libs/retrieval-telemetry" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.9.0" },

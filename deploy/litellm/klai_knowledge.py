@@ -1137,7 +1137,6 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_narrow": False,
             "version": 0,
             "zitadel_user_id": None,
-            "personal_kb_slug": None,
             # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: fail-open to 'shadow', never 'off'.
             "telemetry_level": "shadow",
         }
@@ -1174,7 +1173,6 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_narrow": False,
             "version": 0,
             "zitadel_user_id": None,
-            "personal_kb_slug": None,
             # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: fail-open to 'shadow', never 'off'.
             # Silent telemetry is the wrong default during outages.
             "telemetry_level": "shadow",
@@ -1194,12 +1192,6 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
         # personal-KB qdrant filter, and the verify-cache key all match on
         # zitadel_user_id — using the LibreChat ObjectId would 403 every call.
         "zitadel_user_id": data.get("zitadel_user_id"),
-        # Canonical slug of the user's "Persoonlijk" KB. Owned by portal-api
-        # (`app.services.default_knowledge_bases.personal_kb_slug`) so this
-        # service does not reconstruct the slug template from string parts.
-        # Older portal-api builds without the field land at None and the
-        # hook falls back to scope=personal without a kb_slug filter.
-        "personal_kb_slug": data.get("personal_kb_slug"),
         # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: per-tenant telemetry mode.
         # Older portal-api builds without the field land in the default
         # 'shadow' (REQ-4 fail-open) so a mid-deploy state is privacy-safe.
@@ -1965,32 +1957,16 @@ class KlaiKnowledgeHook(CustomLogger):
 
         # Translate (kb_personal, kb_slugs) → retrieval-api `scope` + optional
         # `kb_slugs` filter.
+        #
+        # When the user picked "Persoonlijk" alone (kb_personal=True,
+        # kb_slugs=[]), we ship scope=personal with no kb_slug filter.
+        # Retrieval-api enforces canonical Persoonlijk-KB narrowing
+        # server-side (SPEC-RAG-PERSONAL-SCOPE-001 REQ-2) so this client
+        # does not need to compute or pass the slug — the lookup is
+        # authoritative on the server.
         if kb_personal and kb_slugs == []:
-            # User picked the "Persoonlijk" entry in the chat dropdown.
-            #
-            # Narrow the request to the auto-provisioned canonical
-            # "Persoonlijk" KB only. Without this filter, retrieval-api
-            # would return every chunk where ``visibility=private`` AND
-            # ``owner_user_id`` matched the requester — which includes
-            # any user-created KBs (e.g. "test2") that the user
-            # explicitly deselected as separate items in the SAME
-            # dropdown.
-            #
-            # The slug template (``personal-<zitadel_user_id>``) is owned
-            # by portal-api in
-            # ``app.services.default_knowledge_bases.personal_kb_slug``;
-            # portal returns the resolved slug to us via
-            # ``KnowledgeFeatureResponse.personal_kb_slug`` so this
-            # process never reconstructs it from string parts. If a
-            # mid-deploy portal omits the field, ``personal_kb_slug``
-            # falls through to None and we ship scope=personal without a
-            # kb_slug filter — same wire shape as the pre-2026-05-27
-            # behaviour and preferable to a 0-result silent breakage.
             scope = "personal"
-            canonical_personal_slug = feature.get("personal_kb_slug")
-            kb_slugs_for_request: list[str] | None = (
-                [canonical_personal_slug] if canonical_personal_slug else None
-            )
+            kb_slugs_for_request: list[str] | None = None
         else:
             scope = "both" if kb_personal else "org"
             kb_slugs_for_request = kb_slugs if kb_slugs else None

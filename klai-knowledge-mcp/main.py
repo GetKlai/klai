@@ -34,6 +34,7 @@ from klai_identity_assert import (
     McpTokenAsserter,
     VerifyResult,
 )
+from klai_kb_slugs import personal_kb_slug
 from klai_retrieval_telemetry import (
     classify_gap as _classify_gap,
 )
@@ -715,19 +716,17 @@ async def save_personal_knowledge(
 
     assert verified.user_id is not None and verified.org_id is not None
     # @MX:NOTE: the personal-KB slug is derived deterministically from the
-    # verified user_id (`f"personal-{...}"`). An attacker who learns a
-    # victim's Zitadel sub can therefore reconstruct the slug. The structural
-    # neutralisation — membership-check between user_id and the KB so that
-    # knowing the slug is not enough — lives in SPEC-SEC-IDENTITY-ASSERT-001
-    # (already shipped; see `_verify_identity` above). SPEC-SEC-HYGIENE-001
-    # REQ-48 documents that the slug FORMAT stays unchanged on purpose:
-    # rotating the derivation strategy would break every existing personal KB
-    # without adding security beyond what IDENTITY-ASSERT-001 already provides.
-    # If a future SPEC migrates to an opaque slug format, that SPEC owns the
-    # data migration path — it is not in this codebase's scope.
+    # verified user_id via the shared ``personal_kb_slug`` helper. An
+    # attacker who learns a victim's Zitadel sub can therefore reconstruct
+    # the slug. The structural neutralisation — membership-check between
+    # user_id and the KB so that knowing the slug is not enough — lives in
+    # SPEC-SEC-IDENTITY-ASSERT-001 (already shipped; see ``_verify_identity``
+    # above). SPEC-SEC-HYGIENE-001 REQ-48 documents that the slug FORMAT
+    # stays unchanged on purpose; rotating it would break every existing
+    # personal KB without adding security beyond IDENTITY-ASSERT-001.
     ok = await _save_to_ingest(
         org_id=verified.org_id,
-        kb_slug=f"personal-{verified.user_id}",
+        kb_slug=personal_kb_slug(verified.user_id),
         title=title,
         content=content,
         assertion_mode=assertion_mode,

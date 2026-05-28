@@ -19,6 +19,8 @@ COPY --chown=app:app klai-libs/connector-credentials klai-libs/connector-credent
 COPY --chown=app:app klai-libs/image-storage klai-libs/image-storage
 # SPEC-TI-003 AC-6: identity-assert path-dep (X-Caller-Service header verification on ingest endpoints)
 COPY --chown=app:app klai-libs/identity-assert klai-libs/identity-assert
+# SPEC-RAG-PERSONAL-SCOPE-001 REQ-1: canonical personal-KB slug helper.
+COPY --chown=app:app klai-libs/kb-slugs klai-libs/kb-slugs
 COPY --chown=app:app klai-knowledge-ingest/pyproject.toml klai-knowledge-ingest/pyproject.toml
 COPY --chown=app:app klai-knowledge-ingest/uv.lock klai-knowledge-ingest/uv.lock
 

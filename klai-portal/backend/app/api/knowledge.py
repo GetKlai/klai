@@ -10,6 +10,7 @@ import asyncio
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from klai_kb_slugs import personal_kb_slug
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,7 +84,7 @@ async def get_knowledge_stats(
         {
             "must": [
                 {"key": "org_id", "match": {"value": zitadel_org_id}},
-                {"key": "kb_slug", "match": {"value": f"personal-{user_id}"}},
+                {"key": "kb_slug", "match": {"value": personal_kb_slug(user_id)}},
                 {"key": "user_id", "match": {"value": user_id}},
             ],
         }
