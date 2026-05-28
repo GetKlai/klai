@@ -81,6 +81,7 @@ def _strip_postgres_nul(value):
 def _sanitize_ingest_request(req: IngestRequest) -> None:
     req.content = _strip_postgres_nul(req.content)
     req.path = _strip_postgres_nul(req.path)
+    req.title = _strip_postgres_nul(req.title)
     req.source_type = _strip_postgres_nul(req.source_type)
     req.content_type = _strip_postgres_nul(req.content_type)
     req.extra = _strip_postgres_nul(req.extra)
@@ -105,8 +106,10 @@ def _verify_internal_secret(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-def _extract_title(content: str, path: str) -> str:
-    """Extract title from frontmatter or first H1, falling back to path."""
+def _extract_title(content: str, path: str, explicit_title: str | None = None) -> str:
+    """Extract title from caller metadata, frontmatter, H1, then path."""
+    if explicit_title and explicit_title.strip():
+        return explicit_title.strip()
     if content.startswith("---"):
         end = content.find("\n---", 3)
         if end != -1:
@@ -410,7 +413,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
 
     vectors = await embedder.embed(texts)
 
-    title = _extract_title(indexable_content, req.path)
+    title = _extract_title(indexable_content, req.path, req.title)
     kf = _parse_knowledge_fields(indexable_content, req.source_type, req.allowed_assertion_modes)
 
     # Apply synthesis_depth override from adapter if provided
@@ -606,6 +609,9 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # Merge adapter extra metadata
     if req.extra:
         extra_payload.update(req.extra)
+    # Adapter extras are untrusted for canonical display title. Portal and
+    # connector callers pass the user-facing title explicitly on the request.
+    extra_payload["title"] = title
     # Merge temporal fields for Qdrant payload
     extra_payload["belief_time_start"] = kf["belief_time_start"]
     extra_payload["belief_time_end"] = kf["belief_time_end"]

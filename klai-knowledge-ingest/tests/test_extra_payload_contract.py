@@ -213,6 +213,11 @@ async def _run_with_mocks(
             new_callable=AsyncMock,
         ) as update_extra_mock,
         patch(
+            "knowledge_ingest.pg_store.insert_parent_chunks",
+            new_callable=AsyncMock,
+            return_value=[1],
+        ),
+        patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,
             return_value=[[0.1] * 10],
@@ -386,6 +391,29 @@ async def test_extra_payload_visibility_is_authoritative_from_kb_config():
         f"connector adapter accidentally widening visibility on an "
         f"internal KB."
     )
+
+
+@pytest.mark.asyncio
+async def test_explicit_title_wins_for_file_hash_paths_and_extra_payload():
+    """Uploads use stable file:sha256 paths; citations must keep filename."""
+    req = IngestRequest(
+        org_id="org-contract",
+        kb_slug="kb-contract",
+        path="file:sha256:abc123",
+        content="Plain content without a heading",
+        title="CV_Jantine_Doornbos.pdf",
+        source_type="file",
+        content_type="document",
+        source_ref="file:sha256:abc123",
+        extra={"title": "wrong-title-from-extra", "original_filename": "CV_Jantine_Doornbos.pdf"},
+    )
+    proc_app = _MockProcApp()
+
+    result, update_extra_mock = await _run_with_mocks(req, proc_app)
+
+    extra_payload = _captured_extra_payload(update_extra_mock)
+    assert result["title"] == "CV_Jantine_Doornbos.pdf"
+    assert extra_payload["title"] == "CV_Jantine_Doornbos.pdf"
 
 
 @pytest.mark.asyncio
