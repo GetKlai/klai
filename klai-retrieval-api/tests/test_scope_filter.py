@@ -36,31 +36,72 @@ class TestScopeFilterVisibility:
         conditions = _scope_filter(req)
         assert _find_visibility_filter(conditions) is not None
 
-    def test_personal_scope_matches_user_id_or_canonical_slug(self):
-        """personal scope: chunk matches if EITHER user_id OR
-        ``kb_slug == personal-<user_id>`` matches.
+    def test_personal_scope_filters_by_canonical_kb_slug_only(self):
+        """SPEC-RAG-PERSONAL-SCOPE-001 REQ-2: scope=personal narrows to the
+        canonical Persoonlijk-KB slug, irrespective of any user_id field
+        on the chunk.
 
-        Bug fix 2026-05-27: previously this branch only matched on
-        ``user_id``. Connectors like web_crawler ingest into a personal
-        KB without passing user_id, so chunks landed in Qdrant with
-        ``user_id=None`` and the owner could not retrieve their own
-        content. The slug-based fallback restores ownership matching
-        via the structural slug pattern (``personal-<user_id>``)
-        without weakening any other scope's filter.
+        The slug template ``personal-<user_id>`` is the structural ownership
+        proof: a chunk with this slug is BY CONSTRUCTION part of the
+        canonical Persoonlijk-KB of the user encoded in the suffix. The
+        user_id payload field is redundant defence-in-depth — and an
+        ``user_id OR kb_slug`` OR-filter (the SPEC-PERSONAL-KB-#709 attempt)
+        wrongly lets chunks from OTHER user-owned KBs (e.g. ``test2``)
+        through via the user_id branch.
+
+        This test pins the post-fix contract: scope=personal MUST contain
+        a single direct FieldCondition on ``kb_slug`` with the canonical
+        value, AND MUST NOT contain a nested should-filter on ``user_id``
+        for ownership.
         """
         req = _make_request(scope="personal", user_id="user-1")
         conditions = _scope_filter(req)
-        nested = _find_visibility_filter(conditions)
-        assert nested is not None, "personal scope must add an ownership Filter"
-        assert nested.should is not None
-        assert len(nested.should) == 2, (
-            f"expected 2-branch should (user_id, kb_slug), got {len(nested.should)}"
+
+        # The canonical slug filter is a direct FieldCondition, not nested in a should.
+        slug_conditions = [
+            c for c in conditions
+            if isinstance(c, FieldCondition) and c.key == "kb_slug"
+        ]
+        assert len(slug_conditions) == 1, (
+            f"expected exactly one kb_slug condition, got {len(slug_conditions)}"
         )
-        # The two branches: user_id == user_id AND kb_slug == personal-<user_id>
-        keys = {c.key for c in nested.should if isinstance(c, FieldCondition)}
-        assert keys == {"user_id", "kb_slug"}, (
-            f"expected branches on user_id + kb_slug, got {keys}"
+        assert slug_conditions[0].match.value == "personal-user-1", (
+            f"expected canonical slug 'personal-user-1', "
+            f"got {slug_conditions[0].match.value!r}"
         )
+
+        # Regression guard: must NOT carry the pre-fix OR-filter that let
+        # test2-style chunks through via the user_id branch.
+        should_filters_with_user_id = [
+            c for c in conditions
+            if isinstance(c, Filter)
+            and c.should is not None
+            and any(
+                isinstance(s, FieldCondition) and s.key == "user_id"
+                for s in c.should
+            )
+        ]
+        assert should_filters_with_user_id == [], (
+            "scope=personal must NOT use the user_id-OR-kb_slug branch — "
+            "the OR lets chunks from non-canonical user-owned KBs leak."
+        )
+
+    def test_personal_scope_canonical_slug_uses_shared_helper(self):
+        """The canonical slug template lives in klai-libs/kb-slugs.
+
+        This test imports the shared helper and asserts the filter value
+        matches its output exactly — guards against retrieval-api silently
+        re-inventing a different template string.
+        """
+        from klai_kb_slugs import personal_kb_slug
+
+        req = _make_request(scope="personal", user_id="someone")
+        conditions = _scope_filter(req)
+        slug_cond = next(
+            c for c in conditions
+            if isinstance(c, FieldCondition) and c.key == "kb_slug"
+        )
+        assert slug_cond.match.value == personal_kb_slug("someone")
 
     def test_org_scope_without_user_only_public_branch(self):
         """Without user_id, only the not-private branch is present (no own-private exception)."""
@@ -103,6 +144,65 @@ class TestScopeFilterVisibility:
         keys = {c.key for c in own_branch.must if isinstance(c, FieldCondition)}
         assert "visibility" in keys
         assert "user_id" in keys
+
+    def test_scope_both_own_private_branch_narrows_to_canonical_slug(self):
+        """SPEC-RAG-PERSONAL-SCOPE-001 REQ-3: scope=both, personal portion
+        narrows to canonical slug.
+
+        The visibility-should clause for scope=both/org has two branches:
+        not_private (org chunks) and (visibility=private + user_id=me)
+        (personal chunks). Without narrowing, ALL user-owned private
+        chunks pass through the second branch — including non-canonical
+        user-created private KBs (e.g. ``test2``). This is the scope=both
+        sibling of the scope=personal leak fixed by REQ-2.
+
+        Fix: add ``kb_slug=personal-<user>`` to the private branch's must
+        list so only canonical Persoonlijk-KB chunks pass via the
+        user_id-bypass.
+        """
+        req = _make_request(scope="both", user_id="user-42", kb_slugs=["engineering"])
+        conditions = _scope_filter(req)
+        vis = _find_visibility_filter(conditions)
+        assert vis is not None
+        assert vis.should is not None and len(vis.should) == 2
+        own_branch = vis.should[1]
+        assert isinstance(own_branch, Filter)
+        assert own_branch.must is not None
+        keys_to_values = {
+            c.key: c.match.value
+            for c in own_branch.must
+            if isinstance(c, FieldCondition)
+        }
+        assert "visibility" in keys_to_values
+        assert "user_id" in keys_to_values
+        # NEW: canonical slug condition pins the private branch to
+        # canonical Persoonlijk only.
+        assert "kb_slug" in keys_to_values, (
+            "scope=both private branch must carry canonical kb_slug condition"
+        )
+        assert keys_to_values["kb_slug"] == "personal-user-42"
+
+    def test_scope_org_own_private_branch_does_not_add_canonical_slug(self):
+        """scope=org also has the visibility-should clause but is a pure-org
+        scope semantically. The own-private branch lets a user's private
+        chunks through (legitimate for "their org plus their private
+        notes"). REQ-3 explicitly narrows ONLY scope=both, not scope=org.
+
+        Rationale: scope=org callers (partner_chat) never opt into
+        personal narrowing; they don't model a Persoonlijk dropdown. The
+        chunks that pass via the own-private branch for scope=org are
+        legitimate org-personal overlaps. Don't tighten without a
+        consumer asking for it.
+        """
+        req = _make_request(scope="org", user_id="user-42")
+        conditions = _scope_filter(req)
+        vis = _find_visibility_filter(conditions)
+        own_branch = vis.should[1]
+        keys = {c.key for c in own_branch.must if isinstance(c, FieldCondition)}
+        assert "kb_slug" not in keys, (
+            "scope=org private branch should NOT carry canonical kb_slug — "
+            "REQ-3 narrows scope=both only."
+        )
 
     def test_kb_slugs_filter_org_scope(self):
         """kb_slugs filter added as a direct FieldCondition for scope=org."""

@@ -28,6 +28,10 @@ dependencies = [
     # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-02: shared chat-prompt constant.
     # Editable install — same pattern as klai-identity-assert.
     "klai-chat-prompts",
+    # SPEC-RAG-PERSONAL-SCOPE-001 REQ-1: shared canonical personal-KB slug
+    # helper. Same template as portal-api provisioning so server-side
+    # scope=personal narrowing cannot drift from the provisioned value.
+    "klai-kb-slugs",
     # Shared evidence context + deterministic citation/source helpers.
     "klai-citations",
 ]
@@ -35,6 +39,7 @@ dependencies = [
 [tool.uv.sources]
 klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
 klai-chat-prompts = { path = "../klai-libs/chat-prompts", editable = true }
+klai-kb-slugs = { path = "../klai-libs/kb-slugs", editable = true }
 klai-citations = { path = "../klai-libs/citations", editable = true }
 
 [project.optional-dependencies]

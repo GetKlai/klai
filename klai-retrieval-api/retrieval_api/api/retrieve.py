@@ -12,6 +12,7 @@ from urllib.parse import urlparse, urlunparse
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
+from klai_kb_slugs import personal_kb_slug
 
 from retrieval_api.config import settings
 from retrieval_api.metrics import (
@@ -105,16 +106,12 @@ def _apply_page_context_boost(
 
         boosted_count += 1
         score_key = (
-            "reranker_score"
-            if isinstance(chunk.get("reranker_score"), (int, float))
-            else "score"
+            "reranker_score" if isinstance(chunk.get("reranker_score"), (int, float)) else "score"
         )
         if isinstance(chunk.get(score_key), (int, float)):
             boosted_score = chunk[score_key] * _PAGE_CONTEXT_SCORE_BOOST
             chunk[score_key] = (
-                min(boosted_score, 1.0)
-                if score_key == "reranker_score"
-                else boosted_score
+                min(boosted_score, 1.0) if score_key == "reranker_score" else boosted_score
             )
             if mark:
                 chunk["_page_context_boosted"] = True
@@ -255,11 +252,33 @@ async def retrieve(
     # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-17 / REQ-6: personal-role callers may
     # only search personal-scope KBs. Force scope to "personal" and strip any
     # caller-supplied kb_slugs so they cannot reach org KBs via this endpoint.
+    #
+    # Note (SPEC-RAG-PERSONAL-SCOPE-001): the strip below removes the
+    # caller-supplied kb_slugs filter, but does NOT widen scope=personal.
+    # Server-side canonical narrowing (``_scope_filter`` adds
+    # ``kb_slug=personal_kb_slug(user_id)`` for every scope=personal request)
+    # re-applies the equivalent filter independent of effective_role.
     if req.effective_role == "personal":
         if req.scope != "personal":
             req = req.model_copy(update={"scope": "personal", "kb_slugs": None})
         elif req.kb_slugs is not None:
             req = req.model_copy(update={"kb_slugs": None})
+
+    # SPEC-RAG-PERSONAL-SCOPE-001 REQ-8: structured observability event.
+    # Fires once per request for scope=personal / scope=both so VictoriaLogs
+    # can confirm the canonical narrowing is in effect post-deploy. If this
+    # event ever stops firing, the canonical filter has regressed silently.
+    if req.scope in ("personal", "both") and req.user_id:
+        logger.info(
+            "retrieval_personal_scope_canonical_filter_applied",
+            org_id=req.org_id,
+            user_id=req.user_id,
+            canonical_slug=personal_kb_slug(req.user_id),
+            scope=req.scope,
+            effective_role=req.effective_role,
+            client_supplied_kb_slugs=req.kb_slugs,
+        )
+
     page_context = req.page_context.model_dump(exclude_none=True) if req.page_context else None
 
     # SPEC-SEC-010 REQ-3 + SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: cross-user /

@@ -11,6 +11,7 @@ import warnings
 from datetime import UTC, datetime
 
 import structlog
+from klai_kb_slugs import personal_kb_slug
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     FieldCondition,
@@ -77,33 +78,29 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
     ]
     if request.scope == "personal":
         if request.user_id:
-            # Match chunks owned by the requester via EITHER signal:
-            #   1. ``user_id`` payload field equals request.user_id (the
-            #      preferred stamping; written by ingest paths that
-            #      thread user_id through).
-            #   2. ``kb_slug`` equals the canonical per-user slug
-            #      ``personal-<user_id>`` (a structural ownership proof
-            #      — the slug name itself encodes the owner).
+            # SPEC-RAG-PERSONAL-SCOPE-001 REQ-2: scope=personal narrows to
+            # the requester's canonical Persoonlijk-KB slug. The slug
+            # template ``personal-<user_id>`` is the structural ownership
+            # proof — a chunk with this slug is BY CONSTRUCTION part of
+            # the canonical Persoonlijk-KB of the user encoded in the
+            # suffix, regardless of whether the chunk's ``user_id``
+            # payload was stamped at ingest.
             #
-            # The second branch is a defensive fallback for chunks
-            # ingested via connectors that did not pass user_id through
-            # to ``qdrant_store.upsert_chunks`` (e.g. legacy web_crawler
-            # runs on a personal KB before the 2026-05-27 ingest fix).
-            # Without it, those chunks are invisible to the very user
-            # who owns them.
-            canonical_personal_slug = f"personal-{request.user_id}"
+            # PR #709 added an OR-filter (user_id OR canonical_slug) to
+            # recover from connectors that did not stamp user_id.
+            # However, the user_id-OR branch let chunks from non-canonical
+            # user-owned KBs (e.g. ``test2``) leak through whenever the
+            # caller was the chunk's owner — exactly the Jantine bug we
+            # want to close. The canonical-slug branch alone matches both
+            # cases the OR was designed to handle:
+            #   - Modern chunks (kb_slug=canonical, user_id=me): pass
+            #   - Legacy chunks (kb_slug=canonical, user_id=None): pass
+            # and rejects the leak case:
+            #   - Other user-owned KB chunks (kb_slug=test2, user_id=me): blocked
             conditions.append(
-                Filter(
-                    should=[
-                        FieldCondition(
-                            key="user_id",
-                            match=MatchValue(value=request.user_id),
-                        ),
-                        FieldCondition(
-                            key="kb_slug",
-                            match=MatchValue(value=canonical_personal_slug),
-                        ),
-                    ]
+                FieldCondition(
+                    key="kb_slug",
+                    match=MatchValue(value=personal_kb_slug(request.user_id)),
                 )
             )
         # personal scope is already restricted to one user; no visibility filter needed
@@ -114,14 +111,27 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
         )
         visibility_should: list[Filter] = [not_private]
         if request.user_id:
-            visibility_should.append(
-                Filter(
-                    must=[
-                        FieldCondition(key="visibility", match=MatchValue(value="private")),
-                        FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
-                    ]
+            own_private_must: list[FieldCondition] = [
+                FieldCondition(key="visibility", match=MatchValue(value="private")),
+                FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
+            ]
+            # SPEC-RAG-PERSONAL-SCOPE-001 REQ-3: scope=both, personal
+            # portion narrows to canonical slug. Without this, the
+            # own-private branch would let ALL user-owned private
+            # chunks pass — including non-canonical user-created
+            # private KBs like ``test2`` — even when the caller picked
+            # "Persoonlijk + specific org KBs" in the dropdown.
+            # scope=org keeps the wider semantic (REQ-3 narrows
+            # scope=both only) because no scope=org consumer models the
+            # Persoonlijk-vs-other-user-KB distinction today.
+            if request.scope == "both":
+                own_private_must.append(
+                    FieldCondition(
+                        key="kb_slug",
+                        match=MatchValue(value=personal_kb_slug(request.user_id)),
+                    )
                 )
-            )
+            visibility_should.append(Filter(must=own_private_must))
         conditions.append(Filter(should=visibility_should))
     if request.kb_slugs:
         if request.scope == "both" and request.user_id:
