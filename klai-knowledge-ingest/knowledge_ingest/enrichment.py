@@ -418,22 +418,36 @@ async def enrich_chunks(
             else strategy_fn(document_text, context_tokens, chunk_index=chunk_index)
         )
         async with semaphore:
-            result = await enrich_chunk(
-                document_text,
-                chunk_text,
-                title,
-                path,
-                question_focus=question_focus,
-                participant_context=participant_context,
-                context_window=context_window,
-                kb_name=kb_name,
-                connector_type=connector_type,
-                source_domain=source_domain,
-                artifact_id=artifact_id,
-                chunk_index=chunk_index,
-                document_summary=document_summary,
-                document_language=document_language,
-            )
+            try:
+                result = await enrich_chunk(
+                    document_text,
+                    chunk_text,
+                    title,
+                    path,
+                    question_focus=question_focus,
+                    participant_context=participant_context,
+                    context_window=context_window,
+                    kb_name=kb_name,
+                    connector_type=connector_type,
+                    source_domain=source_domain,
+                    artifact_id=artifact_id,
+                    chunk_index=chunk_index,
+                    document_summary=document_summary,
+                    document_language=document_language,
+                )
+            except EnrichmentError as exc:
+                logger.warning(
+                    "enrichment_chunk_failed_fallback",
+                    artifact_id=artifact_id,
+                    chunk_index=chunk_index,
+                    path=path,
+                    error=str(exc)[:300],
+                )
+                result = EnrichmentResult(
+                    context_prefix="",
+                    chunk_type="reference",
+                    questions=[],
+                )
         enriched_text = f"{result.context_prefix}\n\n{chunk_text}"
         heading_path = (
             heading_paths[chunk_index]
