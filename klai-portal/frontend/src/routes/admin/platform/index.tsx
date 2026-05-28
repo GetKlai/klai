@@ -232,7 +232,6 @@ function PlatformConsole() {
               <option value="">Alle statussen</option>
               <option value="open">Open</option>
               <option value="new">Nieuw</option>
-              <option value="triage_suggested">AI voorstel</option>
               <option value="linked">Gekoppeld</option>
               <option value="support">Support</option>
               <option value="dismissed">Genegeerd</option>
