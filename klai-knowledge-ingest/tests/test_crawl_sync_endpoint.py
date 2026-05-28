@@ -406,6 +406,82 @@ class TestCrawlSyncEndpoint:
         assert kwargs["start_url"] == "https://example.com/wiki/nl/"
         assert kwargs["include_patterns"] == ["/nl/*"]
 
+    def test_legacy_full_url_path_prefix_is_normalised_to_site_root(self) -> None:
+        """Legacy connector rows may store path_prefix as the full base URL."""
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=7),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://jantinedoornbos.nl/",
+                    "path_prefix": "https://jantinedoornbos.nl/",
+                },
+            )
+        assert resp.status_code == 202, resp.text
+        kwargs = defer_mock.await_args.kwargs
+        assert kwargs["start_url"] == "https://jantinedoornbos.nl/"
+        assert kwargs["include_patterns"] is None
+
+    def test_legacy_full_url_path_prefix_uses_same_origin_path(self) -> None:
+        """A full URL prefix on the same origin is converted to just its path."""
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=8),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://example.com",
+                    "path_prefix": "https://example.com/docs/",
+                },
+            )
+        assert resp.status_code == 202, resp.text
+        kwargs = defer_mock.await_args.kwargs
+        assert kwargs["start_url"] == "https://example.com/docs/"
+        assert kwargs["include_patterns"] == ["/docs/*"]
+
+    def test_full_url_path_prefix_rejects_other_origin(self) -> None:
+        """Full URL prefixes must not silently redirect crawls to another host."""
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=9),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, _defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://example.com",
+                    "path_prefix": "https://other.example/docs/",
+                },
+            )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "path_prefix_must_match_base_url"
+
     def test_public_crawl_still_enqueues(self) -> None:
         """Connector with no encrypted credentials still enqueues; task gets no cookies."""
         pool = _make_pool(
