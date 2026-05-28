@@ -3614,6 +3614,89 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             }
         ]
 
+    @pytest.mark.asyncio
+    async def test_streaming_post_call_keeps_primary_uploaded_evidence_source(
+        self, monkeypatch
+    ):
+        """Primary EvidencePack upload source must survive brittle answer matching."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Wie is waarvoor verantwoordelijk?",
+                    "kb_narrow": True,
+                    "chunks_injected": 20,
+                    "retrieval_ms": 591,
+                    "gate_bypassed": False,
+                    "render_mode": "streaming_guard",
+                    "allowed_image_urls": [],
+                    "confidence_band": "medium",
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Verantwoordelijkheden per bouwblok.pdf",
+                            "url": "",
+                            "artifact_id": "artifact-responsibilities",
+                            "source_id": "S1",
+                            "evidence_ids": ["E1"],
+                            "relevance_score": 0.44,
+                        },
+                        {
+                            "label": "2",
+                            "title": "AI-Blueprint.pdf",
+                            "url": "",
+                            "artifact_id": "artifact-blueprint",
+                            "source_id": "S2",
+                            "evidence_ids": ["E2"],
+                            "relevance_score": 0.56,
+                        },
+                    ],
+                    "citation_chunks": [
+                        {
+                            "evidence_id": "E1",
+                            "artifact_id": "artifact-responsibilities",
+                            "title": "Verantwoordelijkheden per bouwblok.pdf",
+                            "text": "Frank Wolters is eigenaar / trekker.",
+                        },
+                        {
+                            "evidence_id": "E2",
+                            "artifact_id": "artifact-blueprint",
+                            "title": "AI-Blueprint.pdf",
+                            "text": "Data Readiness vraagt verantwoordelijkheden.",
+                        },
+                    ],
+                }
+            }
+        }
+
+        first = {"choices": [{"delta": {"content": "Frank Wolters is "}, "finish_reason": None}]}
+        final = {
+            "choices": [
+                {
+                    "delta": {"content": "verantwoordelijk voor Data Readiness."},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+
+        async def stream():
+            yield first
+            yield final
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+        ]
+
+        assert streamed == [first, final]
+        final_delta = final["choices"][0]["delta"]
+        assert "- Verantwoordelijkheden per bouwblok.pdf" in final_delta["content"]
+        assert final_delta["sources"][0]["title"] == "Verantwoordelijkheden per bouwblok.pdf"
+        assert final_delta["sources"][0]["artifact_id"] == "artifact-responsibilities"
+
 
 # ─── 2026-05-27: Open/Strict mode zero-chunks behaviour ─────────────────────
 #
