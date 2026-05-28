@@ -13,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -173,6 +174,67 @@ async def test_endpoint_returns_429_when_rate_limited() -> None:
     assert "Too many signup attempts" in str(exc_info.value.detail)
     assert exc_info.value.detail.endswith("try again tomorrow.")  # type: ignore[union-attr]
     fake_zitadel.create_org.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_free_email_rejection_does_not_consume_rate_limit() -> None:
+    """Rejected personal-domain signups should not poison a later invite retry."""
+    from fastapi import HTTPException
+
+    from app.api.signup import SignupRequest, signup
+
+    body = SignupRequest(
+        first_name="Eve",
+        last_name="User",
+        email="eve@gmail.com",
+        password="strong-passphrase-for-test",
+        company_name="ACME",
+    )
+
+    rate_limit = AsyncMock(return_value=True)
+
+    with patch("app.api.signup.check_signup_email_rate_limit", rate_limit):
+        with pytest.raises(HTTPException) as exc_info:
+            await signup(body=body, background_tasks=AsyncMock(), db=AsyncMock())
+
+    assert exc_info.value.status_code == 400
+    rate_limit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invited_signup_bypasses_email_rate_limit() -> None:
+    """A verified invite is the allowlist gate; stale counters must not block it."""
+    from app.api.signup import SignupRequest, signup
+
+    body = SignupRequest(
+        first_name="Eve",
+        last_name="User",
+        email="eve@gmail.com",
+        password="strong-passphrase-for-test",
+        company_name="ACME",
+        invite_token="valid-token",
+    )
+
+    rate_limit = AsyncMock(return_value=False)
+    fake_zitadel = AsyncMock()
+    fake_zitadel.create_org = AsyncMock(side_effect=RuntimeError("downstream-stub"))
+
+    with (
+        patch("app.api.signup.check_signup_email_rate_limit", rate_limit),
+        patch(
+            "app.api.signup.verify_invite_token",
+            return_value=SimpleNamespace(email="eve@gmail.com", company="ACME", exp=1),
+        ),
+        patch("app.api.signup.zitadel", fake_zitadel),
+    ):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await signup(body=body, background_tasks=AsyncMock(), db=AsyncMock())
+
+    assert exc_info.value.status_code == 502
+    rate_limit.assert_not_awaited()
+    fake_zitadel.create_org.assert_awaited_once()
 
 
 @pytest.mark.asyncio

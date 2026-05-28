@@ -68,6 +68,7 @@ from app.services.events import emit_event
 from app.services.pending_session import PendingSessionService
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip_subnet
+from app.services.waitlist_token import verify_invite_token
 from app.services.zitadel import zitadel
 from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
@@ -989,6 +990,7 @@ def _resolve_idp_id(requested_idp: str) -> str | None:
 class IDPIntentSignupRequest(BaseModel):
     idp_id: str
     locale: str = "nl"
+    invite_token: str | None = None
 
     @field_validator("locale")
     @classmethod
@@ -999,6 +1001,13 @@ class IDPIntentSignupRequest(BaseModel):
 # Pending social signup cookie name — short-lived, Fernet-encrypted
 _IDP_PENDING_COOKIE = "klai_idp_pending"
 _IDP_PENDING_MAX_AGE = 600  # 10 minutes
+
+
+def _invite_token_matches_email(invite_token: str | None, email_norm: str) -> bool:
+    if not invite_token:
+        return False
+    invite_payload = verify_invite_token(invite_token)
+    return invite_payload is not None and invite_payload.email == email_norm
 
 
 # ---------------------------------------------------------------------------
@@ -2100,6 +2109,8 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
 
     success_url = f"{settings.portal_url}/api/auth/idp-signup-callback?locale={body.locale}"
+    if body.invite_token:
+        success_url = f"{success_url}&invite_token={quote(body.invite_token, safe='')}"
     failure_url = f"{settings.portal_url}/{body.locale}/signup?error=idp_failed"
 
     try:
@@ -2144,11 +2155,12 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
 
 
 @router.get("/auth/idp-signup-callback")
-async def idp_signup_callback(
+async def idp_signup_callback(  # noqa: C901 - existing callback flow has many external failure legs.
     id: str,
     token: str,
     request: Request,
     locale: str = Query(default="nl"),
+    invite_token: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
     """Handle the redirect back from a social IDP during signup.
@@ -2294,6 +2306,7 @@ async def idp_signup_callback(
     first_name: str = raw_info.get("given_name") or user_factor.get("displayName", "").split(" ")[0]
     last_name: str = raw_info.get("family_name") or (" ".join(user_factor.get("displayName", "").split(" ")[1:]) or "")
     email: str = raw_info.get("email") or user_factor.get("loginName", "")
+    email_norm = email.strip().lower()
 
     # 3. Check if a PortalUser already exists for this Zitadel user
     existing_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
@@ -2324,6 +2337,16 @@ async def idp_signup_callback(
         )
         return response
 
+    has_valid_invite = False
+    if invite_token:
+        has_valid_invite = _invite_token_matches_email(invite_token, email_norm)
+        if not has_valid_invite:
+            _slog.warning(
+                "idp_signup_callback_invite_token_rejected",
+                email_domain=email_norm.split("@")[-1] if "@" in email_norm else "",
+            )
+            return RedirectResponse(url=failure_url, status_code=302)
+
     # 4. New user — store pending session in encrypted cookie, redirect to company name form.
     # SPEC-SEC-SESSION-001 REQ-2.1: snapshot the issuing browser + IP-subnet
     # so the consume side (signup_social) can reject a stolen-cookie replay
@@ -2336,6 +2359,7 @@ async def idp_signup_callback(
             "session_token": session_token,
             "zitadel_user_id": zitadel_user_id,
             "email": email,
+            "has_valid_invite": has_valid_invite,
             "ua_hash": pending_ua_hash,
             "ip_subnet": pending_ip_subnet,
         }

@@ -53,6 +53,8 @@ function SocialSignupPage() {
           setError(m.signup_social_expired())
         } else if (resp.status === 409) {
           setError(m.signup_social_name_taken())
+        } else if (typeof data?.detail === 'string' && data.detail.trim()) {
+          setError(data.detail)
         } else {
           setError(m.signup_social_error_server({ status: String(resp.status) }))
         }

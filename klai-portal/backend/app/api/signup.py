@@ -153,16 +153,6 @@ def _to_slug(name: str, suffix: str = "") -> str:
 async def signup(
     body: SignupRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)
 ) -> SignupResponse:
-    # SPEC-SEC-HYGIENE-001 REQ-19.5: per-email rate-limit check runs AFTER
-    # Pydantic validation (so malformed emails never hit Redis) and BEFORE
-    # Zitadel org-creation (so rejected attempts never consume Zitadel quota).
-    # Fail-open on Redis unreachable — see REQ-19.4 + check_signup_email_rate_limit.
-    if not await check_signup_email_rate_limit(body.email):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many signup attempts for this email. Please try again tomorrow.",
-        )
-
     # SPEC-AUTH-009 R1/R7 C1.3: reject free-email domains before any Zitadel/DB work.
     # C7.2: NL message instructs the user to use a company email or request an invitation.
     # SPEC-LAUNCH-SOFTLAUNCH-001 B-3: bypass the free-email block when the
@@ -194,6 +184,15 @@ async def signup(
                 "Vraag je beheerder om een uitnodiging als je via een privé-mailadres "
                 "wilt deelnemen."
             ),
+        )
+
+    # SPEC-SEC-HYGIENE-001 REQ-19.5: rate-limit only attempts that can reach
+    # Zitadel. Rejected free-email attempts should not poison a later valid
+    # invite retry, and a verified invite is already a narrow allowlist gate.
+    if not _has_valid_invite and not await check_signup_email_rate_limit(body.email):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many signup attempts for this email. Please try again tomorrow.",
         )
 
     # 1. Create Zitadel org
@@ -452,15 +451,17 @@ async def signup_social(
             detail="Social signup session expired. Please try again.",
         )
 
-    # SPEC-AUTH-009 R1 C1.3: reject free-email domains in social signup path too.
+    # SPEC-AUTH-009 R1 C1.3: reject free-email domains in social signup path too,
+    # unless the IDP callback already verified that this exact email has an invite.
     _social_email = pending.get("email", "")
     _social_domain = _social_email.split("@")[-1].strip().lower() if "@" in _social_email else ""
+    _has_valid_invite = bool(pending.get("has_valid_invite"))
     if not _social_domain:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Social signup session expired. Please try again.",
         )
-    if _social_domain and is_free_email_provider(_social_domain):
+    if not _has_valid_invite and _social_domain and is_free_email_provider(_social_domain):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
