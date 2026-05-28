@@ -1995,6 +1995,56 @@ class TestKlaiKnowledgeHookKB013:
             mc.post.assert_not_called()
         assert "_klai_kb_meta" not in result
 
+    @pytest.mark.asyncio
+    async def test_portal_fail_uses_stale_feature_cache(self, monkeypatch):
+        """Portal outage after a prior success → use stale feature cache and retrieve."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        stale_feature = {
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": [],
+            "kb_narrow": False,
+            "version": 7,
+            "zitadel_user_id": "300000000000000002",
+            "telemetry_level": "shadow",
+        }
+        cache = MagicMock()
+        cache.async_set_cache = AsyncMock()
+
+        async def _get(key: str) -> object:
+            if key.startswith("templates:"):
+                return []
+            if key.startswith("tax_trees:"):
+                return {}
+            if key.startswith("tax_coverage:"):
+                return {}
+            if key.startswith("kb_feature_latest:"):
+                return stale_feature
+            return None
+
+        cache.async_get_cache = AsyncMock(side_effect=_get)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Wat is de status van de migratie?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(side_effect=Exception("Connection refused"))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            mc.post.assert_called_once()
+        body = mc.post.call_args.kwargs.get("json") or {}
+        assert body.get("scope") == "personal"
+        assert body.get("user_id") == "300000000000000002"
+
 
 # ─── Phase 4 (REQ-10) — multilingual contract on path A (LiteLLM hook) ──────
 
