@@ -44,6 +44,7 @@ _LIBRECHAT_PATCH_MOUNTS = {
     "patches/share.js": "/app/api/server/routes/share.js",
     "patches/stream.cjs": "/app/node_modules/@librechat/agents/dist/cjs/stream.cjs",
     "patches/search.cjs": "/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs",
+    "patches/createStreamServices.ts": "/app/packages/api/src/stream/createStreamServices.ts",
 }
 
 _LIBRECHAT_OPENID_READY_BOOT_ATTEMPTS = 3

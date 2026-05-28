@@ -316,6 +316,7 @@ services:
       - ./librechat/patches/share.js:/app/api/server/routes/share.js:ro
       - ./librechat/patches/stream.cjs:/app/node_modules/@librechat/agents/dist/cjs/stream.cjs:ro
       - ./librechat/patches/search.cjs:/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs:ro
+      - ./librechat/patches/createStreamServices.ts:/app/packages/api/src/stream/createStreamServices.ts:ro
     depends_on:
       mongodb:
         condition: service_healthy
