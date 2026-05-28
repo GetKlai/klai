@@ -1769,9 +1769,7 @@ async def chat_completion_streaming(
 
     if citation_output == "markers":
         trusted_source_list = [s for s in (trusted_sources or []) if isinstance(s, dict)]
-        initial_sources, initial_source_keys = _source_payload_from_trusted_sources(
-            trusted_source_list
-        )
+        initial_sources, initial_source_keys = _source_payload_from_trusted_sources(trusted_source_list)
         if not initial_sources:
             initial_source_keys = list(citation_source_metadata.keys())
             initial_sources = _source_payload_from_keys(initial_source_keys, citation_source_metadata)
