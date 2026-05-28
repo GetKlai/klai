@@ -25,6 +25,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlparse
 
 import structlog
 from fastapi import APIRouter, HTTPException
@@ -142,6 +143,24 @@ def _default_exclude_patterns(normalized_path_prefix: str | None) -> list[str] |
     return [f"/blog/{segment}/*" for segment in _BLOG_ARCHIVE_SEGMENTS]
 
 
+def _normalize_path_prefix(base_url: str, path_prefix: str | None) -> str | None:
+    """Return a path-only prefix, accepting legacy rows that stored a full URL."""
+    if not path_prefix or not path_prefix.strip():
+        return None
+    raw = path_prefix.strip()
+    parsed_prefix = urlparse(raw)
+    if parsed_prefix.scheme or parsed_prefix.netloc:
+        parsed_base = urlparse(base_url)
+        if (
+            parsed_prefix.scheme.lower() != parsed_base.scheme.lower()
+            or parsed_prefix.netloc.lower() != parsed_base.netloc.lower()
+        ):
+            raise HTTPException(status_code=400, detail="path_prefix_must_match_base_url")
+        raw = parsed_prefix.path or "/"
+    normalized = "/" + raw.lstrip("/")
+    return None if normalized == "/" else normalized
+
+
 @router.post(
     "/ingest/v1/crawl/sync",
     response_model=CrawlSyncResponse,
@@ -177,11 +196,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
     # Portal may store path_prefix as either '/blog' or 'blog'. Normalize once
     # before composing start_url; otherwise 'https://host/' + 'blog' becomes the
     # invalid host-like URL 'https://hostblog'.
-    normalized_path_prefix = (
-        "/" + req.path_prefix.strip().lstrip("/")
-        if req.path_prefix and req.path_prefix.strip()
-        else None
-    )
+    normalized_path_prefix = _normalize_path_prefix(req.base_url, req.path_prefix)
     include_patterns = (
         [normalized_path_prefix.rstrip("/") + "/*"]
         if normalized_path_prefix
