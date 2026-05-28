@@ -1257,6 +1257,26 @@ dev = [
 ]
 
 [[package]]
+name = "klai-kb-slugs"
+version = "0.1.0"
+source = { editable = "../klai-libs/kb-slugs" }
+
+[package.metadata]
+requires-dist = [
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
 name = "knowledge-ingest"
 version = "1.0.0"
 source = { virtual = "." }
@@ -1271,6 +1291,7 @@ dependencies = [
     { name = "klai-connector-credentials" },
     { name = "klai-identity-assert" },
     { name = "klai-image-storage" },
+    { name = "klai-kb-slugs" },
     { name = "lingua-language-detector" },
     { name = "minio" },
     { name = "numpy" },
@@ -1315,6 +1336,7 @@ requires-dist = [
     { name = "klai-connector-credentials", editable = "../klai-libs/connector-credentials" },
     { name = "klai-identity-assert", editable = "../klai-libs/identity-assert" },
     { name = "klai-image-storage", editable = "../klai-libs/image-storage" },
+    { name = "klai-kb-slugs", editable = "../klai-libs/kb-slugs" },
     { name = "lingua-language-detector", specifier = ">=2.2.0" },
     { name = "minio", specifier = ">=7.2" },
     { name = "numpy", specifier = ">=1.26" },

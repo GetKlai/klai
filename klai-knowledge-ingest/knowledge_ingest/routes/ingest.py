@@ -23,6 +23,7 @@ import httpx
 import structlog
 import yaml
 from fastapi import APIRouter, HTTPException, Request
+from klai_kb_slugs import personal_kb_slug
 
 from knowledge_ingest import (
     chunker,
@@ -770,7 +771,7 @@ async def ingest_document_route(req: IngestRequest, request: Request) -> dict:
     # filters on org_id only; the Qdrant retrieve-time user_id filter is
     # the only existing defence and is one layer deep — see B2 audit).
     if req.kb_slug.startswith("personal-"):
-        expected_slug = f"personal-{req.user_id}" if req.user_id else None
+        expected_slug = personal_kb_slug(req.user_id) if req.user_id else None
         if expected_slug is None or req.kb_slug != expected_slug:
             logger.warning(
                 "personal_kb_owner_mismatch",
@@ -869,7 +870,7 @@ async def gitea_webhook(request: Request) -> dict:
             path_parts = path.split("/")
             if len(path_parts) >= 2 and path_parts[1]:
                 webhook_user_id = path_parts[1]
-                kb_slug = f"personal-{webhook_user_id}"
+                kb_slug = personal_kb_slug(webhook_user_id)
         elif kb_slug.startswith("personal-") and path.startswith("users/"):
             path_parts = path.split("/")
             if len(path_parts) >= 2 and path_parts[1]:

@@ -268,7 +268,9 @@ async def _get_kb_or_404(kb_slug: str, org_id: int, db: AsyncSession) -> PortalK
 
 async def _resolve_personal_kb(caller_id: str, org_id: int, db: AsyncSession) -> PortalKnowledgeBase:
     """Return the caller's personal KB, creating it as fallback if provisioning missed it."""
-    from app.services.default_knowledge_bases import create_default_personal_kb, personal_kb_slug
+    from klai_kb_slugs import personal_kb_slug
+
+    from app.services.default_knowledge_bases import create_default_personal_kb
 
     slug = personal_kb_slug(caller_id)
     result = await db.execute(

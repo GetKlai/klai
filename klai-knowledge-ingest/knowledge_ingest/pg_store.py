@@ -18,6 +18,7 @@ import uuid
 
 import asyncpg
 import structlog
+from klai_kb_slugs import personal_kb_slug
 
 logger = structlog.get_logger()
 
@@ -157,11 +158,6 @@ async def create_artifact(
         return str(winning_artifact_id)
 
 
-def _personal_slug(user_id: str) -> str:
-    """Build the per-user personal KB slug: ``personal-{user_id}``."""
-    return f"personal-{user_id}"
-
-
 async def list_personal_artifacts(
     conn: asyncpg.Connection,
     org_id: str,
@@ -182,7 +178,7 @@ async def list_personal_artifacts(
         """,
         org_id,
         user_id,
-        _personal_slug(user_id),
+        personal_kb_slug(user_id),
         _SENTINEL,
         limit,
         offset,
@@ -202,7 +198,7 @@ async def count_personal_artifacts(conn: asyncpg.Connection, org_id: str, user_i
         """,
         org_id,
         user_id,
-        _personal_slug(user_id),
+        personal_kb_slug(user_id),
         _SENTINEL,
     )
     return row or 0
@@ -226,7 +222,7 @@ async def get_personal_artifact(
         artifact_id,
         org_id,
         user_id,
-        _personal_slug(user_id),
+        personal_kb_slug(user_id),
         _SENTINEL,
     )
     return dict(row) if row else None
