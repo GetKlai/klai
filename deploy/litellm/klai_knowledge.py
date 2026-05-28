@@ -1611,16 +1611,85 @@ def _render_kb_citation_content(
         # document-level source can be rendered — general knowledge is valid.
         decision["no_citable_reason"] = "selector_rejected_all_sources_broad_passthrough"
         return text, [], False, decision
-    return composed.content, composed.sources, False, composed.decision
+    return (
+        composed.content,
+        _merge_source_metadata(composed.sources, trusted_sources),
+        False,
+        composed.decision,
+    )
+
+
+def _source_metadata_key(source: dict[str, Any]) -> str:
+    url = _normalise_guard_url(source.get("url") or source.get("source_url"))
+    if url:
+        return f"url:{url}"
+    for key in ("artifact_id", "source_id", "title", "source_label"):
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            return f"{key}:{value.strip()}"
+    return ""
+
+
+def _source_with_metadata(source: dict[str, Any], *, label: str) -> dict[str, Any]:
+    title = str(source.get("title") or source.get("source_label") or "Source").strip()
+    rendered: dict[str, Any] = {
+        "label": label,
+        "title": title or "Source",
+        "url": _normalise_guard_url(source.get("url") or source.get("source_url")),
+    }
+    for key in (
+        "source_id",
+        "evidence_ids",
+        "artifact_id",
+        "source_label",
+        "relevance_score",
+    ):
+        value = source.get(key)
+        if value is not None:
+            rendered[key] = value
+    return rendered
+
+
+def _merge_source_metadata(
+    rendered_sources: list[dict[str, Any]],
+    trusted_sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    trusted_by_key = {
+        key: source
+        for source in trusted_sources
+        if isinstance(source, dict) and (key := _source_metadata_key(source))
+    }
+    enriched: list[dict[str, Any]] = []
+    for index, source in enumerate(rendered_sources, 1):
+        if not isinstance(source, dict):
+            continue
+        match = trusted_by_key.get(_source_metadata_key(source))
+        merged = dict(source)
+        if match is not None:
+            for key in (
+                "source_id",
+                "evidence_ids",
+                "artifact_id",
+                "source_label",
+                "relevance_score",
+            ):
+                value = match.get(key)
+                if value is not None:
+                    merged[key] = value
+        merged.setdefault("label", str(index))
+        merged.setdefault("title", "Source")
+        merged["url"] = _normalise_guard_url(merged.get("url"))
+        enriched.append(merged)
+    return enriched
 
 
 def _trusted_sources_visible_fallback(
     trusted_sources: list[dict[str, Any]],
     *,
     max_sources: int = 3,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Render document-level sources when answer/source text matching is too strict."""
-    sources: list[dict[str, str]] = []
+    sources: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for source in trusted_sources:
         url = _normalise_guard_url(source.get("url"))
@@ -1634,8 +1703,7 @@ def _trusted_sources_visible_fallback(
         if not key or key in seen_keys:
             continue
         seen_keys.add(key)
-        title = str(source.get("title") or source.get("source_label") or "Source").strip()
-        sources.append({"label": str(len(sources) + 1), "title": title or "Source", "url": url})
+        sources.append(_source_with_metadata(source, label=str(len(sources) + 1)))
         if len(sources) >= max_sources:
             break
     return sources
@@ -1681,15 +1749,21 @@ def _append_visible_sources_section(
 
 def _format_visible_agent_activity(
     kb_meta: dict[str, Any],
-    sources: list[dict[str, str]],
+    sources: list[dict[str, Any]],
 ) -> str:
     """Render provenance for LibreChat, which ignores structured source metadata."""
     chunks_injected = kb_meta.get("chunks_injected")
     retrieval_ms = kb_meta.get("retrieval_ms")
     citable_sources_count = kb_meta.get("citable_sources_count")
     no_citable_reason = kb_meta.get("no_citable_reason")
+    kb_narrow = bool(kb_meta.get("kb_narrow", False))
+    confidence_band = kb_meta.get("confidence_band")
 
     lines: list[str] = []
+    lines.append(
+        "- Modus: "
+        + ("Strict, alleen kennisbank." if kb_narrow else "Open, kennisbank met fallback.")
+    )
     if isinstance(chunks_injected, int):
         chunk_label = _plural_nl(chunks_injected, "fragment", "fragmenten")
         if isinstance(retrieval_ms, int | float):
@@ -1717,6 +1791,17 @@ def _format_visible_agent_activity(
     elif sources:
         selected_label = _plural_nl(len(sources), "bron", "bronnen")
         lines.append(f"- Bronselectie: {len(sources)} {selected_label} gekoppeld.")
+
+    source_titles = [
+        str(source.get("title") or "").strip()
+        for source in sources
+        if isinstance(source.get("title"), str) and str(source.get("title")).strip()
+    ]
+    if source_titles:
+        lines.append(f"- Gebruikte bronnen: {', '.join(source_titles[:3])}.")
+
+    if isinstance(confidence_band, str) and confidence_band:
+        lines.append(f"- Retrieval confidence: {confidence_band}.")
 
     if not sources and isinstance(no_citable_reason, str) and no_citable_reason:
         lines.append(f"- Citeerbaarheid: geen bruikbare bron geselecteerd ({no_citable_reason}).")
@@ -2499,6 +2584,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 "trusted_sources": [],
                 "evidence_pack": None,
                 "citable_sources_count": 0,
+                "confidence_band": result.get("confidence_band"),
                 "no_citable_sources": True,
                 "no_citable_reason": "missing_evidence_pack",
                 "original_stream": original_stream,
@@ -2812,6 +2898,7 @@ class KlaiKnowledgeHook(CustomLogger):
             "trusted_sources": trusted_sources,
             "evidence_pack": evidence_pack if isinstance(evidence_pack, dict) else None,
             "citable_sources_count": len(trusted_sources),
+            "confidence_band": confidence_band,
             "original_stream": original_stream,
             "render_mode": render_strategy.mode,
             "retrieval_ms": retrieval_ms,
