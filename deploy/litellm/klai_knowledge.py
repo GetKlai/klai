@@ -345,6 +345,73 @@ _LOW_CONFIDENCE_INJECTION_TEXT = (
 _LOW_CONFIDENCE_INJECTION_DISABLED = (
     os.getenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", "0") == "1"
 )
+_LOW_CONFIDENCE_QUERY_TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
+_LOW_CONFIDENCE_QUERY_STOPWORDS = {
+    "aan",
+    "als",
+    "and",
+    "are",
+    "bij",
+    "dat",
+    "een",
+    "for",
+    "het",
+    "hoe",
+    "is",
+    "met",
+    "the",
+    "tot",
+    "van",
+    "voor",
+    "wat",
+    "wie",
+    "with",
+}
+
+
+def _low_confidence_query_tokens(query: object) -> set[str]:
+    if not isinstance(query, str):
+        return set()
+    return {
+        token.lower()
+        for token in _LOW_CONFIDENCE_QUERY_TOKEN_RE.findall(query)
+        if token.lower() not in _LOW_CONFIDENCE_QUERY_STOPWORDS
+    }
+
+
+def _has_direct_evidence_for_query(query: object, chunks: list[dict]) -> bool:
+    """Return whether low-scored retrieval still has literal answer evidence.
+
+    Reranker scores for short personal-document questions can be very low
+    even when the top chunk literally contains the requested entity. In that
+    case adding the low-confidence abstention instruction makes Strict mode
+    refuse despite the knowledge being present. Keep the abstention layer for
+    weak/irrelevant retrieval, but do not override direct lexical evidence.
+    """
+    tokens = _low_confidence_query_tokens(query)
+    if not tokens:
+        return False
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        text = " ".join(
+            str(chunk.get(key) or "")
+            for key in ("title", "heading_path", "source_label", "text", "content")
+        ).lower()
+        if any(token in text for token in tokens):
+            return True
+    return False
+
+
+def _should_apply_low_confidence_injection(
+    confidence_band: object,
+    *,
+    user_query: object,
+    evidence_chunks: list[dict],
+) -> bool:
+    if confidence_band not in ("low", "unknown"):
+        return False
+    return not _has_direct_evidence_for_query(user_query, evidence_chunks)
 
 # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-U2: prompt-template fetch config.
 PORTAL_TEMPLATES_URL = os.getenv(
@@ -2599,7 +2666,11 @@ class KlaiKnowledgeHook(CustomLogger):
         # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2: confidence band drives the
         # anti-hallucination injection. None on bypass paths (fail-open).
         confidence_band: str | None = result.get("confidence_band")
-        low_confidence_inject = confidence_band in ("low", "unknown")
+        low_confidence_inject = _should_apply_low_confidence_injection(
+            confidence_band,
+            user_query=query,
+            evidence_chunks=context_chunks,
+        )
 
         # --- Gap detection (KB-014) ---
         gap_type = _classify_gap(chunks)
