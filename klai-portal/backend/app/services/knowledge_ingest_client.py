@@ -6,6 +6,7 @@ knowledge-ingest identity-assertion can verify the caller.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -26,6 +27,17 @@ _DERIVED_READ_TIMEOUT = httpx.Timeout(1.0, connect=0.3)
 # fail-loud branch in list_kb_sources lets the user see real data on warm
 # calls and a real error on the rare cold-and-slow path.
 _CANONICAL_READ_TIMEOUT = httpx.Timeout(30.0, connect=2.0)
+_READ_RETRY_DELAYS_SECONDS = (0.25, 0.75, 1.5)
+_TRANSIENT_READ_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.RemoteProtocolError,
+)
+
+
+async def _sleep_before_read_retry(attempt: int) -> None:
+    await asyncio.sleep(_READ_RETRY_DELAYS_SECONDS[min(attempt, len(_READ_RETRY_DELAYS_SECONDS) - 1)])
 
 
 async def get_graph_stats(org_id: str) -> dict[str, int | None]:
@@ -35,21 +47,27 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
     or {"entity_count": None, "edge_count": None} on failure.
     """
     try:
-        async with httpx.AsyncClient(
-            base_url=settings.knowledge_ingest_url,
-            headers={
-                "X-Internal-Secret": settings.knowledge_ingest_secret,
-                "X-Caller-Service": "portal-api",
-                **get_trace_headers(),
-            },
-            timeout=_DERIVED_READ_TIMEOUT,
-        ) as client:
-            resp = await client.get(
-                "/ingest/v1/graph-stats",
-                params={"org_id": org_id},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        for attempt in range(len(_READ_RETRY_DELAYS_SECONDS) + 1):
+            try:
+                async with httpx.AsyncClient(
+                    base_url=settings.knowledge_ingest_url,
+                    headers={
+                        "X-Internal-Secret": settings.knowledge_ingest_secret,
+                        "X-Caller-Service": "portal-api",
+                        **get_trace_headers(),
+                    },
+                    timeout=_DERIVED_READ_TIMEOUT,
+                ) as client:
+                    resp = await client.get(
+                        "/ingest/v1/graph-stats",
+                        params={"org_id": org_id},
+                    )
+                    resp.raise_for_status()
+                    return resp.json()
+            except _TRANSIENT_READ_ERRORS:
+                if attempt >= len(_READ_RETRY_DELAYS_SECONDS):
+                    raise
+                await _sleep_before_read_retry(attempt)
     except Exception:
         logger.warning("Could not fetch graph stats from knowledge-ingest (org=%s)", org_id, exc_info=True)
         return {"entity_count": None, "edge_count": None}
@@ -58,21 +76,27 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
 async def get_source_count(org_id: str, kb_slug: str) -> int | None:
     """Fetch the number of active source artifacts for a KB from knowledge-ingest."""
     try:
-        async with httpx.AsyncClient(
-            base_url=settings.knowledge_ingest_url,
-            headers={
-                "X-Internal-Secret": settings.knowledge_ingest_secret,
-                "X-Caller-Service": "portal-api",
-                **get_trace_headers(),
-            },
-            timeout=_DERIVED_READ_TIMEOUT,
-        ) as client:
-            resp = await client.get(
-                "/ingest/v1/source-count",
-                params={"org_id": org_id, "kb_slug": kb_slug},
-            )
-            resp.raise_for_status()
-            return resp.json().get("source_count")
+        for attempt in range(len(_READ_RETRY_DELAYS_SECONDS) + 1):
+            try:
+                async with httpx.AsyncClient(
+                    base_url=settings.knowledge_ingest_url,
+                    headers={
+                        "X-Internal-Secret": settings.knowledge_ingest_secret,
+                        "X-Caller-Service": "portal-api",
+                        **get_trace_headers(),
+                    },
+                    timeout=_DERIVED_READ_TIMEOUT,
+                ) as client:
+                    resp = await client.get(
+                        "/ingest/v1/source-count",
+                        params={"org_id": org_id, "kb_slug": kb_slug},
+                    )
+                    resp.raise_for_status()
+                    return resp.json().get("source_count")
+            except _TRANSIENT_READ_ERRORS:
+                if attempt >= len(_READ_RETRY_DELAYS_SECONDS):
+                    raise
+                await _sleep_before_read_retry(attempt)
     except Exception:
         logger.warning(
             "Could not fetch source count from knowledge-ingest (org=%s kb=%s)", org_id, kb_slug, exc_info=True
@@ -454,22 +478,28 @@ async def get_kb_sources(org_id: str, kb_slug: str) -> dict | None:
     timeouts on every cold call.
     """
     try:
-        async with httpx.AsyncClient(
-            base_url=settings.knowledge_ingest_url,
-            headers={
-                "X-Internal-Secret": settings.knowledge_ingest_secret,
-                "X-Caller-Service": "portal-api",
-                **get_trace_headers(),
-            },
-            timeout=_CANONICAL_READ_TIMEOUT,
-        ) as client:
-            resp = await client.get(
-                f"/knowledge/v1/kb/{kb_slug}/sources",
-                params={"org_id": org_id},
-            )
-            resp.raise_for_status()
-            data: dict = resp.json()
-            return data
+        for attempt in range(len(_READ_RETRY_DELAYS_SECONDS) + 1):
+            try:
+                async with httpx.AsyncClient(
+                    base_url=settings.knowledge_ingest_url,
+                    headers={
+                        "X-Internal-Secret": settings.knowledge_ingest_secret,
+                        "X-Caller-Service": "portal-api",
+                        **get_trace_headers(),
+                    },
+                    timeout=_CANONICAL_READ_TIMEOUT,
+                ) as client:
+                    resp = await client.get(
+                        f"/knowledge/v1/kb/{kb_slug}/sources",
+                        params={"org_id": org_id},
+                    )
+                    resp.raise_for_status()
+                    data: dict = resp.json()
+                    return data
+            except _TRANSIENT_READ_ERRORS:
+                if attempt >= len(_READ_RETRY_DELAYS_SECONDS):
+                    raise
+                await _sleep_before_read_retry(attempt)
     except Exception:
         logger.warning(
             "Could not fetch KB sources from knowledge-ingest (org=%s kb=%s)",
