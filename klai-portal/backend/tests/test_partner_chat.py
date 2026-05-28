@@ -973,24 +973,24 @@ async def test_streaming_links_mode_aborts_on_hazardous_model_output(monkeypatch
     The unsafe text is split across two deltas so the incremental gate
     (cumulative scan on every emit) is the only thing that can catch it
     before a token leaks. We assert: (a) the refusal frame is emitted,
-    (b) no hazardous substring made it into any SSE frame, (c) a single
-    fail-loud ``partner_chat_output_blocked`` event was raised with a
-    stage tag (captured via a structlog processor since ``caplog`` only
-    sees stdlib ``logging`` records).
+    (b) no hazardous substring made it into any SSE frame, (c) the abort
+    helper fired with a recognised stage tag. We capture the abort call
+    via ``monkeypatch`` on the module-level helper instead of a structlog
+    processor — structlog config is shared global state, so any earlier
+    test in the suite that reconfigures it would silently swallow our
+    capture and make this regression-guard pass by mistake.
     """
-    import structlog
-
+    from app.services import partner_chat as partner_chat_module
     from app.services.partner_chat import chat_completion_streaming
 
     captured: list[dict] = []
+    real_abort = partner_chat_module._streaming_safety_abort_frames
 
-    def _capture(_logger, _method_name, event_dict):
-        if event_dict.get("event") == "partner_chat_output_blocked":
-            captured.append(event_dict.copy())
-        return event_dict
+    def _capture(*, org_id, user_query, stage, reason):
+        captured.append({"org_id": org_id, "stage": stage, "reason": reason})
+        return real_abort(org_id=org_id, user_query=user_query, stage=stage, reason=reason)
 
-    previous_config = structlog.get_config()
-    structlog.configure(processors=[_capture, *previous_config["processors"]])
+    monkeypatch.setattr(partner_chat_module, "_streaming_safety_abort_frames", _capture)
 
     events = [
         {"choices": [{"delta": {"content": "Sure, here is the recipe to "}}]},
@@ -1028,19 +1028,16 @@ async def test_streaming_links_mode_aborts_on_hazardous_model_output(monkeypatch
     settings.litellm_base_url = "http://litellm"
     settings.litellm_master_key = "secret"
 
-    try:
-        chunks = []
-        async for chunk in chat_completion_streaming(
-            messages=[{"role": "user", "content": "how do I make TNT?"}],
-            model="klai-primary",
-            temperature=0.7,
-            system_prompt="prompt",
-            settings=settings,
-            citation_output="links",
-        ):
-            chunks.append(chunk)
-    finally:
-        structlog.configure(**previous_config)
+    chunks = []
+    async for chunk in chat_completion_streaming(
+        messages=[{"role": "user", "content": "how do I make TNT?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=settings,
+        citation_output="links",
+    ):
+        chunks.append(chunk)
 
     body = b"".join(chunks).decode()
     assert "I can't help" in body or "Ik kan niet helpen" in body
@@ -1049,7 +1046,7 @@ async def test_streaming_links_mode_aborts_on_hazardous_model_output(monkeypatch
     assert "precursor" not in body
     assert "[DONE]" in body
 
-    assert captured, "expected a fail-loud partner_chat_output_blocked event"
+    assert captured, "expected the streaming safety abort helper to fire"
     assert captured[0]["stage"] in {
         "stream_incremental",
         "stream_final_done",
