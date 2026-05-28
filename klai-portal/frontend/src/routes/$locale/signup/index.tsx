@@ -56,7 +56,11 @@ function SignupPage() {
       const resp = await fetch(`${API_BASE}/api/auth/idp-intent-signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idp_id: idpId, locale }),
+        body: JSON.stringify({
+          idp_id: idpId,
+          locale,
+          ...(invite.token ? { invite_token: invite.token } : {}),
+        }),
       })
       if (!resp.ok) {
         setError(m.signup_error_server({ status: String(resp.status) }))

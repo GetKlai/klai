@@ -10,6 +10,7 @@ All string values below are test placeholders, NOT real credentials.
 """
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -49,6 +50,7 @@ def _encrypt_pending(
     user_id: str,
     *,
     email: str = "jan@bedrijf.nl",
+    has_valid_invite: bool = False,
     ua_hash: str = "",
     ip_subnet: str = "127.0.0.0",
 ) -> str:
@@ -66,6 +68,7 @@ def _encrypt_pending(
             "session_token": session_token,
             "zitadel_user_id": user_id,
             "email": email,
+            "has_valid_invite": has_valid_invite,
             "ua_hash": ua_hash,
             "ip_subnet": ip_subnet,
         }
@@ -137,6 +140,29 @@ class TestIDPIntentSignup:
             call_args = mock_zitadel.create_idp_intent.call_args
             success_url: str = call_args.args[1] if call_args.args else call_args.kwargs["success_url"]
             assert "locale=en" in success_url
+
+    @pytest.mark.asyncio
+    async def test_invite_token_embedded_in_success_url(self) -> None:
+        """Invite context must survive the Google/Microsoft redirect roundtrip."""
+        from app.api.auth import IDPIntentSignupRequest, idp_intent_signup
+
+        with (
+            patch("app.api.auth.settings") as mock_settings,
+            patch("app.api.auth.zitadel") as mock_zitadel,
+        ):
+            mock_settings.zitadel_idp_google_id = _GOOGLE_IDP_ID
+            mock_settings.zitadel_idp_microsoft_id = "microsoft-idp-id"
+            mock_settings.portal_url = _PORTAL_URL
+            mock_zitadel.create_idp_intent = AsyncMock(return_value={"authUrl": "https://auth.example.com/"})
+
+            await idp_intent_signup(
+                IDPIntentSignupRequest(idp_id=_GOOGLE_IDP_ID, locale="nl", invite_token="payload.signature")
+            )
+
+            call_args = mock_zitadel.create_idp_intent.call_args
+            success_url: str = call_args.args[1] if call_args.args else call_args.kwargs["success_url"]
+            assert "locale=nl" in success_url
+            assert "invite_token=payload.signature" in success_url
 
     @pytest.mark.asyncio
     async def test_invalid_locale_defaults_to_nl(self) -> None:
@@ -282,6 +308,74 @@ class TestIDPSignupCallback:
         assert "klai_idp_pending" in response.headers.get("set-cookie", "")
 
     @pytest.mark.asyncio
+    async def test_valid_invite_token_is_stored_in_pending_cookie(self) -> None:
+        """A social signup invite for a Gmail address is validated against the IDP email."""
+        from app.api.auth import idp_signup_callback
+
+        db = AsyncMock()
+        db.scalar = AsyncMock(return_value=None)
+
+        with (
+            patch("app.api.auth.settings") as mock_settings,
+            patch("app.api.auth.zitadel") as mock_zitadel,
+            patch("app.api.auth._get_sso_fernet") as mock_fernet,
+            patch(
+                "app.api.auth.verify_invite_token",
+                return_value=SimpleNamespace(email="founder@gmail.com", company="Private Contact", exp=1),
+            ),
+        ):
+            _configure_settings_mock(mock_settings)
+            _configure_zitadel_mock(
+                mock_zitadel,
+                session_detail=_session_detail(_FAKE_USER_ID, email="founder@gmail.com"),
+            )
+            mock_fernet.return_value.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
+
+            response = await idp_signup_callback(
+                id="intent-id",
+                token="intent-token",
+                request=make_request(),
+                locale="nl",
+                invite_token="valid-token",
+                db=db,
+            )
+
+        assert response.status_code == 302
+        pending_payload = json.loads(mock_fernet.return_value.encrypt.call_args.args[0])
+        assert pending_payload["email"] == "founder@gmail.com"
+        assert pending_payload["has_valid_invite"] is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_invite_token_redirects_to_failure_url(self) -> None:
+        from app.api.auth import idp_signup_callback
+
+        db = AsyncMock()
+        db.scalar = AsyncMock(return_value=None)
+
+        with (
+            patch("app.api.auth.settings") as mock_settings,
+            patch("app.api.auth.zitadel") as mock_zitadel,
+            patch("app.api.auth.verify_invite_token", return_value=None),
+        ):
+            _configure_settings_mock(mock_settings)
+            _configure_zitadel_mock(
+                mock_zitadel,
+                session_detail=_session_detail(_FAKE_USER_ID, email="founder@gmail.com"),
+            )
+
+            response = await idp_signup_callback(
+                id="intent-id",
+                token="intent-token",
+                request=make_request(),
+                locale="nl",
+                invite_token="bad-token",
+                db=db,
+            )
+
+        assert response.status_code == 302
+        assert response.headers["location"] == f"{_PORTAL_URL}/nl/signup?error=idp_failed"
+
+    @pytest.mark.asyncio
     async def test_new_user_locale_en_in_redirect(self) -> None:
         """Locale=en is preserved in the redirect to /signup/social."""
         from app.api.auth import idp_signup_callback
@@ -332,6 +426,39 @@ class TestIDPSignupCallback:
         assert "klai_sso" in response.headers.get("set-cookie", "")
         # Existing-user branch must record the login event
         mock_emit_event.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_existing_user_ignores_invalid_invite_token(self) -> None:
+        """Invite validation is only for new workspace creation, not existing-user login."""
+        from app.api.auth import idp_signup_callback
+
+        existing_user = MagicMock()
+        db = AsyncMock()
+        db.scalar = AsyncMock(return_value=existing_user)
+
+        with (
+            patch("app.api.auth.settings") as mock_settings,
+            patch("app.api.auth.zitadel") as mock_zitadel,
+            patch("app.api.auth._get_sso_fernet") as mock_fernet,
+            patch("app.api.auth.emit_event"),
+            patch("app.api.auth.verify_invite_token", return_value=None) as mock_verify_invite,
+        ):
+            _configure_settings_mock(mock_settings)
+            _configure_zitadel_mock(mock_zitadel)
+            mock_fernet.return_value.encrypt = MagicMock(return_value=b"ENCRYPTED_SSO")
+
+            response = await idp_signup_callback(
+                id="intent-id",
+                token="intent-token",
+                request=make_request(),
+                locale="nl",
+                invite_token="expired-token",
+                db=db,
+            )
+
+        assert response.status_code == 302
+        assert response.headers["location"] == f"{_PORTAL_URL}/"
+        mock_verify_invite.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_new_zitadel_user_created_when_intent_lacks_user_id(self) -> None:
@@ -723,6 +850,58 @@ class TestSignupSocial:
 
         assert exc_info.value.status_code == 400
         mock_zitadel.create_org.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_invited_free_email_social_signup_does_not_claim_primary_domain(self) -> None:
+        from app.api.signup import signup_social
+
+        db = AsyncMock()
+        db.add = MagicMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+
+        org_row = MagicMock()
+        org_row.id = 99
+        org_row.slug = "private-contact-zit-org"
+        org_row.plan = "chat"
+
+        pending_cookie = _encrypt_pending(
+            _FAKE_SESSION_ID,
+            _FAKE_SESSION_TOKEN,
+            _FAKE_USER_ID,
+            email="founder@gmail.com",
+            has_valid_invite=True,
+        )
+
+        with (
+            patch("app.api.signup.settings") as mock_settings,
+            patch("app.api.signup.zitadel") as mock_zitadel,
+            patch("app.api.signup.PortalOrg") as mock_portal_org,
+            patch("app.api.signup.PortalUser"),
+            patch("app.api.signup.provision_tenant"),
+            patch("app.api.signup.emit_event"),
+            patch("app.api.signup._get_fernet", return_value=Fernet(_FERNET_KEY.encode())),
+        ):
+            mock_settings.zitadel_portal_org_id = "portal-org-id"
+            mock_settings.domain = _DOMAIN
+            mock_settings.sso_cookie_max_age = 3600
+            mock_settings.sso_cookie_key = _FERNET_KEY
+            mock_zitadel.create_org = AsyncMock(return_value={"id": "zit-org-new"})
+            mock_zitadel.grant_user_role = AsyncMock()
+            mock_portal_org.return_value = org_row
+
+            result = await signup_social(
+                body=self._make_body("Private Contact"),
+                response=self._make_response_mock(),
+                background_tasks=MagicMock(),
+                db=db,
+                request=make_request(),
+                klai_idp_pending=pending_cookie,
+            )
+
+        assert result.redirect_url == "/"
+        mock_zitadel.create_org.assert_awaited_once()
+        assert mock_portal_org.call_args.kwargs["primary_domain"] == ""
 
     @pytest.mark.asyncio
     async def test_pending_cookie_without_email_raises_400(self) -> None:
