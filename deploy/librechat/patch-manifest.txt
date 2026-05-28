@@ -10,3 +10,4 @@ patches/format.cjs|/app/node_modules/@librechat/agents/dist/cjs/messages/format.
 patches/share.js|/app/api/server/routes/share.js|0efa16cc2b6812b1543c4875fb6db76d2f9fccd0e0049582b29989a71bc0b0a4|Allow public shares and sanitize placeholder links/images before serving shared messages.
 patches/stream.cjs|/app/node_modules/@librechat/agents/dist/cjs/stream.cjs|38baa938c9e97c71b7162cc7bf5c3757744802aac3b14d103e071dd8b5df8876|Preserve Klai streaming behavior in LibreChat agent responses.
 patches/search.cjs|/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs|bd29bafe754d714c4804bf5262d7b45c186dcb4ca2eebc7ee80c8de5c7d4cbae|Preserve Klai web-search behavior in LibreChat agent tooling.
+patches/createStreamServices.ts|/app/packages/api/src/stream/createStreamServices.ts|1455df2b1671a60be4fa484c867f896cd67b7a6a729224ef4bc7622af704698c|Keep completed generation jobs briefly so fast LiteLLM safety refusals can be delivered to late SSE subscribers.
