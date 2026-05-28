@@ -308,7 +308,7 @@ async def test_platform_feedback_items_materializes_before_session_closes(monkey
 
     async def fake_search_items(db, **kwargs):
         assert db is session
-        assert kwargs == {"search": None, "limit": 25}
+        assert kwargs == {"search": None, "status": "active", "kind": "all", "limit": 25}
         return [_SessionBound(session, **_feedback_item().__dict__)]
 
     monkeypatch.setattr(platform, "_audit", fake_audit)
@@ -317,6 +317,8 @@ async def test_platform_feedback_items_materializes_before_session_closes(monkey
 
     result = await platform.platform_feedback_items(
         search=None,
+        status="active",
+        kind="all",
         limit=25,
         perms=SimpleNamespace(org_id=1, user_id="staff"),
     )

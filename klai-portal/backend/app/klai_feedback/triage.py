@@ -66,7 +66,13 @@ async def generate_feedback_triage_suggestion(
         return existing
 
     submission = await get_feedback_submission(db, submission_id)
-    candidates = await search_feedback_items(db, search=_candidate_search_text(submission.raw_text), limit=20)
+    candidates = await search_feedback_items(
+        db,
+        search=_candidate_search_text(submission.raw_text),
+        status="active",
+        kind="all",
+        limit=20,
+    )
     draft = await (classifier or classify_feedback_submission)(submission, candidates, model_name)
     suggestion = FeedbackTriageSuggestion(
         submission_id=submission.id,

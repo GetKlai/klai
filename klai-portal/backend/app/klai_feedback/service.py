@@ -74,9 +74,20 @@ async def search_feedback_items(
     db: AsyncSession,
     *,
     search: str | None,
+    status: str | None,
+    kind: str | None,
     limit: int,
 ) -> list[FeedbackItem]:
     query = select(FeedbackItem).order_by(FeedbackItem.updated_at.desc()).limit(limit)
+    closed_statuses = ("resolved", "shipped", "wont_do")
+    if status == "active":
+        query = query.where(FeedbackItem.status.not_in(closed_statuses))
+    elif status == "closed":
+        query = query.where(FeedbackItem.status.in_(closed_statuses))
+    elif status and status != "all":
+        query = query.where(FeedbackItem.status == status)
+    if kind and kind != "all":
+        query = query.where(FeedbackItem.kind == kind)
     if search:
         q = f"%{search}%"
         query = query.where(

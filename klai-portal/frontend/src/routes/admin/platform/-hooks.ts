@@ -156,16 +156,25 @@ export function usePlatformFeedbackSubmissions(
   })
 }
 
-export function usePlatformFeedbackItems(search: string) {
+export function usePlatformFeedbackItems(
+  search: string,
+  status = 'active',
+  kind = 'all',
+) {
   const auth = useAuth()
   return useQuery({
-    queryKey: ['platform-feedback-items', search],
-    queryFn: async () =>
-      apiFetch<PlatformFeedbackItem[]>(
-        `/api/admin/platform/feedback/items?limit=25${
-          search ? `&search=${encodeURIComponent(search)}` : ''
-        }`,
-      ),
+    queryKey: ['platform-feedback-items', search, status, kind],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        limit: '100',
+        status,
+        kind,
+      })
+      if (search) params.set('search', search)
+      return apiFetch<PlatformFeedbackItem[]>(
+        `/api/admin/platform/feedback/items?${params.toString()}`,
+      )
+    },
     enabled: auth.isAuthenticated,
   })
 }

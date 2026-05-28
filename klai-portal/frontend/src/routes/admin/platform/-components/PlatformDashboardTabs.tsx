@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Select } from '@/components/ui/select'
@@ -61,6 +62,7 @@ import { PlatformTableShell } from './PlatformShell'
 const TH =
   'py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide whitespace-nowrap'
 const TD = 'py-3.5 pr-4 align-top text-gray-900'
+const CLOSED_FEEDBACK_ITEM_STATUSES = new Set(['resolved', 'shipped', 'wont_do'])
 
 // --- Subdomains overview ---------------------------------------------------
 //
@@ -722,6 +724,7 @@ function feedbackItemStatusLabel(status: string): string {
   if (status === 'planned') return 'Gepland'
   if (status === 'in_progress') return 'In uitvoering'
   if (status === 'shipped') return 'Verzonden'
+  if (status === 'resolved') return 'Opgelost'
   if (status === 'wont_do') return "Won't do"
   return 'Inbox'
 }
@@ -1012,13 +1015,52 @@ function RoadmapItemsPanel({
   fmtDate: (s: string | null) => string
   onOpenItem: (itemId: number) => void
 }) {
-  const items = usePlatformFeedbackItems(search)
+  const [statusFilter, setStatusFilter] = useState('active')
+  const [kindFilter, setKindFilter] = useState('all')
+  const items = usePlatformFeedbackItems(search, statusFilter, kindFilter)
   const deleteItem = usePlatformFeedbackDeleteItem()
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const rows = items.data ?? []
 
   return (
     <>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="h-9 min-w-[150px]"
+            aria-label="Filter op status"
+          >
+            <option value="active">Actief</option>
+            <option value="inbox">Inbox</option>
+            <option value="under_review">In review</option>
+            <option value="planned">Gepland</option>
+            <option value="in_progress">In uitvoering</option>
+            <option value="closed">Gesloten</option>
+            <option value="resolved">Opgelost</option>
+            <option value="shipped">Verzonden</option>
+            <option value="wont_do">Won't do</option>
+            <option value="all">Alles</option>
+          </Select>
+          <Select
+            value={kindFilter}
+            onChange={(event) => setKindFilter(event.target.value)}
+            className="h-9 min-w-[130px]"
+            aria-label="Filter op type"
+          >
+            <option value="all">Alle types</option>
+            <option value="bug">Bugs</option>
+            <option value="feature">Features</option>
+            <option value="ux_confusion">UX</option>
+            <option value="docs">Docs</option>
+            <option value="support_pattern">Support</option>
+          </Select>
+        </div>
+        <p className="text-xs text-gray-400">
+          Gesloten items staan niet standaard tussen actieve feedback.
+        </p>
+      </div>
       {items.isFetching && !items.isLoading && (
         <p className="mb-2 text-xs text-gray-400">
           <Loader2 className="mr-2 inline h-3 w-3 animate-spin" />
@@ -1099,6 +1141,19 @@ function RoadmapItemsPanel({
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
+                        {!CLOSED_FEEDBACK_ITEM_STATUSES.has(item.status) && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-md text-gray-400 hover:text-green-700"
+                            aria-label={`Sluit ${item.title}`}
+                            title="Sluiten en gebruiker berichten"
+                            onClick={() => onOpenItem(item.id)}
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           variant="ghost"
@@ -1560,7 +1615,10 @@ function FeedbackItemDetailForm({
   const [resolutionSummary, setResolutionSummary] = useState(
     item.resolution_summary ?? defaultResolutionSummary(item),
   )
+  const [notifyInApp, setNotifyInApp] = useState(true)
+  const [notifyEmail, setNotifyEmail] = useState(false)
   const resolveLabel = feedbackResolveLabel(item.kind)
+  const isClosed = CLOSED_FEEDBACK_ITEM_STATUSES.has(item.status)
   const saveItem = () => {
     updateItem.mutate({
       itemId: item.id,
@@ -1568,6 +1626,25 @@ function FeedbackItemDetailForm({
       title: title.trim(),
       summary: summary.trim() || null,
     })
+  }
+  const closeItem = () => {
+    const channels: Array<'in_app' | 'email'> = []
+    if (notifyInApp) channels.push('in_app')
+    if (notifyEmail) channels.push('email')
+    resolveItem.mutate(
+      {
+        itemId: item.id,
+        resolution_summary: resolutionSummary.trim(),
+        subject: `${resolveLabel.subject}: ${title.trim() || item.title}`,
+        channels,
+      },
+      {
+        onSuccess: (result) => {
+          setStatus(result.item.status)
+          setResolutionSummary(result.item.resolution_summary ?? '')
+        },
+      },
+    )
   }
 
   return (
@@ -1635,46 +1712,53 @@ function FeedbackItemDetailForm({
         </div>
       </section>
 
-      <section className="space-y-3 border-t border-gray-200 pt-5">
+      <section className="space-y-3 rounded-lg border border-green-200 bg-green-50 p-4">
         <div>
           <h3 className="text-sm font-medium text-gray-900">{resolveLabel.title}</h3>
-          <p className="mt-1 text-sm text-gray-500">
-            Zet het item op de juiste eindstatus en maak een in-app update voor gekoppelde melders.
+          <p className="mt-1 text-sm text-gray-600">
+            Sluit dit item en stuur gekoppelde melders een update in hun account.
           </p>
         </div>
+        {isClosed && item.resolution_summary && (
+          <div className="rounded-md border border-green-200 bg-white px-3 py-2 text-sm text-green-800">
+            {item.resolution_summary}
+          </div>
+        )}
         <Textarea
           value={resolutionSummary}
           onChange={(event) => setResolutionSummary(event.target.value)}
           rows={3}
-          placeholder="Korte update voor de melder"
+          placeholder="Persoonlijk bericht voor de melder"
         />
+        <div className="flex flex-wrap items-center gap-5">
+          <Checkbox
+            checked={notifyInApp}
+            onChange={(event) => setNotifyInApp(event.target.checked)}
+            label="In-app bericht"
+          />
+          <Checkbox
+            checked={notifyEmail}
+            onChange={(event) => setNotifyEmail(event.target.checked)}
+            label="Ook e-mail klaarzetten"
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
             variant="secondary"
-            disabled={resolveItem.isPending || resolutionSummary.trim().length < 3}
-            onClick={() => {
-              resolveItem.mutate(
-                {
-                  itemId: item.id,
-                  resolution_summary: resolutionSummary.trim(),
-                  channels: ['in_app'],
-                },
-                {
-                  onSuccess: (result) => {
-                    setStatus(result.item.status)
-                    setResolutionSummary(result.item.resolution_summary ?? '')
-                  },
-                },
-              )
-            }}
+            disabled={
+              resolveItem.isPending ||
+              resolutionSummary.trim().length < 3 ||
+              (!notifyInApp && !notifyEmail)
+            }
+            onClick={closeItem}
           >
             {resolveItem.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <CheckCircle2 className="h-4 w-4" />
             )}
-            {resolveLabel.button}
+            {isClosed ? 'Update opnieuw sturen' : resolveLabel.button}
           </Button>
           {resolveItem.isSuccess && (
             <p className="text-sm text-green-700">
@@ -1713,12 +1797,24 @@ function FeedbackItemDetailForm({
 
 function feedbackResolveLabel(kind: string) {
   if (kind === 'bug') {
-    return { title: 'Bug gefixt', button: 'Markeer als gefixt' }
+    return {
+      title: 'Bug sluiten',
+      button: 'Sluit bug en bericht gebruiker',
+      subject: 'Bug opgelost',
+    }
   }
   if (kind === 'feature') {
-    return { title: 'Feature verzonden', button: 'Markeer als verzonden' }
+    return {
+      title: 'Feature afronden',
+      button: 'Markeer als verzonden en bericht gebruiker',
+      subject: 'Feature beschikbaar',
+    }
   }
-  return { title: 'Melding opgelost', button: 'Markeer als opgelost' }
+  return {
+    title: 'Melding sluiten',
+    button: 'Sluit melding en bericht gebruiker',
+    subject: 'Melding verwerkt',
+  }
 }
 
 function defaultResolutionSummary(item: PlatformFeedbackItem) {
