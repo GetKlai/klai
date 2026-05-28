@@ -1707,7 +1707,9 @@ def _source_metadata_keys(source: dict[str, Any]) -> list[str]:
     url = _normalise_guard_url(source.get("url") or source.get("source_url"))
     if url:
         keys.append(f"url:{url}")
-    for key in ("artifact_id", "source_id", "title", "source_label"):
+    # source_label is intentionally excluded: for personal KB uploads it is
+    # the KB slug, so multiple different documents share the same value.
+    for key in ("artifact_id", "source_id", "title"):
         value = source.get(key)
         if isinstance(value, str) and value.strip():
             keys.append(f"{key}:{value.strip()}")
