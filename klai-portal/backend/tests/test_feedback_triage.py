@@ -85,8 +85,10 @@ async def test_generate_feedback_triage_suggestion_persists_draft(monkeypatch):
         assert submission_id == 123
         return submission
 
-    async def fake_search(_db, *, search, limit):
+    async def fake_search(_db, *, search, status, kind, limit):
         assert "chat" in search
+        assert status == "active"
+        assert kind == "all"
         assert limit == 20
         return candidates
 
