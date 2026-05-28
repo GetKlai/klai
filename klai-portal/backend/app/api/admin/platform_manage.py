@@ -728,6 +728,19 @@ async def _grant_tenant_owner_role(owner_user_id: str, owner_email: str) -> None
         raise
 
 
+async def _rollback_tenant_owner_identity(owner_user_id: str, owner_user_created: bool) -> None:
+    if owner_user_created:
+        await _rollback_zitadel_user(owner_user_id)
+        return
+
+    with suppress(Exception):
+        await _sync_zitadel_role_grant(
+            zitadel_user_id=owner_user_id,
+            old_role="company",
+            new_role="company",
+        )
+
+
 @router.post(
     "/organizations",
     response_model=CreateTenantResponse,
@@ -781,8 +794,7 @@ async def platform_create_tenant(
             },
             perms=perms,
         )
-        if owner_user_created:
-            await _rollback_zitadel_user(owner_user_id)
+        await _rollback_tenant_owner_identity(owner_user_id, owner_user_created)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Owner-setup mislukt: {exc}") from exc
 
@@ -804,8 +816,7 @@ async def platform_create_tenant(
     except Exception as exc:
         await db.rollback()
         logger.exception("platform_create_tenant_org_db_failed", email=body.owner_email)
-        if owner_user_created:
-            await _rollback_zitadel_user(owner_user_id)
+        await _rollback_tenant_owner_identity(owner_user_id, owner_user_created)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Opslaan org mislukt: {exc}") from exc
 
@@ -847,8 +858,7 @@ async def platform_create_tenant(
                 "platform_create_tenant_org_cleanup_failed",
                 org_id=org_row.id,
             )
-        if owner_user_created:
-            await _rollback_zitadel_user(owner_user_id)
+        await _rollback_tenant_owner_identity(owner_user_id, owner_user_created)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Opslaan owner mislukt: {exc}") from exc
 
