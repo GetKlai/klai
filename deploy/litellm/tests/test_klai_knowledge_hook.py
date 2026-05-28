@@ -1103,10 +1103,12 @@ class TestKlaiKnowledgeHookFailLoud:
             choices=[SimpleNamespace(message=SimpleNamespace(content="A model fallback answer"))]
         )
         await hook.async_post_call_success_hook(data, None, response)
-        assert response.choices[0].message.content == (
+        assert response.choices[0].message.content.startswith(
             "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
             "betrouwbaar beantwoorden op basis van je kennisbronnen."
         )
+        assert "**Agent activiteit**" in response.choices[0].message.content
+        assert "**Bronnen**" not in response.choices[0].message.content
 
 
 # ─── KB-010 new tests ────────────────────────────────────────────────────────
@@ -3277,9 +3279,74 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         returned = await hook.async_post_call_success_hook(data, None, response)
 
         assert returned is response
-        assert response.choices[0].message.content == (
+        content = response.choices[0].message.content
+        assert content.startswith(
             "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
         )
+        assert "**Bronnen**" not in content
+        assert "**Agent activiteit**" in content
+        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
+        assert "kb_citations_no_citable_sources" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_strict_refusal_does_not_present_consulted_docs_as_sources(
+        self, monkeypatch, caplog
+    ):
+        """Strict refusal: consulted docs are provenance, not answer sources."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        caplog.set_level("WARNING", logger="klai_knowledge")
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Dat staat niet in de kennisbank.")
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Wat is het favoriete ijsje van Frank Wolters?",
+                    "kb_narrow": True,
+                    "chunks_injected": 20,
+                    "retrieval_ms": 416,
+                    "gate_bypassed": False,
+                    "confidence_band": "low",
+                    "citable_sources_count": 1,
+                    "allowed_image_urls": [],
+                    "trusted_sources": [
+                        {
+                            "title": "Verantwoordelijkheden per bouwblok.pdf",
+                            "url": "",
+                            "evidence_ids": ["E1"],
+                            "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
+                        }
+                    ],
+                    "citation_chunks": [
+                        {
+                            "title": "Verantwoordelijkheden per bouwblok.pdf",
+                            "text": "Frank Wolters is trekker voor Data Readiness.",
+                        }
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        content = response.choices[0].message.content
+        assert content.startswith("Dat staat niet in de kennisbank.")
+        assert "**Bronnen**" not in content
+        assert "Gebruikte bronnen" not in content
+        assert "**Agent activiteit**" in content
+        assert "- Kennisbank geraadpleegd: 20 fragmenten opgehaald in 416 ms." in content
+        assert "- Bronselectie: 0 bronnen gekoppeld" in content
+        assert "- Retrieval confidence: low." in content
+        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
+        assert getattr(response.choices[0].message, "sources", []) == []
         assert "kb_citations_no_citable_sources" in caplog.text
 
     @pytest.mark.asyncio
@@ -3367,9 +3434,12 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         returned = await hook.async_post_call_success_hook(data, None, response)
 
         assert returned is response
-        assert response.choices[0].message.content == (
+        content = response.choices[0].message.content
+        assert content.startswith(
             "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
         )
+        assert "**Bronnen**" not in content
+        assert "**Agent activiteit**" in content
 
     @pytest.mark.asyncio
     async def test_post_call_guard_refuses_irrelevant_citable_sources_in_narrow_mode(
@@ -3427,7 +3497,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert returned is response
         content = response.choices[0].message.content
-        assert content == "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+        assert content.startswith("Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen.")
+        assert "**Bronnen**" not in content
+        assert "**Agent activiteit**" in content
         assert "add-sources" not in content
         assert "getting-started" not in content
         assert "build-a-knowledge-base" not in content
@@ -3545,9 +3617,12 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
         assert streamed == [only]
-        assert streamed[0]["choices"][0]["delta"]["content"] == (
+        content = streamed[0]["choices"][0]["delta"]["content"]
+        assert content.startswith(
             "I cannot answer this reliably from the available knowledge sources."
         )
+        assert "**Agent activiteit**" in content
+        assert "**Bronnen**" not in content
 
     @pytest.mark.asyncio
     async def test_streaming_post_call_flushes_when_iterator_closes_without_finish_reason(self, monkeypatch):

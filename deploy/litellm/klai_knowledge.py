@@ -1702,6 +1702,28 @@ def _strict_kb_unavailable_message(user_query: object) -> str:
     )
 
 
+def _is_strict_refusal_answer(text: object, *, user_query: object) -> bool:
+    if not isinstance(text, str) or not text.strip():
+        return False
+    answer = re.sub(r"\s+", " ", text).strip().casefold()
+    expected = re.sub(
+        r"\s+",
+        " ",
+        _no_citable_sources_message(user_query),
+    ).strip().casefold()
+    unavailable = re.sub(
+        r"\s+",
+        " ",
+        _strict_kb_unavailable_message(user_query),
+    ).strip().casefold()
+    return answer in {
+        expected,
+        unavailable,
+        "dat staat niet in de kennisbank.",
+        "dat staat niet in de kennisbank",
+    }
+
+
 def _render_kb_citation_content(
     text: str,
     *,
@@ -1757,6 +1779,14 @@ def _render_kb_citation_content(
             "rejected": [],
             "no_citable_reason": "no_trusted_sources_broad_passthrough",
         }
+    if kb_narrow and _is_strict_refusal_answer(text, user_query=user_query):
+        return text.strip(), [], True, {
+            "mode": "document_level_supported_sources",
+            "candidate_count": len(trusted_sources),
+            "selected": [],
+            "rejected": [],
+            "no_citable_reason": "strict_refusal_no_supported_sources",
+        }
     composed = compose_answer_with_trusted_sources(
         text,
         trusted_sources,
@@ -1766,6 +1796,12 @@ def _render_kb_citation_content(
     )
     if not composed.content or not composed.sources:
         decision = dict(composed.decision)
+        if kb_narrow and _is_strict_refusal_answer(
+            composed.content or text,
+            user_query=user_query,
+        ):
+            decision["no_citable_reason"] = "strict_refusal_no_supported_sources"
+            return strict_refusal, [], True, decision
         fallback_sources = _trusted_sources_visible_fallback(trusted_sources)
         if fallback_sources:
             decision["fallback"] = "document_level_trusted_sources"
@@ -1969,7 +2005,12 @@ def _append_visible_sources_section(
         sources_markdown = _format_visible_sources_markdown(sources).strip()
         if sources_markdown:
             sections.append(f"**Bronnen**\n{sources_markdown}")
-    if kb_meta is not None and sources:
+    has_no_citable_reason = (
+        kb_meta is not None
+        and isinstance(kb_meta.get("no_citable_reason"), str)
+        and bool(kb_meta.get("no_citable_reason"))
+    )
+    if kb_meta is not None and (sources or has_no_citable_reason):
         activity = _format_visible_agent_activity(kb_meta, sources)
         if activity:
             sections.append(f"**Agent activiteit**\n{activity}")
@@ -2078,6 +2119,17 @@ def _log_kb_citation_render(
     )
 
 
+def _remember_citation_decision(
+    kb_meta: dict[str, Any],
+    decision: dict[str, Any],
+    *,
+    no_citable_sources: bool,
+) -> None:
+    reason = decision.get("no_citable_reason")
+    if no_citable_sources and isinstance(reason, str) and reason:
+        kb_meta["no_citable_reason"] = reason
+
+
 def _flush_citation_stream_buffer(
     response: object,
     kb_meta: dict[str, Any],
@@ -2110,6 +2162,11 @@ def _flush_citation_stream_buffer(
         delta = _get_choice_message(choice, "delta")
         if delta is None:
             continue
+        _remember_citation_decision(
+            kb_meta,
+            decision,
+            no_citable_sources=no_citable_sources,
+        )
         _set_message_content(delta, _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta))
         _set_message_field(delta, "sources", sources)
         stream_parts.clear()
@@ -2175,7 +2232,12 @@ def _compose_non_streaming_kb_response(
                 kb_narrow=bool(kb_meta.get("kb_narrow", False)),
                 no_citable_message=kb_meta.get("no_citable_message"),
             )
-            if rendered_content != content or sources:
+            if rendered_content != content or sources or no_citable_sources:
+                _remember_citation_decision(
+                    kb_meta,
+                    decision,
+                    no_citable_sources=no_citable_sources,
+                )
                 _set_message_content(
                     message,
                     _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta),
@@ -2240,7 +2302,15 @@ def _compose_streaming_kb_response(
                 kb_narrow=kb_narrow,
                 no_citable_message=kb_meta.get("no_citable_message"),
             )
-            _set_message_content(delta, rendered_content)
+            _remember_citation_decision(
+                kb_meta,
+                decision,
+                no_citable_sources=no_citable_sources,
+            )
+            _set_message_content(
+                delta,
+                _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta),
+            )
             kb_meta["_citation_stream_sources_appended"] = True
             kb_meta["_citation_stream_guard_buffer"] = ""
             stats.mutated_messages += 1
@@ -2278,6 +2348,11 @@ def _compose_streaming_kb_response(
             evidence_chunks=citation_chunks,
             kb_narrow=kb_narrow,
             no_citable_message=kb_meta.get("no_citable_message"),
+        )
+        _remember_citation_decision(
+            kb_meta,
+            decision,
+            no_citable_sources=no_citable_sources,
         )
         final_text = _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta)
         final_text = _remove_already_streamed_prefix(final_text, emitted_text)
