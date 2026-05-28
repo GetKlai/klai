@@ -67,6 +67,10 @@ search_tools:
 
 router_settings:
   routing_strategy: simple-shuffle
+  # klai-primary and klai-fast share the same upstream Mistral Small quota.
+  # If that pool hits TPM/RPM limits, fall back to Mistral Medium instead of
+  # making chat users wait through a 60s cooldown.
+  fallbacks: [{"klai-primary": ["klai-medium"]}, {"klai-fast": ["klai-medium"]}]
   optional_pre_call_checks:
     - enforce_model_rate_limits  # Queue requests when model RPM/TPM is hit
   allowed_fails: 2
