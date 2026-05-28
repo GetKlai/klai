@@ -352,7 +352,7 @@ function LoginPage() {
           <div className="flex flex-col gap-2">
             <button
               type="button"
-              onClick={() => handleSocialLogin('368810756424073247')}
+              onClick={() => handleSocialLogin('google')}
               disabled={loading}
               className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-gray-900 transition hover:bg-[var(--color-muted)] disabled:opacity-50"
             >
@@ -368,7 +368,7 @@ function LoginPage() {
 
             <button
               type="button"
-              onClick={() => handleSocialLogin('368809521386094623')}
+              onClick={() => handleSocialLogin('microsoft')}
               disabled={loading}
               className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-gray-900 transition hover:bg-[var(--color-muted)] disabled:opacity-50"
             >

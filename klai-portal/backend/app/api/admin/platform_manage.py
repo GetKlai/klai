@@ -29,6 +29,7 @@ from contextlib import suppress
 from typing import Literal
 from urllib.parse import urlparse
 
+import httpx
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -683,6 +684,50 @@ class CreateTenantResponse(BaseModel):
     message: str
 
 
+async def _create_or_reuse_tenant_owner_user(body: CreateTenantRequest) -> tuple[str, bool]:
+    """Return ``(zitadel_user_id, created)`` for a new-tenant owner."""
+    try:
+        user_data = await zitadel.invite_user(
+            org_id=settings_zitadel_portal_org_id(),
+            email=body.owner_email,
+            first_name=body.owner_first_name,
+            last_name=body.owner_last_name,
+            preferred_language=body.preferred_language,
+        )
+        return user_data["userId"], True
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 409:
+            raise
+
+        # The owner may already exist in Zitadel after an earlier partial
+        # attempt or because they signed up socially first. Reuse that identity
+        # instead of treating the tenant create as non-recoverable.
+        existing_user_id = await zitadel.find_user_id_by_email(body.owner_email)
+        if not existing_user_id:
+            logger.exception("platform_create_tenant_owner_conflict_unresolved", email=body.owner_email)
+            raise
+        logger.warning(
+            "platform_create_tenant_owner_exists_reusing_user",
+            email=body.owner_email,
+            zitadel_user_id=existing_user_id,
+        )
+        return existing_user_id, False
+
+
+async def _grant_tenant_owner_role(owner_user_id: str, owner_email: str) -> None:
+    try:
+        await zitadel.grant_user_role(
+            org_id=settings_zitadel_portal_org_id(),
+            user_id=owner_user_id,
+            role="org:owner",
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 409:
+            logger.warning("platform_create_tenant_owner_role_exists", email=owner_email)
+            return
+        raise
+
+
 @router.post(
     "/organizations",
     response_model=CreateTenantResponse,
@@ -714,27 +759,15 @@ async def platform_create_tenant(
         with suppress(Exception):
             await zitadel.delete_org(zitadel_org_id)
 
-    # 2. Owner user via invite (no password; activation mail).
     try:
-        user_data = await zitadel.invite_user(
-            org_id=settings_zitadel_portal_org_id(),
-            email=body.owner_email,
-            first_name=body.owner_first_name,
-            last_name=body.owner_last_name,
-            preferred_language=body.preferred_language,
-        )
+        owner_user_id, owner_user_created = await _create_or_reuse_tenant_owner_user(body)
     except Exception as exc:
         logger.exception("platform_create_tenant_owner_failed", email=body.owner_email)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Owner-creatie mislukt: {exc}") from exc
-    owner_user_id: str = user_data["userId"]
 
     try:
-        await zitadel.grant_user_role(
-            org_id=settings_zitadel_portal_org_id(),
-            user_id=owner_user_id,
-            role="org:owner",
-        )
+        await _grant_tenant_owner_role(owner_user_id, body.owner_email)
     except Exception as exc:
         logger.exception("platform_create_tenant_owner_setup_failed", email=body.owner_email)
         # REQ-6 (Finding A-7): permanent audit trail for grant failure.
@@ -748,7 +781,8 @@ async def platform_create_tenant(
             },
             perms=perms,
         )
-        await _rollback_zitadel_user(owner_user_id)
+        if owner_user_created:
+            await _rollback_zitadel_user(owner_user_id)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Owner-setup mislukt: {exc}") from exc
 
@@ -770,7 +804,8 @@ async def platform_create_tenant(
     except Exception as exc:
         await db.rollback()
         logger.exception("platform_create_tenant_org_db_failed", email=body.owner_email)
-        await _rollback_zitadel_user(owner_user_id)
+        if owner_user_created:
+            await _rollback_zitadel_user(owner_user_id)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Opslaan org mislukt: {exc}") from exc
 
@@ -812,7 +847,8 @@ async def platform_create_tenant(
                 "platform_create_tenant_org_cleanup_failed",
                 org_id=org_row.id,
             )
-        await _rollback_zitadel_user(owner_user_id)
+        if owner_user_created:
+            await _rollback_zitadel_user(owner_user_id)
         await _rollback_zitadel_org()
         raise HTTPException(status_code=502, detail=f"Opslaan owner mislukt: {exc}") from exc
 
