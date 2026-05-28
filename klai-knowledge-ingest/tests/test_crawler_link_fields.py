@@ -219,6 +219,7 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
+        mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
         mock_pg.upsert_crawled_page = AsyncMock()
         mock_pg.update_crawled_page_simhash = AsyncMock()
         mock_pg.upsert_page_links = AsyncMock(side_effect=_fake_upsert_links)
@@ -282,6 +283,7 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
+        mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
         mock_pg.upsert_crawled_page = AsyncMock()
         mock_pg.update_crawled_page_simhash = AsyncMock()
         mock_pg.upsert_page_links = AsyncMock()
@@ -366,6 +368,7 @@ async def test_run_crawl_job_does_not_fail_when_stale_vector_delete_fails():
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
+        mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
         mock_pg.upsert_crawled_page = AsyncMock()
         mock_pg.update_crawled_page_simhash = AsyncMock()
         mock_pg.upsert_page_links = AsyncMock()

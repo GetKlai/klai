@@ -26,7 +26,6 @@ from fastapi import Request
 
 from knowledge_ingest.crawl4ai_client import CrawlResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -116,6 +115,52 @@ async def test_bulk_crawl_skip_unchanged() -> None:
 
     mock_ingest.assert_not_called()
     mock_upsert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bulk_crawl_reingests_unchanged_connector_when_active_artifact_missing() -> None:
+    """Known crawled_pages hashes must not hide a retired connector artifact."""
+    html = "<html><body>Hello</body></html>"
+    text = "# Hello\nPage content here."
+    stored = (_sha256(html), _sha256(text))
+
+    result = _make_crawl_result(text=text, html=html)
+    mock_conn = _make_mock_conn()
+
+    with (
+        patch(
+            "knowledge_ingest.pg_store.has_active_connector_artifact_for_url",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "knowledge_ingest.pg_store.upsert_crawled_page",
+            new_callable=AsyncMock,
+        ) as mock_upsert,
+        patch(
+            "knowledge_ingest.pg_store.upsert_page_links",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.ingest_document",
+            new_callable=AsyncMock,
+            return_value={"status": "ok", "chunks": 1},
+        ) as mock_ingest,
+    ):
+        from knowledge_ingest.adapters.crawler import _ingest_crawl_result
+
+        await _ingest_crawl_result(
+            mock_conn,
+            result,
+            "https://example.com/page",
+            "org1",
+            "kb1",
+            stored=stored,
+            connector_id="conn-1",
+        )
+
+    mock_ingest.assert_called_once()
+    mock_upsert.assert_called_once()
 
 
 @pytest.mark.asyncio

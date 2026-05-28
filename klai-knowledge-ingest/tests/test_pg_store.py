@@ -150,6 +150,27 @@ async def test_list_stale_connector_artifact_paths_excludes_current_paths():
 
 
 @pytest.mark.asyncio
+async def test_has_active_connector_artifact_for_url_checks_source_url():
+    """Connector artifacts may use path=index.md while source_url is the crawl URL."""
+    conn = _make_conn()
+    conn.fetchval = AsyncMock(return_value=True)
+
+    result = await pg_store.has_active_connector_artifact_for_url(
+        conn,
+        org_id="org",
+        kb_slug="kb",
+        connector_id="conn-1",
+        url="https://jantinedoornbos.nl/",
+    )
+
+    assert result is True
+    sql = conn.fetchval.call_args[0][0]
+    assert "source_connector_id" in sql
+    assert "source_url" in sql
+    assert "belief_time_end = $5" in sql
+
+
+@pytest.mark.asyncio
 async def test_soft_delete_stale_connector_artifacts_scrubs_registry_and_links():
     """Stale connector cleanup retires artifacts and removes crawl metadata."""
     conn = _make_conn()

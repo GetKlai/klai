@@ -981,6 +981,40 @@ async def get_crawled_page_hashes(
     return {row["url"]: (row["raw_html_hash"], row["content_hash"]) for row in rows}
 
 
+async def has_active_connector_artifact_for_url(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    url: str,
+) -> bool:
+    """Return whether an active connector artifact still represents ``url``."""
+    return bool(
+        await conn.fetchval(
+            """
+            SELECT EXISTS (
+              SELECT 1
+              FROM knowledge.artifacts
+              WHERE org_id = $1
+                AND kb_slug = $2
+                AND belief_time_end = $5
+                AND extra IS NOT NULL
+                AND extra::jsonb->>'source_connector_id' = $3
+                AND (
+                  path = $4
+                  OR extra::jsonb->>'source_url' = $4
+                )
+            )
+            """,
+            org_id,
+            kb_slug,
+            connector_id,
+            url,
+            _SENTINEL,
+        )
+    )
+
+
 async def upsert_page_links(
     conn: asyncpg.Connection,
     org_id: str,
