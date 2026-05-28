@@ -30,6 +30,7 @@ from retrieval_api.services.evidence_pack import (
     evidence_pack_items_as_chunks,
     evidence_pack_sources_payload,
 )
+from retrieval_api.services.llm_safety_adapter import check_synthesis_context
 from retrieval_api.util.language_detect import (
     detect_language,
     language_correctness,
@@ -97,6 +98,34 @@ def _build_context(chunks: list[dict], evidence_pack: EvidencePack | None = None
         include_source_urls=True,
         max_chars=_MAX_CONTEXT_CHARS,
     )
+
+
+def _context_text_from_chunk(chunk: dict) -> str:
+    values: list[str] = []
+    for key in ("title", "heading_path", "context_prefix", "text"):
+        value = chunk.get(key)
+        if isinstance(value, str):
+            values.append(value)
+        elif isinstance(value, list):
+            values.extend(item for item in value if isinstance(item, str))
+    return "\n".join(values)
+
+
+def _filter_safe_chunks(chunks: list[dict], *, query: str) -> tuple[list[dict], int]:
+    safe_chunks: list[dict] = []
+    blocked_count = 0
+    for chunk in chunks:
+        decision = check_synthesis_context(_context_text_from_chunk(chunk), query=query)
+        if decision.allowed:
+            safe_chunks.append(chunk)
+            continue
+        blocked_count += 1
+        logger.warning(
+            "synthesis_context_blocked reason=%s chunk_id=%s",
+            decision.reason,
+            chunk.get("chunk_id"),
+        )
+    return safe_chunks, blocked_count
 
 
 def _extract_citation_indices(text: str) -> list[int]:
@@ -180,6 +209,11 @@ async def synthesize(
             chunks,
             query=query_resolved,
         )
+    else:
+        chunks = evidence_pack_items_as_chunks(evidence_pack)
+    chunks, blocked_context_count = _filter_safe_chunks(chunks, query=query_resolved)
+    if blocked_context_count:
+        evidence_pack = build_evidence_pack(chunks, query=query_resolved)
     if not evidence_pack.sources:
         message = "I cannot answer this reliably from the available knowledge sources."
         yield message

@@ -265,6 +265,28 @@ wheels = [
 ]
 
 [[package]]
+name = "klai-llm-safety"
+version = "0.1.0"
+source = { editable = "../../klai-libs/llm-safety" }
+
+[package.metadata]
+requires-dist = [
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pyyaml", specifier = ">=6" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
 name = "klai-log-utils"
 version = "0.1.0"
 source = { editable = "../../klai-libs/log-utils" }
@@ -645,6 +667,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "klai-llm-safety" },
     { name = "klai-log-utils" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -671,6 +694,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "klai-llm-safety", editable = "../../klai-libs/llm-safety" },
     { name = "klai-log-utils", editable = "../../klai-libs/log-utils" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },

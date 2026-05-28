@@ -39,6 +39,8 @@ dependencies = [
     # installed via scikit-learn / umap-learn; declared explicitly for
     # hygiene since proposal_generator + content_fingerprint import it.
     "numpy>=1.26",
+    # Shared deterministic LLM safety policy for untrusted document/DOM rails.
+    "klai-llm-safety",
 ]
 
 [tool.uv.sources]
@@ -46,6 +48,7 @@ klai-connector-credentials = { path = "../klai-libs/connector-credentials", edit
 klai-image-storage = { path = "../klai-libs/image-storage", editable = true }
 klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
 klai-kb-slugs = { path = "../klai-libs/kb-slugs", editable = true }
+klai-llm-safety = { path = "../klai-libs/llm-safety", editable = true }
 
 [project.optional-dependencies]
 dev = [

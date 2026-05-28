@@ -23,10 +23,13 @@ dependencies = [
     # scribe-api is BFF-only and accepts portal-verified X-Klai-Verified-*
     # headers gated by X-Internal-Secret. python-jose removed for the same
     # reason — scribe no longer decodes JWTs locally.
+    # Shared deterministic LLM safety policy for transcript/output rails.
+    "klai-llm-safety",
 ]
 
 [tool.uv.sources]
 klai-log-utils = { path = "../../klai-libs/log-utils", editable = true }
+klai-llm-safety = { path = "../../klai-libs/llm-safety", editable = true }
 
 [project.optional-dependencies]
 dev = [

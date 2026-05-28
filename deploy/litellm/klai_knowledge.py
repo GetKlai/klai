@@ -59,6 +59,7 @@ from klai_citations import (
     render_evidence_context,
     trusted_sources_from_evidence_pack,
 )
+from klai_llm_safety import SafetyDecision, SafetyPhase, SafetyRequest, SafetySurface, check_text, refusal_message
 
 # SPEC-MCP-RETRIEVAL-001 Phase 1: telemetry helpers moved out of this file
 # into ``klai-libs/retrieval-telemetry/`` so klai-knowledge-mcp's new
@@ -118,6 +119,8 @@ KLAI_LITELLM_CLIENT_SECRET = os.getenv("KLAI_LITELLM_CLIENT_SECRET", "")
 # X-Internal-Secret path (Phase C-1 REQ-5 safe rollout).
 _token_client: object | None = None
 _token_client_init_attempted: bool = False
+
+LLM_SAFETY_LITELLM_MODE = os.getenv("LLM_SAFETY_LITELLM_MODE", "enforce").strip().lower()
 
 
 def _get_token_client() -> object | None:
@@ -665,6 +668,112 @@ def _last_user_message(messages: list[dict]) -> str | None:
                     p.get("text", "") for p in content if p.get("type") == "text"
                 )
     return None
+
+
+def _llm_safety_enabled() -> bool:
+    return LLM_SAFETY_LITELLM_MODE not in {"", "off", "disabled", "0", "false"}
+
+
+def _llm_safety_enforces() -> bool:
+    return LLM_SAFETY_LITELLM_MODE in {"enforce", "block", "on", "true", "1"}
+
+
+def _message_text(message: dict[str, Any]) -> str:
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return ""
+
+
+def _conversation_text(messages: list[dict]) -> str:
+    return "\n".join(
+        _message_text(message)
+        for message in messages
+        if message.get("role") in {"user", "assistant", "tool"}
+    )
+
+
+def _chunk_safety_text(chunk: dict[str, Any]) -> str:
+    values: list[str] = []
+    for key in ("title", "heading_path", "source_label", "text"):
+        value = chunk.get(key)
+        if isinstance(value, str):
+            values.append(value)
+        elif isinstance(value, list):
+            values.extend(item for item in value if isinstance(item, str))
+    return "\n".join(values)
+
+
+def _check_llm_safety(
+    *,
+    phase: SafetyPhase,
+    text: str,
+    query: str,
+    org_id: object,
+    user_id: object,
+    metadata: dict[str, Any],
+    chunk_id: object | None = None,
+) -> SafetyDecision | None:
+    if not _llm_safety_enabled() or not text:
+        return None
+    decision = check_text(
+        SafetyRequest(
+            text=text,
+            phase=phase,
+            surface=SafetySurface.LIBRECHAT,
+            locale_hint=query,
+            org_id=str(org_id) if org_id is not None else None,
+        )
+    )
+    metadata.setdefault("_klai_safety", []).append(
+        {
+            "mode": LLM_SAFETY_LITELLM_MODE,
+            "phase": phase.value,
+            "allowed": decision.allowed,
+            "reason": decision.reason,
+            "categories": [category.value for category in decision.categories],
+            "chunk_id": chunk_id,
+        }
+    )
+    if decision.allowed:
+        return decision
+    logger.warning(
+        "llm_safety_litellm_decision mode=%s phase=%s org_id=%s user_id=%s reason=%s categories=%s chunk_id=%s",
+        LLM_SAFETY_LITELLM_MODE,
+        phase.value,
+        org_id,
+        user_id,
+        decision.reason,
+        ",".join(category.value for category in decision.categories),
+        chunk_id,
+    )
+    return decision
+
+
+def _llm_safety_refusal_text(query: str, decision: SafetyDecision | None) -> str:
+    reason = decision.reason if decision is not None else "safety_block"
+    return refusal_message(query, reason)
+
+
+def _llm_safety_short_circuit(
+    data: dict[str, Any],
+    *,
+    query: str,
+    decision: SafetyDecision | None,
+) -> dict[str, Any]:
+    """Return ``data`` mutated so LiteLLM skips the provider and emits a refusal.
+
+    LiteLLM honours ``mock_response`` by short-circuiting the upstream LLM
+    call and synthesising a normal assistant ``ModelResponse`` (works for both
+    streaming and non-streaming). This keeps the refusal surface as a regular
+    chat turn instead of a 400 error.
+    """
+    data["mock_response"] = _llm_safety_refusal_text(query, decision)
+    return data
 
 
 def _build_conversation_history(messages: list[dict]) -> list[dict]:
@@ -1500,6 +1609,96 @@ def _chunk_source_url(chunk: dict[str, Any]) -> str:
         if normalised and not normalised.startswith("/"):
             return normalised
     return ""
+
+
+def _filter_trusted_sources_for_chunks(
+    trusted_sources: list[dict[str, Any]],
+    chunks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not trusted_sources or not chunks:
+        return []
+
+    safe_evidence_ids = {
+        str(evidence_id)
+        for evidence_id in (chunk.get("evidence_id") for chunk in chunks)
+        if isinstance(evidence_id, str | int) and str(evidence_id)
+    }
+    safe_source_keys = {_source_key(_chunk_source_url(chunk)) for chunk in chunks}
+    safe_source_keys.discard("")
+    if not safe_evidence_ids and not safe_source_keys:
+        return []
+
+    filtered: list[dict[str, Any]] = []
+    for source in trusted_sources:
+        evidence_ids = source.get("evidence_ids")
+        source_evidence_ids = (
+            {str(evidence_id) for evidence_id in evidence_ids if isinstance(evidence_id, str | int)}
+            if isinstance(evidence_ids, list)
+            else set()
+        )
+        source_key = _source_key(source.get("url") or source.get("source_url"))
+        if source_evidence_ids.intersection(safe_evidence_ids) or source_key in safe_source_keys:
+            filtered.append(source)
+    return filtered
+
+
+def _source_key(url: object) -> str:
+    normalised = _normalise_guard_url(url)
+    return normalised.rstrip("/") or normalised
+
+
+def _filter_evidence_pack_for_chunks(
+    evidence_pack: object,
+    chunks: list[dict[str, Any]],
+) -> object:
+    if not isinstance(evidence_pack, dict):
+        return evidence_pack
+
+    safe_evidence_ids = {
+        str(evidence_id)
+        for evidence_id in (chunk.get("evidence_id") for chunk in chunks)
+        if isinstance(evidence_id, str | int) and str(evidence_id)
+    }
+    safe_chunk_ids = {
+        str(chunk_id)
+        for chunk_id in (chunk.get("chunk_id") for chunk in chunks)
+        if isinstance(chunk_id, str | int) and str(chunk_id)
+    }
+    safe_source_keys = {_source_key(_chunk_source_url(chunk)) for chunk in chunks}
+    safe_source_keys.discard("")
+
+    filtered = dict(evidence_pack)
+    items = evidence_pack.get("items")
+    if isinstance(items, list):
+        filtered["items"] = [
+            item
+            for item in items
+            if isinstance(item, dict)
+            and (
+                str(item.get("evidence_id")) in safe_evidence_ids
+                or str(item.get("chunk_id")) in safe_chunk_ids
+            )
+        ]
+
+    sources = evidence_pack.get("sources")
+    if isinstance(sources, list):
+        filtered["sources"] = [
+            source
+            for source in sources
+            if isinstance(source, dict)
+            and (
+                {
+                    str(evidence_id)
+                    for evidence_id in (source.get("evidence_ids") or [])
+                    if isinstance(evidence_id, str | int)
+                }.intersection(safe_evidence_ids)
+                or _source_key(source.get("source_url") or source.get("url")) in safe_source_keys
+            )
+        ]
+        if not filtered["sources"] and filtered.get("no_citable_reason") is None:
+            filtered["no_citable_reason"] = "safety_filtered_all_sources"
+
+    return filtered
 
 
 def _chunk_title(chunk: dict[str, Any]) -> str:
@@ -2461,6 +2660,18 @@ class KlaiKnowledgeHook(CustomLogger):
         if not librechat_user_id:
             return data
 
+        safety_metadata = data.setdefault("metadata", {})
+        input_safety_decision = _check_llm_safety(
+            phase=SafetyPhase.INPUT,
+            text=_conversation_text(messages) or query,
+            query=query,
+            org_id=org_id,
+            user_id=librechat_user_id,
+            metadata=safety_metadata,
+        )
+        if input_safety_decision is not None and not input_safety_decision.allowed and _llm_safety_enforces():
+            return _llm_safety_short_circuit(data, query=query, decision=input_safety_decision)
+
         if _is_title_generation_request(messages):
             logger.info(
                 "title_generation_request_detected org_id=%s user_id=%s",
@@ -2919,6 +3130,58 @@ class KlaiKnowledgeHook(CustomLogger):
         evidence_chunks = evidence_pack_items_as_chunks(evidence_pack)
         trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
         context_chunks = evidence_chunks
+        safety_metadata = data.setdefault("metadata", {})
+        if _llm_safety_enabled():
+            safe_context_chunks: list[dict] = []
+            blocked_chunk_ids: list[object] = []
+            last_block_decision: SafetyDecision | None = None
+            for chunk in context_chunks:
+                context_safety_decision = _check_llm_safety(
+                    phase=SafetyPhase.CONTEXT,
+                    text=_chunk_safety_text(chunk),
+                    query=query,
+                    org_id=org_id,
+                    user_id=user_id,
+                    metadata=safety_metadata,
+                    chunk_id=chunk.get("chunk_id"),
+                )
+                if context_safety_decision is None or context_safety_decision.allowed:
+                    safe_context_chunks.append(chunk)
+                    continue
+                blocked_chunk_ids.append(chunk.get("chunk_id"))
+                last_block_decision = context_safety_decision
+            if blocked_chunk_ids:
+                logger.error(
+                    "llm_safety_litellm_context_chunks_dropped mode=%s org_id=%s user_id=%s blocked=%d kept=%d chunk_ids=%s",
+                    LLM_SAFETY_LITELLM_MODE,
+                    org_id,
+                    user_id,
+                    len(blocked_chunk_ids),
+                    len(safe_context_chunks),
+                    blocked_chunk_ids,
+                )
+            if not safe_context_chunks and context_chunks and _llm_safety_enforces():
+                logger.error(
+                    "llm_safety_litellm_all_context_blocked mode=%s org_id=%s user_id=%s total_blocked=%d reason=%s",
+                    LLM_SAFETY_LITELLM_MODE,
+                    org_id,
+                    user_id,
+                    len(blocked_chunk_ids),
+                    last_block_decision.reason if last_block_decision else "unknown",
+                )
+                return _llm_safety_short_circuit(
+                    data, query=query, decision=last_block_decision
+                )
+            context_chunks = safe_context_chunks
+            if blocked_chunk_ids:
+                trusted_sources = _filter_trusted_sources_for_chunks(
+                    trusted_sources,
+                    context_chunks,
+                )
+                evidence_pack = _filter_evidence_pack_for_chunks(
+                    evidence_pack,
+                    context_chunks,
+                )
         # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2: confidence band drives the
         # anti-hallucination injection. None on bypass paths (fail-open).
         confidence_band: str | None = result.get("confidence_band")
