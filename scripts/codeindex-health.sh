@@ -17,6 +17,7 @@ set -u
 REPAIR=0
 RESTART_MCP=0
 QUIET=0
+PROJECT_NAME="${CODEINDEX_PROJECT_NAME:-klai}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -65,6 +66,10 @@ canonical_repo_from_status() {
   sed -n 's/^Repository: //p' | head -1
 }
 
+indexed_commit_from_status() {
+  sed -n 's/^Indexed commit: //p' | awk '{print $1}' | head -1
+}
+
 is_up_to_date() {
   grep -q 'Status: .*up-to-date'
 }
@@ -101,23 +106,26 @@ restart_mcp_processes() {
   sleep 1
 }
 
-run_update_from() {
-  local repo_dir="$1"
-  if [ ! -d "$repo_dir/.git" ] && [ ! -f "$repo_dir/.git" ]; then
-    warn "ERROR: CodeIndex repository path is not a git checkout: $repo_dir"
+run_analyze_from() {
+  local worktree_dir="$1"
+  if [ ! -d "$worktree_dir/.git" ] && [ ! -f "$worktree_dir/.git" ]; then
+    warn "ERROR: CodeIndex worktree path is not a git checkout: $worktree_dir"
     return 1
   fi
 
-  log "Running codeindex update from canonical repo: $repo_dir"
-  (cd "$repo_dir" && codeindex update)
+  log "Running codeindex analyze from current worktree: $worktree_dir"
+  (cd "$worktree_dir" && codeindex analyze "$PROJECT_NAME" "$worktree_dir" --force --no-embeddings)
 }
 
 main() {
   require_codeindex
 
-  local status repo_dir
+  local status repo_dir worktree_dir current_head indexed_commit
   status="$(status_output)"
   repo_dir="$(printf '%s\n' "$status" | canonical_repo_from_status)"
+  worktree_dir="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  current_head="$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || true)"
+  indexed_commit="$(printf '%s\n' "$status" | indexed_commit_from_status)"
 
   if [ -z "$repo_dir" ]; then
     warn "$status"
@@ -132,6 +140,22 @@ main() {
       restart_mcp_processes
     fi
     exit 0
+  fi
+
+  # CodeIndex status currently compares a Conductor worktree index against the
+  # canonical checkout's HEAD because both share the same git common-dir. If the
+  # stored index commit matches this worktree's HEAD, the index is healthy for
+  # this workspace even when `codeindex status` prints a stale warning.
+  if [ -n "$current_head" ] && [ -n "$indexed_commit" ]; then
+    case "$current_head" in
+      "$indexed_commit"*)
+        log "CodeIndex indexed commit matches current worktree ($indexed_commit); treating as healthy."
+        if [ "$RESTART_MCP" -eq 1 ]; then
+          restart_mcp_processes
+        fi
+        exit 0
+        ;;
+    esac
   fi
 
   if [ "$REPAIR" -ne 1 ]; then
@@ -150,14 +174,14 @@ main() {
   stop_codeindex_serve
 
   local update_log
-  update_log="$(run_update_from "$repo_dir" 2>&1)"
+  update_log="$(run_analyze_from "$worktree_dir" 2>&1)"
   local update_rc=$?
   log "$update_log"
 
   if [ "$update_rc" -ne 0 ] && printf '%s\n' "$update_log" | is_locked; then
-    warn "CodeIndex update hit a DB lock; stopping codeindex serve and retrying once."
+    warn "CodeIndex analyze hit a DB lock; stopping codeindex serve and retrying once."
     stop_codeindex_serve
-    update_log="$(run_update_from "$repo_dir" 2>&1)"
+    update_log="$(run_analyze_from "$worktree_dir" 2>&1)"
     update_rc=$?
     log "$update_log"
   fi
@@ -169,8 +193,22 @@ main() {
 
   status="$(status_output)"
   log "$status"
+  indexed_commit="$(printf '%s\n' "$status" | indexed_commit_from_status)"
 
-  if ! printf '%s\n' "$status" | is_up_to_date; then
+  if printf '%s\n' "$status" | is_up_to_date; then
+    :
+  elif [ -n "$current_head" ] && [ -n "$indexed_commit" ]; then
+    case "$current_head" in
+      "$indexed_commit"*)
+        log "CodeIndex indexed commit matches current worktree ($indexed_commit); repair succeeded."
+        ;;
+      *)
+        warn "ERROR: CodeIndex still reports stale after repair."
+        warn "$status"
+        exit 1
+        ;;
+    esac
+  else
     warn "ERROR: CodeIndex still reports stale after repair."
     warn "$status"
     exit 1
