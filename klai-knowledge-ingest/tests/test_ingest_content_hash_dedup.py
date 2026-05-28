@@ -288,6 +288,11 @@ async def test_content_hash_override_used_for_prechunked_ingest():
         patch("knowledge_ingest.pg_store.create_artifact", mock_create),
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
+            "knowledge_ingest.pg_store.insert_parent_chunks",
+            new_callable=AsyncMock,
+            return_value=[1, 2],
+        ),
+        patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,
             return_value=[[0.1] * 10, [0.2] * 10],
@@ -327,3 +332,96 @@ async def test_content_hash_override_used_for_prechunked_ingest():
     mock_get_hash.assert_called_once_with(conn, req.org_id, req.kb_slug, req.path)
     assert mock_create.call_args.kwargs["content_hash"] == "source-sha256"
     assert mock_upsert.call_args.kwargs["chunks"] == ["chunk one", "chunk two"]
+
+
+@pytest.mark.asyncio
+async def test_docling_skip_chunking_writes_parent_chunks() -> None:
+    """Regression for 2026-05-28: docling-prechunked uploads (skip_chunking
+    + chunks) MUST insert parent_chunks rows and thread parent_chunk_ids
+    into the Qdrant upsert.
+
+    Before this fix, the skip_chunking branch only set ``texts`` and never
+    populated ``parents_serialised`` / ``parent_index_per_child``, so the
+    insert_parent_chunks block was skipped. PDF uploads landed chunks in
+    Qdrant but parent_chunks stayed empty for the artifact, breaking
+    retrieval-api's child→parent lookup and causing chat to hallucinate
+    from off-topic chunks (Jantine's "Wie is Frank?" incident).
+    """
+    req = _make_request("Preview only")
+    req.content_hash = "docling-sha256"
+    req.skip_chunking = True
+    req.chunks = ["frank-paragraph", "verantwoordelijkheden-paragraph", "third"]
+    conn = _make_mock_conn()
+
+    mock_create = AsyncMock(return_value="artifact-docling-1")
+    # Each parent_chunks INSERT returns its generated id — order-preserved.
+    mock_insert_parents = AsyncMock(return_value=[101, 102, 103])
+
+    with (
+        patch(
+            "knowledge_ingest.pg_store.get_active_content_hash",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch("knowledge_ingest.pg_store.soft_delete_artifact", new_callable=AsyncMock),
+        patch("knowledge_ingest.pg_store.create_artifact", mock_create),
+        patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
+        patch("knowledge_ingest.pg_store.insert_parent_chunks", mock_insert_parents),
+        patch(
+            "knowledge_ingest.embedder.embed",
+            new_callable=AsyncMock,
+            return_value=[[0.1] * 10, [0.2] * 10, [0.3] * 10],
+        ),
+        patch("knowledge_ingest.qdrant_store.upsert_chunks", new_callable=AsyncMock) as mock_upsert,
+        patch(
+            "knowledge_ingest.org_config.is_enrichment_enabled",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
+            new_callable=AsyncMock,
+            return_value="private",
+        ),
+        patch(
+            "knowledge_ingest.portal_client.fetch_taxonomy_nodes",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "knowledge_ingest.content_labeler.generate_content_label",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch("knowledge_ingest.routes.ingest.settings") as mock_settings,
+    ):
+        mock_settings.graphiti_enabled = False
+        mock_settings.chunk_size = 1500
+        mock_settings.chunk_overlap = 200
+        mock_settings.enrichment_enabled = False
+
+        from knowledge_ingest.routes.ingest import ingest_document
+
+        await ingest_document(conn, req)
+
+    # Contract 1: insert_parent_chunks IS called for docling uploads.
+    # Before this fix, it was silently skipped — that's the bug.
+    mock_insert_parents.assert_awaited_once()
+    insert_kwargs = mock_insert_parents.call_args.kwargs
+    assert insert_kwargs["artifact_id"] == "artifact-docling-1"
+    assert insert_kwargs["org_id"] == "org1"
+    parents_passed = insert_kwargs["parents"]
+    assert len(parents_passed) == 3, "every docling chunk must become its own parent"
+    assert [p["text"] for p in parents_passed] == [
+        "frank-paragraph",
+        "verantwoordelijkheden-paragraph",
+        "third",
+    ]
+    # Each parent gets a sequential position (0-based) so retrieval-api can
+    # reconstruct document order if needed.
+    assert [p["position"] for p in parents_passed] == [0, 1, 2]
+
+    # Contract 2: parent_chunk_ids flows into the Qdrant upsert so chunks
+    # in Qdrant carry a parent_chunk_id field pointing to the new pg rows.
+    upsert_kwargs = mock_upsert.call_args.kwargs
+    assert upsert_kwargs["parent_chunk_ids"] == [101, 102, 103]
