@@ -16,6 +16,7 @@ import { invalidateKnowledgeSourceLists } from '@/lib/kb-query-keys'
 
 const ACCEPT_ATTR = '.csv,.doc,.docx,.json,.md,.pdf,.pptx,.tar,.txt,.xlsx,.xml,.zip'
 const MAX_FILE_BYTES = 200 * 1024 * 1024 // 200 MB - matches Caddy + portal-api
+const MAX_FILES_PER_UPLOAD = 10
 const POLL_INTERVAL_MS = 2000
 const POLL_TIMEOUT_MS = 10 * 60 * 1000 // 10 min - covers a 100 MB PDF on CPU docling
 
@@ -49,17 +50,21 @@ interface ServerUploadResponse {
 
 interface ClientRejection {
   filename: string
-  reason: 'oversize' | 'no_file_selected'
+  reason: 'oversize' | 'no_file_selected' | 'too_many_files'
   size?: number
 }
 
-function partitionClientSide(files: File[]): {
+export function partitionClientSide(files: File[], existingCount = 0): {
   ok: File[]
   rejected: ClientRejection[]
 } {
   const ok: File[] = []
   const rejected: ClientRejection[] = []
   for (const f of files) {
+    if (existingCount + ok.length >= MAX_FILES_PER_UPLOAD) {
+      rejected.push({ filename: f.name, reason: 'too_many_files', size: f.size })
+      continue
+    }
     if (f.size > MAX_FILE_BYTES) {
       rejected.push({ filename: f.name, reason: 'oversize', size: f.size })
       continue
@@ -149,10 +154,10 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const addFiles = useCallback((incoming: File[]) => {
-    const { ok, rejected } = partitionClientSide(incoming)
+    const { ok, rejected } = partitionClientSide(incoming, selectedFiles.length)
     if (ok.length > 0) setSelectedFiles((prev) => [...prev, ...ok])
     if (rejected.length > 0) setClientRejections((prev) => [...prev, ...rejected])
-  }, [])
+  }, [selectedFiles.length])
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
