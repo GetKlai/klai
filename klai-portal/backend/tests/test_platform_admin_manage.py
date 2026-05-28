@@ -442,6 +442,73 @@ async def test_platform_create_tenant_rolls_back_org_when_owner_insert_fails() -
     mock_zitadel.delete_org.assert_awaited_once_with("z-org-new")
 
 
+@pytest.mark.asyncio
+async def test_platform_create_tenant_reconciles_existing_owner_grant_when_owner_insert_fails() -> None:
+    """Existing Zitadel identities are not deleted on rollback, but their
+    global admin grant is reconciled with persisted DB memberships.
+    """
+    from app.api.admin.platform_manage import CreateTenantRequest, platform_create_tenant
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    background_tasks = MagicMock()
+    new_org_id = 12347
+
+    async def _fake_commit() -> None:
+        for call in db.add.call_args_list:
+            (obj,) = call.args
+            if obj.__class__.__name__ == "PortalOrg" and getattr(obj, "id", None) is None:
+                obj.id = new_org_id
+
+    db.commit.side_effect = _fake_commit
+    db.flush = AsyncMock(side_effect=_fake_commit)
+
+    tdb_session = AsyncMock()
+    tdb_session.add = MagicMock()
+    tdb_session.commit = AsyncMock(side_effect=RuntimeError("owner insert failed"))
+
+    cleanup_db = AsyncMock()
+    sync_mock = AsyncMock()
+
+    with (
+        patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(tdb_session)),
+        patch("app.api.admin.platform_manage.cross_org_session", return_value=AsyncContext(cleanup_db)),
+        patch("app.api.admin.platform_manage._sync_zitadel_role_grant", new=sync_mock),
+        patch("app.api.auth.invalidate_tenant_slug_cache"),
+        patch("app.api.admin.platform_manage.provision_tenant", new=AsyncMock()),
+        patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
+        patch("app.api.admin.platform_manage.zitadel") as mock_zitadel,
+    ):
+        mock_zitadel.create_org = AsyncMock(return_value={"id": "z-org-new"})
+        mock_zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
+        mock_zitadel.find_user_id_by_email = AsyncMock(return_value="existing-owner")
+        mock_zitadel.grant_user_role = AsyncMock()
+        mock_zitadel.remove_user = AsyncMock()
+        mock_zitadel.delete_org = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await platform_create_tenant(
+                body=CreateTenantRequest(
+                    company_name="Acme BV",
+                    owner_email="owner@acme.example",
+                    owner_first_name="Owner",
+                    owner_last_name="User",
+                ),
+                background_tasks=background_tasks,
+                perms=_platform_perms(),
+                db=db,
+            )
+
+    assert exc_info.value.status_code == 502
+    mock_zitadel.remove_user.assert_not_awaited()
+    sync_mock.assert_awaited_once_with(
+        zitadel_user_id="existing-owner",
+        old_role="company",
+        new_role="company",
+    )
+    mock_zitadel.delete_org.assert_awaited_once_with("z-org-new")
+
+
 # ---------------------------------------------------------------------------
 # REQ-6 (Finding A-7): partial-failure paths emit audit events
 # ---------------------------------------------------------------------------
