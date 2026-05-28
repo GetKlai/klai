@@ -1680,7 +1680,10 @@ def _render_kb_citation_content(
         return text, [], False, decision
     return (
         composed.content,
-        _merge_source_metadata(composed.sources, trusted_sources),
+        _prepend_primary_upload_source(
+            _merge_source_metadata(composed.sources, trusted_sources),
+            trusted_sources,
+        ),
         False,
         composed.decision,
     )
@@ -1695,6 +1698,18 @@ def _source_metadata_key(source: dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return f"{key}:{value.strip()}"
     return ""
+
+
+def _source_metadata_keys(source: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    url = _normalise_guard_url(source.get("url") or source.get("source_url"))
+    if url:
+        keys.append(f"url:{url}")
+    for key in ("artifact_id", "source_id", "title", "source_label"):
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            keys.append(f"{key}:{value.strip()}")
+    return keys
 
 
 def _source_with_metadata(source: dict[str, Any], *, label: str) -> dict[str, Any]:
@@ -1721,16 +1736,20 @@ def _merge_source_metadata(
     rendered_sources: list[dict[str, Any]],
     trusted_sources: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    trusted_by_key = {
-        key: source
-        for source in trusted_sources
-        if isinstance(source, dict) and (key := _source_metadata_key(source))
-    }
+    trusted_by_key: dict[str, dict[str, Any]] = {}
+    for source in trusted_sources:
+        if not isinstance(source, dict):
+            continue
+        for key in _source_metadata_keys(source):
+            trusted_by_key.setdefault(key, source)
     enriched: list[dict[str, Any]] = []
     for index, source in enumerate(rendered_sources, 1):
         if not isinstance(source, dict):
             continue
-        match = trusted_by_key.get(_source_metadata_key(source))
+        match = next(
+            (trusted_by_key[key] for key in _source_metadata_keys(source) if key in trusted_by_key),
+            None,
+        )
         merged = dict(source)
         if match is not None:
             for key in (
@@ -1748,6 +1767,47 @@ def _merge_source_metadata(
         merged["url"] = _normalise_guard_url(merged.get("url"))
         enriched.append(merged)
     return enriched
+
+
+def _prepend_primary_upload_source(
+    rendered_sources: list[dict[str, Any]],
+    trusted_sources: list[dict[str, Any]],
+    *,
+    max_sources: int = 3,
+) -> list[dict[str, Any]]:
+    """Keep the EvidencePack's primary uploaded document visible.
+
+    The post-call selector validates sources against free-form answer text.
+    That is useful for filtering model-authored noise, but OCR-heavy PDFs can
+    make token overlap brittle. EvidencePack.sources is already trusted
+    retrieval provenance, so a URL-less upload returned as the primary source
+    must not disappear from the visible citation footer.
+    """
+    if not trusted_sources:
+        return rendered_sources
+    primary = trusted_sources[0]
+    if _normalise_guard_url(primary.get("url") or primary.get("source_url")):
+        return rendered_sources
+    if not primary.get("artifact_id"):
+        return rendered_sources
+
+    primary_keys = set(_source_metadata_keys(primary))
+    rendered_keys = {
+        key
+        for source in rendered_sources
+        if isinstance(source, dict)
+        for key in _source_metadata_keys(source)
+    }
+    if primary_keys & rendered_keys:
+        return rendered_sources
+
+    combined = [_source_with_metadata(primary, label="1"), *rendered_sources]
+    relabelled: list[dict[str, Any]] = []
+    for index, source in enumerate(combined[:max_sources], 1):
+        updated = dict(source)
+        updated["label"] = str(index)
+        relabelled.append(updated)
+    return relabelled
 
 
 def _trusted_sources_visible_fallback(
