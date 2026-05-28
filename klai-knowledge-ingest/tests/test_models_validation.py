@@ -24,6 +24,16 @@ class TestIngestRequestValidation:
         )
         assert len(req.content) == 500_000
 
+    def test_title_field_is_preserved(self):
+        req = IngestRequest(
+            org_id="org1",
+            kb_slug="test",
+            path="file:sha256:abc123",
+            content="plain uploaded content",
+            title="CV_Jantine_Doornbos.pdf",
+        )
+        assert req.title == "CV_Jantine_Doornbos.pdf"
+
 
 class TestRetrieveRequestValidation:
     def test_query_over_2k_rejected(self):

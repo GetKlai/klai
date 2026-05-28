@@ -21,6 +21,7 @@ class IngestRequest(BaseModel):
     kb_slug: str         # e.g. "personal"
     path: str            # e.g. "my-note.md" (relative within KB)
     content: str = Field(max_length=500_000)  # Full markdown content (with optional frontmatter)
+    title: str | None = None  # Human-readable source title from portal/connectors
     user_id: str | None = Field(
         default=None,
         description=(
