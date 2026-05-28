@@ -156,7 +156,18 @@ def _normalize_path_prefix(base_url: str, path_prefix: str | None) -> str | None
             or parsed_prefix.netloc.lower() != parsed_base.netloc.lower()
         ):
             raise HTTPException(status_code=400, detail="path_prefix_must_match_base_url")
-        raw = parsed_prefix.path or "/"
+        prefix_path = "/" + (parsed_prefix.path or "/").lstrip("/")
+        base_path = "/" + (parsed_base.path or "/").lstrip("/")
+        if not base_path.endswith("/"):
+            base_path += "/"
+        if not prefix_path.endswith("/"):
+            prefix_path += "/"
+        if prefix_path == base_path:
+            raw = "/"
+        elif prefix_path.startswith(base_path):
+            raw = "/" + prefix_path[len(base_path) :]
+        else:
+            raise HTTPException(status_code=400, detail="path_prefix_must_match_base_url")
     normalized = "/" + raw.lstrip("/")
     return None if normalized == "/" else normalized
 

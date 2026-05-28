@@ -15,25 +15,26 @@ This script repairs the existing rows so chat starts working immediately
 for every tenant that uploaded docling PDFs since SPEC-KB-FILE-UPLOAD-001
 landed:
 
-1. Find every artifact where ``extra->>'pipeline' = 'docling'`` AND no
-   ``parent_chunks`` rows exist.
+1. Find every active artifact where ``extra->>'pipeline' = 'docling'``.
 2. Pull the Qdrant child points for the artifact (ordered by
    ``chunk_index``), extract the ``text`` payload.
-3. INSERT each child as its own parent_chunk row (1:1, matching the
-   in-code fix's semantic: every docling chunk IS its own semantic
-   parent — Docling already chunks at paragraph/section granularity).
+3. INSERT each child as its own parent_chunk row when missing (1:1,
+   matching the in-code fix's semantic: every docling chunk IS its own
+   semantic parent — Docling already chunks at paragraph/section granularity).
 4. UPDATE the Qdrant points so each child's payload carries
    ``parent_chunk_id`` pointing to the new pg row. Without step 4 the
    retrieval-api's parent-lookup still fails because the Qdrant payload
    has no link to the new pg rows.
 
-Idempotent: re-running on an artifact that already has parent_chunks is
-a no-op (the LEFT JOIN skips it).
+Idempotent and retryable: re-running on an artifact that already has
+parent_chunks re-applies the Qdrant ``parent_chunk_id`` payload patch.
+This repairs half-failed runs where PostgreSQL inserts succeeded but the
+Qdrant payload update failed.
 
 Run from inside the knowledge-ingest container:
 
     docker exec klai-core-knowledge-ingest-1 \\
-        python -m knowledge_ingest.scripts.backfill_docling_parent_chunks
+        python scripts/backfill_docling_parent_chunks.py
 """
 
 from __future__ import annotations
@@ -43,9 +44,12 @@ import json
 import os
 import sys
 import urllib.request
+from pathlib import Path
 
 import asyncpg
 import structlog
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from knowledge_ingest.config import settings
 
@@ -127,6 +131,22 @@ def _qdrant_set_parent_chunk_ids(
             resp.read()
 
 
+async def _existing_parent_chunk_ids(
+    conn: asyncpg.Connection,
+    artifact_id: str,
+) -> list[int]:
+    rows = await conn.fetch(
+        """
+        SELECT id
+        FROM knowledge.parent_chunks
+        WHERE artifact_id = $1
+        ORDER BY position ASC, id ASC
+        """,
+        artifact_id,
+    )
+    return [int(row["id"]) for row in rows]
+
+
 async def _backfill_one_artifact(
     conn: asyncpg.Connection,
     org_id: str,
@@ -162,14 +182,21 @@ async def _backfill_one_artifact(
     # Set tenant context so RLS lets the inserts through.
     await conn.execute("SELECT set_config('app.current_org_id', $1, false)", org_id)
 
-    # Idempotency: double-check no parent_chunks already exist for this
-    # artifact (the SQL filter caught this, but a concurrent run might race).
-    existing = await conn.fetchval(
-        "SELECT COUNT(*) FROM knowledge.parent_chunks WHERE artifact_id = $1",
-        artifact_id,
-    )
-    if existing:
-        return 0, "already_has_parent_chunks"
+    existing_ids = await _existing_parent_chunk_ids(conn, artifact_id)
+    if existing_ids:
+        if len(existing_ids) != len(point_ids_in_order):
+            return 0, "parent_chunk_count_mismatch"
+        expected_mapping = dict(zip(point_ids_in_order, existing_ids, strict=True))
+        already_repaired = all(
+            int((point.get("payload") or {}).get("parent_chunk_id") or 0)
+            == expected_mapping[str(point["id"])]
+            for point in points
+            if str(point["id"]) in expected_mapping
+        )
+        if already_repaired:
+            return 0, "already_repaired"
+        _qdrant_set_parent_chunk_ids(expected_mapping)
+        return 0, "qdrant_parent_ids_repaired"
 
     # Insert and capture ids. asyncpg returns RECORD per row.
     inserted_ids: list[int] = []
@@ -211,17 +238,17 @@ async def _list_docling_artifacts_without_parents(
 
     - was ingested via docling (``extra->>'pipeline' = 'docling'``)
     - is the current active row (``belief_time_end = sentinel``)
-    - has zero parent_chunks rows
+
+    The function name is kept for older operator notes; it now returns all
+    active docling artifacts so reruns can repair Qdrant payloads after a
+    partial failure.
     """
     rows = await conn.fetch(
         """
         SELECT a.org_id, a.kb_slug, a.id::text AS artifact_id
         FROM knowledge.artifacts a
-        LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
         WHERE a.extra::jsonb->>'pipeline' = 'docling'
           AND a.belief_time_end = '253402300800'
-        GROUP BY a.org_id, a.kb_slug, a.id
-        HAVING COUNT(pc.id) = 0
         ORDER BY a.org_id, a.kb_slug, a.created_at DESC
         """
     )
@@ -269,7 +296,7 @@ async def main() -> int:
     conn = await asyncpg.connect(**_parse_pg_dsn(dsn))
     try:
         targets = await _list_docling_artifacts_without_parents(conn)
-        print(f"Found {len(targets)} docling artifacts missing parent_chunks.")
+        print(f"Found {len(targets)} active docling artifacts to verify/backfill.")
 
         total_inserted = 0
         outcomes: dict[str, int] = {}

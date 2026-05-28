@@ -298,7 +298,7 @@ async def test_single_url_skip_unchanged() -> None:
     with (
         patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock),
         patch(
-            "knowledge_ingest.routes.crawl.assert_caller_identity",
+            "knowledge_ingest.routes.crawl.assert_caller_identity_tenant_only",
             new_callable=AsyncMock,
         ),
         patch(
@@ -349,7 +349,7 @@ async def test_single_url_url_key() -> None:
     with (
         patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock),
         patch(
-            "knowledge_ingest.routes.crawl.assert_caller_identity",
+            "knowledge_ingest.routes.crawl.assert_caller_identity_tenant_only",
             new_callable=AsyncMock,
         ),
         patch(
