@@ -404,6 +404,35 @@ def test_trusted_sources_include_uploaded_documents_without_source_url() -> None
     assert format_sources_markdown(sources) == "- CV_Jantine_Doornbos.pdf"
 
 
+def test_trusted_source_composition_supports_uploaded_documents_without_url() -> None:
+    composed = compose_answer_with_trusted_sources(
+        "Frank Wolters is verantwoordelijk voor Data Readiness.",
+        [
+            {
+                "label": "1",
+                "title": "CV_Jantine_Doornbos.pdf",
+                "url": "",
+                "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
+                "evidence_ids": ["E1"],
+            }
+        ],
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
+                "title": "CV_Jantine_Doornbos.pdf",
+                "source_url": None,
+                "text": "Frank Wolters is verantwoordelijk voor Data Readiness.",
+            }
+        ],
+    )
+
+    assert composed.sources == [
+        {"label": "1", "title": "CV_Jantine_Doornbos.pdf", "url": ""}
+    ]
+    assert format_sources_markdown(composed.sources) == "- CV_Jantine_Doornbos.pdf"
+
+
 def test_trusted_source_composition_never_reconstructs_sources_from_text_or_chunks() -> None:
     composed = compose_answer_with_trusted_sources(
         "Zie [fake](https://docs.getklai.com/fake).\n\nSources:\n1. Bad https://bad.example",

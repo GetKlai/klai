@@ -940,16 +940,16 @@ def _trusted_candidate_sources(
     seen_keys: set[str] = set()
     for source in trusted_sources:
         url = normalise_source_url(source.get("url"))
-        if not url:
-            continue
-        key = source_url_key(url)
+        artifact_id = _string_value(source.get("artifact_id"))
+        source_id = _string_value(source.get("source_id"))
+        key = source_url_key(url) if url else artifact_id or source_id or ""
         if not key:
             continue
         evidence_texts = _source_evidence_texts(source, evidence_chunks)
         candidate_sources.append(
             CitationSource(
                 key=key,
-                url=url,
+                url=url or "",
                 title=str(source.get("title") or "Source"),
                 chunk_texts=evidence_texts,
                 retrieval_score=_source_retrieval_score(source, evidence_chunks),
