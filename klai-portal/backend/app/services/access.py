@@ -14,6 +14,7 @@ All query functions enforce org-level scoping. Group-scoped access is layered on
                          ``owner_type=='user'`` check inline.
 """
 
+from klai_kb_slugs import personal_kb_slug
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -131,7 +132,7 @@ async def get_accessible_kb_slugs(user_id: str, db: AsyncSession, *, user_role: 
     # REQ-1: personal role cannot see org-wide KB slugs
     is_personal = user_role == "personal"
     org_slugs = [] if is_personal else ["org"]
-    base_slugs = [f"personal-{user_id}"] + org_slugs + [f"group:{gid}" for gid in group_ids]
+    base_slugs = [personal_kb_slug(user_id)] + org_slugs + [f"group:{gid}" for gid in group_ids]
 
     # Named KB slugs via group-KB access
     group_kb_slugs: list[str] = []

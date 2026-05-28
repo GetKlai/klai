@@ -1,0 +1,51 @@
+# SPEC-RAG-PERSONAL-SCOPE-001 REQ-1 — block inline ``f"personal-{...}"``
+# string literals outside the single-source-of-truth library.
+#
+# Why: pre-cleanup, the slug template ``personal-<zitadel_user_id>`` was
+# reconstructed inline in 5 services (portal-api, retrieval-api,
+# knowledge-mcp, knowledge-ingest, deploy/litellm). The Jantine incident
+# (2026-05-27) surfaced that this kind of multi-file string contract
+# drifts silently — see ``url-shape-multi-file-drift`` in
+# ``.claude/rules/klai/pitfalls/process-rules.md``.
+#
+# Single source of truth post-fix: ``klai-libs/kb-slugs``. Every
+# production caller MUST import and call ``personal_kb_slug(user_id)``.
+# A new inline literal is a regression — block at CI.
+#
+# Allow-listed sources:
+#   klai-libs/kb-slugs/klai_kb_slugs/__init__.py  (the source itself)
+#   **/tests/**                                    (drift tests pin the literal byte-equal)
+
+id: no-inline-personal-kb-slug
+language: python
+severity: error
+message: |
+  Inline ``f"personal-{...}"`` string literal is forbidden outside
+  ``klai-libs/kb-slugs`` (SPEC-RAG-PERSONAL-SCOPE-001 REQ-1).
+
+  Import the canonical helper and call it instead:
+
+      from klai_kb_slugs import personal_kb_slug
+      slug = personal_kb_slug(user_id)
+
+rule:
+  any:
+    - pattern: f"personal-{$$$ARGS}"
+    - pattern: f'personal-{$$$ARGS}'
+
+files:
+  # Services with an ast-grep CI step that scans their full source dir.
+  # Adding a path here without a corresponding CI scan would let new
+  # regressions slip through silently, so this list is deliberately
+  # narrow to what CI actually enforces.
+  - klai-portal/backend/app/**/*.py
+  - klai-knowledge-mcp/**/*.py
+  - klai-knowledge-ingest/knowledge_ingest/**/*.py
+
+ignores:
+  # Single source of truth. The literal lives here, once.
+  - klai-libs/kb-slugs/klai_kb_slugs/__init__.py
+  # Test files that pin the literal byte-equal pattern (drift guards) are
+  # intentionally exempt — they're not production code paths.
+  - "**/tests/**"
+  - "**/test_*.py"

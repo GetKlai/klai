@@ -842,29 +842,21 @@ class TestKlaiKnowledgeHookSlugsTriState:
         )
 
     @pytest.mark.asyncio
-    async def test_empty_slugs_and_personal_on_narrows_to_canonical_personal_kb(
+    async def test_empty_slugs_and_personal_on_sends_scope_personal_no_kb_slugs(
         self, monkeypatch
     ):
-        """[] + personal=True + portal provides slug → scope=personal AND kb_slugs=[slug].
+        """[] + personal=True → scope=personal, kb_slugs absent.
 
-        Bug discovered 2026-05-27 when Jantine flagged that company.csv
-        chunks from a user-created KB called "test2" showed up while
-        she had "Persoonlijk" selected and "test2" explicitly unchecked
-        in the dropdown.
+        Post-SPEC-RAG-PERSONAL-SCOPE-001: retrieval-api enforces canonical
+        Persoonlijk-KB narrowing server-side via
+        ``klai-libs/kb-slugs.personal_kb_slug``. The hook ships
+        scope=personal with no client-side kb_slug filter — the server
+        adds the canonical filter to the must-conditions unconditionally.
 
-        Root cause: the "Persoonlijk" dropdown entry lists user-created
-        KBs (e.g. "test2") as SEPARATE items. The previous wire contract
-        sent ``kb_slugs=[]`` + scope=personal, which retrieval-api
-        interpreted as "all chunks where owner_user_id matches" —
-        including chunks from user-owned KBs that the user explicitly
-        DESELECTED in the dropdown.
-
-        Fix: portal-api returns the canonical "Persoonlijk" KB slug as
-        ``personal_kb_slug`` in the knowledge-feature response (single
-        source of truth — owned by
-        ``app.services.default_knowledge_bases.personal_kb_slug``). The
-        hook narrows the retrieve request to that exact slug, with no
-        string reconstruction on this side.
+        Pre-fix this branch used to build ``kb_slugs=["personal-<user>"]``
+        as defence-in-depth. With server-side enforcement that layer is
+        redundant — fail-loud server semantics make the client-side
+        reconstruction pure cruft.
         """
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
@@ -877,62 +869,6 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "kb_narrow": False,
                 "version": 0,
                 "zitadel_user_id": "300000000000000002",
-                "personal_kb_slug": "personal-300000000000000002",
-            }
-        )
-        data = {"user": "u1" * 12, "messages": [
-            {"role": "user", "content": "What about that thing?"}
-        ]}
-
-        with patch("klai_knowledge.httpx.AsyncClient") as cls:
-            mc = AsyncMock()
-            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
-            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
-            mc.__aenter__ = AsyncMock(return_value=mc)
-            mc.__aexit__ = AsyncMock(return_value=None)
-            cls.return_value = mc
-
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
-
-            assert mc.post.call_count == 1
-            body = mc.post.call_args.kwargs["json"]
-            assert body["scope"] == "personal", (
-                f"Expected scope=personal when only personal is enabled, "
-                f"got {body['scope']!r}"
-            )
-            # NEW behaviour: kb_slugs MUST be the canonical personal KB
-            # slug as provided by portal-api. Without this filter,
-            # retrieval-api returns chunks from EVERY user-owned KB
-            # (the previous bug).
-            assert body.get("kb_slugs") == ["personal-300000000000000002"], (
-                "Personal scope must narrow to the canonical "
-                "'personal-<user_id>' KB. Sending no filter caused "
-                "user-created KBs like 'test2' to leak in."
-            )
-
-    @pytest.mark.asyncio
-    async def test_empty_slugs_and_personal_on_falls_through_when_portal_omits_slug(
-        self, monkeypatch
-    ):
-        """[] + personal=True + portal omits slug → scope=personal, kb_slugs absent.
-
-        Backwards-compatible fall-through for a mid-deploy state where
-        portal-api hasn't shipped ``personal_kb_slug`` yet. Same wire
-        shape as the pre-2026-05-27 contract; preferable to a 0-result
-        silent breakage when the field is None.
-        """
-        mod = _load_hook(monkeypatch)
-        hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(
-            feature={
-                "enabled": True,
-                "kb_retrieval_enabled": True,
-                "kb_personal_enabled": True,
-                "kb_slugs_filter": [],
-                "kb_narrow": False,
-                "version": 0,
-                "zitadel_user_id": "300000000000000002",
-                # personal_kb_slug intentionally omitted
             }
         )
         data = {"user": "u1" * 12, "messages": [
@@ -953,8 +889,8 @@ class TestKlaiKnowledgeHookSlugsTriState:
         body = mc.post.call_args.kwargs["json"]
         assert body["scope"] == "personal"
         assert "kb_slugs" not in body or body["kb_slugs"] is None, (
-            "When portal omits personal_kb_slug we fall through to "
-            "scope=personal without a kb_slug filter — never invent the slug."
+            "Hook must NOT send a kb_slugs filter for scope=personal — "
+            "retrieval-api enforces canonical narrowing server-side."
         )
 
     @pytest.mark.asyncio

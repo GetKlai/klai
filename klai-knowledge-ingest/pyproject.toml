@@ -24,6 +24,11 @@ dependencies = [
     "klai-connector-credentials",
     "klai-image-storage",
     "klai-identity-assert",  # SPEC-TI-003 AC-6: identity assertion
+    # SPEC-RAG-PERSONAL-SCOPE-001 REQ-1: canonical personal-KB slug helper.
+    # Single source of truth shared with portal-api + retrieval-api +
+    # knowledge-mcp. Used by pg_store + ingest routes to derive the
+    # personal-KB slug from a verified user_id.
+    "klai-kb-slugs",
     # SPEC-CRAWLER-004 Fase A: image pipeline (Garage S3 + magic-byte MIME detection).
     "minio>=7.2",
     "filetype>=1.2",
@@ -40,6 +45,7 @@ dependencies = [
 klai-connector-credentials = { path = "../klai-libs/connector-credentials", editable = true }
 klai-image-storage = { path = "../klai-libs/image-storage", editable = true }
 klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
+klai-kb-slugs = { path = "../klai-libs/kb-slugs", editable = true }
 
 [project.optional-dependencies]
 dev = [
