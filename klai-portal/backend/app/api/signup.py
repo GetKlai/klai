@@ -36,7 +36,7 @@ from app.core.database import get_db, set_tenant
 from app.models.portal import PortalOrg, PortalUser
 from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
-from app.services.domain_validation import is_free_email_provider
+from app.services.domain_validation import is_free_email_provider, primary_domain_for_email_domain
 from app.services.events import emit_event
 from app.services.provisioning import provision_tenant
 from app.services.request_ip import resolve_caller_ip_subnet
@@ -285,7 +285,7 @@ async def signup(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
             slug=_to_slug(body.company_name, zitadel_org_id),
-            primary_domain=_email_domain,
+            primary_domain=primary_domain_for_email_domain(_email_domain),
             auto_accept_same_domain=False,
         )
         db.add(org_row)
@@ -538,7 +538,7 @@ async def signup_social(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
             slug=_to_slug(body.company_name, zitadel_org_id),
-            primary_domain=_social_domain,
+            primary_domain=primary_domain_for_email_domain(_social_domain),
             auto_accept_same_domain=False,
         )
         db.add(org_row)

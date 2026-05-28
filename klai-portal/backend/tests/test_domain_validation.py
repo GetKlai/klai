@@ -7,6 +7,8 @@ Covers:
 - Domain normalization (lowercase, strip)
 """
 
+import pytest
+
 
 class TestFreeEmailBlocklist:
     """Free email providers must be rejected when adding allowed domains."""
@@ -45,6 +47,50 @@ class TestFreeEmailBlocklist:
         from app.services.domain_validation import is_free_email_provider
 
         assert is_free_email_provider("Gmail.COM") is True
+
+    @pytest.mark.parametrize(
+        "domain",
+        [
+            "googlemail.com",
+            "hotmail.nl",
+            "outlook.nl",
+            "live.nl",
+            "msn.com",
+            "aol.com",
+            "me.com",
+            "mac.com",
+            "protonmail.com",
+            "pm.me",
+            "mail.com",
+            "fastmail.com",
+            "duck.com",
+            "tuta.com",
+            "mailbox.org",
+            "zoho.com",
+            "web.de",
+            "yahoo.nl",
+            "gmx.de",
+            "ziggo.nl",
+            "kpnmail.nl",
+        ],
+    )
+    def test_common_personal_mail_domains_are_blocked(self, domain: str) -> None:
+        from app.services.domain_validation import is_free_email_provider
+
+        assert is_free_email_provider(domain) is True
+
+
+class TestPrimaryDomainForEmailDomain:
+    def test_corporate_domain_is_claimable(self) -> None:
+        from app.services.domain_validation import primary_domain_for_email_domain
+
+        assert primary_domain_for_email_domain("Acme.NL") == "acme.nl"
+
+    @pytest.mark.parametrize("domain", ["gmail.com", "hotmail.nl", "protonmail.com", "me.com"])
+    def test_personal_mail_domain_is_not_claimable(self, domain: str) -> None:
+        from app.services.domain_validation import primary_domain_for_email_domain
+
+        assert primary_domain_for_email_domain(domain) == ""
 
 
 class TestDomainNormalization:
