@@ -1594,14 +1594,39 @@ def _render_kb_citation_content(
     )
     if not composed.content or not composed.sources:
         decision = dict(composed.decision)
+        fallback_sources = _trusted_sources_visible_fallback(trusted_sources)
+        if fallback_sources:
+            decision["fallback"] = "document_level_trusted_sources"
+            decision["no_citable_reason"] = "selector_rejected_all_sources_fallback"
+            return composed.content or text, fallback_sources, False, decision
         if kb_narrow:
             decision["no_citable_reason"] = "selector_rejected_all_sources"
             return strict_refusal, [], True, decision
-        # Broad mode: pass model's answer through even when the source
-        # selector found nothing — general knowledge is still valid.
+        # Broad mode: pass model's answer through even when no trusted
+        # document-level source can be rendered — general knowledge is valid.
         decision["no_citable_reason"] = "selector_rejected_all_sources_broad_passthrough"
         return text, [], False, decision
     return composed.content, composed.sources, False, composed.decision
+
+
+def _trusted_sources_visible_fallback(
+    trusted_sources: list[dict[str, Any]],
+    *,
+    max_sources: int = 3,
+) -> list[dict[str, str]]:
+    """Render document-level sources when answer/source text matching is too strict."""
+    sources: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for source in trusted_sources:
+        url = _normalise_guard_url(source.get("url"))
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        title = str(source.get("title") or source.get("source_label") or "Source").strip()
+        sources.append({"label": str(len(sources) + 1), "title": title or "Source", "url": url})
+        if len(sources) >= max_sources:
+            break
+    return sources
 
 
 def _plural_nl(count: int, singular: str, plural: str) -> str:

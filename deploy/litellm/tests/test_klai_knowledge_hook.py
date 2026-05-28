@@ -3018,6 +3018,75 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
     @pytest.mark.asyncio
+    async def test_post_call_guard_falls_back_to_document_sources_when_selector_rejects(
+        self, monkeypatch, caplog
+    ):
+        """LibreChat must still show provenance when trusted KB sources exist."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        caplog.set_level("WARNING", logger="klai_knowledge")
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=(
+                            "Frank Wolters trekt Data Readiness en Governance & Ethiek."
+                        )
+                    )
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Wie is waarvoor verantwoordelijk?",
+                    "kb_narrow": False,
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "evidence_id": "E1",
+                            "title": "Organogram",
+                            "source_url": "https://kb.getklai.test/organogram.pdf",
+                            "text": "Budget planning and office locations.",
+                        }
+                    ],
+                    # Deliberately no evidence_ids/source text match for the
+                    # selector. The fallback must still show the trusted doc.
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Organogram",
+                            "url": "https://kb.getklai.test/organogram.pdf",
+                            "evidence_ids": ["different-evidence-id"],
+                        }
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        content = response.choices[0].message.content
+        assert "Frank Wolters trekt Data Readiness" in content
+        assert "**Bronnen**" in content
+        assert "- [Organogram](https://kb.getklai.test/organogram.pdf)" in content
+        assert "**Agent activiteit**" in content
+        assert response.choices[0].message.sources == [
+            {
+                "label": "1",
+                "title": "Organogram",
+                "url": "https://kb.getklai.test/organogram.pdf",
+            }
+        ]
+        assert "selector_rejected_all_sources_fallback" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_post_call_guard_refuses_answer_in_narrow_mode_without_citable_sources(
         self, monkeypatch, caplog
     ):
