@@ -1354,21 +1354,30 @@ async def list_artifacts_for_connector(
     """List active artifacts under a connector with chunk counts. Returns ``(rows, total)``."""
     rows = await conn.fetch(
         """
+        WITH page_artifacts AS (
+            SELECT
+                a.id,
+                a.path,
+                a.content_type,
+                a.created_at
+            FROM knowledge.artifacts a
+            WHERE a.org_id = $1
+              AND a.kb_slug = $2
+              AND a.belief_time_end = $3
+              AND a.extra::jsonb->>'source_connector_id' = $4
+            ORDER BY a.created_at DESC
+            LIMIT $5 OFFSET $6
+        )
         SELECT
-            a.id::text AS id,
-            a.path AS path,
-            a.content_type AS content_type,
-            a.created_at AS created_at,
+            pa.id::text AS id,
+            pa.path AS path,
+            pa.content_type AS content_type,
+            pa.created_at AS created_at,
             COUNT(pc.id) AS chunks_count
-        FROM knowledge.artifacts a
-        LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
-        WHERE a.org_id = $1
-          AND a.kb_slug = $2
-          AND a.belief_time_end = $3
-          AND a.extra::jsonb->>'source_connector_id' = $4
-        GROUP BY a.id, a.path, a.content_type, a.created_at
-        ORDER BY a.created_at DESC
-        LIMIT $5 OFFSET $6
+        FROM page_artifacts pa
+        LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = pa.id
+        GROUP BY pa.id, pa.path, pa.content_type, pa.created_at
+        ORDER BY pa.created_at DESC
         """,
         org_id,
         kb_slug,
