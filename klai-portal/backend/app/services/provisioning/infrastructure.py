@@ -441,6 +441,20 @@ def _start_librechat_container(
             raise RuntimeError(f"LibreChat patch file missing: {patch_container_path}")
         volumes[f"{librechat_host_base}/{source_rel_path}"] = {"bind": destination, "mode": "ro"}
 
+    # Klai entrypoint wrapper that forces light theme on every tenant (LibreChat
+    # has no server-side theme config — see deploy/librechat/klai-entrypoint.sh).
+    # Mounted read-only; the container `entrypoint` below runs it before boot.
+    # Fail-loud if missing: a missing bind source would make Docker create an
+    # empty directory at /klai-entrypoint.sh and the container would crash on
+    # start. The file is synced to the host by deploy-compose.yml.
+    entrypoint_container_path = Path(settings.librechat_container_data_path) / "klai-entrypoint.sh"
+    if not entrypoint_container_path.exists():
+        raise RuntimeError(f"LibreChat entrypoint wrapper missing: {entrypoint_container_path}")
+    volumes[f"{librechat_host_base}/klai-entrypoint.sh"] = {
+        "bind": "/klai-entrypoint.sh",
+        "mode": "ro",
+    }
+
     # @MX:ANCHOR provisioning-labels — SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2.
     # These three labels mark the container as klasse-B (provisioning-managed)
     # so that hooks (.claude/hooks/klai/container-hygiene-preflight.sh) and
@@ -476,6 +490,11 @@ def _start_librechat_container(
         environment=container_environment,
         volumes=volumes,
         network="klai-net",
+        # Force light theme via the Klai entrypoint wrapper. Setting entrypoint
+        # requires passing the original command through explicitly so LibreChat
+        # still boots with `npm run backend`; the wrapper forwards it via "$@".
+        entrypoint=["/bin/sh", "/klai-entrypoint.sh"],
+        command=["npm", "run", "backend"],
     )
 
     # Connect the extra networks while the container is still STOPPED, so the

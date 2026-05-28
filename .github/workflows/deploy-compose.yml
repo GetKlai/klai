@@ -10,6 +10,7 @@ on:
       - 'deploy/alloy/config.alloy'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — alloy log-pipeline config
       - 'deploy/searxng/settings.yml'             # SPEC-INFRA-CONFIG-SYNC-001 R3 — searxng search config
       - 'deploy/vexa/profiles.yaml'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — vexa runtime-api meeting-bot profiles
+      - 'deploy/librechat/klai-entrypoint.sh'     # force light theme — synced before librechat-getklai recreate
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
       - 'deploy/scripts/**'                       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — compose-up wrapper + audit-orphan-snapshot
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
@@ -67,6 +68,7 @@ jobs:
               deploy/alloy/config.alloy \
               deploy/searxng/settings.yml \
               deploy/vexa/profiles.yaml \
+              deploy/librechat/klai-entrypoint.sh \
               deploy/grafana/provisioning \
               deploy/scripts \
               deploy/systemd \
@@ -204,6 +206,12 @@ jobs:
             sync_and_recreate alloy       deploy/alloy/config.alloy     /opt/klai/alloy/config.alloy
             sync_and_recreate searxng     deploy/searxng/settings.yml   /opt/klai/searxng/settings.yml
             sync_and_recreate runtime-api deploy/vexa/profiles.yaml     /opt/klai/vexa/profiles.yaml
+            # Force-light-theme wrapper for the compose-managed getklai tenant.
+            # Copies the script to the host THEN force-recreates the container,
+            # so the bind-mount source exists before (re)create — no empty-dir
+            # race. Per-tenant (provisioning-managed) containers pick it up on
+            # their next recreate via _start_librechat_container.
+            sync_and_recreate librechat-getklai deploy/librechat/klai-entrypoint.sh /opt/klai/librechat/klai-entrypoint.sh
 
             # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
             # git clone on a Linux runner usually preserves the execute bit,
