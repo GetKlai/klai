@@ -33,6 +33,8 @@ Return ONLY valid JSON with this exact structure:
   "duplicate_candidates": [{"item_id": 123, "confidence": 0.0, "reason": "short reason"}]
 }
 Do not create roadmap/public copy. Do not invent item ids. Use only duplicate item ids from the provided candidates.
+When a candidate is plausibly about the same problem or request, prefer suggested_action link_existing.
+Only use create_item when no candidate is suitable.
 For source assistant_problem, produce a bug proposal unless the message is clearly a support-only, configuration, or docs question.
 For reproducible bugs without a matching candidate, prefer suggested_action create_item.
 """
@@ -69,7 +71,7 @@ async def generate_feedback_triage_suggestion(
     candidates = await search_feedback_items(
         db,
         search=_candidate_search_text(submission.raw_text),
-        status="active",
+        status="triage",
         kind="all",
         limit=20,
     )

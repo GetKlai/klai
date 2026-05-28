@@ -64,7 +64,9 @@ Live op `main`:
   `feedback_submissions`.
 - Platform Feedback-tab leest uit `feedback_submissions` in plaats van
   `product_events`.
-- Platform detail drawer voor feedback submissions.
+- Platform Feedback gebruikt geen drawer als primaire workflow meer. Lijstregels
+  openen een inline detail-/bewerksectie onder de tabel, zodat het aansluit op
+  de bestaande admin-list patronen.
 - Platform triage-acties:
   - `dismiss`;
   - `mark support`;
@@ -86,9 +88,9 @@ Live op `main`:
 - De Feedback inbox is gecorrigeerd naar het bestaande Platform list/table
   patroon. Open items zijn geen losse card-layout.
 - AI-suggesties zijn geen status meer. Ze leven in
-  `feedback_triage_suggestions` en worden alleen als voorstel in de drawer
-  getoond.
-- De triage drawer zoekt eerst naar bestaande items en mag niet standaard een
+  `feedback_triage_suggestions` en worden alleen als voorstel in de inline
+  triage-sectie getoond.
+- De triage-sectie zoekt eerst naar bestaande items en mag niet standaard een
   nieuw item voorstellen als er een bestaande match is.
 - `/app/account` heeft een eerste `Mijn meldingen` tab die de ingelogde
   gebruiker eigen probleemmeldingen en feedback/verzoeken toont vanuit
@@ -144,7 +146,8 @@ Daarom gelden vanaf nu deze ontwerpregels:
    iets gemeld heeft, welke update zij krijgen, en of die update is verzonden.
 7. **AI is geen workflowstatus.**
    AI-output is voorsteldata, geen status. In de UI blijft dit gewoon
-   nieuw/open werk; de AI-output verschijnt als voorstel in de drawer.
+   nieuw/open werk; de AI-output verschijnt als voorstel in de inline
+   triage-sectie.
 8. **Standaard bundelen, niet dupliceren.**
    Als er een relevant bestaand item is, is koppelen de primaire actie. Een
    nieuw item aanmaken is een expliciete fallback, niet de default.
@@ -185,9 +188,13 @@ Platform Feedback krijgt twee duidelijke werkoppervlakken:
 
    Niet in de lijst:
    - Context/route/url/viewport/locale als aparte kolom. Die hoort in de
-     detail drawer.
-   - Edit/delete icon-acties. Inbox-meldingen zijn evidence; je triageert ze,
-     maar past de originele melding niet inhoudelijk aan.
+     inline detailsectie.
+
+   Acties:
+   - Een expliciete edit-knop opent de inline detailsectie.
+   - Staff kan tekst/status corrigeren of een submission verwijderen als dat
+     nodig is om rommel/testdata op te ruimen. Dit blijft een admin-actie en
+     vervangt triage niet.
 
 2. **Open items** - gebundelde openstaande zaken.
    `Roadmap items` wordt hernoemd naar `Open items`, omdat dit geen publieke
@@ -201,9 +208,10 @@ Platform Feedback krijgt twee duidelijke werkoppervlakken:
    - Type.
    - Bijgewerkt.
 
-   Niet in de lijst:
-   - Losse edit/delete/close icon-kolom. Klik op het item opent de detail
-     drawer; bewerken, verwijderen en sluiten gebeurt daar.
+   Acties:
+   - Een expliciete edit-knop opent de inline itemdetailsectie.
+   - Bewerken, verwijderen en sluiten gebeurt in die detailsectie, niet via
+     losse statuswoorden in de lijst.
 
 Filters:
 
@@ -548,7 +556,7 @@ Klaar:
   - `/feedback/submissions/{id}/items`;
   - `/feedback/submissions/{id}/links`.
 - Alle endpoints gebruiken `require_platform_admin()`.
-- UI toont inbox, status, detail drawer, org/user/context en acties:
+- UI toont inbox, status, inline detailsectie, org/user/context en acties:
   `Link`, `Maak item`, `Support`, `Negeer`.
 - Acties werken op `feedback_submissions`, `feedback_items` en
   `feedback_item_links`.
@@ -557,8 +565,8 @@ Klaar:
 Nog te doen:
 
 - Filters uitbreiden naar status, org, type, productgebied en datum.
-- Detail drawer verder verfijnen op basis van echt gebruik, maar geen extra
-  lege invoervelden toevoegen zonder duidelijke handmatige beslissing.
+- Inline detailsectie verder verfijnen op basis van echt gebruik, maar geen
+  extra lege invoervelden toevoegen zonder duidelijke handmatige beslissing.
 
 Acceptatie:
 
@@ -597,7 +605,7 @@ Gebouwd:
 
 - Platform response bevat de nieuwste AI-suggestie per submission.
 - Duplicate candidates worden verrijkt met itemtitel, status, kind en area.
-- Feedback detail drawer toont een compacte voorstelkaart. De UI noemt dit
+- Feedback detailsectie toont een compacte voorstelkaart. De UI noemt dit
   niet meer `AI voorstel` als status.
 - Staff kan het voorstel accepteren via bestaande flows:
   - link met bestaand item;
@@ -683,8 +691,10 @@ kunnen informeren zonder handmatig zoeken of overtypen.
   - `Markeer als gefixt` voor `kind=bug`;
   - `Markeer als opgelost` voor support/docs/UX;
   - `Markeer als verzonden` voor features.
-- De actie opent een modal/drawer, niet direct een destructieve statuschange.
-- Modal toont:
+- De actie opent een gecontroleerde bevestigingsflow, niet direct een
+  destructieve statuschange. In Platform mag dat inline in de itemdetailsectie
+  of via een bestaand modalpattern, maar niet als nieuwe drawer.
+- De bevestigingsflow toont:
   - itemtitel;
   - gekoppelde submissions;
   - betrokken orgs/users;
@@ -843,7 +853,7 @@ Acceptatie:
   `feedback_items`, `feedback_item_links`, `feedback_triage_suggestions`.
 - [x] Verplaats assistant feedback persistence naar `app/klai_feedback`.
 - [x] Platform Feedback-tab leest uit `feedback_submissions`.
-- [x] Platform Feedback tab uitbreiden met detail drawer.
+- [x] Platform Feedback tab uitbreiden met inline detail-/bewerksectie.
 - [x] Acties: dismiss, create item, link to item, mark support.
 - [x] Eenvoudige non-AI duplicate search.
 - [x] AI triage job met idempotente suggestie-opslag.

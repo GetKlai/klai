@@ -273,6 +273,65 @@ async def test_platform_feedback_dismiss_updates_submission(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_platform_feedback_update_submission_edits_text_and_status(monkeypatch):
+    session = _Session([])
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_update_submission(db, submission_id, values):
+        assert db is session
+        assert submission_id == 123
+        assert values == {
+            "raw_text": "Gecorrigeerde melding",
+            "status": "open",
+        }
+        return _SessionBound(session, id=123, status="open")
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "update_feedback_submission", fake_update_submission)
+
+    result = await platform.platform_feedback_update_submission(
+        submission_id=123,
+        body=platform.PlatformFeedbackSubmissionPatchIn(
+            raw_text="Gecorrigeerde melding",
+            status="open",
+        ),
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert result.ok is True
+    assert result.submission_id == 123
+    assert result.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_platform_feedback_delete_submission_deletes_evidence(monkeypatch):
+    session = _Session([])
+    called = {}
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_delete_submission(db, submission_id):
+        assert db is session
+        called["submission_id"] = submission_id
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "delete_feedback_submission", fake_delete_submission)
+
+    result = await platform.platform_feedback_delete_submission(
+        submission_id=123,
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert result is None
+    assert called == {"submission_id": 123}
+
+
+@pytest.mark.asyncio
 async def test_platform_feedback_create_item_links_submission(monkeypatch):
     session = _Session([])
 

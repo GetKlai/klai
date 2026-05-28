@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackNotification, FeedbackSubmission
@@ -84,22 +84,89 @@ async def search_feedback_items(
     closed_statuses = ("resolved", "dismissed")
     if status == "active":
         query = query.where(FeedbackItem.status.not_in(closed_statuses))
+    elif status == "triage":
+        query = query.where(FeedbackItem.status != "dismissed")
     elif status == "closed":
         query = query.where(FeedbackItem.status.in_(closed_statuses))
     elif status and status != "all":
         query = query.where(FeedbackItem.status == status)
     if kind and kind != "all":
         query = query.where(FeedbackItem.kind == kind)
-    if search:
-        q = f"%{search}%"
-        query = query.where(
-            or_(
-                FeedbackItem.title.ilike(q),
-                FeedbackItem.summary.ilike(q),
-                FeedbackItem.area.ilike(q),
-            )
-        )
+    terms = _feedback_search_terms(search)
+    if terms:
+        query = query.where(and_(*[_feedback_item_search_clause(term) for term in terms]))
     return list((await db.execute(query)).scalars().all())
+
+
+def _feedback_search_terms(search: str | None) -> list[str]:
+    if not search:
+        return []
+    normalized = search.replace("_", " ").replace("-", " ")
+    words = [word.strip(".,:;!?()[]{}\"'").lower() for word in normalized.split()]
+    stopwords = {
+        "voor",
+        "door",
+        "naar",
+        "niet",
+        "geen",
+        "deze",
+        "daar",
+        "hier",
+        "kunnen",
+        "willen",
+        "moeten",
+        "zodat",
+        "voordat",
+        "with",
+        "from",
+        "that",
+        "this",
+    }
+    return [word for word in words if len(word) >= 4 and word not in stopwords][:6]
+
+
+def _feedback_item_search_clause(term: str):
+    q = f"%{term}%"
+    linked_submission_match = (
+        select(FeedbackItemLink.item_id)
+        .join(FeedbackSubmission, FeedbackSubmission.id == FeedbackItemLink.submission_id)
+        .where(FeedbackSubmission.raw_text.ilike(q))
+    )
+    return or_(
+        FeedbackItem.title.ilike(q),
+        FeedbackItem.summary.ilike(q),
+        FeedbackItem.area.ilike(q),
+        FeedbackItem.id.in_(linked_submission_match),
+    )
+
+
+async def update_feedback_submission(
+    db: AsyncSession,
+    submission_id: int,
+    values: dict[str, object],
+) -> FeedbackSubmission:
+    submission = await get_feedback_submission(db, submission_id)
+    for key, value in values.items():
+        setattr(submission, key, value)
+    await db.commit()
+    return submission
+
+
+async def delete_feedback_submission(db: AsyncSession, submission_id: int) -> None:
+    submission = await get_feedback_submission(db, submission_id)
+    linked_item_ids = list(
+        (await db.execute(select(FeedbackItemLink.item_id).where(FeedbackItemLink.submission_id == submission_id)))
+        .scalars()
+        .all()
+    )
+    await db.execute(delete(FeedbackItemLink).where(FeedbackItemLink.submission_id == submission_id))
+    await db.delete(submission)
+    await db.flush()
+    for item_id in linked_item_ids:
+        item_exists = await db.scalar(select(FeedbackItem.id).where(FeedbackItem.id == item_id))
+        if item_exists is not None:
+            await refresh_feedback_item_counts(db, item_id)
+    await db.commit()
 
 
 async def update_feedback_item(
