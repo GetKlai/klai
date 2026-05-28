@@ -738,6 +738,23 @@ function feedbackSuggestionActionLabel(action: string | null | undefined): strin
   return 'Bekijk handmatig'
 }
 
+function feedbackSuggestionPrimaryLabel(
+  action: string | null | undefined,
+  candidateTitle: string | null | undefined,
+  kind: string,
+): string {
+  if (action === 'link_existing') {
+    const shortTitle =
+      candidateTitle && candidateTitle.length > 44
+        ? `${candidateTitle.slice(0, 41)}...`
+        : candidateTitle
+    return shortTitle ? `Koppel aan ${shortTitle}` : 'Koppel aan bestaand item'
+  }
+  if (action === 'support') return 'Markeer als support'
+  if (action === 'dismiss') return 'Negeer melding'
+  return `Maak ${feedbackItemKindLabel(kind).toLowerCase()} item`
+}
+
 function feedbackSuggestionConfidence(value: number | null): string | null {
   if (value === null) return null
   const normalized = value <= 1 ? value * 100 : value
@@ -973,13 +990,18 @@ function FeedbackDetailSheet({
   const bestCandidate = suggestion?.duplicate_candidates[0] ?? null
   const suggestedKind = normalizedFeedbackKind(suggestion?.classification, defaultKind)
   const suggestedTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
-  const [itemSearch, setItemSearch] = useState(item.raw_text?.slice(0, 80) ?? '')
+  const suggestedSearch = (
+    bestCandidate?.title ||
+    [suggestion?.summary, suggestion?.suggested_area].filter(Boolean).join(' ') ||
+    item.raw_text ||
+    ''
+  ).slice(0, 80)
+  const [showCorrections, setShowCorrections] = useState(!suggestion)
+  const [itemSearch, setItemSearch] = useState(suggestedSearch)
   const [kind, setKind] = useState(suggestedKind)
   const [title, setTitle] = useState(suggestedTitle)
-  const [summary, setSummary] = useState(item.raw_text ?? suggestion?.summary ?? '')
-  const [area, setArea] = useState(
-    suggestion?.suggested_area ?? item.route_id?.replace(/^\/app\//, '') ?? '',
-  )
+  const [summary, setSummary] = useState(suggestion?.summary ?? item.raw_text ?? '')
+  const [area, setArea] = useState(suggestion?.suggested_area ?? '')
 
   const items = usePlatformFeedbackItems(itemSearch)
   const dismiss = usePlatformFeedbackDismiss()
@@ -1066,21 +1088,28 @@ function FeedbackDetailSheet({
             <p className="whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm leading-6 text-gray-900">
               {item.raw_text}
             </p>
-            <div className="grid gap-2 text-xs text-gray-500">
-              {item.user_id && <p className="font-mono">user: {item.user_id}</p>}
-              {item.route_id && <p className="font-mono">route: {item.route_id}</p>}
-              {item.page_url && (
-                <a
-                  href={item.page_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[var(--color-rl-accent-dark)] hover:underline"
-                >
-                  {item.page_url}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              )}
-            </div>
+            {(item.user_id || item.route_id || item.page_url) && (
+              <details className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
+                <summary className="cursor-pointer list-none font-medium text-gray-500">
+                  Context opgeslagen
+                </summary>
+                <div className="mt-2 grid gap-1">
+                  {item.user_id && <p className="font-mono">user: {item.user_id}</p>}
+                  {item.route_id && <p className="font-mono">route: {item.route_id}</p>}
+                  {item.page_url && (
+                    <a
+                      href={item.page_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[var(--color-rl-accent-dark)] hover:underline"
+                    >
+                      Open oorspronkelijke pagina
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              </details>
+            )}
           </section>
 
           {canTriage ? (
@@ -1104,14 +1133,14 @@ function FeedbackDetailSheet({
                   <div className="flex flex-wrap gap-2 text-xs">
                     {suggestion.classification && (
                       <Badge variant="outline">
-                        {feedbackItemKindLabel(suggestion.classification)}
+                        Type: {feedbackItemKindLabel(suggestion.classification)}
                       </Badge>
                     )}
                     {suggestion.suggested_area && (
-                      <Badge variant="outline">{suggestion.suggested_area}</Badge>
+                      <Badge variant="outline">Gebied: {suggestion.suggested_area}</Badge>
                     )}
                     {suggestion.suggested_severity && (
-                      <Badge variant="outline">{suggestion.suggested_severity}</Badge>
+                      <Badge variant="outline">Urgentie: {suggestion.suggested_severity}</Badge>
                     )}
                   </div>
                   {suggestion.duplicate_candidates.length > 0 && (
@@ -1155,161 +1184,182 @@ function FeedbackDetailSheet({
                       onClick={acceptSuggestion}
                     >
                       <CheckCircle2 className="h-4 w-4" />
-                      Accepteer voorstel
+                      {feedbackSuggestionPrimaryLabel(
+                        suggestion.suggested_action,
+                        bestCandidate?.title,
+                        suggestedKind,
+                      )}
                     </Button>
-                    <p className="self-center text-xs text-gray-500">
-                      Corrigeren kan via zoeken of nieuw item hieronder.
-                    </p>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => setShowCorrections((visible) => !visible)}
+                    >
+                      Corrigeer
+                    </Button>
                   </div>
                 </section>
               ) : (
                 <section className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-                  Nog geen AI voorstel. Je kunt deze melding wel handmatig verwerken.
+                  AI triage loopt op de achtergrond. Je kunt deze melding alvast handmatig verwerken.
                 </section>
               )}
 
-              <section className="grid gap-3 sm:grid-cols-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => {
-                    dismiss.mutate(item.id, { onSuccess: onClose })
-                  }}
-                >
-                  <ArchiveX className="h-4 w-4" />
-                  Negeer
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => {
-                    support.mutate(item.id, { onSuccess: onClose })
-                  }}
-                >
-                  <LifeBuoy className="h-4 w-4" />
-                  Support
-                </Button>
-              </section>
+              {showCorrections && (
+                <section className="grid gap-3 sm:grid-cols-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      dismiss.mutate(item.id, { onSuccess: onClose })
+                    }}
+                  >
+                    <ArchiveX className="h-4 w-4" />
+                    Negeer
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      support.mutate(item.id, { onSuccess: onClose })
+                    }}
+                  >
+                    <LifeBuoy className="h-4 w-4" />
+                    Markeer als support
+                  </Button>
+                  <p className="text-xs leading-5 text-gray-500 sm:col-span-2">
+                    Support betekent: geen product- of roadmap-item maken; de melding
+                    wordt afgehandeld als klantvraag/supportsignaal.
+                  </p>
+                </section>
+              )}
 
-              <section className="space-y-3 border-t border-gray-200 pt-5">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-sm font-medium text-gray-900">Koppel aan bestaand item</h3>
-                  {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
-                </div>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-gray-500">Zoek roadmap item</span>
-                  <span className="relative block">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <Input
-                      value={itemSearch}
-                      onChange={(event) => setItemSearch(event.target.value)}
-                      placeholder="Titel, onderwerp of route"
-                      className="pl-9"
-                    />
-                  </span>
-                </label>
-                <div className="space-y-2">
-                  {(items.data ?? []).map((existing) => (
-                    <div
-                      key={existing.id}
-                      className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 p-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-gray-900">
-                          {existing.title}
-                        </p>
-                        <p className="mt-1 text-xs text-gray-400">
-                          {[existing.kind, existing.status, existing.area]
-                            .filter(Boolean)
-                            .join(' / ')}
-                        </p>
-                        <p className="mt-1 text-xs text-gray-400">
-                          {existing.org_count} orgs - {existing.user_count} users
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={() => {
-                          linkItem.mutate(
-                            {
-                              submissionId: item.id,
-                              item_id: existing.id,
-                              link_type:
-                                item.event_type === 'klai_assistant.problem_report'
-                                  ? 'bug_repro'
-                                  : 'evidence',
-                            },
-                            { onSuccess: onClose },
-                          )
-                        }}
-                      >
-                        <Link2 className="h-4 w-4" />
-                        Link
-                      </Button>
-                    </div>
-                  ))}
-                  {!items.isFetching && (items.data ?? []).length === 0 && (
-                    <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
-                      Geen bestaand roadmap item gevonden.
+              {showCorrections && (
+                <section className="space-y-3 border-t border-gray-200 pt-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-medium text-gray-900">Koppel aan bestaand item</h3>
+                    {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+                  </div>
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-gray-500">
+                      Slimme zoekterm voor roadmap items
+                    </span>
+                    <span className="relative block">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <Input
+                        value={itemSearch}
+                        onChange={(event) => setItemSearch(event.target.value)}
+                        placeholder="Titel of onderwerp"
+                        className="pl-9"
+                      />
+                    </span>
+                  </label>
+                  {suggestion?.duplicate_candidates.length ? (
+                    <p className="text-xs text-gray-500">
+                      AI heeft al mogelijke matches hierboven getoond. Gebruik zoeken
+                      alleen als je een ander item wilt koppelen.
                     </p>
-                  )}
-                </div>
-              </section>
+                  ) : null}
+                  <div className="space-y-2">
+                    {(items.data ?? []).map((existing) => (
+                      <div
+                        key={existing.id}
+                        className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 p-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-gray-900">
+                            {existing.title}
+                          </p>
+                          <p className="mt-1 text-xs text-gray-400">
+                            {[existing.kind, existing.status, existing.area]
+                              .filter(Boolean)
+                              .join(' / ')}
+                          </p>
+                          <p className="mt-1 text-xs text-gray-400">
+                            {existing.org_count} orgs - {existing.user_count} users
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={() => {
+                            linkItem.mutate(
+                              {
+                                submissionId: item.id,
+                                item_id: existing.id,
+                                link_type: linkType,
+                              },
+                              { onSuccess: onClose },
+                            )
+                          }}
+                        >
+                          <Link2 className="h-4 w-4" />
+                          Link
+                        </Button>
+                      </div>
+                    ))}
+                    {!items.isFetching && (items.data ?? []).length === 0 && (
+                      <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
+                        Geen bestaand roadmap item gevonden.
+                      </p>
+                    )}
+                  </div>
+                </section>
+              )}
 
-              <section className="space-y-3 border-t border-gray-200 pt-5">
-                <h3 className="text-sm font-medium text-gray-900">Maak nieuw item</h3>
-                <Select value={kind} onChange={(event) => setKind(event.target.value)}>
-                  <option value="feature">Feature</option>
-                  <option value="bug">Bug</option>
-                  <option value="ux_confusion">UX verwarring</option>
-                  <option value="docs">Docs</option>
-                  <option value="support_pattern">Support patroon</option>
-                </Select>
-                <Input
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  placeholder="Titel"
-                />
-                <Textarea
-                  value={summary}
-                  onChange={(event) => setSummary(event.target.value)}
-                  rows={4}
-                  placeholder="Samenvatting"
-                />
-                <Input
-                  value={area}
-                  onChange={(event) => setArea(event.target.value)}
-                  placeholder="Productgebied"
-                />
-                <Button
-                  type="button"
-                  disabled={busy || title.trim().length < 3}
-                  onClick={() => {
-                    createItem.mutate(
-                      {
-                        submissionId: item.id,
-                        kind,
-                        title: title.trim(),
-                        summary: summary.trim() || null,
-                        area: area.trim() || null,
-                        link_type:
-                          item.event_type === 'klai_assistant.problem_report'
-                            ? 'bug_repro'
-                            : 'evidence',
-                      },
-                      { onSuccess: onClose },
-                    )
-                  }}
-                >
-                  <PlusCircle className="h-4 w-4" />
-                  Maak item
-                </Button>
-              </section>
+              {showCorrections && (
+                <section className="space-y-3 border-t border-gray-200 pt-5">
+                  <h3 className="text-sm font-medium text-gray-900">Maak nieuw item</h3>
+                  <Select value={kind} onChange={(event) => setKind(event.target.value)}>
+                    <option value="feature">Feature</option>
+                    <option value="bug">Bug</option>
+                    <option value="ux_confusion">UX verwarring</option>
+                    <option value="docs">Docs</option>
+                    <option value="support_pattern">Support patroon</option>
+                  </Select>
+                  <Input
+                    value={title}
+                    onChange={(event) => setTitle(event.target.value)}
+                    placeholder="Titel"
+                  />
+                  <Textarea
+                    value={summary}
+                    onChange={(event) => setSummary(event.target.value)}
+                    rows={4}
+                    placeholder="Samenvatting"
+                  />
+                  <Input
+                    value={area}
+                    onChange={(event) => setArea(event.target.value)}
+                    placeholder="Productgebied"
+                  />
+                  <Button
+                    type="button"
+                    disabled={busy || title.trim().length < 3}
+                    onClick={() => {
+                      createItem.mutate(
+                        {
+                          submissionId: item.id,
+                          kind,
+                          title: title.trim(),
+                          summary: summary.trim() || null,
+                          area: area.trim() || null,
+                          link_type: linkType,
+                        },
+                        { onSuccess: onClose },
+                      )
+                    }}
+                  >
+                    <PlusCircle className="h-4 w-4" />
+                    Maak item
+                  </Button>
+                </section>
+              )}
             </>
           ) : (
             <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
