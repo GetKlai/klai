@@ -205,12 +205,17 @@ async def test_load_and_enrich_skips_when_document_text_missing():
         patch(
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
+        patch(
+            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            new_callable=AsyncMock,
+        ) as mock_status,
     ):
         from knowledge_ingest.enrichment_tasks import _load_and_enrich
 
         await _load_and_enrich("11111111-2222-3333-4444-555555555555")
 
     mock_enrich.assert_not_called()
+    mock_status.assert_awaited_once_with(fake_artifact, "failed")
 
 
 @pytest.mark.asyncio
@@ -244,12 +249,17 @@ async def test_load_and_enrich_skips_truncated_docling_artifact():
         patch(
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
+        patch(
+            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            new_callable=AsyncMock,
+        ) as mock_status,
     ):
         from knowledge_ingest.enrichment_tasks import _load_and_enrich
 
         await _load_and_enrich("11111111-2222-3333-4444-555555555555")
 
     mock_enrich.assert_not_called()
+    mock_status.assert_awaited_once_with(fake_artifact, "synced")
 
 
 @pytest.mark.asyncio

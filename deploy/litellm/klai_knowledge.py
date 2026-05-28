@@ -1604,14 +1604,74 @@ def _render_kb_citation_content(
     return composed.content, composed.sources, False, composed.decision
 
 
-def _append_visible_sources_section(content: str, sources: list[dict[str, str]]) -> str:
+def _plural_nl(count: int, singular: str, plural: str) -> str:
+    return singular if count == 1 else plural
+
+
+def _append_visible_sources_section(
+    content: str,
+    sources: list[dict[str, str]],
+    *,
+    kb_meta: dict[str, Any] | None = None,
+) -> str:
     """Append backend-selected sources for clients that ignore structured metadata."""
-    if not sources:
+    sections: list[str] = []
+    if sources:
+        sources_markdown = format_sources_markdown(sources).strip()
+        if sources_markdown:
+            sections.append(f"**Bronnen**\n{sources_markdown}")
+    if kb_meta is not None and sources:
+        activity = _format_visible_agent_activity(kb_meta, sources)
+        if activity:
+            sections.append(f"**Agent activiteit**\n{activity}")
+    if not sections:
         return content
-    sources_markdown = format_sources_markdown(sources).strip()
-    if not sources_markdown:
-        return content
-    return f"{content.rstrip()}\n\n**Bronnen**\n{sources_markdown}"
+    return f"{content.rstrip()}\n\n" + "\n\n".join(sections)
+
+
+def _format_visible_agent_activity(
+    kb_meta: dict[str, Any],
+    sources: list[dict[str, str]],
+) -> str:
+    """Render provenance for LibreChat, which ignores structured source metadata."""
+    chunks_injected = kb_meta.get("chunks_injected")
+    retrieval_ms = kb_meta.get("retrieval_ms")
+    citable_sources_count = kb_meta.get("citable_sources_count")
+    no_citable_reason = kb_meta.get("no_citable_reason")
+
+    lines: list[str] = []
+    if isinstance(chunks_injected, int):
+        chunk_label = _plural_nl(chunks_injected, "fragment", "fragmenten")
+        if isinstance(retrieval_ms, int | float):
+            lines.append(
+                "- Kennisbank geraadpleegd: "
+                f"{chunks_injected} {chunk_label} opgehaald in {int(retrieval_ms)} ms."
+            )
+        else:
+            lines.append(
+                f"- Kennisbank geraadpleegd: {chunks_injected} {chunk_label} opgehaald."
+            )
+
+    if isinstance(citable_sources_count, int):
+        candidate_label = _plural_nl(
+            citable_sources_count,
+            "kandidaatbron",
+            "kandidaatbronnen",
+        )
+        selected_label = _plural_nl(len(sources), "bron", "bronnen")
+        lines.append(
+            "- Bronselectie: "
+            f"{len(sources)} {selected_label} gekoppeld uit "
+            f"{citable_sources_count} {candidate_label}."
+        )
+    elif sources:
+        selected_label = _plural_nl(len(sources), "bron", "bronnen")
+        lines.append(f"- Bronselectie: {len(sources)} {selected_label} gekoppeld.")
+
+    if not sources and isinstance(no_citable_reason, str) and no_citable_reason:
+        lines.append(f"- Citeerbaarheid: geen bruikbare bron geselecteerd ({no_citable_reason}).")
+
+    return "\n".join(lines)
 
 
 def _log_kb_citation_render(
@@ -1671,7 +1731,7 @@ def _flush_citation_stream_buffer(
         delta = _get_choice_message(choice, "delta")
         if delta is None:
             continue
-        _set_message_content(delta, _append_visible_sources_section(rendered_content, sources))
+        _set_message_content(delta, _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta))
         _set_message_field(delta, "sources", sources)
         stream_parts.clear()
         stats.mutated_messages += 1
@@ -1737,7 +1797,10 @@ def _compose_non_streaming_kb_response(
                 no_citable_message=kb_meta.get("no_citable_message"),
             )
             if rendered_content != content or sources:
-                _set_message_content(message, _append_visible_sources_section(rendered_content, sources))
+                _set_message_content(
+                    message,
+                    _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta),
+                )
                 _set_message_field(message, "sources", sources)
                 stats.mutated_messages += 1
                 stats.rendered_messages += 1
@@ -1837,7 +1900,7 @@ def _compose_streaming_kb_response(
             kb_narrow=kb_narrow,
             no_citable_message=kb_meta.get("no_citable_message"),
         )
-        final_text = _append_visible_sources_section(rendered_content, sources)
+        final_text = _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta)
         if emitted_text and final_text.startswith(emitted_text):
             final_text = final_text[len(emitted_text) :]
         if sources:

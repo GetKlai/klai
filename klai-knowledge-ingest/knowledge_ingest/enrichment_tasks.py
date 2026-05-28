@@ -158,6 +158,7 @@ async def _load_and_enrich(artifact_id: str) -> None:
             reason=prechunked_skip,
             docling_chunk_count=extra.get("docling_chunk_count"),
         )
+        await _set_direct_upload_index_status(artifact, "synced")
         return
     if not document_text:
         # Pre-SPEC-INGEST-CONTENT-PG-001 artifact rows may have no
@@ -169,6 +170,7 @@ async def _load_and_enrich(artifact_id: str) -> None:
             kb_slug=artifact["kb_slug"],
             path=artifact["path"],
         )
+        await _set_direct_upload_index_status(artifact, "failed")
         return
 
     title: str = extra.get("title") or ""
@@ -189,6 +191,7 @@ async def _load_and_enrich(artifact_id: str) -> None:
             reason=derived_skip,
             chunks=len(chunks_text),
         )
+        await _set_direct_upload_index_status(artifact, "synced")
         return
     parents_serialised: list[dict] = [
         {
@@ -218,6 +221,24 @@ async def _load_and_enrich(artifact_id: str) -> None:
         parent_index_per_child=parent_index_per_child,
         heading_path_per_child=heading_path_per_child,
     )
+
+
+async def _set_direct_upload_index_status(artifact: dict, status: str) -> None:
+    """Finish a direct-upload reindex status so the Sources UI cannot hang."""
+    artifact_id = str(artifact.get("artifact_id") or "")
+    org_id = str(artifact.get("org_id") or "")
+    if not artifact_id or not org_id:
+        return
+    try:
+        async with tenant_scoped_connection(org_id) as conn:
+            await pg_store.set_artifact_index_status(conn, artifact_id, org_id, status)
+    except Exception:
+        logger.exception(
+            "artifact_index_status_update_failed",
+            artifact_id=artifact_id,
+            org_id=org_id,
+            status=status,
+        )
 
 
 def _register_tasks(procrastinate_app: Any) -> None:
@@ -513,6 +534,11 @@ async def _enrich_document(
         )
         qdrant_ms = int((time.monotonic() - t0) * 1000)
 
+        await _set_direct_upload_index_status(
+            {"artifact_id": artifact_id, "org_id": org_id},
+            "synced",
+        )
+
         total_ms = int((time.monotonic() - t_total) * 1000)
         enriched_count = sum(1 for ec in enriched_chunks if ec.context_prefix)
         sparse_success_count = sum(1 for sv in sparse_vectors if sv is not None)
@@ -549,6 +575,10 @@ async def _enrich_document(
             artifact_id=artifact_id,
             total_ms=total_ms,
         )
+        await _set_direct_upload_index_status(
+            {"artifact_id": artifact_id, "org_id": org_id},
+            "failed",
+        )
         raise  # Procrastinate retry handles this
 
     except Exception:
@@ -564,4 +594,8 @@ async def _enrich_document(
             org_id=org_id,
             artifact_id=artifact_id,
             total_ms=total_ms,
+        )
+        await _set_direct_upload_index_status(
+            {"artifact_id": artifact_id, "org_id": org_id},
+            "failed",
         )
