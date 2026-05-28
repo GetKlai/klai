@@ -575,7 +575,7 @@ For detailed patterns on plugins, sandboxing, headless mode, and version managem
 <!-- codeindex:start -->
 # CodeIndex MCP
 
-This project is indexed by CodeIndex as **klai** (21649 symbols, 34451 relationships, 0 execution flows).
+This project is indexed by CodeIndex as **klai** (21662 symbols, 34469 relationships, 0 execution flows).
 
 ## Rules (MUST follow)
 
