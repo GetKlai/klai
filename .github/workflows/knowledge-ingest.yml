@@ -69,8 +69,9 @@ jobs:
       # in lockstep with the version that runs at container entrypoint
       # rather than drifting against a hardcoded pin.
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
+          version: "0.11.3"
           enable-cache: true
 
       - name: Guard — single alembic head (knowledge schema)
