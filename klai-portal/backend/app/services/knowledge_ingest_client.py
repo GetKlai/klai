@@ -68,6 +68,7 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
                 if attempt >= len(_READ_RETRY_DELAYS_SECONDS):
                     raise
                 await _sleep_before_read_retry(attempt)
+        raise RuntimeError("unreachable retry loop exit")
     except Exception:
         logger.warning("Could not fetch graph stats from knowledge-ingest (org=%s)", org_id, exc_info=True)
         return {"entity_count": None, "edge_count": None}
@@ -97,6 +98,7 @@ async def get_source_count(org_id: str, kb_slug: str) -> int | None:
                 if attempt >= len(_READ_RETRY_DELAYS_SECONDS):
                     raise
                 await _sleep_before_read_retry(attempt)
+        raise RuntimeError("unreachable retry loop exit")
     except Exception:
         logger.warning(
             "Could not fetch source count from knowledge-ingest (org=%s kb=%s)", org_id, kb_slug, exc_info=True
@@ -500,6 +502,7 @@ async def get_kb_sources(org_id: str, kb_slug: str) -> dict | None:
                 if attempt >= len(_READ_RETRY_DELAYS_SECONDS):
                     raise
                 await _sleep_before_read_retry(attempt)
+        raise RuntimeError("unreachable retry loop exit")
     except Exception:
         logger.warning(
             "Could not fetch KB sources from knowledge-ingest (org=%s kb=%s)",
