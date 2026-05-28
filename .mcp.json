@@ -23,7 +23,7 @@
       "env": {}
     },
     "codeindex": {
-      "$comment": "Graph-powered code intelligence. Launcher repairs stale canonical index/serve locks before starting stdio MCP. Manual fix: scripts/codeindex-health.sh --repair --restart-mcp",
+      "$comment": "Graph-powered code intelligence. Launcher runs an advisory health check only; it must not rebuild or restart MCP during stdio startup. Manual fix: scripts/codeindex-health.sh --repair; disruptive reset for stuck existing agents: scripts/codeindex-health.sh --repair --restart-mcp",
       "type": "stdio",
       "command": "bash",
       "args": [".claude/scripts/codeindex-mcp-launcher.sh"],

@@ -15,11 +15,13 @@ mkdir -p "$LOG_DIR"
 
 {
   echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') codeindex MCP preflight ==="
-  bash "$REPO_DIR/scripts/codeindex-health.sh" --repair --quiet
+  bash "$REPO_DIR/scripts/codeindex-health.sh" --quiet
   echo "preflight complete"
 } >>"$LOG_FILE" 2>&1 || {
   {
-    echo "preflight failed; starting codeindex mcp anyway so the client gets a clear MCP-level failure if needed"
+    echo "preflight reported stale/unhealthy index; starting codeindex mcp without auto-repair"
+    echo "manual recovery: scripts/codeindex-health.sh --repair"
+    echo "transport-disruptive recovery for stuck existing agents: scripts/codeindex-health.sh --repair --restart-mcp"
   } >>"$LOG_FILE" 2>&1
 }
 
