@@ -263,6 +263,51 @@ async def test_load_and_enrich_skips_truncated_docling_artifact():
 
 
 @pytest.mark.asyncio
+async def test_load_and_enrich_reindexes_small_truncated_docling_artifact():
+    """Small Docling uploads can be reindexed from stored document_text."""
+
+    fake_artifact = {
+        "artifact_id": "11111111-2222-3333-4444-555555555555",
+        "org_id": "org1",
+        "kb_slug": "chemie",
+        "path": "file:sha256:source",
+        "user_id": None,
+        "content_type": "document",
+        "synthesis_depth": 0,
+        "assertion_mode": "factual",
+        "provenance_type": "extracted",
+        "confidence": None,
+        "belief_time_start": 0,
+        "belief_time_end": 253402300800,
+        "extra": {
+            "document_text": "# Verantwoordelijkheden\n\nFrank is trekker.",
+            "document_text_truncated": True,
+            "docling_chunk_count": 2,
+        },
+    }
+    with (
+        patch(
+            "knowledge_ingest.enrichment_tasks.pg_store.read_artifact_for_enrichment",
+            new_callable=AsyncMock,
+            return_value=fake_artifact,
+        ),
+        patch(
+            "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
+        ) as mock_enrich,
+        patch(
+            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            new_callable=AsyncMock,
+        ) as mock_status,
+    ):
+        from knowledge_ingest.enrichment_tasks import _load_and_enrich
+
+        await _load_and_enrich("11111111-2222-3333-4444-555555555555")
+
+    mock_enrich.assert_awaited_once()
+    mock_status.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_load_and_enrich_passes_pg_state_to_enrich_document():
     """The kwargs handed to _enrich_document come entirely from PG —
     not from any caller-frozen state. This is the contract that closes

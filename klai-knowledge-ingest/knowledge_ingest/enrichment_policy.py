@@ -22,10 +22,18 @@ def enrichment_skip_reason(
 ) -> str | None:
     """Return a machine-readable reason when LLM enrichment should be skipped."""
     extra = extra_payload or {}
-    if extra.get("document_text_truncated"):
-        return "document_text_truncated"
-
     max_chunks = _configured_max_chunks()
+    if extra.get("document_text_truncated"):
+        docling_chunk_count = extra.get("docling_chunk_count")
+        if docling_chunk_count is None:
+            return "document_text_truncated"
+        try:
+            truncated_chunk_count = int(docling_chunk_count)
+        except (TypeError, ValueError):
+            return "document_text_truncated"
+        if max_chunks > 0 and truncated_chunk_count > max_chunks:
+            return "document_text_truncated"
+
     if max_chunks > 0 and chunk_count > max_chunks:
         return "too_many_chunks"
 
