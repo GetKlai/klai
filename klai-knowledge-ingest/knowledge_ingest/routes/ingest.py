@@ -74,10 +74,7 @@ def _strip_postgres_nul(value):
     if isinstance(value, list):
         return [_strip_postgres_nul(item) for item in value]
     if isinstance(value, dict):
-        return {
-            _strip_postgres_nul(key): _strip_postgres_nul(item)
-            for key, item in value.items()
-        }
+        return {_strip_postgres_nul(key): _strip_postgres_nul(item) for key, item in value.items()}
     return value
 
 
@@ -333,9 +330,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # are stored as BlockNote JSON for editor fidelity; hash the normalized
     # chunking input so deploying converter fixes forces one clean re-index.
     indexable_content = (
-        req.content
-        if req.skip_chunking
-        else normalize_document_for_chunking(req.content)
+        req.content if req.skip_chunking else normalize_document_for_chunking(req.content)
     )
     content_hash = req.content_hash or hashlib.sha256(indexable_content.encode()).hexdigest()
     stored_hash = await pg_store.get_active_content_hash(conn, req.org_id, req.kb_slug, req.path)
@@ -359,6 +354,22 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             texts = req.chunks
         else:
             texts = [req.content]
+        # Docling/connector-prechunked uploads: each pre-provided chunk is its
+        # own semantic parent (no further split). Populate parents_serialised
+        # + parent_index_per_child so the insert_parent_chunks block below
+        # ALSO fires for this path. Without this, PDF uploads landed chunks
+        # in Qdrant but NEVER wrote parent_chunks rows, breaking retrieval-
+        # api's child→parent lookup (incident 2026-05-28: chat hallucinated
+        # because relevant docling-chunked PDFs were effectively unfindable).
+        parents_serialised = [
+            {
+                "text": t,
+                "token_count": chunker._approx_token_count(t),
+                "position": i,
+            }
+            for i, t in enumerate(texts)
+        ]
+        parent_index_per_child = list(range(len(texts)))
     else:
         # Use content profile chunk_tokens_max (converted to chars) when it
         # differs from the global default.  1 token ≈ 4 chars.
@@ -496,7 +507,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # for the symmetric visibility override.
     chunk_user_id = req.user_id
     if not chunk_user_id and req.kb_slug.startswith("personal-"):
-        derived = req.kb_slug[len("personal-"):]
+        derived = req.kb_slug[len("personal-") :]
         if derived:
             chunk_user_id = derived
 
