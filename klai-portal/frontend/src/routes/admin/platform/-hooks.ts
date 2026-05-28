@@ -11,6 +11,7 @@ import type {
   PlatformFeedbackActionResult,
   PlatformFeedbackItem,
   PlatformFeedbackItemDetail,
+  PlatformFeedbackResolveResult,
   PlatformFeedbackSubmission,
   PlatformOrgDetail,
   PlatformKB,
@@ -216,6 +217,28 @@ export function usePlatformFeedbackUpdateItem() {
         `/api/admin/platform/feedback/items/${itemId}`,
         {
           method: 'PATCH',
+          body: JSON.stringify(body),
+        },
+      )
+    },
+    onSuccess: opts.onSuccess,
+  })
+}
+
+export function usePlatformFeedbackResolveItem() {
+  const opts = useFeedbackMutation()
+  return useMutation({
+    mutationFn: async (vars: {
+      itemId: number
+      resolution_summary: string
+      channels: Array<'in_app' | 'email'>
+      subject?: string | null
+    }) => {
+      const { itemId, ...body } = vars
+      return apiFetch<PlatformFeedbackResolveResult>(
+        `/api/admin/platform/feedback/items/${itemId}/resolve`,
+        {
+          method: 'POST',
           body: JSON.stringify(body),
         },
       )

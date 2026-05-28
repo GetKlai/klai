@@ -149,6 +149,10 @@ export interface PlatformFeedbackItem {
   target_window: string | null
   owner: string | null
   shipped_at: string | null
+  resolution_summary: string | null
+  resolved_at: string | null
+  resolved_by: string | null
+  notification_state: string | null
   created_at: string
   updated_at: string
 }
@@ -168,6 +172,27 @@ export interface PlatformFeedbackActionResult {
   submission_id: number
   status: string
   item_id: number | null
+}
+
+export interface PlatformFeedbackNotification {
+  id: number
+  item_id: number
+  submission_id: number | null
+  org_id: number | null
+  user_id: string | null
+  recipient_email: string | null
+  channel: string
+  status: string
+  subject: string | null
+  body: string
+  sent_at: string | null
+  read_at: string | null
+  created_at: string
+}
+
+export interface PlatformFeedbackResolveResult {
+  item: PlatformFeedbackItem
+  notifications: PlatformFeedbackNotification[]
 }
 
 export interface PlatformOrgDetail {
