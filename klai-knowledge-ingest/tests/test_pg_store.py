@@ -144,7 +144,8 @@ async def test_list_stale_connector_artifact_paths_excludes_current_paths():
     assert result == ["https://getklai.com/", "https://getklai.com/contact"]
     sql = conn.fetch.call_args[0][0]
     assert "source_connector_id" in sql
-    assert "NOT (path = ANY($5::text[]))" in sql
+    assert "path = ANY($5::text[])" in sql
+    assert "source_url" in sql
     assert conn.fetch.call_args[0][5] == ["https://www.getklai.com/"]
 
 

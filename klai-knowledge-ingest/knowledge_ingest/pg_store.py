@@ -273,7 +273,10 @@ async def list_stale_connector_artifact_paths(
           AND belief_time_end = $4
           AND extra IS NOT NULL
           AND extra::jsonb->>'source_connector_id' = $3
-          AND NOT (path = ANY($5::text[]))
+          AND NOT (
+            path = ANY($5::text[])
+            OR extra::jsonb->>'source_url' = ANY($5::text[])
+          )
         ORDER BY path
         """,
         org_id,
@@ -1139,6 +1142,8 @@ async def insert_parent_chunks(
                 int(p["token_count"]),
                 int(p["position"]),
             )
+            if row_id is None:
+                raise RuntimeError("parent chunk insert did not return an id")
             ids.append(int(row_id))
     return ids
 
