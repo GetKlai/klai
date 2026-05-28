@@ -403,6 +403,8 @@ class TestCharacterizeStartLibrechatContainer:
         patch_dir.mkdir(exist_ok=True)
         for name in ("format.cjs", "share.js", "stream.cjs", "search.cjs"):
             (patch_dir / name).write_text("// patch\n")
+        # Klai light-theme entrypoint wrapper — fail-loud mounted, must exist.
+        (tmp_path / "klai-entrypoint.sh").write_text('#!/bin/sh\nexec docker-entrypoint.sh "$@"\n')
 
     def test_starts_container_with_correct_config(self, tmp_path):
         from app.services.provisioning import _start_librechat_container
@@ -498,6 +500,39 @@ class TestCharacterizeStartLibrechatContainer:
         }
         assert volumes["/opt/klai/librechat-data/patches/search.cjs"] == {
             "bind": "/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs",
+            "mode": "ro",
+        }
+
+    def test_forces_light_theme_via_entrypoint_wrapper(self, tmp_path):
+        """Every provisioned tenant must boot through the Klai entrypoint
+        wrapper that forces light theme. `entrypoint` clears the image CMD, so
+        `command` MUST be passed through explicitly, and the wrapper script MUST
+        be mounted read-only at /klai-entrypoint.sh.
+        """
+        from app.services.provisioning import _start_librechat_container
+
+        self._write_lc_files(tmp_path)
+
+        mock_client = MagicMock()
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.5-rc1"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+            mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
+
+            _start_librechat_container("acme", "/opt/klai/librechat-data/acme/.env")
+
+        call_kwargs = mock_client.containers.create.call_args[1]
+        assert call_kwargs["entrypoint"] == ["/bin/sh", "/klai-entrypoint.sh"]
+        assert call_kwargs["command"] == ["npm", "run", "backend"]
+        volumes = call_kwargs["volumes"]
+        assert volumes["/opt/klai/librechat-data/klai-entrypoint.sh"] == {
+            "bind": "/klai-entrypoint.sh",
             "mode": "ro",
         }
 
