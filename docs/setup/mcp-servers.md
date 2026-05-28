@@ -100,27 +100,38 @@ It is **cross-platform** — all platform-specific settings live in local config
 
 The CodeIndex MCP server starts through `.claude/scripts/codeindex-mcp-launcher.sh`
 instead of calling `codeindex mcp` directly. The launcher runs
-`scripts/codeindex-health.sh --repair --quiet` before handing stdout to MCP.
-This prevents the recurring failure mode where an old `codeindex serve` process
-holds the local database open and every Conductor workspace starts reporting a
-stale index.
+`scripts/codeindex-health.sh --quiet` before handing stdout to MCP. This is an
+advisory preflight only: startup must not rebuild the index or restart MCP
+processes, because doing that from inside stdio startup can close existing agent
+transports (`Transport closed`) or contend with an active DB reader.
 
 Important details:
 
-- CodeIndex stores one canonical repo path for `klai`, currently
+- CodeIndex stores one shared index for `klai`, currently registered from
   `/Users/mvletter/Developer/Klai`. Conductor worktrees may be on different
-  branches, but the stale check compares against that canonical path.
+  branches, so agents should treat branch changes as an overlay on the shared
+  base index and verify local diffs/source files directly.
 - The launcher writes preflight output to
   `.context/codeindex-mcp-launcher.log`, not stdout, because MCP uses stdout for
   JSON-RPC.
-- The launcher does not kill existing `codeindex mcp` processes. That would be
-  unsafe while starting an MCP server.
+- The launcher does not run repair and does not kill existing `codeindex mcp`
+  processes. That would be unsafe while starting an MCP server.
 
-Manual recovery, if an already-running agent still sees stale CodeIndex context:
+Manual non-disruptive repair, if the shared base index is stale:
+
+```bash
+scripts/codeindex-health.sh --repair
+```
+
+Disruptive recovery, only if already-running agents are stuck on stale or locked
+MCP processes:
 
 ```bash
 scripts/codeindex-health.sh --repair --restart-mcp
 ```
+
+After this command, existing sessions may need to be restarted because their MCP
+stdio transport was intentionally closed.
 
 For diagnosis only:
 

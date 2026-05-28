@@ -210,8 +210,9 @@ main() {
     warn "CodeIndex shared base index is not up to date. Run:"
     warn "  scripts/codeindex-health.sh --repair"
     warn ""
-    warn "If existing agents still show stale context after repair, run:"
+    warn "If existing agents are stuck after repair, this intentionally closes their MCP transports:"
     warn "  scripts/codeindex-health.sh --repair --restart-mcp"
+    warn "Restart affected sessions after using --restart-mcp."
     exit 1
   fi
 
