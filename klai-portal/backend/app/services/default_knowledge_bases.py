@@ -7,17 +7,12 @@ during tenant provisioning, the personal KB during user signup or invite.
 These helpers are idempotent: calling them multiple times for the same
 tenant/user is safe (INSERT ... ON CONFLICT DO NOTHING pattern).
 
-The :func:`personal_kb_slug` template is re-exported from
-``klai-libs/kb-slugs`` (SPEC-RAG-PERSONAL-SCOPE-001 REQ-1) so retrieval-api
-consumes the same helper for server-side scope=personal narrowing without
-the slug template living in two places.
+The personal-KB slug template lives in ``klai-libs/kb-slugs`` (single
+source of truth — SPEC-RAG-PERSONAL-SCOPE-001 REQ-1). Import it directly:
+``from klai_kb_slugs import personal_kb_slug``.
 """
 
 import structlog
-
-# Re-export the canonical template so existing call sites
-# ``from app.services.default_knowledge_bases import personal_kb_slug``
-# continue to resolve. The shared library owns the string.
 from klai_kb_slugs import personal_kb_slug
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -27,15 +22,6 @@ from app.core.database import set_tenant
 from app.models.knowledge_bases import PortalKnowledgeBase
 
 logger = structlog.get_logger()
-
-__all__ = [
-    "create_default_org_kb",
-    "create_default_personal_kb",
-    "ensure_default_knowledge_bases",
-    "personal_kb_slug",
-    "resolve_org_kb",
-    "resolve_personal_kb",
-]
 
 
 async def resolve_personal_kb(caller_id: str, org_id: int, db: AsyncSession) -> PortalKnowledgeBase:

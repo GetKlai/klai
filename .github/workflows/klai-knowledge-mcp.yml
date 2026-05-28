@@ -9,12 +9,14 @@ on:
       # klai-libs/identity-assert as a path-dep, so library changes need
       # to retrigger this image build.
       - 'klai-libs/identity-assert/**'
+      - 'klai-libs/kb-slugs/**'
       - '.github/workflows/klai-knowledge-mcp.yml'
   pull_request:
     branches: [main]
     paths:
       - 'klai-knowledge-mcp/**'
       - 'klai-libs/identity-assert/**'
+      - 'klai-libs/kb-slugs/**'
       - '.github/workflows/klai-knowledge-mcp.yml'
   workflow_dispatch:
 

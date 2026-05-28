@@ -15,6 +15,11 @@ dependencies = [
     # secret-introspection helpers used by every upstream-error log/return path.
     "klai-log-utils",
     "klai-retrieval-telemetry",
+    # SPEC-RAG-PERSONAL-SCOPE-001 REQ-1: canonical personal-KB slug helper.
+    # Single source of truth shared with portal-api + retrieval-api +
+    # knowledge-ingest. Used by save_personal_knowledge to build the
+    # kb_slug for the user's canonical Persoonlijk-KB.
+    "klai-kb-slugs",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +37,7 @@ klai-log-utils = { path = "../klai-libs/log-utils", editable = true }
 # by the search_knowledge tool (gap-events, retrieval-log POSTs). Editable
 # path-dep so changes to the canonical lib propagate without a republish.
 klai-retrieval-telemetry = { path = "../klai-libs/retrieval-telemetry", editable = true }
+klai-kb-slugs = { path = "../klai-libs/kb-slugs", editable = true }
 
 [tool.ruff]
 line-length = 100

@@ -20,6 +20,8 @@ COPY --chown=app:app klai-libs/log-utils klai-libs/log-utils
 # SPEC-MCP-RETRIEVAL-001 Phase 1: klai-retrieval-telemetry path-dep
 # (classify_gap, fire_retrieval_log, fire_gap_event). Used by search_knowledge.
 COPY --chown=app:app klai-libs/retrieval-telemetry klai-libs/retrieval-telemetry
+# SPEC-RAG-PERSONAL-SCOPE-001 REQ-1: canonical personal-KB slug helper.
+COPY --chown=app:app klai-libs/kb-slugs klai-libs/kb-slugs
 COPY --chown=app:app klai-knowledge-mcp/pyproject.toml klai-knowledge-mcp/pyproject.toml
 COPY --chown=app:app klai-knowledge-mcp/uv.lock klai-knowledge-mcp/uv.lock
 
