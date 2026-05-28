@@ -287,6 +287,15 @@ services:
     image: ghcr.io/danny-avila/librechat:v0.8.5-rc1
     container_name: librechat-getklai
     restart: unless-stopped
+    # Force light theme via the Klai entrypoint wrapper (LibreChat has no
+    # server-side theme config — see deploy/librechat/klai-entrypoint.sh).
+    # In Compose, `entrypoint:` CLEARS the image CMD, so `command:` MUST be set
+    # explicitly; the wrapper passes it through ("$@") to docker-entrypoint.sh.
+    # The script is synced to /opt/klai/librechat/klai-entrypoint.sh by
+    # deploy-compose.yml's sync_and_recreate BEFORE this container is
+    # (re)created, so the bind-mount source always exists (no empty-dir race).
+    entrypoint: ["/bin/sh", "/klai-entrypoint.sh"]
+    command: ["npm", "run", "backend"]
     env_file:
       - ./librechat/getklai/.env
     environment:
@@ -295,6 +304,7 @@ services:
     volumes:
       - ./librechat/getklai/librechat.yaml:/app/librechat.yaml:ro
       - ./librechat/getklai/images:/app/client/public/images
+      - ./librechat/klai-entrypoint.sh:/klai-entrypoint.sh:ro
       # Persistent patches - survive image updates until fixed upstream
       - ./librechat/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
       - ./librechat/patches/share.js:/app/api/server/routes/share.js:ro
