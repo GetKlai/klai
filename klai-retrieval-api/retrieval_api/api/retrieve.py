@@ -331,8 +331,14 @@ async def retrieve(
     step_latency_seconds.labels(step="embed").observe(time.perf_counter() - t_embed)
     decision_record["embedding_ms"] = round(embed_ms, 1)
 
-    # 3. Gate check
-    bypassed, gate_margin = await gate.should_bypass(query_vector)
+    # 3. Gate check. Strict KB mode must never skip retrieval: a wrong bypass
+    # would turn "answer only from selected KBs" into a plain model answer.
+    if req.kb_narrow:
+        bypassed = False
+        gate_margin = None
+        decision_record["gate_skipped_reason"] = "strict_mode"
+    else:
+        bypassed, gate_margin = await gate.should_bypass(query_vector)
 
     decision_record["gate_margin"] = round(gate_margin, 4) if gate_margin is not None else None
     decision_record["gate_bypassed"] = bypassed

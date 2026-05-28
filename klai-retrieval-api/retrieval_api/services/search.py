@@ -115,17 +115,20 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
                 FieldCondition(key="visibility", match=MatchValue(value="private")),
                 FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
             ]
-            # SPEC-RAG-PERSONAL-SCOPE-001 REQ-3: scope=both must not use
-            # `user_id` as an unconstrained private-KB bypass. It may include
-            # the canonical Persoonlijk KB and any caller-selected KB slugs,
-            # but it must not let every private chunk owned by the user pass.
+            # SPEC-RAG-PERSONAL-SCOPE-001 REQ-3: scope=both normally must not
+            # use `user_id` as an unconstrained private-KB bypass. It may include
+            # the canonical Persoonlijk KB and any caller-selected KB slugs, but
+            # selecting only Persoonlijk must not leak every private chunk owned
+            # by the user.
             #
-            # This preserves the Jantine fix (selecting only Persoonlijk does
-            # not leak `test2`) while keeping the legitimate case working:
-            # selecting "Persoonlijk + test2" includes both slugs.
+            # The one deliberate exception is the explicit "all collections"
+            # contract: include_owned_private_kbs=True means kb_slugs=None still
+            # covers all org KBs while also allowing all caller-owned private
+            # KBs. Ownership remains enforced by user_id, so this cannot expose
+            # another user's private chunks.
             # scope=org keeps the wider semantic because partner_chat does not
             # model a Persoonlijk-vs-other-user-KB dropdown today.
-            if request.scope == "both":
+            if request.scope == "both" and not request.include_owned_private_kbs:
                 allowed_private_slugs = list(
                     dict.fromkeys(
                         [

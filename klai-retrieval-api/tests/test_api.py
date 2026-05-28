@@ -396,6 +396,63 @@ class TestConfidenceBandEndToEnd:
         assert data["retrieval_bypassed"] is True
         assert data["confidence_band"] is None
 
+    def test_strict_mode_skips_gate_and_attempts_retrieval(self, client, sample_retrieve_request):
+        """Strict mode must not let the retrieval gate bypass KB lookup."""
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value=sample_retrieve_request["query"],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1] * 1024,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(True, 0.5),
+            ) as mock_gate,
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as mock_search,
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.reranker_enabled = False
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_candidates = 20
+            mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = True
+            mock_settings.link_expand_seed_k = 10
+            mock_settings.link_expand_max_urls = 30
+            mock_settings.link_expand_candidates = 20
+            mock_settings.link_authority_boost = 0.05
+            mock_settings.source_quota_enabled = True
+            mock_settings.source_quota_max_per_source = 2
+            mock_settings.router_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            mock_settings.link_expand_score_boost = 1.00
+            resp = client.post(
+                "/retrieve",
+                json={**sample_retrieve_request, "kb_narrow": True},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["retrieval_bypassed"] is False
+        mock_gate.assert_not_awaited()
+        mock_search.assert_awaited_once()
+
 
 class TestGraphMetadata:
     def test_retrieve_metadata_includes_graph_fields(self, client, sample_retrieve_request):

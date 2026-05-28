@@ -926,6 +926,48 @@ class TestKlaiKnowledgeHookSlugsTriState:
             body = mc.post.call_args.kwargs["json"]
             assert body["scope"] == "both"
             assert "kb_slugs" not in body
+            assert body["kb_narrow"] is False
+
+    @pytest.mark.asyncio
+    async def test_null_slugs_sets_all_collections_private_include_flag(self, monkeypatch):
+        """None + personal=True means all org KBs plus caller-owned private KBs.
+
+        The hook must not expand all org or private KBs into long slug lists.
+        It keeps all-org semantics by omitting kb_slugs and adds a boolean for
+        the retrieval-api owned-private branch.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": True,
+                "version": 0,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+        data = {"user": "u1" * 12, "messages": [
+            {"role": "user", "content": "Wat staat er in alle kennisbanken?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+        body = mc.post.call_args.kwargs["json"]
+        assert body["scope"] == "both"
+        assert "kb_slugs" not in body
+        assert body["include_owned_private_kbs"] is True
+        assert body["kb_narrow"] is True
 
 
 # ─── 2026-05-05 fail-loud regression tests ──────────────────────────────────
@@ -1021,6 +1063,50 @@ class TestKlaiKnowledgeHookFailLoud:
             assert "TEMPORARILY UNAVAILABLE" in system_msg["content"]
             kb_meta = data.get("metadata", {}).get("_klai_kb_meta", {})
             assert kb_meta.get("retrieval_failure") == "ConnectError"
+
+    @pytest.mark.asyncio
+    async def test_retrieve_failure_in_strict_mode_refuses_instead_of_general_fallback(
+        self, monkeypatch
+    ):
+        """Strict mode fails closed when retrieval is unavailable."""
+        import httpx as _httpx
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Wat zijn onze team policies?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(side_effect=_httpx.ConnectError("connection refused"))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+        system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
+        assert system_msg is not None
+        assert "Strict mode" in system_msg["content"]
+        assert "Answer using your general knowledge" not in system_msg["content"]
+
+        kb_meta = data.get("metadata", {}).get("_klai_kb_meta", {})
+        assert kb_meta["kb_narrow"] is True
+        assert kb_meta["no_citable_sources"] is True
+        assert kb_meta["no_citable_reason"] == "retrieval_failure"
+
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="A model fallback answer"))]
+        )
+        await hook.async_post_call_success_hook(data, None, response)
+        assert response.choices[0].message.content == (
+            "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
+            "betrouwbaar beantwoorden op basis van je kennisbronnen."
+        )
 
 
 # ─── KB-010 new tests ────────────────────────────────────────────────────────
@@ -3190,7 +3276,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
     @pytest.mark.asyncio
     async def test_streaming_post_call_without_trusted_sources_fails_closed(self, monkeypatch):
-        """Streaming post-call never reconstructs citations from raw chunks."""
+        """Strict streaming post-call never reconstructs citations from raw chunks."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         data = {
@@ -3198,6 +3284,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                 "_klai_kb_meta": {
                     "org_id": "org123",
                     "user_id": "user123",
+                    "user_query": "What does the diagram show?",
+                    "kb_narrow": True,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
                     "gate_bypassed": False,

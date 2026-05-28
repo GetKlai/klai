@@ -37,6 +37,12 @@ class RetrieveRequest(BaseModel):
     page_context: PageContext | None = None
     # SPEC-SEC-010 REQ-2.3: kb_slugs list length bounded to 20 entries.
     kb_slugs: list[str] | None = Field(None, max_length=20)
+    # Include all private chunks owned by user_id. LiteLLM sets this only for
+    # the "all collections" state; explicit subsets keep using kb_slugs.
+    include_owned_private_kbs: bool = False
+    # Strict/Open answer mode from the chat UI. Retrieval uses this to avoid
+    # gate bypasses in Strict mode; generation still decides how to answer.
+    kb_narrow: bool = False
     # SPEC-SEC-010 REQ-2.4: taxonomy_node_ids list length bounded to 50 entries.
     taxonomy_node_ids: list[int] | None = Field(None, max_length=50)
     # SPEC-SEC-010 REQ-2.3 (tags parity): tags list length bounded to 20 entries.

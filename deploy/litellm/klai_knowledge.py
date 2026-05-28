@@ -1516,6 +1516,19 @@ class _KbCitationRenderStats:
         self.citation_decisions.extend(other.citation_decisions)
 
 
+def _strict_kb_unavailable_message(user_query: object) -> str:
+    baseline = _no_citable_sources_message(user_query)
+    if baseline.startswith("Ik "):
+        return (
+            "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
+            "betrouwbaar beantwoorden op basis van je kennisbronnen."
+        )
+    return (
+        "The knowledge base is temporarily unavailable, so I cannot answer this "
+        "reliably from your knowledge sources."
+    )
+
+
 def _render_kb_citation_content(
     text: str,
     *,
@@ -1524,6 +1537,7 @@ def _render_kb_citation_content(
     trusted_sources: list[dict[str, Any]],
     evidence_chunks: list[dict],
     kb_narrow: bool,
+    no_citable_message: object = None,
 ) -> tuple[str, list[dict[str, str]], bool, dict[str, Any]]:
     """Render the model's answer with deterministic citations.
 
@@ -1548,9 +1562,14 @@ def _render_kb_citation_content(
     broad mode the model's general-knowledge answer is the correct
     fallback and the canned message hid it.
     """
+    strict_refusal = (
+        no_citable_message.strip()
+        if isinstance(no_citable_message, str) and no_citable_message.strip()
+        else _no_citable_sources_message(user_query)
+    )
     if not trusted_sources:
         if kb_narrow:
-            return _no_citable_sources_message(user_query), [], True, {
+            return strict_refusal, [], True, {
                 "mode": "document_level_supported_sources",
                 "candidate_count": 0,
                 "selected": [],
@@ -1576,7 +1595,7 @@ def _render_kb_citation_content(
         decision = dict(composed.decision)
         if kb_narrow:
             decision["no_citable_reason"] = "selector_rejected_all_sources"
-            return _no_citable_sources_message(user_query), [], True, decision
+            return strict_refusal, [], True, decision
         # Broad mode: pass model's answer through even when the source
         # selector found nothing — general knowledge is still valid.
         decision["no_citable_reason"] = "selector_rejected_all_sources_broad_passthrough"
@@ -1644,6 +1663,7 @@ def _flush_citation_stream_buffer(
         trusted_sources=trusted_sources,
         evidence_chunks=citation_chunks,
         kb_narrow=bool(kb_meta.get("kb_narrow", False)),
+        no_citable_message=kb_meta.get("no_citable_message"),
     )
 
     for choice in _get_response_choices(response):
@@ -1686,6 +1706,7 @@ def _compose_non_streaming_kb_response(
                 trusted_sources=trusted_sources,
                 evidence_chunks=citation_chunks,
                 kb_narrow=bool(kb_meta.get("kb_narrow", False)),
+                no_citable_message=kb_meta.get("no_citable_message"),
             )
             if rendered_content != content or sources:
                 _set_message_content(message, _append_visible_sources_section(rendered_content, sources))
@@ -2105,9 +2126,18 @@ class KlaiKnowledgeHook(CustomLogger):
             # + shadow-store INSERT accordingly. Default 'shadow' on cache
             # miss + portal outage (fail-open per REQ-4).
             "telemetry_level": telemetry_level,
+            # Strict/Open mode is a retrieval concern too: Strict must not be
+            # gate-bypassed before evidence is attempted.
+            "kb_narrow": kb_narrow,
         }
         if kb_slugs_for_request:
             retrieve_body["kb_slugs"] = kb_slugs_for_request
+        elif scope == "both" and kb_slugs is None:
+            # "All collections" means all org KBs plus every private KB owned
+            # by the caller. This is intentionally a boolean, not an expanded
+            # slug list: large workspaces stay small on the wire, and retrieval
+            # still enforces private ownership by user_id.
+            retrieve_body["include_owned_private_kbs"] = True
         # REQ-3: inject taxonomy_node_ids only when coverage is sufficient
         # and the classifier produced valid IDs. The org/kb scoping filters
         # are NEVER weakened — they run in addition to this filter.
@@ -2153,22 +2183,51 @@ class KlaiKnowledgeHook(CustomLogger):
             # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English
             # instruction to the model; the warning the model emits is in the
             # user's detected language thanks to GROUNDED_CHAT_SYSTEM_PROMPT.
-            kb_unavailable_notice = (
-                "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. Answer using "
-                "your general knowledge. Begin your answer with a warning to "
-                "the user, written in the language you detected from their "
-                "most recent substantive message: tell them you could not "
-                f"reach the knowledge base (technical reason: {retrieval_failure}), "
-                "this answer is therefore not based on their own documentation, "
-                "and they should refresh or try again later.]\n"
-            )
+            if kb_narrow:
+                kb_unavailable_notice = (
+                    "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. The user "
+                    "selected Strict mode, so do not answer from general "
+                    "knowledge. Tell the user in their detected language that "
+                    "the knowledge base is temporarily unavailable and you "
+                    "cannot answer reliably from their knowledge sources right "
+                    f"now (technical reason: {retrieval_failure}).]\n"
+                )
+            else:
+                kb_unavailable_notice = (
+                    "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. Answer using "
+                    "your general knowledge. Begin your answer with a warning to "
+                    "the user, written in the language you detected from their "
+                    "most recent substantive message: tell them you could not "
+                    f"reach the knowledge base (technical reason: {retrieval_failure}), "
+                    "this answer is therefore not based on their own documentation, "
+                    "and they should refresh or try again later.]\n"
+                )
             prefix = _compose_libre_chat_prefix(templates_block, kb_unavailable_notice)
             _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
+            original_stream = data.get("stream")
+            render_strategy = _select_kb_render_strategy(original_stream)
+            if kb_narrow and render_strategy.force_non_streaming:
+                data["stream"] = False
             data.setdefault("metadata", {})["_klai_kb_meta"] = {
                 "org_id": org_id,
                 "user_id": user_id,
+                "user_query": query,
+                "kb_narrow": kb_narrow,
                 "chunks_injected": 0,
+                "chunk_ids": [],
+                "allowed_source_urls": [],
+                "allowed_image_urls": [],
+                "citation_source_urls": {},
+                "citation_chunks": [],
+                "trusted_sources": [],
+                "evidence_pack": None,
+                "citable_sources_count": 0,
+                "no_citable_sources": bool(kb_narrow),
+                "no_citable_reason": "retrieval_failure" if kb_narrow else None,
+                "no_citable_message": _strict_kb_unavailable_message(query) if kb_narrow else None,
+                "original_stream": original_stream,
+                "render_mode": render_strategy.mode,
                 "retrieval_ms": int((time.monotonic() - t0) * 1000),
                 "gate_bypassed": False,
                 "retrieval_failure": retrieval_failure,
