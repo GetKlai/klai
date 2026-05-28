@@ -2453,6 +2453,27 @@ class TestKlaiKnowledgeHookNLBiasRegression:
 class TestKlaiKnowledgeHookUrlImageGrounding:
     """Regression guards for fake URL/image Markdown in KB answers."""
 
+    def test_streaming_footer_prefix_cut_tolerates_whitespace(self, monkeypatch):
+        """Final source footer must not replay streamed answer text."""
+        mod = _load_hook(monkeypatch)
+
+        final_text = (
+            "TL;DR: Voor de Omgevingsdienst Groningen zijn de verantwoordelijkheden.\n"
+            "Bouwblok 1\n"
+            "- Trekker: Frank Wolters\n\n"
+            "**Bronnen**\n"
+            "- Verantwoordelijkheden per bouwblok.pdf"
+        )
+        emitted_text = (
+            "TL;DR: Voor de Omgevingsdienst Groningen zijn de verantwoordelijkheden.\n\n"
+            "Bouwblok 1\n"
+            "- Trekker: Frank Wolters\n"
+        )
+
+        assert mod._remove_already_streamed_prefix(final_text, emitted_text) == (
+            "\n\n**Bronnen**\n- Verantwoordelijkheden per bouwblok.pdf"
+        )
+
     def _system_msg(self, result: dict) -> str:
         msgs = [m for m in result["messages"] if m["role"] == "system"]
         assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"

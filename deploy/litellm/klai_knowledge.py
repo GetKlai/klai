@@ -1595,6 +1595,47 @@ def _split_if_rendered_stop_item(
     return None
 
 
+def _collapse_whitespace_with_index_map(text: str) -> tuple[str, list[int]]:
+    collapsed: list[str] = []
+    index_map: list[int] = []
+    in_whitespace = False
+    for index, char in enumerate(text):
+        if char.isspace():
+            if collapsed and not in_whitespace:
+                collapsed.append(" ")
+                index_map.append(index)
+            in_whitespace = True
+            continue
+        collapsed.append(char)
+        index_map.append(index)
+        in_whitespace = False
+    if collapsed and collapsed[-1] == " ":
+        collapsed.pop()
+        index_map.pop()
+    return "".join(collapsed), index_map
+
+
+def _remove_already_streamed_prefix(final_text: str, emitted_text: str) -> str:
+    """Return only the part of final_text that has not already streamed.
+
+    The deterministic citation renderer may normalize whitespace compared to
+    the token stream. Use an exact cut when possible, then a whitespace-tolerant
+    cut so the final source footer does not replay the full answer in LibreChat.
+    """
+    if not emitted_text:
+        return final_text
+    if final_text.startswith(emitted_text):
+        return final_text[len(emitted_text) :]
+
+    collapsed_final, final_map = _collapse_whitespace_with_index_map(final_text)
+    collapsed_emitted, _ = _collapse_whitespace_with_index_map(emitted_text)
+    if collapsed_emitted and collapsed_final.startswith(collapsed_emitted):
+        cut_index = final_map[len(collapsed_emitted) - 1] + 1
+        return final_text[cut_index:]
+
+    return final_text
+
+
 def _citation_render_inputs(kb_meta: dict[str, Any]) -> tuple[set[str], list[dict], list[dict[str, Any]]]:
     allowed_image_urls = {
         url
@@ -2214,8 +2255,7 @@ def _compose_streaming_kb_response(
             no_citable_message=kb_meta.get("no_citable_message"),
         )
         final_text = _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta)
-        if emitted_text and final_text.startswith(emitted_text):
-            final_text = final_text[len(emitted_text) :]
+        final_text = _remove_already_streamed_prefix(final_text, emitted_text)
         if sources:
             _set_message_field(delta, "sources", sources)
         _set_message_content(delta, final_text)
