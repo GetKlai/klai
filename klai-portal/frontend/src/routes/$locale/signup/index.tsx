@@ -173,7 +173,7 @@ function SignupPage() {
       <div className="flex flex-col gap-2">
         <button
           type="button"
-          onClick={() => handleSocialSignup('368810756424073247')}
+          onClick={() => handleSocialSignup('google')}
           disabled={loading}
           className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-gray-900 transition hover:bg-[var(--color-muted)] disabled:opacity-50"
         >
@@ -189,7 +189,7 @@ function SignupPage() {
 
         <button
           type="button"
-          onClick={() => handleSocialSignup('368809521386094623')}
+          onClick={() => handleSocialSignup('microsoft')}
           disabled={loading}
           className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm font-medium text-gray-900 transition hover:bg-[var(--color-muted)] disabled:opacity-50"
         >

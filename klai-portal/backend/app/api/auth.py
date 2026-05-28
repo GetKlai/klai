@@ -973,6 +973,18 @@ class IDPIntentResponse(BaseModel):
 _SUPPORTED_LOCALES = {"nl", "en"}
 
 
+def _resolve_idp_id(requested_idp: str) -> str | None:
+    requested = requested_idp.strip()
+    configured_idps = {
+        "google": settings.zitadel_idp_google_id,
+        "microsoft": settings.zitadel_idp_microsoft_id,
+    }
+    if requested in configured_idps:
+        return configured_idps[requested] or None
+    known_idps = {idp_id for idp_id in configured_idps.values() if idp_id}
+    return requested if requested in known_idps else None
+
+
 class IDPIntentSignupRequest(BaseModel):
     idp_id: str
     locale: str = "nl"
@@ -1812,8 +1824,8 @@ async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
     SPEC-SEC-AUTH-COVERAGE-001 REQ-2.1/2.2: emit audit on success;
     structured event on unknown_idp / zitadel_5xx / missing_auth_url.
     """
-    known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
-    if body.idp_id not in known_idps:
+    idp_id = _resolve_idp_id(body.idp_id)
+    if not idp_id:
         _emit_auth_event(
             "idp_intent_failed",
             reason="unknown_idp",
@@ -1826,7 +1838,7 @@ async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
     failure_url = f"{settings.portal_url}/login?authRequest={body.auth_request_id}"
 
     try:
-        result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
+        result = await zitadel.create_idp_intent(idp_id, success_url, failure_url)
     except httpx.HTTPStatusError as exc:
         _slog.exception("create_idp_intent_failed", zitadel_status=exc.response.status_code)
         _emit_auth_event(
@@ -1861,7 +1873,7 @@ async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
         action="auth.idp.intent",
         resource_type="session",
         resource_id="pending",
-        details={"idp_id": body.idp_id, "auth_request_id": body.auth_request_id},
+        details={"idp_id": idp_id, "auth_request_id": body.auth_request_id},
     )
     return IDPIntentResponse(auth_url=auth_url)
 
@@ -2075,8 +2087,8 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
     SPEC-SEC-AUTH-COVERAGE-001 REQ-2.6: emit audit on success, structured
     event on unknown_idp / zitadel_5xx / missing_auth_url.
     """
-    known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
-    if body.idp_id not in known_idps:
+    idp_id = _resolve_idp_id(body.idp_id)
+    if not idp_id:
         _emit_auth_event(
             "idp_intent_signup_failed",
             reason="unknown_idp",
@@ -2089,7 +2101,7 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
     failure_url = f"{settings.portal_url}/{body.locale}/signup?error=idp_failed"
 
     try:
-        result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
+        result = await zitadel.create_idp_intent(idp_id, success_url, failure_url)
     except httpx.HTTPStatusError as exc:
         _slog.exception("create_idp_intent_signup_failed", zitadel_status=exc.response.status_code)
         _emit_auth_event(
@@ -2124,7 +2136,7 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
         action="auth.idp.intent_signup",
         resource_type="session",
         resource_id="pending",
-        details={"idp_id": body.idp_id, "locale": body.locale},
+        details={"idp_id": idp_id, "locale": body.locale},
     )
     return IDPIntentResponse(auth_url=auth_url)
 

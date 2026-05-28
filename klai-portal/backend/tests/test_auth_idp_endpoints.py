@@ -88,6 +88,26 @@ async def test_idp_intent_signup_happy(respx_zitadel: respx.MockRouter) -> None:
 
 
 @pytest.mark.asyncio
+async def test_idp_intent_signup_accepts_provider_alias() -> None:
+    """Frontend sends stable aliases; backend resolves to deployment-specific IDP ids."""
+    with (
+        patch("app.api.auth.settings") as mock_settings,
+        patch("app.api.auth.zitadel") as mock_zitadel,
+        _audit_log_patch() as audit_log,
+    ):
+        mock_settings.zitadel_idp_google_id = "google-prod-idp"
+        mock_settings.zitadel_idp_microsoft_id = "microsoft-prod-idp"
+        mock_settings.portal_url = "https://my.example.test"
+        mock_zitadel.create_idp_intent = AsyncMock(return_value={"authUrl": "https://accounts.google.com/oauth"})
+
+        result = await idp_intent_signup(body=IDPIntentSignupRequest(idp_id="google", locale="en"))
+
+    assert result.auth_url.startswith("https://accounts.google.com")
+    assert mock_zitadel.create_idp_intent.await_args.args[0] == "google-prod-idp"
+    assert audit_log.call_args.kwargs["details"]["idp_id"] == "google-prod-idp"
+
+
+@pytest.mark.asyncio
 async def test_idp_intent_signup_unknown_idp(respx_zitadel: respx.MockRouter) -> None:
     """REQ-2.6 — unknown IDP id → 400 + event, Zitadel not called."""
     body = IDPIntentSignupRequest(idp_id="not-in-allowlist", locale="nl")
@@ -144,6 +164,25 @@ async def test_idp_intent_happy(respx_zitadel: respx.MockRouter) -> None:
     audit_log.assert_called_once()
     assert audit_log.call_args.kwargs["action"] == "auth.idp.intent"
     assert _capture_events(captured, "idp_intent_failed") == []
+
+
+@pytest.mark.asyncio
+async def test_idp_intent_accepts_provider_alias() -> None:
+    with (
+        patch("app.api.auth.settings") as mock_settings,
+        patch("app.api.auth.zitadel") as mock_zitadel,
+        _audit_log_patch() as audit_log,
+    ):
+        mock_settings.zitadel_idp_google_id = "google-prod-idp"
+        mock_settings.zitadel_idp_microsoft_id = "microsoft-prod-idp"
+        mock_settings.portal_url = "https://my.example.test"
+        mock_zitadel.create_idp_intent = AsyncMock(return_value={"authUrl": "https://login.microsoftonline.com/oauth"})
+
+        result = await idp_intent(body=IDPIntentRequest(idp_id="microsoft", auth_request_id="ar-1"))
+
+    assert result.auth_url.startswith("https://login.microsoftonline.com")
+    assert mock_zitadel.create_idp_intent.await_args.args[0] == "microsoft-prod-idp"
+    assert audit_log.call_args.kwargs["details"]["idp_id"] == "microsoft-prod-idp"
 
 
 @pytest.mark.asyncio
