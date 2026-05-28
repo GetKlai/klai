@@ -228,6 +228,10 @@ async def test_list_artifacts_for_connector_returns_items_and_total() -> None:
     fetch_sql = conn.fetch.await_args.args[0]
     assert "source_connector_id" in fetch_sql
     assert "LIMIT $5 OFFSET $6" in fetch_sql
+    assert "WITH page_artifacts AS" in fetch_sql
+    assert fetch_sql.index("LIMIT $5 OFFSET $6") < fetch_sql.index(
+        "LEFT JOIN knowledge.parent_chunks"
+    )
 
 
 @pytest.mark.asyncio
