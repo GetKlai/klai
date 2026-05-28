@@ -202,6 +202,38 @@ function useFeedbackMutation() {
   }
 }
 
+export function usePlatformFeedbackUpdateSubmission() {
+  const opts = useFeedbackMutation()
+  return useMutation({
+    mutationFn: async (vars: {
+      submissionId: number
+      raw_text?: string | null
+      status?: string
+    }) => {
+      const { submissionId, ...body } = vars
+      return apiFetch<PlatformFeedbackActionResult>(
+        `/api/admin/platform/feedback/submissions/${submissionId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        },
+      )
+    },
+    onSuccess: opts.onSuccess,
+  })
+}
+
+export function usePlatformFeedbackDeleteSubmission() {
+  const opts = useFeedbackMutation()
+  return useMutation({
+    mutationFn: async (submissionId: number) =>
+      apiFetch<void>(`/api/admin/platform/feedback/submissions/${submissionId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: opts.onSuccess,
+  })
+}
+
 export function usePlatformFeedbackUpdateItem() {
   const opts = useFeedbackMutation()
   return useMutation({

@@ -9,30 +9,26 @@ import {
   LifeBuoy,
   Link2,
   Loader2,
+  Pencil,
   PlusCircle,
   Save,
   Search,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import {
   usePlatformBots,
   usePlatformChatErrors,
   usePlatformFeedbackCreateItem,
+  usePlatformFeedbackDeleteSubmission,
   usePlatformFeedbackDeleteItem,
   usePlatformFeedbackDismiss,
   usePlatformFeedbackItem,
@@ -41,6 +37,7 @@ import {
   usePlatformFeedbackResolveItem,
   usePlatformFeedbackSubmissions,
   usePlatformFeedbackSupport,
+  usePlatformFeedbackUpdateSubmission,
   usePlatformFeedbackUpdateItem,
   usePlatformKnowledgeBases,
   usePlatformOrgs,
@@ -859,7 +856,10 @@ export function FeedbackTab({
           type="button"
           size="sm"
           variant={feedbackView === 'inbox' ? 'default' : 'ghost'}
-          onClick={() => setFeedbackView('inbox')}
+          onClick={() => {
+            setFeedbackView('inbox')
+            setSelectedItemId(null)
+          }}
         >
           Inbox
         </Button>
@@ -867,7 +867,10 @@ export function FeedbackTab({
           type="button"
           size="sm"
           variant={feedbackView === 'items' ? 'default' : 'ghost'}
-          onClick={() => setFeedbackView('items')}
+          onClick={() => {
+            setFeedbackView('items')
+            setSelectedId(null)
+          }}
         >
           Open items
         </Button>
@@ -892,6 +895,7 @@ export function FeedbackTab({
               <th className={TH}>{m.platform_col_organization()}</th>
               <th className={TH}>{m.platform_col_detail()}</th>
               <th className={TH}>{m.platform_col_time()}</th>
+              <th className={TH}></th>
             </tr>
           </thead>
           <tbody>
@@ -901,22 +905,23 @@ export function FeedbackTab({
                 item={item}
                 fmtDate={fmtDate}
                 onOpen={() => setSelectedId(item.id)}
+                selected={selectedId === item.id}
               />
             ))}
           </tbody>
         </PlatformTableShell>
       )}
 
-      {selected && (
-        <FeedbackDetailSheet
+      {feedbackView === 'inbox' && selected && (
+        <FeedbackSubmissionDetailPanel
           key={selected.id}
           item={selected}
           fmtDate={fmtDate}
           onClose={() => setSelectedId(null)}
         />
       )}
-      {selectedItemId !== null && (
-        <FeedbackItemDetailSheet
+      {feedbackView === 'items' && selectedItemId !== null && (
+        <FeedbackItemDetailPanel
           itemId={selectedItemId}
           fmtDate={fmtDate}
           onClose={() => setSelectedItemId(null)}
@@ -930,14 +935,18 @@ function FeedbackSubmissionRow({
   item,
   fmtDate,
   onOpen,
+  selected,
 }: {
   item: PlatformFeedbackSubmission
   fmtDate: (s: string | null) => string
   onOpen: () => void
+  selected: boolean
 }) {
   return (
     <tr
-      className="cursor-pointer border-b border-gray-200 transition-colors last:border-b-0 hover:bg-gray-50"
+      className={`cursor-pointer border-b border-gray-200 transition-colors last:border-b-0 hover:bg-gray-50 ${
+        selected ? 'bg-gray-50' : ''
+      }`}
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(event) => {
@@ -989,6 +998,22 @@ function FeedbackSubmissionRow({
       </td>
       <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
         {fmtDate(item.created_at)}
+      </td>
+      <td className={`${TD} text-right`}>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
+          title="Bewerken"
+          aria-label="Bewerken"
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpen()
+          }}
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
       </td>
     </tr>
   )
@@ -1060,6 +1085,7 @@ function OpenItemsPanel({
               <th className={TH}>Status</th>
               <th className={TH}>Type</th>
               <th className={TH}>Bijgewerkt</th>
+              <th className={TH}></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
@@ -1098,6 +1124,22 @@ function OpenItemsPanel({
                   <td className={`${TD} whitespace-nowrap text-gray-400`}>
                     {fmtDate(item.updated_at)}
                   </td>
+                  <td className={`${TD} text-right`}>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
+                      title="Bewerken"
+                      aria-label={`Bewerk ${item.title}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onOpenItem(item.id)
+                      }}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  </td>
                 </tr>
               ))}
           </tbody>
@@ -1106,7 +1148,7 @@ function OpenItemsPanel({
   )
 }
 
-function FeedbackDetailSheet({
+function FeedbackSubmissionDetailPanel({
   item,
   fmtDate,
   onClose,
@@ -1128,20 +1170,26 @@ function FeedbackDetailSheet({
   const [title, setTitle] = useState(suggestedTitle)
   const [summary, setSummary] = useState(suggestion?.summary ?? item.raw_text ?? '')
   const [area, setArea] = useState(suggestion?.suggested_area ?? '')
+  const [draftRawText, setDraftRawText] = useState(item.raw_text ?? '')
+  const [draftStatus, setDraftStatus] = useState(item.status)
 
-  const items = usePlatformFeedbackItems(itemSearch)
+  const items = usePlatformFeedbackItems(itemSearch, 'triage')
   const existingItems = items.data ?? []
   const bestSearchMatch = itemSearch.trim().length >= 4 ? (existingItems[0] ?? null) : null
+  const updateSubmission = usePlatformFeedbackUpdateSubmission()
+  const deleteSubmission = usePlatformFeedbackDeleteSubmission()
   const dismiss = usePlatformFeedbackDismiss()
   const support = usePlatformFeedbackSupport()
   const createItem = usePlatformFeedbackCreateItem()
   const linkItem = usePlatformFeedbackLinkItem()
   const busy =
+    updateSubmission.isPending ||
+    deleteSubmission.isPending ||
     dismiss.isPending ||
     support.isPending ||
     createItem.isPending ||
     linkItem.isPending
-  const canTriage = item.status === 'new'
+  const canTriage = draftStatus === 'new'
   const linkType =
     item.event_type === 'klai_assistant.problem_report'
       ? 'bug_repro'
@@ -1171,15 +1219,22 @@ function FeedbackDetailSheet({
           area: bestSearchMatch.area,
         }
       : null
-  const proposalSummary = suggestion?.summary || feedbackFallbackSummary(item)
+  const proposalSummary = suggestion?.summary || draftRawText || feedbackFallbackSummary(item)
+  const saveSubmission = () => {
+    updateSubmission.mutate({
+      submissionId: item.id,
+      raw_text: draftRawText.trim(),
+      status: draftStatus,
+    })
+  }
   const acceptCreateItem = () => {
-    const fallbackTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
+    const fallbackTitle = (suggestion?.summary || draftRawText || '').slice(0, 90)
     createItem.mutate(
       {
         submissionId: item.id,
         kind: suggestedKind,
         title: fallbackTitle.trim(),
-        summary: item.raw_text || suggestion?.summary || null,
+        summary: draftRawText || suggestion?.summary || null,
         area: suggestion?.suggested_area || area.trim() || null,
         link_type: linkType,
       },
@@ -1214,20 +1269,34 @@ function FeedbackDetailSheet({
     recommendedAction !== 'review'
 
   return (
-    <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-2xl">
-        <SheetHeader>
-          <SheetTitle>Feedback triage</SheetTitle>
-          <SheetDescription>
+    <section className="mt-6 border-t border-b border-gray-200 bg-white py-5">
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-[15px] font-display-bold text-gray-900">
+            Feedback triage
+          </h2>
+          <p className="mt-1 text-sm text-gray-400">
             {item.org_name ?? item.org_slug ?? 'Onbekende organisatie'} -{' '}
             {feedbackSubmissionReporterLabel(item)
               ? `${feedbackSubmissionReporterLabel(item)} - `
               : ''}
             {fmtDate(item.created_at)}
-          </SheetDescription>
-        </SheetHeader>
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
+          aria-label="Sluiten"
+          title="Sluiten"
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
 
-        <div className="space-y-6">
+      <div className="space-y-6">
           <section className="space-y-3">
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
@@ -1240,9 +1309,66 @@ function FeedbackDetailSheet({
                 </Badge>
               )}
             </div>
-            <p className="whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm leading-6 text-gray-900">
-              {item.raw_text}
-            </p>
+            <Textarea
+              value={draftRawText}
+              onChange={(event) => setDraftRawText(event.target.value)}
+              rows={4}
+              placeholder="Melding"
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <Select
+                value={draftStatus}
+                onChange={(event) => setDraftStatus(event.target.value)}
+                className="h-9 w-auto min-w-[150px]"
+                aria-label="Status"
+              >
+                <option value="new">Nieuw</option>
+                <option value="open">Open</option>
+                <option value="resolved">Opgelost</option>
+                <option value="support">Support</option>
+                <option value="dismissed">Genegeerd</option>
+              </Select>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={
+                  busy ||
+                  draftRawText.trim().length < 1 ||
+                  (draftRawText.trim() === (item.raw_text ?? '') && draftStatus === item.status)
+                }
+                onClick={saveSubmission}
+              >
+                {updateSubmission.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                Opslaan
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => {
+                  if (!window.confirm('Melding verwijderen? Gekoppelde item-signalen worden bijgewerkt.')) {
+                    return
+                  }
+                  deleteSubmission.mutate(item.id, { onSuccess: onClose })
+                }}
+              >
+                {deleteSubmission.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                Verwijderen
+              </Button>
+              {updateSubmission.isSuccess && (
+                <p className="text-sm text-green-700">Melding opgeslagen.</p>
+              )}
+            </div>
           </section>
 
           {canTriage ? (
@@ -1479,13 +1605,12 @@ function FeedbackDetailSheet({
               Opgeslagen
             </div>
           )}
-        </div>
-      </SheetContent>
-    </Sheet>
+      </div>
+    </section>
   )
 }
 
-function FeedbackItemDetailSheet({
+function FeedbackItemDetailPanel({
   itemId,
   fmtDate,
   onClose,
@@ -1497,33 +1622,46 @@ function FeedbackItemDetailSheet({
   const detail = usePlatformFeedbackItem(itemId)
 
   return (
-    <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-3xl">
-        <SheetHeader>
-          <SheetTitle>Open item</SheetTitle>
-          <SheetDescription>
+    <section className="mt-6 border-t border-b border-gray-200 bg-white py-5">
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-[15px] font-display-bold text-gray-900">
+            Open item
+          </h2>
+          <p className="mt-1 text-sm text-gray-400">
             Source of truth voor gebundelde feedback en klantupdates.
-          </SheetDescription>
-        </SheetHeader>
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
+          aria-label="Sluiten"
+          title="Sluiten"
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
 
-        {detail.isLoading ? (
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Laden...
-          </div>
-        ) : detail.data ? (
-          <FeedbackItemDetailForm
-            key={detail.data.item.id}
-            item={detail.data.item}
-            submissions={detail.data.submissions}
-            fmtDate={fmtDate}
-            onClose={onClose}
-          />
-        ) : (
-          <p className="text-sm text-gray-500">Item niet gevonden.</p>
-        )}
-      </SheetContent>
-    </Sheet>
+      {detail.isLoading ? (
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Laden...
+        </div>
+      ) : detail.data ? (
+        <FeedbackItemDetailForm
+          key={detail.data.item.id}
+          item={detail.data.item}
+          submissions={detail.data.submissions}
+          fmtDate={fmtDate}
+          onClose={onClose}
+        />
+      ) : (
+        <p className="text-sm text-gray-500">Item niet gevonden.</p>
+      )}
+    </section>
   )
 }
 

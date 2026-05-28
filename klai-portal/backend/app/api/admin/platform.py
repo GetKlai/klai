@@ -37,6 +37,7 @@ from app.klai_feedback.service import (
     FeedbackSubmissionNotFoundError,
     create_feedback_item_from_submission,
     delete_feedback_item,
+    delete_feedback_submission,
     dismiss_feedback_submission,
     get_feedback_item,
     link_feedback_submission_to_item,
@@ -44,6 +45,7 @@ from app.klai_feedback.service import (
     resolve_feedback_item,
     search_feedback_items,
     update_feedback_item,
+    update_feedback_submission,
 )
 from app.models.portal import PortalOrg as PortalOrgModel
 from app.models.portal import PortalUser as PortalUserModel
@@ -231,6 +233,13 @@ class PlatformFeedbackCreateItemIn(BaseModel):
 class PlatformFeedbackLinkItemIn(BaseModel):
     item_id: int
     link_type: Literal["upvote", "evidence", "bug_repro", "support_signal"] = "evidence"
+
+
+class PlatformFeedbackSubmissionPatchIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    raw_text: str | None = Field(default=None, min_length=1, max_length=4000)
+    status: Literal["new", "open", "resolved", "dismissed", "support"] | None = None
 
 
 class PlatformFeedbackItemPatchIn(BaseModel):
@@ -1155,7 +1164,7 @@ async def platform_feedback_submissions(
 @router.get("/feedback/items", response_model=list[PlatformFeedbackItem])
 async def platform_feedback_items(
     search: str | None = Query(default=None),
-    status: Literal["all", "active", "closed", "open", "resolved", "dismissed"] = Query(default="active"),
+    status: Literal["all", "active", "triage", "closed", "open", "resolved", "dismissed"] = Query(default="active"),
     kind: Literal["all", "feature", "bug", "ux_confusion", "docs", "support_pattern"] = Query(default="all"),
     limit: int = Query(default=25, ge=1, le=100),
     perms: UserPermissions = Depends(require_platform_admin()),
@@ -1329,6 +1338,38 @@ async def platform_feedback_resolve_item(
                 for notification in notifications
             ],
         )
+
+
+@router.patch(
+    "/feedback/submissions/{submission_id}",
+    response_model=PlatformFeedbackActionResult,
+)
+async def platform_feedback_update_submission(
+    submission_id: int,
+    body: PlatformFeedbackSubmissionPatchIn,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> PlatformFeedbackActionResult:
+    await _audit(perms, "feedback:update_submission", str(submission_id))
+    values = body.model_dump(exclude_unset=True, exclude_none=True)
+    async with cross_org_session() as db:
+        try:
+            submission = await update_feedback_submission(db, submission_id, values)
+        except FeedbackSubmissionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Feedback submission not found") from exc
+        return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status)
+
+
+@router.delete("/feedback/submissions/{submission_id}", status_code=204)
+async def platform_feedback_delete_submission(
+    submission_id: int,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> None:
+    await _audit(perms, "feedback:delete_submission", str(submission_id))
+    async with cross_org_session() as db:
+        try:
+            await delete_feedback_submission(db, submission_id)
+        except FeedbackSubmissionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Feedback submission not found") from exc
 
 
 @router.post(
