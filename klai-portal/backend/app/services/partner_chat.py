@@ -912,7 +912,7 @@ def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
                             emitted_source_key_order=emitted_source_key_order,
                             citation_output=citation_output,
                         )
-                        out.append(buffer[:label_start])
+                        out.append(buffer[:label_start] if replacement else buffer[:label_start].rstrip())
                         if replacement:
                             out.append(replacement)
                         if citation_changed or replacement != buffer[label_start : close_idx + 1]:
@@ -1143,6 +1143,11 @@ def _sse_content_delta(text: str) -> bytes:
 
 def _sse_sources_delta(sources: list[dict[str, str]]) -> bytes:
     payload = {"choices": [{"delta": {"sources": sources}}]}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
+def _sse_activity_delta(activity: list[dict[str, str | int]]) -> bytes:
+    payload = {"choices": [{"delta": {"activity": activity}}]}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
@@ -1561,21 +1566,59 @@ async def chat_completion_streaming(
 
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
     user_query = source_query or _last_user_message(messages) or ""
+    citation_source_metadata = citation_source_metadata or (
+        _citation_source_metadata_from_chunks(citation_chunks or []) if citation_chunks else {}
+    )
 
     if citation_output == "markers":
-        async for chunk in _chat_completion_streaming_with_composed_citations(
-            augmented_messages=augmented_messages,
-            model=model,
-            temperature=temperature,
-            settings=settings,
-            org_id=org_id,
-            user_query=user_query,
-            trusted_sources=trusted_sources,
-            citation_chunks=citation_chunks,
-            emit_sources=emit_sources,
-        ):
-            yield chunk
-        return
+        trusted_source_list = [s for s in (trusted_sources or []) if isinstance(s, dict)]
+        initial_sources = [
+            {
+                "label": str(index),
+                "title": str(source.get("title") or "Source"),
+                "url": _normalise_guard_url(str(source.get("url") or "")),
+            }
+            for index, source in enumerate(trusted_source_list, 1)
+            if _normalise_guard_url(str(source.get("url") or ""))
+        ]
+        if not initial_sources:
+            initial_source_keys = list(citation_source_metadata.keys())
+            initial_sources = _source_payload_from_keys(initial_source_keys, citation_source_metadata)
+        else:
+            initial_source_keys = [
+                key
+                for key in (_source_url_key(source.get("url")) for source in initial_sources)
+                if key
+            ]
+        if citation_chunks and not initial_sources:
+            message = _no_citable_sources_message(user_query)
+            yield _sse_content_delta(message)
+            yield b"data: [DONE]\n\n"
+            _emit_language_correctness_log(org_id=org_id, query=user_query, response_text=message)
+            return
+        if citation_chunks:
+            yield _sse_activity_delta(
+                [
+                    {
+                        "step": "knowledge_retrieved",
+                        "label": "Kennisbank geraadpleegd",
+                        "detail": f"{len(citation_chunks)} passages gevonden",
+                        "count": len(citation_chunks),
+                    }
+                ]
+            )
+        if initial_sources:
+            yield _sse_sources_delta(initial_sources)
+            yield _sse_activity_delta(
+                [
+                    {
+                        "step": "sources_attached",
+                        "label": "Bronnen gekoppeld",
+                        "detail": f"{len(initial_sources)} bronnen beschikbaar",
+                        "count": len(initial_sources),
+                    }
+                ]
+            )
 
     async for chunk in _chat_completion_streaming_sanitized(
         augmented_messages=augmented_messages,
@@ -1588,6 +1631,8 @@ async def chat_completion_streaming(
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
         citation_output=citation_output,
+        preemitted_source_keys=initial_source_keys if citation_output == "markers" else None,
+        sources_sent_initially=bool(initial_sources) if citation_output == "markers" else False,
     ):
         yield chunk
 
@@ -1604,6 +1649,8 @@ async def _chat_completion_streaming_sanitized(
     citation_source_urls: dict[int, str] | None,
     citation_source_metadata: dict[str, dict[str, str]] | None,
     citation_output: CitationOutput,
+    preemitted_source_keys: list[str] | None = None,
+    sources_sent_initially: bool = False,
 ) -> AsyncGenerator[bytes]:
     """Legacy partner streaming path with URL sanitization and linked citations."""
     litellm_url = settings.litellm_base_url
@@ -1612,9 +1659,9 @@ async def _chat_completion_streaming_sanitized(
     citation_source_metadata = citation_source_metadata or {}
     collected_text_parts: list[str] = []
     pending_text = ""
-    emitted_source_keys: set[str] = set()
-    emitted_source_key_order: list[str] = []
-    sources_sent = False
+    emitted_source_keys: set[str] = set(preemitted_source_keys or [])
+    emitted_source_key_order: list[str] = list(preemitted_source_keys or [])
+    sources_sent = sources_sent_initially
     stripped_links = 0
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -1653,13 +1700,14 @@ async def _chat_completion_streaming_sanitized(
                     if safe_text:
                         collected_text_parts.append(safe_text)
                         yield _sse_content_delta(safe_text)
-                    if source_delta := _maybe_sse_sources_delta(
-                        citation_output=citation_output,
-                        emitted_source_key_order=emitted_source_key_order,
-                        citation_source_metadata=citation_source_metadata,
-                    ):
-                        yield source_delta
-                    sources_sent = True
+                    if not sources_sent:
+                        if source_delta := _maybe_sse_sources_delta(
+                            citation_output=citation_output,
+                            emitted_source_key_order=emitted_source_key_order,
+                            citation_source_metadata=citation_source_metadata,
+                        ):
+                            yield source_delta
+                        sources_sent = True
                     yield b"data: [DONE]\n\n"
                     continue
                 try:

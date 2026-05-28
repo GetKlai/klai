@@ -599,6 +599,67 @@
   white-space: nowrap;
 }
 
+.klai-activity {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: -4px 0 2px;
+  max-width: 100%;
+}
+
+.klai-activity-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--klai-text-muted);
+}
+
+.klai-activity-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.klai-activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--klai-text-muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.klai-activity-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background-color: var(--klai-primary-color);
+  flex-shrink: 0;
+}
+
+.klai-activity-text {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.klai-activity-title {
+  color: var(--klai-text-color);
+  font-weight: 600;
+}
+
+.klai-activity-detail {
+  overflow-wrap: anywhere;
+}
+
 /* Meta line — small subtitle under an assistant message when
    show_meta is on. Currently shows source-count summary; future
    data (model, retrieval depth) can extend this line. */

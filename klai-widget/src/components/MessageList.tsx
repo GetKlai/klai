@@ -179,6 +179,7 @@ export function MessageList(props: MessageListProps) {
             chatState.config?.show_sources !== false; // default on
           const showMeta = chatState.config?.show_meta === true;
           const sources = message.sources ?? [];
+          const activity = message.activity ?? [];
           return (
             <Show when={!isEmpty}>
               <div
@@ -219,6 +220,32 @@ export function MessageList(props: MessageListProps) {
                             <span class="klai-sources-number">{s.label}</span>
                             <span class="klai-sources-title">{s.title}</span>
                           </a>
+                        </li>
+                      )}
+                    </For>
+                  </ol>
+                </div>
+              </Show>
+              <Show
+                when={
+                  message.role === "assistant" &&
+                  showMeta &&
+                  activity.length > 0
+                }
+              >
+                <div class="klai-activity" aria-label="Agent activiteit">
+                  <span class="klai-activity-label">Agent activiteit</span>
+                  <ol class="klai-activity-list">
+                    <For each={activity}>
+                      {(item) => (
+                        <li class="klai-activity-item">
+                          <span class="klai-activity-dot" aria-hidden="true" />
+                          <span class="klai-activity-text">
+                            <span class="klai-activity-title">{item.label}</span>
+                            <Show when={item.detail}>
+                              <span class="klai-activity-detail">{item.detail}</span>
+                            </Show>
+                          </span>
                         </li>
                       )}
                     </For>

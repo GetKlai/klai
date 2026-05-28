@@ -10,6 +10,7 @@ import {
   startAssistantMessage,
   appendToLastMessage,
   setLastMessageSources,
+  appendLastMessageActivity,
   finishStreaming,
   setError,
   clearError,
@@ -173,6 +174,9 @@ export function ChatWindow(props: ChatWindowProps) {
         },
         onSources: (sources) => {
           setLastMessageSources(sources);
+        },
+        onActivity: (activity) => {
+          appendLastMessageActivity(activity);
         },
         onDone: () => {
           finishStreaming();

@@ -3260,10 +3260,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
         assert streamed == [first, second, final]
-        assert first.choices[0].delta.content == ""
+        assert first.choices[0].delta.content == "Zie diagram "
         assert second.choices[0].delta.content == ""
         assert "https://bad.example" not in final.choices[0].delta.content
-        assert "Zie diagram fake." in final.choices[0].delta.content
+        assert "fake." in final.choices[0].delta.content
         assert "**Bronnen**" in final.choices[0].delta.content
         assert "- [Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
         assert final.choices[0].delta.sources == [
