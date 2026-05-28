@@ -16,14 +16,14 @@ import pytest
 from tests.conftest import make_perms
 
 
-def _make_org(auto_accept: bool = False) -> MagicMock:
+def _make_org(auto_accept: bool = False, primary_domain: str | None = "acme.nl") -> MagicMock:
     org = MagicMock()
     org.id = 1
     org.name = "Acme"
     org.default_language = "nl"
     org.mfa_policy = "optional"
     org.auto_accept_same_domain = auto_accept
-    org.primary_domain = None
+    org.primary_domain = primary_domain
     # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-15: OrgSettingsOut now also
     # carries telemetry_level. Pin to the privacy-friendly default for
     # tests that don't explicitly exercise this field.
@@ -130,3 +130,37 @@ class TestPatchSettingsAutoAccept:
         result = await get_org_settings(perms=perms, db=db)
 
         assert result.auto_accept_same_domain is True
+        assert result.primary_domain == "acme.nl"
+
+    @pytest.mark.asyncio
+    async def test_get_settings_hides_unclaimable_primary_domain(self) -> None:
+        from app.api.admin.settings import get_org_settings
+
+        org = _make_org(auto_accept=True, primary_domain="gmail.com")
+        perms = make_perms(role="admin", org_id=1)
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=org)
+
+        result = await get_org_settings(perms=perms, db=db)
+
+        assert result.primary_domain is None
+        assert result.auto_accept_same_domain is False
+
+    @pytest.mark.asyncio
+    async def test_patch_does_not_enable_auto_accept_for_unclaimable_primary_domain(self) -> None:
+        from app.api.admin.settings import OrgSettingsUpdate, update_org_settings
+
+        org = _make_org(auto_accept=False, primary_domain="gmail.com")
+        perms = make_perms(role="admin", org_id=1)
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=org)
+
+        result = await update_org_settings(
+            body=OrgSettingsUpdate(auto_accept_same_domain=True),
+            perms=perms,
+            db=db,
+        )
+
+        assert org.auto_accept_same_domain is False
+        assert result.auto_accept_same_domain is False
+        assert result.primary_domain is None
