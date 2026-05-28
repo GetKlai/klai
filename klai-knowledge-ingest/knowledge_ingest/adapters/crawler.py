@@ -686,10 +686,23 @@ async def _ingest_crawl_result(
 
     raw_html = result.html or ""
     raw_html_hash = hashlib.sha256(raw_html.encode()).hexdigest()
+    active_connector_artifact_exists = True
+    if connector_id:
+        active_connector_artifact_exists = await pg_store.has_active_connector_artifact_for_url(
+            conn,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            connector_id=connector_id,
+            url=url,
+        )
 
     if stored is not None:
         stored_raw, _stored_content = stored  # type: ignore[misc]
-        if stored_raw is not None and stored_raw == raw_html_hash:
+        if (
+            stored_raw is not None
+            and stored_raw == raw_html_hash
+            and active_connector_artifact_exists
+        ):
             logger.info("crawl_skipped_unchanged", url=url, org_id=org_id, kb_slug=kb_slug)
             return
 
@@ -699,7 +712,11 @@ async def _ingest_crawl_result(
     content_hash = hashlib.sha256(text.encode()).hexdigest()
     if stored is not None:
         _, stored_content = stored  # type: ignore[misc]
-        if stored_content is not None and stored_content == content_hash:
+        if (
+            stored_content is not None
+            and stored_content == content_hash
+            and active_connector_artifact_exists
+        ):
             await pg_store.upsert_crawled_page(
                 conn,
                 org_id=org_id,
