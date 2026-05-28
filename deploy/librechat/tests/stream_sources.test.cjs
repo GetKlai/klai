@@ -10,6 +10,7 @@ const streamPatch = fs.readFileSync(
 );
 
 const sandbox = {
+  Buffer,
   require: (id) => {
     if (id === './common/enum.cjs') {
       return {
@@ -63,7 +64,7 @@ const sandbox = {
 
 vm.runInNewContext(streamPatch, sandbox);
 
-const { createContentAggregator, getChunkSources } = sandbox.exports;
+const { createContentAggregator, extractKlaiSourcesFromText, getChunkSources } = sandbox.exports;
 const sources = [
   {
     label: '1',
@@ -74,6 +75,16 @@ const sources = [
 
 assert.deepEqual(getChunkSources({ additional_kwargs: { sources } }), sources);
 
+const marker = Buffer.from(JSON.stringify(sources), 'utf8')
+  .toString('base64')
+  .replace(/\+/g, '-')
+  .replace(/\//g, '_')
+  .replace(/=+$/, '');
+assert.equal(
+  JSON.stringify(extractKlaiSourcesFromText(`Antwoord. <!-- klai_sources=${marker} -->`)),
+  JSON.stringify({ text: 'Antwoord. ', sources }),
+);
+
 const aggregator = createContentAggregator();
 aggregator.aggregateContent({
   event: 'on_run_step',
@@ -83,7 +94,7 @@ aggregator.aggregateContent({
   event: 'on_message_delta',
   data: {
     id: 'step-1',
-    delta: { content: { type: 'text', text: 'Antwoord. ', sources } },
+    delta: { content: { type: 'text', text: `Antwoord. <!-- klai_sources=${marker} -->` } },
   },
 });
 aggregator.aggregateContent({
@@ -95,6 +106,6 @@ aggregator.aggregateContent({
 });
 
 assert.equal(aggregator.contentParts[0].text, 'Antwoord. Vervolg zonder metadata.');
-assert.deepEqual(aggregator.contentParts[0].sources, sources);
+assert.equal(JSON.stringify(aggregator.contentParts[0].sources), JSON.stringify(sources));
 
 console.log('OK: LibreChat stream aggregator preserves Klai source metadata.');

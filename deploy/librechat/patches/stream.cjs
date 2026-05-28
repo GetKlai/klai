@@ -98,6 +98,29 @@ function getChunkSources(chunk) {
     }
     return undefined;
 }
+const KLAI_SOURCES_MARKER_RE = /<!--\s*klai_sources=([A-Za-z0-9_-]+={0,2})\s*-->/g;
+function decodeKlaiSourcesMarker(encoded) {
+    try {
+        const padded = encoded + '='.repeat((4 - (encoded.length % 4)) % 4);
+        const json = Buffer.from(padded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+        const parsed = JSON.parse(json);
+        return Array.isArray(parsed) ? parsed : undefined;
+    }
+    catch (_error) {
+        return undefined;
+    }
+}
+function extractKlaiSourcesFromText(text) {
+    let sources;
+    const cleanText = text.replace(KLAI_SOURCES_MARKER_RE, (_match, encoded) => {
+        const decoded = decodeKlaiSourcesMarker(encoded);
+        if (decoded && decoded.length > 0) {
+            sources = decoded;
+        }
+        return '';
+    });
+    return { text: cleanText, sources };
+}
 class ChatModelStreamHandler {
     async handle(event, data, metadata, graph) {
         if (!graph) {
@@ -205,20 +228,22 @@ hasToolCallChunks: ${hasToolCallChunks}
             return;
         }
         else if (typeof content === 'string') {
-            const sources = getChunkSources(chunk);
+            const extracted = extractKlaiSourcesFromText(content);
+            const textContent = extracted.text;
+            const sources = getChunkSources(chunk) ?? extracted.sources;
             if (agentContext.currentTokenType === _enum.ContentTypes.TEXT) {
                 await graph.dispatchMessageDelta(stepId, {
                     content: [
                         {
                             type: _enum.ContentTypes.TEXT,
-                            text: content,
+                            text: textContent,
                             ...(sources ? { sources } : {}),
                         },
                     ],
                 });
             }
             else if (agentContext.currentTokenType === 'think_and_text') {
-                const { text, thinking } = parseThinkingContent(content);
+                const { text, thinking } = parseThinkingContent(textContent);
                 if (thinking) {
                     await graph.dispatchReasoningDelta(stepId, {
                         content: [
@@ -381,15 +406,17 @@ function createContentAggregator() {
             typeof contentPart.text === 'string') {
             // TODO: update this!!
             const currentContent = contentParts[index];
+            const extracted = extractKlaiSourcesFromText(contentPart.text);
             const update = {
                 type: _enum.ContentTypes.TEXT,
-                text: (currentContent.text || '') + contentPart.text,
+                text: (currentContent.text || '') + extracted.text,
             };
             if (contentPart.tool_call_ids) {
                 update.tool_call_ids = contentPart.tool_call_ids;
             }
-            if (Array.isArray(contentPart.sources) && contentPart.sources.length > 0) {
-                update.sources = contentPart.sources;
+            const incomingSources = contentPart.sources ?? extracted.sources;
+            if (Array.isArray(incomingSources) && incomingSources.length > 0) {
+                update.sources = incomingSources;
             }
             else if (Array.isArray(currentContent.sources) && currentContent.sources.length > 0) {
                 update.sources = currentContent.sources;
@@ -610,6 +637,7 @@ function createContentAggregator() {
 
 exports.ChatModelStreamHandler = ChatModelStreamHandler;
 exports.createContentAggregator = createContentAggregator;
+exports.extractKlaiSourcesFromText = extractKlaiSourcesFromText;
 exports.getChunkContent = getChunkContent;
 exports.getChunkSources = getChunkSources;
 //# sourceMappingURL=stream.cjs.map
