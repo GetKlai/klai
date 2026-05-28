@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bug, Download, Lightbulb, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -48,6 +48,9 @@ interface AccountFeedbackUpdate {
   item_summary?: string | null
   item_status?: string | null
   item_updated_at?: string | null
+  notification_id?: number | null
+  notification_body?: string | null
+  notification_read_at?: string | null
   latest_update_at: string
   unread: boolean
 }
@@ -62,6 +65,7 @@ function AccountPage() {
   const { locale, switchLocale } = useLocale()
   const search = Route.useSearch()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const [saved, setSaved] = useState(false)
   const [selectedLang, setSelectedLang] = useState<'nl' | 'en'>(locale)
@@ -122,6 +126,15 @@ function AccountPage() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+    },
+  })
+
+  const markFeedbackReadMutation = useMutation({
+    mutationFn: async (notificationId: number) => {
+      return apiFetch(`/api/app/account/feedback-updates/${notificationId}/read`, { method: 'POST' })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['account-feedback-updates'] })
     },
   })
 
@@ -252,6 +265,8 @@ function AccountPage() {
           isLoading={feedbackLoading}
           error={feedbackError}
           locale={locale}
+          onMarkRead={(notificationId) => markFeedbackReadMutation.mutate(notificationId)}
+          markingReadId={markFeedbackReadMutation.variables}
         />
       )}
 
@@ -290,11 +305,15 @@ function FeedbackUpdatesPanel({
   isLoading,
   error,
   locale,
+  onMarkRead,
+  markingReadId,
 }: {
   items: AccountFeedbackUpdate[]
   isLoading: boolean
   error: unknown
   locale: 'nl' | 'en'
+  onMarkRead: (notificationId: number) => void
+  markingReadId?: number
 }) {
   const hasError = error != null
 
@@ -334,7 +353,13 @@ function FeedbackUpdatesPanel({
       {!isLoading && !hasError && items.length > 0 && (
         <div className="border-y border-gray-200 divide-y divide-gray-100">
           {items.map((item) => (
-            <FeedbackUpdateRow key={item.submission_id} item={item} locale={locale} />
+            <FeedbackUpdateRow
+              key={item.submission_id}
+              item={item}
+              locale={locale}
+              onMarkRead={onMarkRead}
+              isMarkingRead={markingReadId === item.notification_id}
+            />
           ))}
         </div>
       )}
@@ -342,11 +367,22 @@ function FeedbackUpdatesPanel({
   )
 }
 
-function FeedbackUpdateRow({ item, locale }: { item: AccountFeedbackUpdate; locale: 'nl' | 'en' }) {
+function FeedbackUpdateRow({
+  item,
+  locale,
+  onMarkRead,
+  isMarkingRead,
+}: {
+  item: AccountFeedbackUpdate
+  locale: 'nl' | 'en'
+  onMarkRead: (notificationId: number) => void
+  isMarkingRead: boolean
+}) {
   const title = item.item_title || truncateText(item.raw_text, 88)
   const status = feedbackStatusLabel(item)
   const updatedAt = formatFeedbackDate(item.latest_update_at, locale)
   const createdAt = formatFeedbackDate(item.created_at, locale)
+  const notificationId = item.notification_id ?? null
 
   return (
     <article className="flex gap-3 py-4">
@@ -356,7 +392,13 @@ function FeedbackUpdateRow({ item, locale }: { item: AccountFeedbackUpdate; loca
       <div className="min-w-0 flex-1">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <h3 className="text-sm font-medium text-gray-900">{title}</h3>
+            <div className="flex items-center gap-2">
+              {item.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />}
+              <h3 className="text-sm font-medium text-gray-900">{title}</h3>
+            </div>
+            {item.notification_body && (
+              <p className="mt-1 text-sm text-gray-900">{item.notification_body}</p>
+            )}
             <p className="mt-1 line-clamp-2 text-sm text-gray-500">{item.raw_text}</p>
           </div>
           <span className={status.className}>{status.label}</span>
@@ -377,6 +419,18 @@ function FeedbackUpdateRow({ item, locale }: { item: AccountFeedbackUpdate; loca
             </div>
           )}
         </dl>
+        {item.unread && notificationId !== null && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mt-3"
+            onClick={() => onMarkRead(notificationId)}
+            disabled={isMarkingRead}
+          >
+            {m.account_feedback_mark_read()}
+          </Button>
+        )}
       </div>
     </article>
   )

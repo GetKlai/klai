@@ -3,7 +3,8 @@ from datetime import UTC, datetime
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackSubmission
+from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackNotification, FeedbackSubmission
+from app.models.portal import PortalUser
 
 
 class FeedbackSubmissionNotFoundError(Exception):
@@ -103,6 +104,87 @@ async def update_feedback_item(
         setattr(item, key, value)
     await db.commit()
     return item
+
+
+async def resolve_feedback_item(
+    db: AsyncSession,
+    item_id: int,
+    *,
+    resolution_summary: str,
+    resolved_by: str,
+    channels: list[str],
+    subject: str | None = None,
+) -> tuple[FeedbackItem, list[FeedbackNotification]]:
+    item = await get_feedback_item(db, item_id)
+    now = datetime.now(UTC)
+    item.resolution_summary = resolution_summary
+    item.resolved_at = now
+    item.resolved_by = resolved_by
+    if item.kind == "feature":
+        item.status = "shipped"
+        item.shipped_at = now
+    else:
+        item.status = "resolved"
+
+    requested_channels = [channel for channel in channels if channel in {"in_app", "email"}]
+    notifications: list[FeedbackNotification] = []
+    if requested_channels:
+        rows = (
+            await db.execute(
+                select(FeedbackSubmission, PortalUser.email)
+                .select_from(FeedbackItemLink)
+                .join(FeedbackSubmission, FeedbackSubmission.id == FeedbackItemLink.submission_id)
+                .outerjoin(
+                    PortalUser,
+                    (PortalUser.zitadel_user_id == FeedbackSubmission.user_id)
+                    & (PortalUser.org_id == FeedbackSubmission.org_id),
+                )
+                .where(FeedbackItemLink.item_id == item_id)
+                .order_by(FeedbackItemLink.created_at.asc())
+            )
+        ).all()
+
+        seen: set[tuple[int | None, str | None, str]] = set()
+        for submission, email in rows:
+            if submission.org_id is None or submission.user_id is None:
+                continue
+            for channel in requested_channels:
+                dedupe_key = (submission.org_id, submission.user_id, channel)
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                status = "sent" if channel == "in_app" else "queued"
+                if channel == "email" and not email:
+                    status = "skipped"
+                notification = FeedbackNotification(
+                    item_id=item.id,
+                    submission_id=submission.id,
+                    org_id=submission.org_id,
+                    user_id=submission.user_id,
+                    recipient_email=email if channel == "email" else None,
+                    channel=channel,
+                    status=status,
+                    subject=subject or item.title,
+                    body=resolution_summary,
+                    generated_by="staff",
+                    sent_at=now if status == "sent" else None,
+                )
+                db.add(notification)
+                notifications.append(notification)
+
+    if not requested_channels:
+        item.notification_state = "not_needed"
+    elif any(notification.status == "failed" for notification in notifications):
+        item.notification_state = "failed"
+    elif any(notification.status == "queued" for notification in notifications):
+        item.notification_state = "queued"
+    elif notifications:
+        item.notification_state = "sent"
+    else:
+        item.notification_state = "not_needed"
+
+    await db.commit()
+    return item, notifications
 
 
 async def delete_feedback_item(db: AsyncSession, item_id: int) -> None:
