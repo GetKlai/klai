@@ -17,6 +17,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    op.execute("LOCK TABLE feedback_submissions, feedback_items IN ACCESS EXCLUSIVE MODE")
+
     op.drop_constraint("ck_feedback_submissions_status", "feedback_submissions", type_="check")
     op.drop_constraint("ck_feedback_items_status", "feedback_items", type_="check")
 
