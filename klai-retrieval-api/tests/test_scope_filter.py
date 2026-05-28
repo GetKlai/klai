@@ -7,13 +7,19 @@ from retrieval_api.models import RetrieveRequest
 from retrieval_api.services.search import _scope_filter
 
 
-def _make_request(scope: str = "org", user_id: str | None = None, kb_slugs: list[str] | None = None) -> RetrieveRequest:
+def _make_request(
+    scope: str = "org",
+    user_id: str | None = None,
+    kb_slugs: list[str] | None = None,
+    include_owned_private_kbs: bool = False,
+) -> RetrieveRequest:
     return RetrieveRequest(
         query="test query",
         org_id="org-abc",
         scope=scope,
         user_id=user_id,
         kb_slugs=kb_slugs,
+        include_owned_private_kbs=include_owned_private_kbs,
     )
 
 
@@ -192,6 +198,22 @@ class TestScopeFilterVisibility:
         )
         assert slug_cond.match.any == ["personal-user-42"]
 
+    def test_scope_both_all_collections_allows_owned_private_kbs(self):
+        """include_owned_private_kbs=True keeps all org KBs broad while also
+        allowing every private chunk owned by the caller.
+        """
+        req = _make_request(
+            scope="both",
+            user_id="user-42",
+            kb_slugs=None,
+            include_owned_private_kbs=True,
+        )
+        conditions = _scope_filter(req)
+        vis = _find_visibility_filter(conditions)
+        own_branch = vis.should[1]
+        keys = {c.key for c in own_branch.must if isinstance(c, FieldCondition)}
+        assert keys == {"visibility", "user_id"}
+
     def test_scope_org_own_private_branch_does_not_add_canonical_slug(self):
         """scope=org also has the visibility-should clause but is a pure-org
         scope semantically. The own-private branch lets a user's private
@@ -238,7 +260,9 @@ class TestScopeFilterVisibility:
             c for c in conditions
             if isinstance(c, FieldCondition) and c.key == "kb_slug"
         ]
-        assert len(bare_slug_conds) == 0, "bare kb_slug FieldCondition must not exist for scope=both"
+        assert len(bare_slug_conds) == 0, (
+            "bare kb_slug FieldCondition must not exist for scope=both"
+        )
 
         # Must be a Filter(should=[...]) containing both slug and user_id bypass
         slug_should_filters = [
@@ -259,7 +283,7 @@ class TestScopeFilterVisibility:
         assert "user_id" in keys
 
     def test_kb_slugs_both_scope_without_user_falls_back_to_direct_filter(self):
-        """scope=both + kb_slugs without user_id: direct slug FieldCondition (no bypass possible)."""
+        """scope=both + kb_slugs without user_id uses direct slug filter."""
         req = _make_request(scope="both", user_id=None, kb_slugs=["engineering"])
         conditions = _scope_filter(req)
         slug_conds = [c for c in conditions if isinstance(c, FieldCondition) and c.key == "kb_slug"]
