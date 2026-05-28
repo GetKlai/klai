@@ -51,6 +51,18 @@ def upgrade() -> None:
             ELSE 'open'
         END
     """)
+    op.execute("""
+        UPDATE feedback_submissions
+        SET status = 'open'
+        WHERE status IS NULL
+           OR status NOT IN ('new', 'open', 'resolved', 'dismissed', 'support')
+    """)
+    op.execute("""
+        UPDATE feedback_items
+        SET status = 'open'
+        WHERE status IS NULL
+           OR status NOT IN ('open', 'resolved', 'dismissed')
+    """)
 
     op.create_check_constraint(
         "ck_feedback_submissions_status",
