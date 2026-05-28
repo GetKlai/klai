@@ -130,6 +130,12 @@ print(JSON.stringify({
   sourceTitles: sources.map((source) => source.title),
   artifactIds: sources.map((source) => source.artifact_id || ''),
   evidenceCounts: sources.map((source) => Array.isArray(source.evidence_ids) ? source.evidence_ids.length : 0),
+  evidenceSnippetCounts: sources.map((source) => Array.isArray(source.evidence) ? source.evidence.length : 0),
+  evidenceSnippetTextCounts: sources.map((source) =>
+    Array.isArray(source.evidence)
+      ? source.evidence.filter((item) => item && typeof item.text === 'string' && item.text.trim()).length
+      : 0
+  ),
   expectedSourcePresent: sources.some((source) => String(source.title || '').includes(expectSource)),
   retrievalLine: (contentText.match(/- Kennisbank geraadpleegd:.*$/m) || [])[0] || '',
   error: assistant.error,
@@ -196,6 +202,10 @@ else:
         failures.append("structured sources missing artifact_id")
     if not any(count > 0 for count in (result.get("evidenceCounts") or [])):
         failures.append("structured sources missing evidence_ids")
+    if not any(count > 0 for count in (result.get("evidenceSnippetCounts") or [])):
+        failures.append("structured sources missing evidence snippets")
+    if not any(count > 0 for count in (result.get("evidenceSnippetTextCounts") or [])):
+        failures.append("structured source evidence snippets missing text")
 if failures:
     print(json.dumps(result, indent=2, ensure_ascii=False), file=sys.stderr)
     print(f"KB citation smoke failed: {'; '.join(failures)}", file=sys.stderr)

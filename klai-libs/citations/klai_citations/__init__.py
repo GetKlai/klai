@@ -71,6 +71,8 @@ _DEFAULT_MAX_SOURCES = 4
 _SIMPLE_ANSWER_SOURCE_TOKEN_LIMIT = 20
 _COMPLEX_ANSWER_SOURCE_TOKEN_LIMIT = 30
 _EXTRA_SOURCE_KEEP_RATIO = 0.85
+_MAX_SOURCE_EVIDENCE_ITEMS = 3
+_MAX_SOURCE_EVIDENCE_TEXT_CHARS = 320
 _SOURCE_RELEVANCE_STOPWORDS = {
     "aan",
     "als",
@@ -810,6 +812,62 @@ def render_structured_sources(
     ]
 
 
+def _compact_text(value: object, *, max_chars: int = _MAX_SOURCE_EVIDENCE_TEXT_CHARS) -> str:
+    if not isinstance(value, str):
+        return ""
+    compact = re.sub(r"\s+", " ", value).strip()
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max_chars - 1].rstrip() + "…"
+
+
+def _source_evidence_items_from_pack(
+    source: dict[str, Any],
+    items: list[object],
+    *,
+    max_items: int = _MAX_SOURCE_EVIDENCE_ITEMS,
+) -> list[dict[str, Any]]:
+    evidence_ids = {
+        str(evidence_id)
+        for evidence_id in source.get("evidence_ids") or []
+        if isinstance(evidence_id, str | int)
+    }
+    if not evidence_ids:
+        return []
+
+    evidence: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        evidence_id = item.get("evidence_id")
+        if str(evidence_id) not in evidence_ids:
+            continue
+        text = _compact_text(item.get("text"))
+        if not text:
+            continue
+        entry: dict[str, Any] = {
+            "evidence_id": str(evidence_id),
+            "chunk_id": item.get("chunk_id"),
+            "text": text,
+        }
+        for key in (
+            "artifact_id",
+            "heading_path",
+            "source_url",
+            "source_label",
+            "score",
+            "reranker_score",
+            "final_score",
+        ):
+            value = item.get(key)
+            if value is not None:
+                entry[key] = value
+        evidence.append(entry)
+        if len(evidence) >= max_items:
+            break
+    return evidence
+
+
 def trusted_sources_from_evidence_pack(evidence_pack: object) -> list[dict[str, Any]]:
     """Return UI-renderable sources from an EvidencePack-like dict.
 
@@ -823,6 +881,8 @@ def trusted_sources_from_evidence_pack(evidence_pack: object) -> list[dict[str, 
     sources = evidence_pack.get("sources")
     if not isinstance(sources, list):
         return []
+    items = evidence_pack.get("items")
+    evidence_items = items if isinstance(items, list) else []
     rendered: list[dict[str, Any]] = []
     for index, source in enumerate(sources, 1):
         if not isinstance(source, dict):
@@ -831,18 +891,20 @@ def trusted_sources_from_evidence_pack(evidence_pack: object) -> list[dict[str, 
         artifact_id = source.get("artifact_id")
         if not url and not artifact_id:
             continue
-        rendered.append(
-            {
-                "label": str(index),
-                "title": source.get("title") or "Source",
-                "url": url,
-                "source_id": source.get("source_id"),
-                "evidence_ids": source.get("evidence_ids") or [],
-                "artifact_id": artifact_id,
-                "source_label": source.get("source_label"),
-                "relevance_score": source.get("relevance_score"),
-            }
-        )
+        rendered_source = {
+            "label": str(index),
+            "title": source.get("title") or "Source",
+            "url": url,
+            "source_id": source.get("source_id"),
+            "evidence_ids": source.get("evidence_ids") or [],
+            "artifact_id": artifact_id,
+            "source_label": source.get("source_label"),
+            "relevance_score": source.get("relevance_score"),
+        }
+        evidence = _source_evidence_items_from_pack(source, evidence_items)
+        if evidence:
+            rendered_source["evidence"] = evidence
+        rendered.append(rendered_source)
     return rendered
 
 
