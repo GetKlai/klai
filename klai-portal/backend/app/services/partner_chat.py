@@ -1569,6 +1569,8 @@ async def chat_completion_streaming(
     citation_source_metadata = citation_source_metadata or (
         _citation_source_metadata_from_chunks(citation_chunks or []) if citation_chunks else {}
     )
+    initial_sources: list[dict[str, str]] = []
+    initial_source_keys: list[str] = []
 
     if citation_output == "markers":
         trusted_source_list = [s for s in (trusted_sources or []) if isinstance(s, dict)]
