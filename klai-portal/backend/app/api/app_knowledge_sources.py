@@ -34,6 +34,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.formparsers import MultiPartException
 
 from app.api.dependencies import _load_org_or_500, get_kb_with_access
 from app.core.database import get_db
@@ -669,8 +671,28 @@ async def add_file_source(
             max_files=_MAX_FILES_PER_REQUEST,
             max_part_size=file_upload.MAX_BINARY_FILE_BYTES + 4 * 1024,
         )
+    except (MultiPartException, StarletteHTTPException) as exc:
+        error_text = str(getattr(exc, "detail", None) or exc)
+        if "Too many files" in error_text or "maximum number of files" in error_text:
+            logger.warning("kb_upload_form_too_many_files", error=error_text)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error_code": "too_many_files",
+                    "max": _MAX_FILES_PER_REQUEST,
+                },
+            ) from exc
+
+        logger.warning("kb_upload_form_parse_failed", error=error_text, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "error_code": "file_too_large",
+                "max_bytes": file_upload.MAX_BINARY_FILE_BYTES,
+            },
+        ) from exc
     except Exception as exc:
-        # Starlette MultiPartException + httpx parse errors land here.
+        # Unexpected parser/transport errors land here.
         # The most common is the user uploading > 200 MB; surface as
         # 413 with the structured error code rather than 500.
         logger.warning("kb_upload_form_parse_failed", error=str(exc), exc_info=True)

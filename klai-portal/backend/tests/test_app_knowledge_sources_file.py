@@ -135,20 +135,21 @@ def _make_request(files: list[UploadFile]) -> MagicMock:
     return request
 
 
-def _make_multipart_request(filename: str, content: bytes, content_type: str) -> Request:
+def _make_multipart_request_many(files: list[tuple[str, bytes, str]]) -> Request:
     """Build a real Starlette Request so request.form() creates UploadFile."""
 
     boundary = "----klai-test-boundary"
-    body = (
-        (
+    parts: list[bytes] = []
+    for filename, content, content_type in files:
+        header = (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'
             f"Content-Type: {content_type}\r\n"
             "\r\n"
         ).encode()
-        + content
-        + f"\r\n--{boundary}--\r\n".encode()
-    )
+        parts.append(header + content + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    body = b"".join(parts)
     chunks = [body[i : i + 64 * 1024] for i in range(0, len(body), 64 * 1024)]
 
     async def receive() -> dict[str, object]:
@@ -172,6 +173,10 @@ def _make_multipart_request(filename: str, content: bytes, content_type: str) ->
         },
         receive,
     )
+
+
+def _make_multipart_request(filename: str, content: bytes, content_type: str) -> Request:
+    return _make_multipart_request_many([(filename, content, content_type)])
 
 
 def _build_zip(members: list[tuple[str, bytes]]) -> bytes:
@@ -634,6 +639,26 @@ class TestProtocolErrors:
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "too_many_files"
+
+    @pytest.mark.asyncio
+    async def test_real_multipart_too_many_files_returns_400(self) -> None:
+        from app.api.app_knowledge_sources import add_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        files = [(f"f{i}.md", b"x", "text/markdown") for i in range(11)]
+
+        with _FilePatches(), pytest.raises(HTTPException) as excinfo:
+            await add_file_source(
+                kb_slug="personal",
+                request=_make_multipart_request_many(files),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["error_code"] == "too_many_files"
+        assert excinfo.value.detail["max"] == 10
 
 
 # --- Status polling endpoint ----------------------------------------------
