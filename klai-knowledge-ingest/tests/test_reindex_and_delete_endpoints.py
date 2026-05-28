@@ -330,6 +330,8 @@ class TestListKbSourcesIndexStatus:
         upload_row = {
             "id": _ARTIFACT,
             "path": "uploads/file.pdf",
+            "display_name": "file.pdf",
+            "source_url": None,
             "content_type": "application/pdf",
             "created_at": 1751328000,
             "chunks_count": 5,

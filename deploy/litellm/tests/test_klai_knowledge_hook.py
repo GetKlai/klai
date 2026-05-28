@@ -2936,6 +2936,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "https://example.com" not in content
         assert "**Bronnen**" in content
         assert "- [Diagram](https://docs.getklai.com/diagram)" in content
+        assert "**Agent activiteit**" in content
+        assert "- Kennisbank geraadpleegd: 1 fragment opgehaald in 12 ms." in content
+        assert "- Bronselectie: 1 bron gekoppeld" in content
         assert "![fake]" not in content
         assert response.choices[0].message.sources == [
             {
@@ -3003,6 +3006,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             "- [Invite and remove people](https://docs.getklai.com/admin/invite-remove-people)"
             in content
         )
+        assert "**Agent activiteit**" in content
+        assert "- Kennisbank geraadpleegd: 1 fragment opgehaald in 12 ms." in content
+        assert "- Bronselectie: 1 bron gekoppeld" in content
         assert response.choices[0].message.sources == [
             {
                 "label": "1",
@@ -3266,6 +3272,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "fake." in final.choices[0].delta.content
         assert "**Bronnen**" in final.choices[0].delta.content
         assert "- [Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
+        assert "**Agent activiteit**" in final.choices[0].delta.content
         assert final.choices[0].delta.sources == [
             {
                 "label": "1",
@@ -3365,6 +3372,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "Zie diagram." in content
         assert "**Bronnen**" in content
         assert "- [Diagram](https://docs.getklai.com/diagram)" in content
+        assert "**Agent activiteit**" in content
         assert streamed[0]["choices"][0]["delta"]["sources"] == [
             {
                 "label": "1",
