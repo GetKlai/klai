@@ -97,6 +97,7 @@ class ChunkResult(BaseModel):
     kb_slug: str | None = None  # Knowledge base slug (SPEC-KB-021)
     source_label: str | None = None  # Human-readable source label (SPEC-KB-021)
     title: str | None = None  # Document title from Qdrant payload
+    original_filename: str | None = None  # Uploaded document filename from ingest metadata
     image_urls: list[str] | None = None  # Presigned S3 URLs for images in this document
     # Specific brand/product entity names extracted by Graphiti at document ingest
     # and filtered per-chunk by literal substring presence in chunk text. Lets the

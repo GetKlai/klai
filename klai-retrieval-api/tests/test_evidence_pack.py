@@ -300,6 +300,29 @@ def test_evidence_pack_includes_uploaded_documents_without_source_url():
     assert len(payload) == 2
 
 
+def test_evidence_pack_prefers_original_filename_for_file_sha_upload_title():
+    """Docling uploads can have a synthetic file:sha title; show the user filename."""
+    pack = build_evidence_pack(
+        [
+            {
+                "chunk_id": "cv-chunk-1",
+                "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
+                "title": (
+                    "file:sha256:"
+                    "59f8048203feeb17818abffa52de51405e0705c9e7907e2a57ebd5aa48c6697a"
+                ),
+                "original_filename": "CV_Jantine_Doornbos.pdf",
+                "text": "WERKERVARING\nMede-oprichter bij Klai jan 2026 - heden.",
+                "source_url": None,
+                "score": 0.4,
+            },
+        ],
+    )
+
+    assert pack.sources[0].title == "CV_Jantine_Doornbos.pdf"
+    assert evidence_pack_sources_payload(pack)[0]["title"] == "CV_Jantine_Doornbos.pdf"
+
+
 def test_evidence_pack_groups_upload_chunks_by_artifact_id():
     """All chunks from one upload share an ``artifact_id`` and must
     collapse into a single source — not two parallel sources confusing
