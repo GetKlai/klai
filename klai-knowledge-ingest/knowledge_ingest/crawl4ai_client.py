@@ -8,6 +8,7 @@ the crawl4ai package (or a local Chromium install) as a dependency.
 from __future__ import annotations
 
 import asyncio
+import copy
 import fnmatch
 import json
 import re
@@ -902,6 +903,27 @@ def _crawl_results_from_raw_results(
     return results
 
 
+def _is_minimal_content_antibot_error(exc: Exception) -> bool:
+    if not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code != 500:
+        return False
+    body = exc.response.text.lower()
+    return "blocked by anti-bot protection" in body and (
+        "minimal_text" in body or "no_content_elements" in body or "0 chars visible" in body
+    )
+
+
+def _relax_seed_crawl_config(crawler_config: dict[str, Any]) -> dict[str, Any]:
+    relaxed = copy.deepcopy(crawler_config)
+    # Some personal/portfolio sites put real content in <header>. If strict
+    # chrome stripping leaves no visible text, retry the seed before treating
+    # the page as anti-bot.
+    relaxed.pop("js_code_before_wait", None)
+    relaxed.pop("wait_for", None)
+    if relaxed.get("excluded_tags"):
+        relaxed["excluded_tags"] = ["script", "style"]
+    return relaxed
+
+
 async def crawl_site(
     start_url: str,
     selector: str | None = None,
@@ -1038,7 +1060,20 @@ async def _fetch_seed_page(
 
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
-            data = await _crawl_sync(client, payload)
+            try:
+                data = await _crawl_sync(client, payload)
+            except Exception as exc:
+                if not _is_minimal_content_antibot_error(exc):
+                    raise
+                relaxed_payload = {
+                    **payload,
+                    "crawler_config": {
+                        "type": "CrawlerRunConfig",
+                        "params": _relax_seed_crawl_config(crawler_config),
+                    },
+                }
+                logger.info("crawl_site_seed_retry_relaxed_config", start_url=start_url)
+                data = await _crawl_sync(client, relaxed_payload)
     except Exception as exc:
         logger.warning(
             "crawl_site_seed_request_failed",
