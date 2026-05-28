@@ -1586,9 +1586,7 @@ async def chat_completion_streaming(
             initial_sources = _source_payload_from_keys(initial_source_keys, citation_source_metadata)
         else:
             initial_source_keys = [
-                key
-                for key in (_source_url_key(source.get("url")) for source in initial_sources)
-                if key
+                key for key in (_source_url_key(source.get("url")) for source in initial_sources) if key
             ]
         if citation_chunks and not initial_sources:
             message = _no_citable_sources_message(user_query)
