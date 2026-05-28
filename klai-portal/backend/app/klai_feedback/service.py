@@ -105,6 +105,23 @@ async def update_feedback_item(
     return item
 
 
+async def delete_feedback_item(db: AsyncSession, item_id: int) -> None:
+    item = await get_feedback_item(db, item_id)
+    linked_submission_ids = list(
+        (await db.execute(select(FeedbackItemLink.submission_id).where(FeedbackItemLink.item_id == item_id)))
+        .scalars()
+        .all()
+    )
+    if linked_submission_ids:
+        submissions = (
+            await db.execute(select(FeedbackSubmission).where(FeedbackSubmission.id.in_(linked_submission_ids)))
+        ).scalars()
+        for submission in submissions:
+            submission.status = "new"
+    await db.delete(item)
+    await db.commit()
+
+
 async def dismiss_feedback_submission(db: AsyncSession, submission_id: int) -> FeedbackSubmission:
     submission = await get_feedback_submission(db, submission_id)
     submission.status = "dismissed"

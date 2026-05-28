@@ -13,6 +13,7 @@ import {
   Save,
   Search,
   Sparkles,
+  Trash2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,6 +32,7 @@ import {
   usePlatformBots,
   usePlatformChatErrors,
   usePlatformFeedbackCreateItem,
+  usePlatformFeedbackDeleteItem,
   usePlatformFeedbackDismiss,
   usePlatformFeedbackItem,
   usePlatformFeedbackItems,
@@ -755,10 +757,11 @@ function feedbackSuggestionPrimaryLabel(
   return `Maak ${feedbackItemKindLabel(kind).toLowerCase()} item`
 }
 
-function feedbackSuggestionConfidence(value: number | null): string | null {
-  if (value === null) return null
-  const normalized = value <= 1 ? value * 100 : value
-  return `${Math.round(normalized)}%`
+function feedbackFallbackSummary(item: PlatformFeedbackSubmission): string {
+  if (item.event_type === 'klai_assistant.problem_report') {
+    return `Bugmelding: ${item.raw_text || 'Geen omschrijving.'}`
+  }
+  return item.raw_text || 'Geen omschrijving.'
 }
 
 function normalizedFeedbackKind(kind: string | null | undefined, fallback: string): string {
@@ -785,115 +788,65 @@ export function FeedbackTab({
   const { data, isLoading } = usePlatformFeedbackSubmissions(search, status, kind)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
+  const [feedbackView, setFeedbackView] = useState<'inbox' | 'items'>('inbox')
   const rows = data ?? []
   const selected = rows.find((row) => row.id === selectedId) ?? null
 
   return (
     <>
-      <RoadmapItemsPanel
-        search={search}
-        fmtDate={fmtDate}
-        onOpenItem={setSelectedItemId}
-      />
+      <div className="mb-5 inline-flex rounded-lg border border-gray-200 bg-white p-1">
+        <Button
+          type="button"
+          size="sm"
+          variant={feedbackView === 'inbox' ? 'default' : 'ghost'}
+          onClick={() => setFeedbackView('inbox')}
+        >
+          Inbox
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={feedbackView === 'items' ? 'default' : 'ghost'}
+          onClick={() => setFeedbackView('items')}
+        >
+          Roadmap items
+        </Button>
+      </div>
 
-      <PlatformTableShell
-        loading={isLoading}
-        empty={rows.length === 0}
-        emptyText={m.platform_empty_feedback()}
-      >
-        <thead>
-          <tr className="border-b border-gray-200">
-            <th className={TH}>{m.platform_col_type()}</th>
-            <th className={TH}>Status</th>
-            <th className={TH}>{m.platform_col_organization()}</th>
-            <th className={TH}>{m.platform_col_detail()}</th>
-            <th className={TH}>{m.platform_feedback_context()}</th>
-            <th className={TH}>{m.platform_col_time()}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((item) => (
-            <tr
-              key={item.id}
-              className="cursor-pointer border-b border-gray-200 transition-colors last:border-b-0 hover:bg-gray-50"
-              tabIndex={0}
-              onClick={() => setSelectedId(item.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') setSelectedId(item.id)
-              }}
-            >
-              <td className={TD}>
-                <div className="flex flex-col items-start gap-2">
-                  <Badge
-                    variant={
-                      item.event_type === 'klai_assistant.problem_report'
-                        ? 'destructive'
-                        : item.event_type === 'klai_assistant.feedback'
-                          ? 'success'
-                          : 'outline'
-                    }
-                  >
-                    {feedbackKindLabel(item.event_type)}
-                  </Badge>
-                  {(item.feedback_type || item.severity) && (
-                    <span className="text-xs text-gray-400">
-                      {item.feedback_type || item.severity}
-                    </span>
-                  )}
-                </div>
-              </td>
-              <td className={TD}>
-                <Badge variant={item.status === 'new' ? 'outline' : 'secondary'}>
-                  {feedbackStatusLabel(item.status)}
-                </Badge>
-              </td>
-              <td className={TD}>
-                <span className="font-medium">
-                  {item.org_name ?? (item.org_id ? `#${item.org_id}` : '-')}
-                </span>
-                {item.org_slug && (
-                  <p className="font-mono text-xs text-gray-400">{item.org_slug}</p>
-                )}
-                {item.user_id && (
-                  <p className="mt-1 max-w-[180px] truncate font-mono text-xs text-gray-400">
-                    {item.user_id}
-                  </p>
-                )}
-              </td>
-              <td className={`${TD} max-w-md`}>
-                <p className="line-clamp-3 whitespace-pre-wrap text-sm leading-6">
-                  {item.raw_text ?? '-'}
-                </p>
-              </td>
-              <td className={`${TD} max-w-xs`}>
-                {item.route_id && (
-                  <p className="font-mono text-xs text-gray-500">{item.route_id}</p>
-                )}
-                {item.page_url && (
-                  <a
-                    href={item.page_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-1 inline-flex max-w-full items-center gap-1 text-xs text-[var(--color-rl-accent-dark)] hover:underline"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <span className="truncate">{item.page_url}</span>
-                    <ExternalLink className="h-3 w-3 shrink-0" />
-                  </a>
-                )}
-                {(item.locale || item.viewport) && (
-                  <p className="mt-1 text-xs text-gray-400">
-                    {[item.locale, item.viewport].filter(Boolean).join(' / ')}
-                  </p>
-                )}
-              </td>
-              <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-                {fmtDate(item.created_at)}
-              </td>
+      {feedbackView === 'items' ? (
+        <RoadmapItemsPanel
+          search={search}
+          fmtDate={fmtDate}
+          onOpenItem={setSelectedItemId}
+        />
+      ) : (
+        <PlatformTableShell
+          loading={isLoading}
+          empty={rows.length === 0}
+          emptyText={m.platform_empty_feedback()}
+        >
+          <thead>
+            <tr className="border-b border-gray-200">
+              <th className={TH}>{m.platform_col_type()}</th>
+              <th className={TH}>Status</th>
+              <th className={TH}>{m.platform_col_organization()}</th>
+              <th className={TH}>{m.platform_col_detail()}</th>
+              <th className={TH}>{m.platform_feedback_context()}</th>
+              <th className={TH}>{m.platform_col_time()}</th>
             </tr>
-          ))}
-        </tbody>
-      </PlatformTableShell>
+          </thead>
+          <tbody>
+            {rows.map((item) => (
+              <FeedbackSubmissionRow
+                key={item.id}
+                item={item}
+                fmtDate={fmtDate}
+                onOpen={() => setSelectedId(item.id)}
+              />
+            ))}
+          </tbody>
+        </PlatformTableShell>
+      )}
 
       {selected && (
         <FeedbackDetailSheet
@@ -911,6 +864,96 @@ export function FeedbackTab({
         />
       )}
     </>
+  )
+}
+
+function FeedbackSubmissionRow({
+  item,
+  fmtDate,
+  onOpen,
+}: {
+  item: PlatformFeedbackSubmission
+  fmtDate: (s: string | null) => string
+  onOpen: () => void
+}) {
+  return (
+    <tr
+      className="cursor-pointer border-b border-gray-200 transition-colors last:border-b-0 hover:bg-gray-50"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') onOpen()
+      }}
+    >
+      <td className={TD}>
+        <div className="flex flex-col items-start gap-2">
+          <Badge
+            variant={
+              item.event_type === 'klai_assistant.problem_report'
+                ? 'destructive'
+                : item.event_type === 'klai_assistant.feedback'
+                  ? 'success'
+                  : 'outline'
+            }
+          >
+            {feedbackKindLabel(item.event_type)}
+          </Badge>
+          {(item.feedback_type || item.severity) && (
+            <span className="text-xs text-gray-400">
+              {item.feedback_type || item.severity}
+            </span>
+          )}
+        </div>
+      </td>
+      <td className={TD}>
+        <Badge variant={item.status === 'new' ? 'outline' : 'secondary'}>
+          {feedbackStatusLabel(item.status)}
+        </Badge>
+      </td>
+      <td className={TD}>
+        <span className="font-medium">
+          {item.org_name ?? (item.org_id ? `#${item.org_id}` : '-')}
+        </span>
+        {item.org_slug && (
+          <p className="font-mono text-xs text-gray-400">{item.org_slug}</p>
+        )}
+        {item.user_id && (
+          <p className="mt-1 max-w-[180px] truncate font-mono text-xs text-gray-400">
+            {item.user_id}
+          </p>
+        )}
+      </td>
+      <td className={`${TD} max-w-md`}>
+        <p className="line-clamp-3 whitespace-pre-wrap text-sm leading-6">
+          {item.raw_text ?? '-'}
+        </p>
+      </td>
+      <td className={`${TD} max-w-xs`}>
+        {item.route_id && (
+          <p className="font-mono text-xs text-gray-500">{item.route_id}</p>
+        )}
+        {item.page_url && (
+          <a
+            href={item.page_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 inline-flex max-w-full items-center gap-1 text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <span className="truncate">{item.page_url}</span>
+            <ExternalLink className="h-3 w-3 shrink-0" />
+          </a>
+        )}
+        {(item.locale || item.viewport) && (
+          <p className="mt-1 text-xs text-gray-400">
+            {[item.locale, item.viewport].filter(Boolean).join(' / ')}
+          </p>
+        )}
+      </td>
+      <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
+        {fmtDate(item.created_at)}
+      </td>
+    </tr>
   )
 }
 
@@ -932,7 +975,7 @@ function RoadmapItemsPanel({
         <div>
           <h2 className="text-sm font-medium text-gray-900">Roadmap items</h2>
           <p className="mt-0.5 text-xs text-gray-400">
-            Gebundelde feedback met traceability naar klanten en execution links.
+            Gebundelde feedback. Open een item om te bewerken of verwijderen.
           </p>
         </div>
         {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
@@ -966,6 +1009,9 @@ function RoadmapItemsPanel({
                   {item.org_count} orgs / {item.user_count} users
                 </span>
                 <span className="block">{fmtDate(item.updated_at)}</span>
+                <span className="mt-1 inline-block text-[var(--color-rl-accent-dark)]">
+                  Bewerk
+                </span>
               </span>
             </button>
           ))}
@@ -996,7 +1042,7 @@ function FeedbackDetailSheet({
     item.raw_text ||
     ''
   ).slice(0, 80)
-  const [showCorrections, setShowCorrections] = useState(!suggestion)
+  const [showCorrections, setShowCorrections] = useState(false)
   const [itemSearch, setItemSearch] = useState(suggestedSearch)
   const [kind, setKind] = useState(suggestedKind)
   const [title, setTitle] = useState(suggestedTitle)
@@ -1004,6 +1050,8 @@ function FeedbackDetailSheet({
   const [area, setArea] = useState(suggestion?.suggested_area ?? '')
 
   const items = usePlatformFeedbackItems(itemSearch)
+  const existingItems = items.data ?? []
+  const bestSearchMatch = itemSearch.trim().length >= 4 ? (existingItems[0] ?? null) : null
   const dismiss = usePlatformFeedbackDismiss()
   const support = usePlatformFeedbackSupport()
   const createItem = usePlatformFeedbackCreateItem()
@@ -1020,6 +1068,28 @@ function FeedbackDetailSheet({
       : suggestion?.classification === 'support_pattern'
         ? 'support_signal'
         : 'evidence'
+  const recommendedAction =
+    bestCandidate || bestSearchMatch
+      ? 'link_existing'
+      : suggestion?.suggested_action || 'create_item'
+  const recommendedItem = bestCandidate
+    ? {
+        id: bestCandidate.item_id,
+        title: bestCandidate.title ?? `Item #${bestCandidate.item_id}`,
+        kind: bestCandidate.kind,
+        status: bestCandidate.status,
+        area: bestCandidate.area,
+      }
+    : bestSearchMatch
+      ? {
+          id: bestSearchMatch.id,
+          title: bestSearchMatch.title,
+          kind: bestSearchMatch.kind,
+          status: bestSearchMatch.status,
+          area: bestSearchMatch.area,
+        }
+      : null
+  const proposalSummary = suggestion?.summary || feedbackFallbackSummary(item)
   const acceptCreateItem = () => {
     const fallbackTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
     createItem.mutate(
@@ -1034,32 +1104,31 @@ function FeedbackDetailSheet({
       { onSuccess: onClose },
     )
   }
-  const acceptSuggestion = () => {
-    if (suggestion?.suggested_action === 'link_existing' && bestCandidate) {
+  const acceptRecommendedAction = () => {
+    if (recommendedAction === 'link_existing' && recommendedItem) {
       linkItem.mutate(
         {
           submissionId: item.id,
-          item_id: bestCandidate.item_id,
+          item_id: recommendedItem.id,
           link_type: linkType,
         },
         { onSuccess: onClose },
       )
       return
     }
-    if (suggestion?.suggested_action === 'support') {
+    if (recommendedAction === 'support') {
       support.mutate(item.id, { onSuccess: onClose })
       return
     }
-    if (suggestion?.suggested_action === 'dismiss') {
+    if (recommendedAction === 'dismiss') {
       dismiss.mutate(item.id, { onSuccess: onClose })
       return
     }
     acceptCreateItem()
   }
-  const canAcceptSuggestion =
-    !!suggestion &&
-    (suggestion.suggested_action !== 'link_existing' || bestCandidate !== null) &&
-    (suggestion.suggested_action !== 'create_item' || suggestedTitle.trim().length >= 3)
+  const canAcceptRecommendedAction =
+    (recommendedAction !== 'link_existing' || recommendedItem !== null) &&
+    (recommendedAction !== 'create_item' || suggestedTitle.trim().length >= 3)
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
@@ -1088,123 +1157,74 @@ function FeedbackDetailSheet({
             <p className="whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm leading-6 text-gray-900">
               {item.raw_text}
             </p>
-            {(item.user_id || item.route_id || item.page_url) && (
-              <details className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
-                <summary className="cursor-pointer list-none font-medium text-gray-500">
-                  Context opgeslagen
-                </summary>
-                <div className="mt-2 grid gap-1">
-                  {item.user_id && <p className="font-mono">user: {item.user_id}</p>}
-                  {item.route_id && <p className="font-mono">route: {item.route_id}</p>}
-                  {item.page_url && (
-                    <a
-                      href={item.page_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[var(--color-rl-accent-dark)] hover:underline"
-                    >
-                      Open oorspronkelijke pagina
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
-                </div>
-              </details>
-            )}
           </section>
 
           {canTriage ? (
             <>
-              {suggestion ? (
-                <section className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-2">
-                      <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                      <div className="min-w-0">
-                        <h3 className="text-sm font-medium text-gray-900">AI voorstel</h3>
-                        <p className="mt-1 text-sm leading-6 text-gray-700">
-                          {suggestion.summary || 'Geen samenvatting beschikbaar.'}
-                        </p>
-                      </div>
-                    </div>
-                    <Badge variant="secondary">
-                      {feedbackSuggestionActionLabel(suggestion.suggested_action)}
-                    </Badge>
+              <section className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <div className="flex min-w-0 items-start gap-2">
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium text-gray-900">
+                      {suggestion ? 'AI voorstel' : 'Voorstel'}
+                    </h3>
+                    <p className="mt-1 text-sm leading-6 text-gray-700">
+                      {proposalSummary}
+                    </p>
                   </div>
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    {suggestion.classification && (
-                      <Badge variant="outline">
-                        Type: {feedbackItemKindLabel(suggestion.classification)}
-                      </Badge>
-                    )}
-                    {suggestion.suggested_area && (
-                      <Badge variant="outline">Gebied: {suggestion.suggested_area}</Badge>
-                    )}
-                    {suggestion.suggested_severity && (
-                      <Badge variant="outline">Urgentie: {suggestion.suggested_severity}</Badge>
-                    )}
-                  </div>
-                  {suggestion.duplicate_candidates.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-gray-500">
-                        Mogelijke duplicate
-                      </p>
-                      {suggestion.duplicate_candidates.slice(0, 3).map((candidate) => (
-                        <div
-                          key={candidate.item_id}
-                          className="rounded-md border border-amber-200 bg-white px-3 py-2"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="truncate text-sm font-medium text-gray-900">
-                              {candidate.title ?? `Item #${candidate.item_id}`}
-                            </p>
-                            {feedbackSuggestionConfidence(candidate.confidence) && (
-                              <span className="text-xs text-gray-400">
-                                {feedbackSuggestionConfidence(candidate.confidence)}
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-1 text-xs text-gray-400">
-                            {[candidate.kind, candidate.status, candidate.area]
-                              .filter(Boolean)
-                              .join(' / ')}
-                          </p>
-                          {candidate.reason && (
-                            <p className="mt-1 text-xs leading-5 text-gray-500">
-                              {candidate.reason}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <Badge variant="outline">
+                    Actie: {feedbackSuggestionActionLabel(recommendedAction)}
+                  </Badge>
+                  <Badge variant="outline">
+                    Type: {feedbackItemKindLabel(suggestedKind)}
+                  </Badge>
+                  {suggestion?.suggested_area && (
+                    <Badge variant="outline">Gebied: {suggestion.suggested_area}</Badge>
                   )}
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      disabled={busy || !canAcceptSuggestion}
-                      onClick={acceptSuggestion}
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      {feedbackSuggestionPrimaryLabel(
-                        suggestion.suggested_action,
-                        bestCandidate?.title,
-                        suggestedKind,
-                      )}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => setShowCorrections((visible) => !visible)}
-                    >
-                      Corrigeer
-                    </Button>
+                  {suggestion?.suggested_severity && (
+                    <Badge variant="outline">Urgentie: {suggestion.suggested_severity}</Badge>
+                  )}
+                </div>
+                {recommendedItem && (
+                  <div className="rounded-md border border-amber-200 bg-white px-3 py-2">
+                    <p className="text-xs font-medium text-gray-500">
+                      Bestaand item gevonden
+                    </p>
+                    <p className="mt-1 truncate text-sm font-medium text-gray-900">
+                      {recommendedItem.title}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {[recommendedItem.kind, recommendedItem.status, recommendedItem.area]
+                        .filter(Boolean)
+                        .join(' / ')}
+                    </p>
                   </div>
-                </section>
-              ) : (
-                <section className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-                  AI triage loopt op de achtergrond. Je kunt deze melding alvast handmatig verwerken.
-                </section>
-              )}
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    disabled={busy || !canAcceptRecommendedAction || items.isFetching}
+                    onClick={acceptRecommendedAction}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    {feedbackSuggestionPrimaryLabel(
+                      recommendedAction,
+                      recommendedItem?.title,
+                      suggestedKind,
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => setShowCorrections((visible) => !visible)}
+                  >
+                    Andere actie
+                  </Button>
+                </div>
+              </section>
 
               {showCorrections && (
                 <section className="grid gap-3 sm:grid-cols-2">
@@ -1411,6 +1431,7 @@ function FeedbackItemDetailSheet({
             item={detail.data.item}
             submissions={detail.data.submissions}
             fmtDate={fmtDate}
+            onClose={onClose}
           />
         ) : (
           <p className="text-sm text-gray-500">Item niet gevonden.</p>
@@ -1424,12 +1445,15 @@ function FeedbackItemDetailForm({
   item,
   submissions,
   fmtDate,
+  onClose,
 }: {
   item: PlatformFeedbackItem
   submissions: PlatformFeedbackLinkedSubmission[]
   fmtDate: (s: string | null) => string
+  onClose: () => void
 }) {
   const updateItem = usePlatformFeedbackUpdateItem()
+  const deleteItem = usePlatformFeedbackDeleteItem()
   const [status, setStatus] = useState(item.status)
   const [title, setTitle] = useState(item.title)
   const [summary, setSummary] = useState(item.summary ?? '')
@@ -1472,7 +1496,7 @@ function FeedbackItemDetailForm({
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
-            disabled={updateItem.isPending || title.trim().length < 3}
+            disabled={updateItem.isPending || deleteItem.isPending || title.trim().length < 3}
             onClick={saveItem}
           >
             {updateItem.isPending ? (
@@ -1485,6 +1509,24 @@ function FeedbackItemDetailForm({
           {updateItem.isSuccess && (
             <p className="text-sm text-green-700">Roadmap item opgeslagen.</p>
           )}
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={updateItem.isPending || deleteItem.isPending}
+            onClick={() => {
+              if (!window.confirm('Roadmap item verwijderen en gekoppelde feedback terugzetten naar nieuw?')) {
+                return
+              }
+              deleteItem.mutate(item.id, { onSuccess: onClose })
+            }}
+          >
+            {deleteItem.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+            Verwijder item
+          </Button>
         </div>
       </section>
 
