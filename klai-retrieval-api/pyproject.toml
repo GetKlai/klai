@@ -34,6 +34,8 @@ dependencies = [
     "klai-kb-slugs",
     # Shared evidence context + deterministic citation/source helpers.
     "klai-citations",
+    # Shared deterministic LLM safety policy for prompt-injection/content rails.
+    "klai-llm-safety",
 ]
 
 [tool.uv.sources]
@@ -41,6 +43,7 @@ klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true 
 klai-chat-prompts = { path = "../klai-libs/chat-prompts", editable = true }
 klai-kb-slugs = { path = "../klai-libs/kb-slugs", editable = true }
 klai-citations = { path = "../klai-libs/citations", editable = true }
+klai-llm-safety = { path = "../klai-libs/llm-safety", editable = true }
 
 [project.optional-dependencies]
 dev = [

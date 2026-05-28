@@ -53,6 +53,8 @@ dependencies = [
     # Shared deterministic citation composer used by widget/partner chat and
     # vendored into the LiteLLM hook for the LibreChat path.
     "klai-citations",
+    # Shared deterministic LLM safety policy for user input/model output guardrails.
+    "klai-llm-safety",
     # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07: passive language detection
     # for the chat_synthesis_complete log event in partner_chat.
     "lingua-language-detector>=2.2.0",
@@ -70,6 +72,7 @@ klai-log-utils = { path = "../../klai-libs/log-utils", editable = true }
 klai-chat-prompts = { path = "../../klai-libs/chat-prompts", editable = true }
 klai-kb-slugs = { path = "../../klai-libs/kb-slugs", editable = true }
 klai-citations = { path = "../../klai-libs/citations", editable = true }
+klai-llm-safety = { path = "../../klai-libs/llm-safety", editable = true }
 
 [project.optional-dependencies]
 dev = [

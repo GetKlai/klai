@@ -20,6 +20,7 @@ from typing import Literal
 
 import httpx
 import structlog
+from klai_llm_safety import SafetyPhase, SafetyRequest, SafetySurface, check_text
 from pydantic import BaseModel, ValidationError
 
 from knowledge_ingest.config import settings
@@ -149,6 +150,21 @@ class EnrichedChunk:
     chunk_type: str = ""
 
 
+def _safe_reference_result() -> EnrichmentResult:
+    return EnrichmentResult(context_prefix="", chunk_type="reference", questions=[])
+
+
+def _context_safety_violation(text: str) -> str | None:
+    decision = check_text(
+        SafetyRequest(
+            text=text,
+            phase=SafetyPhase.CONTEXT,
+            surface=SafetySurface.INGEST_ENRICHMENT,
+        )
+    )
+    return None if decision.allowed else decision.reason
+
+
 def _truncate_to_tokens(text: str, max_tokens: int) -> str:
     """Rough truncation: 1 token ≈ 4 chars for Dutch/English mixed text."""
     max_chars = max_tokens * 4
@@ -269,6 +285,21 @@ async def enrich_chunk(
        in the legacy full-document prompt.
     3. Otherwise → truncate ``document_text`` to settings.enrichment_max_document_tokens.
     """
+    safety_text = "\n".join(
+        part
+        for part in (document_summary or "", context_window or "", document_text, chunk_text)
+        if part
+    )
+    if safety_reason := _context_safety_violation(safety_text):
+        logger.warning(
+            "enrichment_context_blocked",
+            path=path,
+            artifact_id=artifact_id,
+            chunk_index=chunk_index,
+            reason=safety_reason,
+        )
+        return _safe_reference_result()
+
     use_summary = bool(document_summary and document_summary.strip())
     if not use_summary:
         if context_window is not None:
@@ -418,36 +449,22 @@ async def enrich_chunks(
             else strategy_fn(document_text, context_tokens, chunk_index=chunk_index)
         )
         async with semaphore:
-            try:
-                result = await enrich_chunk(
-                    document_text,
-                    chunk_text,
-                    title,
-                    path,
-                    question_focus=question_focus,
-                    participant_context=participant_context,
-                    context_window=context_window,
-                    kb_name=kb_name,
-                    connector_type=connector_type,
-                    source_domain=source_domain,
-                    artifact_id=artifact_id,
-                    chunk_index=chunk_index,
-                    document_summary=document_summary,
-                    document_language=document_language,
-                )
-            except EnrichmentError as exc:
-                logger.warning(
-                    "enrichment_chunk_failed_fallback",
-                    artifact_id=artifact_id,
-                    chunk_index=chunk_index,
-                    path=path,
-                    error=str(exc)[:300],
-                )
-                result = EnrichmentResult(
-                    context_prefix="",
-                    chunk_type="reference",
-                    questions=[],
-                )
+            result = await enrich_chunk(
+                document_text,
+                chunk_text,
+                title,
+                path,
+                question_focus=question_focus,
+                participant_context=participant_context,
+                context_window=context_window,
+                kb_name=kb_name,
+                connector_type=connector_type,
+                source_domain=source_domain,
+                artifact_id=artifact_id,
+                chunk_index=chunk_index,
+                document_summary=document_summary,
+                document_language=document_language,
+            )
         enriched_text = f"{result.context_prefix}\n\n{chunk_text}"
         heading_path = (
             heading_paths[chunk_index]

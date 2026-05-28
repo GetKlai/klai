@@ -39,6 +39,9 @@ from app.services.partner_chat import (
     chat_completion_non_streaming,
     chat_completion_streaming,
     retrieve_context,
+    safety_refusal_response,
+    safety_refusal_stream,
+    widget_input_safety_violation,
 )
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.quality_scorer import schedule_quality_update
@@ -524,6 +527,52 @@ async def _get_support_session_row(
     return row
 
 
+def _widget_safety_block_response(
+    request: ChatCompletionsRequest,
+    auth: PartnerAuthContext,
+) -> Response | dict[str, Any] | None:
+    if not str(auth.key_id).startswith("wgt_"):
+        return None
+    safety_reason = widget_input_safety_violation(request.messages)
+    if not safety_reason:
+        return None
+    logger.warning(
+        "partner_chat_widget_input_blocked",
+        org_id=auth.org_id,
+        widget_id=auth.key_id,
+        stage="widget_input",
+        reason=safety_reason,
+    )
+    last_user_msg = next(
+        (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
+        "",
+    )
+    if request.stream:
+        return StreamingResponse(
+            content=safety_refusal_stream(last_user_msg),
+            media_type="text/event-stream",
+        )
+    return safety_refusal_response(model=request.model, query=last_user_msg)
+
+
+def _validate_chat_request(request: ChatCompletionsRequest) -> None:
+    if request.model not in _ALLOWED_MODELS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "type": "invalid_request",
+                    "message": f"Model must be one of: {', '.join(sorted(_ALLOWED_MODELS))}",
+                }
+            },
+        )
+    if not any(m.get("role") == "user" for m in request.messages):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"type": "invalid_request", "message": "Messages must contain at least one user message"}},
+        )
+
+
 @router.post("/chat/completions")
 async def chat_completions(
     request: ChatCompletionsRequest,
@@ -539,25 +588,11 @@ async def chat_completions(
     # 1. Permission check
     require_permission(auth, "chat")
 
-    # 2. Model validation
-    if request.model not in _ALLOWED_MODELS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": {
-                    "type": "invalid_request",
-                    "message": f"Model must be one of: {', '.join(sorted(_ALLOWED_MODELS))}",
-                }
-            },
-        )
-
-    # 3. Messages validation: at least one user message
-    has_user_msg = any(m.get("role") == "user" for m in request.messages)
-    if not has_user_msg:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"type": "invalid_request", "message": "Messages must contain at least one user message"}},
-        )
+    # 2-3. Model and messages validation.
+    _validate_chat_request(request)
+    if safety_response := _widget_safety_block_response(request, auth):
+        return safety_response
+    is_widget_chat = str(auth.key_id).startswith("wgt_")
 
     # 4. Validate KB access. ``knowledge`` is a Klai extension on top of the
     # OpenAI-compatible request shape. Top-level knowledge_base_ids remains
@@ -603,7 +638,6 @@ async def chat_completions(
     except (ValueError, AttributeError, TypeError):
         partner_user_id = None
     widget_system_prompt = await _widget_system_prompt(auth, db)
-    is_widget_chat = str(auth.key_id).startswith("wgt_")
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
     page_context = (
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None

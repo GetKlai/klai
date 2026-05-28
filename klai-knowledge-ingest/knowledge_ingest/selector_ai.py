@@ -14,6 +14,7 @@ import json
 
 import httpx
 import structlog
+from klai_llm_safety import SafetyPhase, SafetyRequest, SafetySurface, check_text
 
 from knowledge_ingest.config import settings
 
@@ -68,11 +69,26 @@ async def _call_llm(prompt: str, log_event: str) -> str | None:
         return None
 
 
+def _dom_summary_safety_violation(dom_summary: list[dict]) -> str | None:
+    text = json.dumps(dom_summary, ensure_ascii=False)
+    decision = check_text(
+        SafetyRequest(
+            text=text,
+            phase=SafetyPhase.CONTEXT,
+            surface=SafetySurface.INGEST_ENRICHMENT,
+        )
+    )
+    return None if decision.allowed else decision.reason
+
+
 async def detect_selector_via_llm(dom_summary: list[dict]) -> str | None:
     """Identify the main content CSS selector from a DOM summary.
 
     Returns the CSS selector string, or None on any failure.
     """
+    if safety_reason := _dom_summary_safety_violation(dom_summary):
+        logger.warning("crawl_llm_selector_context_blocked", reason=safety_reason)
+        return None
     json_summary = json.dumps(dom_summary, ensure_ascii=False)
     prompt = _CONTENT_SELECTOR_PROMPT.format(json_summary=json_summary)
     return await _call_llm(prompt, "crawl_llm_selector_failed")
@@ -87,6 +103,9 @@ async def detect_login_indicator_via_llm(dom_summary: list[dict]) -> str | None:
 
     Returns the CSS selector string, or None.
     """
+    if safety_reason := _dom_summary_safety_violation(dom_summary):
+        logger.warning("crawl_llm_login_indicator_context_blocked", reason=safety_reason)
+        return None
     json_summary = json.dumps(dom_summary, ensure_ascii=False)
     prompt = _LOGIN_INDICATOR_PROMPT.format(json_summary=json_summary)
     result = await _call_llm(prompt, "crawl_llm_login_indicator_failed")

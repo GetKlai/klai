@@ -8,6 +8,10 @@ import logging
 import httpx
 
 from retrieval_api.config import settings
+from retrieval_api.services.llm_safety_adapter import (
+    check_coreference_input,
+    check_coreference_output,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,14 @@ async def resolve(query: str, history: list[dict]) -> str:
     is returned unchanged.
     """
     if not history:
+        return query
+    input_decision = check_coreference_input(query, history)
+    if not input_decision.allowed:
+        logger.warning(
+            "coreference_safety_input_blocked reason=%s categories=%s",
+            input_decision.reason,
+            ",".join(input_decision.categories),
+        )
         return query
 
     # Take only last 3 turns to keep context small
@@ -53,6 +65,14 @@ async def resolve(query: str, history: list[dict]) -> str:
             timeout=settings.coreference_timeout,
         )
         resolved = resolved.strip()
+        output_decision = check_coreference_output(resolved, query=query)
+        if not output_decision.allowed:
+            logger.warning(
+                "coreference_safety_output_blocked reason=%s categories=%s",
+                output_decision.reason,
+                ",".join(output_decision.categories),
+            )
+            return query
         if resolved:
             return resolved
         return query

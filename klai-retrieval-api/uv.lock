@@ -781,6 +781,28 @@ dev = [
 ]
 
 [[package]]
+name = "klai-llm-safety"
+version = "0.1.0"
+source = { editable = "../klai-libs/llm-safety" }
+
+[package.metadata]
+requires-dist = [
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pyyaml", specifier = ">=6" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
 name = "lingua-language-detector"
 version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1312,6 +1334,7 @@ dependencies = [
     { name = "klai-citations" },
     { name = "klai-identity-assert" },
     { name = "klai-kb-slugs" },
+    { name = "klai-llm-safety" },
     { name = "lingua-language-detector" },
     { name = "prometheus-client" },
     { name = "pydantic" },
@@ -1344,6 +1367,7 @@ requires-dist = [
     { name = "klai-citations", editable = "../klai-libs/citations" },
     { name = "klai-identity-assert", editable = "../klai-libs/identity-assert" },
     { name = "klai-kb-slugs", editable = "../klai-libs/kb-slugs" },
+    { name = "klai-llm-safety", editable = "../klai-libs/llm-safety" },
     { name = "lingua-language-detector", specifier = ">=2.2.0" },
     { name = "prometheus-client", specifier = ">=0.21" },
     { name = "pydantic", specifier = ">=2.9" },
