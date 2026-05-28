@@ -91,6 +91,7 @@ jobs:
             install -m 0755 deploy/scripts/compose-up.sh /opt/klai/scripts/compose-up.sh
             install -m 0755 deploy/scripts/audit-orphan-snapshot.sh /opt/klai/scripts/audit-orphan-snapshot.sh
             install -m 0755 deploy/scripts/docker-orphan-audit.sh /opt/klai/scripts/docker-orphan-audit.sh
+            install -m 0755 deploy/scripts/kb-citation-smoke.sh /opt/klai/scripts/kb-citation-smoke.sh
 
             # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-5 + REQ-6: sync systemd
             # units. Activation requires sudo and is one-time per host —
