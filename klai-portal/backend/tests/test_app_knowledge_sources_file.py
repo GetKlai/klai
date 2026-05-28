@@ -503,6 +503,27 @@ class TestArchivePipeline:
         assert patches.mock_create_upload.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_zip_with_nested_markdown_members_ingests_each_member(self) -> None:
+        from app.api.app_knowledge_sources import add_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        zip_bytes = _build_zip([("exports/one.md", b"# One"), ("exports/nested/two.md", b"# Two")])
+        files = [_upload("digital-twin-export.zip", zip_bytes, "application/zip")]
+
+        with _FilePatches() as patches:
+            resp = await add_file_source(kb_slug="personal", request=_make_request(files), perms=_make_perms(), db=db)
+
+        assert len(resp.uploads) == 2
+        assert {u.filename for u in resp.uploads} == {"exports/one.md", "exports/nested/two.md"}
+        assert {u.status for u in resp.uploads} == {"done"}
+        assert resp.skipped == []
+        assert patches.mock_ingest is not None
+        assert patches.mock_ingest.call_count == 2
+        assert patches.mock_create_upload is not None
+        assert patches.mock_create_upload.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_zip_with_unsupported_member_rejects_whole_archive(self) -> None:
         from app.api.app_knowledge_sources import add_file_source
 

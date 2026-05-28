@@ -53,9 +53,14 @@ class TestSafeMemberName:
             ("/etc/passwd", False),
             ("..", False),
             (".", False),
-            ("a/b.md", False),
+            ("a/b.md", True),
+            ("a/b/c.md", True),
+            ("a/../b.md", False),
+            ("a/./b.md", False),
+            ("a//b.md", False),
             ("a\\b.md", False),
             ("C:\\foo.md", False),
+            ("C:/foo.md", False),
             ("hello\x00.md", False),
             ("", False),
         ],
@@ -110,6 +115,15 @@ class TestZipExtraction:
         names = {e.filename for e in result.extracted}
         assert names == {"notes.md", "data.csv"}
         assert result.skipped == []
+
+    def test_happy_path_nested_directories(self) -> None:
+        zip_bytes = _build_zip([("exports/Youwe.md", b"# Youwe"), ("exports/notes/Zipf.md", b"# Zipf")])
+        result = archive.extract_archive("bundle.zip", zip_bytes)
+
+        assert len(result.extracted) == 2
+        names = {e.filename for e in result.extracted}
+        assert names == {"exports/Youwe.md", "exports/notes/Zipf.md"}
+        assert [e.content for e in result.extracted] == [b"# Youwe", b"# Zipf"]
 
     def test_path_traversal_aborts(self) -> None:
         zip_bytes = _build_zip([("notes.md", b"# ok"), ("../../etc/passwd.md", b"# attack")])
