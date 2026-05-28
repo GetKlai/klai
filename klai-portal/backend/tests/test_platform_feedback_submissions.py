@@ -550,7 +550,7 @@ async def test_update_feedback_item_sets_shipped_at(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_resolve_feedback_item_refreshes_after_commit(monkeypatch):
+async def test_resolve_feedback_item_returns_snapshots_without_refresh_after_commit(monkeypatch):
     session = _Session([])
     item = _feedback_item(kind="bug", status="inbox")
 
@@ -569,9 +569,10 @@ async def test_resolve_feedback_item_refreshes_after_commit(monkeypatch):
         channels=[],
     )
 
-    assert result is item
+    assert result is not item
+    assert result.id == item.id
     assert notifications == []
     assert item.status == "resolved"
     assert item.notification_state == "not_needed"
     assert session.flushed is True
-    assert session.refreshed == [item]
+    assert session.refreshed == []
