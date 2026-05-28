@@ -39,6 +39,7 @@ import {
   usePlatformFeedbackItem,
   usePlatformFeedbackItems,
   usePlatformFeedbackLinkItem,
+  usePlatformFeedbackResolveItem,
   usePlatformFeedbackSubmissions,
   usePlatformFeedbackSupport,
   usePlatformFeedbackUpdateItem,
@@ -1551,10 +1552,15 @@ function FeedbackItemDetailForm({
   onClose: () => void
 }) {
   const updateItem = usePlatformFeedbackUpdateItem()
+  const resolveItem = usePlatformFeedbackResolveItem()
   const deleteItem = usePlatformFeedbackDeleteItem()
   const [status, setStatus] = useState(item.status)
   const [title, setTitle] = useState(item.title)
   const [summary, setSummary] = useState(item.summary ?? '')
+  const [resolutionSummary, setResolutionSummary] = useState(
+    item.resolution_summary ?? defaultResolutionSummary(item),
+  )
+  const resolveLabel = feedbackResolveLabel(item.kind)
   const saveItem = () => {
     updateItem.mutate({
       itemId: item.id,
@@ -1581,6 +1587,7 @@ function FeedbackItemDetailForm({
             <option value="planned">Gepland</option>
             <option value="in_progress">In uitvoering</option>
             <option value="shipped">Verzonden</option>
+            <option value="resolved">Opgelost</option>
             <option value="wont_do">Won't do</option>
           </Select>
         </div>
@@ -1629,6 +1636,55 @@ function FeedbackItemDetailForm({
       </section>
 
       <section className="space-y-3 border-t border-gray-200 pt-5">
+        <div>
+          <h3 className="text-sm font-medium text-gray-900">{resolveLabel.title}</h3>
+          <p className="mt-1 text-sm text-gray-500">
+            Zet het item op de juiste eindstatus en maak een in-app update voor gekoppelde melders.
+          </p>
+        </div>
+        <Textarea
+          value={resolutionSummary}
+          onChange={(event) => setResolutionSummary(event.target.value)}
+          rows={3}
+          placeholder="Korte update voor de melder"
+        />
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={resolveItem.isPending || resolutionSummary.trim().length < 3}
+            onClick={() => {
+              resolveItem.mutate(
+                {
+                  itemId: item.id,
+                  resolution_summary: resolutionSummary.trim(),
+                  channels: ['in_app'],
+                },
+                {
+                  onSuccess: (result) => {
+                    setStatus(result.item.status)
+                    setResolutionSummary(result.item.resolution_summary ?? '')
+                  },
+                },
+              )
+            }}
+          >
+            {resolveItem.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            {resolveLabel.button}
+          </Button>
+          {resolveItem.isSuccess && (
+            <p className="text-sm text-green-700">
+              Update aangemaakt voor {resolveItem.data.notifications.length} ontvanger(s).
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section className="space-y-3 border-t border-gray-200 pt-5">
         <h3 className="text-sm font-medium text-gray-900">
           Gekoppelde feedback ({submissions.length})
         </h3>
@@ -1653,4 +1709,24 @@ function FeedbackItemDetailForm({
       </section>
     </div>
   )
+}
+
+function feedbackResolveLabel(kind: string) {
+  if (kind === 'bug') {
+    return { title: 'Bug gefixt', button: 'Markeer als gefixt' }
+  }
+  if (kind === 'feature') {
+    return { title: 'Feature verzonden', button: 'Markeer als verzonden' }
+  }
+  return { title: 'Melding opgelost', button: 'Markeer als opgelost' }
+}
+
+function defaultResolutionSummary(item: PlatformFeedbackItem) {
+  if (item.kind === 'bug') {
+    return `We hebben dit probleem opgelost: ${item.title}.`
+  }
+  if (item.kind === 'feature') {
+    return `We hebben deze verbetering beschikbaar gemaakt: ${item.title}.`
+  }
+  return `We hebben je melding verwerkt: ${item.title}.`
 }

@@ -412,12 +412,6 @@ function FeedbackUpdateRow({
             <dt>{m.account_feedback_updated()}</dt>
             <dd>{updatedAt}</dd>
           </div>
-          {item.route_id && (
-            <div className="flex gap-1">
-              <dt>{m.account_feedback_location()}</dt>
-              <dd className="max-w-[220px] truncate">{item.route_id}</dd>
-            </div>
-          )}
         </dl>
         {item.unread && notificationId !== null && (
           <Button
