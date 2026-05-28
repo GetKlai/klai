@@ -150,6 +150,11 @@ def test_parse_triage_response_filters_unknown_duplicate_ids():
     assert parsed.duplicate_candidates == [{"item_id": 456, "confidence": 0.91, "reason": "match"}]
 
 
+def test_triage_system_prompt_explicitly_handles_problem_reports():
+    assert "assistant_problem" in triage._TRIAGE_SYSTEM
+    assert "bug proposal" in triage._TRIAGE_SYSTEM
+
+
 @pytest.mark.asyncio
 async def test_run_feedback_triage_for_submission_swallows_ai_failure(monkeypatch):
     class _Ctx:

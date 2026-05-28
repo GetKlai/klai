@@ -368,7 +368,12 @@ Gebouwd:
   - maak nieuw item;
   - markeer als support;
   - negeer.
-- Handmatige correctie blijft beschikbaar onder het voorstel.
+- Handmatige correctie blijft beschikbaar achter een expliciete
+  `Corrigeer`-actie, zodat staff niet eerst door lege formulieren hoeft.
+- Technische context zoals route, URL en user-id wordt opgeslagen maar niet als
+  primair bewerkveld getoond.
+- Probleemmeldingen krijgen expliciet een bug-voorstel van de AI-triage,
+  tenzij ze duidelijk support/docs/configuratie zijn.
 
 - Output:
   - korte samenvatting;
@@ -471,6 +476,8 @@ Acceptatie:
 - [x] Eenvoudige non-AI duplicate search.
 - [x] AI triage job met idempotente suggestie-opslag.
 - [x] AI voorstelkaart in Platform met acceptactie via bestaande flows.
+- [x] Correctie-flow versimpeld: AI eerst, handmatige forms pas na
+  `Corrigeer`, context ingeklapt.
 
 ## Eerstvolgende stap
 
@@ -480,12 +487,12 @@ handmatige formulierchaos.
 Concreet:
 
 1. Observeer echte AI-voorstellen: hoeveel zijn link, nieuw item, support of
-   negeer?
-2. Maak de primaire knop specifieker waar nodig, bijvoorbeeld "Koppel aan
-   Multi-KB chat" of "Maak feature-item".
-3. Voeg alleen extra correctie-acties toe als ze in echt gebruik nodig blijken,
+   negeer, en hoeveel worden gecorrigeerd?
+2. Voeg alleen extra correctie-acties toe als ze in echt gebruik nodig blijken,
    bijvoorbeeld "kies ander bestaand item" of "maak nieuw item met aangepaste
    titel".
+3. Verbeter duplicate search later met embeddings/RAG als de simpele
+   item-search en AI-candidates onvoldoende matchen.
 4. Houd GitHub Issues en feedback.getklai.com buiten de ruwe inbox.
 5. Pas daarna one-click sync toe naar GitHub Issues of feedback.getklai.com,
    altijd vanaf het canonical `feedback_item`.

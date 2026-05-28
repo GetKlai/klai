@@ -33,6 +33,8 @@ Return ONLY valid JSON with this exact structure:
   "duplicate_candidates": [{"item_id": 123, "confidence": 0.0, "reason": "short reason"}]
 }
 Do not create roadmap/public copy. Do not invent item ids. Use only duplicate item ids from the provided candidates.
+For source assistant_problem, produce a bug proposal unless the message is clearly a support-only, configuration, or docs question.
+For reproducible bugs without a matching candidate, prefer suggested_action create_item.
 """
 
 
