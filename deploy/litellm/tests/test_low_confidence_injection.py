@@ -189,6 +189,44 @@ def test_injection_trigger_table(band, expected_inject) -> None:
     assert inject is expected_inject
 
 
+def test_low_confidence_injection_skips_when_chunks_contain_query_entity(monkeypatch) -> None:
+    """Strict mode must not refuse when low-scored chunks directly contain the answer."""
+    klai_knowledge = _load_hook(monkeypatch)
+
+    assert (
+        klai_knowledge._should_apply_low_confidence_injection(
+            "low",
+            user_query="wie is jantine?",
+            evidence_chunks=[
+                {
+                    "title": "CV_Jantine_Doornbos.pdf",
+                    "text": "Jantine Doornbos\nAI-ontwikkelaar & adviseur",
+                }
+            ],
+        )
+        is False
+    )
+
+
+def test_low_confidence_injection_still_applies_without_direct_evidence(monkeypatch) -> None:
+    """The safety layer remains active for low-scored unrelated chunks."""
+    klai_knowledge = _load_hook(monkeypatch)
+
+    assert (
+        klai_knowledge._should_apply_low_confidence_injection(
+            "low",
+            user_query="wie is verantwoordelijk voor Data Readiness?",
+            evidence_chunks=[
+                {
+                    "title": "CV_Jantine_Doornbos.pdf",
+                    "text": "Jantine Doornbos is AI-ontwikkelaar en adviseur.",
+                }
+            ],
+        )
+        is True
+    )
+
+
 # ---------------------------------------------------------------------------
 # Smoke: importing the hook with the new fields does not raise
 # ---------------------------------------------------------------------------
