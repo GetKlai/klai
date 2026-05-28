@@ -3007,13 +3007,17 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             in content
         )
         assert "**Agent activiteit**" in content
+        assert "- Modus: Open, kennisbank met fallback." in content
         assert "- Kennisbank geraadpleegd: 1 fragment opgehaald in 12 ms." in content
         assert "- Bronselectie: 1 bron gekoppeld" in content
+        assert "- Gebruikte bronnen: Invite and remove people." in content
         assert response.choices[0].message.sources == [
             {
                 "label": "1",
                 "title": "Invite and remove people",
                 "url": "https://docs.getklai.com/admin/invite-remove-people",
+                "evidence_ids": ["E1"],
+                "relevance_score": 0.91,
             }
         ]
 
@@ -3077,11 +3081,13 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "**Bronnen**" in content
         assert "- [Organogram](https://kb.getklai.test/organogram.pdf)" in content
         assert "**Agent activiteit**" in content
+        assert "- Gebruikte bronnen: Organogram." in content
         assert response.choices[0].message.sources == [
             {
                 "label": "1",
                 "title": "Organogram",
                 "url": "https://kb.getklai.test/organogram.pdf",
+                "evidence_ids": ["different-evidence-id"],
             }
         ]
         assert "selector_rejected_all_sources_fallback" in caplog.text
@@ -3145,11 +3151,14 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "- CV_Jantine_Doornbos.pdf" in content
         assert "- [CV_Jantine_Doornbos.pdf]" not in content
         assert "**Agent activiteit**" in content
+        assert "- Gebruikte bronnen: CV_Jantine_Doornbos.pdf." in content
         assert response.choices[0].message.sources == [
             {
                 "label": "1",
                 "title": "CV_Jantine_Doornbos.pdf",
                 "url": "",
+                "evidence_ids": ["E1"],
+                "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
             }
         ]
         assert "kb_citations_rendered_structured" in caplog.text
@@ -3515,6 +3524,93 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                 "label": "1",
                 "title": "Diagram",
                 "url": "https://docs.getklai.com/diagram",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_streaming_post_call_renders_uploaded_document_source_without_url(
+        self, monkeypatch
+    ):
+        """LibreChat streaming must get visible sources for uploaded PDFs."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Wie is waarvoor verantwoordelijk?",
+                    "kb_narrow": True,
+                    "chunks_injected": 8,
+                    "retrieval_ms": 604,
+                    "gate_bypassed": False,
+                    "render_mode": "streaming_guard",
+                    "allowed_image_urls": [],
+                    "confidence_band": "low",
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "CV_Jantine_Doornbos.pdf",
+                            "url": "",
+                            "artifact_id": "ca867993-6498-4ce2-bee5-647ffc8cfa21",
+                            "source_id": "S1",
+                            "source_label": "personal-374185638016057361",
+                            "evidence_ids": ["E1"],
+                            "relevance_score": 0.07,
+                        }
+                    ],
+                    "citation_chunks": [
+                        {
+                            "evidence_id": "E1",
+                            "artifact_id": "ca867993-6498-4ce2-bee5-647ffc8cfa21",
+                            "title": "CV_Jantine_Doornbos.pdf",
+                            "source_url": None,
+                            "source_label": "personal-374185638016057361",
+                            "text": "Frank Wolters is verantwoordelijk voor Data Readiness.",
+                        }
+                    ],
+                }
+            }
+        }
+
+        first = {"choices": [{"delta": {"content": "Frank Wolters is "}, "finish_reason": None}]}
+        final = {
+            "choices": [
+                {
+                    "delta": {"content": "verantwoordelijk voor Data Readiness."},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+
+        async def stream():
+            yield first
+            yield final
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+        ]
+
+        assert streamed == [first, final]
+        final_delta = final["choices"][0]["delta"]
+        combined = first["choices"][0]["delta"]["content"] + final_delta["content"]
+        assert "Frank Wolters is verantwoordelijk voor Data Readiness." in combined
+        assert "**Bronnen**" in final_delta["content"]
+        assert "- CV_Jantine_Doornbos.pdf" in final_delta["content"]
+        assert "**Agent activiteit**" in final_delta["content"]
+        assert "- Modus: Strict, alleen kennisbank." in final_delta["content"]
+        assert "- Retrieval confidence: low." in final_delta["content"]
+        assert final_delta["sources"] == [
+            {
+                "label": "1",
+                "title": "CV_Jantine_Doornbos.pdf",
+                "url": "",
+                "source_id": "S1",
+                "evidence_ids": ["E1"],
+                "artifact_id": "ca867993-6498-4ce2-bee5-647ffc8cfa21",
+                "source_label": "personal-374185638016057361",
+                "relevance_score": 0.07,
             }
         ]
 
