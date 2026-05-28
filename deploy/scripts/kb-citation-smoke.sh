@@ -14,6 +14,7 @@
 #   LIBRECHAT_CONTAINER=librechat-jantine-doornbos-37418563
 #   KB_SMOKE_QUERY='Wie is waarvoor verantwoordelijk?'
 #   KB_SMOKE_EXPECT_SOURCE='Verantwoordelijkheden per bouwblok'
+#   KB_SMOKE_EXPECT_REFUSAL=0
 #   KB_SMOKE_TIMEOUT=180
 
 set -euo pipefail
@@ -21,6 +22,7 @@ set -euo pipefail
 LIBRECHAT_CONTAINER="${LIBRECHAT_CONTAINER:-librechat-jantine-doornbos-37418563}"
 KB_SMOKE_QUERY="${KB_SMOKE_QUERY:-Wie is waarvoor verantwoordelijk?}"
 KB_SMOKE_EXPECT_SOURCE="${KB_SMOKE_EXPECT_SOURCE:-Verantwoordelijkheden per bouwblok}"
+KB_SMOKE_EXPECT_REFUSAL="${KB_SMOKE_EXPECT_REFUSAL:-0}"
 KB_SMOKE_TIMEOUT="${KB_SMOKE_TIMEOUT:-180}"
 MONGO_CONTAINER="${MONGO_CONTAINER:-klai-core-mongodb-1}"
 
@@ -119,8 +121,10 @@ const contentText = (assistant.content || []).map((part) => part && part.text ||
 const sources = (assistant.content || []).flatMap((part) => Array.isArray(part && part.sources) ? part.sources : []);
 print(JSON.stringify({
   ready: true,
+  hasRefusal: /Dat staat niet in de kennisbank|niet betrouwbaar beantwoorden|cannot answer this reliably/.test(contentText),
   hasBronnen: /\\*\\*Bronnen\\*\\*/.test(contentText),
   hasAgentActivity: /\\*\\*Agent activiteit\\*\\*/.test(contentText),
+  hasUsedSourcesLine: /Gebruikte bronnen/.test(contentText),
   markerLeaked: /klai_sources/.test(contentText),
   sourceCount: sources.length,
   sourceTitles: sources.map((source) => source.title),
@@ -152,6 +156,12 @@ import os
 import sys
 
 expected = sys.argv[1]
+expect_refusal = os.environ.get("KB_SMOKE_EXPECT_REFUSAL", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 result = json.loads(os.environ["RESULT_JSON"])
 failures = []
 if not result.get("ready"):
@@ -160,22 +170,32 @@ if result.get("error"):
     failures.append("assistant message has error=true")
 if result.get("unfinished"):
     failures.append("assistant message is unfinished")
-if not result.get("hasBronnen"):
-    failures.append("visible **Bronnen** missing")
 if not result.get("hasAgentActivity"):
     failures.append("visible **Agent activiteit** missing")
 if result.get("markerLeaked"):
     failures.append("klai_sources marker leaked into visible content")
-if int(result.get("sourceCount") or 0) < 1:
-    failures.append("structured content[].sources missing")
-if not result.get("expectedSourcePresent"):
-    failures.append(f"expected source title missing: {expected}")
-if not any(result.get("artifactIds") or []):
-    failures.append("structured sources missing artifact_id")
-if not any(count > 0 for count in (result.get("evidenceCounts") or [])):
-    failures.append("structured sources missing evidence_ids")
 if not result.get("retrievalLine"):
     failures.append("agent activity retrieval line missing")
+if expect_refusal:
+    if not result.get("hasRefusal"):
+        failures.append("strict refusal text missing")
+    if result.get("hasBronnen"):
+        failures.append("visible **Bronnen** should be absent for strict refusal")
+    if int(result.get("sourceCount") or 0) != 0:
+        failures.append("structured sources should be empty for strict refusal")
+    if result.get("hasUsedSourcesLine"):
+        failures.append("Gebruikte bronnen line should be absent for strict refusal")
+else:
+    if not result.get("hasBronnen"):
+        failures.append("visible **Bronnen** missing")
+    if int(result.get("sourceCount") or 0) < 1:
+        failures.append("structured content[].sources missing")
+    if not result.get("expectedSourcePresent"):
+        failures.append(f"expected source title missing: {expected}")
+    if not any(result.get("artifactIds") or []):
+        failures.append("structured sources missing artifact_id")
+    if not any(count > 0 for count in (result.get("evidenceCounts") or [])):
+        failures.append("structured sources missing evidence_ids")
 if failures:
     print(json.dumps(result, indent=2, ensure_ascii=False), file=sys.stderr)
     print(f"KB citation smoke failed: {'; '.join(failures)}", file=sys.stderr)
