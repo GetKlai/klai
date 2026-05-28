@@ -122,7 +122,13 @@ def _make_connector(
     return c
 
 
-def _make_upload(filename: str = "Chemie Overal 4VWO.pdf", status: str = "processing") -> MagicMock:
+def _make_upload(
+    filename: str = "Chemie Overal 4VWO.pdf",
+    status: str = "processing",
+    *,
+    artifact_id: str | None = None,
+    source_ref: str = "file:sha256:upload",
+) -> MagicMock:
     upload = MagicMock()
     upload.id = uuid4()
     upload.kb_id = 42
@@ -131,17 +137,25 @@ def _make_upload(filename: str = "Chemie Overal 4VWO.pdf", status: str = "proces
     upload.extension = ".pdf"
     upload.mime = "application/pdf"
     upload.status = status
+    upload.artifact_id = artifact_id
+    upload.source_ref = source_ref
     upload.created_at = datetime(2026, 5, 10, tzinfo=UTC)
     return upload
 
 
-def _make_sources_db(connectors: list[MagicMock], uploads: list[MagicMock] | None = None) -> AsyncMock:
+def _make_sources_db(
+    connectors: list[MagicMock],
+    uploads: list[MagicMock] | None = None,
+    done_uploads: list[MagicMock] | None = None,
+) -> AsyncMock:
     db = AsyncMock()
     conn_query_result = MagicMock()
     conn_query_result.scalars.return_value.all.return_value = connectors
+    done_upload_query_result = MagicMock()
+    done_upload_query_result.scalars.return_value.all.return_value = done_uploads or []
     upload_query_result = MagicMock()
     upload_query_result.scalars.return_value.all.return_value = uploads or []
-    db.execute.side_effect = [conn_query_result, upload_query_result]
+    db.execute.side_effect = [conn_query_result, done_upload_query_result, upload_query_result]
     return db
 
 
@@ -399,6 +413,51 @@ async def test_list_kb_sources_includes_processing_uploads_before_ingest_artifac
     assert bron.items_count == 1
     assert bron.chunks_count == 0
     assert bron.status == "processing"
+
+
+@pytest.mark.asyncio
+async def test_list_kb_sources_includes_done_upload_when_active_artifact_missing() -> None:
+    """Done uploads must not disappear when knowledge-ingest lost the active artifact."""
+
+    from app.api.app_knowledge_bases import list_kb_sources
+
+    org = _make_org()
+    kb = _make_kb()
+    upload = _make_upload(
+        filename="Verantwoordelijkheden.pdf",
+        status="done",
+        artifact_id="artifact-stale",
+        source_ref="file:sha256:stale",
+    )
+    db = _make_sources_db([], done_uploads=[upload])
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.get_kb_sources",
+            new=AsyncMock(return_value={"connectors": [], "uploads": []}),
+        ),
+    ):
+        result = await list_kb_sources(
+            kb_slug="kb-a",
+            perms=_make_perms(),
+            db=db,
+        )
+
+    assert len(result.sources) == 1
+    bron = result.sources[0]
+    assert bron.kind == "upload"
+    assert bron.id == "artifact-stale"
+    assert bron.name == "Verantwoordelijkheden.pdf"
+    assert bron.status == "done"
+    assert bron.index_status == "not_synced"
 
 
 # -- get_source_content -------------------------------------------------------

@@ -91,8 +91,17 @@ def _client_with_conn(conn: MagicMock):  # type: ignore[return]
 class TestReindexHappyPath:
     def test_returns_202_with_pending_status(self) -> None:
         conn = _make_mock_conn()
-        # set_artifact_index_status returns the updated row
-        conn.fetchrow = AsyncMock(return_value={"artifact_id": _ARTIFACT, "path": _PATH})
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {
+                    "id": _ARTIFACT,
+                    "kb_slug": _KB,
+                    "path": _PATH,
+                    "belief_time_end": 253402300800,
+                },
+                {"artifact_id": _ARTIFACT, "path": _PATH},
+            ]
+        )
 
         mock_job = MagicMock()
         mock_job.configure = MagicMock(return_value=mock_job)
@@ -124,7 +133,17 @@ class TestReindexHappyPath:
 
     def test_sets_index_status_to_pending_in_db(self) -> None:
         conn = _make_mock_conn()
-        conn.fetchrow = AsyncMock(return_value={"artifact_id": _ARTIFACT, "path": _PATH})
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {
+                    "id": _ARTIFACT,
+                    "kb_slug": _KB,
+                    "path": _PATH,
+                    "belief_time_end": 253402300800,
+                },
+                {"artifact_id": _ARTIFACT, "path": _PATH},
+            ]
+        )
 
         mock_job = MagicMock()
         mock_job.configure = MagicMock(return_value=mock_job)
@@ -148,12 +167,54 @@ class TestReindexHappyPath:
                     params={"org_id": _ORG},
                 )
 
-        # The UPDATE call should pass "pending" as the first positional arg
-        sql = conn.fetchrow.await_args.args[0]
+        # The second fetchrow is the UPDATE that sets the artifact to pending.
+        sql = conn.fetchrow.await_args_list[1].args[0]
         assert "UPDATE knowledge.artifacts" in sql
         assert "index_status" in sql
-        status_arg = conn.fetchrow.await_args.args[1]
+        status_arg = conn.fetchrow.await_args_list[1].args[1]
         assert status_arg == "pending"
+
+    def test_reactivates_expired_upload_artifact(self) -> None:
+        conn = _make_mock_conn()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {
+                    "id": _ARTIFACT,
+                    "kb_slug": _KB,
+                    "path": _PATH,
+                    "belief_time_end": 1779974993,
+                },
+                {"artifact_id": _ARTIFACT, "path": _PATH},
+            ]
+        )
+
+        mock_job = MagicMock()
+        mock_job.configure = MagicMock(return_value=mock_job)
+        mock_job.defer_async = AsyncMock(return_value=None)
+        mock_proc_app = MagicMock()
+        mock_proc_app.enrich_document_interactive = mock_job
+
+        with (
+            patch(
+                "knowledge_ingest.routes.kb_sources.assert_caller_identity_tenant_only",
+                AsyncMock(return_value=_ORG),
+            ),
+            patch(
+                "knowledge_ingest.enrichment_tasks.get_app",
+                return_value=mock_proc_app,
+            ),
+        ):
+            with _client_with_conn(conn) as client:
+                resp = client.post(
+                    f"/knowledge/v1/artifacts/{_ARTIFACT}/reindex",
+                    params={"org_id": _ORG},
+                )
+
+        assert resp.status_code == 202
+        assert conn.execute.await_count == 1
+        sql = conn.execute.await_args.args[0]
+        assert "UPDATE knowledge.artifacts" in sql
+        assert "id <> $6::uuid" in sql
 
 
 # ---------------------------------------------------------------------------
