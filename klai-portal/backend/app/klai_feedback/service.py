@@ -1,4 +1,6 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -125,7 +127,7 @@ async def resolve_feedback_item(
     resolved_by: str,
     channels: list[str],
     subject: str | None = None,
-) -> tuple[FeedbackItem, list[FeedbackNotification]]:
+) -> tuple[Any, list[Any]]:
     item = await get_feedback_item(db, item_id)
     now = datetime.now(UTC)
     item.resolution_summary = resolution_summary
@@ -195,11 +197,52 @@ async def resolve_feedback_item(
         item.notification_state = "not_needed"
 
     await db.flush()
+    item_snapshot = SimpleNamespace(
+        id=item.id,
+        kind=item.kind,
+        title=item.title,
+        summary=item.summary,
+        status=item.status,
+        area=item.area,
+        priority_score=item.priority_score,
+        org_count=item.org_count,
+        user_count=item.user_count,
+        external_tracker_type=item.external_tracker_type,
+        external_tracker_id=item.external_tracker_id,
+        external_tracker_url=item.external_tracker_url,
+        public_feedback_url=item.public_feedback_url,
+        public_title=item.public_title,
+        public_summary=item.public_summary,
+        target_window=item.target_window,
+        owner=item.owner,
+        shipped_at=item.shipped_at,
+        resolution_summary=item.resolution_summary,
+        resolved_at=item.resolved_at,
+        resolved_by=item.resolved_by,
+        notification_state=item.notification_state,
+        created_at=item.created_at,
+        updated_at=now,
+    )
+    notification_snapshots = [
+        SimpleNamespace(
+            id=notification.id,
+            item_id=notification.item_id,
+            submission_id=notification.submission_id,
+            org_id=notification.org_id,
+            user_id=notification.user_id,
+            recipient_email=notification.recipient_email,
+            channel=notification.channel,
+            status=notification.status,
+            subject=notification.subject,
+            body=notification.body,
+            sent_at=notification.sent_at,
+            read_at=notification.read_at,
+            created_at=notification.created_at or now,
+        )
+        for notification in notifications
+    ]
     await db.commit()
-    await db.refresh(item)
-    for notification in notifications:
-        await db.refresh(notification)
-    return item, notifications
+    return item_snapshot, notification_snapshots
 
 
 async def delete_feedback_item(db: AsyncSession, item_id: int) -> None:
