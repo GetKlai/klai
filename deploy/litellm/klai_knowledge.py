@@ -17,7 +17,9 @@ The custom_router uses this to prevent model downgrade for KB-enriched requests.
 """
 
 import asyncio
+import base64
 import copy
+import json
 import logging
 import os
 import re
@@ -1961,9 +1963,22 @@ def _append_visible_sources_section(
         activity = _format_visible_agent_activity(kb_meta, sources)
         if activity:
             sections.append(f"**Agent activiteit**\n{activity}")
+    if sources:
+        marker = _format_sources_metadata_marker(sources)
+        if marker:
+            sections.append(marker)
     if not sections:
         return content
     return f"{content.rstrip()}\n\n" + "\n\n".join(sections)
+
+
+def _format_sources_metadata_marker(sources: list[dict[str, Any]]) -> str:
+    try:
+        payload = json.dumps(sources, ensure_ascii=False, separators=(",", ":")).encode()
+    except (TypeError, ValueError):
+        return ""
+    encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    return f"<!-- klai_sources={encoded} -->"
 
 
 def _format_visible_agent_activity(
