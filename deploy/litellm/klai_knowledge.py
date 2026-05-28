@@ -53,7 +53,6 @@ from klai_chat_prompts import (
 from klai_citations import (
     compose_answer_with_trusted_sources,
     evidence_pack_items_as_chunks,
-    format_sources_markdown,
     render_evidence_context,
     trusted_sources_from_evidence_pack,
 )
@@ -1496,7 +1495,13 @@ def _citation_render_inputs(kb_meta: dict[str, Any]) -> tuple[set[str], list[dic
     trusted_sources = [
         source
         for source in (kb_meta.get("trusted_sources") or [])
-        if isinstance(source, dict) and _normalise_guard_url(source.get("url"))
+        if isinstance(source, dict)
+        and (
+            _normalise_guard_url(source.get("url"))
+            or source.get("artifact_id")
+            or source.get("source_id")
+            or source.get("title")
+        )
     ]
     return allowed_image_urls, citation_chunks, trusted_sources
 
@@ -1616,12 +1621,19 @@ def _trusted_sources_visible_fallback(
 ) -> list[dict[str, str]]:
     """Render document-level sources when answer/source text matching is too strict."""
     sources: list[dict[str, str]] = []
-    seen_urls: set[str] = set()
+    seen_keys: set[str] = set()
     for source in trusted_sources:
         url = _normalise_guard_url(source.get("url"))
-        if not url or url in seen_urls:
+        key = url or str(
+            source.get("artifact_id")
+            or source.get("source_id")
+            or source.get("title")
+            or source.get("source_label")
+            or ""
+        ).strip()
+        if not key or key in seen_keys:
             continue
-        seen_urls.add(url)
+        seen_keys.add(key)
         title = str(source.get("title") or source.get("source_label") or "Source").strip()
         sources.append({"label": str(len(sources) + 1), "title": title or "Source", "url": url})
         if len(sources) >= max_sources:
@@ -1633,16 +1645,29 @@ def _plural_nl(count: int, singular: str, plural: str) -> str:
     return singular if count == 1 else plural
 
 
+def _format_visible_sources_markdown(sources: list[dict[str, Any]]) -> str:
+    """Render source links or URL-less upload labels for the visible chat footer."""
+    lines: list[str] = []
+    for source in sources:
+        title = str(source.get("title") or source.get("source_label") or "Source").strip()
+        url = _normalise_guard_url(source.get("url"))
+        if url:
+            lines.append(f"- [{title or 'Source'}]({url})")
+        else:
+            lines.append(f"- {title or 'Source'}")
+    return "\n".join(lines)
+
+
 def _append_visible_sources_section(
     content: str,
-    sources: list[dict[str, str]],
+    sources: list[dict[str, Any]],
     *,
     kb_meta: dict[str, Any] | None = None,
 ) -> str:
     """Append backend-selected sources for clients that ignore structured metadata."""
     sections: list[str] = []
     if sources:
-        sources_markdown = format_sources_markdown(sources).strip()
+        sources_markdown = _format_visible_sources_markdown(sources).strip()
         if sources_markdown:
             sections.append(f"**Bronnen**\n{sources_markdown}")
     if kb_meta is not None and sources:

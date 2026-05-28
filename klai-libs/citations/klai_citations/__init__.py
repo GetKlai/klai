@@ -772,15 +772,16 @@ def compose_citations(
     )
 
 
-def format_sources_markdown(sources: list[dict[str, str]]) -> str:
+def format_sources_markdown(sources: list[dict[str, Any]]) -> str:
     """Render deterministic source links for plain Markdown chat clients."""
     lines: list[str] = []
     for source in sources:
         title = (source.get("title") or "").strip() or "Source"
         url = normalise_source_url(source.get("url"))
         if not url:
-            continue
-        lines.append(f"- [{title}]({url})")
+            lines.append(f"- {title}")
+        else:
+            lines.append(f"- [{title}]({url})")
     return "\n".join(lines)
 
 
@@ -814,7 +815,8 @@ def trusted_sources_from_evidence_pack(evidence_pack: object) -> list[dict[str, 
         if not isinstance(source, dict):
             continue
         url = normalise_source_url(source.get("source_url") or source.get("url"))
-        if not url:
+        artifact_id = source.get("artifact_id")
+        if not url and not artifact_id:
             continue
         rendered.append(
             {
@@ -823,7 +825,7 @@ def trusted_sources_from_evidence_pack(evidence_pack: object) -> list[dict[str, 
                 "url": url,
                 "source_id": source.get("source_id"),
                 "evidence_ids": source.get("evidence_ids") or [],
-                "artifact_id": source.get("artifact_id"),
+                "artifact_id": artifact_id,
                 "source_label": source.get("source_label"),
                 "relevance_score": source.get("relevance_score"),
             }

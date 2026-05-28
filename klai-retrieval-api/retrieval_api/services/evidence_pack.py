@@ -49,9 +49,9 @@ def _source_url(chunk: ChunkResult | dict[str, Any]) -> str | None:
 
 
 def _title(chunk: ChunkResult | dict[str, Any], source_url: str | None) -> str:
-    for key in ("title", "source_label", "context_prefix"):
+    for key in ("original_filename", "filename", "title", "source_label", "context_prefix"):
         value = _string_value(_chunk_value(chunk, key))
-        if value:
+        if value and not value.startswith("file:sha256:"):
             return value[:160]
     if source_url:
         return source_url

@@ -674,6 +674,7 @@ async def retrieve(
                     kb_slug=r.get("kb_slug"),
                     source_label=r.get("source_label"),
                     title=r.get("title"),
+                    original_filename=r.get("original_filename"),
                     image_urls=payload_list(r, "image_urls") or None,
                     entity_names=payload_list(r, "entity_names") or None,
                     is_parent_text=is_parent,

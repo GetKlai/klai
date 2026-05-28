@@ -4,6 +4,7 @@ from klai_citations import (
     compose_citations,
     evidence_chunks_from_chunks,
     evidence_pack_items_as_chunks,
+    format_sources_markdown,
     render_evidence_context,
     render_markdown_answer,
     render_markdown_answer_with_sources,
@@ -371,6 +372,36 @@ def test_trusted_sources_are_projected_only_from_evidence_pack_sources() -> None
             "is_parent_text": None,
         }
     ]
+
+
+def test_trusted_sources_include_uploaded_documents_without_source_url() -> None:
+    pack = {
+        "sources": [
+            {
+                "source_id": "S1",
+                "title": "CV_Jantine_Doornbos.pdf",
+                "source_url": None,
+                "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
+                "evidence_ids": ["E1"],
+            }
+        ],
+    }
+
+    sources = trusted_sources_from_evidence_pack(pack)
+
+    assert sources == [
+        {
+            "label": "1",
+            "title": "CV_Jantine_Doornbos.pdf",
+            "url": "",
+            "source_id": "S1",
+            "evidence_ids": ["E1"],
+            "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
+            "source_label": None,
+            "relevance_score": None,
+        }
+    ]
+    assert format_sources_markdown(sources) == "- CV_Jantine_Doornbos.pdf"
 
 
 def test_trusted_source_composition_never_reconstructs_sources_from_text_or_chunks() -> None:

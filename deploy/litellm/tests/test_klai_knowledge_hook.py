@@ -3087,6 +3087,74 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "selector_rejected_all_sources_fallback" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_post_call_guard_renders_uploaded_document_source_without_url(
+        self, monkeypatch, caplog
+    ):
+        """Uploaded PDFs have artifact ids but no public URL; still show provenance."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        caplog.set_level("WARNING", logger="klai_knowledge")
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="Frank Wolters is verantwoordelijk voor Data Readiness."
+                    )
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Wie is waarvoor verantwoordelijk?",
+                    "kb_narrow": False,
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "evidence_id": "E1",
+                            "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
+                            "title": "CV_Jantine_Doornbos.pdf",
+                            "source_url": None,
+                            "text": "Frank Wolters is verantwoordelijk voor Data Readiness.",
+                        }
+                    ],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "CV_Jantine_Doornbos.pdf",
+                            "url": None,
+                            "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
+                            "evidence_ids": ["E1"],
+                        }
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        content = response.choices[0].message.content
+        assert "Frank Wolters is verantwoordelijk" in content
+        assert "**Bronnen**" in content
+        assert "- CV_Jantine_Doornbos.pdf" in content
+        assert "- [CV_Jantine_Doornbos.pdf]" not in content
+        assert "**Agent activiteit**" in content
+        assert response.choices[0].message.sources == [
+            {
+                "label": "1",
+                "title": "CV_Jantine_Doornbos.pdf",
+                "url": "",
+            }
+        ]
+        assert "kb_citations_rendered_structured" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_post_call_guard_refuses_answer_in_narrow_mode_without_citable_sources(
         self, monkeypatch, caplog
     ):
