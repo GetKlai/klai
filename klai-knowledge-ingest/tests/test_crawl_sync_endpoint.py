@@ -458,6 +458,58 @@ class TestCrawlSyncEndpoint:
         assert kwargs["start_url"] == "https://example.com/docs/"
         assert kwargs["include_patterns"] == ["/docs/*"]
 
+    def test_legacy_full_url_path_prefix_with_nested_base_url_is_relative(self) -> None:
+        """Full URL prefixes are made relative to base_url's path, not appended twice."""
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=10),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://example.com/wiki/",
+                    "path_prefix": "https://example.com/wiki/",
+                },
+            )
+        assert resp.status_code == 202, resp.text
+        kwargs = defer_mock.await_args.kwargs
+        assert kwargs["start_url"] == "https://example.com/wiki/"
+        assert kwargs["include_patterns"] is None
+
+    def test_legacy_full_url_path_prefix_under_nested_base_url_is_relative(self) -> None:
+        """A full URL prefix below a nested base keeps only the child path."""
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=11),
+                "zitadel_org_id": "42",
+                "encrypted_credentials": None,
+                "connector_dek_enc": None,
+            },
+        )
+        with _client_with_patches(pool) as (client, defer_mock):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": str(uuid.uuid4()),
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://example.com/wiki/",
+                    "path_prefix": "https://example.com/wiki/nl/",
+                },
+            )
+        assert resp.status_code == 202, resp.text
+        kwargs = defer_mock.await_args.kwargs
+        assert kwargs["start_url"] == "https://example.com/wiki/nl/"
+        assert kwargs["include_patterns"] == ["/nl/*"]
+
     def test_full_url_path_prefix_rejects_other_origin(self) -> None:
         """Full URL prefixes must not silently redirect crawls to another host."""
         pool = _make_pool(
