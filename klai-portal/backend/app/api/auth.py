@@ -63,6 +63,7 @@ from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
 from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
+from app.services.domain_validation import primary_domain_for_email_domain
 from app.services.events import emit_event
 from app.services.pending_session import PendingSessionService
 from app.services.redis_client import get_redis_pool
@@ -1966,11 +1967,12 @@ async def idp_callback(
 
     # Query orgs with matching primary_domain that user is NOT already a member of.
     email_domain = email.rsplit("@", 1)[-1].strip().lower() if "@" in email else ""
+    claimable_domain = primary_domain_for_email_domain(email_domain)
     domain_orgs: list[PortalOrg] = []
-    if email_domain and zitadel_user_id:
+    if claimable_domain and zitadel_user_id:
         member_org_ids = {u.org_id for u in member_users}
         domain_query = select(PortalOrg).where(
-            PortalOrg.primary_domain == email_domain,
+            PortalOrg.primary_domain == claimable_domain,
             PortalOrg.deleted_at.is_(None),
         )
         if member_org_ids:

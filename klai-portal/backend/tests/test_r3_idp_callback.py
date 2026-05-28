@@ -85,6 +85,21 @@ class TestIdpCallbackCase1NoMemberNoDomain:
         assert response.status_code == 302
         assert "/no-account" in response.headers.get("location", "")
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("email", ["user@gmail.com", "user@hotmail.nl", "user@protonmail.com"])
+    async def test_free_email_domain_does_not_match_org_primary_domain(self, email: str) -> None:
+        from app.api.auth import idp_callback
+
+        mr = MagicMock()
+        mr.scalars.return_value.all.return_value = []
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mr)
+        with patch("app.api.auth.zitadel", _zitadel_mocks(email)), patch("app.api.auth.emit_event"):
+            response = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
+        assert response.status_code == 302
+        assert "/no-account" in response.headers.get("location", "")
+        assert mock_db.execute.await_count == 1
+
 
 class TestIdpCallbackCase2SingleMemberNoDomain:
     @pytest.mark.asyncio
