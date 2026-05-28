@@ -287,6 +287,7 @@ _KB_STREAMING_RENDER_MODES = {
     _KB_RENDER_MODE_STREAMING_GUARD,
     _KB_RENDER_MODE_LEGACY_STREAMING_GUARD,
 }
+_STREAM_LINK_GUARD_TAIL_CHARS = 16
 
 
 @dataclass(frozen=True)
@@ -1682,6 +1683,33 @@ def _flush_citation_stream_buffer(
     return stats
 
 
+def _earliest_stream_guard_start(text: str) -> int:
+    starts = [
+        idx
+        for idx in (
+            text.find("!["),
+            text.find("["),
+            text.find("http://"),
+            text.find("https://"),
+        )
+        if idx >= 0
+    ]
+    return min(starts) if starts else -1
+
+
+def _pop_streaming_guard_text(buffer: str, *, final: bool) -> tuple[str, str]:
+    start = _earliest_stream_guard_start(buffer)
+    if start >= 0:
+        if final:
+            return buffer, ""
+        return buffer[:start], buffer[start:]
+    if final:
+        return buffer, ""
+    if len(buffer) <= _STREAM_LINK_GUARD_TAIL_CHARS:
+        return "", buffer
+    return buffer[:-_STREAM_LINK_GUARD_TAIL_CHARS], buffer[-_STREAM_LINK_GUARD_TAIL_CHARS:]
+
+
 def _compose_non_streaming_kb_response(
     response: object,
     kb_meta: dict[str, Any],
@@ -1725,32 +1753,106 @@ def _compose_streaming_kb_response(
     *,
     flush_stream: bool = False,
 ) -> _KbCitationRenderStats:
-    """Buffer streaming deltas and flush one deterministic cited delta."""
+    """Let answer tokens stream and append deterministic sources at the end.
+
+    The previous implementation blanked every streamed delta and replayed one
+    fully rendered answer on the final chunk. That made KB chats feel frozen
+    until the model had completed. For streaming clients we preserve token flow
+    and only add the source list as a final metadata-like Markdown tail.
+    """
     stats = _KbCitationRenderStats()
     allowed_image_urls, citation_chunks, trusted_sources = _citation_render_inputs(kb_meta)
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
     if not citation_chunks and not trusted_sources and not force_no_citable:
         return stats
+    if kb_meta.get("_citation_stream_sources_appended"):
+        return stats
+
+    kb_narrow = bool(kb_meta.get("kb_narrow", False))
+    strict_no_sources = not trusted_sources and (force_no_citable or kb_narrow)
+    if not trusted_sources and not strict_no_sources:
+        return stats
+
+    should_flush = flush_stream
 
     for choice in _get_response_choices(response):
         delta = _get_choice_message(choice, "delta")
         if delta is None:
             continue
         content = _get_message_content(delta)
-        stream_parts = kb_meta.setdefault("_citation_stream_parts", [])
-        if isinstance(content, str) and content:
-            stream_parts.append(content)
-            _set_message_content(delta, "")
-            stats.mutated_messages += 1
-        if flush_stream or _get_choice_finish_reason(choice):
-            stats.merge(
-                _flush_citation_stream_buffer(
-                    response,
-                    kb_meta,
-                    citation_chunks,
-                    allowed_image_urls,
-                )
+        should_flush = should_flush or bool(_get_choice_finish_reason(choice))
+        if strict_no_sources:
+            if isinstance(content, str) and content:
+                buffered = kb_meta.get("_citation_stream_guard_buffer") or ""
+                kb_meta["_citation_stream_guard_buffer"] = buffered + content
+                _set_message_content(delta, "")
+                stats.mutated_messages += 1
+            if not should_flush:
+                continue
+            rendered_content, sources, no_citable_sources, decision = _render_kb_citation_content(
+                kb_meta.get("_citation_stream_guard_buffer") or "",
+                allowed_image_urls=allowed_image_urls,
+                user_query=kb_meta.get("user_query"),
+                trusted_sources=trusted_sources,
+                evidence_chunks=citation_chunks,
+                kb_narrow=kb_narrow,
+                no_citable_message=kb_meta.get("no_citable_message"),
             )
+            _set_message_content(delta, rendered_content)
+            kb_meta["_citation_stream_sources_appended"] = True
+            kb_meta["_citation_stream_guard_buffer"] = ""
+            stats.mutated_messages += 1
+            stats.rendered_messages += 1
+            stats.rendered_sources = len(sources)
+            stats.no_citable_sources = no_citable_sources
+            stats.citation_decisions.append(decision)
+            return stats
+
+        stream_buffer = kb_meta.get("_citation_stream_guard_buffer") or ""
+        if isinstance(content, str) and content:
+            full_parts = kb_meta.setdefault("_citation_stream_full_parts", [])
+            full_parts.append(content)
+            stream_buffer += content
+        safe_text, stream_buffer = _pop_streaming_guard_text(stream_buffer, final=should_flush)
+        if safe_text != content:
+            _set_message_content(delta, safe_text)
+            stats.mutated_messages += 1
+        if safe_text and not should_flush:
+            emitted_parts = kb_meta.setdefault("_citation_stream_emitted_parts", [])
+            emitted_parts.append(safe_text)
+        kb_meta["_citation_stream_guard_buffer"] = stream_buffer
+        if not should_flush:
+            continue
+
+        full_text = "".join(part for part in kb_meta.get("_citation_stream_full_parts", []) if isinstance(part, str))
+        emitted_text = "".join(
+            part for part in kb_meta.get("_citation_stream_emitted_parts", []) if isinstance(part, str)
+        )
+        rendered_content, sources, no_citable_sources, decision = _render_kb_citation_content(
+            full_text,
+            allowed_image_urls=allowed_image_urls,
+            user_query=kb_meta.get("user_query"),
+            trusted_sources=trusted_sources,
+            evidence_chunks=citation_chunks,
+            kb_narrow=kb_narrow,
+            no_citable_message=kb_meta.get("no_citable_message"),
+        )
+        final_text = _append_visible_sources_section(rendered_content, sources)
+        if emitted_text and final_text.startswith(emitted_text):
+            final_text = final_text[len(emitted_text) :]
+        if sources:
+            _set_message_field(delta, "sources", sources)
+        _set_message_content(delta, final_text)
+        kb_meta["_citation_stream_sources_appended"] = True
+        kb_meta["_citation_stream_guard_buffer"] = ""
+        kb_meta["_citation_stream_full_parts"] = []
+        kb_meta["_citation_stream_emitted_parts"] = []
+        stats.mutated_messages += 1
+        stats.rendered_messages += 1
+        stats.rendered_sources = len(sources)
+        stats.no_citable_sources = no_citable_sources
+        stats.citation_decisions.append(decision)
+        return stats
     return stats
 
 
@@ -2636,7 +2738,7 @@ class KlaiKnowledgeHook(CustomLogger):
             pending_item = item
             stats = _compose_streaming_kb_response(item, kb_meta)
             _log_kb_citation_render(kb_meta, stats, stream=True)
-        if pending_item is not None and kb_meta.get("_citation_stream_parts"):
+        if pending_item is not None and not kb_meta.get("_citation_stream_sources_appended"):
             stats = _compose_streaming_kb_response(pending_item, kb_meta, flush_stream=True)
             _log_kb_citation_render(kb_meta, stats, stream=True)
         if pending_item is not None:

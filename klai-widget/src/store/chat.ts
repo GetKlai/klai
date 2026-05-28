@@ -1,7 +1,7 @@
 import { createStore } from "solid-js/store";
 import type { WidgetConfig } from "../api/widget-config";
-import type { Message, MessageSource } from "../api/chat-stream";
-import { normalizeMessageSources } from "../api/chat-stream";
+import type { AgentActivity, Message, MessageSource } from "../api/chat-stream";
+import { normalizeAgentActivity, normalizeMessageSources } from "../api/chat-stream";
 
 export type ConversationStatus = "active" | "handoff_active" | "closed";
 
@@ -561,6 +561,24 @@ export function setLastMessageSources(sources: MessageSource[]): void {
     return updated;
   });
   schedulePersist();
+}
+
+export function appendLastMessageActivity(activity: AgentActivity[]): void {
+  const normalizedActivity = normalizeAgentActivity(activity);
+  if (normalizedActivity.length === 0) {
+    return;
+  }
+  setChatState("messages", (msgs) => {
+    const updated = [...msgs];
+    const last = updated[updated.length - 1];
+    if (last && last.role === "assistant") {
+      const existing = last.activity ?? [];
+      const existingSteps = new Set(existing.map((item) => item.step));
+      const appended = normalizedActivity.filter((item) => !existingSteps.has(item.step));
+      updated[updated.length - 1] = { ...last, activity: [...existing, ...appended] };
+    }
+    return updated;
+  });
 }
 
 export function finishStreaming(): void {

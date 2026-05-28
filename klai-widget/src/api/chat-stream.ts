@@ -7,6 +7,7 @@ export interface Message {
   sources?: MessageSource[];
   id?: number;
   agentName?: string;
+  activity?: AgentActivity[];
 }
 
 export interface MessageSource {
@@ -23,9 +24,17 @@ export interface PageContext {
   excerpt?: string;
 }
 
+export interface AgentActivity {
+  step: string;
+  label: string;
+  detail?: string;
+  count?: number;
+}
+
 export interface StreamCallbacks {
   onToken: (token: string) => void;
   onSources?: (sources: MessageSource[]) => void;
+  onActivity?: (activity: AgentActivity[]) => void;
   onDone: () => void;
   onError: (error: KlaiWidgetError | Error) => void;
 }
@@ -184,6 +193,33 @@ export function normalizeMessageSources(rawSources: unknown): MessageSource[] {
   return normalized;
 }
 
+export function normalizeAgentActivity(rawActivity: unknown): AgentActivity[] {
+  if (!Array.isArray(rawActivity)) {
+    return [];
+  }
+
+  const normalized: AgentActivity[] = [];
+  const seenSteps = new Set<string>();
+
+  for (const rawItem of rawActivity) {
+    if (!rawItem || typeof rawItem !== "object") {
+      continue;
+    }
+    const item = rawItem as Partial<AgentActivity>;
+    const step = typeof item.step === "string" ? item.step.trim() : "";
+    const label = typeof item.label === "string" ? item.label.trim() : "";
+    if (!step || !label || seenSteps.has(step)) {
+      continue;
+    }
+    const detail = typeof item.detail === "string" && item.detail.trim() ? item.detail.trim() : undefined;
+    const count = typeof item.count === "number" && Number.isFinite(item.count) ? item.count : undefined;
+    normalized.push({ step, label, detail, count });
+    seenSteps.add(step);
+  }
+
+  return normalized;
+}
+
 export async function streamChat(options: ChatStreamOptions): Promise<void> {
   const { endpoint, token, messages, widgetId, pageContext, callbacks, abortController } = options;
   let currentToken = token;
@@ -229,7 +265,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
           try {
             const parsed = JSON.parse(event.data) as {
               choices?: Array<{
-                delta?: { content?: string; sources?: unknown };
+                delta?: { content?: string; sources?: unknown; activity?: unknown };
                 finish_reason?: string;
               }>;
             };
@@ -241,6 +277,10 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             const sources = normalizeMessageSources(delta?.sources);
             if (sources.length > 0) {
               callbacks.onSources?.(sources);
+            }
+            const activity = normalizeAgentActivity(delta?.activity);
+            if (activity.length > 0) {
+              callbacks.onActivity?.(activity);
             }
             if (parsed.choices?.[0]?.finish_reason === "stop") {
               callbacks.onDone();

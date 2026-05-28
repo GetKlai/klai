@@ -15,7 +15,12 @@ from retrieval_api.config import settings
 
 logger = logging.getLogger(__name__)
 
-_EMBED_MODEL = "BAAI/bge-m3"
+
+def _embedding_payload(text_or_texts: str | list[str]) -> dict[str, object]:
+    payload: dict[str, object] = {"input": text_or_texts}
+    if settings.tei_model.strip():
+        payload["model"] = settings.tei_model.strip()
+    return payload
 
 
 async def embed_single(text: str) -> list[float]:
@@ -26,7 +31,7 @@ async def embed_single(text: str) -> list[float]:
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             f"{settings.tei_url}/v1/embeddings",
-            json={"input": text, "model": _EMBED_MODEL},
+            json=_embedding_payload(text),
         )
         resp.raise_for_status()
         return resp.json()["data"][0]["embedding"]
@@ -37,7 +42,7 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             f"{settings.tei_url}/v1/embeddings",
-            json={"input": texts, "model": _EMBED_MODEL},
+            json=_embedding_payload(texts),
         )
         resp.raise_for_status()
         data = resp.json()["data"]

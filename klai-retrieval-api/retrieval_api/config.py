@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     qdrant_collection: str = "klai_knowledge"
 
     tei_url: str = "http://172.18.0.1:7997"
+    tei_model: str = "BAAI/bge-m3"
     infinity_reranker_url: str = "http://172.18.0.1:7998"
 
     litellm_url: str = "http://litellm:4000"

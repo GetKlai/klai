@@ -1614,7 +1614,14 @@ async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
         chunks.append(chunk)
 
     body = b"".join(chunks).decode()
-    assert '"content": "Naam."' in body
+    content_parts = []
+    for line in body.splitlines():
+        if not line.startswith("data: ") or line == "data: [DONE]":
+            continue
+        delta = json.loads(line[6:])["choices"][0]["delta"]
+        if "content" in delta:
+            content_parts.append(delta["content"])
+    assert "".join(content_parts) == "Naam."
     assert (
         '"sources": [{"label": "1", "title": "Privacy policy", "url": "https://getklai.com/docs/legal/privacy"}]'
     ) in body
@@ -1689,7 +1696,14 @@ async def test_streaming_widget_mode_composes_sources_without_model_citations(mo
 
     body = b"".join(chunks).decode()
     assert '"sources": [{"label": "1", "title": "Steward ownership"' in body
-    assert '"content": "Klai is steward-owned and mission-led."' in body
+    content_parts = []
+    for line in body.splitlines():
+        if not line.startswith("data: ") or line == "data: [DONE]":
+            continue
+        delta = json.loads(line[6:])["choices"][0]["delta"]
+        if "content" in delta:
+            content_parts.append(delta["content"])
+    assert "".join(content_parts) == "Klai is steward-owned and mission-led."
     assert body.index('"sources"') < body.index('"content"')
 
 
