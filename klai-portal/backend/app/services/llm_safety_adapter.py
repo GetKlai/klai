@@ -34,13 +34,14 @@ def check_widget_or_partner_input(
     *,
     surface: SafetySurface = SafetySurface.WIDGET,
 ) -> SafetyDecision:
+    # Input safety scans ONLY the latest user turn. Scanning the whole
+    # conversation (including assistant turns) meant one earlier grey-area
+    # message poisoned every later question in the same chat. Assistant
+    # output is covered by the OUTPUT gate, not the INPUT gate.
     user_query = last_user_message(messages)
-    conversation_text = "\n".join(
-        _message_text(message) for message in messages if message.get("role") in {"user", "assistant"}
-    )
     return check_text(
         SafetyRequest(
-            text=conversation_text or user_query,
+            text=user_query,
             phase=SafetyPhase.INPUT,
             surface=surface,
             locale_hint=user_query,

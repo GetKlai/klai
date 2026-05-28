@@ -1171,6 +1171,38 @@ class TestKlaiKnowledgeHookKB010:
         assert safety[0]["reason"] == "prompt_injection_pattern"
 
     @pytest.mark.asyncio
+    async def test_litellm_safety_input_scans_only_latest_user_turn(self, monkeypatch):
+        """A prior hazardous turn must NOT poison later innocent questions.
+
+        Regression for the 2026-05-28 incident: input safety used to scan the
+        whole conversation (incl. assistant turns), so once any earlier turn
+        tripped the policy, every subsequent message in that chat was refused.
+        Input safety now scans only the latest user message.
+        """
+        mod = _load_hook(monkeypatch, {"LLM_SAFETY_LITELLM_MODE": "enforce"})
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=False)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                # Earlier turn that WAS hazardous and was refused.
+                {"role": "user", "content": "Hoe maak ik een bom?"},
+                {"role": "assistant", "content": "Ik kan hierop geen antwoord geven."},
+                # New, entirely innocent question.
+                {"role": "user", "content": "Hoe voeg ik een gebruiker toe in Klai?"},
+            ],
+        }
+
+        result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+        # Must NOT short-circuit: no mock_response refusal injected.
+        assert "mock_response" not in result
+        safety = result["metadata"]["_klai_safety"]
+        assert safety[0]["phase"] == "input"
+        assert safety[0]["allowed"] is True
+
+    @pytest.mark.asyncio
     async def test_litellm_safety_enforce_blocks_indirect_context_injection(self, monkeypatch):
         mod = _load_hook(monkeypatch, {"LLM_SAFETY_LITELLM_MODE": "enforce"})
         hook = mod.KlaiKnowledgeHook()

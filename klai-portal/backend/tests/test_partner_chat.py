@@ -171,7 +171,7 @@ async def test_widget_prompt_injection_hazardous_input_blocked_before_retrieval(
     async for chunk in result.body_iterator:
         received.append(chunk)
     body = b"".join(received).decode()
-    assert "Ik kan niet helpen" in body
+    assert "Ik kan hierop geen antwoord geven" in body
     assert "[DONE]" in body
 
 
@@ -903,7 +903,7 @@ async def test_non_streaming_blocks_hazardous_model_output(monkeypatch):
     )
 
     content = body["choices"][0]["message"]["content"]
-    assert "Ik kan niet helpen" in content
+    assert "Ik kan hierop geen antwoord geven" in content
     assert "step-by-step" not in content
     assert body["choices"][0]["message"]["sources"] == []
 
@@ -960,7 +960,7 @@ async def test_streaming_widget_mode_blocks_hazardous_model_output(monkeypatch):
         chunks.append(chunk)
 
     body = b"".join(chunks).decode()
-    assert "Ik kan niet helpen" in body
+    assert "Ik kan hierop geen antwoord geven" in body
     assert "step-by-step" not in body
     assert "[DONE]" in body
 
@@ -1040,7 +1040,7 @@ async def test_streaming_links_mode_aborts_on_hazardous_model_output(monkeypatch
         chunks.append(chunk)
 
     body = b"".join(chunks).decode()
-    assert "I can't help" in body or "Ik kan niet helpen" in body
+    assert "I can't help with that request" in body or "Ik kan hierop geen antwoord geven" in body
     assert "TNT" not in body
     assert "step-by-step" not in body
     assert "precursor" not in body

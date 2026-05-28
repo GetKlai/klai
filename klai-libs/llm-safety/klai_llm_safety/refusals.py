@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import re
 
-_REFUSAL_NL = "Ik kan niet helpen met instructies voor wapens, explosieven of andere gevaarlijke materialen."
-_REFUSAL_EN = "I can't help with instructions for weapons, explosives, or other dangerous materials."
+# Neutral refusal: do NOT enumerate the blocked categories. Echoing
+# "weapons, explosives, ..." back into the chat puts those exact terms in
+# the conversation history, which (a) reads as if Klai assumed the worst of
+# the user and (b) re-poisons any downstream scan of that history.
+_REFUSAL_NL = "Ik kan hierop geen antwoord geven."
+_REFUSAL_EN = "I can't help with that request."
 
 
 def _looks_dutch(text: str) -> bool:
