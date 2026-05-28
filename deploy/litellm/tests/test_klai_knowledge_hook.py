@@ -3344,7 +3344,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "**Agent activiteit**" in content
         assert "- Kennisbank geraadpleegd: 20 fragmenten opgehaald in 416 ms." in content
         assert "- Bronselectie: 0 bronnen gekoppeld" in content
-        assert "- Retrieval confidence: low." in content
+        assert "- Retrieval score: low." in content
         assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
         assert getattr(response.choices[0].message, "sources", []) == []
         assert "kb_citations_no_citable_sources" in caplog.text
@@ -3759,7 +3759,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "- CV_Jantine_Doornbos.pdf" in footer_delta["content"]
         assert "**Agent activiteit**" in footer_delta["content"]
         assert "- Modus: Strict, alleen kennisbank." in footer_delta["content"]
-        assert "- Retrieval confidence: low." in footer_delta["content"]
+        assert "- Retrieval score: low; bronfragmenten gekoppeld." in footer_delta["content"]
         assert footer_delta["sources"] == [
             {
                 "label": "1",
