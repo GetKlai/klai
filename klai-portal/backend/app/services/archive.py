@@ -8,8 +8,9 @@ pipelines.
 Defenses (sunzip-style; see also CVE-2024-0450, GHSA-ffj4-jq7m-9g6v,
 PEP 706):
 
-- **Path traversal** — entry name MUST be a single basename. Reject
-  ``..``, absolute paths, backslash separators, NUL, leading slashes.
+- **Path traversal** — entry name MUST be a safe relative POSIX path.
+  Reject ``..``, ``.``, empty path segments, absolute paths, backslash
+  separators, Windows drive letters, NUL, leading slashes.
 - **Nested archives** — entries with a recognised archive extension
   (``.zip`` / ``.tar``) reject the whole archive; we never recurse.
 - **Symlinks / devices (tar)** — only ``REGTYPE`` / ``AREGTYPE``
@@ -117,27 +118,26 @@ class ArchiveAbort(HTTPException):
 
 
 def _is_safe_member_name(name: str) -> bool:
-    """Return True iff ``name`` is a single basename (no traversal).
+    """Return True iff ``name`` is a safe relative POSIX path.
 
     Matches the safezip / Python-3.12-tarfile-data-filter rules.
     """
     if not name or "\x00" in name:
         return False
-    # PurePosixPath collapses ``"."`` and ``"./"`` to empty parts, so we
-    # also reject the bare strings explicitly.
-    if name in {".", ".."}:
-        return False
     # Reject absolute paths (POSIX or Windows), drive letters, UNC paths.
     if name.startswith(("/", "\\")):
         return False
-    if len(name) >= 2 and name[1] == ":":
+    if "\\" in name:
         return False
-    # Reject path separators — must be a basename.
-    if "/" in name or "\\" in name:
+    raw_parts = name.split("/")
+    # PurePosixPath collapses ``.`` and duplicate separators, so inspect
+    # raw path segments before normalising.
+    if any(part in {"", ".", ".."} for part in raw_parts):
         return False
-    # Reject parent-traversal markers.
-    parts = PurePosixPath(name).parts
-    if any(p in {"..", "."} for p in parts):
+    # Reject Windows drive markers in any segment, e.g. C:/foo.md.
+    if any(len(part) >= 2 and part[1] == ":" for part in raw_parts):
+        return False
+    if PurePosixPath(name).is_absolute():
         return False
     return True
 
@@ -193,7 +193,7 @@ def _preflight_member(
     if not _is_safe_member_name(name):
         raise ArchiveAbort("archive_path_traversal", filename=name or "<unnamed>")
 
-    normalised = PurePosixPath(name).name.lower()
+    normalised = PurePosixPath(name).as_posix().lower()
     if normalised in seen_names:
         raise ArchiveAbort("archive_duplicate_entry", filename=name)
     seen_names.add(normalised)
