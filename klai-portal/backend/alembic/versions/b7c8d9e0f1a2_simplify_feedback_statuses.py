@@ -40,9 +40,13 @@ def upgrade() -> None:
     op.execute("""
         UPDATE feedback_submissions
         SET status = CASE
+            WHEN status = 'new' THEN 'new'
             WHEN status = 'triage_suggested' THEN 'new'
+            WHEN status IN ('resolved', 'shipped') THEN 'resolved'
+            WHEN status IN ('dismissed', 'wont_do') THEN 'dismissed'
+            WHEN status = 'support' THEN 'support'
             WHEN status = 'linked' THEN 'open'
-            ELSE status
+            ELSE 'open'
         END
     """)
 
