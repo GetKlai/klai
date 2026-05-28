@@ -228,18 +228,45 @@ async def _list_docling_artifacts_without_parents(
     return [(r["org_id"], r["kb_slug"], r["artifact_id"]) for r in rows]
 
 
+def _parse_pg_dsn(dsn: str) -> dict[str, object]:
+    """Structural DSN parser — asyncpg's urlparse-based parser chokes on
+    passwords with reserved chars (``:``, ``/``, ``+``, ``@``). Same pitfall
+    as ``redis-url-password-must-be-parsed-manually``. We take the password
+    as opaque bytes between the first ``:`` after the scheme and the LAST
+    ``@`` before the host.
+    """
+    rest = dsn.split("://", 1)[1] if "://" in dsn else dsn
+    creds, hostpart = rest.rsplit("@", 1)
+    user, password = creds.split(":", 1)
+    host_and_port, _, database = hostpart.partition("/")
+    host, _, port_s = host_and_port.partition(":")
+    return {
+        "user": user,
+        "password": password,
+        "host": host,
+        "port": int(port_s) if port_s else 5432,
+        "database": database or user,
+    }
+
+
 async def main() -> int:
     # Connect as klai superuser to bypass RLS for the cross-org listing,
     # then set tenant context per-artifact for the actual inserts.
-    dsn = os.environ.get("KLAI_SUPERUSER_DSN") or os.environ.get("DATABASE_URL")
+    dsn = (
+        os.environ.get("KLAI_SUPERUSER_DSN")
+        or os.environ.get("POSTGRES_DSN")
+        or os.environ.get("DATABASE_URL")
+    )
     if not dsn:
         print(
-            "Set KLAI_SUPERUSER_DSN to the klai superuser DSN before running.",
+            "Set KLAI_SUPERUSER_DSN (or POSTGRES_DSN/DATABASE_URL) before running.",
             file=sys.stderr,
         )
         return 1
+    # Strip SQLAlchemy's +asyncpg suffix; we use asyncpg directly here.
+    dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
 
-    conn = await asyncpg.connect(dsn)
+    conn = await asyncpg.connect(**_parse_pg_dsn(dsn))
     try:
         targets = await _list_docling_artifacts_without_parents(conn)
         print(f"Found {len(targets)} docling artifacts missing parent_chunks.")
