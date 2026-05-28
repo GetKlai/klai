@@ -13,7 +13,9 @@ Klai-staff zo klein mogelijk. De gewenste workflow is:
 3. een triage-job maakt automatisch een voorstel;
 4. Platform toont een compacte Feedback-tab voor Klai-staff;
 5. staff kiest: merge met bestaand item, nieuw item, bug/task, support, negeren;
-6. roadmap en execution tracker worden bijgewerkt zonder dubbel invoerwerk.
+6. roadmap en execution tracker worden bijgewerkt zonder dubbel invoerwerk;
+7. staff markeert het item als opgelost/gefixt/verzonden;
+8. betrokken melders krijgen gecontroleerd een in-app en/of e-mail update.
 
 ## Huidige situatie
 
@@ -80,6 +82,12 @@ Live op `main`:
   GitHub/Fider-links, owner en target window horen niet als leeg handmatig
   formulier in de eerste workflow. Die moeten door AI/systeem voorgesteld of
   via expliciete acties gezet worden.
+- De Feedback inbox is gecorrigeerd naar het bestaande Platform list/table
+  patroon. Roadmap items zijn geen losse card-layout.
+- `triage_suggested` is een interne technische status en wordt niet meer als
+  aparte productstatus `AI voorstel` aan staff getoond.
+- De triage drawer zoekt eerst naar bestaande items en mag niet standaard een
+  nieuw item voorstellen als er een bestaande match is.
 
 Geverifieerd:
 
@@ -91,7 +99,11 @@ Geverifieerd:
 
 Nog niet gebouwd:
 
-- Volledige correctie-flow voor AI-suggesties na eerste live gebruik.
+- Resolution/close-the-loop flow: item als gefixt/opgelost markeren,
+  betrokken gebruikers/orgs tonen, notificatie opstellen en verzenden.
+- In-app notificaties voor betrokken melders.
+- Transactionele e-mail naar betrokken melders.
+- Volledige audit/status tracking voor notificaties.
 - Downstream sync naar GitHub Issues of feedback.getklai.com.
 
 ## Kritische herijking na huidige progressie
@@ -120,6 +132,15 @@ Daarom gelden vanaf nu deze ontwerpregels:
 5. **Meer velden tonen is geen betere workflow.**
    Velden die staff niet expliciet hoeft te beslissen blijven verborgen of
    alleen-lezen totdat er een concrete actie voor bestaat.
+6. **Een feedback-item is pas af als de melder terugkoppeling kan krijgen.**
+   Triage eindigt niet bij `linked` of `shipped`. De flow moet kunnen tonen wie
+   iets gemeld heeft, welke update zij krijgen, en of die update is verzonden.
+7. **AI is geen workflowstatus.**
+   `triage_suggested` is een interne queue-toestand. In de UI blijft dit
+   gewoon open/nieuw werk; de AI-output verschijnt als voorstel in de drawer.
+8. **Standaard bundelen, niet dupliceren.**
+   Als er een relevant bestaand item is, is koppelen de primaire actie. Een
+   nieuw item aanmaken is een expliciete fallback, niet de default.
 
 ## Belangrijke correctie
 
@@ -236,7 +257,7 @@ Canonical product needs, bugs of roadmap-items.
 - `title`
 - `summary`
 - `status`: `inbox`, `under_review`, `planned`, `in_progress`, `shipped`,
-  `wont_do`
+  `resolved`, `wont_do`
 - `area`
 - `priority_score`
 - `org_count`, `user_count`
@@ -244,7 +265,22 @@ Canonical product needs, bugs of roadmap-items.
 - `public_feedback_url`: optionele publieke feedback/voting post
 - `public_title`, `public_summary`: gecureerde tekst voor roadmap/voting
 - `target_window`, `owner`: lichte roadmapplanning zonder nieuw extern systeem
+- `resolution_summary`: interne/klantvriendelijke samenvatting van de fix
+- `resolved_at`: wanneer het item inhoudelijk klaar is
+- `resolved_by`: Klai-staff user id
+- `notification_state`: `not_needed`, `draft`, `queued`, `partially_sent`,
+  `sent`, `failed`
 - `created_at`, `updated_at`
+
+Statuslabels in de UI zijn contextafhankelijk:
+
+- `resolved` op een bug toont als `Gefixt`.
+- `resolved` op docs/support/UX toont als `Opgelost`.
+- `shipped` blijft bruikbaar voor echte feature launches/public roadmap taal.
+
+Voorlopig mag de implementatie `shipped` intern blijven gebruiken als migreren
+te duur is, maar de UI en het plan moeten onderscheid maken tussen "feature is
+verzonden" en "klantbug is gefixt".
 
 ### `feedback_item_links`
 
@@ -269,6 +305,30 @@ AI-output die staff kan accepteren of corrigeren.
 - `suggested_action`
 - `model`
 - `created_at`
+
+### `feedback_notifications`
+
+Per-recipient close-the-loop records. Dit is bewust een aparte tabel en geen
+los e-mail-logje, zodat we later in-app, mail en audit op dezelfde bron kunnen
+baseren.
+
+- `id`
+- `item_id`
+- `submission_id`
+- `org_id`
+- `user_id`
+- `recipient_email`
+- `channel`: `in_app`, `email`
+- `status`: `draft`, `queued`, `sent`, `failed`, `skipped`
+- `subject`
+- `body`
+- `generated_by`: `ai`, `staff`, `system`
+- `sent_at`
+- `error`
+- `created_at`, `updated_at`
+
+De ontvangers worden afgeleid uit `feedback_item_links -> feedback_submissions`.
+Staff typt dus geen ontvangers over.
 
 ## Workflow
 
@@ -362,7 +422,8 @@ Gebouwd:
 
 - Platform response bevat de nieuwste AI-suggestie per submission.
 - Duplicate candidates worden verrijkt met itemtitel, status, kind en area.
-- Feedback detail drawer toont een compacte "AI voorstel" kaart.
+- Feedback detail drawer toont een compacte voorstelkaart. De UI noemt dit
+  niet meer `AI voorstel` als status.
 - Staff kan het voorstel accepteren via bestaande flows:
   - link met bestaand item;
   - maak nieuw item;
@@ -374,6 +435,10 @@ Gebouwd:
   primair bewerkveld getoond.
 - Probleemmeldingen krijgen expliciet een bug-voorstel van de AI-triage,
   tenzij ze duidelijk support/docs/configuratie zijn.
+- De primaire actie moet bestaande matches prefereren. Als de zoekactie of
+  duplicate candidates een bestaand item vinden, is `Koppel aan bestaand item`
+  de primaire actie. `Maak nieuw item` verschijnt pas als fallback of onder
+  `Andere actie`.
 
 - Output:
   - korte samenvatting;
@@ -412,6 +477,8 @@ Status: Fase 4-light klaar; verdere roadmapautomatisering na Fase 3.
   - itemdetail toont gekoppelde submissions, orgs/users en externe links;
   - GitHub issue en feedback.getklai.com post zijn optionele links vanaf het
     item, geen primaire bron.
+- Roadmap item list gebruikt hetzelfde Platform table/list patroon als de
+  feedback inbox. Geen losse card-layout voor dezelfde soort beheerdata.
 - Prioriteit wordt automatisch berekend op:
   - aantal orgs;
   - aantal users;
@@ -427,7 +494,85 @@ Acceptatie:
 - Bij status `shipped` kan Klai alle betrokken orgs/users terugvinden voor
   close-the-loop communicatie.
 
-### Fase 5 - Integraties
+### Fase 5 - Resolution en klantnotificaties
+
+Status: eerstvolgende productstap.
+
+Doel: een bug/request is niet klaar als alleen de code gefixt is. Staff moet in
+Platform kunnen vastleggen dat een item is opgelost en de gekoppelde melders
+kunnen informeren zonder handmatig zoeken of overtypen.
+
+#### Fase 5a - Resolve actie
+
+- Voeg op `feedback_items` een expliciete actie toe:
+  - `Markeer als gefixt` voor `kind=bug`;
+  - `Markeer als opgelost` voor support/docs/UX;
+  - `Markeer als verzonden` voor features.
+- De actie opent een modal/drawer, niet direct een destructieve statuschange.
+- Modal toont:
+  - itemtitel;
+  - gekoppelde submissions;
+  - betrokken orgs/users;
+  - beschikbare e-mailadressen;
+  - AI-concept voor klantvriendelijke update;
+  - kanaalkeuze: `in-app`, `e-mail`, `beide`, `geen notificatie`.
+- Staff kan de update aanpassen en bevestigen.
+
+Acceptatie:
+
+- Staff kan een item als opgelost markeren zonder SQL.
+- Een opgelost item toont `resolved_at`, `resolved_by` en
+  `resolution_summary`.
+- Bugs tonen in de UI `Gefixt`, niet `Verzonden`.
+
+#### Fase 5b - Notification records
+
+- Maak `feedback_notifications` records per recipient + kanaal.
+- Deduplicate per item/user/channel zodat iemand niet twee keer dezelfde
+  update krijgt door meerdere submissions.
+- Bewaar status per notification: `draft`, `queued`, `sent`, `failed`,
+  `skipped`.
+- Audit elke staff-confirmatie en elke verzendpoging.
+
+Acceptatie:
+
+- Platform kan tonen wie wel/niet geïnformeerd is.
+- Een mislukte mail blokkeert de itemstatus niet, maar blijft zichtbaar als
+  `failed`.
+- Staff kan failed notifications later opnieuw proberen.
+
+#### Fase 5c - In-app notificatie
+
+- Start simpel: een notification inbox/toast in de Klai app, gekoppeld aan de
+  ingelogde user.
+- Toon alleen updates voor eigen `user_id` binnen eigen org.
+- Link vanuit de notification naar relevante app-context als die veilig
+  beschikbaar is.
+- Geen cross-tenant Platform data in tenant-facing payloads.
+
+Acceptatie:
+
+- Een gebruiker die feedback meldde ziet in-app dat het item is opgelost.
+- Tenant-users kunnen nooit notificaties van andere orgs lezen.
+
+#### Fase 5d - E-mail
+
+- Gebruik de bestaande transactionele mail-infra.
+- Verstuur alleen naar bekende, geverifieerde user-e-mailadressen.
+- Mail bevat:
+  - korte klantvriendelijke update;
+  - product/contextnaam waar relevant;
+  - geen interne Platform labels, issue IDs of andere klantdata;
+  - preference/unsubscribe-gedrag conform bestaande productmail-regels.
+- Bounces/failures worden teruggeschreven naar `feedback_notifications`.
+
+Acceptatie:
+
+- Staff kan een resolved item mailen naar gekoppelde melders.
+- Verzonden mails zijn auditable per item/submission/user.
+- Geen e-mail naar users zonder geldig adres of met opt-out.
+
+### Fase 6 - Integraties
 
 - Start met Slack/email digest:
   - nieuwe high-severity bugs;
@@ -445,16 +590,17 @@ Acceptatie:
 - Staff hoeft feedback niet handmatig over te typen naar execution tooling.
 - Een external issue link komt terug op het feedback item.
 
-### Fase 6 - Close the loop
+### Fase 7 - Public roadmap/voting
 
-- Bij status `planned`, `in_progress` of `shipped` kan staff gebruikers/orgs
-  informeren.
-- Begin intern: lijst van affected orgs/users per item.
-- Later: opt-in mail of in-app notificatie.
+- Alleen gecureerde items worden gepubliceerd naar feedback.getklai.com/Fider
+  of een vergelijkbare publieke/semi-publieke laag.
+- Public roadmap is downstream van `feedback_items`, niet andersom.
+- Private klantmeldingen en ruwe context blijven in Platform.
 
 Acceptatie:
 
-- Een shipped item kan alle betrokken feedbackmelders tonen.
+- Een public roadmap post kan teruglinken naar het canonical internal item.
+- Staff kan public copy genereren/aanpassen zonder ruwe klantfeedback te lekken.
 
 ## Eerste implementatiepakket
 
@@ -478,30 +624,53 @@ Acceptatie:
 - [x] AI voorstelkaart in Platform met acceptactie via bestaande flows.
 - [x] Correctie-flow versimpeld: AI eerst, handmatige forms pas na
   `Corrigeer`, context ingeklapt.
+- [x] `AI voorstel` verwijderd als zichtbare status/filter; het is alleen een
+  interne technische toestand.
+- [x] Roadmap item view teruggebracht naar het standaard Platform table/list
+  patroon.
+- [x] Triage default gecorrigeerd: eerst zoeken/koppelen aan bestaand item,
+  nieuw item alleen als fallback of expliciete andere actie.
 
 ## Eerstvolgende stap
 
-Verfijn de Fase 3b correctie-flow na eerste live gebruik, zonder nieuwe
-handmatige formulierchaos.
+Build Fase 5a/5b: resolution + notification records. Zonder dit blijft de flow
+stuk zodra een echte klantbug is opgelost, omdat Klai-staff niet kan vastleggen
+dat het gefixt is en de melder niet betrouwbaar kan informeren.
 
 Concreet:
 
-1. Observeer echte AI-voorstellen: hoeveel zijn link, nieuw item, support of
-   negeer, en hoeveel worden gecorrigeerd?
-2. Voeg alleen extra correctie-acties toe als ze in echt gebruik nodig blijken,
-   bijvoorbeeld "kies ander bestaand item" of "maak nieuw item met aangepaste
-   titel".
-3. Verbeter duplicate search later met embeddings/RAG als de simpele
-   item-search en AI-candidates onvoldoende matchen.
-4. Houd GitHub Issues en feedback.getklai.com buiten de ruwe inbox.
-5. Pas daarna one-click sync toe naar GitHub Issues of feedback.getklai.com,
-   altijd vanaf het canonical `feedback_item`.
+1. Voeg datamodel/migratie toe voor `feedback_notifications` en resolution
+   velden op `feedback_items`.
+2. Voeg backend endpoints toe:
+   - `POST /api/admin/platform/feedback/items/{id}/resolve-draft`
+   - `POST /api/admin/platform/feedback/items/{id}/resolve`
+   - `POST /api/admin/platform/feedback/notifications/{id}/retry`
+3. Voeg Platform UI toe in item-detail:
+   - knop `Markeer als gefixt/opgelost/verzonden`;
+   - modal met affected users/orgs;
+   - AI/system conceptbericht;
+   - kanaalkeuze in-app/e-mail/beide/geen notificatie.
+4. Implementeer in-app notification persistence en tenant-facing read endpoint.
+5. Implementeer e-mail enqueue via bestaande transactionele mail-infra.
+6. Voeg tests toe voor:
+   - recipient dedupe;
+   - cross-tenant RLS/auth;
+   - no-email/no-opt-in handling;
+   - failed notification retry;
+   - bug label `Gefixt` versus feature label `Verzonden`.
+7. Pas daarna pas GitHub Issues of feedback.getklai.com sync verder aan.
 
 ## Risico's
 
 - Te vroeg een publieke voting portal maken veroorzaakt product-politiek en
   onderhoudswerk.
 - Alles direct naar Linear/GitHub sturen veroorzaakt ticket-chaos.
+- Een item als `shipped` markeren zonder close-the-loop veroorzaakt verloren
+  klantvertrouwen: de melder hoort niets terwijl Klai de fix wel weet.
+- Notificaties zonder per-recipient audit veroorzaken support-onduidelijkheid:
+  "wie heeft deze update gehad?" moet altijd beantwoordbaar zijn.
+- E-mail zonder preference/opt-out check kan privacy/compliance problemen
+  veroorzaken.
 - `question` en `feedback` mengen maakt roadmap data rommelig.
 - Alleen de frontend tab verbergen is geen security boundary; backend moet
   altijd `require_platform_admin()` gebruiken.
