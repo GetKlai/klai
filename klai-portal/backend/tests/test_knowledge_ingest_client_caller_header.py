@@ -158,3 +158,37 @@ def test_delete_kb_sends_caller_service_header(monkeypatch) -> None:
     assert captured_headers.get("x-caller-service") == "portal-api", (
         f"delete_kb did not send X-Caller-Service: portal-api; captured: {captured_headers!r}"
     )
+
+
+def test_get_kb_sources_retries_transient_connect_error(monkeypatch) -> None:
+    """The canonical Sources tab read survives a brief knowledge-ingest restart."""
+    import asyncio
+    from unittest.mock import patch
+
+    import httpx
+
+    from app.services import knowledge_ingest_client
+
+    attempts = 0
+
+    async def _no_sleep(_attempt: int) -> None:
+        return None
+
+    async def _mock_send(self, request, *args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("restart window", request=request)
+        return httpx.Response(
+            200,
+            json={"connectors": [], "uploads": []},
+            request=request,
+        )
+
+    monkeypatch.setattr(knowledge_ingest_client, "_sleep_before_read_retry", _no_sleep)
+
+    with patch.object(httpx.AsyncClient, "send", _mock_send):
+        result = asyncio.run(knowledge_ingest_client.get_kb_sources(org_id="org-test", kb_slug="kb-slug"))
+
+    assert attempts == 2
+    assert result == {"connectors": [], "uploads": []}
