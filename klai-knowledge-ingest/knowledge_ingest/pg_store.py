@@ -1511,21 +1511,56 @@ async def set_artifact_index_status(
     artifact was found and updated, or ``None`` when it does not exist /
     belongs to a different org.
     """
-    row = await conn.fetchrow(
-        """
-        UPDATE knowledge.artifacts
-        SET index_status = $1
-        WHERE id = $2::uuid
-          AND org_id = $3
-          AND belief_time_end = $4
-          AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
-        RETURNING id::text AS artifact_id, path
-        """,
-        status,
-        artifact_id,
-        org_id,
-        _SENTINEL,
-    )
+    async with conn.transaction():
+        artifact = await conn.fetchrow(
+            """
+            SELECT id, kb_slug, path, belief_time_end
+            FROM knowledge.artifacts
+            WHERE id = $1::uuid
+              AND org_id = $2
+              AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
+            """,
+            artifact_id,
+            org_id,
+        )
+        if artifact is None:
+            return None
+
+        if artifact["belief_time_end"] != _SENTINEL:
+            now = int(time.time())
+            await conn.execute(
+                """
+                UPDATE knowledge.artifacts
+                SET belief_time_end = $1
+                WHERE org_id = $2
+                  AND kb_slug = $3
+                  AND path = $4
+                  AND belief_time_end = $5
+                  AND id <> $6::uuid
+                """,
+                now,
+                org_id,
+                artifact["kb_slug"],
+                artifact["path"],
+                _SENTINEL,
+                artifact_id,
+            )
+
+        row = await conn.fetchrow(
+            """
+            UPDATE knowledge.artifacts
+            SET index_status = $1,
+                belief_time_end = $2
+            WHERE id = $3::uuid
+              AND org_id = $4
+              AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
+            RETURNING id::text AS artifact_id, path
+            """,
+            status,
+            _SENTINEL,
+            artifact_id,
+            org_id,
+        )
     if row is None:
         return None
     return {"artifact_id": row["artifact_id"], "path": row["path"]}

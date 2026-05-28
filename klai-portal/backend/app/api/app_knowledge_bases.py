@@ -1107,6 +1107,32 @@ def _upload_type_label(content_type: str) -> str:
     return content_type.replace("_", " ").title()
 
 
+def _is_upload_missing_active_artifact(upload: KBUpload, active_artifact_ids: set[str], active_paths: set[str]) -> bool:
+    artifact_id = str(upload.artifact_id or "")
+    source_ref = str(upload.source_ref or "")
+    if artifact_id and artifact_id in active_artifact_ids:
+        return False
+    if source_ref and source_ref in active_paths:
+        return False
+    return True
+
+
+def _stale_done_upload_source(upload: KBUpload) -> SourceOut:
+    artifact_id = str(upload.artifact_id or "")
+    return SourceOut(
+        kind="upload",
+        id=artifact_id or str(upload.id),
+        name=upload.filename,
+        type_label=_upload_type_label(upload.mime or upload.extension),
+        connector_type=None,
+        items_count=1,
+        chunks_count=0,
+        status=upload.status,
+        created_at=upload.created_at,
+        index_status="not_synced",
+    )
+
+
 @router.get(
     "/knowledge-bases/{kb_slug}/sources",
     response_model=SourcesResponse,
@@ -1162,6 +1188,8 @@ async def list_kb_sources(
         )
 
     sources: list[SourceOut] = []
+    active_upload_artifact_ids: set[str] = set()
+    active_upload_paths: set[str] = set()
 
     # 1) Connector rows: merge knowledge-ingest counts with portal display data.
     seen_connector_ids: set[str] = set()
@@ -1229,12 +1257,16 @@ async def list_kb_sources(
 
     # 3) Direct uploads — one row per artifact without source_connector_id.
     for upload in aggregates.get("uploads", []):
+        artifact_id = str(upload.get("id") or "")
+        path = str(upload.get("path") or "")
+        active_upload_artifact_ids.add(artifact_id)
+        active_upload_paths.add(path)
         created_at_unix = upload.get("created_at")
         created_at_dt = datetime.fromtimestamp(int(created_at_unix), tz=dt.UTC) if created_at_unix is not None else None
         sources.append(
             SourceOut(
                 kind="upload",
-                id=str(upload.get("id") or ""),
+                id=artifact_id,
                 name=str(upload.get("display_name") or upload.get("path") or "(zonder naam)"),
                 type_label=_upload_type_label(str(upload.get("content_type") or "")),
                 connector_type=None,
@@ -1246,6 +1278,24 @@ async def list_kb_sources(
                 index_status=str(upload.get("index_status") or "synced"),
             )
         )
+
+    # 4) Done uploads whose artifact is no longer active. These are data-health
+    # failures: portal accepted and completed the upload, but knowledge-ingest's
+    # active artifact/Qdrant side disappeared later. Show the row as not_synced
+    # instead of making the user's source vanish; if an artifact_id exists the
+    # normal reindex button can repair it.
+    done_upload_rows_result = await db.execute(
+        select(KBUpload)
+        .where(
+            KBUpload.org_id == org.id,
+            KBUpload.kb_id == kb.id,
+            KBUpload.status == "done",
+        )
+        .order_by(KBUpload.created_at.desc())
+    )
+    for upload in done_upload_rows_result.scalars().all():
+        if _is_upload_missing_active_artifact(upload, active_upload_artifact_ids, active_upload_paths):
+            sources.append(_stale_done_upload_source(upload))
 
     upload_rows_result = await db.execute(
         select(KBUpload)
