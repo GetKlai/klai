@@ -3411,21 +3411,29 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
         ]
 
-        assert streamed == [first, second, final]
+        assert len(streamed) == 4
+        assert streamed[0] is first
+        assert streamed[1] is second
+        assert streamed[3] is final
         assert first.choices[0].delta.content == "Zie diagram "
         assert second.choices[0].delta.content == ""
-        assert "https://bad.example" not in final.choices[0].delta.content
-        assert "fake." in final.choices[0].delta.content
-        assert "**Bronnen**" in final.choices[0].delta.content
-        assert "- [Diagram](https://docs.getklai.com/diagram)" in final.choices[0].delta.content
-        assert "**Agent activiteit**" in final.choices[0].delta.content
-        assert final.choices[0].delta.sources == [
+        footer = streamed[2]
+        assert footer.choices[0].finish_reason is None
+        assert "https://bad.example" not in footer.choices[0].delta.content
+        assert "fake." in footer.choices[0].delta.content
+        assert "**Bronnen**" in footer.choices[0].delta.content
+        assert "- [Diagram](https://docs.getklai.com/diagram)" in footer.choices[0].delta.content
+        assert "**Agent activiteit**" in footer.choices[0].delta.content
+        assert footer.choices[0].delta.sources == [
             {
                 "label": "1",
                 "title": "Diagram",
                 "url": "https://docs.getklai.com/diagram",
             }
         ]
+        assert final.choices[0].finish_reason == "stop"
+        assert final.choices[0].delta.content == ""
+        assert not hasattr(final.choices[0].delta, "sources")
 
     @pytest.mark.asyncio
     async def test_streaming_post_call_without_trusted_sources_fails_closed(self, monkeypatch):
@@ -3592,16 +3600,21 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
         ]
 
-        assert streamed == [first, final]
+        assert len(streamed) == 3
+        assert streamed[0] is first
+        assert streamed[2] is final
+        footer = streamed[1]
+        assert footer["choices"][0]["finish_reason"] is None
         final_delta = final["choices"][0]["delta"]
-        combined = first["choices"][0]["delta"]["content"] + final_delta["content"]
+        footer_delta = footer["choices"][0]["delta"]
+        combined = first["choices"][0]["delta"]["content"] + footer_delta["content"]
         assert "Frank Wolters is verantwoordelijk voor Data Readiness." in combined
-        assert "**Bronnen**" in final_delta["content"]
-        assert "- CV_Jantine_Doornbos.pdf" in final_delta["content"]
-        assert "**Agent activiteit**" in final_delta["content"]
-        assert "- Modus: Strict, alleen kennisbank." in final_delta["content"]
-        assert "- Retrieval confidence: low." in final_delta["content"]
-        assert final_delta["sources"] == [
+        assert "**Bronnen**" in footer_delta["content"]
+        assert "- CV_Jantine_Doornbos.pdf" in footer_delta["content"]
+        assert "**Agent activiteit**" in footer_delta["content"]
+        assert "- Modus: Strict, alleen kennisbank." in footer_delta["content"]
+        assert "- Retrieval confidence: low." in footer_delta["content"]
+        assert footer_delta["sources"] == [
             {
                 "label": "1",
                 "title": "CV_Jantine_Doornbos.pdf",
@@ -3613,6 +3626,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                 "relevance_score": 0.07,
             }
         ]
+        assert final["choices"][0]["finish_reason"] == "stop"
+        assert final_delta == {"content": ""}
 
     @pytest.mark.asyncio
     async def test_streaming_post_call_keeps_primary_uploaded_evidence_source(
@@ -3691,11 +3706,16 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
         ]
 
-        assert streamed == [first, final]
-        final_delta = final["choices"][0]["delta"]
-        assert "- Verantwoordelijkheden per bouwblok.pdf" in final_delta["content"]
-        assert final_delta["sources"][0]["title"] == "Verantwoordelijkheden per bouwblok.pdf"
-        assert final_delta["sources"][0]["artifact_id"] == "artifact-responsibilities"
+        assert len(streamed) == 3
+        assert streamed[0] is first
+        assert streamed[2] is final
+        footer_delta = streamed[1]["choices"][0]["delta"]
+        assert streamed[1]["choices"][0]["finish_reason"] is None
+        assert "- Verantwoordelijkheden per bouwblok.pdf" in footer_delta["content"]
+        assert footer_delta["sources"][0]["title"] == "Verantwoordelijkheden per bouwblok.pdf"
+        assert footer_delta["sources"][0]["artifact_id"] == "artifact-responsibilities"
+        assert final["choices"][0]["finish_reason"] == "stop"
+        assert final["choices"][0]["delta"] == {"content": ""}
 
 
 # ─── 2026-05-27: Open/Strict mode zero-chunks behaviour ─────────────────────

@@ -17,6 +17,7 @@ The custom_router uses this to prevent model downgrade for KB-enriched requests.
 """
 
 import asyncio
+import copy
 import logging
 import os
 import re
@@ -1528,6 +1529,13 @@ def _get_choice_finish_reason(choice: object) -> object:
     return getattr(choice, "finish_reason", None)
 
 
+def _set_choice_finish_reason(choice: object, value: object) -> None:
+    if isinstance(choice, dict):
+        choice["finish_reason"] = value
+    else:
+        setattr(choice, "finish_reason", value)
+
+
 def _set_message_content(message: object, content: object) -> None:
     if isinstance(message, dict):
         message["content"] = content
@@ -1542,10 +1550,49 @@ def _set_message_field(message: object, key: str, value: object) -> None:
         setattr(message, key, value)
 
 
+def _delete_message_field(message: object, key: str) -> None:
+    if isinstance(message, dict):
+        message.pop(key, None)
+    elif hasattr(message, key):
+        delattr(message, key)
+
+
 def _get_response_choices(response: object) -> object:
     if isinstance(response, dict):
         return response.get("choices") or []
     return getattr(response, "choices", []) or []
+
+
+def _stream_item_has_finish_reason(item: object) -> bool:
+    return any(
+        bool(_get_choice_finish_reason(choice)) for choice in _get_response_choices(item)
+    )
+
+
+def _split_stream_footer_from_stop_item(item: object) -> object:
+    """Return a non-final copy carrying content/sources, leaving item as pure stop.
+
+    Some streaming clients ignore `delta.content` on the same chunk that
+    carries `finish_reason`. LibreChat source footers therefore need their own
+    non-final delta, followed by the original stop chunk.
+    """
+    footer_item = copy.deepcopy(item)
+    for choice in _get_response_choices(footer_item):
+        _set_choice_finish_reason(choice, None)
+    for choice in _get_response_choices(item):
+        delta = _get_choice_message(choice, "delta")
+        if delta is not None:
+            _set_message_content(delta, "")
+            _delete_message_field(delta, "sources")
+    return footer_item
+
+
+def _split_if_rendered_stop_item(
+    item: object, stats: "_KbCitationRenderStats"
+) -> object | None:
+    if stats.rendered_messages and _stream_item_has_finish_reason(item):
+        return _split_stream_footer_from_stop_item(item)
+    return None
 
 
 def _citation_render_inputs(kb_meta: dict[str, Any]) -> tuple[set[str], list[dict], list[dict[str, Any]]]:
@@ -3073,9 +3120,15 @@ class KlaiKnowledgeHook(CustomLogger):
             pending_item = item
             stats = _compose_streaming_kb_response(item, kb_meta)
             _log_kb_citation_render(kb_meta, stats, stream=True)
+            footer_item = _split_if_rendered_stop_item(item, stats)
+            if footer_item is not None:
+                yield footer_item
         if pending_item is not None and not kb_meta.get("_citation_stream_sources_appended"):
             stats = _compose_streaming_kb_response(pending_item, kb_meta, flush_stream=True)
             _log_kb_citation_render(kb_meta, stats, stream=True)
+            footer_item = _split_if_rendered_stop_item(pending_item, stats)
+            if footer_item is not None:
+                yield footer_item
         if pending_item is not None:
             yield pending_item
 
