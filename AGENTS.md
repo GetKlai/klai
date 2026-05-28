@@ -1,7 +1,7 @@
 <!-- codeindex:start -->
 # CodeIndex MCP
 
-This project is indexed by CodeIndex as **klai** (10707 symbols, 49418 relationships, 300 execution flows).
+This project is indexed by CodeIndex as **klai** (21649 symbols, 34451 relationships, 0 execution flows).
 
 ## Rules (MUST follow)
 

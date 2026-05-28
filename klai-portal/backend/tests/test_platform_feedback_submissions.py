@@ -424,6 +424,31 @@ async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_platform_feedback_delete_item_deletes_roadmap_item(monkeypatch):
+    session = _Session([])
+    called = {}
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_delete_item(db, item_id):
+        assert db is session
+        called["item_id"] = item_id
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "delete_feedback_item", fake_delete_item)
+
+    result = await platform.platform_feedback_delete_item(
+        item_id=456,
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert result is None
+    assert called == {"item_id": 456}
+
+
+@pytest.mark.asyncio
 async def test_update_feedback_item_sets_shipped_at(monkeypatch):
     session = _Session([])
     item = _feedback_item(status="planned", shipped_at=None)

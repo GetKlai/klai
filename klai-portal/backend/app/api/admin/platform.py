@@ -36,6 +36,7 @@ from app.klai_feedback.service import (
     FeedbackItemNotFoundError,
     FeedbackSubmissionNotFoundError,
     create_feedback_item_from_submission,
+    delete_feedback_item,
     dismiss_feedback_submission,
     get_feedback_item,
     link_feedback_submission_to_item,
@@ -1199,6 +1200,19 @@ async def platform_feedback_update_item(
         except FeedbackItemNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback item not found") from exc
         return _platform_feedback_item(item)
+
+
+@router.delete("/feedback/items/{item_id}", status_code=204)
+async def platform_feedback_delete_item(
+    item_id: int,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> None:
+    await _audit(perms, "feedback:delete_item", str(item_id))
+    async with cross_org_session() as db:
+        try:
+            await delete_feedback_item(db, item_id)
+        except FeedbackItemNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Feedback item not found") from exc
 
 
 @router.post(

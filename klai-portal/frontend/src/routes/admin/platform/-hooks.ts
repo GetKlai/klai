@@ -224,6 +224,17 @@ export function usePlatformFeedbackUpdateItem() {
   })
 }
 
+export function usePlatformFeedbackDeleteItem() {
+  const opts = useFeedbackMutation()
+  return useMutation({
+    mutationFn: async (itemId: number) =>
+      apiFetch<void>(`/api/admin/platform/feedback/items/${itemId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: opts.onSuccess,
+  })
+}
+
 export function usePlatformFeedbackDismiss() {
   const opts = useFeedbackMutation()
   return useMutation({
