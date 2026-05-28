@@ -713,7 +713,6 @@ function feedbackStatusLabel(status: string): string {
   if (status === 'linked') return 'Gekoppeld'
   if (status === 'dismissed') return 'Genegeerd'
   if (status === 'support') return 'Support'
-  if (status === 'triage_suggested') return 'AI voorstel'
   return 'Nieuw'
 }
 
@@ -739,7 +738,8 @@ function feedbackSuggestionActionLabel(action: string | null | undefined): strin
   if (action === 'create_item') return 'Maak nieuw item'
   if (action === 'support') return 'Support'
   if (action === 'dismiss') return 'Negeer'
-  return 'Bekijk handmatig'
+  if (action === 'review') return 'Check bestaande items'
+  return 'Bekijk'
 }
 
 function feedbackSuggestionPrimaryLabel(
@@ -756,7 +756,50 @@ function feedbackSuggestionPrimaryLabel(
   }
   if (action === 'support') return 'Markeer als support'
   if (action === 'dismiss') return 'Negeer melding'
+  if (action === 'review') return 'Zoekt bestaande items'
   return `Maak ${feedbackItemKindLabel(kind).toLowerCase()} item`
+}
+
+function feedbackItemSearchTerm(
+  item: PlatformFeedbackSubmission,
+  suggestion: PlatformFeedbackSubmission['triage_suggestion'],
+): string {
+  const candidateTitle = suggestion?.duplicate_candidates[0]?.title
+  if (candidateTitle) return candidateTitle.slice(0, 80)
+
+  const source = suggestion?.summary || item.raw_text || suggestion?.suggested_area || ''
+  const words = source
+    .toLowerCase()
+    .replace(/[^a-z0-9_ -]+/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length >= 4)
+    .filter(
+      (word) =>
+        ![
+          'voor',
+          'door',
+          'naar',
+          'niet',
+          'geen',
+          'deze',
+          'daar',
+          'hier',
+          'kunnen',
+          'willen',
+          'moeten',
+          'zodat',
+          'voordat',
+          'soms',
+          'eens',
+          'with',
+          'from',
+          'that',
+          'this',
+        ].includes(word),
+    )
+
+  const search = words.slice(0, 2).join(' ')
+  return search || source.slice(0, 80)
 }
 
 function feedbackFallbackSummary(item: PlatformFeedbackSubmission): string {
@@ -974,24 +1017,20 @@ function RoadmapItemsPanel({
   const rows = items.data ?? []
 
   return (
-    <section className="mb-6 space-y-3 rounded-lg border border-gray-200 bg-white p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-medium text-gray-900">Roadmap items</h2>
-          <p className="mt-0.5 text-xs text-gray-400">
-            Gebundelde feedback. Open een item om te bewerken of verwijderen.
-          </p>
-        </div>
-        {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
-      </div>
-      {rows.length === 0 ? (
-        <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
-          Nog geen feedback items gevonden.
+    <>
+      {items.isFetching && !items.isLoading && (
+        <p className="mb-2 text-xs text-gray-400">
+          <Loader2 className="mr-2 inline h-3 w-3 animate-spin" />
+          Roadmap items bijwerken
         </p>
-      ) : (
-        <PlatformTableShell loading={false} empty={false} emptyText="">
+      )}
+      <PlatformTableShell
+        loading={items.isLoading}
+        empty={rows.length === 0}
+        emptyText="Nog geen feedback items gevonden."
+      >
           <thead>
-            <tr>
+            <tr className="border-b border-gray-200">
               <th className={TH}>Item</th>
               <th className={TH}>Status</th>
               <th className={TH}>Type</th>
@@ -1077,9 +1116,8 @@ function RoadmapItemsPanel({
               )
             })}
           </tbody>
-        </PlatformTableShell>
-      )}
-    </section>
+      </PlatformTableShell>
+    </>
   )
 }
 
@@ -1098,12 +1136,7 @@ function FeedbackDetailSheet({
   const bestCandidate = suggestion?.duplicate_candidates[0] ?? null
   const suggestedKind = normalizedFeedbackKind(suggestion?.classification, defaultKind)
   const suggestedTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
-  const suggestedSearch = (
-    bestCandidate?.title ||
-    [suggestion?.summary, suggestion?.suggested_area].filter(Boolean).join(' ') ||
-    item.raw_text ||
-    ''
-  ).slice(0, 80)
+  const suggestedSearch = feedbackItemSearchTerm(item, suggestion)
   const [showCorrections, setShowCorrections] = useState(false)
   const [itemSearch, setItemSearch] = useState(suggestedSearch)
   const [kind, setKind] = useState(suggestedKind)
@@ -1133,6 +1166,8 @@ function FeedbackDetailSheet({
   const recommendedAction =
     bestCandidate || bestSearchMatch
       ? 'link_existing'
+      : items.isFetching
+        ? 'review'
       : suggestion?.suggested_action || 'create_item'
   const recommendedItem = bestCandidate
     ? {
@@ -1190,7 +1225,8 @@ function FeedbackDetailSheet({
   }
   const canAcceptRecommendedAction =
     (recommendedAction !== 'link_existing' || recommendedItem !== null) &&
-    (recommendedAction !== 'create_item' || suggestedTitle.trim().length >= 3)
+    (recommendedAction !== 'create_item' || suggestedTitle.trim().length >= 3) &&
+    recommendedAction !== 'review'
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
@@ -1207,9 +1243,9 @@ function FeedbackDetailSheet({
           <section className="space-y-3">
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
-              <Badge variant={item.status === 'new' ? 'outline' : 'secondary'}>
-                {feedbackStatusLabel(item.status)}
-              </Badge>
+              {item.status !== 'new' && item.status !== 'triage_suggested' && (
+                <Badge variant="secondary">{feedbackStatusLabel(item.status)}</Badge>
+              )}
               {(item.feedback_type || item.severity) && (
                 <Badge variant="secondary">
                   {item.feedback_type || item.severity}
@@ -1228,7 +1264,7 @@ function FeedbackDetailSheet({
                   <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
                   <div className="min-w-0">
                     <h3 className="text-sm font-medium text-gray-900">
-                      {suggestion ? 'AI voorstel' : 'Voorstel'}
+                      Voorstel
                     </h3>
                     <p className="mt-1 text-sm leading-6 text-gray-700">
                       {proposalSummary}
