@@ -194,7 +194,11 @@ async def resolve_feedback_item(
     else:
         item.notification_state = "not_needed"
 
+    await db.flush()
     await db.commit()
+    await db.refresh(item)
+    for notification in notifications:
+        await db.refresh(notification)
     return item, notifications
 
 
