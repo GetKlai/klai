@@ -85,8 +85,6 @@ async def generate_feedback_triage_suggestion(
         model=model_key,
     )
     db.add(suggestion)
-    if submission.status == "new":
-        submission.status = "triage_suggested"
     try:
         await db.commit()
     except IntegrityError:

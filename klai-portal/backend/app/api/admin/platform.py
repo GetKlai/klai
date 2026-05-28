@@ -26,7 +26,7 @@ import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import bindparam, or_, select, text
+from sqlalchemy import and_, bindparam, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import cross_org_session
@@ -46,6 +46,7 @@ from app.klai_feedback.service import (
     update_feedback_item,
 )
 from app.models.portal import PortalOrg as PortalOrgModel
+from app.models.portal import PortalUser as PortalUserModel
 from app.services.audit import log_event
 from app.services.platform_subdomains import KLAI_SUBDOMAINS
 from app.services.zitadel import zitadel
@@ -150,6 +151,8 @@ class PlatformFeedbackSubmission(BaseModel):
     org_name: str | None
     org_slug: str | None
     user_id: str | None
+    user_email: str | None
+    user_display_name: str | None
     event_type: str
     status: str
     raw_text: str | None
@@ -161,6 +164,13 @@ class PlatformFeedbackSubmission(BaseModel):
     viewport: str | None
     created_at: datetime
     triage_suggestion: PlatformFeedbackTriageSuggestion | None = None
+
+
+class PlatformFeedbackReporterOrg(BaseModel):
+    org_id: int | None
+    org_name: str | None
+    org_slug: str | None
+    user_count: int
 
 
 class PlatformFeedbackItem(BaseModel):
@@ -186,6 +196,7 @@ class PlatformFeedbackItem(BaseModel):
     resolved_at: datetime | None = None
     resolved_by: str | None = None
     notification_state: str | None = None
+    reporter_orgs: list[PlatformFeedbackReporterOrg] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -228,7 +239,7 @@ class PlatformFeedbackItemPatchIn(BaseModel):
     kind: Literal["feature", "bug", "ux_confusion", "docs", "support_pattern"] | None = None
     title: str | None = Field(default=None, min_length=3, max_length=256)
     summary: str | None = Field(default=None, max_length=4000)
-    status: Literal["inbox", "under_review", "planned", "in_progress", "shipped", "resolved", "wont_do"] | None = None
+    status: Literal["open", "resolved", "dismissed"] | None = None
     area: str | None = Field(default=None, max_length=128)
     external_tracker_type: str | None = Field(default=None, max_length=32)
     external_tracker_id: str | None = Field(default=None, max_length=128)
@@ -1024,7 +1035,7 @@ async def platform_chat_errors(
 @router.get("/feedback-submissions", response_model=list[PlatformFeedbackSubmission])
 async def platform_feedback_submissions(
     search: str | None = Query(default=None),
-    status_filter: Literal["open", "new", "triage_suggested", "linked", "dismissed", "support"] | None = Query(
+    status_filter: Literal["new", "open", "resolved", "dismissed", "support"] | None = Query(
         default=None,
         alias="status",
     ),
@@ -1051,6 +1062,8 @@ async def platform_feedback_submissions(
             PortalOrgModel.name.label("org_name"),
             PortalOrgModel.slug.label("org_slug"),
             FeedbackSubmission.user_id.label("user_id"),
+            PortalUserModel.email.label("user_email"),
+            PortalUserModel.display_name.label("user_display_name"),
             FeedbackSubmission.source.label("source"),
             FeedbackSubmission.status.label("status"),
             FeedbackSubmission.raw_text.label("raw_text"),
@@ -1064,6 +1077,13 @@ async def platform_feedback_submissions(
         )
         .select_from(FeedbackSubmission)
         .outerjoin(PortalOrgModel, PortalOrgModel.id == FeedbackSubmission.org_id)
+        .outerjoin(
+            PortalUserModel,
+            and_(
+                PortalUserModel.zitadel_user_id == FeedbackSubmission.user_id,
+                PortalUserModel.org_id == FeedbackSubmission.org_id,
+            ),
+        )
         .where(FeedbackSubmission.source.in_(("assistant_feedback", "assistant_problem", "assistant_question")))
         .order_by(FeedbackSubmission.created_at.desc())
         .limit(bindparam("limit"))
@@ -1083,10 +1103,7 @@ async def platform_feedback_submissions(
                 FeedbackSubmission.route_id.ilike(q),
             )
         )
-    if status_filter == "open":
-        params["statuses"] = ["new", "triage_suggested"]
-        query = query.where(FeedbackSubmission.status.in_(bindparam("statuses", expanding=True)))
-    elif status_filter:
+    if status_filter:
         params["status"] = status_filter
         query = query.where(FeedbackSubmission.status == bindparam("status"))
     if kind:
@@ -1117,6 +1134,8 @@ async def platform_feedback_submissions(
             org_name=r.org_name,
             org_slug=r.org_slug,
             user_id=r.user_id,
+            user_email=r.user_email,
+            user_display_name=r.user_display_name,
             event_type=_feedback_event_type(r.source),
             status=r.status,
             raw_text=r.raw_text,
@@ -1136,18 +1155,7 @@ async def platform_feedback_submissions(
 @router.get("/feedback/items", response_model=list[PlatformFeedbackItem])
 async def platform_feedback_items(
     search: str | None = Query(default=None),
-    status: Literal[
-        "all",
-        "active",
-        "closed",
-        "inbox",
-        "under_review",
-        "planned",
-        "in_progress",
-        "shipped",
-        "resolved",
-        "wont_do",
-    ] = Query(default="active"),
+    status: Literal["all", "active", "closed", "open", "resolved", "dismissed"] = Query(default="active"),
     kind: Literal["all", "feature", "bug", "ux_confusion", "docs", "support_pattern"] = Query(default="all"),
     limit: int = Query(default=25, ge=1, le=100),
     perms: UserPermissions = Depends(require_platform_admin()),
@@ -1163,10 +1171,11 @@ async def platform_feedback_items(
                 kind=kind,
                 limit=limit,
             )
+            reporter_orgs = await _platform_feedback_item_reporter_orgs(db, [item.id for item in items])
         except Exception:
             logger.warning("platform_feedback_items_query_failed", exc_info=True)
             return []
-        return [_platform_feedback_item(item) for item in items]
+        return [_platform_feedback_item(item, reporter_orgs.get(item.id, [])) for item in items]
 
 
 @router.get("/feedback/items/{item_id}", response_model=PlatformFeedbackItemDetail)
@@ -1189,6 +1198,8 @@ async def platform_feedback_item_detail(
                         PortalOrgModel.name.label("org_name"),
                         PortalOrgModel.slug.label("org_slug"),
                         FeedbackSubmission.user_id.label("user_id"),
+                        PortalUserModel.email.label("user_email"),
+                        PortalUserModel.display_name.label("user_display_name"),
                         FeedbackSubmission.source.label("source"),
                         FeedbackSubmission.status.label("status"),
                         FeedbackSubmission.raw_text.label("raw_text"),
@@ -1205,15 +1216,23 @@ async def platform_feedback_item_detail(
                     .select_from(FeedbackItemLink)
                     .join(FeedbackSubmission, FeedbackSubmission.id == FeedbackItemLink.submission_id)
                     .outerjoin(PortalOrgModel, PortalOrgModel.id == FeedbackSubmission.org_id)
+                    .outerjoin(
+                        PortalUserModel,
+                        and_(
+                            PortalUserModel.zitadel_user_id == FeedbackSubmission.user_id,
+                            PortalUserModel.org_id == FeedbackSubmission.org_id,
+                        ),
+                    )
                     .where(FeedbackItemLink.item_id == item_id)
                     .order_by(FeedbackItemLink.created_at.desc())
                 )
             ).all()
+            reporter_orgs = await _platform_feedback_item_reporter_orgs(db, [item_id])
         except FeedbackItemNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback item not found") from exc
 
         return PlatformFeedbackItemDetail(
-            item=_platform_feedback_item(item),
+            item=_platform_feedback_item(item, reporter_orgs.get(item_id, [])),
             submissions=[
                 PlatformFeedbackLinkedSubmission(
                     id=r.id,
@@ -1221,6 +1240,8 @@ async def platform_feedback_item_detail(
                     org_name=r.org_name,
                     org_slug=r.org_slug,
                     user_id=r.user_id,
+                    user_email=r.user_email,
+                    user_display_name=r.user_display_name,
                     event_type=_feedback_event_type(r.source),
                     status=r.status,
                     raw_text=r.raw_text,
@@ -1395,7 +1416,51 @@ async def platform_feedback_link_item(
         return PlatformFeedbackActionResult(submission_id=submission.id, status=submission.status, item_id=item.id)
 
 
-def _platform_feedback_item(item: FeedbackItem) -> PlatformFeedbackItem:
+async def _platform_feedback_item_reporter_orgs(
+    db: AsyncSession,
+    item_ids: list[int],
+) -> dict[int, list[PlatformFeedbackReporterOrg]]:
+    if not item_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                FeedbackItemLink.item_id.label("item_id"),
+                FeedbackSubmission.org_id.label("org_id"),
+                PortalOrgModel.name.label("org_name"),
+                PortalOrgModel.slug.label("org_slug"),
+                func.count(func.distinct(FeedbackSubmission.user_id)).label("user_count"),
+            )
+            .select_from(FeedbackItemLink)
+            .join(FeedbackSubmission, FeedbackSubmission.id == FeedbackItemLink.submission_id)
+            .outerjoin(PortalOrgModel, PortalOrgModel.id == FeedbackSubmission.org_id)
+            .where(FeedbackItemLink.item_id.in_(item_ids))
+            .group_by(
+                FeedbackItemLink.item_id,
+                FeedbackSubmission.org_id,
+                PortalOrgModel.name,
+                PortalOrgModel.slug,
+            )
+            .order_by(FeedbackItemLink.item_id.asc(), PortalOrgModel.name.asc())
+        )
+    ).all()
+    grouped: dict[int, list[PlatformFeedbackReporterOrg]] = {}
+    for row in rows:
+        grouped.setdefault(row.item_id, []).append(
+            PlatformFeedbackReporterOrg(
+                org_id=row.org_id,
+                org_name=row.org_name,
+                org_slug=row.org_slug,
+                user_count=int(row.user_count or 0),
+            )
+        )
+    return grouped
+
+
+def _platform_feedback_item(
+    item: FeedbackItem,
+    reporter_orgs: list[PlatformFeedbackReporterOrg] | None = None,
+) -> PlatformFeedbackItem:
     return PlatformFeedbackItem(
         id=item.id,
         kind=item.kind,
@@ -1419,6 +1484,7 @@ def _platform_feedback_item(item: FeedbackItem) -> PlatformFeedbackItem:
         resolved_at=item.resolved_at,
         resolved_by=item.resolved_by,
         notification_state=item.notification_state,
+        reporter_orgs=reporter_orgs or [],
         created_at=item.created_at,
         updated_at=item.updated_at,
     )

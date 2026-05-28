@@ -9,7 +9,6 @@ import {
   LifeBuoy,
   Link2,
   Loader2,
-  Pencil,
   PlusCircle,
   Save,
   Search,
@@ -20,7 +19,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Select } from '@/components/ui/select'
 import {
   Sheet,
@@ -62,7 +60,7 @@ import { PlatformTableShell } from './PlatformShell'
 const TH =
   'py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide whitespace-nowrap'
 const TD = 'py-3.5 pr-4 align-top text-gray-900'
-const CLOSED_FEEDBACK_ITEM_STATUSES = new Set(['resolved', 'shipped', 'wont_do'])
+const CLOSED_FEEDBACK_ITEM_STATUSES = new Set(['resolved', 'dismissed'])
 
 // --- Subdomains overview ---------------------------------------------------
 //
@@ -712,21 +710,34 @@ function feedbackKindLabel(eventType: string): string {
   return m.platform_feedback_kind_feedback()
 }
 
+function feedbackSubmissionReporterLabel(item: PlatformFeedbackSubmission): string | null {
+  return item.user_display_name || item.user_email || item.user_id || null
+}
+
 function feedbackStatusLabel(status: string): string {
-  if (status === 'linked') return 'Gekoppeld'
+  if (status === 'open') return 'Open'
+  if (status === 'resolved') return 'Opgelost'
   if (status === 'dismissed') return 'Genegeerd'
   if (status === 'support') return 'Support'
   return 'Nieuw'
 }
 
 function feedbackItemStatusLabel(status: string): string {
-  if (status === 'under_review') return 'In review'
-  if (status === 'planned') return 'Gepland'
-  if (status === 'in_progress') return 'In uitvoering'
-  if (status === 'shipped') return 'Verzonden'
   if (status === 'resolved') return 'Opgelost'
-  if (status === 'wont_do') return "Won't do"
-  return 'Inbox'
+  if (status === 'dismissed') return 'Genegeerd'
+  return 'Open'
+}
+
+function feedbackItemReporterSummary(item: PlatformFeedbackItem): string {
+  const names = item.reporter_orgs
+    .map((org) => org.org_name ?? org.org_slug ?? (org.org_id ? `#${org.org_id}` : null))
+    .filter((name): name is string => Boolean(name))
+
+  if (names.length === 0) {
+    return item.org_count > 0 ? `${item.org_count} organisaties` : '-'
+  }
+  if (names.length <= 2) return names.join(', ')
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2}`
 }
 
 function feedbackItemKindLabel(kind: string): string {
@@ -858,12 +869,12 @@ export function FeedbackTab({
           variant={feedbackView === 'items' ? 'default' : 'ghost'}
           onClick={() => setFeedbackView('items')}
         >
-          Roadmap items
+          Open items
         </Button>
       </div>
 
       {feedbackView === 'items' ? (
-        <RoadmapItemsPanel
+        <OpenItemsPanel
           search={search}
           fmtDate={fmtDate}
           onOpenItem={setSelectedItemId}
@@ -880,7 +891,6 @@ export function FeedbackTab({
               <th className={TH}>Status</th>
               <th className={TH}>{m.platform_col_organization()}</th>
               <th className={TH}>{m.platform_col_detail()}</th>
-              <th className={TH}>{m.platform_feedback_context()}</th>
               <th className={TH}>{m.platform_col_time()}</th>
             </tr>
           </thead>
@@ -966,9 +976,9 @@ function FeedbackSubmissionRow({
         {item.org_slug && (
           <p className="font-mono text-xs text-gray-400">{item.org_slug}</p>
         )}
-        {item.user_id && (
-          <p className="mt-1 max-w-[180px] truncate font-mono text-xs text-gray-400">
-            {item.user_id}
+        {feedbackSubmissionReporterLabel(item) && (
+          <p className="mt-1 max-w-[180px] truncate text-xs text-gray-400">
+            {feedbackSubmissionReporterLabel(item)}
           </p>
         )}
       </td>
@@ -977,28 +987,6 @@ function FeedbackSubmissionRow({
           {item.raw_text ?? '-'}
         </p>
       </td>
-      <td className={`${TD} max-w-xs`}>
-        {item.route_id && (
-          <p className="font-mono text-xs text-gray-500">{item.route_id}</p>
-        )}
-        {item.page_url && (
-          <a
-            href={item.page_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-1 inline-flex max-w-full items-center gap-1 text-xs text-[var(--color-rl-accent-dark)] hover:underline"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <span className="truncate">{item.page_url}</span>
-            <ExternalLink className="h-3 w-3 shrink-0" />
-          </a>
-        )}
-        {(item.locale || item.viewport) && (
-          <p className="mt-1 text-xs text-gray-400">
-            {[item.locale, item.viewport].filter(Boolean).join(' / ')}
-          </p>
-        )}
-      </td>
       <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
         {fmtDate(item.created_at)}
       </td>
@@ -1006,7 +994,7 @@ function FeedbackSubmissionRow({
   )
 }
 
-function RoadmapItemsPanel({
+function OpenItemsPanel({
   search,
   fmtDate,
   onOpenItem,
@@ -1018,8 +1006,6 @@ function RoadmapItemsPanel({
   const [statusFilter, setStatusFilter] = useState('active')
   const [kindFilter, setKindFilter] = useState('all')
   const items = usePlatformFeedbackItems(search, statusFilter, kindFilter)
-  const deleteItem = usePlatformFeedbackDeleteItem()
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const rows = items.data ?? []
 
   return (
@@ -1033,14 +1019,9 @@ function RoadmapItemsPanel({
             aria-label="Filter op status"
           >
             <option value="active">Actief</option>
-            <option value="inbox">Inbox</option>
-            <option value="under_review">In review</option>
-            <option value="planned">Gepland</option>
-            <option value="in_progress">In uitvoering</option>
-            <option value="closed">Gesloten</option>
+            <option value="open">Open</option>
             <option value="resolved">Opgelost</option>
-            <option value="shipped">Verzonden</option>
-            <option value="wont_do">Won't do</option>
+            <option value="dismissed">Genegeerd</option>
             <option value="all">Alles</option>
           </Select>
           <Select
@@ -1064,7 +1045,7 @@ function RoadmapItemsPanel({
       {items.isFetching && !items.isLoading && (
         <p className="mb-2 text-xs text-gray-400">
           <Loader2 className="mr-2 inline h-3 w-3 animate-spin" />
-          Roadmap items bijwerken
+          Open items bijwerken
         </p>
       )}
       <PlatformTableShell
@@ -1075,102 +1056,50 @@ function RoadmapItemsPanel({
           <thead>
             <tr className="border-b border-gray-200">
               <th className={TH}>Item</th>
+              <th className={TH}>Organisatie(s)</th>
               <th className={TH}>Status</th>
               <th className={TH}>Type</th>
-              <th className={TH}>Impact</th>
               <th className={TH}>Bijgewerkt</th>
-              <th className={`${TH} text-right`}>Acties</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {rows.map((item) => {
-              const isConfirming = confirmDeleteId === item.id
-              return (
+            {rows.map((item) => (
                 <tr
                   key={item.id}
-                  className={isConfirming ? 'bg-[var(--color-hover)]' : 'hover:bg-gray-50'}
+                  className="cursor-pointer hover:bg-gray-50"
+                  tabIndex={0}
+                  onClick={() => onOpenItem(item.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') onOpenItem(item.id)
+                  }}
                 >
                   <td className={`${TD} max-w-xl`}>
-                    <button
-                      type="button"
-                      className="block max-w-full text-left"
-                      onClick={() => onOpenItem(item.id)}
-                    >
-                      <span className="block truncate font-medium text-gray-900">
-                        {item.title}
-                      </span>
-                      <span className="mt-1 block truncate text-xs text-gray-400">
-                        {[item.area, item.owner && `owner: ${item.owner}`]
-                          .filter(Boolean)
-                          .join(' / ')}
-                      </span>
-                    </button>
+                    <span className="block truncate font-medium text-gray-900">
+                      {item.title}
+                    </span>
+                    <span className="mt-1 block truncate text-xs text-gray-400">
+                      {[item.area, item.owner && `owner: ${item.owner}`]
+                        .filter(Boolean)
+                        .join(' / ')}
+                    </span>
+                  </td>
+                  <td className={`${TD} max-w-xs`}>
+                    <span className="block truncate text-sm text-gray-900">
+                      {feedbackItemReporterSummary(item)}
+                    </span>
+                    <span className="mt-1 block text-xs text-gray-400">
+                      {item.org_count} orgs / {item.user_count} users
+                    </span>
                   </td>
                   <td className={TD}>
                     <Badge variant="outline">{feedbackItemStatusLabel(item.status)}</Badge>
                   </td>
                   <td className={TD}>{feedbackItemKindLabel(item.kind)}</td>
-                  <td className={`${TD} whitespace-nowrap tabular-nums`}>
-                    {item.org_count} orgs / {item.user_count} users
-                  </td>
                   <td className={`${TD} whitespace-nowrap text-gray-400`}>
                     {fmtDate(item.updated_at)}
                   </td>
-                  <td className={`${TD} text-right`}>
-                    <InlineDeleteConfirm
-                      isConfirming={isConfirming}
-                      isPending={deleteItem.isPending && isConfirming}
-                      label="Verwijder"
-                      cancelLabel={m.admin_users_cancel()}
-                      onConfirm={() => {
-                        deleteItem.mutate(item.id, {
-                          onSuccess: () => setConfirmDeleteId(null),
-                        })
-                      }}
-                      onCancel={() => setConfirmDeleteId(null)}
-                    >
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
-                          aria-label={`Bewerk ${item.title}`}
-                          title="Bewerken"
-                          onClick={() => onOpenItem(item.id)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {!CLOSED_FEEDBACK_ITEM_STATUSES.has(item.status) && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 rounded-md text-gray-400 hover:text-green-700"
-                            aria-label={`Sluit ${item.title}`}
-                            title="Sluiten en gebruiker berichten"
-                            onClick={() => onOpenItem(item.id)}
-                          >
-                            <CheckCircle2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-md text-gray-400 hover:text-[var(--color-destructive)]"
-                          aria-label={`Verwijder ${item.title}`}
-                          title="Verwijderen"
-                          onClick={() => setConfirmDeleteId(item.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </InlineDeleteConfirm>
-                  </td>
                 </tr>
-              )
-            })}
+              ))}
           </tbody>
       </PlatformTableShell>
     </>
@@ -1212,7 +1141,7 @@ function FeedbackDetailSheet({
     support.isPending ||
     createItem.isPending ||
     linkItem.isPending
-  const canTriage = item.status === 'new' || item.status === 'triage_suggested'
+  const canTriage = item.status === 'new'
   const linkType =
     item.event_type === 'klai_assistant.problem_report'
       ? 'bug_repro'
@@ -1291,6 +1220,9 @@ function FeedbackDetailSheet({
           <SheetTitle>Feedback triage</SheetTitle>
           <SheetDescription>
             {item.org_name ?? item.org_slug ?? 'Onbekende organisatie'} -{' '}
+            {feedbackSubmissionReporterLabel(item)
+              ? `${feedbackSubmissionReporterLabel(item)} - `
+              : ''}
             {fmtDate(item.created_at)}
           </SheetDescription>
         </SheetHeader>
@@ -1299,7 +1231,7 @@ function FeedbackDetailSheet({
           <section className="space-y-3">
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
-              {item.status !== 'new' && item.status !== 'triage_suggested' && (
+              {item.status !== 'new' && (
                 <Badge variant="secondary">{feedbackStatusLabel(item.status)}</Badge>
               )}
               {(item.feedback_type || item.severity) && (
@@ -1405,7 +1337,7 @@ function FeedbackDetailSheet({
                     Markeer als support
                   </Button>
                   <p className="text-xs leading-5 text-gray-500 sm:col-span-2">
-                    Support betekent: geen product- of roadmap-item maken; de melding
+                    Support betekent: geen product- of open item maken; de melding
                     wordt afgehandeld als klantvraag/supportsignaal.
                   </p>
                 </section>
@@ -1419,7 +1351,7 @@ function FeedbackDetailSheet({
                   </div>
                   <label className="block space-y-1">
                     <span className="text-xs font-medium text-gray-500">
-                      Slimme zoekterm voor roadmap items
+                      Slimme zoekterm voor open items
                     </span>
                     <span className="relative block">
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -1479,7 +1411,7 @@ function FeedbackDetailSheet({
                     ))}
                     {!items.isFetching && (items.data ?? []).length === 0 && (
                       <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
-                        Geen bestaand roadmap item gevonden.
+                        Geen bestaand open item gevonden.
                       </p>
                     )}
                   </div>
@@ -1568,7 +1500,7 @@ function FeedbackItemDetailSheet({
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-3xl">
         <SheetHeader>
-          <SheetTitle>Roadmap item</SheetTitle>
+          <SheetTitle>Open item</SheetTitle>
           <SheetDescription>
             Source of truth voor gebundelde feedback en klantupdates.
           </SheetDescription>
@@ -1669,13 +1601,9 @@ function FeedbackItemDetailForm({
         </div>
         <div className="grid gap-3">
           <Select value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="inbox">Inbox</option>
-            <option value="under_review">In review</option>
-            <option value="planned">Gepland</option>
-            <option value="in_progress">In uitvoering</option>
-            <option value="shipped">Verzonden</option>
+            <option value="open">Open</option>
             <option value="resolved">Opgelost</option>
-            <option value="wont_do">Won't do</option>
+            <option value="dismissed">Genegeerd</option>
           </Select>
         </div>
         <Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Titel" />
@@ -1699,14 +1627,14 @@ function FeedbackItemDetailForm({
             Opslaan
           </Button>
           {updateItem.isSuccess && (
-            <p className="text-sm text-green-700">Roadmap item opgeslagen.</p>
+            <p className="text-sm text-green-700">Open item opgeslagen.</p>
           )}
           <Button
             type="button"
             variant="secondary"
             disabled={updateItem.isPending || deleteItem.isPending}
             onClick={() => {
-              if (!window.confirm('Roadmap item verwijderen en gekoppelde feedback terugzetten naar nieuw?')) {
+              if (!window.confirm('Open item verwijderen en gekoppelde feedback terugzetten naar nieuw?')) {
                 return
               }
               deleteItem.mutate(item.id, { onSuccess: onClose })
@@ -1800,7 +1728,9 @@ function FeedbackItemDetailForm({
               </p>
               <p className="mt-2 text-xs text-gray-400">
                 {submission.org_name ?? submission.org_slug ?? 'Onbekende org'}
-                {submission.user_id ? ` / ${submission.user_id}` : ''}
+                {feedbackSubmissionReporterLabel(submission)
+                  ? ` / ${feedbackSubmissionReporterLabel(submission)}`
+                  : ''}
               </p>
             </div>
           ))}

@@ -117,6 +117,8 @@ export interface PlatformFeedbackSubmission {
   org_name: string | null
   org_slug: string | null
   user_id: string | null
+  user_email: string | null
+  user_display_name: string | null
   event_type: string
   status: string
   raw_text: string | null
@@ -153,8 +155,16 @@ export interface PlatformFeedbackItem {
   resolved_at: string | null
   resolved_by: string | null
   notification_state: string | null
+  reporter_orgs: PlatformFeedbackReporterOrg[]
   created_at: string
   updated_at: string
+}
+
+export interface PlatformFeedbackReporterOrg {
+  org_id: number | null
+  org_name: string | null
+  org_slug: string | null
+  user_count: number
 }
 
 export interface PlatformFeedbackLinkedSubmission extends PlatformFeedbackSubmission {
