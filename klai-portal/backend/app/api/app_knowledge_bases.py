@@ -1453,21 +1453,43 @@ async def rename_kb_upload(
 
 
 @router.delete(
-    "/knowledge-bases/{kb_slug}/uploads/{artifact_id}", status_code=204, dependencies=[Depends(get_kb_with_access)]
+    "/knowledge-bases/{kb_slug}/uploads/{upload_or_artifact_id}",
+    status_code=204,
+    dependencies=[Depends(get_kb_with_access)],
 )
 async def delete_kb_upload(
     kb_slug: str,
-    artifact_id: str,
+    upload_or_artifact_id: str,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete a direct-upload artifact from the KB.
+    """Delete a direct-upload from the KB, handling both lifecycle stages.
 
     Owners may delete any upload.
     Contributors may only delete their own uploads (ownership enforced by
-    knowledge-ingest via X-User-ID check).
+    knowledge-ingest via X-User-ID check for done artifacts; by created_by
+    check on the KBUpload row for in-flight uploads).
     Viewers get 403.
-    SPEC-PORTAL-KENNIS-002 B2.
+
+    The path id parameter is overloaded by design because the Sources tab
+    surfaces two different id types under the same row.id field:
+
+    - status in {processing, ingesting, failed}  →  KBUpload.id (uuid)
+      The artifact does not exist yet (or never will, if failed). Only the
+      kb_uploads row exists.
+    - status == done                              →  artifact_id (uuid)
+      The kb_uploads row is hidden once status flips to done; the artifact
+      is the canonical handle.
+
+    This handler tries the KBUpload lookup first. If hit, we delete the
+    kb_uploads row (and cascade to the artifact if it was already created).
+    Otherwise we fall back to the legacy artifact-delete forward.
+
+    Regression: before this handler accepted both id types, clicking delete
+    on a still-processing upload sent the kb_uploads.id to knowledge-ingest
+    as if it were artifact_id, which 404'd, which left the kb_uploads row
+    in place. On the next refresh the row reappeared, reading as "delete
+    didn't do anything" (incident 2026-05-28 — Jantine).
     """
     org = await _load_org_or_500(db, perms.org_id)
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
@@ -1487,13 +1509,80 @@ async def delete_kb_upload(
             detail="Contributor or owner access required",
         )
 
+    # Try to find a KBUpload row by id — this handles the
+    # processing/ingesting/failed case where no artifact exists yet
+    # (or where the artifact failed to materialise).
+    upload_row = await db.execute(
+        select(KBUpload).where(
+            KBUpload.id == upload_or_artifact_id,
+            KBUpload.org_id == perms.org_id,
+            KBUpload.kb_id == kb.id,
+        )
+    )
+    upload = upload_row.scalar_one_or_none()
+
     # Contributors: pass user_id so knowledge-ingest enforces ownership.
     # Owners: omit user_id to allow cross-user deletes.
     caller_user_id = perms.user_id if role == "contributor" else None
+
+    if upload is not None:
+        # Contributor ownership check for in-flight uploads — mirrors
+        # knowledge-ingest's X-User-ID gate on the artifact-side delete.
+        if role == "contributor" and upload.created_by != perms.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="you can only delete your own uploads",
+            )
+
+        # If the upload already produced an artifact, cascade the delete to
+        # knowledge-ingest so Qdrant + artifact row also go. We do this
+        # BEFORE the local row delete so a failing upstream call does not
+        # leave an artifact stranded with no kb_uploads breadcrumb.
+        if upload.artifact_id:
+            try:
+                await knowledge_ingest_client.delete_kb_upload(
+                    org.zitadel_org_id,
+                    kb.slug,
+                    upload.artifact_id,
+                    user_id=caller_user_id,
+                )
+            except httpx.HTTPStatusError as exc:
+                # 404 = artifact already gone (race with poller). Treat as
+                # success and continue to delete the local row. Anything
+                # else propagates as 502 — local row will linger but the
+                # user can retry.
+                if exc.response.status_code != 404:
+                    logger.exception(
+                        "delete_kb_upload_cascade_failed",
+                        kb_slug=kb_slug,
+                        upload_id=str(upload.id),
+                        artifact_id=upload.artifact_id,
+                        status=exc.response.status_code,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="Could not clean up artifact",
+                    ) from exc
+
+        await db.delete(upload)
+        await db.commit()
+        logger.info(
+            "kb_upload_deleted",
+            org_id=org.zitadel_org_id,
+            kb_slug=kb_slug,
+            upload_id=str(upload.id),
+            had_artifact=bool(upload.artifact_id),
+            status_at_delete=upload.status,
+        )
+        return
+
+    # No KBUpload row — treat as a legacy artifact_id and forward.
+    # The artifact-side delete enforces its own ownership check on
+    # contributor calls (user_id query param).
     await knowledge_ingest_client.delete_kb_upload(
         org.zitadel_org_id,
         kb.slug,
-        artifact_id,
+        upload_or_artifact_id,
         user_id=caller_user_id,
     )
 
