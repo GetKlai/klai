@@ -1148,10 +1148,18 @@ async def list_kb_sources(
     deleting_ids = {str(c.id) for c in all_portal_connectors if c.state == "deleting"}
     connector_by_id: dict[str, PortalConnector] = {str(c.id): c for c in portal_connectors}
 
-    # Knowledge-ingest aggregates (per connector_id and direct uploads)
+    # Knowledge-ingest aggregates (per connector_id and direct uploads).
+    # FAIL-LOUD: when the upstream call fails (timeout, 5xx, transport),
+    # raise 503 so the frontend's isError branch fires ("Kon bronnen niet
+    # laden — probeer opnieuw"). Returning an empty list misleads users
+    # into thinking their just-uploaded source disappeared
+    # (incident 2026-05-28 — Jantine personal-KB).
     aggregates = await knowledge_ingest_client.get_kb_sources(org.zitadel_org_id, kb.slug)
     if aggregates is None:
-        aggregates = {"connectors": [], "uploads": []}
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "knowledge_ingest_unreachable"},
+        )
 
     sources: list[SourceOut] = []
 
