@@ -15,7 +15,7 @@ class FeedbackSubmission(Base):
             name="ck_feedback_submissions_source",
         ),
         CheckConstraint(
-            "status IN ('new', 'triage_suggested', 'linked', 'dismissed', 'support')",
+            "status IN ('new', 'open', 'resolved', 'dismissed', 'support')",
             name="ck_feedback_submissions_status",
         ),
         Index("ix_feedback_submissions_org_created", "org_id", "created_at"),
@@ -61,7 +61,7 @@ class FeedbackItem(Base):
             name="ck_feedback_items_kind",
         ),
         CheckConstraint(
-            "status IN ('inbox', 'under_review', 'planned', 'in_progress', 'shipped', 'resolved', 'wont_do')",
+            "status IN ('open', 'resolved', 'dismissed')",
             name="ck_feedback_items_status",
         ),
         Index("ix_feedback_items_status_updated", "status", "updated_at"),

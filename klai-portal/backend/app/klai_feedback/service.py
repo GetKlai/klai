@@ -81,7 +81,7 @@ async def search_feedback_items(
     limit: int,
 ) -> list[FeedbackItem]:
     query = select(FeedbackItem).order_by(FeedbackItem.updated_at.desc()).limit(limit)
-    closed_statuses = ("resolved", "shipped", "wont_do")
+    closed_statuses = ("resolved", "dismissed")
     if status == "active":
         query = query.where(FeedbackItem.status.not_in(closed_statuses))
     elif status == "closed":
@@ -109,9 +109,9 @@ async def update_feedback_item(
 ) -> FeedbackItem:
     item = await get_feedback_item(db, item_id)
     next_status = values.get("status")
-    if next_status == "shipped" and item.status != "shipped" and item.shipped_at is None:
+    if next_status == "resolved" and item.status != "resolved" and item.shipped_at is None:
         item.shipped_at = datetime.now(UTC)
-    elif next_status is not None and next_status != "shipped":
+    elif next_status is not None and next_status != "resolved":
         item.shipped_at = None
     for key, value in values.items():
         setattr(item, key, value)
@@ -133,11 +133,9 @@ async def resolve_feedback_item(
     item.resolution_summary = resolution_summary
     item.resolved_at = now
     item.resolved_by = resolved_by
+    item.status = "resolved"
     if item.kind == "feature":
-        item.status = "shipped"
         item.shipped_at = now
-    else:
-        item.status = "resolved"
 
     requested_channels = [channel for channel in channels if channel in {"in_app", "email"}]
     notifications: list[FeedbackNotification] = []
@@ -195,6 +193,18 @@ async def resolve_feedback_item(
         item.notification_state = "sent"
     else:
         item.notification_state = "not_needed"
+
+    await db.flush()
+    linked_submissions = (
+        await db.execute(
+            select(FeedbackSubmission)
+            .select_from(FeedbackItemLink)
+            .join(FeedbackSubmission, FeedbackSubmission.id == FeedbackItemLink.submission_id)
+            .where(FeedbackItemLink.item_id == item_id)
+        )
+    ).scalars()
+    for submission in linked_submissions:
+        submission.status = "resolved"
 
     await db.flush()
     item_snapshot = SimpleNamespace(
@@ -292,7 +302,7 @@ async def create_feedback_item_from_submission(
         title=title,
         summary=summary or submission.raw_text,
         area=area,
-        status="inbox",
+        status="open",
     )
     db.add(item)
     await db.flush()
@@ -305,7 +315,7 @@ async def create_feedback_item_from_submission(
             created_by="staff",
         )
     )
-    submission.status = "linked"
+    submission.status = "open"
     await db.flush()
     await refresh_feedback_item_counts(db, item.id)
     await db.commit()
@@ -345,7 +355,7 @@ async def link_feedback_submission_to_item(
         existing.created_by = "staff"
         existing.confidence = 100
 
-    submission.status = "linked"
+    submission.status = "open"
     await db.flush()
     await refresh_feedback_item_counts(db, item_id)
     await db.commit()

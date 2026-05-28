@@ -125,7 +125,7 @@ async def test_generate_feedback_triage_suggestion_persists_draft(monkeypatch):
     }
     assert result.suggested_action == "link_existing"
     assert result.model == "test-model:feedback-triage-v1"
-    assert submission.status == "triage_suggested"
+    assert submission.status == "new"
     assert db.commits == 1
 
 

@@ -130,6 +130,12 @@ class AccountFeedbackReadResponse(BaseModel):
     read_at: datetime
 
 
+class AccountFeedbackReadAllResponse(BaseModel):
+    ok: bool = True
+    read_count: int
+    read_at: datetime
+
+
 async def _validate_and_normalize_template_ids(
     tpl_ids: list[int] | None,
     org_id: int,
@@ -299,6 +305,28 @@ async def mark_feedback_update_read(
         await db.commit()
     read_at = notification.read_at or datetime.now(UTC)
     return AccountFeedbackReadResponse(notification_id=notification.id, read_at=read_at)
+
+
+@router.post("/feedback-updates/read-all", response_model=AccountFeedbackReadAllResponse)
+async def mark_all_feedback_updates_read(
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountFeedbackReadAllResponse:
+    result = await db.execute(
+        select(FeedbackNotification).where(
+            FeedbackNotification.org_id == perms.org_id,
+            FeedbackNotification.user_id == perms.user_id,
+            FeedbackNotification.channel == "in_app",
+            FeedbackNotification.read_at.is_(None),
+        )
+    )
+    notifications = list(result.scalars())
+    read_at = datetime.now(UTC)
+    for notification in notifications:
+        notification.read_at = read_at
+    if notifications:
+        await db.commit()
+    return AccountFeedbackReadAllResponse(read_count=len(notifications), read_at=read_at)
 
 
 @router.patch("/kb-preference", response_model=KBPreferenceOut)

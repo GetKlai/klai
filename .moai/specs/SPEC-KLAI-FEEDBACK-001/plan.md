@@ -73,7 +73,8 @@ Live op `main`:
 - Simpele duplicate/item search op bestaande `feedback_items`.
 - Item-signaal via `org_count`, `user_count` en `priority_score`.
 - Platform item-detail toont gekoppelde submissions en item-signaal.
-- `feedback_items` heeft lightweight roadmapvelden voor later gebruik:
+- `feedback_items` heeft lightweight plannings- en externe-linkvelden voor
+  later gebruik:
   `public_title`, `public_summary`, `public_feedback_url`, `target_window`,
   `owner`, `shipped_at` en external tracker velden.
 - De item-detail UI is bewust teruggebracht naar menselijke beslissingen:
@@ -83,9 +84,10 @@ Live op `main`:
   formulier in de eerste workflow. Die moeten door AI/systeem voorgesteld of
   via expliciete acties gezet worden.
 - De Feedback inbox is gecorrigeerd naar het bestaande Platform list/table
-  patroon. Roadmap items zijn geen losse card-layout.
-- `triage_suggested` is een interne technische status en wordt niet meer als
-  aparte productstatus `AI voorstel` aan staff getoond.
+  patroon. Open items zijn geen losse card-layout.
+- AI-suggesties zijn geen status meer. Ze leven in
+  `feedback_triage_suggestions` en worden alleen als voorstel in de drawer
+  getoond.
 - De triage drawer zoekt eerst naar bestaande items en mag niet standaard een
   nieuw item voorstellen als er een bestaande match is.
 - `/app/account` heeft een eerste `Mijn meldingen` tab die de ingelogde
@@ -103,10 +105,8 @@ Geverifieerd:
 
 Nog niet gebouwd:
 
-- Resolution/close-the-loop flow: item als gefixt/opgelost markeren,
-  betrokken gebruikers/orgs tonen, notificatie opstellen en verzenden.
-- Volledige notification-backed `/app/account` updates met read/unread state.
-- In-app notificaties voor betrokken melders.
+- Verdere verfijning van de close-the-loop flow: e-mailkanaal, retries en
+  delivery-overzicht.
 - Transactionele e-mail naar betrokken melders.
 - Volledige audit/status tracking voor notificaties.
 - Apart product/system update systeem voor latere release notes,
@@ -140,14 +140,87 @@ Daarom gelden vanaf nu deze ontwerpregels:
    Velden die staff niet expliciet hoeft te beslissen blijven verborgen of
    alleen-lezen totdat er een concrete actie voor bestaat.
 6. **Een feedback-item is pas af als de melder terugkoppeling kan krijgen.**
-   Triage eindigt niet bij `linked` of `shipped`. De flow moet kunnen tonen wie
+   Triage eindigt niet bij koppelen of oplossen. De flow moet kunnen tonen wie
    iets gemeld heeft, welke update zij krijgen, en of die update is verzonden.
 7. **AI is geen workflowstatus.**
-   `triage_suggested` is een interne queue-toestand. In de UI blijft dit
-   gewoon open/nieuw werk; de AI-output verschijnt als voorstel in de drawer.
+   AI-output is voorsteldata, geen status. In de UI blijft dit gewoon
+   nieuw/open werk; de AI-output verschijnt als voorstel in de drawer.
 8. **Standaard bundelen, niet dupliceren.**
    Als er een relevant bestaand item is, is koppelen de primaire actie. Een
    nieuw item aanmaken is een expliciete fallback, niet de default.
+
+## Herijking statusmodel en Platform UI
+
+Datum: 2026-05-28.
+
+De termen `linked`, `triage_suggested`, `planned`, `in_progress`, `shipped`
+en `wont_do` maken de workflow onnodig technisch. Staff wil zien of iets nieuw
+is, open staat, opgelost is, naar support moet of genegeerd is. Daarom wordt
+het statusmodel versimpeld aan de bron, niet alleen cosmetisch in de UI.
+
+Nieuwe statussen:
+
+- `feedback_submissions.status`: `new`, `open`, `resolved`, `support`,
+  `dismissed`.
+- `feedback_items.status`: `open`, `resolved`, `dismissed`.
+
+Betekenis:
+
+- `new`: ruwe melding is binnen en nog niet beoordeeld.
+- `open`: melding is beoordeeld en onderdeel van een open item.
+- `resolved`: melding/item is afgehandeld en kan naar de melder worden
+  teruggekoppeld.
+- `support`: melding hoort buiten de product/bug-itemflow.
+- `dismissed`: melding/item is niet relevant of wordt bewust niet opgepakt.
+
+Platform Feedback krijgt twee duidelijke werkoppervlakken:
+
+1. **Inbox** - ruwe meldingen en triage.
+   Velden in de lijst:
+   - Type.
+   - Status.
+   - Organisatie, inclusief tenant/user.
+   - Detail.
+   - Tijd.
+
+   Niet in de lijst:
+   - Context/route/url/viewport/locale als aparte kolom. Die hoort in de
+     detail drawer.
+   - Edit/delete icon-acties. Inbox-meldingen zijn evidence; je triageert ze,
+     maar past de originele melding niet inhoudelijk aan.
+
+2. **Open items** - gebundelde openstaande zaken.
+   `Roadmap items` wordt hernoemd naar `Open items`, omdat dit geen publieke
+   roadmap is maar een interne lijst met bugs, feedback en terugkerende
+   signalen die nog niet afgehandeld zijn.
+
+   Velden in de lijst:
+   - Item.
+   - Organisatie(s), met namen waar mogelijk en counts als fallback.
+   - Status.
+   - Type.
+   - Bijgewerkt.
+
+   Niet in de lijst:
+   - Losse edit/delete/close icon-kolom. Klik op het item opent de detail
+     drawer; bewerken, verwijderen en sluiten gebeurt daar.
+
+Filters:
+
+- Inbox: Alle statussen, Nieuw, Open, Opgelost, Support, Genegeerd.
+- Open items: Actief/Open, Opgelost, Genegeerd, Alles.
+
+Migratie van bestaande data:
+
+- submission `triage_suggested` -> `new`.
+- submission `linked` -> `open`, behalve wanneer het gekoppelde item al
+  opgelost/verzonden is; dan `resolved`.
+- item `inbox`, `under_review`, `planned`, `in_progress` -> `open`.
+- item `resolved`, `shipped` -> `resolved`.
+- item `wont_do` -> `dismissed`.
+
+Na deze migratie moet de UI geen status `Gekoppeld`, `AI voorstel`,
+`Gepland`, `In uitvoering` of `Verzonden` meer tonen in de hoofdflow.
 
 ## Belangrijke correctie
 
@@ -302,7 +375,7 @@ Ruwe in-app meldingen.
 - `source`: `assistant_feedback`, `assistant_problem`, `assistant_question`,
   later `chat_rating`, `manual_import`
 - `raw_text`
-- `status`: `new`, `triage_suggested`, `linked`, `dismissed`, `support`
+- `status`: `new`, `open`, `resolved`, `dismissed`, `support`
 - `org_id`, `user_id`
 - `page_url`, `route_id`, `locale`, `viewport`, `user_agent`, `referrer`
 - `metadata_json`
@@ -310,14 +383,14 @@ Ruwe in-app meldingen.
 
 ### `feedback_items`
 
-Canonical product needs, bugs of roadmap-items.
+Canonical open items: productwensen, bugs, UX-frictie, docs-signalen en
+terugkerende supportpatronen.
 
 - `id`
 - `kind`: `feature`, `bug`, `ux_confusion`, `docs`, `support_pattern`
 - `title`
 - `summary`
-- `status`: `inbox`, `under_review`, `planned`, `in_progress`, `shipped`,
-  `resolved`, `wont_do`
+- `status`: `open`, `resolved`, `dismissed`
 - `area`
 - `priority_score`
 - `org_count`, `user_count`
@@ -332,15 +405,17 @@ Canonical product needs, bugs of roadmap-items.
   `sent`, `failed`
 - `created_at`, `updated_at`
 
-Statuslabels in de UI zijn contextafhankelijk:
+Statuslabels in de UI blijven bewust simpel:
 
-- `resolved` op een bug toont als `Gefixt`.
-- `resolved` op docs/support/UX toont als `Opgelost`.
-- `shipped` blijft bruikbaar voor echte feature launches/public roadmap taal.
+- `open`: staat nog open en hoort in `Open items`.
+- `resolved`: afgehandeld; bij bugs mag de actieknop "bug sluiten" zeggen,
+  maar de status blijft technisch en visueel `Opgelost`.
+- `dismissed`: bewust niet oppakken.
 
-Voorlopig mag de implementatie `shipped` intern blijven gebruiken als migreren
-te duur is, maar de UI en het plan moeten onderscheid maken tussen "feature is
-verzonden" en "klantbug is gefixt".
+Er is geen aparte mappinglaag meer voor "gekoppeld", "gepland" of "in
+behandeling". Koppelingen zijn relaties (`feedback_item_links`), geen status.
+Planning of externe execution kan later via GitHub/Plane links, maar verandert
+dit simpele interne feedbackmodel niet.
 
 ### `feedback_item_links`
 
@@ -502,8 +577,7 @@ productstap is de correctie-flow verfijnen op basis van live gebruik.
 - Idempotent: dezelfde submission krijgt maximaal één suggestie per
   model/config versie.
 - Output wordt opgeslagen in `feedback_triage_suggestions`; geen automatische
-  wijziging aan `feedback_items` of `feedback_submissions` behalve eventueel
-  status `triage_suggested`.
+  wijziging aan `feedback_items` of `feedback_submissions`.
 - Als AI faalt, blijft de handmatige workflow werken.
 - Model/config versie wordt opgeslagen als `model:feedback-triage-v1`.
 - Er is een unieke index op `submission_id + model` om race conditions te
@@ -567,18 +641,18 @@ Acceptatie:
   `feedback_item_links` flow.
 - Accepteren van "nieuw item" gebruikt dezelfde bestaande create-item flow.
 
-### Fase 4 - Roadmap-items en upvotes
+### Fase 4 - Open items en signaalbundeling
 
-Status: Fase 4-light klaar; verdere roadmapautomatisering na Fase 3.
+Status: Fase 4-light klaar; verdere automatisering na Fase 3.
 
 - Maak `feedback_items` het canonical product-backlog niveau.
 - Een nieuwe submission wordt meestal evidence/upvote op een bestaand item.
-- Roadmap leeft eerst lightweight in Platform, niet in Plane:
-  - `feedback_items.status` is de roadmapstatus;
+- Open items leven eerst lightweight in Platform, niet in Plane:
+  - `feedback_items.status` is alleen `open`, `resolved` of `dismissed`;
   - itemdetail toont gekoppelde submissions, orgs/users en externe links;
   - GitHub issue en feedback.getklai.com post zijn optionele links vanaf het
     item, geen primaire bron.
-- Roadmap item list gebruikt hetzelfde Platform table/list patroon als de
+- Open items list gebruikt hetzelfde Platform table/list patroon als de
   feedback inbox. Geen losse card-layout voor dezelfde soort beheerdata.
 - Prioriteit wordt automatisch berekend op:
   - aantal orgs;
@@ -590,9 +664,9 @@ Status: Fase 4-light klaar; verdere roadmapautomatisering na Fase 3.
 
 Acceptatie:
 
-- Een roadmap-item toont alle gekoppelde feedback snippets.
+- Een open item toont alle gekoppelde feedback snippets.
 - Nieuwe duplicaten verhogen item-signaal zonder nieuwe ticket-chaos.
-- Bij status `shipped` kan Klai alle betrokken orgs/users terugvinden voor
+- Bij status `resolved` kan Klai alle betrokken orgs/users terugvinden voor
   close-the-loop communicatie.
 
 ### Fase 5 - Resolution en klantnotificaties
@@ -778,7 +852,7 @@ Acceptatie:
   `Corrigeer`, context ingeklapt.
 - [x] `AI voorstel` verwijderd als zichtbare status/filter; het is alleen een
   interne technische toestand.
-- [x] Roadmap item view teruggebracht naar het standaard Platform table/list
+- [x] Open items view teruggebracht naar het standaard Platform table/list
   patroon.
 - [x] Triage default gecorrigeerd: eerst zoeken/koppelen aan bestaand item,
   nieuw item alleen als fallback of expliciete andere actie.
@@ -834,7 +908,7 @@ Slice 2: product/system updates als apart systeem.
 - Te vroeg een publieke voting portal maken veroorzaakt product-politiek en
   onderhoudswerk.
 - Alles direct naar Linear/GitHub sturen veroorzaakt ticket-chaos.
-- Een item als `shipped` markeren zonder close-the-loop veroorzaakt verloren
+- Een item als `resolved` markeren zonder close-the-loop veroorzaakt verloren
   klantvertrouwen: de melder hoort niets terwijl Klai de fix wel weet.
 - Notificaties zonder per-recipient audit veroorzaken support-onduidelijkheid:
   "wie heeft deze update gehad?" moet altijd beantwoordbaar zijn.

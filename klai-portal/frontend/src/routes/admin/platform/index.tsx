@@ -59,7 +59,7 @@ function PlatformConsole() {
   const navigate = useNavigate()
   const [tab, setTab] = useState<PlatformTab>('users')
   const [search, setSearch] = useState('')
-  const [feedbackStatus, setFeedbackStatus] = useState('open')
+  const [feedbackStatus, setFeedbackStatus] = useState('')
   const [feedbackKind, setFeedbackKind] = useState('')
   const auth = useAuth()
   const meQuery = useQuery({
@@ -230,9 +230,9 @@ function PlatformConsole() {
               className="w-44"
             >
               <option value="">Alle statussen</option>
-              <option value="open">Open</option>
               <option value="new">Nieuw</option>
-              <option value="linked">Gekoppeld</option>
+              <option value="open">Open</option>
+              <option value="resolved">Opgelost</option>
               <option value="support">Support</option>
               <option value="dismissed">Genegeerd</option>
             </Select>

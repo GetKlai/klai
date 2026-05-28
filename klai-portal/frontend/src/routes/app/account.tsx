@@ -138,6 +138,15 @@ function AccountPage() {
     },
   })
 
+  const markAllFeedbackReadMutation = useMutation({
+    mutationFn: async () => {
+      return apiFetch('/api/app/account/feedback-updates/read-all', { method: 'POST' })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['account-feedback-updates'] })
+    },
+  })
+
   // Name and email come from /api/me (sourced server-side from the Zitadel
   // userinfo claims). The BFF session only carries `sub`, so reading from
   // auth.user.profile here would always be empty.
@@ -270,8 +279,11 @@ function AccountPage() {
           isLoading={feedbackLoading}
           error={feedbackError}
           locale={locale}
+          unreadCount={feedbackUnreadCount}
           onMarkRead={(notificationId) => markFeedbackReadMutation.mutate(notificationId)}
+          onMarkAllRead={() => markAllFeedbackReadMutation.mutate()}
           markingReadId={markFeedbackReadMutation.variables}
+          isMarkingAllRead={markAllFeedbackReadMutation.isPending}
         />
       )}
 
@@ -310,23 +322,43 @@ function FeedbackUpdatesPanel({
   isLoading,
   error,
   locale,
+  unreadCount,
   onMarkRead,
+  onMarkAllRead,
   markingReadId,
+  isMarkingAllRead,
 }: {
   items: AccountFeedbackUpdate[]
   isLoading: boolean
   error: unknown
   locale: 'nl' | 'en'
+  unreadCount: number
   onMarkRead: (notificationId: number) => void
+  onMarkAllRead: () => void
   markingReadId?: number
+  isMarkingAllRead: boolean
 }) {
   const hasError = error != null
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-sm font-medium text-gray-900 mb-2">{m.account_feedback_title()}</h2>
-        <p className="text-sm text-gray-400">{m.account_feedback_description()}</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-sm font-medium text-gray-900 mb-2">{m.account_feedback_title()}</h2>
+          <p className="text-sm text-gray-400">{m.account_feedback_description()}</p>
+        </div>
+        {unreadCount > 0 && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="w-fit shrink-0"
+            onClick={onMarkAllRead}
+            disabled={isMarkingAllRead}
+          >
+            {m.account_feedback_mark_all_read()}
+          </Button>
+        )}
       </div>
 
       {isLoading && (
@@ -437,22 +469,18 @@ function FeedbackUpdateRow({
 
 function feedbackStatusLabel(item: AccountFeedbackUpdate): { label: string; className: string } {
   const status = item.item_status ?? item.submission_status
-  const kind = item.item_kind ?? (item.source === 'assistant_problem' ? 'bug' : 'feedback')
   const baseClass = 'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium'
 
-  if (status === 'resolved' || status === 'shipped') {
+  if (status === 'resolved') {
     return {
-      label: kind === 'bug' ? m.account_feedback_status_fixed() : m.account_feedback_status_shipped(),
+      label: m.account_feedback_status_fixed(),
       className: `${baseClass} bg-emerald-50 text-emerald-700`,
     }
   }
-  if (status === 'planned' || status === 'in_progress') {
-    return { label: m.account_feedback_status_in_progress(), className: `${baseClass} bg-blue-50 text-blue-700` }
-  }
-  if (status === 'under_review' || status === 'linked') {
+  if (status === 'open') {
     return { label: m.account_feedback_status_review(), className: `${baseClass} bg-amber-50 text-amber-700` }
   }
-  if (status === 'dismissed' || status === 'wont_do') {
+  if (status === 'dismissed') {
     return { label: m.account_feedback_status_closed(), className: `${baseClass} bg-gray-100 text-gray-600` }
   }
   if (status === 'support') {

@@ -17,6 +17,9 @@ class _Result:
     def scalars(self):
         return _Result([])
 
+    def __iter__(self):
+        return iter(self._rows)
+
 
 class _Session:
     def __init__(self, rows):
@@ -55,7 +58,7 @@ def _feedback_item(**overrides):
         "kind": "feature",
         "title": "Betere triage",
         "summary": "Bundel dubbele feedback.",
-        "status": "inbox",
+        "status": "open",
         "area": "platform",
         "priority_score": 12,
         "org_count": 2,
@@ -100,6 +103,8 @@ async def test_platform_feedback_submissions_reads_assistant_events(monkeypatch)
             org_name="Acme",
             org_slug="acme",
             user_id="user-123",
+            user_email="ada@acme.test",
+            user_display_name="Ada Acme",
             source="assistant_feedback",
             status="new",
             raw_text="Maak het makkelijker om feedback te geven.",
@@ -138,6 +143,8 @@ async def test_platform_feedback_submissions_reads_assistant_events(monkeypatch)
     assert result[0].org_name == "Acme"
     assert result[0].event_type == "klai_assistant.feedback"
     assert result[0].status == "new"
+    assert result[0].user_email == "ada@acme.test"
+    assert result[0].user_display_name == "Ada Acme"
     assert result[0].raw_text == "Maak het makkelijker om feedback te geven."
     assert result[0].feedback_type == "improvement"
     assert result[0].route_id == "/app/knowledge"
@@ -154,8 +161,10 @@ async def test_platform_feedback_submissions_includes_ai_suggestion(monkeypatch)
             org_name="Acme",
             org_slug="acme",
             user_id="user-123",
+            user_email="ada@acme.test",
+            user_display_name="Ada Acme",
             source="assistant_feedback",
-            status="triage_suggested",
+            status="new",
             raw_text="Ik wil meerdere kennisbanken tegelijk selecteren.",
             feedback_type="improvement",
             severity=None,
@@ -187,7 +196,7 @@ async def test_platform_feedback_submissions_includes_ai_suggestion(monkeypatch)
                         reason="Vergelijkbaar verzoek",
                         title="Multi-KB chat",
                         kind="feature",
-                        status="inbox",
+                        status="open",
                         area="chat",
                     )
                 ],
@@ -216,7 +225,7 @@ async def test_platform_feedback_submissions_includes_ai_suggestion(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_platform_feedback_submissions_open_filter_includes_new_and_suggested(monkeypatch):
+async def test_platform_feedback_submissions_status_filter_uses_simple_status(monkeypatch):
     session = _Session([])
 
     async def fake_audit(*_args, **_kwargs):
@@ -234,10 +243,7 @@ async def test_platform_feedback_submissions_open_filter_includes_new_and_sugges
     )
 
     assert result == []
-    assert session.params == {
-        "limit": 100,
-        "statuses": ["new", "triage_suggested"],
-    }
+    assert session.params == {"limit": 100, "status": "open"}
 
 
 @pytest.mark.asyncio
@@ -284,7 +290,7 @@ async def test_platform_feedback_create_item_links_submission(monkeypatch):
             "link_type": "evidence",
         }
         return (
-            _SessionBound(session, id=123, status="linked"),
+            _SessionBound(session, id=123, status="open"),
             _SessionBound(session, id=456),
         )
 
@@ -303,7 +309,7 @@ async def test_platform_feedback_create_item_links_submission(monkeypatch):
         perms=SimpleNamespace(org_id=1, user_id="staff"),
     )
 
-    assert result.status == "linked"
+    assert result.status == "open"
     assert result.item_id == 456
 
 
@@ -319,9 +325,24 @@ async def test_platform_feedback_items_materializes_before_session_closes(monkey
         assert kwargs == {"search": None, "status": "active", "kind": "all", "limit": 25}
         return [_SessionBound(session, **_feedback_item().__dict__)]
 
+    async def fake_reporter_orgs(db, item_ids):
+        assert db is session
+        assert item_ids == [456]
+        return {
+            456: [
+                platform.PlatformFeedbackReporterOrg(
+                    org_id=42,
+                    org_name="Acme",
+                    org_slug="acme",
+                    user_count=1,
+                )
+            ]
+        }
+
     monkeypatch.setattr(platform, "_audit", fake_audit)
     monkeypatch.setattr(platform, "cross_org_session", lambda: session)
     monkeypatch.setattr(platform, "search_feedback_items", fake_search_items)
+    monkeypatch.setattr(platform, "_platform_feedback_item_reporter_orgs", fake_reporter_orgs)
 
     result = await platform.platform_feedback_items(
         search=None,
@@ -335,6 +356,7 @@ async def test_platform_feedback_items_materializes_before_session_closes(monkey
     assert len(result) == 1
     assert result[0].id == 456
     assert result[0].title == "Betere triage"
+    assert result[0].reporter_orgs[0].org_name == "Acme"
 
 
 @pytest.mark.asyncio
@@ -347,8 +369,10 @@ async def test_platform_feedback_item_detail_returns_linked_customer_evidence(mo
             org_name="Acme",
             org_slug="acme",
             user_id="user-123",
+            user_email="ada@acme.test",
+            user_display_name="Ada Acme",
             source="assistant_feedback",
-            status="linked",
+            status="open",
             raw_text="Maak triage minder handmatig.",
             feedback_type="improvement",
             severity=None,
@@ -371,9 +395,15 @@ async def test_platform_feedback_item_detail_returns_linked_customer_evidence(mo
         assert item_id == 456
         return _SessionBound(session, **_feedback_item().__dict__)
 
+    async def fake_reporter_orgs(db, item_ids):
+        assert db is session
+        assert item_ids == [456]
+        return {}
+
     monkeypatch.setattr(platform, "_audit", fake_audit)
     monkeypatch.setattr(platform, "cross_org_session", lambda: session)
     monkeypatch.setattr(platform, "get_feedback_item", fake_get_item)
+    monkeypatch.setattr(platform, "_platform_feedback_item_reporter_orgs", fake_reporter_orgs)
 
     result = await platform.platform_feedback_item_detail(
         item_id=456,
@@ -400,7 +430,7 @@ async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
         assert db is session
         assert item_id == 456
         assert values == {
-            "status": "planned",
+            "status": "resolved",
             "owner": "Maaike",
             "target_window": "Q3",
             "external_tracker_url": "https://github.com/getklai/klai/issues/123",
@@ -409,7 +439,7 @@ async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
         return _SessionBound(
             session,
             **_feedback_item(
-                status="planned",
+                status="resolved",
                 owner="Maaike",
                 target_window="Q3",
                 external_tracker_url="https://github.com/getklai/klai/issues/123",
@@ -423,7 +453,7 @@ async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
     result = await platform.platform_feedback_update_item(
         item_id=456,
         body=platform.PlatformFeedbackItemPatchIn(
-            status="planned",
+            status="resolved",
             owner="Maaike",
             target_window="Q3",
             external_tracker_url="https://github.com/getklai/klai/issues/123",
@@ -432,7 +462,7 @@ async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
         perms=SimpleNamespace(org_id=1, user_id="staff"),
     )
 
-    assert result.status == "planned"
+    assert result.status == "resolved"
     assert result.owner == "Maaike"
     assert result.target_window == "Q3"
 
@@ -528,9 +558,9 @@ async def test_platform_feedback_resolve_item_materializes_response_before_sessi
 
 
 @pytest.mark.asyncio
-async def test_update_feedback_item_sets_shipped_at(monkeypatch):
+async def test_update_feedback_item_sets_shipped_at_when_resolved(monkeypatch):
     session = _Session([])
-    item = _feedback_item(status="planned", shipped_at=None)
+    item = _feedback_item(status="open", shipped_at=None)
 
     async def fake_get_item(db, item_id):
         assert db is session
@@ -542,17 +572,17 @@ async def test_update_feedback_item_sets_shipped_at(monkeypatch):
     result = await feedback_service.update_feedback_item(
         session,
         456,
-        {"status": "shipped"},
+        {"status": "resolved"},
     )
 
-    assert result.status == "shipped"
+    assert result.status == "resolved"
     assert result.shipped_at is not None
 
 
 @pytest.mark.asyncio
 async def test_resolve_feedback_item_returns_snapshots_without_refresh_after_commit(monkeypatch):
     session = _Session([])
-    item = _feedback_item(kind="bug", status="inbox")
+    item = _feedback_item(kind="bug", status="open")
 
     async def fake_get_item(db, item_id):
         assert db is session
