@@ -10,6 +10,7 @@ so the next LLM call picks up the new settings without delay.
 
 import asyncio
 import logging
+from datetime import datetime
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
+from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackSubmission
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalUser
 from app.models.templates import PortalTemplate
@@ -95,6 +97,30 @@ class KBPreferencePatch(BaseModel):
     active_template_ids: list[int] | None = None
 
 
+class AccountFeedbackUpdateOut(BaseModel):
+    submission_id: int
+    source: str
+    raw_text: str
+    submission_status: str
+    created_at: datetime
+    updated_at: datetime
+    page_url: str | None = None
+    route_id: str | None = None
+    item_id: int | None = None
+    item_kind: str | None = None
+    item_title: str | None = None
+    item_summary: str | None = None
+    item_status: str | None = None
+    item_updated_at: datetime | None = None
+    latest_update_at: datetime
+    unread: bool = False
+
+
+class AccountFeedbackUpdatesResponse(BaseModel):
+    items: list[AccountFeedbackUpdateOut]
+    unread_count: int = 0
+
+
 async def _validate_and_normalize_template_ids(
     tpl_ids: list[int] | None,
     org_id: int,
@@ -151,6 +177,71 @@ async def get_kb_preference(
         kb_pref_version=user.kb_pref_version,
         active_template_ids=user.active_template_ids,
     )
+
+
+@router.get("/feedback-updates", response_model=AccountFeedbackUpdatesResponse)
+async def get_feedback_updates(
+    limit: int = 50,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountFeedbackUpdatesResponse:
+    """Return the caller's own feedback/problem reports for the account page."""
+    safe_limit = max(1, min(limit, 100))
+    result = await db.execute(
+        select(
+            FeedbackSubmission.id.label("submission_id"),
+            FeedbackSubmission.source.label("source"),
+            FeedbackSubmission.raw_text.label("raw_text"),
+            FeedbackSubmission.status.label("submission_status"),
+            FeedbackSubmission.created_at.label("created_at"),
+            FeedbackSubmission.updated_at.label("updated_at"),
+            FeedbackSubmission.page_url.label("page_url"),
+            FeedbackSubmission.route_id.label("route_id"),
+            FeedbackItem.id.label("item_id"),
+            FeedbackItem.kind.label("item_kind"),
+            FeedbackItem.title.label("item_title"),
+            FeedbackItem.summary.label("item_summary"),
+            FeedbackItem.status.label("item_status"),
+            FeedbackItem.updated_at.label("item_updated_at"),
+        )
+        .select_from(FeedbackSubmission)
+        .outerjoin(FeedbackItemLink, FeedbackItemLink.submission_id == FeedbackSubmission.id)
+        .outerjoin(FeedbackItem, FeedbackItem.id == FeedbackItemLink.item_id)
+        .where(
+            FeedbackSubmission.org_id == perms.org_id,
+            FeedbackSubmission.user_id == perms.user_id,
+            FeedbackSubmission.source.in_(["assistant_problem", "assistant_feedback"]),
+        )
+        .order_by(FeedbackSubmission.created_at.desc())
+        .limit(safe_limit)
+    )
+
+    items: list[AccountFeedbackUpdateOut] = []
+    for row in result.all():
+        item_updated_at = row.item_updated_at
+        latest_update_at = item_updated_at or row.updated_at
+        items.append(
+            AccountFeedbackUpdateOut(
+                submission_id=row.submission_id,
+                source=row.source,
+                raw_text=row.raw_text,
+                submission_status=row.submission_status,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                page_url=row.page_url,
+                route_id=row.route_id,
+                item_id=row.item_id,
+                item_kind=row.item_kind,
+                item_title=row.item_title,
+                item_summary=row.item_summary,
+                item_status=row.item_status,
+                item_updated_at=item_updated_at,
+                latest_update_at=latest_update_at,
+                unread=False,
+            )
+        )
+
+    return AccountFeedbackUpdatesResponse(items=items, unread_count=0)
 
 
 @router.patch("/kb-preference", response_model=KBPreferenceOut)

@@ -88,6 +88,10 @@ Live op `main`:
   aparte productstatus `AI voorstel` aan staff getoond.
 - De triage drawer zoekt eerst naar bestaande items en mag niet standaard een
   nieuw item voorstellen als er een bestaande match is.
+- `/app/account` heeft een eerste `Mijn meldingen` tab die de ingelogde
+  gebruiker eigen probleemmeldingen en feedback/verzoeken toont vanuit
+  `feedback_submissions`, inclusief eventuele gekoppelde `feedback_items`
+  status.
 
 Geverifieerd:
 
@@ -101,9 +105,12 @@ Nog niet gebouwd:
 
 - Resolution/close-the-loop flow: item als gefixt/opgelost markeren,
   betrokken gebruikers/orgs tonen, notificatie opstellen en verzenden.
+- Volledige notification-backed `/app/account` updates met read/unread state.
 - In-app notificaties voor betrokken melders.
 - Transactionele e-mail naar betrokken melders.
 - Volledige audit/status tracking voor notificaties.
+- Apart product/system update systeem voor latere release notes,
+  maintenance-meldingen en gerichte productmeldingen.
 - Downstream sync naar GitHub Issues of feedback.getklai.com.
 
 ## Kritische herijking na huidige progressie
@@ -232,6 +239,59 @@ Platform. Gebruik `feedback_items` als source of truth voor bundeling,
 traceability en klantupdates. Sync later optioneel naar GitHub Issues
 execution en feedback.getklai.com/Fider voor publieke voting.
 
+## Onderzoeksconclusie notificatie UX en overzichtslijsten
+
+Datum: 2026-05-28.
+
+Patronen uit GitHub, Linear, Canny, Beamer, Intercom, Appcues en Pendo:
+
+1. **Een inbox heeft expliciete read/unread en triage-acties.**
+   GitHub toont een notification inbox met filters voor read/unread, saved en
+   done. Belangrijk detail: iets bekijken is niet hetzelfde als afhandelen.
+   Voor Klai betekent dit dat een groen bolletje verdwijnt door expliciet
+   `mark read`, niet door alleen de pagina te openen.
+2. **Updates over eigen of gevolgde feedback-items zijn statusupdates.**
+   Linear en Canny sturen updates wanneer een issue/post waar je bij betrokken
+   bent verandert: status, comments, merge, assignment of completion. Voor Klai
+   zijn dit persoonlijke updates op alles wat je zelf gemeld of gesteund hebt:
+   bug, feature request, UX-feedback, docs of support-pattern. De tekst is:
+   "je melding is gekoppeld", "we onderzoeken dit", "dit is gepland",
+   "dit is gefixt/opgelost/verzonden".
+3. **Product/system updates zijn announcements, geen persoonlijke tickets.**
+   Beamer, Intercom, Appcues en Pendo behandelen release notes, banners,
+   resource centers en product tours als outbound/product messaging. Dat heeft
+   audience targeting, publish/draft/scheduled lifecycle en eventueel banners
+   of changelog. Dat moet niet in dezelfde bron of lifecycle zitten als
+   feedbackmeldingen.
+4. **Overzichtslijsten zijn per taak verschillend.**
+   Persoonlijk feedback-overzicht: lijst/timeline van eigen meldingen en
+   gesteunde items met status en laatste update. Product updates: "Wat is
+   nieuw" feed of notification center met categorie, publicatiedatum, audience
+   en read state.
+5. **Een gedeelde bell mag later, maar alleen als aggregatie.**
+   Eén UI-bell kan later beide feeds tonen, maar daarachter blijven het twee
+   systemen met eigen tabellen, endpoints, rechten en lifecycle. De bell is een
+   view, geen bron van waarheid.
+6. **Publieke roadmap blijft gecureerd downstream.**
+   Canny maakt onderscheid tussen interne roadmap en publieke portal. Voor Klai
+   blijft Platform canonical; feedback.getklai.com of een publieke changelog
+   krijgt alleen expliciet gepubliceerde items.
+
+Ontwerpbeslissing:
+
+- Bouw twee gescheiden systemen:
+  - **Persoonlijke feedback-updates**: `feedback_notifications`, gekoppeld aan
+    `feedback_items`, zichtbaar bij `/app/account` als `Mijn meldingen` of
+    `Mijn feedback`. Dit omvat bugs, feature requests, UX-feedback en andere
+    canonical feedback-items.
+  - **Product/system updates**: `product_announcements` +
+    `product_announcement_deliveries`, zichtbaar als latere `Wat is nieuw` feed
+    of notification center.
+- Deel alleen kleine technische primitives waar nuttig:
+  `read_at`, `dismissed_at`, delivery status, e-mail status en audit events.
+- Een latere globale bell mag server-side beide feeds samen ophalen, maar mag
+  de onderliggende modellen niet samenvoegen.
+
 ## Datamodel
 
 ### `feedback_submissions`
@@ -329,6 +389,47 @@ baseren.
 
 De ontvangers worden afgeleid uit `feedback_item_links -> feedback_submissions`.
 Staff typt dus geen ontvangers over.
+
+### `product_announcements`
+
+Aparte bron voor system updates/release notes. Dit is bewust niet hetzelfde
+als feedback-notificaties: announcements zijn outbound productcommunicatie met
+een doelgroep en publicatielifecycle.
+
+- `id`
+- `kind`: `system_update`, `release_note`, `maintenance`, `incident`,
+  `feature_announcement`
+- `title`
+- `body`
+- `status`: `draft`, `scheduled`, `published`, `archived`
+- `severity`: `info`, `success`, `warning`, `critical`
+- `audience_json`: tenants, plans, roles, locales of feature flags
+- `publish_at`
+- `expires_at`
+- `created_by`
+- `created_at`, `updated_at`
+
+### `product_announcement_deliveries`
+
+Per-user/per-org delivery en read state voor product/system updates.
+
+- `id`
+- `announcement_id`
+- `org_id`
+- `user_id`: nullable voor org-brede delivery, maar reads worden per user
+  vastgelegd zodra iemand opent
+- `channel`: `in_app`, `email`
+- `status`: `queued`, `sent`, `failed`, `skipped`
+- `read_at`
+- `dismissed_at`
+- `sent_at`
+- `error`
+- `created_at`
+- `updated_at`
+
+RLS-regel: tenant users lezen alleen records voor hun eigen `org_id` en eigen
+`user_id` of org-brede records. Platform-admins beheren/publishen via aparte
+gated endpoints.
 
 ## Workflow
 
@@ -543,17 +644,36 @@ Acceptatie:
 
 #### Fase 5c - In-app notificatie
 
-- Start simpel: een notification inbox/toast in de Klai app, gekoppeld aan de
-  ingelogde user.
+- Start simpel in `/app/account` met tab `Mijn meldingen` of `Mijn feedback`,
+  gekoppeld aan de ingelogde user.
+- De tab krijgt een groen bolletje of unread count als er ongelezen updates op
+  eigen of gesteunde feedback-items zijn.
+- Deze tab is alleen voor persoonlijke feedbackstatus. Geen algemene release
+  notes of system updates in deze lijst.
+- Toon eigen/gesteunde meldingen als compacte lijst met per item een timeline:
+  - titel;
+  - type: bug, feature request, UX-feedback, docs of support-pattern;
+  - user-facing status: `Ontvangen`, `In behandeling`, `Gepland`, `Gefixt`,
+    `Opgelost`, `Verzonden`, `Niet gepland`;
+  - laatste staff/updatebericht;
+  - datum;
+  - optionele link naar relevante app-context.
 - Toon alleen updates voor eigen `user_id` binnen eigen org.
 - Link vanuit de notification naar relevante app-context als die veilig
   beschikbaar is.
 - Geen cross-tenant Platform data in tenant-facing payloads.
+- Gebruik `feedback_notifications` als bron voor deze lijst. Niet
+  `product_announcements`.
 
 Acceptatie:
 
 - Een gebruiker die feedback meldde ziet in-app dat het item is opgelost.
+- Een gebruiker die een feature request deed of steunde ziet voortgang daarop,
+  niet alleen bugs.
 - Tenant-users kunnen nooit notificaties van andere orgs lezen.
+- Het groene bolletje verdwijnt pas na mark-as-read, niet alleen na page load.
+- Interne labels/statussen worden niet aan gebruikers getoond.
+- Algemene product/system updates verschijnen hier niet.
 
 #### Fase 5d - E-mail
 
@@ -589,6 +709,38 @@ Acceptatie:
 
 - Staff hoeft feedback niet handmatig over te typen naar execution tooling.
 - Een external issue link komt terug op het feedback item.
+
+### Fase 6b - System updates en product announcements
+
+Status: expliciet later, na feedback notifications.
+
+- Voeg `product_announcements` en `product_announcement_deliveries` toe als
+  aparte Platform-console voor:
+  - system updates;
+  - release notes;
+  - maintenance/incident notices;
+  - targeted feature announcements.
+- Publiceren maakt delivery records voor de doelgroep. Dit staat los van
+  `feedback_notifications`.
+- Eerste UI-patroon:
+  - aparte `Wat is nieuw` of `Updates` entry, niet de feedbacklijst;
+  - optioneel later een globale bell die feedback- en announcement-feeds
+    aggregeert;
+  - optionele topbar alleen voor belangrijke system/incident updates;
+  - geen modals/pop-ups voor normale release notes.
+- Audience targeting blijft simpel:
+  - iedereen;
+  - specifieke tenant(s);
+  - platform/admin rol;
+  - feature flag of product area later.
+
+Acceptatie:
+
+- Feedback-updates en system updates gebruiken vergelijkbare read/unread
+  semantics, maar eigen tabellen en endpoints.
+- System updates hebben hun eigen bron en lifecycle, dus feedbackdata raakt
+  niet vervuild.
+- Klai kan gerichte productupdates tonen zonder externe changelogtool.
 
 ### Fase 7 - Public roadmap/voting
 
@@ -630,21 +782,28 @@ Acceptatie:
   patroon.
 - [x] Triage default gecorrigeerd: eerst zoeken/koppelen aan bestaand item,
   nieuw item alleen als fallback of expliciete andere actie.
+- [x] Eerste `/app/account` persoonlijke lijst: eigen probleemmeldingen en
+  feedback/verzoeken zichtbaar met gekoppelde itemstatus waar aanwezig.
 
 ## Eerstvolgende stap
 
-Build Fase 5a/5b: resolution + notification records. Zonder dit blijft de flow
-stuk zodra een echte klantbug is opgelost, omdat Klai-staff niet kan vastleggen
-dat het gefixt is en de melder niet betrouwbaar kan informeren.
+Build Fase 5 in twee korte slices. Zonder dit blijft de flow stuk zodra
+Klai-staff een item oplost, omdat de melder geen betrouwbare update krijgt en
+geen eigen overzicht heeft van eerder gemelde zaken.
 
-Concreet:
+Slice 1: persoonlijke feedback-updates.
 
-1. Voeg datamodel/migratie toe voor `feedback_notifications` en resolution
-   velden op `feedback_items`.
+0. Klaar: eerste `/app/account` lijst voor eigen probleemmeldingen en
+   feedback/verzoeken via `GET /api/app/account/feedback-updates`.
+1. Voeg datamodel/migratie toe voor `feedback_notifications`,
+   read/dismiss velden op `feedback_notifications` en resolution velden op
+   `feedback_items`.
 2. Voeg backend endpoints toe:
    - `POST /api/admin/platform/feedback/items/{id}/resolve-draft`
    - `POST /api/admin/platform/feedback/items/{id}/resolve`
    - `POST /api/admin/platform/feedback/notifications/{id}/retry`
+   - `GET /api/app/account/feedback-updates`
+   - `POST /api/app/account/feedback-updates/{id}/read`
 3. Voeg Platform UI toe in item-detail:
    - knop `Markeer als gefixt/opgelost/verzonden`;
    - modal met affected users/orgs;
@@ -658,7 +817,17 @@ Concreet:
    - no-email/no-opt-in handling;
    - failed notification retry;
    - bug label `Gefixt` versus feature label `Verzonden`.
-7. Pas daarna pas GitHub Issues of feedback.getklai.com sync verder aan.
+7. Voeg `/app/account` tab `Mijn meldingen` of `Mijn feedback` toe met unread
+   bolletje, persoonlijke lijst van eigen/gesteunde feedback-items en
+   mark-as-read.
+
+Slice 2: product/system updates als apart systeem.
+
+1. Voeg `product_announcements` en `product_announcement_deliveries` toe.
+2. Voeg Platform publish-console toe voor draft/scheduled/published updates.
+3. Voeg tenant-facing `Wat is nieuw` feed toe, los van `Mijn meldingen`.
+4. Voeg eventueel later een globale bell toe die beide feeds aggregeert.
+5. Pas daarna pas GitHub Issues of feedback.getklai.com sync verder aan.
 
 ## Risico's
 
@@ -671,6 +840,12 @@ Concreet:
   "wie heeft deze update gehad?" moet altijd beantwoordbaar zijn.
 - E-mail zonder preference/opt-out check kan privacy/compliance problemen
   veroorzaken.
+- Een generiek notificatiesysteem bouwen zonder concrete productbron veroorzaakt
+  scope creep. Daarom eerst persoonlijke feedback-updates, daarna pas
+  product/system announcements.
+- System updates en feedback-updates in dezelfde brontabel stoppen vervuilt de
+  lifecycle. Deel hooguit read/dismiss/delivery patronen en een latere
+  aggregator view.
 - `question` en `feedback` mengen maakt roadmap data rommelig.
 - Alleen de frontend tab verbergen is geen security boundary; backend moet
   altijd `require_platform_admin()` gebruiken.
@@ -685,4 +860,15 @@ Concreet:
 - Quackback: https://www.quackback.io/ en https://github.com/QuackbackIO/quackback
 - Plane: https://github.com/makeplane/plane
 - GitHub issue forms: https://docs.github.com/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms
+- GitHub notifications: https://docs.github.com/en/subscriptions-and-notifications/concepts/about-notifications
 - GitHub Discussions: https://docs.github.com/en/discussions
+- Linear customer requests: https://linear.app/docs/customer-requests
+- Linear notifications: https://linear.app/docs/notifications
+- Canny notifications:
+  https://help.canny.io/en/articles/5380265-notifications
+- Canny public roadmap:
+  https://help.canny.io/en/articles/3828148-public-roadmap
+- Beamer in-app notification center:
+  https://www.getbeamer.com/in-app-notification-center
+- Appcues announcement patterns:
+  https://docs.appcues.com/build-guide-general-announcement-webinar

@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Download, Settings, SlidersHorizontal } from 'lucide-react'
+import { Bug, Download, Lightbulb, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -10,9 +10,9 @@ import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
 
-type TabId = 'settings' | 'advanced'
+type TabId = 'settings' | 'feedback' | 'advanced'
 
-const VALID_TABS = new Set<TabId>(['settings', 'advanced'])
+const VALID_TABS = new Set<TabId>(['settings', 'feedback', 'advanced'])
 
 type AccountSearch = {
   tab?: TabId
@@ -31,6 +31,30 @@ interface MeAccount {
   preferred_language?: 'nl' | 'en'
   name?: string
   email?: string
+}
+
+interface AccountFeedbackUpdate {
+  submission_id: number
+  source: string
+  raw_text: string
+  submission_status: string
+  created_at: string
+  updated_at: string
+  page_url?: string | null
+  route_id?: string | null
+  item_id?: number | null
+  item_kind?: string | null
+  item_title?: string | null
+  item_summary?: string | null
+  item_status?: string | null
+  item_updated_at?: string | null
+  latest_update_at: string
+  unread: boolean
+}
+
+interface AccountFeedbackUpdatesResponse {
+  items: AccountFeedbackUpdate[]
+  unread_count: number
 }
 
 function AccountPage() {
@@ -53,6 +77,12 @@ function AccountPage() {
         return null
       }
     },
+    enabled: auth.isAuthenticated,
+  })
+
+  const { data: feedbackUpdates, isLoading: feedbackLoading, error: feedbackError } = useQuery({
+    queryKey: ['account-feedback-updates'],
+    queryFn: () => apiFetch<AccountFeedbackUpdatesResponse>('/api/app/account/feedback-updates'),
     enabled: auth.isAuthenticated,
   })
 
@@ -101,9 +131,11 @@ function AccountPage() {
   const name = meData?.name ?? ''
   const email = meData?.email ?? ''
   const hasProfileInfo = Boolean(name || email)
+  const feedbackUnreadCount = feedbackUpdates?.unread_count ?? 0
 
-  const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
+  const tabs: { id: TabId; label: string; icon: React.ElementType; unread?: number }[] = [
     { id: 'settings', label: m.account_tab_settings(), icon: Settings },
+    { id: 'feedback', label: m.account_tab_feedback(), icon: MessageSquare, unread: feedbackUnreadCount },
     { id: 'advanced', label: m.account_tab_advanced(), icon: SlidersHorizontal },
   ]
 
@@ -127,7 +159,7 @@ function AccountPage() {
 
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex gap-6">
-          {tabs.map(({ id: tabId, label, icon: TabIcon }) => {
+          {tabs.map(({ id: tabId, label, icon: TabIcon, unread }) => {
             const isActive = tabId === activeTab
             return (
               <button
@@ -143,6 +175,9 @@ function AccountPage() {
               >
                 <TabIcon className="h-4 w-4" />
                 {label}
+                {(unread ?? 0) > 0 && (
+                  <span className="ml-0.5 h-2 w-2 rounded-full bg-emerald-500" aria-label={m.account_feedback_unread()} />
+                )}
               </button>
             )
           })}
@@ -211,6 +246,15 @@ function AccountPage() {
         </div>
       )}
 
+      {activeTab === 'feedback' && (
+        <FeedbackUpdatesPanel
+          items={feedbackUpdates?.items ?? []}
+          isLoading={feedbackLoading}
+          error={feedbackError}
+          locale={locale}
+        />
+      )}
+
       {activeTab === 'advanced' && (
         <div className="space-y-6">
           <div>
@@ -239,4 +283,140 @@ function AccountPage() {
       )}
     </div>
   )
+}
+
+function FeedbackUpdatesPanel({
+  items,
+  isLoading,
+  error,
+  locale,
+}: {
+  items: AccountFeedbackUpdate[]
+  isLoading: boolean
+  error: unknown
+  locale: 'nl' | 'en'
+}) {
+  const hasError = error != null
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-sm font-medium text-gray-900 mb-2">{m.account_feedback_title()}</h2>
+        <p className="text-sm text-gray-400">{m.account_feedback_description()}</p>
+      </div>
+
+      {isLoading && (
+        <div className="border-y border-gray-200 divide-y divide-gray-100">
+          {[0, 1, 2].map((index) => (
+            <div key={index} className="flex gap-3 py-4">
+              <div className="mt-0.5 h-8 w-8 shrink-0 rounded-full bg-gray-100" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="h-4 w-2/3 rounded bg-gray-100" />
+                <div className="h-3 w-full rounded bg-gray-100" />
+                <div className="h-3 w-1/3 rounded bg-gray-100" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!isLoading && hasError && (
+        <p className="text-sm text-[var(--color-destructive)]">{m.account_feedback_error()}</p>
+      )}
+
+      {!isLoading && !hasError && items.length === 0 && (
+        <div className="border-y border-gray-200 py-8">
+          <p className="text-sm font-medium text-gray-900">{m.account_feedback_empty_title()}</p>
+          <p className="mt-1 text-sm text-gray-400">{m.account_feedback_empty_description()}</p>
+        </div>
+      )}
+
+      {!isLoading && !hasError && items.length > 0 && (
+        <div className="border-y border-gray-200 divide-y divide-gray-100">
+          {items.map((item) => (
+            <FeedbackUpdateRow key={item.submission_id} item={item} locale={locale} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FeedbackUpdateRow({ item, locale }: { item: AccountFeedbackUpdate; locale: 'nl' | 'en' }) {
+  const title = item.item_title || truncateText(item.raw_text, 88)
+  const status = feedbackStatusLabel(item)
+  const updatedAt = formatFeedbackDate(item.latest_update_at, locale)
+  const createdAt = formatFeedbackDate(item.created_at, locale)
+
+  return (
+    <article className="flex gap-3 py-4">
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+        {item.source === 'assistant_problem' ? <Bug className="h-4 w-4" /> : <Lightbulb className="h-4 w-4" />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium text-gray-900">{title}</h3>
+            <p className="mt-1 line-clamp-2 text-sm text-gray-500">{item.raw_text}</p>
+          </div>
+          <span className={status.className}>{status.label}</span>
+        </div>
+        <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
+          <div className="flex gap-1">
+            <dt>{m.account_feedback_reported()}</dt>
+            <dd>{createdAt}</dd>
+          </div>
+          <div className="flex gap-1">
+            <dt>{m.account_feedback_updated()}</dt>
+            <dd>{updatedAt}</dd>
+          </div>
+          {item.route_id && (
+            <div className="flex gap-1">
+              <dt>{m.account_feedback_location()}</dt>
+              <dd className="max-w-[220px] truncate">{item.route_id}</dd>
+            </div>
+          )}
+        </dl>
+      </div>
+    </article>
+  )
+}
+
+function feedbackStatusLabel(item: AccountFeedbackUpdate): { label: string; className: string } {
+  const status = item.item_status ?? item.submission_status
+  const kind = item.item_kind ?? (item.source === 'assistant_problem' ? 'bug' : 'feedback')
+  const baseClass = 'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium'
+
+  if (status === 'shipped') {
+    return {
+      label: kind === 'bug' ? m.account_feedback_status_fixed() : m.account_feedback_status_shipped(),
+      className: `${baseClass} bg-emerald-50 text-emerald-700`,
+    }
+  }
+  if (status === 'planned' || status === 'in_progress') {
+    return { label: m.account_feedback_status_in_progress(), className: `${baseClass} bg-blue-50 text-blue-700` }
+  }
+  if (status === 'under_review' || status === 'linked') {
+    return { label: m.account_feedback_status_review(), className: `${baseClass} bg-amber-50 text-amber-700` }
+  }
+  if (status === 'dismissed' || status === 'wont_do') {
+    return { label: m.account_feedback_status_closed(), className: `${baseClass} bg-gray-100 text-gray-600` }
+  }
+  if (status === 'support') {
+    return { label: m.account_feedback_status_support(), className: `${baseClass} bg-purple-50 text-purple-700` }
+  }
+  return { label: m.account_feedback_status_received(), className: `${baseClass} bg-gray-100 text-gray-700` }
+}
+
+function formatFeedbackDate(value: string, locale: 'nl' | 'en') {
+  return new Intl.DateTimeFormat(locale === 'nl' ? 'nl-NL' : 'en-US', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(value))
+}
+
+function truncateText(value: string, maxLength: number) {
+  if (value.length <= maxLength) return value
+  return `${value.slice(0, maxLength - 3).trim()}...`
 }
