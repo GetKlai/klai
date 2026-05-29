@@ -69,14 +69,6 @@ def _feedback_item(**overrides):
         "priority_score": 12,
         "org_count": 2,
         "user_count": 3,
-        "external_tracker_type": None,
-        "external_tracker_id": None,
-        "external_tracker_url": None,
-        "public_feedback_url": None,
-        "public_title": None,
-        "public_summary": None,
-        "target_window": None,
-        "owner": None,
         "shipped_at": None,
         "resolution_summary": None,
         "resolved_at": None,
@@ -539,7 +531,7 @@ async def test_platform_feedback_item_detail_returns_linked_customer_evidence(mo
 
 
 @pytest.mark.asyncio
-async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
+async def test_platform_feedback_update_item_saves_editable_fields(monkeypatch):
     session = _Session([])
 
     async def fake_audit(*_args, **_kwargs):
@@ -550,18 +542,16 @@ async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
         assert item_id == 456
         assert values == {
             "status": "resolved",
-            "owner": "Maaike",
-            "target_window": "Q3",
-            "external_tracker_url": "https://github.com/getklai/klai/issues/123",
-            "public_feedback_url": None,
+            "title": "Snellere triage",
+            "summary": "Bundel dubbele feedback.",
+            "area": "platform",
         }
         return _SessionBound(
             session,
             **_feedback_item(
                 status="resolved",
-                owner="Maaike",
-                target_window="Q3",
-                external_tracker_url="https://github.com/getklai/klai/issues/123",
+                title="Snellere triage",
+                area="platform",
             ).__dict__,
         )
 
@@ -573,17 +563,16 @@ async def test_platform_feedback_update_item_saves_roadmap_fields(monkeypatch):
         item_id=456,
         body=platform.PlatformFeedbackItemPatchIn(
             status="resolved",
-            owner="Maaike",
-            target_window="Q3",
-            external_tracker_url="https://github.com/getklai/klai/issues/123",
-            public_feedback_url="",
+            title="Snellere triage",
+            summary="Bundel dubbele feedback.",
+            area="platform",
         ),
         perms=SimpleNamespace(org_id=1, user_id="staff"),
     )
 
     assert result.status == "resolved"
-    assert result.owner == "Maaike"
-    assert result.target_window == "Q3"
+    assert result.title == "Snellere triage"
+    assert result.area == "platform"
 
 
 @pytest.mark.asyncio
