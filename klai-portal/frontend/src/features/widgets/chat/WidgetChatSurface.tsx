@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, MessageSquare, Pencil, Share2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, MessageSquare, Pencil, Share2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
@@ -29,10 +29,18 @@ interface MessageSource {
   url: string
 }
 
+interface AgentActivity {
+  step: string
+  label: string
+  detail?: string
+  count?: number
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   sources?: MessageSource[]
+  activity?: AgentActivity[]
 }
 
 interface PageContext {
@@ -82,10 +90,29 @@ function normalizeSources(rawSources: unknown): MessageSource[] {
     const source = raw as Partial<MessageSource>
     const label = typeof source.label === 'string' ? source.label.trim() : ''
     const title = typeof source.title === 'string' && source.title.trim() ? source.title.trim() : `Source ${label}`
-    const url = typeof source.url === 'string' ? source.url.trim() : ''
-    if (!/^\d+$/.test(label) || !/^https?:\/\//i.test(url) || seen.has(label)) continue
+    const rawUrl = typeof source.url === 'string' ? source.url.trim() : ''
+    const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : ''
+    if (!/^\d+$/.test(label) || seen.has(label)) continue
     normalized.push({ label, title, url })
     seen.add(label)
+  }
+  return normalized
+}
+
+function normalizeActivity(rawActivity: unknown): AgentActivity[] {
+  if (!Array.isArray(rawActivity)) return []
+  const seen = new Set<string>()
+  const normalized: AgentActivity[] = []
+  for (const raw of rawActivity) {
+    if (!raw || typeof raw !== 'object') continue
+    const item = raw as Partial<AgentActivity>
+    const step = typeof item.step === 'string' ? item.step.trim() : ''
+    const label = typeof item.label === 'string' ? item.label.trim() : ''
+    if (!step || !label || seen.has(step)) continue
+    const detail = typeof item.detail === 'string' && item.detail.trim() ? item.detail.trim() : undefined
+    const count = typeof item.count === 'number' && Number.isFinite(item.count) ? item.count : undefined
+    normalized.push({ step, label, detail, count })
+    seen.add(step)
   }
   return normalized
 }
@@ -191,6 +218,8 @@ export function WidgetChatSurface({
             if (token) appendAssistantToken(token)
             const sources = normalizeSources(parsed.choices?.[0]?.delta?.sources)
             if (sources.length > 0) setLastAssistantSources(sources)
+            const activity = normalizeActivity(parsed.choices?.[0]?.delta?.activity)
+            if (activity.length > 0) appendLastAssistantActivity(activity)
           } catch {
             // Ignore malformed streaming chunks.
           }
@@ -226,6 +255,20 @@ export function WidgetChatSurface({
       const last = next[next.length - 1]
       if (last && last.role === 'assistant') {
         next[next.length - 1] = { ...last, sources }
+      }
+      return next
+    })
+  }
+
+  function appendLastAssistantActivity(activity: AgentActivity[]) {
+    setMessages((prev) => {
+      const next = [...prev]
+      const last = next[next.length - 1]
+      if (last && last.role === 'assistant') {
+        const existing = last.activity ?? []
+        const seen = new Set(existing.map((item) => item.step))
+        const appended = activity.filter((item) => !seen.has(item.step))
+        next[next.length - 1] = { ...last, activity: [...existing, ...appended] }
       }
       return next
     })
@@ -538,42 +581,89 @@ function SourceDetails({
   isDark: boolean
 }) {
   const sources = message.sources ?? []
-  if (message.role !== 'assistant' || sources.length === 0) return null
+  const activity = message.activity ?? []
+  const sourceCountLabel = sources.length === 1 ? '1 bron' : `${sources.length} bronnen`
+  const activityCountLabel = activity.length === 1 ? '1 stap' : `${activity.length} stappen`
+  if (
+    message.role !== 'assistant' ||
+    (!showSources && !showMeta) ||
+    (sources.length === 0 && activity.length === 0)
+  ) return null
   return (
-    <div className="mt-2 max-w-xl">
-      {showSources && (
-        <div className="space-y-1">
-          <div className={`text-[10px] font-semibold uppercase tracking-[0.06em] ${isDark ? 'text-[#fffef2]/45' : 'text-gray-400'}`}>
-            {m.widget_chat_sources_label()}
-          </div>
-          <ol className="space-y-1">
+    <div className="mt-2 max-w-xl space-y-1.5">
+      {showSources && sources.length > 0 && (
+        <details className={`group rounded-xl border ${isDark ? 'border-white/10 bg-white/[0.04]' : 'border-gray-200 bg-gray-50/70'}`}>
+          <summary className={`flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs ${isDark ? 'text-[#fffef2]/60 hover:text-[#fffef2]' : 'text-gray-500 hover:text-gray-900'} [&::-webkit-details-marker]:hidden`}>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 -rotate-90 transition-transform group-open:rotate-0" strokeWidth={2} />
+            <span className="min-w-0 flex-1 font-medium">{m.widget_chat_sources_label()}</span>
+            <span className={isDark ? 'text-[#fffef2]/40' : 'text-gray-400'}>{sourceCountLabel}</span>
+          </summary>
+          <ol className="space-y-1 px-3 pb-3">
             {sources.map((source) => (
               <li key={`${source.label}-${source.url}`}>
-                <a
-                  href={source.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs no-underline transition-colors ${isDark ? 'border-white/10 bg-white/5 text-[#fffef2] hover:bg-white/10' : 'border-gray-200 bg-[var(--color-rl-cream)] text-gray-700 hover:bg-gray-50'}`}
-                >
-                  <span
-                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
-                    style={{ backgroundColor: 'var(--color-rl-dark)' }}
+                {source.url ? (
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs no-underline transition-colors ${isDark ? 'border-white/10 bg-white/5 text-[#fffef2] hover:bg-white/10' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
                   >
-                    {source.label}
+                    <span
+                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                      style={{ backgroundColor: 'var(--color-rl-dark)' }}
+                    >
+                      {source.label}
+                    </span>
+                    <span className="truncate">{source.title}</span>
+                  </a>
+                ) : (
+                  <span className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs ${isDark ? 'border-white/10 bg-white/5 text-[#fffef2]/70' : 'border-gray-200 bg-white text-gray-600'}`}>
+                    <span
+                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                      style={{ backgroundColor: 'var(--color-rl-dark)' }}
+                    >
+                      {source.label}
+                    </span>
+                    <span className="truncate">{source.title}</span>
                   </span>
-                  <span className="truncate">{source.title}</span>
-                </a>
+                )}
               </li>
             ))}
           </ol>
-        </div>
+        </details>
       )}
       {showMeta && (
-        <p className={`mt-1.5 text-[11px] ${isDark ? 'text-[#fffef2]/45' : 'text-gray-400'}`}>
-          {sources.length === 1
-            ? m.widget_chat_meta_sources_one()
-            : m.widget_chat_meta_sources_many({ count: String(sources.length) })}
-        </p>
+        <details className={`group rounded-xl border ${isDark ? 'border-white/10 bg-white/[0.03]' : 'border-gray-200 bg-gray-50/50'}`}>
+          <summary className={`flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs ${isDark ? 'text-[#fffef2]/55 hover:text-[#fffef2]' : 'text-gray-500 hover:text-gray-900'} [&::-webkit-details-marker]:hidden`}>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 -rotate-90 transition-transform group-open:rotate-0" strokeWidth={2} />
+            <span className="min-w-0 flex-1 font-medium">Agent activiteit</span>
+            <span className={isDark ? 'text-[#fffef2]/40' : 'text-gray-400'}>
+              {activity.length > 0 ? activityCountLabel : sourceCountLabel}
+            </span>
+          </summary>
+          <div className={`space-y-2 px-3 pb-3 text-[11px] leading-relaxed ${isDark ? 'text-[#fffef2]/55' : 'text-gray-500'}`}>
+            {sources.length > 0 && (
+              <p>
+                {sources.length === 1
+                  ? m.widget_chat_meta_sources_one()
+                  : m.widget_chat_meta_sources_many({ count: String(sources.length) })}
+              </p>
+            )}
+            {activity.length > 0 && (
+              <ol className="space-y-1.5">
+                {activity.map((item) => (
+                  <li key={item.step} className="flex gap-2">
+                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${isDark ? 'bg-[#fffef2]/35' : 'bg-gray-300'}`} />
+                    <span className="min-w-0">
+                      <span className={isDark ? 'font-medium text-[#fffef2]/75' : 'font-medium text-gray-700'}>{item.label}</span>
+                      {item.detail && <span> {item.detail}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </details>
       )}
     </div>
   )
