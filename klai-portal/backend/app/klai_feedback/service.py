@@ -2,10 +2,16 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackNotification, FeedbackSubmission
+from app.klai_feedback.models import (
+    FeedbackItem,
+    FeedbackItemLink,
+    FeedbackNotification,
+    FeedbackSubmission,
+    FeedbackTriageSuggestion,
+)
 from app.models.portal import PortalUser
 
 
@@ -159,6 +165,12 @@ async def delete_feedback_submission(db: AsyncSession, submission_id: int) -> No
         .scalars()
         .all()
     )
+    await db.execute(
+        update(FeedbackNotification)
+        .where(FeedbackNotification.submission_id == submission_id)
+        .values(submission_id=None)
+    )
+    await db.execute(delete(FeedbackTriageSuggestion).where(FeedbackTriageSuggestion.submission_id == submission_id))
     await db.execute(delete(FeedbackItemLink).where(FeedbackItemLink.submission_id == submission_id))
     await db.delete(submission)
     await db.flush()
@@ -335,6 +347,8 @@ async def delete_feedback_item(db: AsyncSession, item_id: int) -> None:
         ).scalars()
         for submission in submissions:
             submission.status = "new"
+    await db.execute(delete(FeedbackNotification).where(FeedbackNotification.item_id == item_id))
+    await db.execute(delete(FeedbackItemLink).where(FeedbackItemLink.item_id == item_id))
     await db.delete(item)
     await db.commit()
 

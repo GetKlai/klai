@@ -1,10 +1,14 @@
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.api.admin import platform
 from app.klai_feedback import service as feedback_service
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class _Result:
@@ -50,6 +54,9 @@ class _Session:
     async def refresh(self, obj):
         self.refreshed.append(obj)
 
+    async def delete(self, _obj):
+        return None
+
 
 def _feedback_item(**overrides):
     now = datetime(2026, 5, 27, 10, 0, tzinfo=UTC)
@@ -81,6 +88,20 @@ def _feedback_item(**overrides):
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def test_feedback_submission_delete_rls_policy_exists():
+    migration = (
+        REPO_ROOT
+        / "backend"
+        / "alembic"
+        / "versions"
+        / "c8d9e0f1a2b3_add_feedback_submission_delete_policy.py"
+    ).read_text()
+
+    assert "CREATE POLICY feedback_submissions_delete" in migration
+    assert "FOR DELETE" in migration
+    assert "app.cross_org_admin" in migration
 
 
 class _SessionBound:
