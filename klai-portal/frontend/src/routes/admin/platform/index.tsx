@@ -26,7 +26,29 @@ import {
 import { PlatformStatCard } from './-components/PlatformShell'
 import type { PlatformTab } from './-types'
 
+const VALID_TABS = new Set<PlatformTab>([
+  'users',
+  'organizations',
+  'knowledge-bases',
+  'templates',
+  'subscriptions',
+  'bots',
+  'feedback',
+  'chat-errors',
+  'status',
+  'subdomains',
+])
+
+type PlatformSearch = {
+  tab?: PlatformTab
+}
+
 export const Route = createFileRoute('/admin/platform/')({
+  validateSearch: (search: Record<string, unknown>): PlatformSearch => ({
+    tab: (VALID_TABS as Set<string>).has(search.tab as string)
+      ? (search.tab as PlatformTab)
+      : undefined,
+  }),
   component: PlatformConsole,
 })
 
@@ -57,7 +79,7 @@ function fmtDate(iso: string | null): string {
 function PlatformConsole() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const [tab, setTab] = useState<PlatformTab>('users')
+  const routeSearch = Route.useSearch()
   const [search, setSearch] = useState('')
   const [feedbackStatus, setFeedbackStatus] = useState('')
   const [feedbackKind, setFeedbackKind] = useState('')
@@ -71,6 +93,16 @@ function PlatformConsole() {
 
   const statsQuery = usePlatformStats(isPlatformAdmin)
   const stats = statsQuery.data
+  const tab = routeSearch.tab ?? 'users'
+  const newFeedbackCount = stats?.new_feedback_count ?? 0
+  const chatErrorCount = stats?.chat_error_count ?? 0
+
+  function setPlatformTab(nextTab: PlatformTab) {
+    void navigate({
+      to: '/admin/platform',
+      search: { tab: nextTab === 'users' ? undefined : nextTab },
+    })
+  }
 
   useEffect(() => {
     if ((meQuery.data && !isPlatformAdmin) || meQuery.isError) {
@@ -133,7 +165,7 @@ function PlatformConsole() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <PlatformStatCard
           label={m.platform_stat_users()}
           value={stats?.total_users}
@@ -182,6 +214,22 @@ function PlatformConsole() {
           sub={stats ? `€${(stats.arr_cents / 100).toFixed(0)} ARR` : undefined}
           loading={statsQuery.isLoading}
         />
+        <PlatformStatCard
+          label={m.platform_tab_feedback()}
+          value={stats?.new_feedback_count}
+          sub={m.platform_stat_new_feedback()}
+          loading={statsQuery.isLoading}
+          alert={newFeedbackCount > 0}
+          onClick={() => setPlatformTab('feedback')}
+        />
+        <PlatformStatCard
+          label={m.platform_tab_chat_errors()}
+          value={stats?.chat_error_count}
+          sub={m.platform_stat_chat_errors_24h()}
+          loading={statsQuery.isLoading}
+          alert={chatErrorCount > 0}
+          onClick={() => setPlatformTab('chat-errors')}
+        />
       </div>
 
       <div className="border-b border-gray-200">
@@ -193,7 +241,7 @@ function PlatformConsole() {
                 key={t.id}
                 type="button"
                 variant="link"
-                onClick={() => setTab(t.id)}
+                onClick={() => setPlatformTab(t.id)}
                 className={[
                   'h-auto rounded-none border-b-2 px-0 pb-3 text-sm font-medium no-underline transition-colors hover:no-underline',
                   active
@@ -202,6 +250,16 @@ function PlatformConsole() {
                 ].join(' ')}
               >
                 {t.label()}
+                {t.id === 'feedback' && newFeedbackCount > 0 && (
+                  <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-warning)] px-1.5 text-[11px] font-medium leading-5 text-white">
+                    {newFeedbackCount}
+                  </span>
+                )}
+                {t.id === 'chat-errors' && chatErrorCount > 0 && (
+                  <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-destructive)] px-1.5 text-[11px] font-medium leading-5 text-white">
+                    {chatErrorCount}
+                  </span>
+                )}
               </Button>
             )
           })}

@@ -15,6 +15,7 @@ export interface NavItem {
   label: string
   icon: LucideIcon
   end?: boolean
+  badgeCount?: number
   children?: NavItem[]
 }
 
@@ -48,6 +49,30 @@ export function Sidebar({ navItems }: SidebarProps) {
     const next = !collapsed
     setCollapsed(next)
     localStorage.setItem(STORAGE_KEYS.sidebarCollapsed, String(next))
+  }
+
+  function renderBadge(
+    count: number | undefined,
+    label: string,
+    tone: 'destructive' | 'success' = 'destructive',
+  ) {
+    if (!count || count <= 0) return null
+    const toneClass =
+      tone === 'success'
+        ? 'bg-[var(--color-success)]'
+        : 'bg-[var(--color-destructive)]'
+    return (
+      <span
+        className={cn(
+          'ml-auto inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium leading-5 text-white',
+          toneClass,
+          collapsed && 'absolute translate-x-3 -translate-y-2 px-1 min-w-4 leading-4 text-[10px]'
+        )}
+        aria-label={label}
+      >
+        {count}
+      </span>
+    )
   }
 
   return (
@@ -99,13 +124,14 @@ export function Sidebar({ navItems }: SidebarProps) {
                   rel="noopener noreferrer"
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
+                    'relative flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
                     'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3 px-3'
                   )}
                 >
                   <item.icon size={18} strokeWidth={1.5} />
                   {!collapsed && item.label}
+                  {renderBadge(item.badgeCount, item.label)}
                 </a>
               ) : (
                 <Link
@@ -113,7 +139,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                   activeOptions={item.end ? { exact: true } : undefined}
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
+                    'relative flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
                     'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3 px-3'
                   )}
@@ -123,6 +149,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                 >
                   <item.icon size={18} strokeWidth={1.5} />
                   {!collapsed && item.label}
+                  {renderBadge(item.badgeCount, item.label)}
                 </Link>
               )}
               {item.children && item.children.length > 0 && item.to && location.pathname.startsWith(item.to) && !collapsed && (
@@ -200,17 +227,7 @@ export function Sidebar({ navItems }: SidebarProps) {
         >
           <UserCircle size={18} strokeWidth={1.5} />
           {!collapsed && m.sidebar_account()}
-          {feedbackUnreadCount > 0 && (
-            <span
-              className={cn(
-                'ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-medium leading-5 text-white',
-                collapsed && 'absolute translate-x-3 -translate-y-2 px-1 min-w-4 leading-4 text-[10px]'
-              )}
-              aria-label={m.account_feedback_unread()}
-            >
-              {feedbackUnreadCount}
-            </span>
-          )}
+          {renderBadge(feedbackUnreadCount, m.account_feedback_unread(), 'success')}
         </Link>
         <button
           onClick={() => {

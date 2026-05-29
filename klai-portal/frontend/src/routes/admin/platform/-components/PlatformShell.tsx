@@ -7,14 +7,25 @@ export function PlatformStatCard({
   value,
   sub,
   loading,
+  alert,
+  onClick,
 }: {
   label: string
   value: number | string | undefined
   sub?: string
   loading: boolean
+  alert?: boolean
+  onClick?: () => void
 }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white px-4 py-4">
+  const className = [
+    'rounded-xl border bg-white px-4 py-4 text-left transition-colors',
+    alert
+      ? 'border-[var(--color-warning)] bg-[var(--color-warning-bg)]'
+      : 'border-gray-200',
+    onClick ? 'klai-hover cursor-pointer' : '',
+  ].join(' ')
+  const content = (
+    <>
       <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
         {label}
       </p>
@@ -28,6 +39,18 @@ export function PlatformStatCard({
         )}
       </p>
       {sub && <p className="mt-1 text-xs text-gray-400">{sub}</p>}
+    </>
+  )
+  if (onClick) {
+    return (
+      <button type="button" className={className} onClick={onClick}>
+        {content}
+      </button>
+    )
+  }
+  return (
+    <div className={className}>
+      {content}
     </div>
   )
 }
