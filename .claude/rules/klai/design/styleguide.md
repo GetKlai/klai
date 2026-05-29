@@ -9,7 +9,7 @@ paths:
 # Klai Styleguide
 
 > Shared brand DNA for all Klai products (portal, website, future apps).
-> Portal-specific patterns (tokens, sidebar, forms): `portal-patterns.md`
+> Portal-specific UI/UX patterns: `klai-portal/frontend/docs/ui-standards.md`
 > Website-specific patterns (spacing, animations, buttons): `website-patterns.md`
 > Source of truth: `klai-website/src/styles/global.css` and `klai-portal/frontend/src/index.css`.
 
@@ -159,7 +159,8 @@ Height: `h-5` (20px) in nav. Never distort or tint.
 
 ## See Also
 
-- Portal patterns (tokens, sidebar, forms, cards, tables): `portal-patterns.md`
+- Portal UI standards: `klai-portal/frontend/docs/ui-standards.md`
+- Portal compatibility rule entrypoint: `portal-patterns.md`
 - Website patterns (buttons, spacing, animations, shadows): `website-patterns.md`
 - [rules/gtm/klai-brand-voice.md](../gtm/klai-brand-voice.md) - tone and writing style
 - [patterns/frontend.md](patterns/frontend.md) - technical frontend patterns (i18n, UI components)

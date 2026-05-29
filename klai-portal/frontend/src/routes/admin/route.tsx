@@ -67,7 +67,10 @@ function AdminLayout() {
   const { data: platformStats } = useQuery({
     queryKey: ['platform-stats'],
     queryFn: () =>
-      apiFetch<{ new_feedback_count: number; chat_error_count: number }>(
+      apiFetch<{
+        new_feedback_count: number
+        chat_error_count: number
+      }>(
         '/api/admin/platform/stats',
       ),
     enabled: auth.isAuthenticated && me?.is_platform_admin === true,

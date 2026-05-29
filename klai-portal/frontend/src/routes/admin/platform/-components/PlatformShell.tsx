@@ -8,6 +8,7 @@ export function PlatformStatCard({
   sub,
   loading,
   alert,
+  valueTone,
   onClick,
 }: {
   label: string
@@ -15,6 +16,7 @@ export function PlatformStatCard({
   sub?: string
   loading: boolean
   alert?: boolean
+  valueTone?: 'default' | 'warning' | 'destructive'
   onClick?: () => void
 }) {
   const className = [
@@ -29,7 +31,16 @@ export function PlatformStatCard({
       <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
         {label}
       </p>
-      <p className="mt-1 text-3xl font-display-bold text-gray-900 tabular-nums">
+      <p
+        className={[
+          'mt-1 text-3xl font-display-bold tabular-nums',
+          valueTone === 'warning'
+            ? 'text-[var(--color-warning)]'
+            : valueTone === 'destructive'
+              ? 'text-[var(--color-destructive)]'
+              : 'text-gray-900',
+        ].join(' ')}
+      >
         {loading ? (
           <Loader2 className="inline h-5 w-5 animate-spin text-gray-400" />
         ) : value === undefined ? (

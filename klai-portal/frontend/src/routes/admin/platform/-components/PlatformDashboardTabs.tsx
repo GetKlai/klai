@@ -3,6 +3,7 @@ import { useState } from 'react'
 import {
   Activity,
   ArchiveX,
+  ArrowLeft,
   Bug,
   CheckCircle2,
   ExternalLink,
@@ -1267,17 +1268,23 @@ export function FeedbackSubmissionDetailPanel({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          {m.platform_feedback_triage_title()}
-        </h1>
-        <p className="mt-1 text-sm text-gray-400">
-          {item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()} -{' '}
-          {feedbackSubmissionReporterLabel(item)
-            ? `${feedbackSubmissionReporterLabel(item)} - `
-            : ''}
-          {fmtDate(item.created_at)}
-        </p>
+      <div className="flex items-start gap-3">
+        <div className="flex-1">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+            {m.platform_feedback_triage_title()}
+          </h1>
+          <p className="mt-1 text-sm text-gray-400">
+            {item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()} -{' '}
+            {feedbackSubmissionReporterLabel(item)
+              ? `${feedbackSubmissionReporterLabel(item)} - `
+              : ''}
+            {fmtDate(item.created_at)}
+          </p>
+        </div>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          {m.platform_back_to_feedback()}
+        </Button>
       </div>
 
       <div className="space-y-6">
@@ -1656,13 +1663,19 @@ export function FeedbackItemDetailPanel({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          {m.platform_feedback_item_title()}
-        </h1>
-        <p className="mt-1 text-sm text-gray-400">
-          {m.platform_feedback_item_description()}
-        </p>
+      <div className="flex items-start gap-3">
+        <div className="flex-1">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+            {m.platform_feedback_item_title()}
+          </h1>
+          <p className="mt-1 text-sm text-gray-400">
+            {m.platform_feedback_item_description()}
+          </p>
+        </div>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          {m.platform_back_to_feedback()}
+        </Button>
       </div>
 
       {detail.isLoading ? (

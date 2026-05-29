@@ -5,8 +5,8 @@
 > Modify the source directly when you need to change default styling.
 >
 > This file is component-level guidance. The current portal UX/layout source of
-> truth is `.claude/rules/klai/design/portal-patterns.md`; when these disagree,
-> update this file to match the portal patterns and the current implementation.
+> truth is `klai-portal/frontend/docs/ui-standards.md`; when these disagree,
+> update this file to match the portal standards and current implementation.
 
 ---
 
@@ -137,32 +137,25 @@ tab/detail settings in a large rounded bordered card by default.
 </Card>
 ```
 
-### Data table card
+### Data table
 
 ```tsx
-<Card>
-  <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className="px-6 py-3 text-left text-xs font-medium text-gray-400">
-            Naam
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, i) => (
-          <tr
-            key={row.id}
-            className="hover:bg-gray-50"
-          >
-            <td className="px-6 py-3 text-gray-900">{row.name}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </CardContent>
-</Card>
+<table className="w-full text-sm border-t border-b border-gray-200">
+  <thead>
+    <tr className="border-b border-gray-200">
+      <th className="px-6 py-3 text-left text-xs font-medium text-gray-400">
+        Naam
+      </th>
+    </tr>
+  </thead>
+  <tbody>
+    {rows.map((row) => (
+      <tr key={row.id} className="border-b border-gray-200 klai-hover cursor-pointer">
+        <td className="px-6 py-3 text-gray-900">{row.name}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
 ```
 
 ---
@@ -209,7 +202,7 @@ hover layers. Use CSS variables for semantic or themeable states.
 | `text-gray-900` | Headings, primary prose text, names |
 | `text-gray-400` | Muted descriptions, metadata, placeholder-like text |
 | `border-gray-200` / `divide-gray-200` | Borders and dividers |
-| `bg-gray-50` / `hover:bg-gray-50` | Subtle surfaces and row hover |
+| `klai-hover` | Interactive row/list/sidebar hover |
 | `var(--color-muted-foreground)` | Secondary text, placeholder, disabled |
 | `var(--color-destructive)` | Error text, delete confirm buttons |
 | `var(--color-success)` | Save confirm buttons, positive feedback |

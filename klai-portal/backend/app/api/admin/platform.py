@@ -72,6 +72,7 @@ class PlatformStats(BaseModel):
     new_bots_today: int
     total_kbs: int
     total_templates: int
+    total_feedback_count: int
     new_feedback_count: int
     chat_error_count: int
     mrr_cents: int
@@ -533,6 +534,7 @@ async def platform_stats(
                       (SELECT COUNT(*) FROM portal_knowledge_bases) AS total_kbs,
                       (SELECT COUNT(*) FROM portal_templates
                          WHERE is_active) AS total_templates,
+                      (SELECT COUNT(*) FROM feedback_submissions) AS total_feedback_count,
                       (SELECT COUNT(*) FROM feedback_submissions
                          WHERE status = 'new') AS new_feedback_count,
                       (SELECT COUNT(*) FROM product_events
@@ -553,6 +555,7 @@ async def platform_stats(
         new_bots_today=row.new_bots_today,
         total_kbs=row.total_kbs,
         total_templates=row.total_templates,
+        total_feedback_count=row.total_feedback_count,
         new_feedback_count=row.new_feedback_count,
         chat_error_count=row.chat_error_count,
         mrr_cents=0,
