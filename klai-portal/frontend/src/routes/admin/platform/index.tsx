@@ -216,7 +216,7 @@ function PlatformConsole() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder={
               tab === 'feedback'
-                ? 'Zoek in feedback, organisatie, route...'
+                ? m.platform_feedback_search_global_placeholder()
                 : m.platform_search_placeholder()
             }
             className="pl-9"
@@ -229,22 +229,22 @@ function PlatformConsole() {
               onChange={(event) => setFeedbackStatus(event.target.value)}
               className="w-44"
             >
-              <option value="">Alle statussen</option>
-              <option value="new">Nieuw</option>
-              <option value="open">Open</option>
-              <option value="resolved">Opgelost</option>
-              <option value="support">Support</option>
-              <option value="dismissed">Genegeerd</option>
+              <option value="">{m.platform_feedback_filter_all_statuses()}</option>
+              <option value="new">{m.platform_feedback_status_new()}</option>
+              <option value="open">{m.platform_feedback_status_open()}</option>
+              <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+              <option value="support">{m.platform_feedback_status_support()}</option>
+              <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
             </Select>
             <Select
               value={feedbackKind}
               onChange={(event) => setFeedbackKind(event.target.value)}
               className="w-40"
             >
-              <option value="">Alle types</option>
-              <option value="feedback">Feedback</option>
-              <option value="problem">Probleem</option>
-              <option value="question">Vraag</option>
+              <option value="">{m.platform_feedback_filter_all_types()}</option>
+              <option value="feedback">{m.platform_feedback_kind_feedback()}</option>
+              <option value="problem">{m.platform_feedback_kind_problem()}</option>
+              <option value="question">{m.platform_feedback_kind_question()}</option>
             </Select>
           </>
         )}
