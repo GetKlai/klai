@@ -28,7 +28,7 @@ function PlatformFeedbackItemPage() {
   const backToPlatform = () => void navigate({ to: '/admin/platform' })
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-6 py-10">
+    <div className="mx-auto max-w-3xl space-y-6 px-6 py-10">
       <Button
         type="button"
         variant="link"
