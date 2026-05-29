@@ -15,7 +15,6 @@ import {
   PlusCircle,
   Save,
   Search,
-  Sparkles,
   Trash2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -1162,7 +1161,6 @@ export function FeedbackSubmissionDetailPanel({
   const suggestedKind = normalizedFeedbackKind(suggestion?.classification, defaultKind)
   const suggestedTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
   const suggestedSearch = feedbackItemSearchTerm(item, suggestion)
-  const [showCorrections, setShowCorrections] = useState(false)
   const [itemSearch, setItemSearch] = useState(suggestedSearch)
   const [kind, setKind] = useState(suggestedKind)
   const [title, setTitle] = useState(suggestedTitle)
@@ -1171,6 +1169,9 @@ export function FeedbackSubmissionDetailPanel({
   const [draftRawText, setDraftRawText] = useState(item.raw_text ?? '')
   const [draftStatus, setDraftStatus] = useState(item.status)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [triageAction, setTriageAction] = useState<
+    'recommended' | 'link' | 'create' | 'support' | 'dismiss'
+  >('recommended')
 
   const items = usePlatformFeedbackItems(itemSearch, 'triage')
   const existingItems = items.data ?? []
@@ -1266,6 +1267,10 @@ export function FeedbackSubmissionDetailPanel({
     (recommendedAction !== 'link_existing' || recommendedItem !== null) &&
     (recommendedAction !== 'create_item' || suggestedTitle.trim().length >= 3) &&
     recommendedAction !== 'review'
+  const selectedActionClass =
+    'border-gray-900 bg-gray-900 text-white hover:bg-gray-800 hover:text-white'
+  const actionButtonClass =
+    'h-auto min-h-14 justify-start rounded-lg px-4 py-3 text-left whitespace-normal'
 
   return (
     <div className="space-y-6">
@@ -1288,102 +1293,64 @@ export function FeedbackSubmissionDetailPanel({
         </Button>
       </div>
 
-      <div className="space-y-6">
-          <section className="grid gap-6 border-t border-b border-gray-200 py-5 lg:grid-cols-[minmax(0,1fr)_260px]">
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
-                {item.status !== 'new' && (
-                  <Badge variant="secondary">{feedbackStatusLabel(item.status)}</Badge>
-                )}
-                {(item.feedback_type || item.severity) && (
-                  <Badge variant="secondary">
-                    {item.feedback_type || item.severity}
-                  </Badge>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor={`feedback-submission-${item.id}`}>
-                  {m.platform_feedback_submission_placeholder()}
-                </Label>
-                <Textarea
-                  id={`feedback-submission-${item.id}`}
-                  value={draftRawText}
-                  onChange={(event) => setDraftRawText(event.target.value)}
-                  rows={5}
-                  placeholder={m.platform_feedback_submission_placeholder()}
-                />
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor={`feedback-submission-status-${item.id}`}>
-                  {m.platform_col_status()}
-                </Label>
-                <Select
-                  id={`feedback-submission-status-${item.id}`}
-                  value={draftStatus}
-                  onChange={(event) => setDraftStatus(event.target.value)}
-                >
-                  <option value="new">{m.platform_feedback_status_new()}</option>
-                  <option value="open">{m.platform_feedback_status_open()}</option>
-                  <option value="resolved">{m.platform_feedback_status_resolved()}</option>
-                  <option value="support">{m.platform_feedback_status_support()}</option>
-                  <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
-                </Select>
-              </div>
-              <Button
-                type="button"
-                className="w-full"
-                disabled={
-                  busy ||
-                  draftRawText.trim().length < 1 ||
-                  (draftRawText.trim() === (item.raw_text ?? '') && draftStatus === item.status)
-                }
-                onClick={saveSubmission}
-              >
-                {updateSubmission.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {m.admin_shared_save()}
-              </Button>
-              <Button
-                type="button"
-                className="w-full"
-                variant="secondary"
-                disabled={busy}
-                onClick={() => setConfirmDeleteOpen(true)}
-              >
-                {deleteSubmission.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
-                {m.platform_delete()}
-              </Button>
-              {updateSubmission.isSuccess && (
-                <p className="text-sm text-[var(--color-success)]">
-                  {m.platform_feedback_submission_saved()}
-                </p>
-              )}
-            </div>
-          </section>
+      <div className="space-y-8">
+        <section className="space-y-4 border-t border-gray-200 pt-6">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+              {m.platform_feedback_flow_step({ step: '1' })}
+            </p>
+            <h2 className="mt-1 text-base font-display-bold text-gray-900">
+              {m.platform_feedback_read_report_title()}
+            </h2>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
+            <Badge variant={item.status === 'new' ? 'outline' : 'secondary'}>
+              {feedbackStatusLabel(item.status)}
+            </Badge>
+            {(item.feedback_type || item.severity) && (
+              <Badge variant="secondary">
+                {item.feedback_type || item.severity}
+              </Badge>
+            )}
+          </div>
+          <Textarea
+            id={`feedback-submission-${item.id}`}
+            value={draftRawText}
+            onChange={(event) => setDraftRawText(event.target.value)}
+            rows={6}
+            placeholder={m.platform_feedback_submission_placeholder()}
+          />
+          <div className="grid gap-3 text-sm text-gray-600 sm:grid-cols-2">
+            <FeedbackMetaRow
+              label={m.platform_col_organization()}
+              value={item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()}
+            />
+            <FeedbackMetaRow
+              label={m.platform_feedback_reporter_label()}
+              value={feedbackSubmissionReporterLabel(item) ?? '-'}
+            />
+            <FeedbackMetaRow label="URL" value={item.page_url ?? '-'} />
+            <FeedbackMetaRow label="Route" value={item.route_id ?? '-'} />
+            <FeedbackMetaRow
+              label={m.platform_feedback_context()}
+              value={[item.locale, item.viewport].filter(Boolean).join(' / ') || '-'}
+            />
+            <FeedbackMetaRow label={m.platform_col_created()} value={fmtDate(item.created_at)} />
+          </div>
+        </section>
 
           {canTriage ? (
             <>
-              <section className="space-y-3 border-t border-gray-200 pt-5">
-                <div className="flex min-w-0 items-start gap-2">
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warning)]" />
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-medium text-gray-900">
-                      {m.platform_feedback_suggestion_title()}
-                    </h3>
-                    <p className="mt-1 text-sm leading-6 text-gray-700">
-                      {proposalSummary}
-                    </p>
-                  </div>
+              <section className="space-y-4 border-t border-gray-200 pt-6">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                    {m.platform_feedback_flow_step({ step: '2' })}
+                  </p>
+                  <h2 className="mt-1 text-base font-display-bold text-gray-900">
+                    {m.platform_feedback_triage_proposal_title()}
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-gray-700">{proposalSummary}</p>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs">
                   <Badge variant="outline">
@@ -1412,7 +1379,7 @@ export function FeedbackSubmissionDetailPanel({
                   )}
                 </div>
                 {recommendedItem && (
-                  <div className="rounded-lg border border-gray-200 px-3 py-2">
+                  <div className="rounded-lg border border-gray-200 px-4 py-3">
                     <p className="text-xs font-medium text-gray-500">
                       {m.platform_feedback_existing_item_found()}
                     </p>
@@ -1426,13 +1393,27 @@ export function FeedbackSubmissionDetailPanel({
                     </p>
                   </div>
                 )}
-                <div className="flex flex-wrap gap-2">
+              </section>
+
+              <section className="space-y-4 border-t border-gray-200 pt-6">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                    {m.platform_feedback_flow_step({ step: '3' })}
+                  </p>
+                  <h2 className="mt-1 text-base font-display-bold text-gray-900">
+                    {m.platform_feedback_choose_action_title()}
+                  </h2>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
                   <Button
                     type="button"
-                    disabled={busy || !canAcceptRecommendedAction || items.isFetching}
-                    onClick={acceptRecommendedAction}
+                    variant="secondary"
+                    className={`${actionButtonClass} ${
+                      triageAction === 'recommended' ? selectedActionClass : ''
+                    }`}
+                    onClick={() => setTriageAction('recommended')}
                   >
-                    <CheckCircle2 className="h-4 w-4" />
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
                     {feedbackSuggestionPrimaryLabel(
                       recommendedAction,
                       recommendedItem?.title,
@@ -1442,176 +1423,239 @@ export function FeedbackSubmissionDetailPanel({
                   <Button
                     type="button"
                     variant="secondary"
-                    disabled={busy}
-                    onClick={() => setShowCorrections((visible) => !visible)}
+                    className={`${actionButtonClass} ${
+                      triageAction === 'link' ? selectedActionClass : ''
+                    }`}
+                    onClick={() => setTriageAction('link')}
                   >
-                    {showCorrections
-                      ? m.platform_feedback_hide_other_actions()
-                      : m.platform_feedback_other_action()}
+                    <Link2 className="h-4 w-4 shrink-0" />
+                    {m.platform_feedback_link_existing_title()}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className={`${actionButtonClass} ${
+                      triageAction === 'create' ? selectedActionClass : ''
+                    }`}
+                    onClick={() => setTriageAction('create')}
+                  >
+                    <PlusCircle className="h-4 w-4 shrink-0" />
+                    {m.platform_feedback_create_new_title()}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className={`${actionButtonClass} ${
+                      triageAction === 'support' ? selectedActionClass : ''
+                    }`}
+                    onClick={() => setTriageAction('support')}
+                    disabled={busy}
+                  >
+                    <LifeBuoy className="h-4 w-4 shrink-0" />
+                    {m.platform_feedback_primary_support()}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className={`${actionButtonClass} ${
+                      triageAction === 'dismiss' ? selectedActionClass : ''
+                    } md:col-span-2`}
+                    onClick={() => setTriageAction('dismiss')}
+                  >
+                    <ArchiveX className="h-4 w-4 shrink-0" />
+                    {m.platform_feedback_action_dismiss()}
                   </Button>
                 </div>
               </section>
 
-              {showCorrections && (
-                <section className="grid gap-3 sm:grid-cols-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => {
-                      dismiss.mutate(item.id, { onSuccess: onClose })
-                    }}
-                  >
-                    <ArchiveX className="h-4 w-4" />
-                    {m.platform_feedback_action_dismiss()}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => {
-                      support.mutate(item.id, { onSuccess: onClose })
-                    }}
-                  >
-                    <LifeBuoy className="h-4 w-4" />
-                    {m.platform_feedback_primary_support()}
-                  </Button>
-                  <p className="text-xs leading-5 text-gray-500 sm:col-span-2">
-                    {m.platform_feedback_support_help()}
-                  </p>
-                </section>
-              )}
-
-              {showCorrections && (
-                <section className="space-y-3 border-t border-gray-200 pt-5">
-                  <div className="flex items-center justify-between gap-3">
+              <section className="space-y-4 border-t border-gray-200 pt-6">
+                {triageAction === 'recommended' && (
+                  <div className="space-y-3">
                     <h3 className="text-sm font-medium text-gray-900">
-                      {m.platform_feedback_link_existing_title()}
+                      {m.platform_feedback_recommended_action_title()}
                     </h3>
-                    {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+                    <Button
+                      type="button"
+                      disabled={busy || !canAcceptRecommendedAction || items.isFetching}
+                      onClick={acceptRecommendedAction}
+                    >
+                      {items.isFetching ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                      )}
+                      {feedbackSuggestionPrimaryLabel(
+                        recommendedAction,
+                        recommendedItem?.title,
+                        suggestedKind,
+                      )}
+                    </Button>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`feedback-item-search-${item.id}`}>
-                      {m.platform_feedback_smart_search_label()}
-                    </Label>
-                    <span className="relative block">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                      <Input
-                        id={`feedback-item-search-${item.id}`}
-                        value={itemSearch}
-                        onChange={(event) => setItemSearch(event.target.value)}
-                        placeholder={m.platform_feedback_search_placeholder()}
-                        className="pl-9"
-                      />
-                    </span>
-                  </div>
-                  {suggestion?.duplicate_candidates.length ? (
-                    <p className="text-xs text-gray-500">
-                      {m.platform_feedback_ai_matches_help()}
-                    </p>
-                  ) : null}
-                  <div className="space-y-2">
-                    {(items.data ?? []).map((existing) => (
-                      <div
-                        key={existing.id}
-                        className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 p-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-gray-900">
-                            {existing.title}
-                          </p>
-                          <p className="mt-1 text-xs text-gray-400">
-                            {[existing.kind, existing.status, existing.area]
-                              .filter(Boolean)
-                              .join(' / ')}
-                          </p>
-                          <p className="mt-1 text-xs text-gray-400">
-                            {m.platform_feedback_reporter_counts({
-                              orgs: existing.org_count,
-                              users: existing.user_count,
-                            })}
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          disabled={busy}
-                          onClick={() => {
-                            linkItem.mutate(
-                              {
-                                submissionId: item.id,
-                                item_id: existing.id,
-                                link_type: linkType,
-                              },
-                              { onSuccess: onClose },
-                            )
-                          }}
-                        >
-                          <Link2 className="h-4 w-4" />
-                          {m.platform_feedback_link()}
-                        </Button>
-                      </div>
-                    ))}
-                    {!items.isFetching && (items.data ?? []).length === 0 && (
-                      <p className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500">
-                        {m.platform_feedback_no_existing_item()}
-                      </p>
-                    )}
-                  </div>
-                </section>
-              )}
+                )}
 
-              {showCorrections && (
-                <section className="space-y-3 border-t border-gray-200 pt-5">
-                  <h3 className="text-sm font-medium text-gray-900">
-                    {m.platform_feedback_create_new_title()}
-                  </h3>
-                  <Select value={kind} onChange={(event) => setKind(event.target.value)}>
-                    <option value="feature">{m.platform_feedback_item_kind_feature()}</option>
-                    <option value="bug">{m.platform_feedback_item_kind_bug()}</option>
-                    <option value="ux_confusion">{m.platform_feedback_item_kind_ux()}</option>
-                    <option value="docs">{m.platform_feedback_item_kind_docs()}</option>
-                    <option value="support_pattern">{m.platform_feedback_item_kind_support()}</option>
-                  </Select>
-                  <Input
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                    placeholder={m.platform_feedback_title_placeholder()}
-                  />
-                  <Textarea
-                    value={summary}
-                    onChange={(event) => setSummary(event.target.value)}
-                    rows={4}
-                    placeholder={m.platform_feedback_summary_placeholder()}
-                  />
-                  <Input
-                    value={area}
-                    onChange={(event) => setArea(event.target.value)}
-                    placeholder={m.platform_feedback_area_placeholder()}
-                  />
-                  <Button
-                    type="button"
-                    disabled={busy || title.trim().length < 3}
-                    onClick={() => {
-                      createItem.mutate(
-                        {
-                          submissionId: item.id,
-                          kind,
-                          title: title.trim(),
-                          summary: summary.trim() || null,
-                          area: area.trim() || null,
-                          link_type: linkType,
-                        },
-                        { onSuccess: onClose },
-                      )
-                    }}
-                  >
-                    <PlusCircle className="h-4 w-4" />
-                    {m.platform_feedback_create_item()}
-                  </Button>
-                </section>
-              )}
+                {triageAction === 'support' && (
+                  <div className="space-y-3">
+                    <p className="text-sm leading-6 text-gray-600">
+                      {m.platform_feedback_support_help()}
+                    </p>
+                    <Button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        support.mutate(item.id, { onSuccess: onClose })
+                      }}
+                    >
+                      <LifeBuoy className="h-4 w-4" />
+                      {m.platform_feedback_primary_support()}
+                    </Button>
+                  </div>
+                )}
+
+                {triageAction === 'dismiss' && (
+                  <div className="space-y-3">
+                    <p className="text-sm leading-6 text-gray-600">
+                      {m.platform_feedback_dismiss_help()}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => {
+                        dismiss.mutate(item.id, { onSuccess: onClose })
+                      }}
+                    >
+                      <ArchiveX className="h-4 w-4" />
+                      {m.platform_feedback_action_dismiss()}
+                    </Button>
+                  </div>
+                )}
+
+                {triageAction === 'link' && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-medium text-gray-900">
+                        {m.platform_feedback_link_existing_title()}
+                      </h3>
+                      {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`feedback-item-search-${item.id}`}>
+                        {m.platform_feedback_smart_search_label()}
+                      </Label>
+                      <span className="relative block">
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                        <Input
+                          id={`feedback-item-search-${item.id}`}
+                          value={itemSearch}
+                          onChange={(event) => setItemSearch(event.target.value)}
+                          placeholder={m.platform_feedback_search_placeholder()}
+                          className="pl-9"
+                        />
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {(items.data ?? []).map((existing) => (
+                        <div
+                          key={existing.id}
+                          className="flex items-start justify-between gap-3 border-t border-gray-200 py-3 first:border-t-0"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-gray-900">
+                              {existing.title}
+                            </p>
+                            <p className="mt-1 text-xs text-gray-400">
+                              {[existing.kind, existing.status, existing.area]
+                                .filter(Boolean)
+                                .join(' / ')}
+                            </p>
+                            <p className="mt-1 text-xs text-gray-400">
+                              {m.platform_feedback_reporter_counts({
+                                orgs: existing.org_count,
+                                users: existing.user_count,
+                              })}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => {
+                              linkItem.mutate(
+                                {
+                                  submissionId: item.id,
+                                  item_id: existing.id,
+                                  link_type: linkType,
+                                },
+                                { onSuccess: onClose },
+                              )
+                            }}
+                          >
+                            <Link2 className="h-4 w-4" />
+                            {m.platform_feedback_link()}
+                          </Button>
+                        </div>
+                      ))}
+                      {!items.isFetching && (items.data ?? []).length === 0 && (
+                        <p className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500">
+                          {m.platform_feedback_no_existing_item()}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {triageAction === 'create' && (
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-medium text-gray-900">
+                      {m.platform_feedback_create_new_title()}
+                    </h3>
+                    <Select value={kind} onChange={(event) => setKind(event.target.value)}>
+                      <option value="feature">{m.platform_feedback_item_kind_feature()}</option>
+                      <option value="bug">{m.platform_feedback_item_kind_bug()}</option>
+                      <option value="ux_confusion">{m.platform_feedback_item_kind_ux()}</option>
+                      <option value="docs">{m.platform_feedback_item_kind_docs()}</option>
+                      <option value="support_pattern">{m.platform_feedback_item_kind_support()}</option>
+                    </Select>
+                    <Input
+                      value={title}
+                      onChange={(event) => setTitle(event.target.value)}
+                      placeholder={m.platform_feedback_title_placeholder()}
+                    />
+                    <Textarea
+                      value={summary}
+                      onChange={(event) => setSummary(event.target.value)}
+                      rows={4}
+                      placeholder={m.platform_feedback_summary_placeholder()}
+                    />
+                    <Input
+                      value={area}
+                      onChange={(event) => setArea(event.target.value)}
+                      placeholder={m.platform_feedback_area_placeholder()}
+                    />
+                    <Button
+                      type="button"
+                      disabled={busy || title.trim().length < 3}
+                      onClick={() => {
+                        createItem.mutate(
+                          {
+                            submissionId: item.id,
+                            kind,
+                            title: title.trim(),
+                            summary: summary.trim() || null,
+                            area: area.trim() || null,
+                            link_type: linkType,
+                          },
+                          { onSuccess: onClose },
+                        )
+                      }}
+                    >
+                      <PlusCircle className="h-4 w-4" />
+                      {m.platform_feedback_create_item()}
+                    </Button>
+                  </div>
+                )}
+              </section>
             </>
           ) : (
             <div className="rounded-lg border border-gray-200 px-4 py-3 text-sm text-gray-600">
@@ -1627,6 +1671,59 @@ export function FeedbackSubmissionDetailPanel({
               {m.admin_settings_saved()}
             </div>
           )}
+
+          <section className="grid gap-3 border-t border-gray-200 pt-6 sm:grid-cols-[1fr_auto_auto] sm:items-end">
+            <div className="space-y-1.5">
+              <Label htmlFor={`feedback-submission-status-${item.id}`}>
+                {m.platform_col_status()}
+              </Label>
+              <Select
+                id={`feedback-submission-status-${item.id}`}
+                value={draftStatus}
+                onChange={(event) => setDraftStatus(event.target.value)}
+              >
+                <option value="new">{m.platform_feedback_status_new()}</option>
+                <option value="open">{m.platform_feedback_status_open()}</option>
+                <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+                <option value="support">{m.platform_feedback_status_support()}</option>
+                <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+              </Select>
+            </div>
+            <Button
+              type="button"
+              disabled={
+                busy ||
+                draftRawText.trim().length < 1 ||
+                (draftRawText.trim() === (item.raw_text ?? '') && draftStatus === item.status)
+              }
+              onClick={saveSubmission}
+            >
+              {updateSubmission.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              {m.admin_shared_save()}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => setConfirmDeleteOpen(true)}
+            >
+              {deleteSubmission.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              {m.platform_delete()}
+            </Button>
+            {updateSubmission.isSuccess && (
+              <p className="text-sm text-[var(--color-success)] sm:col-span-3">
+                {m.platform_feedback_submission_saved()}
+              </p>
+            )}
+          </section>
       </div>
       <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <AlertDialogContent>
@@ -1786,7 +1883,7 @@ function FeedbackItemDetailForm({
 
   return (
     <div className="space-y-8">
-      <section className="border-t border-b border-gray-200 py-5">
+      <section className="space-y-4 border-t border-gray-200 pt-6">
         <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
           <Badge variant="outline">{feedbackItemKindLabel(item.kind)}</Badge>
           <Badge variant={isClosed ? 'secondary' : 'outline'}>
@@ -1798,16 +1895,107 @@ function FeedbackItemDetailForm({
           <Badge variant="outline">
             {m.platform_feedback_user_count({ count: String(item.user_count) })}
           </Badge>
+          <Badge variant="outline">
+            {m.platform_feedback_score({ score: String(item.priority_score) })}
+          </Badge>
           {item.area && <Badge variant="outline">{item.area}</Badge>}
+        </div>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+            {m.platform_feedback_flow_step({ step: '1' })}
+          </p>
+          <h2 className="mt-1 text-xl font-display-bold text-gray-900">{title}</h2>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">
+            {summary || m.platform_feedback_no_description()}
+          </p>
+        </div>
+        <div className="grid gap-3 text-sm text-gray-600 sm:grid-cols-2 lg:grid-cols-4">
+          <FeedbackMetaRow label={m.platform_col_status()} value={feedbackItemStatusLabel(status)} />
+          <FeedbackMetaRow label={m.platform_col_created()} value={fmtDate(item.created_at)} />
+          <FeedbackMetaRow label={m.platform_feedback_col_updated()} value={fmtDate(item.updated_at)} />
+          <FeedbackMetaRow
+            label={m.platform_feedback_item_signal()}
+            value={m.platform_feedback_reporter_counts({
+              orgs: String(item.org_count),
+              users: String(item.user_count),
+            })}
+          />
         </div>
       </section>
 
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="space-y-8">
-          <section className="space-y-4 border-t border-gray-200 pt-5">
-            <h3 className="text-sm font-medium text-gray-900">
-              {m.platform_feedback_item_details()}
+      <section className="space-y-3 border-t border-gray-200 pt-6">
+        <h3 className="text-sm font-medium text-gray-900">
+          {m.platform_feedback_linked_feedback({ count: String(submissions.length) })}
+        </h3>
+        {submissions.length === 0 ? (
+          <p className="rounded-lg border border-gray-200 px-4 py-3 text-sm text-gray-600">
+            {m.platform_feedback_no_linked_feedback_warning()}
+          </p>
+        ) : (
+          <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
+            {submissions.map((submission) => (
+              <div key={submission.id} className="py-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">{feedbackKindLabel(submission.event_type)}</Badge>
+                  <Badge variant="secondary">{submission.link_type}</Badge>
+                  <span className="text-xs text-gray-400">{fmtDate(submission.created_at)}</span>
+                </div>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-900">
+                  {submission.raw_text}
+                </p>
+                <div className="mt-2 grid gap-2 text-xs text-gray-400 sm:grid-cols-2">
+                  <span>
+                    {submission.org_name ?? submission.org_slug ?? m.platform_feedback_unknown_organization()}
+                    {feedbackSubmissionReporterLabel(submission)
+                      ? ` / ${feedbackSubmissionReporterLabel(submission)}`
+                      : ''}
+                  </span>
+                  <span>{submission.page_url || submission.route_id || '-'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {item.kind === 'bug' && (
+        <section className="space-y-4 border-t border-gray-200 pt-6">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+              {m.platform_feedback_flow_step({ step: '2' })}
+            </p>
+            <h3 className="mt-1 text-base font-display-bold text-gray-900">
+              {m.platform_feedback_copy_debug_title()}
             </h3>
+            <p className="mt-1 text-sm leading-6 text-gray-600">
+              {m.platform_feedback_copy_debug_description()}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" onClick={() => void copyDebugInstructions()}>
+              <Copy className="h-4 w-4" />
+              {m.platform_feedback_copy_debug_button()}
+            </Button>
+            {copyNotice && (
+              <p className="text-sm text-[var(--color-success)]">
+                {copyNotice}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      <section className="space-y-4 border-t border-gray-200 pt-6">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+            {m.platform_feedback_flow_step({ step: item.kind === 'bug' ? '3' : '2' })}
+          </p>
+          <h3 className="mt-1 text-base font-display-bold text-gray-900">
+            {m.platform_feedback_follow_up_title()}
+          </h3>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <div className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor={`feedback-item-title-${item.id}`}>
                 {m.platform_feedback_title_placeholder()}
@@ -1831,203 +2019,131 @@ function FeedbackItemDetailForm({
                 placeholder={m.platform_feedback_short_note_placeholder()}
               />
             </div>
-          </section>
-
-          {item.kind === 'bug' && (
-            <section className="space-y-3 border-t border-gray-200 pt-5">
-              <div>
-                <h3 className="text-sm font-medium text-gray-900">
-                  {m.platform_feedback_copy_debug_title()}
-                </h3>
-                <p className="mt-1 text-sm leading-6 text-gray-600">
-                  {m.platform_feedback_copy_debug_description()}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => void copyDebugInstructions()}
-                >
-                  <Copy className="h-4 w-4" />
-                  {m.platform_feedback_copy_debug_button()}
-                </Button>
-                {copyNotice && (
-                  <p className="text-sm text-[var(--color-success)]">
-                    {copyNotice}
-                  </p>
-                )}
-              </div>
-            </section>
-          )}
-
-          <section className="space-y-4 border-t border-gray-200 pt-5">
-            <div>
-              <h3 className="text-sm font-medium text-gray-900">{resolveLabel.title}</h3>
-              <p className="mt-1 text-sm leading-6 text-gray-600">
-                {m.platform_feedback_resolve_description()}
-              </p>
-            </div>
-            {isClosed && resolutionSummary && (
-              <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900">
-                {resolutionSummary}
-              </div>
-            )}
+          </div>
+          <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label htmlFor={`feedback-item-resolution-${item.id}`}>
-                {m.platform_feedback_resolution_placeholder()}
+              <Label htmlFor={`feedback-item-status-${item.id}`}>
+                {m.platform_col_status()}
               </Label>
-              <Textarea
-                id={`feedback-item-resolution-${item.id}`}
-                value={resolutionSummary}
-                onChange={(event) => setResolutionSummary(event.target.value)}
-                rows={3}
-                placeholder={m.platform_feedback_resolution_placeholder()}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-5">
-              <Checkbox
-                checked={notifyInApp}
-                onChange={(event) => setNotifyInApp(event.target.checked)}
-                label={m.platform_feedback_channel_in_app()}
-              />
-              <Checkbox
-                checked={notifyEmail}
-                onChange={(event) => setNotifyEmail(event.target.checked)}
-                label={m.platform_feedback_channel_email()}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={
-                  resolveItem.isPending ||
-                  resolutionSummary.trim().length < 3 ||
-                  (!notifyInApp && !notifyEmail)
-                }
-                onClick={closeItem}
+              <Select
+                id={`feedback-item-status-${item.id}`}
+                value={status}
+                onChange={(event) => setStatus(event.target.value)}
               >
-                {resolveItem.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="h-4 w-4" />
-                )}
-                {resolveItem.isPending
-                  ? m.platform_feedback_resolving()
-                  : isClosed
-                    ? m.platform_feedback_resend_update()
-                    : resolveLabel.button}
-              </Button>
-              {resolveNotice && (
-                <p className="text-sm text-[var(--color-success)]">
-                  {resolveNotice}
-                </p>
-              )}
-              {resolveError && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  {resolveError}
-                </p>
-              )}
+                <option value="open">{m.platform_feedback_status_open()}</option>
+                <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+                <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+              </Select>
             </div>
-          </section>
-
-          <section className="space-y-3 border-t border-gray-200 pt-5">
-            <h3 className="text-sm font-medium text-gray-900">
-              {m.platform_feedback_linked_feedback({ count: String(submissions.length) })}
-            </h3>
-            <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
-              {submissions.map((submission) => (
-                <div key={submission.id} className="py-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline">{feedbackKindLabel(submission.event_type)}</Badge>
-                    <Badge variant="secondary">{submission.link_type}</Badge>
-                    <span className="text-xs text-gray-400">{fmtDate(submission.created_at)}</span>
-                  </div>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-900">
-                    {submission.raw_text}
-                  </p>
-                  <p className="mt-2 text-xs text-gray-400">
-                    {submission.org_name ?? submission.org_slug ?? m.platform_feedback_unknown_organization()}
-                    {feedbackSubmissionReporterLabel(submission)
-                      ? ` / ${feedbackSubmissionReporterLabel(submission)}`
-                      : ''}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </section>
+            <Button
+              type="button"
+              className="w-full"
+              disabled={updateItem.isPending || deleteItem.isPending || title.trim().length < 3}
+              onClick={saveItem}
+            >
+              {updateItem.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              {m.admin_shared_save()}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full"
+              disabled={updateItem.isPending || deleteItem.isPending}
+              onClick={() => setConfirmDeleteOpen(true)}
+            >
+              {deleteItem.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              {m.platform_feedback_delete_item()}
+            </Button>
+          </div>
         </div>
+        {updateItem.isSuccess && (
+          <p className="text-sm text-[var(--color-success)]">
+            {m.platform_feedback_item_saved()}
+          </p>
+        )}
+      </section>
 
-        <aside className="space-y-6">
-          <section className="space-y-3 border-t border-gray-200 pt-5">
-            <h3 className="text-sm font-medium text-gray-900">
-              {m.platform_feedback_item_signal()}
-            </h3>
-            <FeedbackMetaRow
-              label={m.platform_col_status()}
-              value={
-                <Select
-                  id={`feedback-item-status-${item.id}`}
-                  value={status}
-                  onChange={(event) => setStatus(event.target.value)}
-                >
-                  <option value="open">{m.platform_feedback_status_open()}</option>
-                  <option value="resolved">{m.platform_feedback_status_resolved()}</option>
-                  <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
-                </Select>
-              }
-            />
-            <FeedbackMetaRow
-              label={m.platform_feedback_score({ score: String(item.priority_score) })}
-              value={m.platform_feedback_reporter_counts({
-                orgs: String(item.org_count),
-                users: String(item.user_count),
-              })}
-            />
-            <FeedbackMetaRow label={m.platform_col_created()} value={fmtDate(item.created_at)} />
-            <FeedbackMetaRow label={m.platform_feedback_col_updated()} value={fmtDate(item.updated_at)} />
-          </section>
-
-          <section className="space-y-3 border-t border-gray-200 pt-5">
-            <h3 className="text-sm font-medium text-gray-900">{m.platform_col_actions()}</h3>
-            <div className="space-y-3">
-              <Button
-                type="button"
-                className="w-full"
-                disabled={updateItem.isPending || deleteItem.isPending || title.trim().length < 3}
-                onClick={saveItem}
-              >
-                {updateItem.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {m.admin_shared_save()}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="w-full"
-                disabled={updateItem.isPending || deleteItem.isPending}
-                onClick={() => setConfirmDeleteOpen(true)}
-              >
-                {deleteItem.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
-                {m.platform_feedback_delete_item()}
-              </Button>
-            </div>
-            {updateItem.isSuccess && (
-              <p className="text-sm text-[var(--color-success)]">
-                {m.platform_feedback_item_saved()}
-              </p>
+      <section className="space-y-4 border-t border-gray-200 pt-6">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+            {m.platform_feedback_flow_step({ step: item.kind === 'bug' ? '4' : '3' })}
+          </p>
+          <h3 className="mt-1 text-base font-display-bold text-gray-900">{resolveLabel.title}</h3>
+          <p className="mt-1 text-sm leading-6 text-gray-600">
+            {m.platform_feedback_resolve_description()}
+          </p>
+        </div>
+        {isClosed && resolutionSummary && (
+          <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900">
+            {resolutionSummary}
+          </div>
+        )}
+        <div className="space-y-1.5">
+          <Label htmlFor={`feedback-item-resolution-${item.id}`}>
+            {m.platform_feedback_resolution_placeholder()}
+          </Label>
+          <Textarea
+            id={`feedback-item-resolution-${item.id}`}
+            value={resolutionSummary}
+            onChange={(event) => setResolutionSummary(event.target.value)}
+            rows={3}
+            placeholder={m.platform_feedback_resolution_placeholder()}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-5">
+          <Checkbox
+            checked={notifyInApp}
+            onChange={(event) => setNotifyInApp(event.target.checked)}
+            label={m.platform_feedback_channel_in_app()}
+          />
+          <Checkbox
+            checked={notifyEmail}
+            onChange={(event) => setNotifyEmail(event.target.checked)}
+            label={m.platform_feedback_channel_email()}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={
+              resolveItem.isPending ||
+              resolutionSummary.trim().length < 3 ||
+              (!notifyInApp && !notifyEmail)
+            }
+            onClick={closeItem}
+          >
+            {resolveItem.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
             )}
-          </section>
-        </aside>
-      </div>
+            {resolveItem.isPending
+              ? m.platform_feedback_resolving()
+              : isClosed
+                ? m.platform_feedback_resend_update()
+                : resolveLabel.button}
+          </Button>
+          {resolveNotice && (
+            <p className="text-sm text-[var(--color-success)]">
+              {resolveNotice}
+            </p>
+          )}
+          {resolveError && (
+            <p className="text-sm text-[var(--color-destructive)]">
+              {resolveError}
+            </p>
+          )}
+        </div>
+      </section>
       <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
