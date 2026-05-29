@@ -20,8 +20,19 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import * as m from '@/paraglide/messages'
 import {
   usePlatformBots,
@@ -711,17 +722,17 @@ function feedbackSubmissionReporterLabel(item: PlatformFeedbackSubmission): stri
 }
 
 function feedbackStatusLabel(status: string): string {
-  if (status === 'open') return 'Open'
-  if (status === 'resolved') return 'Opgelost'
-  if (status === 'dismissed') return 'Genegeerd'
-  if (status === 'support') return 'Support'
-  return 'Nieuw'
+  if (status === 'open') return m.platform_feedback_status_open()
+  if (status === 'resolved') return m.platform_feedback_status_resolved()
+  if (status === 'dismissed') return m.platform_feedback_status_dismissed()
+  if (status === 'support') return m.platform_feedback_status_support()
+  return m.platform_feedback_status_new()
 }
 
 function feedbackItemStatusLabel(status: string): string {
-  if (status === 'resolved') return 'Opgelost'
-  if (status === 'dismissed') return 'Genegeerd'
-  return 'Open'
+  if (status === 'resolved') return m.platform_feedback_status_resolved()
+  if (status === 'dismissed') return m.platform_feedback_status_dismissed()
+  return m.platform_feedback_status_open()
 }
 
 function feedbackItemReporterSummary(item: PlatformFeedbackItem): string {
@@ -730,27 +741,29 @@ function feedbackItemReporterSummary(item: PlatformFeedbackItem): string {
     .filter((name): name is string => Boolean(name))
 
   if (names.length === 0) {
-    return item.org_count > 0 ? `${item.org_count} organisaties` : '-'
+    return item.org_count > 0
+      ? m.platform_feedback_org_count({ count: item.org_count })
+      : '-'
   }
   if (names.length <= 2) return names.join(', ')
   return `${names.slice(0, 2).join(', ')} +${names.length - 2}`
 }
 
 function feedbackItemKindLabel(kind: string): string {
-  if (kind === 'bug') return 'Bug'
-  if (kind === 'ux_confusion') return 'UX'
-  if (kind === 'docs') return 'Docs'
-  if (kind === 'support_pattern') return 'Support'
-  return 'Feature'
+  if (kind === 'bug') return m.platform_feedback_item_kind_bug()
+  if (kind === 'ux_confusion') return m.platform_feedback_item_kind_ux()
+  if (kind === 'docs') return m.platform_feedback_item_kind_docs()
+  if (kind === 'support_pattern') return m.platform_feedback_item_kind_support()
+  return m.platform_feedback_item_kind_feature()
 }
 
 function feedbackSuggestionActionLabel(action: string | null | undefined): string {
-  if (action === 'link_existing') return 'Link met bestaand item'
-  if (action === 'create_item') return 'Maak nieuw item'
-  if (action === 'support') return 'Support'
-  if (action === 'dismiss') return 'Negeer'
-  if (action === 'review') return 'Check bestaande items'
-  return 'Bekijk'
+  if (action === 'link_existing') return m.platform_feedback_action_link_existing()
+  if (action === 'create_item') return m.platform_feedback_action_create_item()
+  if (action === 'support') return m.platform_feedback_action_support()
+  if (action === 'dismiss') return m.platform_feedback_action_dismiss()
+  if (action === 'review') return m.platform_feedback_action_review()
+  return m.platform_feedback_action_review()
 }
 
 function feedbackSuggestionPrimaryLabel(
@@ -763,12 +776,14 @@ function feedbackSuggestionPrimaryLabel(
       candidateTitle && candidateTitle.length > 44
         ? `${candidateTitle.slice(0, 41)}...`
         : candidateTitle
-    return shortTitle ? `Koppel aan ${shortTitle}` : 'Koppel aan bestaand item'
+    return shortTitle
+      ? m.platform_feedback_primary_link_to({ title: shortTitle })
+      : m.platform_feedback_primary_link_existing()
   }
-  if (action === 'support') return 'Markeer als support'
-  if (action === 'dismiss') return 'Negeer melding'
-  if (action === 'review') return 'Zoekt bestaande items'
-  return `Maak ${feedbackItemKindLabel(kind).toLowerCase()} item`
+  if (action === 'support') return m.platform_feedback_primary_support()
+  if (action === 'dismiss') return m.platform_feedback_primary_dismiss()
+  if (action === 'review') return m.platform_feedback_primary_review()
+  return m.platform_feedback_primary_create({ kind: feedbackItemKindLabel(kind).toLowerCase() })
 }
 
 function feedbackItemSearchTerm(
@@ -815,9 +830,11 @@ function feedbackItemSearchTerm(
 
 function feedbackFallbackSummary(item: PlatformFeedbackSubmission): string {
   if (item.event_type === 'klai_assistant.problem_report') {
-    return `Bugmelding: ${item.raw_text || 'Geen omschrijving.'}`
+    return m.platform_feedback_fallback_bug({
+      text: item.raw_text || m.platform_feedback_no_description(),
+    })
   }
-  return item.raw_text || 'Geen omschrijving.'
+  return item.raw_text || m.platform_feedback_no_description()
 }
 
 function normalizedFeedbackKind(kind: string | null | undefined, fallback: string): string {
@@ -855,7 +872,7 @@ export function FeedbackTab({
           variant={feedbackView === 'inbox' ? 'default' : 'ghost'}
           onClick={() => setFeedbackView('inbox')}
         >
-          Inbox
+          {m.platform_feedback_view_inbox()}
         </Button>
         <Button
           type="button"
@@ -863,7 +880,7 @@ export function FeedbackTab({
           variant={feedbackView === 'items' ? 'default' : 'ghost'}
           onClick={() => setFeedbackView('items')}
         >
-          Open items
+          {m.platform_feedback_view_items()}
         </Button>
       </div>
 
@@ -887,7 +904,7 @@ export function FeedbackTab({
           <thead>
             <tr className="border-b border-gray-200">
               <th className={TH}>{m.platform_col_type()}</th>
-              <th className={TH}>Status</th>
+              <th className={TH}>{m.platform_col_status()}</th>
               <th className={TH}>{m.platform_col_organization()}</th>
               <th className={TH}>{m.platform_col_detail()}</th>
               <th className={TH}>{m.platform_col_time()}</th>
@@ -983,8 +1000,8 @@ function FeedbackSubmissionRow({
         <button
           type="button"
           className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-          title="Bewerken"
-          aria-label="Bewerken"
+          title={m.platform_feedback_edit()}
+          aria-label={m.platform_feedback_edit()}
           onClick={(event) => {
             event.stopPropagation()
             onOpen()
@@ -1019,50 +1036,50 @@ function OpenItemsPanel({
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
             className="h-9 min-w-[150px]"
-            aria-label="Filter op status"
+            aria-label={m.platform_feedback_filter_status()}
           >
-            <option value="active">Actief</option>
-            <option value="open">Open</option>
-            <option value="resolved">Opgelost</option>
-            <option value="dismissed">Genegeerd</option>
-            <option value="all">Alles</option>
+            <option value="active">{m.platform_feedback_filter_active()}</option>
+            <option value="open">{m.platform_feedback_status_open()}</option>
+            <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+            <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+            <option value="all">{m.platform_feedback_filter_all()}</option>
           </Select>
           <Select
             value={kindFilter}
             onChange={(event) => setKindFilter(event.target.value)}
             className="h-9 min-w-[130px]"
-            aria-label="Filter op type"
+            aria-label={m.platform_feedback_filter_type()}
           >
-            <option value="all">Alle types</option>
-            <option value="bug">Bugs</option>
-            <option value="feature">Features</option>
-            <option value="ux_confusion">UX</option>
-            <option value="docs">Docs</option>
-            <option value="support_pattern">Support</option>
+            <option value="all">{m.platform_feedback_filter_all_types()}</option>
+            <option value="bug">{m.platform_feedback_item_kind_bug()}</option>
+            <option value="feature">{m.platform_feedback_item_kind_feature()}</option>
+            <option value="ux_confusion">{m.platform_feedback_item_kind_ux()}</option>
+            <option value="docs">{m.platform_feedback_item_kind_docs()}</option>
+            <option value="support_pattern">{m.platform_feedback_item_kind_support()}</option>
           </Select>
         </div>
         <p className="text-xs text-gray-400">
-          Gesloten items staan niet standaard tussen actieve feedback.
+          {m.platform_feedback_closed_hidden_hint()}
         </p>
       </div>
       {items.isFetching && !items.isLoading && (
         <p className="mb-2 text-xs text-gray-400">
           <Loader2 className="mr-2 inline h-3 w-3 animate-spin" />
-          Open items bijwerken
+          {m.platform_feedback_items_refreshing()}
         </p>
       )}
       <PlatformTableShell
         loading={items.isLoading}
         empty={rows.length === 0}
-        emptyText="Nog geen feedback items gevonden."
+        emptyText={m.platform_feedback_items_empty()}
       >
           <thead>
             <tr className="border-b border-gray-200">
-              <th className={TH}>Item</th>
-              <th className={TH}>Organisatie(s)</th>
-              <th className={TH}>Status</th>
-              <th className={TH}>Type</th>
-              <th className={TH}>Bijgewerkt</th>
+              <th className={TH}>{m.platform_feedback_col_item()}</th>
+              <th className={TH}>{m.platform_feedback_col_organizations()}</th>
+              <th className={TH}>{m.platform_col_status()}</th>
+              <th className={TH}>{m.platform_col_type()}</th>
+              <th className={TH}>{m.platform_feedback_col_updated()}</th>
               <th className={TH}></th>
             </tr>
           </thead>
@@ -1082,7 +1099,7 @@ function OpenItemsPanel({
                       {item.title}
                     </span>
                     <span className="mt-1 block truncate text-xs text-gray-400">
-                      {[item.area, item.owner && `owner: ${item.owner}`]
+                      {[item.area, item.owner && m.platform_feedback_owner({ owner: item.owner })]
                         .filter(Boolean)
                         .join(' / ')}
                     </span>
@@ -1092,7 +1109,10 @@ function OpenItemsPanel({
                       {feedbackItemReporterSummary(item)}
                     </span>
                     <span className="mt-1 block text-xs text-gray-400">
-                      {item.org_count} orgs / {item.user_count} users
+                      {m.platform_feedback_reporter_counts({
+                        orgs: item.org_count,
+                        users: item.user_count,
+                      })}
                     </span>
                   </td>
                   <td className={TD}>
@@ -1106,8 +1126,8 @@ function OpenItemsPanel({
                     <button
                       type="button"
                       className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                      title="Bewerken"
-                      aria-label={`Bewerk ${item.title}`}
+                      title={m.platform_feedback_edit()}
+                      aria-label={m.platform_feedback_edit_item({ title: item.title })}
                       onClick={(event) => {
                         event.stopPropagation()
                         onOpenItem(item.id)
@@ -1148,6 +1168,7 @@ export function FeedbackSubmissionDetailPanel({
   const [area, setArea] = useState(suggestion?.suggested_area ?? '')
   const [draftRawText, setDraftRawText] = useState(item.raw_text ?? '')
   const [draftStatus, setDraftStatus] = useState(item.status)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
   const items = usePlatformFeedbackItems(itemSearch, 'triage')
   const existingItems = items.data ?? []
@@ -1248,10 +1269,10 @@ export function FeedbackSubmissionDetailPanel({
     <div className="space-y-6">
       <div>
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          Feedback triage
+          {m.platform_feedback_triage_title()}
         </h1>
         <p className="mt-1 text-sm text-gray-400">
-          {item.org_name ?? item.org_slug ?? 'Onbekende organisatie'} -{' '}
+          {item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()} -{' '}
           {feedbackSubmissionReporterLabel(item)
             ? `${feedbackSubmissionReporterLabel(item)} - `
             : ''}
@@ -1272,24 +1293,31 @@ export function FeedbackSubmissionDetailPanel({
                 </Badge>
               )}
             </div>
-            <Textarea
-              value={draftRawText}
-              onChange={(event) => setDraftRawText(event.target.value)}
-              rows={4}
-              placeholder="Melding"
-            />
+            <div className="space-y-1.5">
+              <Label htmlFor={`feedback-submission-${item.id}`}>
+                {m.platform_feedback_submission_placeholder()}
+              </Label>
+              <Textarea
+                id={`feedback-submission-${item.id}`}
+                value={draftRawText}
+                onChange={(event) => setDraftRawText(event.target.value)}
+                rows={4}
+                placeholder={m.platform_feedback_submission_placeholder()}
+              />
+            </div>
             <div className="flex flex-wrap items-center gap-3">
               <Select
+                id={`feedback-submission-status-${item.id}`}
                 value={draftStatus}
                 onChange={(event) => setDraftStatus(event.target.value)}
                 className="h-9 w-auto min-w-[150px]"
-                aria-label="Status"
+                aria-label={m.platform_col_status()}
               >
-                <option value="new">Nieuw</option>
-                <option value="open">Open</option>
-                <option value="resolved">Opgelost</option>
-                <option value="support">Support</option>
-                <option value="dismissed">Genegeerd</option>
+                <option value="new">{m.platform_feedback_status_new()}</option>
+                <option value="open">{m.platform_feedback_status_open()}</option>
+                <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+                <option value="support">{m.platform_feedback_status_support()}</option>
+                <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
               </Select>
               <Button
                 type="button"
@@ -1307,41 +1335,38 @@ export function FeedbackSubmissionDetailPanel({
                 ) : (
                   <Save className="h-4 w-4" />
                 )}
-                Opslaan
+                {m.admin_shared_save()}
               </Button>
               <Button
                 type="button"
                 size="sm"
                 variant="secondary"
                 disabled={busy}
-                onClick={() => {
-                  if (!window.confirm('Melding verwijderen? Gekoppelde item-signalen worden bijgewerkt.')) {
-                    return
-                  }
-                  deleteSubmission.mutate(item.id, { onSuccess: onClose })
-                }}
+                onClick={() => setConfirmDeleteOpen(true)}
               >
                 {deleteSubmission.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Trash2 className="h-4 w-4" />
                 )}
-                Verwijderen
+                {m.platform_delete()}
               </Button>
               {updateSubmission.isSuccess && (
-                <p className="text-sm text-green-700">Melding opgeslagen.</p>
+                <p className="text-sm text-[var(--color-success)]">
+                  {m.platform_feedback_submission_saved()}
+                </p>
               )}
             </div>
           </section>
 
           {canTriage ? (
             <>
-              <section className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <section className="space-y-3 border-t border-gray-200 pt-5">
                 <div className="flex min-w-0 items-start gap-2">
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warning)]" />
                   <div className="min-w-0">
                     <h3 className="text-sm font-medium text-gray-900">
-                      Voorstel
+                      {m.platform_feedback_suggestion_title()}
                     </h3>
                     <p className="mt-1 text-sm leading-6 text-gray-700">
                       {proposalSummary}
@@ -1350,22 +1375,34 @@ export function FeedbackSubmissionDetailPanel({
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs">
                   <Badge variant="outline">
-                    Actie: {feedbackSuggestionActionLabel(recommendedAction)}
+                    {m.platform_feedback_suggestion_action({
+                      action: feedbackSuggestionActionLabel(recommendedAction),
+                    })}
                   </Badge>
                   <Badge variant="outline">
-                    Type: {feedbackItemKindLabel(suggestedKind)}
+                    {m.platform_feedback_suggestion_type({
+                      type: feedbackItemKindLabel(suggestedKind),
+                    })}
                   </Badge>
                   {suggestion?.suggested_area && (
-                    <Badge variant="outline">Gebied: {suggestion.suggested_area}</Badge>
+                    <Badge variant="outline">
+                      {m.platform_feedback_suggestion_area({
+                        area: suggestion.suggested_area,
+                      })}
+                    </Badge>
                   )}
                   {suggestion?.suggested_severity && (
-                    <Badge variant="outline">Urgentie: {suggestion.suggested_severity}</Badge>
+                    <Badge variant="outline">
+                      {m.platform_feedback_suggestion_severity({
+                        severity: suggestion.suggested_severity,
+                      })}
+                    </Badge>
                   )}
                 </div>
                 {recommendedItem && (
-                  <div className="rounded-md border border-amber-200 bg-white px-3 py-2">
+                  <div className="rounded-lg border border-gray-200 px-3 py-2">
                     <p className="text-xs font-medium text-gray-500">
-                      Bestaand item gevonden
+                      {m.platform_feedback_existing_item_found()}
                     </p>
                     <p className="mt-1 truncate text-sm font-medium text-gray-900">
                       {recommendedItem.title}
@@ -1396,7 +1433,9 @@ export function FeedbackSubmissionDetailPanel({
                     disabled={busy}
                     onClick={() => setShowCorrections((visible) => !visible)}
                   >
-                    Andere actie
+                    {showCorrections
+                      ? m.platform_feedback_hide_other_actions()
+                      : m.platform_feedback_other_action()}
                   </Button>
                 </div>
               </section>
@@ -1412,7 +1451,7 @@ export function FeedbackSubmissionDetailPanel({
                     }}
                   >
                     <ArchiveX className="h-4 w-4" />
-                    Negeer
+                    {m.platform_feedback_action_dismiss()}
                   </Button>
                   <Button
                     type="button"
@@ -1423,11 +1462,10 @@ export function FeedbackSubmissionDetailPanel({
                     }}
                   >
                     <LifeBuoy className="h-4 w-4" />
-                    Markeer als support
+                    {m.platform_feedback_primary_support()}
                   </Button>
                   <p className="text-xs leading-5 text-gray-500 sm:col-span-2">
-                    Support betekent: geen product- of open item maken; de melding
-                    wordt afgehandeld als klantvraag/supportsignaal.
+                    {m.platform_feedback_support_help()}
                   </p>
                 </section>
               )}
@@ -1435,27 +1473,29 @@ export function FeedbackSubmissionDetailPanel({
               {showCorrections && (
                 <section className="space-y-3 border-t border-gray-200 pt-5">
                   <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-sm font-medium text-gray-900">Koppel aan bestaand item</h3>
+                    <h3 className="text-sm font-medium text-gray-900">
+                      {m.platform_feedback_link_existing_title()}
+                    </h3>
                     {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
                   </div>
-                  <label className="block space-y-1">
-                    <span className="text-xs font-medium text-gray-500">
-                      Slimme zoekterm voor open items
-                    </span>
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`feedback-item-search-${item.id}`}>
+                      {m.platform_feedback_smart_search_label()}
+                    </Label>
                     <span className="relative block">
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                       <Input
+                        id={`feedback-item-search-${item.id}`}
                         value={itemSearch}
                         onChange={(event) => setItemSearch(event.target.value)}
-                        placeholder="Titel of onderwerp"
+                        placeholder={m.platform_feedback_search_placeholder()}
                         className="pl-9"
                       />
                     </span>
-                  </label>
+                  </div>
                   {suggestion?.duplicate_candidates.length ? (
                     <p className="text-xs text-gray-500">
-                      AI heeft al mogelijke matches hierboven getoond. Gebruik zoeken
-                      alleen als je een ander item wilt koppelen.
+                      {m.platform_feedback_ai_matches_help()}
                     </p>
                   ) : null}
                   <div className="space-y-2">
@@ -1474,7 +1514,10 @@ export function FeedbackSubmissionDetailPanel({
                               .join(' / ')}
                           </p>
                           <p className="mt-1 text-xs text-gray-400">
-                            {existing.org_count} orgs - {existing.user_count} users
+                            {m.platform_feedback_reporter_counts({
+                              orgs: existing.org_count,
+                              users: existing.user_count,
+                            })}
                           </p>
                         </div>
                         <Button
@@ -1494,13 +1537,13 @@ export function FeedbackSubmissionDetailPanel({
                           }}
                         >
                           <Link2 className="h-4 w-4" />
-                          Link
+                          {m.platform_feedback_link()}
                         </Button>
                       </div>
                     ))}
                     {!items.isFetching && (items.data ?? []).length === 0 && (
-                      <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
-                        Geen bestaand open item gevonden.
+                      <p className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500">
+                        {m.platform_feedback_no_existing_item()}
                       </p>
                     )}
                   </div>
@@ -1509,29 +1552,31 @@ export function FeedbackSubmissionDetailPanel({
 
               {showCorrections && (
                 <section className="space-y-3 border-t border-gray-200 pt-5">
-                  <h3 className="text-sm font-medium text-gray-900">Maak nieuw item</h3>
+                  <h3 className="text-sm font-medium text-gray-900">
+                    {m.platform_feedback_create_new_title()}
+                  </h3>
                   <Select value={kind} onChange={(event) => setKind(event.target.value)}>
-                    <option value="feature">Feature</option>
-                    <option value="bug">Bug</option>
-                    <option value="ux_confusion">UX verwarring</option>
-                    <option value="docs">Docs</option>
-                    <option value="support_pattern">Support patroon</option>
+                    <option value="feature">{m.platform_feedback_item_kind_feature()}</option>
+                    <option value="bug">{m.platform_feedback_item_kind_bug()}</option>
+                    <option value="ux_confusion">{m.platform_feedback_item_kind_ux()}</option>
+                    <option value="docs">{m.platform_feedback_item_kind_docs()}</option>
+                    <option value="support_pattern">{m.platform_feedback_item_kind_support()}</option>
                   </Select>
                   <Input
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
-                    placeholder="Titel"
+                    placeholder={m.platform_feedback_title_placeholder()}
                   />
                   <Textarea
                     value={summary}
                     onChange={(event) => setSummary(event.target.value)}
                     rows={4}
-                    placeholder="Samenvatting"
+                    placeholder={m.platform_feedback_summary_placeholder()}
                   />
                   <Input
                     value={area}
                     onChange={(event) => setArea(event.target.value)}
-                    placeholder="Productgebied"
+                    placeholder={m.platform_feedback_area_placeholder()}
                   />
                   <Button
                     type="button"
@@ -1551,24 +1596,49 @@ export function FeedbackSubmissionDetailPanel({
                     }}
                   >
                     <PlusCircle className="h-4 w-4" />
-                    Maak item
+                    {m.platform_feedback_create_item()}
                   </Button>
                 </section>
               )}
             </>
           ) : (
-            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-              Deze melding is al afgehandeld als {feedbackStatusLabel(item.status).toLowerCase()}.
+            <div className="rounded-lg border border-gray-200 px-4 py-3 text-sm text-gray-600">
+              {m.platform_feedback_submission_already_handled({
+                status: feedbackStatusLabel(item.status).toLowerCase(),
+              })}
             </div>
           )}
 
           {(dismiss.isSuccess || support.isSuccess || createItem.isSuccess || linkItem.isSuccess) && (
-            <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
+            <div className="flex items-center gap-2 rounded-lg bg-[var(--color-success-bg)] px-3 py-2 text-sm text-[var(--color-success-text)]">
               <CheckCircle2 className="h-4 w-4" />
-              Opgeslagen
+              {m.admin_settings_saved()}
             </div>
           )}
       </div>
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {m.platform_feedback_delete_submission_title()}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.platform_feedback_delete_submission_description()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+              onClick={() => {
+                deleteSubmission.mutate(item.id, { onSuccess: onClose })
+              }}
+            >
+              {m.platform_delete()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -1588,17 +1658,17 @@ export function FeedbackItemDetailPanel({
     <div className="space-y-6">
       <div>
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          Open item
+          {m.platform_feedback_item_title()}
         </h1>
         <p className="mt-1 text-sm text-gray-400">
-          Gebundelde feedback en klantupdates.
+          {m.platform_feedback_item_description()}
         </p>
       </div>
 
       {detail.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-gray-500">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Laden...
+          {m.admin_shared_loading()}
         </div>
       ) : detail.data ? (
         <FeedbackItemDetailForm
@@ -1609,7 +1679,7 @@ export function FeedbackItemDetailPanel({
           onClose={onClose}
         />
       ) : (
-        <p className="text-sm text-gray-500">Item niet gevonden.</p>
+        <p className="text-sm text-gray-500">{m.platform_feedback_item_not_found()}</p>
       )}
     </div>
   )
@@ -1639,6 +1709,7 @@ function FeedbackItemDetailForm({
   const [notifyEmail, setNotifyEmail] = useState(false)
   const [resolveNotice, setResolveNotice] = useState<string | null>(null)
   const [resolveError, setResolveError] = useState<string | null>(null)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const resolveLabel = feedbackResolveLabel(item.kind)
   const isClosed = CLOSED_FEEDBACK_ITEM_STATUSES.has(status)
   const saveItem = () => {
@@ -1653,7 +1724,7 @@ function FeedbackItemDetailForm({
     const channels: Array<'in_app' | 'email'> = []
     if (notifyInApp) channels.push('in_app')
     if (notifyEmail) channels.push('email')
-    setResolveNotice('Update wordt aangemaakt...')
+    setResolveNotice(m.platform_feedback_update_creating())
     setResolveError(null)
     resolveItem.mutate(
       {
@@ -1666,7 +1737,11 @@ function FeedbackItemDetailForm({
         onSuccess: (result) => {
           setStatus(result.item.status)
           setResolutionSummary(result.item.resolution_summary ?? '')
-          setResolveNotice(`Update aangemaakt voor ${result.notifications.length} ontvanger(s).`)
+          setResolveNotice(
+            m.platform_feedback_update_created({
+              count: result.notifications.length,
+            }),
+          )
           setResolveError(null)
         },
         onError: (error) => {
@@ -1682,25 +1757,54 @@ function FeedbackItemDetailForm({
       <section className="space-y-3 border-t border-b border-gray-200 py-5">
         <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
           <Badge variant="outline">{feedbackItemKindLabel(item.kind)}</Badge>
-          <Badge variant="outline">{item.org_count} orgs</Badge>
-          <Badge variant="outline">{item.user_count} users</Badge>
-          <Badge variant="secondary">score {item.priority_score}</Badge>
+          <Badge variant="outline">
+            {m.platform_feedback_org_count({ count: item.org_count })}
+          </Badge>
+          <Badge variant="outline">
+            {m.platform_feedback_user_count({ count: item.user_count })}
+          </Badge>
+          <Badge variant="secondary">
+            {m.platform_feedback_score({ score: item.priority_score })}
+          </Badge>
           {item.area && <Badge variant="outline">{item.area}</Badge>}
         </div>
-        <div className="grid gap-3">
-          <Select value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="open">Open</option>
-            <option value="resolved">Opgelost</option>
-            <option value="dismissed">Genegeerd</option>
+        <div className="space-y-1.5">
+          <Label htmlFor={`feedback-item-status-${item.id}`}>
+            {m.platform_col_status()}
+          </Label>
+          <Select
+            id={`feedback-item-status-${item.id}`}
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+          >
+            <option value="open">{m.platform_feedback_status_open()}</option>
+            <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+            <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
           </Select>
         </div>
-        <Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Titel" />
-        <Textarea
-          value={summary}
-          onChange={(event) => setSummary(event.target.value)}
-          rows={3}
-          placeholder="Korte notitie"
-        />
+        <div className="space-y-1.5">
+          <Label htmlFor={`feedback-item-title-${item.id}`}>
+            {m.platform_feedback_title_placeholder()}
+          </Label>
+          <Input
+            id={`feedback-item-title-${item.id}`}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder={m.platform_feedback_title_placeholder()}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`feedback-item-summary-${item.id}`}>
+            {m.platform_feedback_short_note_placeholder()}
+          </Label>
+          <Textarea
+            id={`feedback-item-summary-${item.id}`}
+            value={summary}
+            onChange={(event) => setSummary(event.target.value)}
+            rows={3}
+            placeholder={m.platform_feedback_short_note_placeholder()}
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
@@ -1712,60 +1816,63 @@ function FeedbackItemDetailForm({
             ) : (
               <Save className="h-4 w-4" />
             )}
-            Opslaan
+            {m.admin_shared_save()}
           </Button>
           {updateItem.isSuccess && (
-            <p className="text-sm text-green-700">Open item opgeslagen.</p>
+            <p className="text-sm text-[var(--color-success)]">
+              {m.platform_feedback_item_saved()}
+            </p>
           )}
           <Button
             type="button"
             variant="secondary"
             disabled={updateItem.isPending || deleteItem.isPending}
-            onClick={() => {
-              if (!window.confirm('Open item verwijderen en gekoppelde feedback terugzetten naar nieuw?')) {
-                return
-              }
-              deleteItem.mutate(item.id, { onSuccess: onClose })
-            }}
+            onClick={() => setConfirmDeleteOpen(true)}
           >
             {deleteItem.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Trash2 className="h-4 w-4" />
             )}
-            Verwijder item
+            {m.platform_feedback_delete_item()}
           </Button>
         </div>
       </section>
 
-      <section className="space-y-3 rounded-lg border border-green-200 bg-green-50 p-4">
+      <section className="space-y-3 border-t border-gray-200 pt-5">
         <div>
           <h3 className="text-sm font-medium text-gray-900">{resolveLabel.title}</h3>
           <p className="mt-1 text-sm text-gray-600">
-            Sluit dit item en stuur gekoppelde melders een update in hun account.
+            {m.platform_feedback_resolve_description()}
           </p>
         </div>
         {isClosed && resolutionSummary && (
-          <div className="rounded-md border border-green-200 bg-white px-3 py-2 text-sm text-green-800">
+          <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900">
             {resolutionSummary}
           </div>
         )}
-        <Textarea
-          value={resolutionSummary}
-          onChange={(event) => setResolutionSummary(event.target.value)}
-          rows={3}
-          placeholder="Persoonlijk bericht voor de melder"
-        />
+        <div className="space-y-1.5">
+          <Label htmlFor={`feedback-item-resolution-${item.id}`}>
+            {m.platform_feedback_resolution_placeholder()}
+          </Label>
+          <Textarea
+            id={`feedback-item-resolution-${item.id}`}
+            value={resolutionSummary}
+            onChange={(event) => setResolutionSummary(event.target.value)}
+            rows={3}
+            placeholder={m.platform_feedback_resolution_placeholder()}
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-5">
           <Checkbox
             checked={notifyInApp}
             onChange={(event) => setNotifyInApp(event.target.checked)}
-            label="In-app bericht"
+            label={m.platform_feedback_channel_in_app()}
           />
           <Checkbox
             checked={notifyEmail}
             onChange={(event) => setNotifyEmail(event.target.checked)}
-            label="Ook e-mail klaarzetten"
+            label={m.platform_feedback_channel_email()}
           />
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -1785,23 +1892,27 @@ function FeedbackItemDetailForm({
               <CheckCircle2 className="h-4 w-4" />
             )}
             {resolveItem.isPending
-              ? 'Bezig met sluiten...'
+              ? m.platform_feedback_resolving()
               : isClosed
-                ? 'Update opnieuw sturen'
+                ? m.platform_feedback_resend_update()
                 : resolveLabel.button}
           </Button>
           {resolveNotice && (
-            <p className="text-sm text-green-700">
+            <p className="text-sm text-[var(--color-success)]">
               {resolveNotice}
             </p>
           )}
-          {resolveError && <p className="text-sm text-red-700">{resolveError}</p>}
+          {resolveError && (
+            <p className="text-sm text-[var(--color-destructive)]">
+              {resolveError}
+            </p>
+          )}
         </div>
       </section>
 
       <section className="space-y-3 border-t border-gray-200 pt-5">
         <h3 className="text-sm font-medium text-gray-900">
-          Gekoppelde feedback ({submissions.length})
+          {m.platform_feedback_linked_feedback({ count: submissions.length })}
         </h3>
         <div className="space-y-2">
           {submissions.map((submission) => (
@@ -1815,7 +1926,7 @@ function FeedbackItemDetailForm({
                 {submission.raw_text}
               </p>
               <p className="mt-2 text-xs text-gray-400">
-                {submission.org_name ?? submission.org_slug ?? 'Onbekende org'}
+                {submission.org_name ?? submission.org_slug ?? m.platform_feedback_unknown_organization()}
                 {feedbackSubmissionReporterLabel(submission)
                   ? ` / ${feedbackSubmissionReporterLabel(submission)}`
                   : ''}
@@ -1824,6 +1935,27 @@ function FeedbackItemDetailForm({
           ))}
         </div>
       </section>
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{m.platform_feedback_delete_item_title()}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.platform_feedback_delete_item_description()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+              onClick={() => {
+                deleteItem.mutate(item.id, { onSuccess: onClose })
+              }}
+            >
+              {m.platform_delete()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -1831,22 +1963,22 @@ function FeedbackItemDetailForm({
 function feedbackResolveLabel(kind: string) {
   if (kind === 'bug') {
     return {
-      title: 'Bug sluiten',
-      button: 'Sluit bug en bericht gebruiker',
-      subject: 'Bug opgelost',
+      title: m.platform_feedback_resolve_bug_title(),
+      button: m.platform_feedback_resolve_bug_button(),
+      subject: m.platform_feedback_resolve_bug_subject(),
     }
   }
   if (kind === 'feature') {
     return {
-      title: 'Feature afronden',
-      button: 'Markeer als verzonden en bericht gebruiker',
-      subject: 'Feature beschikbaar',
+      title: m.platform_feedback_resolve_feature_title(),
+      button: m.platform_feedback_resolve_feature_button(),
+      subject: m.platform_feedback_resolve_feature_subject(),
     }
   }
   return {
-    title: 'Melding sluiten',
-    button: 'Sluit melding en bericht gebruiker',
-    subject: 'Melding verwerkt',
+    title: m.platform_feedback_resolve_report_title(),
+    button: m.platform_feedback_resolve_report_button(),
+    subject: m.platform_feedback_resolve_report_subject(),
   }
 }
 
@@ -1854,15 +1986,15 @@ function feedbackActionErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
     return error.message
   }
-  return 'Actie mislukt. Probeer opnieuw of open de console voor details.'
+  return m.platform_feedback_action_failed()
 }
 
 function defaultResolutionSummary(item: PlatformFeedbackItem) {
   if (item.kind === 'bug') {
-    return `We hebben dit probleem opgelost: ${item.title}.`
+    return m.platform_feedback_default_resolution_bug({ title: item.title })
   }
   if (item.kind === 'feature') {
-    return `We hebben deze verbetering beschikbaar gemaakt: ${item.title}.`
+    return m.platform_feedback_default_resolution_feature({ title: item.title })
   }
-  return `We hebben je melding verwerkt: ${item.title}.`
+  return m.platform_feedback_default_resolution_report({ title: item.title })
 }

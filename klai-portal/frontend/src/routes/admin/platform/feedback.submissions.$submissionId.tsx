@@ -31,7 +31,8 @@ function PlatformFeedbackSubmissionPage() {
   const id = Number(submissionId)
   const detail = usePlatformFeedbackSubmission(Number.isFinite(id) ? id : null)
 
-  const backToPlatform = () => void navigate({ to: '/admin/platform' })
+  const backToPlatform = () =>
+    void navigate({ to: '/admin/platform', search: { tab: 'feedback' } })
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-6 py-10">
@@ -42,7 +43,7 @@ function PlatformFeedbackSubmissionPage() {
         className="h-auto justify-start p-0 text-sm font-medium text-gray-500 no-underline hover:text-gray-900 hover:no-underline"
       >
         <ArrowLeft className="h-4 w-4" />
-        {m.platform_back_to_platform()}
+        {m.platform_back_to_feedback()}
       </Button>
 
       {detail.isLoading && (
