@@ -74,7 +74,6 @@ export function FeedbackSubmissionDetailPanel({
   const [title, setTitle] = useState(suggestedTitle)
   const [summary, setSummary] = useState(suggestion?.summary ?? item.raw_text ?? '')
   const [area, setArea] = useState(suggestion?.suggested_area ?? '')
-  const [draftRawText, setDraftRawText] = useState(item.raw_text ?? '')
   const [draftStatus, setDraftStatus] = useState(item.status)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [triageAction, setTriageAction] = useState<
@@ -130,22 +129,22 @@ export function FeedbackSubmissionDetailPanel({
           area: bestSearchMatch.area,
         }
       : null
-  const proposalSummary = suggestion?.summary || draftRawText || feedbackFallbackSummary(item)
-  const saveSubmission = () => {
+  const reportText = item.raw_text || feedbackFallbackSummary(item)
+  const proposalSummary = suggestion?.summary || item.raw_text || feedbackFallbackSummary(item)
+  const saveSubmissionStatus = () => {
     updateSubmission.mutate({
       submissionId: item.id,
-      raw_text: draftRawText.trim(),
       status: draftStatus,
     })
   }
   const acceptCreateItem = () => {
-    const fallbackTitle = (suggestion?.summary || draftRawText || '').slice(0, 90)
+    const fallbackTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
     createItem.mutate(
       {
         submissionId: item.id,
         kind: suggestedKind,
         title: fallbackTitle.trim(),
-        summary: draftRawText || suggestion?.summary || null,
+        summary: item.raw_text || suggestion?.summary || null,
         area: suggestion?.suggested_area || area.trim() || null,
         link_type: linkType,
       },
@@ -192,7 +191,7 @@ export function FeedbackSubmissionDetailPanel({
   const submissionWizardSteps: StepItem[] = submissionStepOrder.map((step) => ({
     label:
       step === 'report'
-        ? m.platform_feedback_submission_placeholder()
+        ? m.platform_feedback_read_report_title()
         : step === 'proposal'
           ? m.platform_feedback_suggestion_title()
           : m.platform_feedback_choose_action_title(),
@@ -241,15 +240,11 @@ export function FeedbackSubmissionDetailPanel({
             <h2 className="mt-1 text-base font-display-bold text-gray-900">
               {m.platform_feedback_read_report_title()}
             </h2>
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">
+              {reportText}
+            </p>
           </div>
-          <Textarea
-            id={`feedback-submission-${item.id}`}
-            value={draftRawText}
-            onChange={(event) => setDraftRawText(event.target.value)}
-            rows={6}
-            placeholder={m.platform_feedback_submission_placeholder()}
-          />
-          <div className="space-y-3 text-sm text-gray-600">
+          <div className="grid gap-3 text-sm text-gray-600 sm:grid-cols-2 lg:grid-cols-3">
             <FeedbackMetaRow
               label={m.platform_col_organization()}
               value={item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()}
@@ -606,8 +601,8 @@ export function FeedbackSubmissionDetailPanel({
             </div>
           )}
 
-          {activeSubmissionStep === 'report' && (
-            <section className="space-y-3">
+          {!canTriage && (
+            <section className="space-y-3 border-t border-gray-200 pt-6">
               <div className="space-y-1.5">
                 <Label htmlFor={`feedback-submission-status-${item.id}`}>
                   {m.platform_col_status()}
@@ -627,12 +622,8 @@ export function FeedbackSubmissionDetailPanel({
               <div className="flex flex-wrap items-center gap-3">
                 <Button
                   type="button"
-                  disabled={
-                    busy ||
-                    draftRawText.trim().length < 1 ||
-                    (draftRawText.trim() === (item.raw_text ?? '') && draftStatus === item.status)
-                  }
-                  onClick={saveSubmission}
+                  disabled={busy || draftStatus === item.status}
+                  onClick={saveSubmissionStatus}
                 >
                   {updateSubmission.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -664,24 +655,41 @@ export function FeedbackSubmissionDetailPanel({
           )}
 
           {canTriage && (
-          <div className="flex items-center justify-between pt-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={submissionStepIndex === 0}
-              onClick={previousSubmissionStep}
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              {m.admin_shared_wizard_previous()}
-            </Button>
-            {canTriage && submissionStepIndex < submissionStepOrder.length - 1 && (
-              <Button type="button" onClick={nextSubmissionStep}>
-                {m.admin_shared_wizard_next()}
-                <ArrowRight className="h-4 w-4 ml-2" />
+            <div className="flex items-center justify-between border-t border-gray-200 pt-4">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
+                disabled={busy}
+                onClick={() => setConfirmDeleteOpen(true)}
+              >
+                {deleteSubmission.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-2" />
+                )}
+                {m.platform_delete()}
               </Button>
-            )}
-          </div>
+              <div className="flex items-center gap-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={submissionStepIndex === 0}
+                  onClick={previousSubmissionStep}
+                >
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  {m.admin_shared_wizard_previous()}
+                </Button>
+                {submissionStepIndex < submissionStepOrder.length - 1 && (
+                  <Button type="button" onClick={nextSubmissionStep}>
+                    {m.admin_shared_wizard_next()}
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </Button>
+                )}
+              </div>
+            </div>
           )}
       </div>
       <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
