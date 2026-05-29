@@ -258,9 +258,7 @@ function OpenItemsPanel({
                       {item.title}
                     </span>
                     <span className="mt-1 block truncate text-xs text-gray-400">
-                      {[item.area, item.owner && m.platform_feedback_owner({ owner: item.owner })]
-                        .filter(Boolean)
-                        .join(' / ')}
+                      {item.area}
                     </span>
                   </td>
                   <td className={`${TD} max-w-xs`}>

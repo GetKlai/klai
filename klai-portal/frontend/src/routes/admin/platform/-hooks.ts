@@ -256,14 +256,6 @@ export function usePlatformFeedbackUpdateItem() {
       summary?: string | null
       status?: string
       area?: string | null
-      external_tracker_type?: string | null
-      external_tracker_id?: string | null
-      external_tracker_url?: string | null
-      public_feedback_url?: string | null
-      public_title?: string | null
-      public_summary?: string | null
-      target_window?: string | null
-      owner?: string | null
     }) => {
       const { itemId, ...body } = vars
       return apiFetch<PlatformFeedbackItem>(
