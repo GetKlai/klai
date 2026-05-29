@@ -125,6 +125,40 @@ Platform stat cards may be clickable when they navigate to the matching tab.
 Operational alert cards use semantic warning/destructive tokens and must show
 what needs action as the primary value.
 
+## Chat Disclosure Rows
+
+Use this pattern when a chat answer needs secondary provenance below the
+assistant text: sources, agent activity, retrieval metadata, citations, or
+other debug/provenance details. These rows should feel available and calm,
+without competing with the answer.
+
+```tsx
+<div className="mt-8 space-y-3">
+  <details className="group rounded-xl border border-gray-200 bg-white">
+    <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-4 py-3 text-[15px] text-gray-600 [&::-webkit-details-marker]:hidden">
+      <ChevronRight className="h-4 w-4 shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
+      <span className="min-w-0 flex-1 font-semibold">Bronnen</span>
+      <span className="shrink-0 text-sm font-medium text-gray-400">1 bron</span>
+    </summary>
+    <div className="border-t border-gray-200 px-4 pb-4 pt-3 text-sm text-gray-600">
+      ...
+    </div>
+  </details>
+</div>
+```
+
+Rules:
+
+- Closed by default. The answer stays primary; provenance is secondary.
+- Use standalone rows, not cards inside cards: `rounded-xl border border-gray-200 bg-white`.
+- Use `mt-8 space-y-3` after answer prose.
+- Summary layout is chevron left, title middle, muted count right.
+- Summary typography is `text-[15px] font-semibold text-gray-600`; count is `text-sm font-medium text-gray-400`.
+- Body content starts below `border-t border-gray-200` and stays compact: `text-sm text-gray-600`.
+- Use `ChevronRight` from Lucide, rotating with `group-open:rotate-90`.
+- Do not use `klai-hover` or loud hover backgrounds for disclosure summaries.
+- Do not render `Bronnen` or `Agent activiteit` as plain bold headings below the answer.
+
 ## Colors
 
 Use:
