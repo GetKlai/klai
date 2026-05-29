@@ -2,6 +2,12 @@ import { Loader2 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import type { ReactNode } from 'react'
 
+/** Shared table header cell class for every platform admin table. */
+export const TH =
+  'py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide whitespace-nowrap'
+/** Shared table data cell class for every platform admin table. */
+export const TD = 'py-3.5 pr-4 align-top text-gray-900'
+
 export function PlatformStatCard({
   label,
   value,
