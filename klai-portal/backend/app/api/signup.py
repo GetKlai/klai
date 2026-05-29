@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import invalidate_tenant_slug_cache
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
+from app.core.seats import suggest_seat
 from app.models.portal import PortalOrg, PortalUser
 from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
@@ -284,6 +285,7 @@ async def signup(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
             slug=_to_slug(body.company_name, zitadel_org_id),
+            plan="knowledge",
             primary_domain=primary_domain_for_email_domain(_email_domain),
             auto_accept_same_domain=False,
         )
@@ -297,6 +299,7 @@ async def signup(
             zitadel_user_id=zitadel_user_id,
             org_id=org_row.id,
             role="admin",  # org creator is always admin
+            seat_type=str(suggest_seat("admin")),
             preferred_language=body.preferred_language,
         )
         db.add(user_row)
@@ -451,24 +454,16 @@ async def signup_social(
             detail="Social signup session expired. Please try again.",
         )
 
-    # SPEC-AUTH-009 R1 C1.3: reject free-email domains in social signup path too,
-    # unless the IDP callback already verified that this exact email has an invite.
+    # Social signup gets a verified email from the IDP. Free-email providers are
+    # allowed to create a workspace, but primary_domain_for_email_domain() below
+    # returns "" so gmail.com/hotmail/etc. can never be claimed for domain-match
+    # or auto-join.
     _social_email = pending.get("email", "")
     _social_domain = _social_email.split("@")[-1].strip().lower() if "@" in _social_email else ""
-    _has_valid_invite = bool(pending.get("has_valid_invite"))
     if not _social_domain:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Social signup session expired. Please try again.",
-        )
-    if not _has_valid_invite and _social_domain and is_free_email_provider(_social_domain):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Klai-werkruimtes kun je alleen aanmaken met een zakelijk mailadres. "
-                "Vraag je beheerder om een uitnodiging als je via een privé-mailadres "
-                "wilt deelnemen."
-            ),
         )
 
     # 2. Create Zitadel org
@@ -539,6 +534,7 @@ async def signup_social(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
             slug=_to_slug(body.company_name, zitadel_org_id),
+            plan="knowledge",
             primary_domain=primary_domain_for_email_domain(_social_domain),
             auto_accept_same_domain=False,
         )
@@ -552,6 +548,7 @@ async def signup_social(
             zitadel_user_id=zitadel_user_id,
             org_id=org_row.id,
             role="admin",
+            seat_type=str(suggest_seat("admin")),
         )
         db.add(user_row)
         await db.commit()

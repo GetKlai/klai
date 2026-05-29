@@ -33,13 +33,17 @@ export interface CurrentUser extends MeResponse {
   hasCapability: (cap: string) => boolean
 }
 
+export function deriveIsAdmin(me: Pick<MeResponse, 'roles' | 'portal_role'>): boolean {
+  return me.portal_role === 'admin' || (me.roles?.some((r) => ADMIN_ROLES.includes(r)) ?? false)
+}
+
 export function useCurrentUser() {
   const auth = useAuth()
   const query = useQuery({
     queryKey: ['current-user'],
     queryFn: async () => {
       const me = await apiFetch<MeResponse>('/api/me')
-      const isAdmin = me.roles?.some((r) => ADMIN_ROLES.includes(r)) ?? false
+      const isAdmin = deriveIsAdmin(me)
       return {
         ...me,
         // Ensure capabilities is always an array even if older backend omits it

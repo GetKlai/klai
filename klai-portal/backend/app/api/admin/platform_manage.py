@@ -808,6 +808,7 @@ async def platform_create_tenant(
         zitadel_org_id=zitadel_org_id,
         name=body.company_name,
         slug=_to_slug(body.company_name, zitadel_org_id),
+        plan="knowledge",
         primary_domain=primary_domain_for_email_domain(owner_email_domain),
         auto_accept_same_domain=False,
     )
