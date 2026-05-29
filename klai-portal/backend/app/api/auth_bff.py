@@ -245,8 +245,10 @@ async def oidc_callback(
         org_id = portal_row.org_id
     else:
         portal_rows = (
-            await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id).limit(2))
-        ).scalars().all()
+            (await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id).limit(2)))
+            .scalars()
+            .all()
+        )
         if len(portal_rows) == 1:
             org_id = portal_rows[0].org_id
         elif len(portal_rows) > 1:
