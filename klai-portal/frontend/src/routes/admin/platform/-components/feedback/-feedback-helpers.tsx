@@ -55,6 +55,13 @@ export function feedbackItemKindLabel(kind: string): string {
   return m.platform_feedback_item_kind_feature()
 }
 
+export function feedbackLinkTypeLabel(linkType: string): string {
+  if (linkType === 'upvote') return m.platform_feedback_link_type_upvote()
+  if (linkType === 'bug_repro') return m.platform_feedback_link_type_bug_repro()
+  if (linkType === 'support_signal') return m.platform_feedback_link_type_support_signal()
+  return m.platform_feedback_link_type_evidence()
+}
+
 export function feedbackSuggestionActionLabel(action: string | null | undefined): string {
   if (action === 'link_existing') return m.platform_feedback_action_link_existing()
   if (action === 'create_item') return m.platform_feedback_action_create_item()
@@ -204,6 +211,20 @@ export function buildFeedbackDebugInstructions(
   submissions: PlatformFeedbackLinkedSubmission[],
   fmtDate: (s: string | null) => string,
 ) {
+  const distinct = (values: Array<string | null | undefined>) => [
+    ...new Set(values.map((value) => (value ?? '').trim()).filter(Boolean)),
+  ]
+  const routes = distinct(submissions.map((submission) => submission.route_id))
+  const urls = distinct(submissions.map((submission) => submission.page_url))
+  const locales = distinct(submissions.map((submission) => submission.locale))
+
+  const location = [
+    `- Area: ${item.area || 'unknown'}`,
+    `- Routes: ${routes.length ? routes.join(', ') : 'unknown'}`,
+    `- Page URLs: ${urls.length ? urls.join(', ') : 'unknown'}`,
+    `- Locales seen: ${locales.length ? locales.join(', ') : 'unknown'}`,
+  ].join('\n')
+
   const evidence = submissions.length
     ? submissions
         .map((submission, index) =>
@@ -211,6 +232,7 @@ export function buildFeedbackDebugInstructions(
             `${index + 1}. ${submission.raw_text || '(empty)'}`,
             `   Org: ${submission.org_name ?? submission.org_slug ?? 'unknown'}`,
             `   Reporter: ${feedbackSubmissionReporterLabel(submission) || submission.user_id || 'unknown'}`,
+            `   Type/severity: ${[submission.feedback_type, submission.severity].filter(Boolean).join(' / ') || 'unknown'}`,
             `   URL: ${submission.page_url || 'unknown'}`,
             `   Route: ${submission.route_id || 'unknown'}`,
             `   Locale/viewport: ${[submission.locale, submission.viewport].filter(Boolean).join(' / ') || 'unknown'}`,
@@ -224,12 +246,14 @@ export function buildFeedbackDebugInstructions(
     'You are fixing a Klai production bug from the Platform feedback workflow.',
     '',
     'Goal:',
-    `Fix the bug item #${item.id}: ${item.title}`,
+    `Fix the ${item.kind} item #${item.id}: ${item.title}`,
+    '',
+    'Affected location (where to look first):',
+    location,
     '',
     'Current item state:',
     `- Kind: ${item.kind}`,
     `- Status: ${item.status}`,
-    `- Area: ${item.area || 'unknown'}`,
     `- Priority score: ${item.priority_score}`,
     `- Reporter signal: ${item.org_count} org(s), ${item.user_count} user(s)`,
     '',
@@ -240,10 +264,10 @@ export function buildFeedbackDebugInstructions(
     evidence,
     '',
     'Instructions:',
-    '1. Reproduce or trace the issue from the linked URL, route, and raw customer text.',
-    '2. Identify the smallest backend/frontend change that fixes the actual cause.',
-    '3. Add or update focused regression coverage for the broken behavior.',
-    '4. Verify the delete/save/close path still works if this bug touches Platform feedback.',
+    '1. Start from the Area and Routes above to locate the affected module in the codebase.',
+    '2. Reproduce or trace the issue from the linked URL, route, and raw customer text.',
+    '3. Identify the smallest backend/frontend change that fixes the actual cause.',
+    '4. Add or update focused regression coverage for the broken behavior.',
     '5. Report changed files, tests run, and any residual risk.',
   ].join('\n')
 }

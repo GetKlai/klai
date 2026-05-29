@@ -186,7 +186,7 @@ export function FeedbackSubmissionDetailPanel({
     'proposal',
     'decision',
   ]
-  const activeSubmissionStep = canTriage ? submissionStep : 'report'
+  const activeSubmissionStep = submissionStep
   const submissionStepIndex = Math.max(0, submissionStepOrder.indexOf(activeSubmissionStep))
   const submissionWizardSteps: StepItem[] = submissionStepOrder.map((step) => ({
     label:
@@ -230,9 +230,7 @@ export function FeedbackSubmissionDetailPanel({
       </div>
 
       <div className="space-y-8">
-        {canTriage && (
-          <StepIndicator steps={submissionWizardSteps} currentIndex={submissionStepIndex} />
-        )}
+        <StepIndicator steps={submissionWizardSteps} currentIndex={submissionStepIndex} />
 
         {activeSubmissionStep === 'report' && (
         <section className="space-y-4">
@@ -275,7 +273,6 @@ export function FeedbackSubmissionDetailPanel({
         </section>
         )}
 
-          {canTriage ? (
             <>
               {activeSubmissionStep === 'proposal' && (
               <section className="space-y-4">
@@ -592,7 +589,6 @@ export function FeedbackSubmissionDetailPanel({
               </>
               )}
             </>
-          ) : null}
 
           {(dismiss.isSuccess || support.isSuccess || createItem.isSuccess || linkItem.isSuccess) && (
             <div className="flex items-center gap-2 rounded-lg bg-[var(--color-success-bg)] px-3 py-2 text-sm text-[var(--color-success-text)]">
@@ -601,8 +597,11 @@ export function FeedbackSubmissionDetailPanel({
             </div>
           )}
 
-          {!canTriage && (
+          {activeSubmissionStep === 'decision' && (
             <section className="space-y-3 border-t border-gray-200 pt-6">
+              <h3 className="text-sm font-medium text-gray-900">
+                {m.platform_feedback_set_status_manually()}
+              </h3>
               <div className="space-y-1.5">
                 <Label htmlFor={`feedback-submission-status-${item.id}`}>
                   {m.platform_col_status()}
@@ -619,33 +618,19 @@ export function FeedbackSubmissionDetailPanel({
                   <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
                 </Select>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  type="button"
-                  disabled={busy || draftStatus === item.status}
-                  onClick={saveSubmissionStatus}
-                >
-                  {updateSubmission.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  {m.admin_shared_save()}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => setConfirmDeleteOpen(true)}
-                >
-                  {deleteSubmission.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )}
-                  {m.platform_delete()}
-                </Button>
-              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy || draftStatus === item.status}
+                onClick={saveSubmissionStatus}
+              >
+                {updateSubmission.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                {m.admin_shared_save()}
+              </Button>
               {updateSubmission.isSuccess && (
                 <p className="text-sm text-[var(--color-success)]">
                   {m.platform_feedback_submission_saved()}
@@ -654,8 +639,7 @@ export function FeedbackSubmissionDetailPanel({
             </section>
           )}
 
-          {canTriage && (
-            <div className="flex items-center justify-between border-t border-gray-200 pt-4">
+          <div className="flex items-center justify-between border-t border-gray-200 pt-4">
               <Button
                 type="button"
                 variant="ghost"
@@ -690,7 +674,6 @@ export function FeedbackSubmissionDetailPanel({
                 )}
               </div>
             </div>
-          )}
       </div>
       <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <AlertDialogContent>
