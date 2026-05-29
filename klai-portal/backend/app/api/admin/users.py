@@ -339,7 +339,7 @@ async def invite_user(
     )
     db.add(user_row)
 
-    # SPEC-PORTAL-RBAC-001: products are derived from (role, plan,
+    # SPEC-PORTAL-RBAC-001: products are derived from (role, seat_type,
     # platform_unlocked_features) at read time; no per-user entitlement
     # rows are written here.
     #
@@ -428,10 +428,8 @@ async def update_user_role(
     # @MX:ANCHOR SPEC-PORTAL-ADMIN-UI-001 REQ-2 — min-1-admin invariant.
     # @MX:REASON Without serialised role changes two concurrent admin->X
     # patches that both see admin_count=2 can each succeed and leave the
-    # workspace with zero admins. We need both the lock AND the org's
-    # current plan; ``_lock_org_for_role_change`` only locks by id, so
-    # we replicate the FOR UPDATE query here to read ``plan`` from the
-    # locked row.
+    # workspace with zero admins. We lock the org row so concurrent profile
+    # edits serialize around the same tenant-level invariant.
     locked_org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id).with_for_update())
     locked_org = locked_org_result.scalar_one()
 

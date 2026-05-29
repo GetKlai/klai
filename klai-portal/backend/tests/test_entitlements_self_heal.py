@@ -1,8 +1,8 @@
 """SPEC-PORTAL-RBAC-001: get_effective_products is now a single-query
-profile-driven derivation. The legacy "self-healing tenant context" pattern
-is gone -- the function reads only from the permissive portal_users +
-portal_orgs tables, never from the RLS-protected portal_user_products /
-portal_group_products tables.
+profile/account-type driven derivation. The legacy "self-healing tenant
+context" pattern is gone -- the function reads only from the permissive
+portal_users + portal_orgs tables, never from the RLS-protected
+portal_user_products / portal_group_products tables.
 
 This file's name is preserved for git-history continuity; the contents are
 fully rewritten to assert the new contract.
@@ -16,10 +16,10 @@ import pytest
 from app.services import entitlements
 
 
-def _row(role: str, plan: str = "chat", enabled_addons: list[str] | None = None) -> MagicMock:
-    """Build a mock row that mirrors the SELECT (role, plan, enabled_addons) result."""
+def _row(role: str, seat_type: str = "chat", enabled_addons: list[str] | None = None) -> MagicMock:
+    """Build a mock row that mirrors the SELECT (role, seat_type, unlocked) result."""
     row = MagicMock()
-    row.one_or_none.return_value = (role, plan, enabled_addons or [])
+    row.one_or_none.return_value = (role, seat_type, enabled_addons or [])
     return row
 
 
@@ -30,7 +30,7 @@ def _empty_row() -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_returns_plan_products_for_core_personal() -> None:
+async def test_returns_account_type_products_for_chat_personal() -> None:
     db = AsyncMock()
     db.execute = AsyncMock(return_value=_row("personal", "chat", []))
 
@@ -87,12 +87,12 @@ async def test_addon_disabled_at_tenant_level_filters_out() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unknown_plan_returns_addon_only_when_threshold_met() -> None:
+async def test_unknown_account_type_returns_addon_only_when_threshold_met() -> None:
     db = AsyncMock()
     db.execute = AsyncMock(return_value=_row("admin", "enterprise_xl", ["scribe"]))
 
     result = await entitlements.get_effective_products("user-1", db)
-    # Unknown plan -> empty plan_features. Addons still apply if profile is high enough.
+    # Unknown account type -> empty baseline. Addons still apply if profile is high enough.
     assert sorted(result) == ["scribe"]
 
 

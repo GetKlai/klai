@@ -64,13 +64,8 @@ def _row(
     tests that pre-date the seat axis produce intuitive results without
     extra kwargs.
 
-    ``plan`` is still meaningful post-Phase-4: it still drives
-    ``derive_user_products(role, plan, platform_features)`` (which
-    products surface in the FE sidebar) and ``effective_kb_limits(role,
-    plan)`` (the per-user KB quota). Only the capability-intersection
-    axis moved to ``seat_type``. Phase 5b / a follow-up SPEC will
-    finish the plan -> seat sweep across products + kb-quota; until
-    then this kwarg is a real input, not a stale relic.
+    ``plan`` is still meaningful for legacy quota/billing paths, but
+    products and capabilities derive from ``seat_type``.
     """
     from app.core.seats import suggest_seat
 
@@ -248,7 +243,7 @@ async def test_resolve_kb_manager_on_knowledge_seat_keeps_full_caps() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_products_for_admin_with_addons() -> None:
-    """Effective products = plan_features union enabled_addons (subject to floor)."""
+    """Effective products = account-type baseline union platform unlocks."""
     db = _db_with_row(_row(role="admin", plan="knowledge", enabled_addons=["scribe", "docs"]))
     perms = await resolve_user_permissions("uid-test", db)
     assert perms is not None

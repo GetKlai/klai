@@ -127,10 +127,9 @@ async def change_plan(
 ) -> MessageResponse:
     """Upgrade or downgrade org plan.
 
-    SPEC-PORTAL-RBAC-001 v0.2.0: products are derived from (profile, plan,
-    platform_unlocked_features), so changing the plan automatically (re-)gates
-    the feature set on the next request. No per-user/group product cleanup
-    needed -- those tables are no longer the source of truth.
+    ``portal_orgs.plan`` is now legacy billing/quota state. Product access is
+    derived from user account type plus platform unlocks, so changing the plan
+    does not write or clean up per-user/group product rows.
     """
     new_plan = body.plan
 
