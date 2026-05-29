@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
-import { FeedbackItemDetailPanel } from './-components/PlatformDashboardTabs'
+import { FeedbackItemDetailPanel } from './-components/feedback/FeedbackItemDetailPanel'
 
 export const Route = createFileRoute('/admin/platform/feedback/items/$itemId')({
   component: PlatformFeedbackItemPage,
