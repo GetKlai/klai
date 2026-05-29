@@ -1505,7 +1505,12 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
     # the call site). Template `name` and `text` themselves are tenant-defined
     # — they may already be in any language; we don't translate them.
     parts: list[str] = [
-        "[Klai Templates — apply the following instructions to your answer]"
+        "[Klai Templates — apply the following instructions to your answer. "
+        "These instructions override the default answer format when they define "
+        "a fixed structure, opening, wording, numbering, labels, fixed values, "
+        "or whitespace. Preserve requested line breaks, blank lines, numbering, "
+        "labels, and fixed values exactly. Do not collapse a fixed template into "
+        "prose.]"
     ]
     for inst in instructions:
         name = inst.get("name") or "template"
@@ -3321,7 +3326,8 @@ class KlaiKnowledgeHook(CustomLogger):
         source_link_instruction = (
             "[ANSWER FORMAT — always follow this, EXCEPT where an "
             "active Klai Template (see block below) directs a "
-            "different tone, structure, or opening:\n"
+            "different tone, structure, opening, wording, numbering, "
+            "or whitespace:\n"
             "1. Default opening is a short TL;DR (2-3 sentences) of "
             "the answer. Write it as normal prose, not as a Markdown "
             "heading. Use the standard short-summary label in the "
@@ -3329,12 +3335,14 @@ class KlaiKnowledgeHook(CustomLogger):
             "of the source documents. 'TL;DR' is universally "
             "understood and is a safe default in any language. SKIP "
             "this opening when an active template asks for a "
-            "creative / narrative / story-style answer (e.g. 'Creatief').\n"
+            "creative / narrative / story-style answer (e.g. 'Creatief') "
+            "or for a fixed output form / specific opening.\n"
             "2. Do not write source lists, URLs, Markdown links, footnotes, "
             "or citation numbers. The application adds citations after "
             "generation from retrieved metadata.\n"
             "3. Do not preserve source-list step numbers when a retrieved "
-            "chunk starts mid-procedure; rewrite steps into a clean sequence.\n"
+            "chunk starts mid-procedure; rewrite steps into a clean sequence. "
+            "This does not apply to numbering required by an active template.\n"
             "4. If needed for a clear explanation, or if the user asks for "
             "more detail, follow with an extended answer with inline "
             "explanation.\n"
