@@ -1,7 +1,7 @@
 """SPEC-PORTAL-RBAC-001 + SPEC-PORTAL-EXTENSIONS-UNIFY-001:
 derive_user_products parametrized matrix.
 
-Pure-function tests on the canonical (role, plan, platform_unlocked_features)
+Pure-function tests on the canonical (role, account_type, platform_unlocked_features)
 -> products derivation. No DB, no mocks; just the function contract.
 
 NB: positional args throughout so the tests stay readable regardless of the
@@ -12,35 +12,38 @@ on 2026-05-12).
 import pytest
 
 from app.core.features import (
+    ACCOUNT_TYPE_PRODUCTS,
     FEATURE_MIN_PROFILE,
     PLAN_FEATURES,
     derive_user_products,
 )
 
 # ---------------------------------------------------------------------------
-# Plan + role matrix (no platform-unlocks)
+# Account type + role matrix (no platform-unlocks)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "role,plan,expected",
+    "role,account_type,expected",
     [
-        # free plan: nothing
+        # "free" is a legacy workspace plan, not a user account type.
         ("personal", "free", set()),
         ("admin", "free", set()),
-        # chat plan: chat + knowledge product for every role (PLAN_LIMITS
-        # ceilings differ; PLAN_FEATURES only emits the product set).
+        # chat account type: chat + knowledge product for every role. Deeper
+        # knowledge capabilities are controlled by seat capabilities, not this
+        # product surface.
         ("personal", "chat", {"chat", "knowledge"}),
         ("company", "chat", {"chat", "knowledge"}),
         ("kb_manager", "chat", {"chat", "knowledge"}),
         ("group_manager", "chat", {"chat", "knowledge"}),
         ("admin", "chat", {"chat", "knowledge"}),
-        # knowledge plan: same product set, full unlock via PLAN_LIMITS.
+        # knowledge account type: same product set; fuller access is in
+        # capabilities/limits, not ProductGuard's coarse product list.
         ("admin", "knowledge", {"chat", "knowledge"}),
     ],
 )
-def test_plan_features_only(role: str, plan: str, expected: set[str]) -> None:
-    assert derive_user_products(role, plan, []) == expected
+def test_account_type_products_only(role: str, account_type: str, expected: set[str]) -> None:
+    assert derive_user_products(role, account_type, []) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +101,7 @@ def test_pure_platform_gate_does_not_appear_as_product() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unknown_plan_returns_empty() -> None:
+def test_unknown_account_type_returns_empty() -> None:
     assert derive_user_products("admin", "enterprise_xl", []) == set()
 
 
@@ -116,17 +119,21 @@ def test_empty_unlocks_treated_as_plan_only() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_plan_features_keys() -> None:
+def test_legacy_plan_features_keys() -> None:
     assert set(PLAN_FEATURES.keys()) == {"free", "chat", "knowledge"}
 
 
-def test_feature_min_profile_covers_plan_products() -> None:
-    """Every product that comes from a plan MUST declare a profile-floor."""
+def test_account_type_products_keys() -> None:
+    assert set(ACCOUNT_TYPE_PRODUCTS.keys()) == {"chat", "knowledge"}
+
+
+def test_feature_min_profile_covers_account_type_products() -> None:
+    """Every product that comes from an account type MUST declare a profile-floor."""
     declared = set(FEATURE_MIN_PROFILE.keys())
-    plan_products: set[str] = set()
-    for s in PLAN_FEATURES.values():
-        plan_products |= s
-    assert declared >= plan_products, f"missing floors for plan-products: {plan_products - declared}"
+    account_products: set[str] = set()
+    for s in ACCOUNT_TYPE_PRODUCTS.values():
+        account_products |= s
+    assert declared >= account_products, f"missing floors for account-products: {account_products - declared}"
 
 
 def test_addon_products_floor_company() -> None:

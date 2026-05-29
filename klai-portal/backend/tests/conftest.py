@@ -281,7 +281,7 @@ def make_perms(
     else:
         eff_caps = frozenset(Capability(c) for c in seat_effective_capabilities(role_enum.value, seat_enum))
 
-    eff_products = frozenset(derive_user_products(role_enum.value, plan, list(plat_features)))
+    eff_products = frozenset(derive_user_products(role_enum.value, seat_str, list(plat_features)))
 
     return UserPermissions(
         user_id=user_id,
