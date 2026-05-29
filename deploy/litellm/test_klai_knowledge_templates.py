@@ -138,10 +138,29 @@ def test_build_block_single_template_wraps_with_markers():
     block = k._build_template_instructions_block(
         [{"source": "template", "name": "Klantenservice", "text": "Wees vriendelijk."}]
     )
-    assert "[Klai Templates — pas onderstaande instructies toe bij je antwoord]" in block
+    assert "[Klai Templates — apply the following instructions to your answer." in block
     assert "[Klantenservice]" in block
     assert "Wees vriendelijk." in block
-    assert "[Einde templates]" in block
+    assert "[End templates]" in block
+
+
+def test_build_block_treats_fixed_layout_as_exact_output_contract():
+    import klai_knowledge as k
+
+    bt_text = (
+        "Hello BT,\n\n"
+        "1. What is the name of your company?\n\n"
+        "[This is a fixed value] VOYS TELECOM\n\n"
+        "2. What is your Corp ID?"
+    )
+
+    block = k._build_template_instructions_block(
+        [{"source": "template", "name": "BT ticket", "text": bt_text}]
+    )
+
+    assert "fixed structure" in block
+    assert "Preserve requested line breaks, blank lines, numbering" in block
+    assert bt_text in block
 
 
 def test_build_block_preserves_order():
