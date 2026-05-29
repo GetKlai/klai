@@ -10,6 +10,8 @@ export interface PlatformStats {
   new_bots_today: number
   total_kbs: number
   total_templates: number
+  new_feedback_count: number
+  chat_error_count: number
   mrr_cents: number
   arr_cents: number
 }
