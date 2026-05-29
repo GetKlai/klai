@@ -46,6 +46,7 @@ import {
   feedbackItemKindLabel,
   feedbackItemStatusLabel,
   feedbackKindLabel,
+  feedbackLinkTypeLabel,
   feedbackResolveLabel,
   feedbackSubmissionReporterLabel,
 } from "./-feedback-helpers"
@@ -263,7 +264,7 @@ function FeedbackItemDetailForm({
               <div key={submission.id} className="py-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline">{feedbackKindLabel(submission.event_type)}</Badge>
-                  <Badge variant="secondary">{submission.link_type}</Badge>
+                  <Badge variant="secondary">{feedbackLinkTypeLabel(submission.link_type)}</Badge>
                   <span className="text-xs text-gray-400">{fmtDate(submission.created_at)}</span>
                 </div>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-900">
