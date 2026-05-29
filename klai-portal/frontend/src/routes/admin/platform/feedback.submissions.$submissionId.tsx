@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
-import { ArrowLeft, Loader2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Loader2 } from 'lucide-react'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
@@ -36,16 +35,6 @@ function PlatformFeedbackSubmissionPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-6 py-10">
-      <Button
-        type="button"
-        variant="link"
-        onClick={backToPlatform}
-        className="h-auto justify-start p-0 text-sm font-medium text-gray-500 no-underline hover:text-gray-900 hover:no-underline"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        {m.platform_back_to_feedback()}
-      </Button>
-
       {detail.isLoading && (
         <p className="py-8 text-sm text-gray-400">
           <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />

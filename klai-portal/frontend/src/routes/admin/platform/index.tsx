@@ -216,10 +216,15 @@ function PlatformConsole() {
         />
         <PlatformStatCard
           label={m.platform_tab_feedback()}
-          value={stats?.new_feedback_count}
-          sub={m.platform_stat_new_feedback()}
+          value={stats ? m.platform_stat_new_feedback_value({ count: stats.new_feedback_count }) : undefined}
+          sub={
+            stats
+              ? m.platform_stat_feedback_total({ count: stats.total_feedback_count })
+              : undefined
+          }
           loading={statsQuery.isLoading}
           alert={newFeedbackCount > 0}
+          valueTone={newFeedbackCount > 0 ? 'warning' : 'default'}
           onClick={() => setPlatformTab('feedback')}
         />
         <PlatformStatCard

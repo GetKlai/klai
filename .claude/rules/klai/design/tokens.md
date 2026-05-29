@@ -8,8 +8,8 @@ paths:
 > writes user-facing markup (HTML, CSS, JSX, email-template) sees the
 > source-of-truth tokens before deciding on values.
 >
-> Full patterns + components: `.claude/rules/klai/design/styleguide.md`,
-> `.claude/rules/klai/design/portal-patterns.md`.
+> Full portal UI/UX patterns: `klai-portal/frontend/docs/ui-standards.md`.
+> Shared brand DNA: `.claude/rules/klai/design/styleguide.md`.
 > Source of truth: `klai-portal/frontend/src/index.css` (CSS `@theme` block).
 
 ## When you write user-facing markup, use these tokens
@@ -55,7 +55,8 @@ first-paint never blocks on a font fetch.
 ## Radius + spacing
 
 - Border radii: `--radius-sm: 0.375rem`, `--radius-md: 0.5rem`, `--radius-lg: 0.75rem`, `--radius-xl: 1rem`.
-- Buttons + cards default to `--radius-md`.
+- Portal buttons use pill radius (`rounded-full`).
+- Portal cards use `rounded-xl`.
 - Body baseline line-height: `1.6`. Headings: `1.25–1.3`.
 
 ## Logo — canonical sources (CRIT)
