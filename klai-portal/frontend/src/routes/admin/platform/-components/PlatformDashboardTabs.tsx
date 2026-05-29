@@ -1,11 +1,12 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import {
   Activity,
   ArchiveX,
   ArrowLeft,
   Bug,
   CheckCircle2,
+  Copy,
   ExternalLink,
   LifeBuoy,
   Link2,
@@ -1288,48 +1289,52 @@ export function FeedbackSubmissionDetailPanel({
       </div>
 
       <div className="space-y-6">
-          <section className="space-y-3 border-t border-b border-gray-200 py-5">
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
-              {item.status !== 'new' && (
-                <Badge variant="secondary">{feedbackStatusLabel(item.status)}</Badge>
-              )}
-              {(item.feedback_type || item.severity) && (
-                <Badge variant="secondary">
-                  {item.feedback_type || item.severity}
-                </Badge>
-              )}
+          <section className="grid gap-6 border-t border-b border-gray-200 py-5 lg:grid-cols-[minmax(0,1fr)_260px]">
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
+                {item.status !== 'new' && (
+                  <Badge variant="secondary">{feedbackStatusLabel(item.status)}</Badge>
+                )}
+                {(item.feedback_type || item.severity) && (
+                  <Badge variant="secondary">
+                    {item.feedback_type || item.severity}
+                  </Badge>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`feedback-submission-${item.id}`}>
+                  {m.platform_feedback_submission_placeholder()}
+                </Label>
+                <Textarea
+                  id={`feedback-submission-${item.id}`}
+                  value={draftRawText}
+                  onChange={(event) => setDraftRawText(event.target.value)}
+                  rows={5}
+                  placeholder={m.platform_feedback_submission_placeholder()}
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={`feedback-submission-${item.id}`}>
-                {m.platform_feedback_submission_placeholder()}
-              </Label>
-              <Textarea
-                id={`feedback-submission-${item.id}`}
-                value={draftRawText}
-                onChange={(event) => setDraftRawText(event.target.value)}
-                rows={4}
-                placeholder={m.platform_feedback_submission_placeholder()}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Select
-                id={`feedback-submission-status-${item.id}`}
-                value={draftStatus}
-                onChange={(event) => setDraftStatus(event.target.value)}
-                className="h-9 w-auto min-w-[150px]"
-                aria-label={m.platform_col_status()}
-              >
-                <option value="new">{m.platform_feedback_status_new()}</option>
-                <option value="open">{m.platform_feedback_status_open()}</option>
-                <option value="resolved">{m.platform_feedback_status_resolved()}</option>
-                <option value="support">{m.platform_feedback_status_support()}</option>
-                <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
-              </Select>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor={`feedback-submission-status-${item.id}`}>
+                  {m.platform_col_status()}
+                </Label>
+                <Select
+                  id={`feedback-submission-status-${item.id}`}
+                  value={draftStatus}
+                  onChange={(event) => setDraftStatus(event.target.value)}
+                >
+                  <option value="new">{m.platform_feedback_status_new()}</option>
+                  <option value="open">{m.platform_feedback_status_open()}</option>
+                  <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+                  <option value="support">{m.platform_feedback_status_support()}</option>
+                  <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+                </Select>
+              </div>
               <Button
                 type="button"
-                size="sm"
-                variant="secondary"
+                className="w-full"
                 disabled={
                   busy ||
                   draftRawText.trim().length < 1 ||
@@ -1346,7 +1351,7 @@ export function FeedbackSubmissionDetailPanel({
               </Button>
               <Button
                 type="button"
-                size="sm"
+                className="w-full"
                 variant="secondary"
                 disabled={busy}
                 onClick={() => setConfirmDeleteOpen(true)}
@@ -1722,9 +1727,11 @@ function FeedbackItemDetailForm({
   const [notifyEmail, setNotifyEmail] = useState(false)
   const [resolveNotice, setResolveNotice] = useState<string | null>(null)
   const [resolveError, setResolveError] = useState<string | null>(null)
+  const [copyNotice, setCopyNotice] = useState<string | null>(null)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const resolveLabel = feedbackResolveLabel(item.kind)
   const isClosed = CLOSED_FEEDBACK_ITEM_STATUSES.has(status)
+  const debugInstructions = buildFeedbackDebugInstructions(item, submissions, fmtDate)
   const saveItem = () => {
     updateItem.mutate({
       itemId: item.id,
@@ -1752,7 +1759,7 @@ function FeedbackItemDetailForm({
           setResolutionSummary(result.item.resolution_summary ?? '')
           setResolveNotice(
             m.platform_feedback_update_created({
-              count: result.notifications.length,
+              count: String(result.notifications.length),
             }),
           )
           setResolveError(null)
@@ -1764,190 +1771,263 @@ function FeedbackItemDetailForm({
       },
     )
   }
+  const copyDebugInstructions = async () => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard) {
+      setCopyNotice(m.platform_feedback_copy_debug_failed())
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(debugInstructions)
+      setCopyNotice(m.platform_feedback_copy_debug_copied())
+    } catch {
+      setCopyNotice(m.platform_feedback_copy_debug_failed())
+    }
+  }
 
   return (
-    <div className="space-y-5">
-      <section className="space-y-3 border-t border-b border-gray-200 py-5">
+    <div className="space-y-8">
+      <section className="border-t border-b border-gray-200 py-5">
         <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
           <Badge variant="outline">{feedbackItemKindLabel(item.kind)}</Badge>
-          <Badge variant="outline">
-            {m.platform_feedback_org_count({ count: item.org_count })}
+          <Badge variant={isClosed ? 'secondary' : 'outline'}>
+            {feedbackItemStatusLabel(status)}
           </Badge>
           <Badge variant="outline">
-            {m.platform_feedback_user_count({ count: item.user_count })}
+            {m.platform_feedback_org_count({ count: String(item.org_count) })}
           </Badge>
-          <Badge variant="secondary">
-            {m.platform_feedback_score({ score: item.priority_score })}
+          <Badge variant="outline">
+            {m.platform_feedback_user_count({ count: String(item.user_count) })}
           </Badge>
           {item.area && <Badge variant="outline">{item.area}</Badge>}
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor={`feedback-item-status-${item.id}`}>
-            {m.platform_col_status()}
-          </Label>
-          <Select
-            id={`feedback-item-status-${item.id}`}
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-          >
-            <option value="open">{m.platform_feedback_status_open()}</option>
-            <option value="resolved">{m.platform_feedback_status_resolved()}</option>
-            <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor={`feedback-item-title-${item.id}`}>
-            {m.platform_feedback_title_placeholder()}
-          </Label>
-          <Input
-            id={`feedback-item-title-${item.id}`}
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder={m.platform_feedback_title_placeholder()}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor={`feedback-item-summary-${item.id}`}>
-            {m.platform_feedback_short_note_placeholder()}
-          </Label>
-          <Textarea
-            id={`feedback-item-summary-${item.id}`}
-            value={summary}
-            onChange={(event) => setSummary(event.target.value)}
-            rows={3}
-            placeholder={m.platform_feedback_short_note_placeholder()}
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            disabled={updateItem.isPending || deleteItem.isPending || title.trim().length < 3}
-            onClick={saveItem}
-          >
-            {updateItem.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-            {m.admin_shared_save()}
-          </Button>
-          {updateItem.isSuccess && (
-            <p className="text-sm text-[var(--color-success)]">
-              {m.platform_feedback_item_saved()}
-            </p>
-          )}
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={updateItem.isPending || deleteItem.isPending}
-            onClick={() => setConfirmDeleteOpen(true)}
-          >
-            {deleteItem.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Trash2 className="h-4 w-4" />
-            )}
-            {m.platform_feedback_delete_item()}
-          </Button>
-        </div>
       </section>
 
-      <section className="space-y-3 border-t border-gray-200 pt-5">
-        <div>
-          <h3 className="text-sm font-medium text-gray-900">{resolveLabel.title}</h3>
-          <p className="mt-1 text-sm text-gray-600">
-            {m.platform_feedback_resolve_description()}
-          </p>
-        </div>
-        {isClosed && resolutionSummary && (
-          <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900">
-            {resolutionSummary}
-          </div>
-        )}
-        <div className="space-y-1.5">
-          <Label htmlFor={`feedback-item-resolution-${item.id}`}>
-            {m.platform_feedback_resolution_placeholder()}
-          </Label>
-          <Textarea
-            id={`feedback-item-resolution-${item.id}`}
-            value={resolutionSummary}
-            onChange={(event) => setResolutionSummary(event.target.value)}
-            rows={3}
-            placeholder={m.platform_feedback_resolution_placeholder()}
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-5">
-          <Checkbox
-            checked={notifyInApp}
-            onChange={(event) => setNotifyInApp(event.target.checked)}
-            label={m.platform_feedback_channel_in_app()}
-          />
-          <Checkbox
-            checked={notifyEmail}
-            onChange={(event) => setNotifyEmail(event.target.checked)}
-            label={m.platform_feedback_channel_email()}
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={
-              resolveItem.isPending ||
-              resolutionSummary.trim().length < 3 ||
-              (!notifyInApp && !notifyEmail)
-            }
-            onClick={closeItem}
-          >
-            {resolveItem.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4" />
-            )}
-            {resolveItem.isPending
-              ? m.platform_feedback_resolving()
-              : isClosed
-                ? m.platform_feedback_resend_update()
-                : resolveLabel.button}
-          </Button>
-          {resolveNotice && (
-            <p className="text-sm text-[var(--color-success)]">
-              {resolveNotice}
-            </p>
-          )}
-          {resolveError && (
-            <p className="text-sm text-[var(--color-destructive)]">
-              {resolveError}
-            </p>
-          )}
-        </div>
-      </section>
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="space-y-8">
+          <section className="space-y-4 border-t border-gray-200 pt-5">
+            <h3 className="text-sm font-medium text-gray-900">
+              {m.platform_feedback_item_details()}
+            </h3>
+            <div className="space-y-1.5">
+              <Label htmlFor={`feedback-item-title-${item.id}`}>
+                {m.platform_feedback_title_placeholder()}
+              </Label>
+              <Input
+                id={`feedback-item-title-${item.id}`}
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder={m.platform_feedback_title_placeholder()}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`feedback-item-summary-${item.id}`}>
+                {m.platform_feedback_short_note_placeholder()}
+              </Label>
+              <Textarea
+                id={`feedback-item-summary-${item.id}`}
+                value={summary}
+                onChange={(event) => setSummary(event.target.value)}
+                rows={4}
+                placeholder={m.platform_feedback_short_note_placeholder()}
+              />
+            </div>
+          </section>
 
-      <section className="space-y-3 border-t border-gray-200 pt-5">
-        <h3 className="text-sm font-medium text-gray-900">
-          {m.platform_feedback_linked_feedback({ count: submissions.length })}
-        </h3>
-        <div className="space-y-2">
-          {submissions.map((submission) => (
-            <div key={submission.id} className="rounded-lg border border-gray-200 p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">{feedbackKindLabel(submission.event_type)}</Badge>
-                <Badge variant="secondary">{submission.link_type}</Badge>
-                <span className="text-xs text-gray-400">{fmtDate(submission.created_at)}</span>
+          {item.kind === 'bug' && (
+            <section className="space-y-3 border-t border-gray-200 pt-5">
+              <div>
+                <h3 className="text-sm font-medium text-gray-900">
+                  {m.platform_feedback_copy_debug_title()}
+                </h3>
+                <p className="mt-1 text-sm leading-6 text-gray-600">
+                  {m.platform_feedback_copy_debug_description()}
+                </p>
               </div>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-900">
-                {submission.raw_text}
-              </p>
-              <p className="mt-2 text-xs text-gray-400">
-                {submission.org_name ?? submission.org_slug ?? m.platform_feedback_unknown_organization()}
-                {feedbackSubmissionReporterLabel(submission)
-                  ? ` / ${feedbackSubmissionReporterLabel(submission)}`
-                  : ''}
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void copyDebugInstructions()}
+                >
+                  <Copy className="h-4 w-4" />
+                  {m.platform_feedback_copy_debug_button()}
+                </Button>
+                {copyNotice && (
+                  <p className="text-sm text-[var(--color-success)]">
+                    {copyNotice}
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
+
+          <section className="space-y-4 border-t border-gray-200 pt-5">
+            <div>
+              <h3 className="text-sm font-medium text-gray-900">{resolveLabel.title}</h3>
+              <p className="mt-1 text-sm leading-6 text-gray-600">
+                {m.platform_feedback_resolve_description()}
               </p>
             </div>
-          ))}
+            {isClosed && resolutionSummary && (
+              <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900">
+                {resolutionSummary}
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label htmlFor={`feedback-item-resolution-${item.id}`}>
+                {m.platform_feedback_resolution_placeholder()}
+              </Label>
+              <Textarea
+                id={`feedback-item-resolution-${item.id}`}
+                value={resolutionSummary}
+                onChange={(event) => setResolutionSummary(event.target.value)}
+                rows={3}
+                placeholder={m.platform_feedback_resolution_placeholder()}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-5">
+              <Checkbox
+                checked={notifyInApp}
+                onChange={(event) => setNotifyInApp(event.target.checked)}
+                label={m.platform_feedback_channel_in_app()}
+              />
+              <Checkbox
+                checked={notifyEmail}
+                onChange={(event) => setNotifyEmail(event.target.checked)}
+                label={m.platform_feedback_channel_email()}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={
+                  resolveItem.isPending ||
+                  resolutionSummary.trim().length < 3 ||
+                  (!notifyInApp && !notifyEmail)
+                }
+                onClick={closeItem}
+              >
+                {resolveItem.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                {resolveItem.isPending
+                  ? m.platform_feedback_resolving()
+                  : isClosed
+                    ? m.platform_feedback_resend_update()
+                    : resolveLabel.button}
+              </Button>
+              {resolveNotice && (
+                <p className="text-sm text-[var(--color-success)]">
+                  {resolveNotice}
+                </p>
+              )}
+              {resolveError && (
+                <p className="text-sm text-[var(--color-destructive)]">
+                  {resolveError}
+                </p>
+              )}
+            </div>
+          </section>
+
+          <section className="space-y-3 border-t border-gray-200 pt-5">
+            <h3 className="text-sm font-medium text-gray-900">
+              {m.platform_feedback_linked_feedback({ count: String(submissions.length) })}
+            </h3>
+            <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
+              {submissions.map((submission) => (
+                <div key={submission.id} className="py-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline">{feedbackKindLabel(submission.event_type)}</Badge>
+                    <Badge variant="secondary">{submission.link_type}</Badge>
+                    <span className="text-xs text-gray-400">{fmtDate(submission.created_at)}</span>
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-900">
+                    {submission.raw_text}
+                  </p>
+                  <p className="mt-2 text-xs text-gray-400">
+                    {submission.org_name ?? submission.org_slug ?? m.platform_feedback_unknown_organization()}
+                    {feedbackSubmissionReporterLabel(submission)
+                      ? ` / ${feedbackSubmissionReporterLabel(submission)}`
+                      : ''}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
-      </section>
+
+        <aside className="space-y-6">
+          <section className="space-y-3 border-t border-gray-200 pt-5">
+            <h3 className="text-sm font-medium text-gray-900">
+              {m.platform_feedback_item_signal()}
+            </h3>
+            <FeedbackMetaRow
+              label={m.platform_col_status()}
+              value={
+                <Select
+                  id={`feedback-item-status-${item.id}`}
+                  value={status}
+                  onChange={(event) => setStatus(event.target.value)}
+                >
+                  <option value="open">{m.platform_feedback_status_open()}</option>
+                  <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+                  <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+                </Select>
+              }
+            />
+            <FeedbackMetaRow
+              label={m.platform_feedback_score({ score: String(item.priority_score) })}
+              value={m.platform_feedback_reporter_counts({
+                orgs: String(item.org_count),
+                users: String(item.user_count),
+              })}
+            />
+            <FeedbackMetaRow label={m.platform_col_created()} value={fmtDate(item.created_at)} />
+            <FeedbackMetaRow label={m.platform_feedback_col_updated()} value={fmtDate(item.updated_at)} />
+          </section>
+
+          <section className="space-y-3 border-t border-gray-200 pt-5">
+            <h3 className="text-sm font-medium text-gray-900">{m.platform_col_actions()}</h3>
+            <div className="space-y-3">
+              <Button
+                type="button"
+                className="w-full"
+                disabled={updateItem.isPending || deleteItem.isPending || title.trim().length < 3}
+                onClick={saveItem}
+              >
+                {updateItem.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                {m.admin_shared_save()}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                disabled={updateItem.isPending || deleteItem.isPending}
+                onClick={() => setConfirmDeleteOpen(true)}
+              >
+                {deleteItem.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                {m.platform_feedback_delete_item()}
+              </Button>
+            </div>
+            {updateItem.isSuccess && (
+              <p className="text-sm text-[var(--color-success)]">
+                {m.platform_feedback_item_saved()}
+              </p>
+            )}
+          </section>
+        </aside>
+      </div>
       <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -2010,4 +2090,68 @@ function defaultResolutionSummary(item: PlatformFeedbackItem) {
     return m.platform_feedback_default_resolution_feature({ title: item.title })
   }
   return m.platform_feedback_default_resolution_report({ title: item.title })
+}
+
+function FeedbackMetaRow({
+  label,
+  value,
+}: {
+  label: string
+  value: ReactNode
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-gray-400">{label}</p>
+      <div className="text-sm text-gray-900">{value || '-'}</div>
+    </div>
+  )
+}
+
+function buildFeedbackDebugInstructions(
+  item: PlatformFeedbackItem,
+  submissions: PlatformFeedbackLinkedSubmission[],
+  fmtDate: (s: string | null) => string,
+) {
+  const evidence = submissions.length
+    ? submissions
+        .map((submission, index) =>
+          [
+            `${index + 1}. ${submission.raw_text || '(empty)'}`,
+            `   Org: ${submission.org_name ?? submission.org_slug ?? 'unknown'}`,
+            `   Reporter: ${feedbackSubmissionReporterLabel(submission) || submission.user_id || 'unknown'}`,
+            `   URL: ${submission.page_url || 'unknown'}`,
+            `   Route: ${submission.route_id || 'unknown'}`,
+            `   Locale/viewport: ${[submission.locale, submission.viewport].filter(Boolean).join(' / ') || 'unknown'}`,
+            `   Submitted: ${fmtDate(submission.created_at)}`,
+          ].join('\n'),
+        )
+        .join('\n\n')
+    : 'No linked feedback evidence yet.'
+
+  return [
+    'You are fixing a Klai production bug from the Platform feedback workflow.',
+    '',
+    'Goal:',
+    `Fix the bug item #${item.id}: ${item.title}`,
+    '',
+    'Current item state:',
+    `- Kind: ${item.kind}`,
+    `- Status: ${item.status}`,
+    `- Area: ${item.area || 'unknown'}`,
+    `- Priority score: ${item.priority_score}`,
+    `- Reporter signal: ${item.org_count} org(s), ${item.user_count} user(s)`,
+    '',
+    'Internal note:',
+    item.summary || '(empty)',
+    '',
+    'Linked customer evidence:',
+    evidence,
+    '',
+    'Instructions:',
+    '1. Reproduce or trace the issue from the linked URL, route, and raw customer text.',
+    '2. Identify the smallest backend/frontend change that fixes the actual cause.',
+    '3. Add or update focused regression coverage for the broken behavior.',
+    '4. Verify the delete/save/close path still works if this bug touches Platform feedback.',
+    '5. Report changed files, tests run, and any residual risk.',
+  ].join('\n')
 }
