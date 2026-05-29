@@ -4,8 +4,8 @@ After SPEC-PORTAL-RBAC-001 v0.2.0 the per-user / per-group assignment surface
 is removed (those endpoints return 410 Gone -- see test_products_gone.py for
 the 410 contract). This file keeps:
 
-  * PLAN_FEATURES tests (canonical mapping in app.core.features)
-  * list_available_products: returns derive_user_products(caller, plan, addons)
+  * legacy PLAN_FEATURES tests (plan validation/back-compat in app.core.features)
+  * list_available_products: returns caller.effective_products
   * get_user_effective_products: returns sourced view (plan/addon)
   * change_plan: simple plan update, no product-row cleanup
 """
@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
-from app.core.features import PLAN_FEATURES
+from app.core.features import ACCOUNT_TYPE_PRODUCTS, PLAN_FEATURES
 from tests.conftest import make_perms
 
 # ---------------------------------------------------------------------------
@@ -24,7 +24,7 @@ from tests.conftest import make_perms
 
 
 class TestPlanProducts:
-    """SPEC-PORTAL-PLAN-RENAME-001: 2-tier ladder (chat / knowledge) + free."""
+    """Legacy plan ladder remains for plan settings/back-compat."""
 
     def test_free_plan_has_no_products(self) -> None:
         assert PLAN_FEATURES["free"] == frozenset()
@@ -53,6 +53,18 @@ class TestPlanProducts:
         assert chat == knowledge  # same product set; difference lives in PLAN_LIMITS
 
 
+class TestAccountTypeProducts:
+    """Runtime product baselines are keyed by portal_users.seat_type."""
+
+    def test_chat_account_type_has_chat_and_knowledge_products(self) -> None:
+        assert ACCOUNT_TYPE_PRODUCTS["chat"] == frozenset({"chat", "knowledge"})
+
+    def test_knowledge_account_type_has_same_coarse_product_surface(self) -> None:
+        # The difference between chat and knowledge account types is in
+        # capabilities/limits, not ProductGuard's coarse chat/knowledge modules.
+        assert ACCOUNT_TYPE_PRODUCTS["knowledge"] == frozenset({"chat", "knowledge"})
+
+
 # ---------------------------------------------------------------------------
 # list_available_products: profile-driven derivation
 # ---------------------------------------------------------------------------
@@ -68,7 +80,7 @@ class TestListAvailableProducts:
     """
 
     @pytest.mark.asyncio
-    async def test_returns_plan_features_for_chat(self) -> None:
+    async def test_returns_account_type_products_for_chat(self) -> None:
         from app.api.admin.products import list_available_products
 
         perms = make_perms(role="admin", plan="chat", enabled_addons=[])
@@ -76,7 +88,7 @@ class TestListAvailableProducts:
         assert sorted(result.products) == ["chat", "knowledge"]
 
     @pytest.mark.asyncio
-    async def test_returns_plan_plus_enabled_addons_for_admin(self) -> None:
+    async def test_returns_account_type_plus_platform_unlocks_for_admin(self) -> None:
         from app.api.admin.products import list_available_products
 
         perms = make_perms(role="admin", plan="chat", enabled_addons=["scribe", "docs"])
@@ -84,12 +96,12 @@ class TestListAvailableProducts:
         assert set(result.products) == {"chat", "knowledge", "scribe", "docs"}
 
     @pytest.mark.asyncio
-    async def test_free_plan_returns_empty_when_no_addons(self) -> None:
+    async def test_legacy_free_plan_does_not_suppress_account_type_products(self) -> None:
         from app.api.admin.products import list_available_products
 
         perms = make_perms(role="admin", plan="free", enabled_addons=[])
         result = await list_available_products(perms=perms, db=AsyncMock())
-        assert result.products == []
+        assert sorted(result.products) == ["chat", "knowledge"]
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +164,8 @@ class TestPlanChange:
         await change_plan(body=body, perms=make_perms(role="admin"), db=mock_db)
 
         assert org.plan == "knowledge"
-        # No product-row cleanup queries -- products derive from (role, plan, enabled_addons).
+        # No product-row cleanup queries -- products derive from user account
+        # type + platform unlocks, not product rows.
         mock_db.delete.assert_not_called()
         mock_db.commit.assert_awaited_once()
 
