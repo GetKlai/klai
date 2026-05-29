@@ -1,6 +1,6 @@
 """SPEC-PORTAL-EXTENSIONS-UNIFY-001 — derive_user_products behavior-parity snapshot.
 
-Locks the (role, plan, unlocked_features) -> products mapping for every
+Locks the (role, account_type, unlocked_features) -> products mapping for every
 production-relevant tenant state and every profile-rank we have today.
 This test must remain green across the refactor that renames the third
 positional parameter from ``enabled_addons`` to ``platform_unlocked_features``.
@@ -9,11 +9,12 @@ Positional args throughout — that way the test does not need to change when
 the parameter name is renamed in the next commit. Behavior is what we lock,
 not the call-site spelling.
 
-Reference data (verified on prod 2026-05-12):
-- getklai: plan=complete, current effective unlocks={widgets, custom_mcps,
-  scribe, docs} post-migration.
-- voys:    plan=knowledge, current effective unlocks={partner_api, widgets,
+Reference data (verified on prod 2026-05-12, later moved from plan-axis to
+account-type-axis):
+- getklai: account_type=knowledge, current effective unlocks={widgets,
   custom_mcps, scribe, docs} post-migration.
+- voys:    account_type=knowledge, current effective unlocks={partner_api,
+  widgets, custom_mcps, scribe, docs} post-migration.
 """
 
 import pytest
@@ -27,7 +28,7 @@ from app.core.features import derive_user_products
 # Locked set the refactor MUST preserve. If a row here changes, that's a
 # semantic regression — investigate before updating the snapshot.
 SNAPSHOT_CASES: list[tuple[str, str, list[str], set[str]]] = [
-    # getklai (plan=complete) — admin sees scribe/docs (company-floor), no
+    # getklai (account_type=knowledge) — admin sees scribe/docs (company-floor), no
     # partner_api (not unlocked), widgets/custom_mcps don't appear in
     # derive_user_products output (they're platform gates, not products).
     (
@@ -51,7 +52,7 @@ SNAPSHOT_CASES: list[tuple[str, str, list[str], set[str]]] = [
         ["custom_mcps", "docs", "scribe", "widgets"],
         {"chat", "knowledge", "scribe", "docs"},
     ),
-    # voys (plan=knowledge) — admin sees scribe/docs; partner_api/widgets/
+    # voys (account_type=knowledge) — admin sees scribe/docs; partner_api/widgets/
     # custom_mcps are platform gates, not products in derive_user_products.
     (
         "admin",
@@ -67,10 +68,10 @@ SNAPSHOT_CASES: list[tuple[str, str, list[str], set[str]]] = [
         {"chat", "knowledge"},
     ),
     # ---- Edge cases that must remain stable across the refactor ----
-    # Empty unlocks → plan-only.
+    # Empty unlocks -> account-type baseline only.
     ("admin", "chat", [], {"chat", "knowledge"}),
     ("personal", "chat", [], {"chat", "knowledge"}),
-    # Unknown plan → no plan_features, but unlocked products still flow
+    # Unknown account type -> no account baseline, but unlocked products still flow
     # through (subject to FEATURE_MIN_PROFILE). Admin clears the company
     # floor for scribe, so scribe surfaces.
     ("admin", "enterprise_xl", ["scribe"], {"scribe"}),
@@ -78,7 +79,7 @@ SNAPSHOT_CASES: list[tuple[str, str, list[str], set[str]]] = [
     ("nobody", "chat", ["scribe", "docs"], set()),
     # Stale legacy feature → ignored (no FEATURE_MIN_PROFILE entry).
     ("admin", "chat", ["scribe", "x_legacy_feature"], {"chat", "knowledge", "scribe"}),
-    # Free plan → no plan_features. Unlocked products still grant when
+    # "free" is not an account type -> no account baseline. Unlocked products still grant when
     # profile clears the floor (admin >= company → scribe + docs). The
     # widgets entry is a pure platform-gate (no profile-floor entry) so
     # it does NOT appear as a product.
@@ -89,10 +90,12 @@ SNAPSHOT_CASES: list[tuple[str, str, list[str], set[str]]] = [
 ]
 
 
-@pytest.mark.parametrize("role,plan,unlocked,expected", SNAPSHOT_CASES)
-def test_derive_user_products_behavior_snapshot(role: str, plan: str, unlocked: list[str], expected: set[str]) -> None:
+@pytest.mark.parametrize("role,account_type,unlocked,expected", SNAPSHOT_CASES)
+def test_derive_user_products_behavior_snapshot(
+    role: str, account_type: str, unlocked: list[str], expected: set[str]
+) -> None:
     """Behavior-parity contract. Positional args survive the param rename."""
-    assert derive_user_products(role, plan, unlocked) == expected
+    assert derive_user_products(role, account_type, unlocked) == expected
 
 
 def test_widgets_and_partner_api_are_not_products_in_derivation() -> None:

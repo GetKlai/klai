@@ -73,6 +73,8 @@ class UserPermissions:
     org_id: int
     org_slug: str
     role: ProfileRole
+    # Legacy workspace billing plan. Kept for billing/quota paths; product and
+    # capability entitlements use seat_type below.
     plan: str
     platform_unlocked_features: frozenset[str]
     effective_role: ProfileRole
@@ -192,14 +194,13 @@ async def resolve_user_permissions(
 
     role = ProfileRole(user.role)
     plan = org.plan
-    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 4: capability resolution
-    # axis swapped from plan to seat_type. ``plan`` stays on UserPermissions
-    # for the legacy kb-quota path (services/kb_quota.py reads org.plan to
-    # cap personal-KB count) — that swap is a follow-up.
+    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 4+: entitlement resolution
+    # moved from workspace plan to per-user seat_type. ``plan`` stays on
+    # UserPermissions for legacy billing/quota paths.
     seat_type = user.seat_type
     platform_features = _platform_unlocked_set(org)
     effective_caps = _derive_effective_capabilities(role, seat_type)
-    effective_prods = frozenset(derive_user_products(role.value, plan, list(platform_features)))
+    effective_prods = frozenset(derive_user_products(role.value, seat_type, list(platform_features)))
     kb_limits = effective_kb_limits(role.value, plan)
     is_platform_admin = org.slug == _app_settings.platform_org_slug
 
