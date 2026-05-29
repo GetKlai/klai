@@ -30,6 +30,7 @@ import { Route as SetupMfaRouteImport } from './routes/setup/mfa'
 import { Route as Setup2faRouteImport } from './routes/setup/2fa'
 import { Route as PasswordSetRouteImport } from './routes/password/set'
 import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
+import { Route as JoinRequestSentRouteImport } from './routes/join-request/sent'
 import { Route as BotWidgetIdRouteImport } from './routes/bot/$widgetId'
 import { Route as AppScribeRouteImport } from './routes/app/scribe'
 import { Route as AppIntegrationsRouteImport } from './routes/app/integrations'
@@ -213,6 +214,11 @@ const PasswordForgotRoute = PasswordForgotRouteImport.update({
   id: '/password/forgot',
   path: '/password/forgot',
   getParentRoute: () => rootRouteImport,
+} as any)
+const JoinRequestSentRoute = JoinRequestSentRouteImport.update({
+  id: '/sent',
+  path: '/sent',
+  getParentRoute: () => JoinRequestRoute,
 } as any)
 const BotWidgetIdRoute = BotWidgetIdRouteImport.update({
   id: '/bot/$widgetId',
@@ -634,7 +640,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteRouteWithChildren
   '/app': typeof AppRouteRouteWithChildren
   '/callback': typeof CallbackRoute
-  '/join-request': typeof JoinRequestRoute
+  '/join-request': typeof JoinRequestRouteWithChildren
   '/logged-out': typeof LoggedOutRoute
   '/login': typeof LoginRoute
   '/no-account': typeof NoAccountRoute
@@ -656,6 +662,7 @@ export interface FileRoutesByFullPath {
   '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/bot/$widgetId': typeof BotWidgetIdRoute
+  '/join-request/sent': typeof JoinRequestSentRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
@@ -733,7 +740,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$locale': typeof LocaleRouteRouteWithChildren
   '/callback': typeof CallbackRoute
-  '/join-request': typeof JoinRequestRoute
+  '/join-request': typeof JoinRequestRouteWithChildren
   '/logged-out': typeof LoggedOutRoute
   '/login': typeof LoginRoute
   '/no-account': typeof NoAccountRoute
@@ -754,6 +761,7 @@ export interface FileRoutesByTo {
   '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/bot/$widgetId': typeof BotWidgetIdRoute
+  '/join-request/sent': typeof JoinRequestSentRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
@@ -832,7 +840,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteRouteWithChildren
   '/app': typeof AppRouteRouteWithChildren
   '/callback': typeof CallbackRoute
-  '/join-request': typeof JoinRequestRoute
+  '/join-request': typeof JoinRequestRouteWithChildren
   '/logged-out': typeof LoggedOutRoute
   '/login': typeof LoginRoute
   '/no-account': typeof NoAccountRoute
@@ -854,6 +862,7 @@ export interface FileRoutesById {
   '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/bot/$widgetId': typeof BotWidgetIdRoute
+  '/join-request/sent': typeof JoinRequestSentRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
@@ -957,6 +966,7 @@ export interface FileRouteTypes {
     | '/app/integrations'
     | '/app/scribe'
     | '/bot/$widgetId'
+    | '/join-request/sent'
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
@@ -1055,6 +1065,7 @@ export interface FileRouteTypes {
     | '/app/integrations'
     | '/app/scribe'
     | '/bot/$widgetId'
+    | '/join-request/sent'
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
@@ -1154,6 +1165,7 @@ export interface FileRouteTypes {
     | '/app/integrations'
     | '/app/scribe'
     | '/bot/$widgetId'
+    | '/join-request/sent'
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
@@ -1234,7 +1246,7 @@ export interface RootRouteChildren {
   AdminRouteRoute: typeof AdminRouteRouteWithChildren
   AppRouteRoute: typeof AppRouteRouteWithChildren
   CallbackRoute: typeof CallbackRoute
-  JoinRequestRoute: typeof JoinRequestRoute
+  JoinRequestRoute: typeof JoinRequestRouteWithChildren
   LoggedOutRoute: typeof LoggedOutRoute
   LoginRoute: typeof LoginRoute
   NoAccountRoute: typeof NoAccountRoute
@@ -1399,6 +1411,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/password/forgot'
       preLoaderRoute: typeof PasswordForgotRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/join-request/sent': {
+      id: '/join-request/sent'
+      path: '/sent'
+      fullPath: '/join-request/sent'
+      preLoaderRoute: typeof JoinRequestSentRouteImport
+      parentRoute: typeof JoinRequestRoute
     }
     '/bot/$widgetId': {
       id: '/bot/$widgetId'
@@ -2180,13 +2199,25 @@ const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
   AppRouteRouteChildren,
 )
 
+interface JoinRequestRouteChildren {
+  JoinRequestSentRoute: typeof JoinRequestSentRoute
+}
+
+const JoinRequestRouteChildren: JoinRequestRouteChildren = {
+  JoinRequestSentRoute: JoinRequestSentRoute,
+}
+
+const JoinRequestRouteWithChildren = JoinRequestRoute._addFileChildren(
+  JoinRequestRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LocaleRouteRoute: LocaleRouteRouteWithChildren,
   AdminRouteRoute: AdminRouteRouteWithChildren,
   AppRouteRoute: AppRouteRouteWithChildren,
   CallbackRoute: CallbackRoute,
-  JoinRequestRoute: JoinRequestRoute,
+  JoinRequestRoute: JoinRequestRouteWithChildren,
   LoggedOutRoute: LoggedOutRoute,
   LoginRoute: LoginRoute,
   NoAccountRoute: NoAccountRoute,

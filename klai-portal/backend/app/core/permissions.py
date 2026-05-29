@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import structlog
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -162,7 +162,12 @@ def _platform_unlocked_set(org: PortalOrg) -> frozenset[str]:
 # @MX:REASON: every endpoint that switches to declarative gates calls this
 # (transitively via `get_caller`); changes here ripple across the portal.
 # @MX:SPEC SPEC-PORTAL-RBAC-REFACTOR-001 REQ-1
-async def resolve_user_permissions(zitadel_user_id: str, db: AsyncSession) -> UserPermissions | None:
+async def resolve_user_permissions(
+    zitadel_user_id: str,
+    db: AsyncSession,
+    *,
+    org_id: int | None = None,
+) -> UserPermissions | None:
     """Single SELECT + pure derivation. Returns None if user not in portal.
 
     The SELECT joins ``portal_orgs`` and ``portal_users`` on ``org_id`` and
@@ -171,11 +176,15 @@ async def resolve_user_permissions(zitadel_user_id: str, db: AsyncSession) -> Us
     BEFORE ``set_tenant`` has been called — exactly the pattern the existing
     ``_get_caller_org`` relies on.
     """
-    result = await db.execute(
+    stmt = (
         select(PortalOrg, PortalUser)
         .join(PortalUser, PortalUser.org_id == PortalOrg.id)
         .where(PortalUser.zitadel_user_id == zitadel_user_id)
     )
+    if org_id is not None:
+        stmt = stmt.where(PortalUser.org_id == org_id)
+
+    result = await db.execute(stmt)
     row = result.one_or_none()
     if row is None:
         return None
@@ -222,6 +231,7 @@ async def _resolve_caller_with_options(
     db: AsyncSession,
     *,
     allow_during_deprovisioning: bool,
+    session_org_id: int | None = None,
 ) -> UserPermissions:
     """Shared body for ``get_caller`` and ``get_caller_during_deprovisioning``.
 
@@ -239,7 +249,7 @@ async def _resolve_caller_with_options(
     if not zitadel_user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found in token")
 
-    perms = await resolve_user_permissions(zitadel_user_id, db)
+    perms = await resolve_user_permissions(zitadel_user_id, db, org_id=session_org_id)
     if perms is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
 
@@ -289,11 +299,21 @@ async def _resolve_caller_with_options(
     return perms
 
 
+def _session_org_id(request: Request) -> int | None:
+    session = getattr(getattr(request, "state", None), "session", None)
+    return getattr(session, "org_id", None)
+
+
+def _coerce_session_org_id(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
 # @MX:ANCHOR fan_in=8+ — primary FastAPI dependency for portal endpoints.
 # Phase 2 sweeps `_get_caller_org` callers to this; treat as stable.
 async def get_caller(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
+    session_org_id: int | None = Depends(_session_org_id),
 ) -> UserPermissions:
     """Validate the bearer token and return a frozen ``UserPermissions``.
 
@@ -306,12 +326,18 @@ async def get_caller(
     - sets ``app.is_platform_admin`` GUC for callers in the platform org
     - binds ``org_id`` + ``user_id`` into structlog contextvars
     """
-    return await _resolve_caller_with_options(credentials, db, allow_during_deprovisioning=False)
+    return await _resolve_caller_with_options(
+        credentials,
+        db,
+        allow_during_deprovisioning=False,
+        session_org_id=_coerce_session_org_id(session_org_id),
+    )
 
 
 async def get_caller_during_deprovisioning(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
+    session_org_id: int | None = Depends(_session_org_id),
 ) -> UserPermissions:
     """Variant of ``get_caller`` that does NOT block on deprovisioning state.
 
@@ -321,7 +347,12 @@ async def get_caller_during_deprovisioning(
     can't observe the orchestrator finishing. All other admin actions
     still hit the 403 via ``get_caller``. Use sparingly.
     """
-    return await _resolve_caller_with_options(credentials, db, allow_during_deprovisioning=True)
+    return await _resolve_caller_with_options(
+        credentials,
+        db,
+        allow_during_deprovisioning=True,
+        session_org_id=_coerce_session_org_id(session_org_id),
+    )
 
 
 def get_caller_at_least(min_role: ProfileRole):

@@ -53,10 +53,13 @@ function SelectWorkspacePage() {
         const body = await res.json().catch(() => ({}))
         throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`)
       }
-      return res.json() as Promise<{ workspace_url: string }>
+      return res.json() as Promise<
+        | { kind: 'member' | 'auto_join'; redirect_url: string }
+        | { kind: 'join_request_pending'; redirect_to: string }
+      >
     },
     onSuccess: (result) => {
-      window.location.replace(result.workspace_url)
+      window.location.replace('redirect_url' in result ? result.redirect_url : result.redirect_to)
     },
     onError: (err) => {
       authLogger.error('Workspace selection failed', { error: String(err) })

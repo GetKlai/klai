@@ -188,6 +188,7 @@ async def oidc_callback(
     code: str | None = Query(None),
     state: str | None = Query(None),
     error: str | None = Query(None),
+    selected_org_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     if error:
@@ -224,10 +225,33 @@ async def oidc_callback(
     if not zitadel_user_id:
         return _fail_redirect("id_token_invalid", request)
 
-    portal_row = (
-        await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
-    ).scalar_one_or_none()
-    org_id = portal_row.org_id if portal_row is not None else None
+    org_id: int | None = None
+    if selected_org_id is not None:
+        portal_row = (
+            await db.execute(
+                select(PortalUser).where(
+                    PortalUser.zitadel_user_id == zitadel_user_id,
+                    PortalUser.org_id == selected_org_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if portal_row is None:
+            logger.warning(
+                "bff_oidc_callback_selected_org_not_available",
+                zitadel_user_id=zitadel_user_id,
+                selected_org_id=selected_org_id,
+            )
+            return _fail_redirect("org_not_available", request)
+        org_id = portal_row.org_id
+    else:
+        portal_rows = (
+            await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id).limit(2))
+        ).scalars().all()
+        if len(portal_rows) == 1:
+            org_id = portal_rows[0].org_id
+        elif len(portal_rows) > 1:
+            logger.warning("bff_oidc_callback_ambiguous_org", zitadel_user_id=zitadel_user_id)
+            return _fail_redirect("workspace_selection_required", request)
 
     record = await session_service.create(
         zitadel_user_id=zitadel_user_id,

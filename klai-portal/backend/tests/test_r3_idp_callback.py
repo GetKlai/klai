@@ -71,7 +71,7 @@ def _zitadel_mocks(email: str = "test@acme.nl") -> MagicMock:
 
 class TestIdpCallbackCase1NoMemberNoDomain:
     @pytest.mark.asyncio
-    async def test_redirects_to_no_account(self) -> None:
+    async def test_finalizes_login_before_no_account_routing(self) -> None:
         from app.api.auth import idp_callback
 
         mr = MagicMock()
@@ -80,10 +80,22 @@ class TestIdpCallbackCase1NoMemberNoDomain:
         dr.scalars.return_value.all.return_value = []
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(side_effect=[mr, dr])
-        with patch("app.api.auth.zitadel", _zitadel_mocks()), patch("app.api.auth.emit_event"):
+        zit = _zitadel_mocks()
+        with (
+            patch("app.api.auth.zitadel", zit),
+            patch("app.api.auth.emit_event"),
+            patch("app.api.auth.audit.log_event", AsyncMock()),
+            patch("app.api.auth._get_tenant_slug_allowlist", AsyncMock(return_value={"acme"})),
+        ):
             response = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
         assert response.status_code == 302
-        assert "/no-account" in response.headers.get("location", "")
+        assert "acme.getklai.com" in response.headers.get("location", "")
+        assert "klai_sso" in response.headers.get("set-cookie", "")
+        zit.finalize_auth_request.assert_awaited_once_with(
+            auth_request_id="ar-1",
+            session_id="sid",
+            session_token="stk",
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("email", ["user@gmail.com", "user@hotmail.nl", "user@protonmail.com"])
@@ -94,10 +106,16 @@ class TestIdpCallbackCase1NoMemberNoDomain:
         mr.scalars.return_value.all.return_value = []
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(return_value=mr)
-        with patch("app.api.auth.zitadel", _zitadel_mocks(email)), patch("app.api.auth.emit_event"):
+        with (
+            patch("app.api.auth.zitadel", _zitadel_mocks(email)),
+            patch("app.api.auth.emit_event"),
+            patch("app.api.auth.audit.log_event", AsyncMock()),
+            patch("app.api.auth._get_tenant_slug_allowlist", AsyncMock(return_value={"acme"})),
+        ):
             response = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
         assert response.status_code == 302
-        assert "/no-account" in response.headers.get("location", "")
+        assert "acme.getklai.com" in response.headers.get("location", "")
+        assert "klai_sso" in response.headers.get("set-cookie", "")
         assert mock_db.execute.await_count == 1
 
 

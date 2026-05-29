@@ -4,9 +4,9 @@ Workspace selection endpoint for multi-org SSO users (SPEC-AUTH-009 R4).
 POST /api/auth/select-workspace  -- no Bearer required, uses ref from Redis
 
 Discriminated response (R4):
-  - member            -> finalize + SSO cookie + {kind: member, workspace_url}
+  - member            -> finalize + {kind: member, redirect_url}
   - domain_match + auto_accept=True  -> INSERT portal_users + notify admins
-                                     -> {kind: auto_join, workspace_url}
+                                     -> {kind: auto_join, redirect_url}
   - domain_match + auto_accept=False -> INSERT join_request + notify admins
                                      -> {kind: join_request_pending, redirect_to}
 """
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import UTC
 from typing import Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -22,8 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.portal import PortalJoinRequest, PortalOrg, PortalUser
 from app.services.events import emit_event
 from app.services.join_request_token import generate_approval_token
@@ -62,12 +62,12 @@ class SelectWorkspaceRequest(BaseModel):
 # kind+auto_accept from pending-session, never client-supplied hint (C4.1).
 class SelectWorkspaceMember(BaseModel):
     kind: Literal["member"]
-    workspace_url: str
+    redirect_url: str
 
 
 class SelectWorkspaceAutoJoin(BaseModel):
     kind: Literal["auto_join"]
-    workspace_url: str
+    redirect_url: str
 
 
 class SelectWorkspacePending(BaseModel):
@@ -76,6 +76,13 @@ class SelectWorkspacePending(BaseModel):
 
 
 SelectWorkspaceResponse = SelectWorkspaceMember | SelectWorkspaceAutoJoin | SelectWorkspacePending
+
+
+def _callback_url_with_selected_org(callback_url: str, org_id: int) -> str:
+    parts = urlsplit(callback_url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["selected_org_id"] = str(org_id)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 # ---------------------------------------------------------------------------
@@ -174,8 +181,8 @@ async def select_workspace(
     """Select a workspace from a pending SSO session.
 
     Consumes the pending session (one-time use) and branches on entry kind:
-      - member:                     finalize + SSO cookie -> workspace_url
-      - domain_match auto_accept:   INSERT portal_users + notify admins -> workspace_url
+      - member:                     finalize -> redirect_url
+      - domain_match auto_accept:   INSERT portal_users + notify admins -> redirect_url
       - domain_match no auto_accept: INSERT join_request + notify admins -> redirect_to
 
     C4.1: kind is taken from pending-session, never from client.
@@ -203,7 +210,7 @@ async def select_workspace(
             detail="Organisation not available for this session",
         )
 
-    # Look up the org for workspace URL construction
+    # Look up the org to ensure the selected org still exists.
     result = await db.execute(select(PortalOrg).where(PortalOrg.id == body.org_id))
     org = result.scalar_one_or_none()
     if not org:
@@ -212,7 +219,6 @@ async def select_workspace(
             detail="Organisation not found",
         )
 
-    workspace_url = f"https://{org.slug}.{settings.domain}"
     session_id = session_data["session_id"]
     session_token = session_data["session_token"]
     auth_request_id = session_data["auth_request_id"]
@@ -223,12 +229,11 @@ async def select_workspace(
     auto_accept = entry.get("auto_accept", False)
 
     if kind == "member":
-        # C4.2: member path -- finalize + SSO cookie
+        # C4.2: member path -- finalize + BFF callback handoff
         return await _handle_member(
             auth_request_id=auth_request_id,
             session_id=session_id,
             session_token=session_token,
-            workspace_url=workspace_url,
             zitadel_user_id=zitadel_user_id,
             org_id=body.org_id,
         )
@@ -240,7 +245,6 @@ async def select_workspace(
             auth_request_id=auth_request_id,
             session_id=session_id,
             session_token=session_token,
-            workspace_url=workspace_url,
             zitadel_user_id=zitadel_user_id,
             email=email,
             org_id=body.org_id,
@@ -261,13 +265,12 @@ async def _handle_member(
     auth_request_id: str,
     session_id: str,
     session_token: str,
-    workspace_url: str,
     zitadel_user_id: str,
     org_id: int,
 ) -> SelectWorkspaceMember:
-    """C4.2: Finalize auth request and return workspace URL."""
+    """C4.2: Finalize auth request and return a BFF callback URL."""
     try:
-        await zitadel.finalize_auth_request(
+        callback_url = await zitadel.finalize_auth_request(
             auth_request_id=auth_request_id,
             session_id=session_id,
             session_token=session_token,
@@ -285,7 +288,7 @@ async def _handle_member(
         properties={"method": "idp", "multi_org": True, "org_id": org_id},
     )
     logger.info("workspace_selected_member", zitadel_user_id=zitadel_user_id, org_id=org_id)
-    return SelectWorkspaceMember(kind="member", workspace_url=workspace_url)
+    return SelectWorkspaceMember(kind="member", redirect_url=_callback_url_with_selected_org(callback_url, org_id))
 
 
 async def _handle_auto_join(
@@ -293,7 +296,6 @@ async def _handle_auto_join(
     auth_request_id: str,
     session_id: str,
     session_token: str,
-    workspace_url: str,
     zitadel_user_id: str,
     email: str,
     org_id: int,
@@ -304,6 +306,8 @@ async def _handle_auto_join(
     C4.6: idempotent -- IntegrityError on duplicate -> fall through to finalize.
     """
     from sqlalchemy.exc import IntegrityError
+
+    await set_tenant(db, org_id)
 
     # INSERT portal_users
     try:
@@ -328,10 +332,11 @@ async def _handle_auto_join(
         org_id=org_id,
         db=db,
     )
+    await db.commit()
 
     # Finalize auth request
     try:
-        await zitadel.finalize_auth_request(
+        callback_url = await zitadel.finalize_auth_request(
             auth_request_id=auth_request_id,
             session_id=session_id,
             session_token=session_token,
@@ -349,7 +354,7 @@ async def _handle_auto_join(
         properties={"method": "idp", "auto_join": True, "org_id": org_id},
     )
     logger.info("workspace_auto_joined", zitadel_user_id=zitadel_user_id, org_id=org_id)
-    return SelectWorkspaceAutoJoin(kind="auto_join", workspace_url=workspace_url)
+    return SelectWorkspaceAutoJoin(kind="auto_join", redirect_url=_callback_url_with_selected_org(callback_url, org_id))
 
 
 async def _handle_join_request(
@@ -363,6 +368,8 @@ async def _handle_join_request(
     from datetime import datetime, timedelta
 
     expires_at = datetime.now(UTC) + timedelta(days=7)
+
+    await set_tenant(db, org_id)
 
     # placeholder token -- updated after flush (same pattern as auth_join.py)
     join_request = PortalJoinRequest(
@@ -398,6 +405,8 @@ async def _handle_join_request(
                 )
     except Exception:
         logger.warning("notify_join_request_admins_failed", org_id=org_id, exc_info=True)
+
+    await db.commit()
 
     logger.info("workspace_join_request_created", zitadel_user_id=zitadel_user_id, org_id=org_id)
     return SelectWorkspacePending(kind="join_request_pending", redirect_to="/join-request/sent")

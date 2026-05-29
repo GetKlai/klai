@@ -2012,9 +2012,49 @@ async def idp_callback(
 
     total = len(entries)
 
-    # Case 1: no member orgs AND no domain_orgs -> redirect to /no-account.
+    # Case 1: no member orgs AND no domain_orgs -> still complete the BFF
+    # login. The frontend callback will route org_found=false users to
+    # /no-account, but it needs a valid session first so they can submit a join
+    # request from that page.
     if total == 0:
-        return RedirectResponse(url="/no-account", status_code=302)
+        try:
+            callback_url = await zitadel.finalize_auth_request(
+                auth_request_id=auth_request_id,
+                session_id=session_id,
+                session_token=session_token,
+            )
+        except httpx.HTTPStatusError as exc:
+            _slog.exception("idp_callback_finalize_no_account_failed", zitadel_status=exc.response.status_code)
+            _emit_auth_event(
+                "idp_callback_failed",
+                reason="finalize_no_account_5xx",
+                zitadel_status=exc.response.status_code,
+                outcome="302→failure_url",
+                level="error",
+            )
+            return RedirectResponse(url=failure_url, status_code=302)
+
+        redirect = RedirectResponse(url=await _validate_callback_url(callback_url), status_code=302)
+        redirect.set_cookie(
+            key="klai_sso",
+            value=_encrypt_sso(session_id, session_token),
+            domain=f".{settings.domain}",
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=settings.sso_cookie_max_age,
+        )
+        emit_event("login", user_id=zitadel_user_id or None, properties={"method": "idp", "org_found": False})
+        if zitadel_user_id:
+            await audit.log_event(
+                org_id=0,
+                actor=zitadel_user_id,
+                action="auth.login.idp.no_account",
+                resource_type="session",
+                resource_id=session_id,
+                details={"method": "idp", "org_found": False},
+            )
+        return redirect
 
     # Case 2: exactly 1 member, 0 domain_match -> direct finalize (falls through below).
     is_case_2 = len(member_users) == 1 and len(domain_orgs) == 0
