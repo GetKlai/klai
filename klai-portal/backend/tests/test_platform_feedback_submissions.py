@@ -7,7 +7,6 @@ import pytest
 from app.api.admin import platform
 from app.klai_feedback import service as feedback_service
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -92,11 +91,7 @@ def _feedback_item(**overrides):
 
 def test_feedback_submission_delete_rls_policy_exists():
     migration = (
-        REPO_ROOT
-        / "backend"
-        / "alembic"
-        / "versions"
-        / "c8d9e0f1a2b3_add_feedback_submission_delete_policy.py"
+        REPO_ROOT / "backend" / "alembic" / "versions" / "c8d9e0f1a2b3_add_feedback_submission_delete_policy.py"
     ).read_text()
 
     assert "CREATE POLICY feedback_submissions_delete" in migration
