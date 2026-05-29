@@ -14,7 +14,6 @@ import { usePlatformStats } from './-hooks'
 import {
   BotsTab,
   ChatErrorsTab,
-  FeedbackTab,
   KbTab,
   OrgsTab,
   StatusTab,
@@ -23,6 +22,7 @@ import {
   TemplatesTab,
   UsersTab,
 } from './-components/PlatformDashboardTabs'
+import { FeedbackTab } from './-components/feedback/FeedbackTab'
 import { PlatformStatCard } from './-components/PlatformShell'
 import type { PlatformTab } from './-types'
 

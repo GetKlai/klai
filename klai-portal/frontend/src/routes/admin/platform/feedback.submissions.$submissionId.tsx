@@ -5,7 +5,7 @@ import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
 import * as m from '@/paraglide/messages'
 import { usePlatformFeedbackSubmission } from './-hooks'
-import { FeedbackSubmissionDetailPanel } from './-components/PlatformDashboardTabs'
+import { FeedbackSubmissionDetailPanel } from './-components/feedback/FeedbackSubmissionDetailPanel'
 
 export const Route = createFileRoute('/admin/platform/feedback/submissions/$submissionId')({
   component: PlatformFeedbackSubmissionPage,
