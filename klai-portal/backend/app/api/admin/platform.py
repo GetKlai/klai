@@ -442,6 +442,32 @@ async def _platform_feedback_triage_suggestions(
     }
 
 
+def _platform_feedback_submission(
+    row: object,
+    triage_suggestions: dict[int, PlatformFeedbackTriageSuggestion],
+) -> PlatformFeedbackSubmission:
+    return PlatformFeedbackSubmission(
+        id=row.id,
+        org_id=row.org_id,
+        org_name=row.org_name,
+        org_slug=row.org_slug,
+        user_id=row.user_id,
+        user_email=row.user_email,
+        user_display_name=row.user_display_name,
+        event_type=_feedback_event_type(row.source),
+        status=row.status,
+        raw_text=row.raw_text,
+        feedback_type=row.feedback_type,
+        severity=row.severity,
+        page_url=row.page_url,
+        route_id=row.route_id,
+        locale=row.locale,
+        viewport=row.viewport,
+        created_at=row.created_at,
+        triage_suggestion=triage_suggestions.get(row.id),
+    )
+
+
 async def _zitadel_identity_map() -> dict[str, tuple[str | None, str | None]]:
     """Map ``zitadel_user_id -> (display_name, email)`` for every human in the
     single portal org. ``portal_users`` is mapping-only (no live identity), so
@@ -1136,29 +1162,60 @@ async def platform_feedback_submissions(
             logger.warning("platform_feedback_triage_suggestions_query_failed", exc_info=True)
             triage_suggestions = {}
 
-    return [
-        PlatformFeedbackSubmission(
-            id=r.id,
-            org_id=r.org_id,
-            org_name=r.org_name,
-            org_slug=r.org_slug,
-            user_id=r.user_id,
-            user_email=r.user_email,
-            user_display_name=r.user_display_name,
-            event_type=_feedback_event_type(r.source),
-            status=r.status,
-            raw_text=r.raw_text,
-            feedback_type=r.feedback_type,
-            severity=r.severity,
-            page_url=r.page_url,
-            route_id=r.route_id,
-            locale=r.locale,
-            viewport=r.viewport,
-            created_at=r.created_at,
-            triage_suggestion=triage_suggestions.get(r.id),
+    return [_platform_feedback_submission(r, triage_suggestions) for r in rows]
+
+
+@router.get("/feedback/submissions/{submission_id}", response_model=PlatformFeedbackSubmission)
+async def platform_feedback_submission_detail(
+    submission_id: int,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> PlatformFeedbackSubmission:
+    """Return one feedback submission for the platform detail page."""
+    await _audit(perms, "feedback:submission_detail", str(submission_id))
+    feedback_type = FeedbackSubmission.metadata_json["feedback_type"].astext
+    severity = FeedbackSubmission.metadata_json["severity"].astext
+    query = (
+        select(
+            FeedbackSubmission.id.label("id"),
+            FeedbackSubmission.org_id.label("org_id"),
+            PortalOrgModel.name.label("org_name"),
+            PortalOrgModel.slug.label("org_slug"),
+            FeedbackSubmission.user_id.label("user_id"),
+            PortalUserModel.email.label("user_email"),
+            PortalUserModel.display_name.label("user_display_name"),
+            FeedbackSubmission.source.label("source"),
+            FeedbackSubmission.status.label("status"),
+            FeedbackSubmission.raw_text.label("raw_text"),
+            feedback_type.label("feedback_type"),
+            severity.label("severity"),
+            FeedbackSubmission.page_url.label("page_url"),
+            FeedbackSubmission.route_id.label("route_id"),
+            FeedbackSubmission.locale.label("locale"),
+            FeedbackSubmission.viewport.label("viewport"),
+            FeedbackSubmission.created_at.label("created_at"),
         )
-        for r in rows
-    ]
+        .select_from(FeedbackSubmission)
+        .outerjoin(PortalOrgModel, PortalOrgModel.id == FeedbackSubmission.org_id)
+        .outerjoin(
+            PortalUserModel,
+            and_(
+                PortalUserModel.zitadel_user_id == FeedbackSubmission.user_id,
+                PortalUserModel.org_id == FeedbackSubmission.org_id,
+            ),
+        )
+        .where(FeedbackSubmission.id == bindparam("submission_id"))
+        .where(FeedbackSubmission.source.in_(("assistant_feedback", "assistant_problem", "assistant_question")))
+        .limit(1)
+    )
+
+    async with cross_org_session() as db:
+        rows = (await db.execute(query, {"submission_id": submission_id})).all()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Feedback submission not found")
+        row = rows[0]
+        triage_suggestions = await _platform_feedback_triage_suggestions(db, [row.id])
+
+    return _platform_feedback_submission(row, triage_suggestions)
 
 
 @router.get("/feedback/items", response_model=list[PlatformFeedbackItem])

@@ -843,11 +843,9 @@ export function FeedbackTab({
   fmtDate: (s: string | null) => string
 }) {
   const { data, isLoading } = usePlatformFeedbackSubmissions(search, status, kind)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
+  const navigate = useNavigate()
   const [feedbackView, setFeedbackView] = useState<'inbox' | 'items'>('inbox')
   const rows = data ?? []
-  const selected = rows.find((row) => row.id === selectedId) ?? null
 
   return (
     <>
@@ -856,10 +854,7 @@ export function FeedbackTab({
           type="button"
           size="sm"
           variant={feedbackView === 'inbox' ? 'default' : 'ghost'}
-          onClick={() => {
-            setFeedbackView('inbox')
-            setSelectedItemId(null)
-          }}
+          onClick={() => setFeedbackView('inbox')}
         >
           Inbox
         </Button>
@@ -867,10 +862,7 @@ export function FeedbackTab({
           type="button"
           size="sm"
           variant={feedbackView === 'items' ? 'default' : 'ghost'}
-          onClick={() => {
-            setFeedbackView('items')
-            setSelectedId(null)
-          }}
+          onClick={() => setFeedbackView('items')}
         >
           Open items
         </Button>
@@ -880,7 +872,12 @@ export function FeedbackTab({
         <OpenItemsPanel
           search={search}
           fmtDate={fmtDate}
-          onOpenItem={setSelectedItemId}
+          onOpenItem={(itemId) =>
+            void navigate({
+              to: '/admin/platform/feedback/items/$itemId',
+              params: { itemId: String(itemId) },
+            })
+          }
         />
       ) : (
         <PlatformTableShell
@@ -904,28 +901,16 @@ export function FeedbackTab({
                 key={item.id}
                 item={item}
                 fmtDate={fmtDate}
-                onOpen={() => setSelectedId(item.id)}
-                selected={selectedId === item.id}
+                onOpen={() =>
+                  void navigate({
+                    to: '/admin/platform/feedback/submissions/$submissionId',
+                    params: { submissionId: String(item.id) },
+                  })
+                }
               />
             ))}
           </tbody>
         </PlatformTableShell>
-      )}
-
-      {feedbackView === 'inbox' && selected && (
-        <FeedbackSubmissionDetailPanel
-          key={selected.id}
-          item={selected}
-          fmtDate={fmtDate}
-          onClose={() => setSelectedId(null)}
-        />
-      )}
-      {feedbackView === 'items' && selectedItemId !== null && (
-        <FeedbackItemDetailPanel
-          itemId={selectedItemId}
-          fmtDate={fmtDate}
-          onClose={() => setSelectedItemId(null)}
-        />
       )}
     </>
   )
@@ -935,18 +920,14 @@ function FeedbackSubmissionRow({
   item,
   fmtDate,
   onOpen,
-  selected,
 }: {
   item: PlatformFeedbackSubmission
   fmtDate: (s: string | null) => string
   onOpen: () => void
-  selected: boolean
 }) {
   return (
     <tr
-      className={`cursor-pointer border-b border-gray-200 transition-colors last:border-b-0 hover:bg-gray-50 ${
-        selected ? 'bg-gray-50' : ''
-      }`}
+      className="cursor-pointer border-b border-gray-200 transition-colors last:border-b-0 hover:bg-gray-50"
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(event) => {
@@ -1148,7 +1129,7 @@ function OpenItemsPanel({
   )
 }
 
-function FeedbackSubmissionDetailPanel({
+export function FeedbackSubmissionDetailPanel({
   item,
   fmtDate,
   onClose,
@@ -1269,7 +1250,7 @@ function FeedbackSubmissionDetailPanel({
     recommendedAction !== 'review'
 
   return (
-    <section className="mt-6 border-t border-b border-gray-200 bg-white py-5">
+    <section className="border-t border-b border-gray-200 bg-white py-5">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <h2 className="text-[15px] font-display-bold text-gray-900">
@@ -1610,7 +1591,7 @@ function FeedbackSubmissionDetailPanel({
   )
 }
 
-function FeedbackItemDetailPanel({
+export function FeedbackItemDetailPanel({
   itemId,
   fmtDate,
   onClose,
@@ -1622,7 +1603,7 @@ function FeedbackItemDetailPanel({
   const detail = usePlatformFeedbackItem(itemId)
 
   return (
-    <section className="mt-6 border-t border-b border-gray-200 bg-white py-5">
+    <section className="border-t border-b border-gray-200 bg-white py-5">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <h2 className="text-[15px] font-display-bold text-gray-900">

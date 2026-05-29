@@ -156,6 +156,18 @@ export function usePlatformFeedbackSubmissions(
   })
 }
 
+export function usePlatformFeedbackSubmission(submissionId: number | null) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-feedback-submission', submissionId],
+    queryFn: async () =>
+      apiFetch<PlatformFeedbackSubmission>(
+        `/api/admin/platform/feedback/submissions/${submissionId}`,
+      ),
+    enabled: auth.isAuthenticated && submissionId !== null,
+  })
+}
+
 export function usePlatformFeedbackItems(
   search: string,
   status = 'active',

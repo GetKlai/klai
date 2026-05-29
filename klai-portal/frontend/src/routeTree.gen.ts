@@ -106,6 +106,8 @@ import { Route as AdminInstructionsSlugEditRouteImport } from './routes/admin/in
 import { Route as AdminGroupsGroupIdEditRouteImport } from './routes/admin/groups/$groupId/edit'
 import { Route as AdminGroupsGroupIdAddMemberRouteImport } from './routes/admin/groups/$groupId/add-member'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
+import { Route as AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport } from './routes/admin/platform/feedback.submissions.$submissionId'
+import { Route as AdminPlatformFeedbackItemsItemIdRouteImport } from './routes/admin/platform/feedback.items.$itemId'
 
 const WidgetTestRoute = WidgetTestRouteImport.update({
   id: '/widget-test',
@@ -613,6 +615,18 @@ const AppKnowledgeKbSlugEditConnectorConnectorIdRoute =
     path: '/knowledge/$kbSlug/edit-connector/$connectorId',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AdminPlatformFeedbackSubmissionsSubmissionIdRoute =
+  AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport.update({
+    id: '/platform/feedback/submissions/$submissionId',
+    path: '/platform/feedback/submissions/$submissionId',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
+const AdminPlatformFeedbackItemsItemIdRoute =
+  AdminPlatformFeedbackItemsItemIdRouteImport.update({
+    id: '/platform/feedback/items/$itemId',
+    path: '/platform/feedback/items/$itemId',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -711,6 +725,8 @@ export interface FileRoutesByFullPath {
   '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
+  '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
+  '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
 }
 export interface FileRoutesByTo {
@@ -805,6 +821,8 @@ export interface FileRoutesByTo {
   '/admin/profiles/$profile': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugIndexRoute
+  '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
+  '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
 }
 export interface FileRoutesById {
@@ -905,6 +923,8 @@ export interface FileRoutesById {
   '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
+  '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
+  '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug_/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
 }
 export interface FileRouteTypes {
@@ -1006,6 +1026,8 @@ export interface FileRouteTypes {
     | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
+    | '/admin/platform/feedback/items/$itemId'
+    | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -1100,6 +1122,8 @@ export interface FileRouteTypes {
     | '/admin/profiles/$profile'
     | '/app/docs/$kbSlug'
     | '/app/knowledge/$kbSlug'
+    | '/admin/platform/feedback/items/$itemId'
+    | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
   id:
     | '__root__'
@@ -1199,6 +1223,8 @@ export interface FileRouteTypes {
     | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
+    | '/admin/platform/feedback/items/$itemId'
+    | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
   fileRoutesById: FileRoutesById
 }
@@ -1906,6 +1932,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/admin/platform/feedback/submissions/$submissionId': {
+      id: '/admin/platform/feedback/submissions/$submissionId'
+      path: '/platform/feedback/submissions/$submissionId'
+      fullPath: '/admin/platform/feedback/submissions/$submissionId'
+      preLoaderRoute: typeof AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/platform/feedback/items/$itemId': {
+      id: '/admin/platform/feedback/items/$itemId'
+      path: '/platform/feedback/items/$itemId'
+      fullPath: '/admin/platform/feedback/items/$itemId'
+      preLoaderRoute: typeof AdminPlatformFeedbackItemsItemIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
   }
 }
 
@@ -1972,6 +2012,8 @@ interface AdminRouteRouteChildren {
   AdminWidgetsIdTestRoute: typeof AdminWidgetsIdTestRoute
   AdminGroupsGroupIdIndexRoute: typeof AdminGroupsGroupIdIndexRoute
   AdminProfilesProfileIndexRoute: typeof AdminProfilesProfileIndexRoute
+  AdminPlatformFeedbackItemsItemIdRoute: typeof AdminPlatformFeedbackItemsItemIdRoute
+  AdminPlatformFeedbackSubmissionsSubmissionIdRoute: typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
 }
 
 const AdminRouteRouteChildren: AdminRouteRouteChildren = {
@@ -2009,6 +2051,9 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminWidgetsIdTestRoute: AdminWidgetsIdTestRoute,
   AdminGroupsGroupIdIndexRoute: AdminGroupsGroupIdIndexRoute,
   AdminProfilesProfileIndexRoute: AdminProfilesProfileIndexRoute,
+  AdminPlatformFeedbackItemsItemIdRoute: AdminPlatformFeedbackItemsItemIdRoute,
+  AdminPlatformFeedbackSubmissionsSubmissionIdRoute:
+    AdminPlatformFeedbackSubmissionsSubmissionIdRoute,
 }
 
 const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
