@@ -15,7 +15,6 @@ import {
   Search,
   Sparkles,
   Trash2,
-  X,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -927,7 +926,7 @@ function FeedbackSubmissionRow({
 }) {
   return (
     <tr
-      className="cursor-pointer border-b border-gray-200 transition-colors last:border-b-0 hover:bg-gray-50"
+      className="cursor-pointer border-b border-gray-200 last:border-b-0 klai-hover"
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(event) => {
@@ -981,11 +980,9 @@ function FeedbackSubmissionRow({
         {fmtDate(item.created_at)}
       </td>
       <td className={`${TD} text-right`}>
-        <Button
+        <button
           type="button"
-          size="icon"
-          variant="ghost"
-          className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
+          className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
           title="Bewerken"
           aria-label="Bewerken"
           onClick={(event) => {
@@ -994,7 +991,7 @@ function FeedbackSubmissionRow({
           }}
         >
           <Pencil className="h-4 w-4" />
-        </Button>
+        </button>
       </td>
     </tr>
   )
@@ -1073,7 +1070,7 @@ function OpenItemsPanel({
             {rows.map((item) => (
                 <tr
                   key={item.id}
-                  className="cursor-pointer hover:bg-gray-50"
+                  className="cursor-pointer border-b border-gray-200 last:border-b-0 klai-hover"
                   tabIndex={0}
                   onClick={() => onOpenItem(item.id)}
                   onKeyDown={(event) => {
@@ -1106,11 +1103,9 @@ function OpenItemsPanel({
                     {fmtDate(item.updated_at)}
                   </td>
                   <td className={`${TD} text-right`}>
-                    <Button
+                    <button
                       type="button"
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
+                      className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                       title="Bewerken"
                       aria-label={`Bewerk ${item.title}`}
                       onClick={(event) => {
@@ -1119,7 +1114,7 @@ function OpenItemsPanel({
                       }}
                     >
                       <Pencil className="h-4 w-4" />
-                    </Button>
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -1250,35 +1245,22 @@ export function FeedbackSubmissionDetailPanel({
     recommendedAction !== 'review'
 
   return (
-    <section className="border-t border-b border-gray-200 bg-white py-5">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-[15px] font-display-bold text-gray-900">
-            Feedback triage
-          </h2>
-          <p className="mt-1 text-sm text-gray-400">
-            {item.org_name ?? item.org_slug ?? 'Onbekende organisatie'} -{' '}
-            {feedbackSubmissionReporterLabel(item)
-              ? `${feedbackSubmissionReporterLabel(item)} - `
-              : ''}
-            {fmtDate(item.created_at)}
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
-          aria-label="Sluiten"
-          title="Sluiten"
-          onClick={onClose}
-        >
-          <X className="h-4 w-4" />
-        </Button>
+    <div className="space-y-6">
+      <div>
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          Feedback triage
+        </h1>
+        <p className="mt-1 text-sm text-gray-400">
+          {item.org_name ?? item.org_slug ?? 'Onbekende organisatie'} -{' '}
+          {feedbackSubmissionReporterLabel(item)
+            ? `${feedbackSubmissionReporterLabel(item)} - `
+            : ''}
+          {fmtDate(item.created_at)}
+        </p>
       </div>
 
       <div className="space-y-6">
-          <section className="space-y-3">
+          <section className="space-y-3 border-t border-b border-gray-200 py-5">
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
               {item.status !== 'new' && (
@@ -1587,7 +1569,7 @@ export function FeedbackSubmissionDetailPanel({
             </div>
           )}
       </div>
-    </section>
+    </div>
   )
 }
 
@@ -1603,27 +1585,14 @@ export function FeedbackItemDetailPanel({
   const detail = usePlatformFeedbackItem(itemId)
 
   return (
-    <section className="border-t border-b border-gray-200 bg-white py-5">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-[15px] font-display-bold text-gray-900">
-            Open item
-          </h2>
-          <p className="mt-1 text-sm text-gray-400">
-            Source of truth voor gebundelde feedback en klantupdates.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
-          aria-label="Sluiten"
-          title="Sluiten"
-          onClick={onClose}
-        >
-          <X className="h-4 w-4" />
-        </Button>
+    <div className="space-y-6">
+      <div>
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          Open item
+        </h1>
+        <p className="mt-1 text-sm text-gray-400">
+          Gebundelde feedback en klantupdates.
+        </p>
       </div>
 
       {detail.isLoading ? (
@@ -1642,7 +1611,7 @@ export function FeedbackItemDetailPanel({
       ) : (
         <p className="text-sm text-gray-500">Item niet gevonden.</p>
       )}
-    </section>
+    </div>
   )
 }
 
@@ -1710,7 +1679,7 @@ function FeedbackItemDetailForm({
 
   return (
     <div className="space-y-5">
-      <section className="space-y-3">
+      <section className="space-y-3 border-t border-b border-gray-200 py-5">
         <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
           <Badge variant="outline">{feedbackItemKindLabel(item.kind)}</Badge>
           <Badge variant="outline">{item.org_count} orgs</Badge>
