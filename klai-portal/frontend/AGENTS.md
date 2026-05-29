@@ -6,6 +6,7 @@ Before changing UI in this directory, read:
 
 Hard rules:
 
+- These rules are portal-only; do not apply them to website or marketing pages.
 - Follow an existing screen with the same pattern before introducing new UI.
 - Admin detail pages use separate routes and header-right back actions.
 - Do not introduce drawers/sheets/inline detail panels for admin entity work.
