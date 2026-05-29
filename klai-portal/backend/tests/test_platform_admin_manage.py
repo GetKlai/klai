@@ -303,6 +303,7 @@ async def test_platform_create_tenant_user_insert_uses_tenant_scoped_session() -
     added_org = db.add.call_args_list[0].args[0]
     assert added_org.__class__.__name__ == "PortalOrg"
     assert added_org.primary_domain == "acme.example"
+    assert added_org.plan == "knowledge"
     tdb_session.add.assert_called_once()
     added_user = tdb_session.add.call_args.args[0]
     assert added_user.__class__.__name__ == "PortalUser"
@@ -371,6 +372,7 @@ async def test_platform_create_tenant_free_email_owner_does_not_claim_primary_do
     added_org = db.add.call_args_list[0].args[0]
     assert added_org.__class__.__name__ == "PortalOrg"
     assert added_org.primary_domain == ""
+    assert added_org.plan == "knowledge"
 
 
 @pytest.mark.asyncio
