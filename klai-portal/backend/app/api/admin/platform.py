@@ -188,14 +188,6 @@ class PlatformFeedbackItem(BaseModel):
     priority_score: int
     org_count: int
     user_count: int
-    external_tracker_type: str | None
-    external_tracker_id: str | None
-    external_tracker_url: str | None
-    public_feedback_url: str | None
-    public_title: str | None
-    public_summary: str | None
-    target_window: str | None
-    owner: str | None
     shipped_at: datetime | None
     resolution_summary: str | None = None
     resolved_at: datetime | None = None
@@ -253,14 +245,6 @@ class PlatformFeedbackItemPatchIn(BaseModel):
     summary: str | None = Field(default=None, max_length=4000)
     status: Literal["open", "resolved", "dismissed"] | None = None
     area: str | None = Field(default=None, max_length=128)
-    external_tracker_type: str | None = Field(default=None, max_length=32)
-    external_tracker_id: str | None = Field(default=None, max_length=128)
-    external_tracker_url: str | None = Field(default=None, max_length=2048)
-    public_feedback_url: str | None = Field(default=None, max_length=2048)
-    public_title: str | None = Field(default=None, max_length=256)
-    public_summary: str | None = Field(default=None, max_length=4000)
-    target_window: str | None = Field(default=None, max_length=64)
-    owner: str | None = Field(default=None, max_length=128)
 
 
 class PlatformFeedbackResolveIn(BaseModel):
@@ -1581,14 +1565,6 @@ def _platform_feedback_item(
         priority_score=item.priority_score,
         org_count=item.org_count,
         user_count=item.user_count,
-        external_tracker_type=item.external_tracker_type,
-        external_tracker_id=item.external_tracker_id,
-        external_tracker_url=item.external_tracker_url,
-        public_feedback_url=item.public_feedback_url,
-        public_title=item.public_title,
-        public_summary=item.public_summary,
-        target_window=item.target_window,
-        owner=item.owner,
         shipped_at=item.shipped_at,
         resolution_summary=item.resolution_summary,
         resolved_at=item.resolved_at,
