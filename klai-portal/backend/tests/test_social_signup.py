@@ -724,7 +724,7 @@ class TestSignupSocial:
             patch("app.api.signup.settings") as mock_settings,
             patch("app.api.signup.zitadel") as mock_zitadel,
             patch("app.api.signup.PortalOrg") as mock_portal_org,
-            patch("app.api.signup.PortalUser"),
+            patch("app.api.signup.PortalUser") as mock_portal_user,
             patch("app.api.signup.provision_tenant"),
             patch("app.api.signup.emit_event"),
             patch("app.api.signup._get_fernet", return_value=Fernet(_FERNET_KEY.encode())),
@@ -752,7 +752,10 @@ class TestSignupSocial:
         assert result.redirect_url == "/"
         assert result.org_id == "zit-org-new"
         assert result.user_id == _FAKE_USER_ID
+        assert mock_portal_org.call_args.kwargs["plan"] == "knowledge"
         assert mock_portal_org.call_args.kwargs["primary_domain"] == "bedrijf.nl"
+        assert mock_portal_user.call_args.kwargs["role"] == "admin"
+        assert mock_portal_user.call_args.kwargs["seat_type"] == "knowledge"
         response_mock.set_cookie.assert_called_once()
         response_mock.delete_cookie.assert_called_once_with(
             key="klai_idp_pending",
@@ -816,40 +819,76 @@ class TestSignupSocial:
             user_id=_FAKE_USER_ID,
             role="org:owner",
         )
+        assert mock_portal_org.call_args.kwargs["plan"] == "knowledge"
         assert mock_portal_org.call_args.kwargs["primary_domain"] == "bedrijf.nl"
         assert mock_portal_org.call_args.kwargs["auto_accept_same_domain"] is False
         assert mock_portal_user.call_args.kwargs["zitadel_user_id"] == _FAKE_USER_ID
+        assert mock_portal_user.call_args.kwargs["role"] == "admin"
+        assert mock_portal_user.call_args.kwargs["seat_type"] == "knowledge"
         background_tasks.add_task.assert_called_once_with(mock_provision_tenant, org_row.id)
         mock_emit_event.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_free_email_social_signup_rejected_before_org_creation(self) -> None:
+    @pytest.mark.parametrize(
+        "email",
+        [
+            "founder@gmail.com",
+            "founder@hotmail.nl",
+            "founder@outlook.com",
+            "founder@protonmail.com",
+            "founder@icloud.com",
+        ],
+    )
+    async def test_free_email_social_signup_creates_workspace_without_claiming_domain(self, email: str) -> None:
         from app.api.signup import signup_social
+
+        db = AsyncMock()
+        db.add = MagicMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+
+        org_row = MagicMock()
+        org_row.id = 99
+        org_row.slug = "private-contact-zit-org"
+        org_row.plan = "knowledge"
 
         pending_cookie = _encrypt_pending(
             _FAKE_SESSION_ID,
             _FAKE_SESSION_TOKEN,
             _FAKE_USER_ID,
-            email="founder@gmail.com",
+            email=email,
         )
 
         with (
+            patch("app.api.signup.settings") as mock_settings,
             patch("app.api.signup.zitadel") as mock_zitadel,
+            patch("app.api.signup.PortalOrg") as mock_portal_org,
+            patch("app.api.signup.PortalUser"),
+            patch("app.api.signup.provision_tenant"),
+            patch("app.api.signup.emit_event"),
             patch("app.api.signup._get_fernet", return_value=Fernet(_FERNET_KEY.encode())),
         ):
-            mock_zitadel.create_org = AsyncMock()
-            with pytest.raises(HTTPException) as exc_info:
-                await signup_social(
-                    body=self._make_body(),
-                    response=self._make_response_mock(),
-                    background_tasks=MagicMock(),
-                    db=AsyncMock(),
-                    request=make_request(),
-                    klai_idp_pending=pending_cookie,
-                )
+            mock_settings.zitadel_portal_org_id = "portal-org-id"
+            mock_settings.domain = _DOMAIN
+            mock_settings.sso_cookie_max_age = 3600
+            mock_settings.sso_cookie_key = _FERNET_KEY
+            mock_zitadel.create_org = AsyncMock(return_value={"id": "zit-org-new"})
+            mock_zitadel.grant_user_role = AsyncMock()
+            mock_portal_org.return_value = org_row
 
-        assert exc_info.value.status_code == 400
-        mock_zitadel.create_org.assert_not_awaited()
+            result = await signup_social(
+                body=self._make_body("Private Contact"),
+                response=self._make_response_mock(),
+                background_tasks=MagicMock(),
+                db=db,
+                request=make_request(),
+                klai_idp_pending=pending_cookie,
+            )
+
+        assert result.redirect_url == "/"
+        mock_zitadel.create_org.assert_awaited_once()
+        assert mock_portal_org.call_args.kwargs["plan"] == "knowledge"
+        assert mock_portal_org.call_args.kwargs["primary_domain"] == ""
 
     @pytest.mark.asyncio
     async def test_invited_free_email_social_signup_does_not_claim_primary_domain(self) -> None:
@@ -901,6 +940,7 @@ class TestSignupSocial:
 
         assert result.redirect_url == "/"
         mock_zitadel.create_org.assert_awaited_once()
+        assert mock_portal_org.call_args.kwargs["plan"] == "knowledge"
         assert mock_portal_org.call_args.kwargs["primary_domain"] == ""
 
     @pytest.mark.asyncio

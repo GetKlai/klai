@@ -109,7 +109,7 @@ async function resolveDestination(
 
   if (!me.mfa_enrolled) return { kind: 'navigate', url: '/setup/mfa' }
 
-  const isAdmin = me.roles?.some((r) => ADMIN_ROLES.includes(r)) ?? false
+  const isAdmin = me.portal_role === 'admin' || (me.roles?.some((r) => ADMIN_ROLES.includes(r)) ?? false)
   if (isAdmin) {
     const billingStatus = await fetchBillingStatus(signal)
     if (billingStatus === 'pending') return { kind: 'navigate', url: '/admin/billing' }

@@ -39,7 +39,10 @@ function JoinRequestPage() {
 
   const submitMutation = useMutation({
     mutationFn: async () => {
-      if (!auth.isAuthenticated) throw new Error('Not authenticated')
+      if (!auth.isAuthenticated) {
+        await auth.signinRedirect({ returnTo: '/join-request' })
+        return new Promise<unknown>(() => {})
+      }
       return apiFetch<unknown>('/api/auth/join-request', { method: 'POST' })
     },
     onSuccess: () => {
@@ -122,7 +125,7 @@ function JoinRequestPage() {
 
       <Button
         onClick={() => submitMutation.mutate()}
-        disabled={submitMutation.isPending}
+        disabled={auth.isLoading || submitMutation.isPending}
         size="lg"
         className="w-full"
       >
