@@ -39,7 +39,7 @@ set -e
 
 INDEX=/app/client/dist/index.html
 LIGHT_MARKER=klai-force-light
-KB_DISCLOSURE_MARKER=klai-kb-disclosure
+KB_DISCLOSURE_MARKER=klai-kb-disclosure-v2
 
 if [ -f "$INDEX" ]; then
   node - "$INDEX" "$LIGHT_MARKER" "$KB_DISCLOSURE_MARKER" <<'NODE' || echo "[klai-entrypoint] client polish inject failed (non-fatal), booting anyway"
@@ -47,7 +47,12 @@ const { readFileSync, writeFileSync } = require('fs');
 const target = process.argv[2];
 const lightMarker = process.argv[3];
 const disclosureMarker = process.argv[4];
-const html = readFileSync(target, 'utf8');
+let html = readFileSync(target, 'utf8');
+if (!html.includes(disclosureMarker)) {
+  html = html
+    .replace(/<style id="klai-kb-disclosure-style">[\s\S]*?<\/style>\s*/g, '')
+    .replace(/<script id="klai-kb-disclosure-script">[\s\S]*?<\/script>\s*/g, '');
+}
 const idx = html.indexOf('<head>');
 if (idx === -1) {
   process.stderr.write('[klai-entrypoint] <head> not found; skipping client polish inject\n');
@@ -58,22 +63,22 @@ if (!html.includes(lightMarker)) {
   injections.push("<script>/*klai-force-light*/try{localStorage.setItem('color-theme','light');}catch(e){}</script>");
 }
 if (!html.includes(disclosureMarker)) {
-  injections.push(`<style id="klai-kb-disclosure-style">/*klai-kb-disclosure*/
-.klai-kb-disclosure{margin:.5rem 0 0;border:1px solid rgb(17 24 39/.08);border-radius:.75rem;background:rgb(249 250 251/.72);overflow:hidden;max-width:42rem}
-.klai-kb-disclosure[open]{background:rgb(249 250 251/.9)}
-.klai-kb-disclosure summary{min-height:2.25rem;display:flex;align-items:center;gap:.5rem;padding:.5rem .75rem;cursor:pointer;list-style:none;color:rgb(75 85 99/.88);font-size:.8125rem;line-height:1.25rem}
+  injections.push(`<style id="klai-kb-disclosure-style">/*klai-kb-disclosure-v2*/
+.klai-kb-disclosure{margin:.6rem 0 0;border:1px solid rgb(17 24 39 / .08);border-radius:.7rem;background:rgb(249 250 251 / .72);overflow:hidden;max-width:42rem}
+.klai-kb-disclosure[open]{background:rgb(249 250 251 / .94)}
+.klai-kb-disclosure summary{min-height:2.25rem;display:flex;align-items:center;gap:.5rem;padding:.48rem .72rem;cursor:pointer;list-style:none;color:rgb(75 85 99 / .88);font-size:.8125rem;line-height:1.25rem}
 .klai-kb-disclosure summary::-webkit-details-marker{display:none}
 .klai-kb-disclosure summary:before{content:"";width:.4rem;height:.4rem;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .15s ease;flex:0 0 auto}
 .klai-kb-disclosure[open] summary:before{transform:rotate(45deg)}
-.klai-kb-disclosure summary:hover{color:rgb(17 24 39);background:rgb(0 0 0/.025)}
+.klai-kb-disclosure summary:hover{color:rgb(17 24 39);background:rgb(0 0 0 / .025)}
 .klai-kb-disclosure-title{font-weight:600;min-width:0;flex:1}
-.klai-kb-disclosure-count{font-size:.75rem;color:rgb(107 114 128/.78);white-space:nowrap}
+.klai-kb-disclosure-count{font-size:.75rem;color:rgb(107 114 128 / .78);white-space:nowrap}
 .klai-kb-disclosure-body{padding:0 .75rem .75rem 1.8rem;color:rgb(75 85 99);font-size:.8125rem}
 .klai-kb-disclosure-body ul,.klai-kb-disclosure-body ol{margin:.15rem 0 0 1rem;padding:0}
 .klai-kb-disclosure-body li{margin:.15rem 0}
 </style>
-<script id="klai-kb-disclosure-script">/*klai-kb-disclosure*/
-(()=>{const H=new Set(["Bronnen","Agent activiteit"]);const label=(name,n)=>name==="Bronnen"?(n===1?"1 bron":n+" bronnen"):(n===1?"1 stap":n+" stappen");const block=e=>{let n=e;while(n&&n.parentElement&&!["P","DIV","LI"].includes(n.tagName))n=n.parentElement;return n||e};const count=nodes=>{const l=nodes.find(n=>/^[UO]L$/.test(n.tagName));return l?l.querySelectorAll(":scope > li").length:0};const wrap=s=>{if(!s||s.dataset.klaiKbDisclosure==="1")return;const name=(s.textContent||"").trim();if(!H.has(name))return;const head=block(s);if(head.closest(".klai-kb-disclosure"))return;const parent=head.parentElement;if(!parent)return;const body=[];let next=head.nextElementSibling;while(next){const strong=next.querySelector?.("strong");const text=(strong?.textContent||"").trim();if(H.has(text))break;if(next.classList?.contains("klai-kb-disclosure"))break;body.push(next);next=next.nextElementSibling}if(body.length===0)return;const d=document.createElement("details");d.className="klai-kb-disclosure klai-kb-disclosure--"+(name==="Bronnen"?"sources":"activity");const summary=document.createElement("summary");const title=document.createElement("span");title.className="klai-kb-disclosure-title";title.textContent=name;const c=document.createElement("span");c.className="klai-kb-disclosure-count";c.textContent=label(name,count(body));summary.append(title,c);const inner=document.createElement("div");inner.className="klai-kb-disclosure-body";for(const node of body)inner.appendChild(node);d.append(summary,inner);head.replaceWith(d);s.dataset.klaiKbDisclosure="1"};const scan=root=>{for(const s of root.querySelectorAll?.("strong")||[])wrap(s)};const run=()=>scan(document.body);new MutationObserver(m=>{for(const x of m)for(const n of x.addedNodes)n.nodeType===1&&scan(n)}).observe(document.documentElement,{childList:true,subtree:true});document.readyState==="loading"?document.addEventListener("DOMContentLoaded",run):run();})();</script>`);
+<script id="klai-kb-disclosure-script">/*klai-kb-disclosure-v2*/
+(()=>{const H=new Set(["Bronnen","Agent activiteit"]);const norm=t=>(t||"").replace(/\\s+/g," ").trim();const title=e=>H.has(norm(e?.textContent))?norm(e.textContent):"";const heading=e=>{if(!(e instanceof HTMLElement))return"";const tag=e.tagName;if(/^H[1-6]$/.test(tag)||["P","LI","STRONG","B"].includes(tag))return title(e);return""};const headingIn=e=>{if(!(e instanceof HTMLElement))return"";const direct=heading(e);if(direct)return direct;const c=e.querySelector("strong,b,h1,h2,h3,h4,h5,h6,p,li");return heading(c)};const block=e=>/^H[1-6]$/.test(e.tagName)||["P","LI"].includes(e.tagName)?e:e.closest("p,li,h1,h2,h3,h4,h5,h6")||e;const label=(name,n)=>name==="Bronnen"?(n===1?"1 bron":n+" bronnen"):(n===1?"1 stap":n+" stappen");const count=nodes=>{const l=nodes.find(n=>/^[UO]L$/.test(n.tagName));return l?l.querySelectorAll(":scope > li").length:nodes.filter(n=>norm(n.textContent)).length};const wrap=e=>{const name=heading(e);if(!name)return;const head=block(e);if(!head||head.dataset.klaiKbDisclosure==="1"||head.closest(".klai-kb-disclosure"))return;const body=[];let next=head.nextElementSibling;while(next){if(next.classList?.contains("klai-kb-disclosure")||headingIn(next))break;if(!["SCRIPT","STYLE"].includes(next.tagName))body.push(next);next=next.nextElementSibling}if(body.length===0){if(next&&headingIn(next)){head.dataset.klaiKbDisclosure="1";head.style.display="none"}return}const d=document.createElement("details");d.className="klai-kb-disclosure klai-kb-disclosure--"+(name==="Bronnen"?"sources":"activity");const summary=document.createElement("summary");const t=document.createElement("span");t.className="klai-kb-disclosure-title";t.textContent=name;const c=document.createElement("span");c.className="klai-kb-disclosure-count";c.textContent=label(name,count(body));summary.append(t,c);const inner=document.createElement("div");inner.className="klai-kb-disclosure-body";for(const node of body)inner.appendChild(node);d.append(summary,inner);head.dataset.klaiKbDisclosure="1";head.replaceWith(d)};const scan=root=>{const list=[];if(root instanceof HTMLElement)list.push(root);list.push(...(root.querySelectorAll?.("strong,b,h1,h2,h3,h4,h5,h6,p,li")||[]));for(const e of list)wrap(e)};let timer=0;const run=()=>scan(document.body);const schedule=()=>{clearTimeout(timer);timer=setTimeout(run,250)};new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true,characterData:true});document.readyState==="loading"?document.addEventListener("DOMContentLoaded",schedule):schedule();})();</script>`);
 }
 if (!injections.length) {
   process.stdout.write('[klai-entrypoint] client polish already injected, skipping\n');
