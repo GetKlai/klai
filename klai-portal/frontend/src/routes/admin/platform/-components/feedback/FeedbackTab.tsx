@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
-import { Loader2, Pencil } from "lucide-react"
+import { ChevronRight, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Select } from "@/components/ui/select"
@@ -167,18 +167,7 @@ function FeedbackSubmissionRow({
         {fmtDate(item.created_at)}
       </td>
       <td className={`${TD} text-right`}>
-        <button
-          type="button"
-          className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-          title={m.platform_feedback_edit()}
-          aria-label={m.platform_feedback_edit()}
-          onClick={(event) => {
-            event.stopPropagation()
-            onOpen()
-          }}
-        >
-          <Pencil className="h-4 w-4" />
-        </button>
+        <ChevronRight className="ml-auto h-4 w-4 text-gray-300" />
       </td>
     </tr>
   )
@@ -293,18 +282,7 @@ function OpenItemsPanel({
                     {fmtDate(item.updated_at)}
                   </td>
                   <td className={`${TD} text-right`}>
-                    <button
-                      type="button"
-                      className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                      title={m.platform_feedback_edit()}
-                      aria-label={m.platform_feedback_edit_item({ title: item.title })}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onOpenItem(item.id)
-                      }}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
+                    <ChevronRight className="ml-auto h-4 w-4 text-gray-300" />
                   </td>
                 </tr>
               ))}
