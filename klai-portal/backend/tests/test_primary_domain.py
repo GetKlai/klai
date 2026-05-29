@@ -61,13 +61,17 @@ class TestPrimaryDomainSetAtSignup:
             patch("app.api.signup.invalidate_tenant_slug_cache"),
             patch("app.api.signup.set_tenant", AsyncMock()),
             patch("app.api.signup.PortalOrg") as morg,
-            patch("app.api.signup.PortalUser"),
+            patch("app.api.signup.PortalUser") as muser,
         ):
             _mock_deps(mz, morg)
             await signup(body=body, background_tasks=MagicMock(), db=mock_db)
             kw = morg.call_args.kwargs
             assert "primary_domain" in kw
             assert kw["primary_domain"] == "bedrijf.nl"
+            assert kw["plan"] == "knowledge"
+            user_kw = muser.call_args.kwargs
+            assert user_kw["role"] == "admin"
+            assert user_kw["seat_type"] == "knowledge"
 
     @pytest.mark.asyncio
     async def test_signup_sets_auto_accept_false(self) -> None:
