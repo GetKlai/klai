@@ -225,6 +225,50 @@ async def test_platform_feedback_submissions_includes_ai_suggestion(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_platform_feedback_submission_detail_returns_one_submission(monkeypatch):
+    created_at = datetime(2026, 5, 27, 10, 0, tzinfo=UTC)
+    rows = [
+        SimpleNamespace(
+            id=123,
+            org_id=42,
+            org_name="Acme",
+            org_slug="acme",
+            user_id="user-123",
+            user_email="ada@acme.test",
+            user_display_name="Ada Acme",
+            source="assistant_problem",
+            status="open",
+            raw_text="BT ticket instructies veranderen opmaak.",
+            feedback_type="bug",
+            severity="medium",
+            page_url="https://acme.getklai.com/admin/platform",
+            route_id="/admin/platform",
+            locale="nl",
+            viewport="1440x900",
+            created_at=created_at,
+        )
+    ]
+    session = _Session(rows)
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+
+    result = await platform.platform_feedback_submission_detail(
+        submission_id=123,
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert session.params == {"submission_id": 123}
+    assert result.id == 123
+    assert result.event_type == "klai_assistant.problem_report"
+    assert result.status == "open"
+    assert result.raw_text == "BT ticket instructies veranderen opmaak."
+
+
+@pytest.mark.asyncio
 async def test_platform_feedback_submissions_status_filter_uses_simple_status(monkeypatch):
     session = _Session([])
 
