@@ -1,86 +1,62 @@
 ---
 name: klai-portal-ui
 description: >
-  Klai portal UI conventions. Mandatory for any agent editing klai-portal/frontend/src/.
-  Covers page layout (h1 left + back button right), component usage, color tokens,
-  and the LiteLLM model policy (never use gpt-* or other US model names).
+  Klai portal UI conventions. Mandatory for any agent editing
+  klai-portal/frontend/ UI. Delegates layout, admin/app patterns,
+  component usage, colors, and i18n to the canonical portal UI standards.
 license: Apache-2.0
 user-invocable: false
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   category: "domain"
   status: "active"
-  updated: "2026-03-24"
+  updated: "2026-05-29"
   tags: "klai, portal, frontend, ui, react, typescript"
 ---
 
 # Klai Portal UI Conventions
 
-**[HARD] Read this skill in full before editing any file in `klai-portal/frontend/src/`.**
+This skill is portal-only. It does not apply to `klai-website/`, marketing
+pages, landing pages, or public web storytelling. Portal and web are separate
+UI worlds.
 
----
+## Canonical Source
 
-## Page layout standard
+Before editing portal UI, read:
 
-Reference implementation: `klai-portal/frontend/src/routes/admin/users/invite.tsx`
+`klai-portal/frontend/docs/ui-standards.md`
 
-Every page uses this structure:
+That file wins over older examples, skills, or rule files. If another portal
+document disagrees with it, update the other document in the same change.
 
-```tsx
-<div className="p-8 max-w-lg">           {/* max-w-3xl for wide content pages */}
-  <div className="flex items-center justify-between mb-6">
-    <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-      Page Title
-    </h1>
-    <Button type="button" variant="ghost" size="sm" onClick={handleBack}>
-      <ArrowLeft className="h-4 w-4 mr-2" />
-      {m.some_back_label()}
-    </Button>
-  </div>
-  {/* content */}
-</div>
-```
+## Required Workflow
 
-Rules:
-- **h1 LEFT, back button RIGHT** — always one `flex items-center justify-between` row
-- Never put the back button above the h1 in a separate block
-- Never put back button bottom-left or in a footer
-- `font-serif text-2xl font-bold text-[var(--color-purple-deep)]` on every h1
+1. Read `klai-portal/frontend/docs/ui-standards.md`.
+2. Find an existing portal screen with the same pattern.
+3. State the reference screen before editing.
+4. Follow the existing portal pattern before introducing anything new.
+5. Keep website/marketing patterns out of the portal, and portal admin/app
+   patterns out of the website.
 
-## Components: always use `components/ui/`
+## Non-Negotiables
 
-```tsx
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-```
+- Admin detail/edit flows use separate routes, not drawers, sheets, or inline
+  row-expanded detail panels.
+- Back/cancel actions live in the page header on the right as
+  `Button variant="ghost" size="sm"`.
+- Lists/tables use the existing portal table/list pattern and `klai-hover`.
+- All user-visible strings go through Paraglide messages.
+- Form fields use `components/ui/` primitives and pair every field with
+  `Label`.
+- Semantic states use CSS tokens such as `var(--color-success)`,
+  `var(--color-warning)`, and `var(--color-destructive)`.
+- Do not use `window.confirm`.
 
-Never use raw `<input>`, `<select>`, `<button>` with inline Tailwind in route files.
+## Related References
 
-## Color tokens — never raw Tailwind colors
-
-| Token | Use |
-|---|---|
-| `var(--color-purple-deep)` | Headings, primary text, active icons |
-| `var(--color-muted-foreground)` | Secondary text, placeholders |
-| `var(--color-destructive)` | Errors, delete actions |
-| `var(--color-success)` | Save confirm buttons |
-| `var(--color-border)` | Borders, dividers |
-
-Never use `text-red-*`, `bg-red-*`, `text-green-*`, `bg-green-*` for semantic states.
-
-## LiteLLM model policy [HARD]
-
-Never use OpenAI/US model names (`gpt-*`, `claude-*`, `text-davinci-*`) in any Klai code.
-Klai is EU-only. Use only LiteLLM aliases:
-- `klai-primary` — Mistral Small (default for most tasks)
-- `klai-fast` — Mistral Nemo (lightweight)
-- `klai-large` — Mistral Large (complex reasoning)
-
-## Full references
-
-- `klai-portal/docs/ui-components.md` — full component reference with code examples
-- `.claude/rules/klai/portal-patterns.md` — form patterns, table patterns, semantic tokens
-- `.claude/rules/klai/styleguide.md` — shared brand DNA (colors, typography, rules)
+- `klai-portal/frontend/docs/ui-standards.md` — portal UI/UX source of truth.
+- `.claude/rules/klai/projects/portal-frontend.md` — portal frontend
+  engineering rules, routing, file organization, and implementation pitfalls.
+- `.claude/rules/klai/design/tokens.md` — shared tokens and canonical logo
+  guidance.
+- `.claude/rules/klai/design/styleguide.md` — shared brand DNA.

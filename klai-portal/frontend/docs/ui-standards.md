@@ -4,6 +4,9 @@ This is the canonical UI/UX source of truth for `klai-portal/frontend`.
 If another design document disagrees with this file, this file wins and the
 other document must be updated in the same change.
 
+This file is portal-only. It does not define website, landing-page, marketing,
+or public web patterns. Keep those in the website-specific design guidance.
+
 ## Required Workflow
 
 Before changing portal UI:
