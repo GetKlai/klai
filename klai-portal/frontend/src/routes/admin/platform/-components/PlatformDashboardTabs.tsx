@@ -1194,7 +1194,7 @@ export function FeedbackSubmissionDetailPanel({
     support.isPending ||
     createItem.isPending ||
     linkItem.isPending
-  const canTriage = draftStatus === 'new'
+  const canTriage = item.status === 'new'
   const linkType =
     item.event_type === 'klai_assistant.problem_report'
       ? 'bug_repro'
@@ -1281,7 +1281,8 @@ export function FeedbackSubmissionDetailPanel({
     'proposal',
     'decision',
   ]
-  const submissionStepIndex = Math.max(0, submissionStepOrder.indexOf(submissionStep))
+  const activeSubmissionStep = canTriage ? submissionStep : 'report'
+  const submissionStepIndex = Math.max(0, submissionStepOrder.indexOf(activeSubmissionStep))
   const submissionWizardSteps: StepItem[] = submissionStepOrder.map((step) => ({
     label:
       step === 'report'
@@ -1305,7 +1306,9 @@ export function FeedbackSubmissionDetailPanel({
       <div className="flex items-start gap-3">
         <div className="flex-1">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.platform_feedback_triage_title()}
+            {canTriage
+              ? m.platform_feedback_triage_title()
+              : m.platform_feedback_submission_detail_title()}
           </h1>
           <p className="mt-1 text-sm text-gray-400">
             {item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()} -{' '}
@@ -1322,9 +1325,11 @@ export function FeedbackSubmissionDetailPanel({
       </div>
 
       <div className="space-y-8">
-        <StepIndicator steps={submissionWizardSteps} currentIndex={submissionStepIndex} />
+        {canTriage && (
+          <StepIndicator steps={submissionWizardSteps} currentIndex={submissionStepIndex} />
+        )}
 
-        {submissionStep === 'report' && (
+        {activeSubmissionStep === 'report' && (
         <section className="space-y-4">
           <div>
             <h2 className="mt-1 text-base font-display-bold text-gray-900">
@@ -1338,7 +1343,7 @@ export function FeedbackSubmissionDetailPanel({
             rows={6}
             placeholder={m.platform_feedback_submission_placeholder()}
           />
-          <div className="grid gap-3 text-sm text-gray-600 sm:grid-cols-2">
+          <div className="space-y-3 text-sm text-gray-600">
             <FeedbackMetaRow
               label={m.platform_col_organization()}
               value={item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()}
@@ -1371,7 +1376,7 @@ export function FeedbackSubmissionDetailPanel({
 
           {canTriage ? (
             <>
-              {submissionStep === 'proposal' && (
+              {activeSubmissionStep === 'proposal' && (
               <section className="space-y-4">
                 <div>
                   <h2 className="mt-1 text-base font-display-bold text-gray-900">
@@ -1423,7 +1428,7 @@ export function FeedbackSubmissionDetailPanel({
               </section>
               )}
 
-              {submissionStep === 'decision' && (
+              {activeSubmissionStep === 'decision' && (
               <>
               <section className="space-y-4">
                 <div>
@@ -1686,13 +1691,7 @@ export function FeedbackSubmissionDetailPanel({
               </>
               )}
             </>
-          ) : (
-            <div className="rounded-lg border border-gray-200 px-4 py-3 text-sm text-gray-600">
-              {m.platform_feedback_submission_already_handled({
-                status: feedbackStatusLabel(item.status).toLowerCase(),
-              })}
-            </div>
-          )}
+          ) : null}
 
           {(dismiss.isSuccess || support.isSuccess || createItem.isSuccess || linkItem.isSuccess) && (
             <div className="flex items-center gap-2 rounded-lg bg-[var(--color-success-bg)] px-3 py-2 text-sm text-[var(--color-success-text)]">
@@ -1701,8 +1700,8 @@ export function FeedbackSubmissionDetailPanel({
             </div>
           )}
 
-          {submissionStep === 'report' && (
-            <section className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end">
+          {activeSubmissionStep === 'report' && (
+            <section className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor={`feedback-submission-status-${item.id}`}>
                   {m.platform_col_status()}
@@ -1714,48 +1713,51 @@ export function FeedbackSubmissionDetailPanel({
                 >
                   <option value="new">{m.platform_feedback_status_new()}</option>
                   <option value="open">{m.platform_feedback_status_open()}</option>
-                  <option value="resolved">{m.platform_feedback_status_resolved()}</option>
                   <option value="support">{m.platform_feedback_status_support()}</option>
+                  <option value="resolved">{m.platform_feedback_status_resolved()}</option>
                   <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
                 </Select>
               </div>
-              <Button
-                type="button"
-                disabled={
-                  busy ||
-                  draftRawText.trim().length < 1 ||
-                  (draftRawText.trim() === (item.raw_text ?? '') && draftStatus === item.status)
-                }
-                onClick={saveSubmission}
-              >
-                {updateSubmission.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {m.admin_shared_save()}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={busy}
-                onClick={() => setConfirmDeleteOpen(true)}
-              >
-                {deleteSubmission.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
-                {m.platform_delete()}
-              </Button>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  disabled={
+                    busy ||
+                    draftRawText.trim().length < 1 ||
+                    (draftRawText.trim() === (item.raw_text ?? '') && draftStatus === item.status)
+                  }
+                  onClick={saveSubmission}
+                >
+                  {updateSubmission.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {m.admin_shared_save()}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => setConfirmDeleteOpen(true)}
+                >
+                  {deleteSubmission.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  {m.platform_delete()}
+                </Button>
+              </div>
               {updateSubmission.isSuccess && (
-                <p className="text-sm text-[var(--color-success)] sm:col-span-3">
+                <p className="text-sm text-[var(--color-success)]">
                   {m.platform_feedback_submission_saved()}
                 </p>
               )}
             </section>
           )}
 
+          {canTriage && (
           <div className="flex items-center justify-between pt-2">
             <Button
               type="button"
@@ -1774,6 +1776,7 @@ export function FeedbackSubmissionDetailPanel({
               </Button>
             )}
           </div>
+          )}
       </div>
       <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <AlertDialogContent>
