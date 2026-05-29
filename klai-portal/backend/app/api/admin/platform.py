@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 import structlog
@@ -443,7 +443,7 @@ async def _platform_feedback_triage_suggestions(
 
 
 def _platform_feedback_submission(
-    row: object,
+    row: Any,
     triage_suggestions: dict[int, PlatformFeedbackTriageSuggestion],
 ) -> PlatformFeedbackSubmission:
     return PlatformFeedbackSubmission(
