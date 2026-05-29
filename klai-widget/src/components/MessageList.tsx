@@ -34,6 +34,14 @@ function sourceMapFromSources(sources?: MessageSource[]): Map<string, MessageSou
   return sourceMap;
 }
 
+function sourceCountLabel(count: number): string {
+  return count === 1 ? "1 bron" : `${count} bronnen`;
+}
+
+function activityCountLabel(count: number): string {
+  return count === 1 ? "1 stap" : `${count} stappen`;
+}
+
 function decorateLinks(template: HTMLTemplateElement): void {
   template.content.querySelectorAll("a").forEach((anchor) => {
     const href = normalizeSourceUrl(anchor.getAttribute("href"));
@@ -204,27 +212,42 @@ export function MessageList(props: MessageListProps) {
                   sources.length > 0
                 }
               >
-                <div class="klai-sources" aria-label="Bronnen">
-                  <span class="klai-sources-label">Bronnen</span>
+                <details class="klai-disclosure klai-disclosure--sources" aria-label="Bronnen">
+                  <summary class="klai-disclosure-summary">
+                    <span class="klai-disclosure-title">Bronnen</span>
+                    <span class="klai-disclosure-count">{sourceCountLabel(sources.length)}</span>
+                  </summary>
                   <ol class="klai-sources-list">
                     <For each={sources}>
                       {(s) => (
                         <li class="klai-sources-item">
-                          <a
-                            class="klai-sources-link"
-                            href={s.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title={s.title}
+                          <Show
+                            when={normalizeSourceUrl(s.url)}
+                            fallback={
+                              <span class="klai-sources-link klai-sources-link--document" title={s.title}>
+                                <span class="klai-sources-number">{s.label}</span>
+                                <span class="klai-sources-title">{s.title}</span>
+                              </span>
+                            }
                           >
-                            <span class="klai-sources-number">{s.label}</span>
-                            <span class="klai-sources-title">{s.title}</span>
-                          </a>
+                            {(url) => (
+                              <a
+                                class="klai-sources-link"
+                                href={url()}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={s.title}
+                              >
+                                <span class="klai-sources-number">{s.label}</span>
+                                <span class="klai-sources-title">{s.title}</span>
+                              </a>
+                            )}
+                          </Show>
                         </li>
                       )}
                     </For>
                   </ol>
-                </div>
+                </details>
               </Show>
               <Show
                 when={
@@ -233,8 +256,11 @@ export function MessageList(props: MessageListProps) {
                   activity.length > 0
                 }
               >
-                <div class="klai-activity" aria-label="Agent activiteit">
-                  <span class="klai-activity-label">Agent activiteit</span>
+                <details class="klai-disclosure klai-disclosure--activity" aria-label="Agent activiteit">
+                  <summary class="klai-disclosure-summary">
+                    <span class="klai-disclosure-title">Agent activiteit</span>
+                    <span class="klai-disclosure-count">{activityCountLabel(activity.length)}</span>
+                  </summary>
                   <ol class="klai-activity-list">
                     <For each={activity}>
                       {(item) => (
@@ -250,7 +276,7 @@ export function MessageList(props: MessageListProps) {
                       )}
                     </For>
                   </ol>
-                </div>
+                </details>
               </Show>
               <Show
                 when={

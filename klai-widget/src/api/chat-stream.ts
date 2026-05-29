@@ -13,6 +13,7 @@ export interface Message {
 export interface MessageSource {
   label: string;
   title: string;
+  /** Empty when the source is an uploaded/private document without a public URL. */
   url: string;
 }
 
@@ -181,8 +182,8 @@ export function normalizeMessageSources(rawSources: unknown): MessageSource[] {
     }
     const source = rawSource as Partial<MessageSource>;
     const label = typeof source.label === "string" ? source.label.trim() : "";
-    const url = normalizeSourceUrl(source.url);
-    if (!/^\d+$/.test(label) || !url || seenLabels.has(label)) {
+    const url = normalizeSourceUrl(source.url) ?? "";
+    if (!/^\d+$/.test(label) || seenLabels.has(label)) {
       continue;
     }
     const title = typeof source.title === "string" && source.title.trim() ? source.title.trim() : `Source ${label}`;

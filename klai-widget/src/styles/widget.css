@@ -524,29 +524,76 @@
 .klai-markdown code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
 .klai-markdown h1, .klai-markdown h2, .klai-markdown h3 { font-size: 14px; font-weight: 600; margin: 8px 0 4px; }
 
-/* Sources block — shown inline under an assistant message when
-   show_sources is on AND the bot returned citations. Each item is
-   a clickable pill with the citation number + source title. */
-.klai-sources {
+/* Collapsible provenance blocks — compact by default, so sources and
+   agent metadata stay available without dominating the answer. */
+.klai-disclosure {
   align-self: flex-start;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   margin: -4px 0 2px;
-  max-width: 100%;
+  width: min(100%, 460px);
+  border: 1px solid color-mix(in srgb, var(--klai-border-color) 78%, transparent);
+  border-radius: 10px;
+  background-color: color-mix(in srgb, var(--klai-card-color) 58%, transparent);
+  overflow: hidden;
 }
 
-.klai-sources-label {
-  font-size: 10.5px;
+.klai-disclosure[open] {
+  background-color: color-mix(in srgb, var(--klai-card-color) 74%, transparent);
+}
+
+.klai-disclosure-summary {
+  min-height: 34px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--klai-text-muted);
+  list-style: none;
+  user-select: none;
+}
+
+.klai-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.klai-disclosure-summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 150ms ease;
+  flex-shrink: 0;
+}
+
+.klai-disclosure[open] > .klai-disclosure-summary::before {
+  transform: rotate(45deg);
+}
+
+.klai-disclosure-summary:hover {
+  color: var(--klai-text-color);
+  background-color: color-mix(in srgb, var(--klai-primary-color) 7%, transparent);
+}
+
+.klai-disclosure-title {
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  line-height: 1.2;
+}
+
+.klai-disclosure-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1.2;
   color: var(--klai-text-muted);
 }
 
 .klai-sources-list {
   list-style: none;
-  padding: 0;
+  padding: 0 10px 10px 22px;
   margin: 0;
   display: flex;
   flex-direction: column;
@@ -573,9 +620,13 @@
   transition: background-color 150ms ease, border-color 150ms ease;
 }
 
-.klai-sources-link:hover {
+.klai-sources-link[href]:hover {
   background-color: color-mix(in srgb, var(--klai-primary-color) 12%, transparent);
   border-color: var(--klai-primary-color);
+}
+
+.klai-sources-link--document {
+  color: var(--klai-text-muted);
 }
 
 .klai-sources-number {
@@ -599,26 +650,9 @@
   white-space: nowrap;
 }
 
-.klai-activity {
-  align-self: flex-start;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: -4px 0 2px;
-  max-width: 100%;
-}
-
-.klai-activity-label {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--klai-text-muted);
-}
-
 .klai-activity-list {
   list-style: none;
-  padding: 0;
+  padding: 0 10px 10px 22px;
   margin: 0;
   display: flex;
   flex-direction: column;
