@@ -1325,22 +1325,11 @@ export function FeedbackSubmissionDetailPanel({
         <StepIndicator steps={submissionWizardSteps} currentIndex={submissionStepIndex} />
 
         {submissionStep === 'report' && (
-        <section className="space-y-4 border-t border-gray-200 pt-6">
+        <section className="space-y-4">
           <div>
             <h2 className="mt-1 text-base font-display-bold text-gray-900">
               {m.platform_feedback_read_report_title()}
             </h2>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
-            <Badge variant={item.status === 'new' ? 'outline' : 'secondary'}>
-              {feedbackStatusLabel(item.status)}
-            </Badge>
-            {(item.feedback_type || item.severity) && (
-              <Badge variant="secondary">
-                {item.feedback_type || item.severity}
-              </Badge>
-            )}
           </div>
           <Textarea
             id={`feedback-submission-${item.id}`}
@@ -1358,13 +1347,24 @@ export function FeedbackSubmissionDetailPanel({
               label={m.platform_feedback_reporter_label()}
               value={feedbackSubmissionReporterLabel(item) ?? '-'}
             />
-            <FeedbackMetaRow label="URL" value={item.page_url ?? '-'} />
-            <FeedbackMetaRow label="Route" value={item.route_id ?? '-'} />
+            <FeedbackMetaRow label={m.platform_feedback_page_url()} value={item.page_url ?? '-'} />
+            <FeedbackMetaRow label={m.platform_feedback_route_id()} value={item.route_id ?? '-'} />
             <FeedbackMetaRow
               label={m.platform_feedback_context()}
               value={[item.locale, item.viewport].filter(Boolean).join(' / ') || '-'}
             />
             <FeedbackMetaRow label={m.platform_col_created()} value={fmtDate(item.created_at)} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
+            <Badge variant={item.status === 'new' ? 'outline' : 'secondary'}>
+              {feedbackStatusLabel(item.status)}
+            </Badge>
+            {(item.feedback_type || item.severity) && (
+              <Badge variant="secondary">
+                {item.feedback_type || item.severity}
+              </Badge>
+            )}
           </div>
         </section>
         )}
@@ -1372,7 +1372,7 @@ export function FeedbackSubmissionDetailPanel({
           {canTriage ? (
             <>
               {submissionStep === 'proposal' && (
-              <section className="space-y-4 border-t border-gray-200 pt-6">
+              <section className="space-y-4">
                 <div>
                   <h2 className="mt-1 text-base font-display-bold text-gray-900">
                     {m.platform_feedback_triage_proposal_title()}
@@ -1425,7 +1425,7 @@ export function FeedbackSubmissionDetailPanel({
 
               {submissionStep === 'decision' && (
               <>
-              <section className="space-y-4 border-t border-gray-200 pt-6">
+              <section className="space-y-4">
                 <div>
                   <h2 className="mt-1 text-base font-display-bold text-gray-900">
                     {m.platform_feedback_choose_action_title()}
@@ -1495,7 +1495,7 @@ export function FeedbackSubmissionDetailPanel({
                 </div>
               </section>
 
-              <section className="space-y-4 border-t border-gray-200 pt-6">
+              <section className="space-y-4">
                 {triageAction === 'recommended' && (
                   <div className="space-y-3">
                     <h3 className="text-sm font-medium text-gray-900">
@@ -1702,7 +1702,7 @@ export function FeedbackSubmissionDetailPanel({
           )}
 
           {submissionStep === 'report' && (
-            <section className="grid gap-3 border-t border-gray-200 pt-6 sm:grid-cols-[1fr_auto_auto] sm:items-end">
+            <section className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end">
               <div className="space-y-1.5">
                 <Label htmlFor={`feedback-submission-status-${item.id}`}>
                   {m.platform_col_status()}
@@ -1756,20 +1756,21 @@ export function FeedbackSubmissionDetailPanel({
             </section>
           )}
 
-          <div className="flex items-center justify-between border-t border-gray-200 pt-6">
+          <div className="flex items-center justify-between pt-2">
             <Button
               type="button"
               variant="ghost"
+              size="sm"
               disabled={submissionStepIndex === 0}
               onClick={previousSubmissionStep}
             >
-              <ArrowLeft className="h-4 w-4" />
+              <ArrowLeft className="h-4 w-4 mr-2" />
               {m.admin_shared_wizard_previous()}
             </Button>
             {canTriage && submissionStepIndex < submissionStepOrder.length - 1 && (
               <Button type="button" onClick={nextSubmissionStep}>
                 {m.admin_shared_wizard_next()}
-                <ArrowRight className="h-4 w-4" />
+                <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             )}
           </div>
@@ -1963,23 +1964,7 @@ function FeedbackItemDetailForm({
 
       {itemStep === 'understand' && (
         <>
-      <section className="space-y-4 border-t border-gray-200 pt-6">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-          <Badge variant="outline">{feedbackItemKindLabel(item.kind)}</Badge>
-          <Badge variant={isClosed ? 'secondary' : 'outline'}>
-            {feedbackItemStatusLabel(status)}
-          </Badge>
-          <Badge variant="outline">
-            {m.platform_feedback_org_count({ count: String(item.org_count) })}
-          </Badge>
-          <Badge variant="outline">
-            {m.platform_feedback_user_count({ count: String(item.user_count) })}
-          </Badge>
-          <Badge variant="outline">
-            {m.platform_feedback_score({ score: String(item.priority_score) })}
-          </Badge>
-          {item.area && <Badge variant="outline">{item.area}</Badge>}
-        </div>
+      <section className="space-y-4">
         <div>
           <h2 className="mt-1 text-xl font-display-bold text-gray-900">{title}</h2>
           <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">
@@ -1998,9 +1983,25 @@ function FeedbackItemDetailForm({
             })}
           />
         </div>
+        <div className="flex flex-wrap gap-2 text-xs text-gray-500">
+          <Badge variant="outline">{feedbackItemKindLabel(item.kind)}</Badge>
+          <Badge variant={isClosed ? 'secondary' : 'outline'}>
+            {feedbackItemStatusLabel(status)}
+          </Badge>
+          <Badge variant="outline">
+            {m.platform_feedback_org_count({ count: String(item.org_count) })}
+          </Badge>
+          <Badge variant="outline">
+            {m.platform_feedback_user_count({ count: String(item.user_count) })}
+          </Badge>
+          <Badge variant="outline">
+            {m.platform_feedback_score({ score: String(item.priority_score) })}
+          </Badge>
+          {item.area && <Badge variant="outline">{item.area}</Badge>}
+        </div>
       </section>
 
-      <section className="space-y-3 border-t border-gray-200 pt-6">
+      <section className="space-y-3">
         <h3 className="text-sm font-medium text-gray-900">
           {m.platform_feedback_linked_feedback({ count: String(submissions.length) })}
         </h3>
@@ -2038,7 +2039,7 @@ function FeedbackItemDetailForm({
       )}
 
       {item.kind === 'bug' && itemStep === 'debug' && (
-        <section className="space-y-4 border-t border-gray-200 pt-6">
+        <section className="space-y-4">
           <div>
             <h3 className="mt-1 text-base font-display-bold text-gray-900">
               {m.platform_feedback_copy_debug_title()}
@@ -2062,70 +2063,54 @@ function FeedbackItemDetailForm({
       )}
 
       {itemStep === 'fix' && (
-        <section className="space-y-4 border-t border-gray-200 pt-6">
+        <section className="space-y-4">
         <div>
           <h3 className="mt-1 text-base font-display-bold text-gray-900">
             {m.platform_feedback_follow_up_title()}
           </h3>
         </div>
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor={`feedback-item-title-${item.id}`}>
-                {m.platform_feedback_title_placeholder()}
-              </Label>
-              <Input
-                id={`feedback-item-title-${item.id}`}
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder={m.platform_feedback_title_placeholder()}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={`feedback-item-summary-${item.id}`}>
-                {m.platform_feedback_short_note_placeholder()}
-              </Label>
-              <Textarea
-                id={`feedback-item-summary-${item.id}`}
-                value={summary}
-                onChange={(event) => setSummary(event.target.value)}
-                rows={4}
-                placeholder={m.platform_feedback_short_note_placeholder()}
-              />
-            </div>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor={`feedback-item-title-${item.id}`}>
+              {m.platform_feedback_title_placeholder()}
+            </Label>
+            <Input
+              id={`feedback-item-title-${item.id}`}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder={m.platform_feedback_title_placeholder()}
+            />
           </div>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor={`feedback-item-status-${item.id}`}>
-                {m.platform_col_status()}
-              </Label>
-              <Select
-                id={`feedback-item-status-${item.id}`}
-                value={status}
-                onChange={(event) => setStatus(event.target.value)}
-              >
-                <option value="open">{m.platform_feedback_status_open()}</option>
-                <option value="resolved">{m.platform_feedback_status_resolved()}</option>
-                <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
-              </Select>
-            </div>
-            <Button
-              type="button"
-              className="w-full"
-              disabled={updateItem.isPending || deleteItem.isPending || title.trim().length < 3}
-              onClick={saveItem}
+          <div className="space-y-1.5">
+            <Label htmlFor={`feedback-item-summary-${item.id}`}>
+              {m.platform_feedback_short_note_placeholder()}
+            </Label>
+            <Textarea
+              id={`feedback-item-summary-${item.id}`}
+              value={summary}
+              onChange={(event) => setSummary(event.target.value)}
+              rows={4}
+              placeholder={m.platform_feedback_short_note_placeholder()}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`feedback-item-status-${item.id}`}>
+              {m.platform_col_status()}
+            </Label>
+            <Select
+              id={`feedback-item-status-${item.id}`}
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
             >
-              {updateItem.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              {m.admin_shared_save()}
-            </Button>
+              <option value="open">{m.platform_feedback_status_open()}</option>
+              <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+              <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+            </Select>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
             <Button
               type="button"
               variant="secondary"
-              className="w-full"
               disabled={updateItem.isPending || deleteItem.isPending}
               onClick={() => setConfirmDeleteOpen(true)}
             >
@@ -2135,6 +2120,18 @@ function FeedbackItemDetailForm({
                 <Trash2 className="h-4 w-4" />
               )}
               {m.platform_feedback_delete_item()}
+            </Button>
+            <Button
+              type="button"
+              disabled={updateItem.isPending || deleteItem.isPending || title.trim().length < 3}
+              onClick={saveItem}
+            >
+              {updateItem.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              {m.admin_shared_save()}
             </Button>
           </div>
         </div>
@@ -2147,7 +2144,7 @@ function FeedbackItemDetailForm({
       )}
 
       {itemStep === 'message' && (
-        <section className="space-y-4 border-t border-gray-200 pt-6">
+        <section className="space-y-4">
         <div>
           <h3 className="mt-1 text-base font-display-bold text-gray-900">{resolveLabel.title}</h3>
           <p className="mt-1 text-sm leading-6 text-gray-600">
@@ -2219,20 +2216,21 @@ function FeedbackItemDetailForm({
       </section>
       )}
 
-      <div className="flex items-center justify-between border-t border-gray-200 pt-6">
+      <div className="flex items-center justify-between pt-2">
         <Button
           type="button"
           variant="ghost"
+          size="sm"
           disabled={itemStepIndex === 0}
           onClick={previousItemStep}
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_shared_wizard_previous()}
         </Button>
         {itemStepIndex < itemStepOrder.length - 1 && (
           <Button type="button" onClick={nextItemStep}>
             {m.admin_shared_wizard_next()}
-            <ArrowRight className="h-4 w-4" />
+            <ArrowRight className="h-4 w-4 ml-2" />
           </Button>
         )}
       </div>
