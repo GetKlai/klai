@@ -8,6 +8,7 @@ import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 import { meetsMinRole, type ProfileRole } from '@/lib/profiles'
 import { useAuth } from '@/lib/auth'
 import { fetchMe } from '@/lib/api-me'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/admin')({
   component: AdminLayout,
@@ -63,6 +64,15 @@ function AdminLayout() {
     queryFn: ({ signal }) => fetchMe(signal),
     enabled: auth.isAuthenticated,
   })
+  const { data: platformStats } = useQuery({
+    queryKey: ['platform-stats'],
+    queryFn: () =>
+      apiFetch<{ new_feedback_count: number; chat_error_count: number }>(
+        '/api/admin/platform/stats',
+      ),
+    enabled: auth.isAuthenticated && me?.is_platform_admin === true,
+    staleTime: 30_000,
+  })
 
   // Filter nav items: role-check first, then platform-unlock-check.
   // The platform-unlock filter applies uniformly - including to platform-admin
@@ -72,6 +82,9 @@ function AdminLayout() {
   // alignment, the sidebar contradicts the Uitbreidingen status panel.
   const effectiveRole = user?.effective_role
   const unlocked = me?.platform_unlocked_features ?? []
+
+  const platformAlertCount =
+    (platformStats?.new_feedback_count ?? 0) + (platformStats?.chat_error_count ?? 0)
 
   const adminNav = ADMIN_NAV_ITEMS.filter((item) => {
     if (!meetsMinRole(effectiveRole, item.minRole)) return false
@@ -85,7 +98,13 @@ function AdminLayout() {
       return unlocked.includes(item.requiresFeature)
     }
     return true
-  }).map(({ to, label, icon, end }) => ({ to, label, icon, end }))
+  }).map(({ to, label, icon, end }) => ({
+    to,
+    label,
+    icon,
+    end,
+    badgeCount: to === '/admin/platform' ? platformAlertCount : undefined,
+  }))
 
   if (!canRender) {
     return (
