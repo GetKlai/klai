@@ -35,13 +35,13 @@ class TestResponseModels:
     def test_member_model(self):
         from app.api.auth_select import SelectWorkspaceMember
 
-        m = SelectWorkspaceMember(kind="member", workspace_url="https://x")
+        m = SelectWorkspaceMember(kind="member", redirect_url="https://x")
         assert m.kind == "member"
 
     def test_auto_join_model(self):
         from app.api.auth_select import SelectWorkspaceAutoJoin
 
-        m = SelectWorkspaceAutoJoin(kind="auto_join", workspace_url="https://x")
+        m = SelectWorkspaceAutoJoin(kind="auto_join", redirect_url="https://x")
         assert m.kind == "auto_join"
 
     def test_pending_model(self):
@@ -97,7 +97,7 @@ class TestMemberPath:
             db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=org)))
             result = await select_workspace(body=SelectWorkspaceRequest(ref="r", org_id=1), db=db)
         assert result.kind == "member"
-        assert "acme" in result.workspace_url
+        assert result.redirect_url == "https://acme.getklai.com/cb?selected_org_id=1"
 
 
 class TestAutoJoinPath:
@@ -112,6 +112,7 @@ class TestAutoJoinPath:
             patch("app.api.auth_select.zitadel") as zit,
             patch("app.api.auth_select.emit_event"),
             patch("app.api.auth_select.notify_auto_join_admins", AsyncMock()),
+            patch("app.api.auth_select.set_tenant", AsyncMock()),
         ):
             svc.consume = AsyncMock(return_value=session)
             zit.finalize_auth_request = AsyncMock(return_value="https://acme.getklai.com/cb")
@@ -122,10 +123,12 @@ class TestAutoJoinPath:
             ar_.scalars.return_value.all.return_value = [_admin()]
             db.execute = AsyncMock(side_effect=[or_, ar_])
             db.flush = AsyncMock()
+            db.commit = AsyncMock()
             db.add = MagicMock()  # sync add — avoid coroutine-never-awaited warning
             result = await select_workspace(body=SelectWorkspaceRequest(ref="r", org_id=1), db=db)
         assert result.kind == "auto_join"
-        assert "acme" in result.workspace_url
+        assert result.redirect_url == "https://acme.getklai.com/cb?selected_org_id=1"
+        db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_auto_accept_inserts_portal_users_row(self):
@@ -139,6 +142,7 @@ class TestAutoJoinPath:
             patch("app.api.auth_select.zitadel") as zit,
             patch("app.api.auth_select.emit_event"),
             patch("app.api.auth_select.notify_auto_join_admins", AsyncMock()),
+            patch("app.api.auth_select.set_tenant", AsyncMock()),
         ):
             svc.consume = AsyncMock(return_value=session)
             zit.finalize_auth_request = AsyncMock(return_value="https://acme.getklai.com/cb")
@@ -149,6 +153,7 @@ class TestAutoJoinPath:
             ar_.scalars.return_value.all.return_value = [_admin()]
             db.execute = AsyncMock(side_effect=[or_, ar_])
             db.flush = AsyncMock()
+            db.commit = AsyncMock()
             added = []
             db.add = lambda obj: added.append(obj)
             await select_workspace(body=SelectWorkspaceRequest(ref="r", org_id=1), db=db)
@@ -170,14 +175,17 @@ class TestJoinRequestPath:
             patch("app.api.auth_select.zitadel"),
             patch("app.api.auth_select.emit_event"),
             patch("app.api.auth_select.notify_admin_join_request", AsyncMock()),
+            patch("app.api.auth_select.set_tenant", AsyncMock()),
         ):
             svc.consume = AsyncMock(return_value=session)
             db = AsyncMock()
             db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=org)))
+            db.commit = AsyncMock()
             db.add = MagicMock()  # sync add — avoid coroutine-never-awaited warning
             result = await select_workspace(body=SelectWorkspaceRequest(ref="r", org_id=1), db=db)
         assert result.kind == "join_request_pending"
         assert result.redirect_to == "/join-request/sent"
+        db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_no_portal_users_row_for_join_request_path(self):
@@ -191,10 +199,12 @@ class TestJoinRequestPath:
             patch("app.api.auth_select.zitadel"),
             patch("app.api.auth_select.emit_event"),
             patch("app.api.auth_select.notify_admin_join_request", AsyncMock()),
+            patch("app.api.auth_select.set_tenant", AsyncMock()),
         ):
             svc.consume = AsyncMock(return_value=session)
             db = AsyncMock()
             db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=org)))
+            db.commit = AsyncMock()
             added = []
             db.add = lambda obj: added.append(obj)
             await select_workspace(body=SelectWorkspaceRequest(ref="r", org_id=1), db=db)

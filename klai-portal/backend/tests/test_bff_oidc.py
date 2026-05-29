@@ -112,6 +112,15 @@ class _FakeResult:
 
         return _Row()
 
+    def scalars(self) -> Any:
+        row = self.scalar_one_or_none()
+
+        class _Scalars:
+            def all(self) -> list[Any]:
+                return [] if row is None else [row]
+
+        return _Scalars()
+
 
 # ---------------------------------------------------------------------------
 # PKCE helpers

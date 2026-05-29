@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from bson import ObjectId
 from bson.errors import InvalidId
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
@@ -86,10 +86,20 @@ def _extract_roles(info: dict) -> list[str]:
     return []
 
 
+def _session_org_id(request: Request) -> int | None:
+    session = getattr(getattr(request, "state", None), "session", None)
+    return getattr(session, "org_id", None)
+
+
+def _coerce_session_org_id(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
 @router.get("/me", response_model=MeResponse)
 async def me(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
+    session_org_id: int | None = Depends(_session_org_id),
 ) -> MeResponse:
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
@@ -127,7 +137,8 @@ async def me(
     # the scope that would emit it; resolution-via-membership is
     # deterministic and aligned with zitadel.md:99-100).
     resolved_zitadel_org_id: str | None = None
-    perms = await resolve_user_permissions(zitadel_user_id, db) if zitadel_user_id else None
+    org_id_hint = _coerce_session_org_id(session_org_id)
+    perms = await resolve_user_permissions(zitadel_user_id, db, org_id=org_id_hint) if zitadel_user_id else None
     if perms is not None:
         org_found = True
         await set_tenant(db, perms.org_id)
@@ -139,7 +150,10 @@ async def me(
         result = await db.execute(
             select(PortalOrg, PortalUser)
             .join(PortalUser, PortalUser.org_id == PortalOrg.id)
-            .where(PortalUser.zitadel_user_id == zitadel_user_id)
+            .where(
+                PortalUser.zitadel_user_id == zitadel_user_id,
+                PortalUser.org_id == perms.org_id,
+            )
         )
         row = result.one_or_none()
         if row:

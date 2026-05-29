@@ -55,8 +55,7 @@ class TestSelectWorkspace:
 
             response = await select_workspace(body=body, db=mock_db)
 
-        assert response.workspace_url is not None
-        assert "acme" in response.workspace_url
+        assert response.redirect_url == "https://acme.getklai.com/callback?selected_org_id=1"
 
     @pytest.mark.asyncio
     async def test_invalid_ref_returns_410(self) -> None:
