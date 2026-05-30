@@ -145,6 +145,7 @@ async def test_invite_user_grants_portal_role_to_zitadel(
     org.plan = "knowledge"
 
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
     locked_org_result = MagicMock()
     locked_org_result.scalar_one.return_value = org
     mock_db.execute.return_value = locked_org_result
@@ -189,6 +190,126 @@ async def test_invite_user_grants_portal_role_to_zitadel(
             f"REQ-2: invite_user(role={portal_role!r}) granted Zitadel role "
             f"{grant_kwargs['role']!r}; expected {expected_zitadel_role!r}."
         )
+
+
+@pytest.mark.asyncio
+async def test_invite_user_cleans_up_zitadel_user_when_mail_fails() -> None:
+    """If invite-code delivery fails, retry must not hit a stuck Zitadel 409."""
+    from fastapi import HTTPException
+
+    from app.api.admin.users import InviteRequest, invite_user
+    from app.core.config import settings
+
+    org = MagicMock()
+    org.id = 101
+    org.plan = "knowledge"
+
+    mock_db = AsyncMock()
+    mock_db.add = MagicMock()
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    mock_db.execute.return_value = locked_org_result
+
+    body = InviteRequest(
+        email="mail-fail@example.com",
+        first_name="Mail",
+        last_name="Fail",
+        role="company",
+        preferred_language="nl",
+    )
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
+
+    with (
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.default_knowledge_bases.create_default_personal_kb",
+            new=AsyncMock(),
+        ),
+    ):
+        mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-user-mail-fail"})
+        mock_zitadel.send_invite_code = AsyncMock(side_effect=RuntimeError("mailer down"))
+        mock_zitadel.remove_user = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await invite_user(body=body, perms=perms, db=mock_db)
+
+    assert exc_info.value.status_code == 502
+    mock_zitadel.remove_user.assert_awaited_once_with(
+        org_id=settings.zitadel_portal_org_id,
+        zitadel_user_id="new-user-mail-fail",
+    )
+    mock_db.add.assert_called_once()
+    mock_db.rollback.assert_awaited_once()
+    mock_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invite_user_can_add_multiple_users_to_same_tenant() -> None:
+    """A tenant admin can invite multiple distinct users into one workspace."""
+    from app.api.admin.users import InviteRequest, invite_user
+    from app.models.portal import PortalUser
+
+    org = MagicMock()
+    org.id = 101
+    org.plan = "knowledge"
+
+    mock_db = AsyncMock()
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    mock_db.execute.return_value = locked_org_result
+
+    added_users: list[PortalUser] = []
+
+    def _record_add(row):
+        if isinstance(row, PortalUser):
+            added_users.append(row)
+
+    mock_db.add = MagicMock(side_effect=_record_add)
+
+    bodies = [
+        InviteRequest(
+            email="one@example.com",
+            first_name="One",
+            last_name="User",
+            role="company",
+            preferred_language="nl",
+        ),
+        InviteRequest(
+            email="two@example.com",
+            first_name="Two",
+            last_name="User",
+            role="kb_manager",
+            preferred_language="en",
+        ),
+    ]
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
+
+    with (
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.default_knowledge_bases.create_default_personal_kb",
+            new=AsyncMock(),
+        ) as create_personal_kb,
+    ):
+        mock_zitadel.invite_user = AsyncMock(
+            side_effect=[
+                {"userId": "new-user-one"},
+                {"userId": "new-user-two"},
+            ]
+        )
+        mock_zitadel.send_invite_code = AsyncMock()
+        mock_zitadel.grant_user_role = AsyncMock()
+
+        responses = [await invite_user(body=body, perms=perms, db=mock_db) for body in bodies]
+
+    assert [response.user_id for response in responses] == ["new-user-one", "new-user-two"]
+    assert [user.zitadel_user_id for user in added_users] == ["new-user-one", "new-user-two"]
+    assert [user.org_id for user in added_users] == [101, 101]
+    assert [user.role for user in added_users] == ["company", "kb_manager"]
+    assert mock_zitadel.invite_user.await_count == 2
+    assert mock_zitadel.send_invite_code.await_count == 2
+    assert create_personal_kb.await_count == 2
+    assert mock_db.commit.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -281,11 +402,13 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
     commit clears the tenant GUC and trips Category-D RLS on
     portal_knowledge_bases at the next INSERT.
 
-    The test records the order of (commit, create_personal_kb) calls and
+    The test records the order of (commit, create_personal_kb, send_invite)
+    calls and
     asserts:
     1. create_default_personal_kb is awaited at least once
-    2. db.commit happens AFTER create_default_personal_kb (single tx)
-    3. There is exactly ONE commit (not two — two commits = the regressed pattern)
+    2. send_invite_code happens AFTER create_default_personal_kb
+    3. db.commit happens AFTER send_invite_code (single tx)
+    4. There is exactly ONE commit (not two — two commits = the regressed pattern)
     """
     from app.api.admin.users import InviteRequest, invite_user
 
@@ -303,6 +426,9 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
 
     async def _record_create_personal_kb(*_args, **_kwargs):
         call_order.append("create_personal_kb")
+
+    async def _record_send_invite(*_args, **_kwargs):
+        call_order.append("send_invite")
 
     mock_db = AsyncMock()
     mock_db.commit = AsyncMock(side_effect=_record_commit)
@@ -329,7 +455,9 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
         ),
     ):
         mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-user-id"})
-        mock_zitadel.send_invite_code = AsyncMock()  # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2
+        mock_zitadel.send_invite_code = AsyncMock(
+            side_effect=_record_send_invite
+        )  # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2
         mock_zitadel.grant_user_role = AsyncMock()
         await invite_user(body=body, perms=perms, db=mock_db)
 
@@ -339,12 +467,22 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
 
     commit_indices = [i for i, e in enumerate(call_order) if e == "commit"]
     kb_indices = [i for i, e in enumerate(call_order) if e == "create_personal_kb"]
-    assert kb_indices and commit_indices, f"missing events; got {call_order}"
+    invite_indices = [i for i, e in enumerate(call_order) if e == "send_invite"]
+    assert kb_indices and invite_indices and commit_indices, f"missing events; got {call_order}"
+    assert kb_indices[0] < invite_indices[0], (
+        "send_invite_code MUST run only after the personal KB has flushed. "
+        "Otherwise a mail can go out for a user whose portal membership/KB "
+        f"cannot be saved. Got call order: {call_order}"
+    )
     assert kb_indices[0] < commit_indices[0], (
         "create_default_personal_kb MUST run BEFORE the commit. The 2026-05-07 "
         "regression had `db.commit()` between the portal_users INSERT and the "
         "KB creation, which cleared the tenant-scoped GUC and tripped Cat-D "
         f"RLS at 42501 on portal_knowledge_bases. Got call order: {call_order}"
+    )
+    assert invite_indices[0] < commit_indices[0], (
+        "send_invite_code should run before the single commit in this flow so "
+        f"mail failures can still roll back the portal rows. Got call order: {call_order}"
     )
     assert len(commit_indices) == 1, (
         "invite_user MUST commit exactly once after the KB is created. Two or "
