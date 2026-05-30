@@ -389,6 +389,17 @@ async def invite_user(
         url_template_host=urlparse(invite_url_template).netloc,
     )
 
+    from app.services.listmonk import sync_portal_user_best_effort
+
+    await sync_portal_user_best_effort(
+        email=str(body.email),
+        name=f"{body.first_name} {body.last_name}".strip(),
+        org_id=org.id,
+        portal_user_id=getattr(user_row, "id", None),
+        zitadel_user_id=zitadel_user_id,
+        source="portal_admin_invite",
+    )
+
     return InviteResponse(
         user_id=zitadel_user_id,
         message=f"Uitnodiging verstuurd naar {body.email}.",

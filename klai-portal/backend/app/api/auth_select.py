@@ -310,6 +310,7 @@ async def _handle_auto_join(
     await set_tenant(db, org_id)
 
     # INSERT portal_users
+    new_user: PortalUser | None = None
     try:
         new_user = PortalUser(
             zitadel_user_id=zitadel_user_id,
@@ -323,6 +324,7 @@ async def _handle_auto_join(
     except IntegrityError:
         # C4.6: race condition -- user already a member; fall through
         logger.info("auto_join_duplicate_ignored", zitadel_user_id=zitadel_user_id, org_id=org_id)
+        new_user = None
         await db.rollback()
 
     # Notify all admins (non-blocking)
@@ -333,6 +335,17 @@ async def _handle_auto_join(
         db=db,
     )
     await db.commit()
+    if new_user is not None:
+        from app.services.listmonk import sync_portal_user_best_effort
+
+        await sync_portal_user_best_effort(
+            email=email,
+            name=email,
+            org_id=org_id,
+            portal_user_id=getattr(new_user, "id", None),
+            zitadel_user_id=zitadel_user_id,
+            source="portal_auto_join",
+        )
 
     # Finalize auth request
     try:

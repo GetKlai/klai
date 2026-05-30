@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from jwt import PyJWKClient
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import RedisError
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1242,16 +1242,12 @@ class OnboardingStartRequest(BaseModel):
 
     Triggered from a Twenty CRM Workflow's manual "Start onboarding"
     button on a Person record. The Workflow's HTTP-action posts the
-    person's email + name + the Cal.com booking link. portal-api proxies
-    to klai-mailer's /internal/send (template ``onboarding_invite``).
-
-    @MX:NOTE: The mailer binds the recipient to ``variables.email``
-    server-side, so ``email`` here is both the routing address AND the
-    template variable. There is no separate ``to`` field by design.
+    person's email + name + the Cal.com booking link. portal-api sends
+    listmonk's transactional template ``onboarding_invite``.
     """
 
     name: str
-    email: str
+    email: str | None = None
     cal_url: str | None = None
 
 
@@ -1261,6 +1257,49 @@ class OnboardingStartResponse(BaseModel):
     body_html: str = ""
     cal_url: str = ""
     sent_to: str = ""
+
+
+class MailingSyncContactRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    email: str | None = None
+    name: str | None = None
+    source: str = Field(min_length=1, max_length=80)
+    audiences: list[Literal["signups", "users", "updates_opt_in", "crm_selected"]] = Field(min_length=1)
+    company: str | None = None
+    twenty_person_id: str | None = Field(default=None, alias="twentyPersonId")
+    portal_user_id: int | None = Field(default=None, alias="portalUserId")
+    zitadel_user_id: str | None = Field(default=None, alias="zitadelUserId")
+    org_id: int | None = Field(default=None, alias="orgId")
+    product: str | None = None
+    marketing_consent: bool | None = Field(default=None, alias="marketingConsent")
+
+
+class MailingSyncContactResponse(BaseModel):
+    synced: bool
+    subscriber_id: int
+    lists_added: list[int]
+
+
+class MailingSendRequest(BaseModel):
+    template: Literal["onboarding_invite"]
+    email: str | None = None
+    name: str
+    cal_url: str | None = None
+
+
+class MailingSendResponse(BaseModel):
+    sent: bool
+    template: str
+    template_id: int
+    sent_to: str
+
+
+def _normalise_mailing_email(email: str | None) -> str:
+    email_norm = (email or "").strip().lower()
+    if "@" not in email_norm or "." not in email_norm.rsplit("@", 1)[-1]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A valid email is required")
+    return email_norm
 
 
 @router.post("/onboarding/start", response_model=OnboardingStartResponse)
@@ -1285,31 +1324,102 @@ async def start_onboarding_drip(
     """
     await _require_internal_token(request)
 
-    from app.services.notifications import send_onboarding_invite
+    from app.services import listmonk
 
+    email = _normalise_mailing_email(body.email)
     cal_url = body.cal_url or "https://cal.getklai.com/klai/onboarding-intake"
 
-    mailer_result = await send_onboarding_invite(
-        name=body.name,
-        email=body.email,
-        cal_url=cal_url,
-    )
+    try:
+        result = await listmonk.send_onboarding_invite(
+            name=body.name,
+            email=email,
+            cal_url=cal_url,
+        )
+    except (listmonk.ListmonkUnavailable, listmonk.ListmonkAPIError) as exc:
+        await _audit_internal_call(request, org_id=0)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="listmonk rejected or unreachable",
+        ) from exc
 
     # Cross-tenant operation (the Person may belong to any tenant in Twenty),
     # so we audit with org_id=0 like /librechat/regenerate.
     await _audit_internal_call(request, org_id=0)
 
-    if mailer_result is None:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="mailer rejected or unreachable",
-        )
     return OnboardingStartResponse(
-        sent=True,
-        subject=str(mailer_result.get("subject", "")),
-        body_html=str(mailer_result.get("body_html", "")),
+        sent=result.sent,
+        subject="Welcome to Klai, you're in",
+        body_html="",
         cal_url=cal_url,
-        sent_to=body.email,
+        sent_to=result.sent_to,
+    )
+
+
+@router.post("/mailing/sync-contact", response_model=MailingSyncContactResponse)
+async def mailing_sync_contact(
+    request: Request,
+    body: MailingSyncContactRequest,
+) -> MailingSyncContactResponse:
+    """Sync a CRM/signup/user contact to listmonk mailing lists."""
+    await _require_internal_token(request)
+
+    from app.services import listmonk
+
+    email = _normalise_mailing_email(body.email)
+    try:
+        result = await listmonk.sync_contact(
+            email=email,
+            name=body.name,
+            source=body.source,
+            audiences=[str(audience) for audience in body.audiences],
+            company=body.company,
+            twenty_person_id=body.twenty_person_id,
+            portal_user_id=body.portal_user_id,
+            zitadel_user_id=body.zitadel_user_id,
+            org_id=body.org_id,
+            product=body.product,
+            marketing_consent=body.marketing_consent,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except (listmonk.ListmonkUnavailable, listmonk.ListmonkAPIError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="listmonk rejected or unreachable") from exc
+
+    await _audit_internal_call(request, org_id=body.org_id or 0)
+    return MailingSyncContactResponse(
+        synced=True,
+        subscriber_id=result.subscriber_id,
+        lists_added=result.lists_added,
+    )
+
+
+@router.post("/mailing/send", response_model=MailingSendResponse)
+async def mailing_send(
+    request: Request,
+    body: MailingSendRequest,
+) -> MailingSendResponse:
+    """Send a supported non-auth transactional mail through listmonk."""
+    await _require_internal_token(request)
+
+    from app.services import listmonk
+
+    email = _normalise_mailing_email(body.email)
+    cal_url = body.cal_url or "https://cal.getklai.com/klai/onboarding-intake"
+    try:
+        result = await listmonk.send_onboarding_invite(
+            email=email,
+            name=body.name,
+            cal_url=cal_url,
+        )
+    except (listmonk.ListmonkUnavailable, listmonk.ListmonkAPIError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="listmonk rejected or unreachable") from exc
+
+    await _audit_internal_call(request, org_id=0)
+    return MailingSendResponse(
+        sent=result.sent,
+        template=body.template,
+        template_id=result.template_id,
+        sent_to=result.sent_to,
     )
 
 

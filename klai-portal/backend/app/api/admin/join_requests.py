@@ -184,6 +184,17 @@ async def approve_join_request(
         reviewer=reviewer,
     )
 
+    from app.services.listmonk import sync_portal_user_best_effort
+
+    await sync_portal_user_best_effort(
+        email=jr.email,
+        name=jr.display_name or jr.email,
+        org_id=org_id,
+        portal_user_id=getattr(new_user, "id", None),
+        zitadel_user_id=jr.zitadel_user_id,
+        source="portal_join_request_approved",
+    )
+
     # Send approval notification email (non-blocking)
     workspace_url = f"https://{settings.domain}"
     try:

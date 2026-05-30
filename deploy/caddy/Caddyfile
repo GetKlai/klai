@@ -413,20 +413,19 @@
         }
     }
 
-    # Onboarding-mail trigger — externally reachable so Twenty CRM on
-    # public-01 can POST when an operator clicks the "Verstuur
-    # onboarding mail" workflow button. Auth is Bearer <INTERNAL_SECRET>;
-    # without the bearer this endpoint 401s. Header-strip mirrors every
+    # Mailing triggers — externally reachable so Twenty CRM on public-01
+    # can POST workflow actions. Auth is Bearer <INTERNAL_SECRET>; without
+    # the bearer these endpoints 401. Header-strip mirrors every
     # other public→portal-api route so external traffic can never inject
     # internal-trust headers.
-    @onboarding-public {
+    @mailing-public {
         host my.{$DOMAIN}
-        path /internal/onboarding/start
+        path /internal/onboarding/start /internal/mailing/sync-contact /internal/mailing/send
         method POST
     }
-    handle @onboarding-public {
+    handle @mailing-public {
         rate_limit {
-            zone onboarding_per_ip {
+            zone mailing_per_ip {
                 key {remote_host}
                 events 30
                 window 1m

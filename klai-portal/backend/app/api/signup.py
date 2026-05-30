@@ -150,6 +150,29 @@ def _to_slug(name: str, suffix: str = "") -> str:
     return base[:64]
 
 
+async def _sync_signup_to_mailing(
+    *,
+    email: str,
+    name: str,
+    company: str,
+    org_id: int,
+    portal_user_id: int | None,
+    zitadel_user_id: str,
+    source: str,
+) -> None:
+    from app.services.listmonk import sync_portal_user_best_effort
+
+    await sync_portal_user_best_effort(
+        email=email,
+        name=name,
+        company=company,
+        org_id=org_id,
+        portal_user_id=portal_user_id,
+        zitadel_user_id=zitadel_user_id,
+        source=source,
+    )
+
+
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
 async def signup(
     body: SignupRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)
@@ -320,6 +343,16 @@ async def signup(
 
     logger.info("Provisioning queued for org_id=%d, slug=%s", org_row.id, org_row.slug)
     background_tasks.add_task(provision_tenant, org_row.id)
+    background_tasks.add_task(
+        _sync_signup_to_mailing,
+        email=str(body.email),
+        name=f"{body.first_name} {body.last_name}".strip(),
+        company=body.company_name,
+        org_id=org_row.id,
+        portal_user_id=getattr(user_row, "id", None),
+        zitadel_user_id=zitadel_user_id,
+        source="portal_signup",
+    )
     emit_event("signup", org_id=org_row.id, user_id=zitadel_user_id, properties={"plan": org_row.plan})
 
     return SignupResponse(
@@ -567,6 +600,16 @@ async def signup_social(
     # 5. Start provisioning
     logger.info("Social signup: provisioning queued for org_id=%d, slug=%s", org_row.id, org_row.slug)
     background_tasks.add_task(provision_tenant, org_row.id)
+    background_tasks.add_task(
+        _sync_signup_to_mailing,
+        email=_social_email,
+        name=_social_email,
+        company=body.company_name,
+        org_id=org_row.id,
+        portal_user_id=getattr(user_row, "id", None),
+        zitadel_user_id=zitadel_user_id,
+        source="portal_social_signup",
+    )
     emit_event(
         "signup", org_id=org_row.id, user_id=zitadel_user_id, properties={"plan": org_row.plan, "method": "social"}
     )
