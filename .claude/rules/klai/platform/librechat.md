@@ -5,6 +5,23 @@ paths:
 ---
 # LibreChat
 
+## Klai client UI polish
+
+`deploy/librechat/klai-entrypoint.sh` injects small Klai client-side polish into
+LibreChat's built SPA. Any source, citation, retrieval, or agent-activity UI in
+that file must follow the canonical `Chat Disclosure Rows` pattern in:
+
+`klai-portal/frontend/docs/ui-standards.md`
+
+Keep this close to LibreChat's native message metadata style: compact inline
+controls, muted text, closed by default, no bordered dashboard/card rows, and
+no plain bold `Bronnen` / `Agent activiteit` headings below the answer.
+
+When changing the injected CSS/JS, bump the `klai-kb-disclosure-v*` marker so
+running containers replace older injected blocks on restart. Verify with both a
+string check against the generated HTML and a browser computed-style check for
+visual changes.
+
 ## OIDC config (required per tenant)
 ```
 OPENID_USERNAME_CLAIM=preferred_username  (default `given_name` is wrong)
