@@ -133,14 +133,14 @@ other debug/provenance details. These rows should feel available, compact, and
 quiet, without competing with the answer.
 
 ```tsx
-<div className="mt-5 space-y-2">
-  <details className="group max-w-xl rounded-lg border border-[color:rgb(232_230_222_/_0.6)] bg-transparent">
-    <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-[13px] text-[color:rgb(25_25_24_/_0.5)] [&::-webkit-details-marker]:hidden">
+<div className="mt-4 space-y-0.5">
+  <details className="group max-w-xl bg-transparent">
+    <summary className="inline-flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-md px-1 py-0.5 text-[13px] text-[color:rgb(25_25_24_/_0.5)] hover:bg-[var(--color-muted)]/60 hover:text-gray-900 [&::-webkit-details-marker]:hidden">
       <ChevronRight className="h-3 w-3 shrink-0 text-[color:rgb(25_25_24_/_0.3)] transition-transform group-open:rotate-90" />
       <span className="min-w-0 flex-1 font-medium">Bronnen</span>
-      <span className="shrink-0 text-xs font-normal text-[color:rgb(25_25_24_/_0.3)]">1 bron</span>
+      <span className="shrink-0 text-xs font-normal text-[color:rgb(25_25_24_/_0.3)] before:mr-1.5 before:text-[color:rgb(25_25_24_/_0.2)] before:content-['·']">1 bron</span>
     </summary>
-    <div className="border-t border-[color:rgb(232_230_222_/_0.5)] px-2.5 pb-2 pt-1.5 text-[13px] text-[color:rgb(25_25_24_/_0.5)]">
+    <div className="pb-2 pl-4 pt-1 text-[13px] text-[color:rgb(25_25_24_/_0.5)]">
       ...
     </div>
   </details>
@@ -150,11 +150,11 @@ quiet, without competing with the answer.
 Rules:
 
 - Closed by default. The answer stays primary; provenance is secondary.
-- Use standalone rows, not cards inside cards: `rounded-lg border border-[color:rgb(232_230_222_/_0.6)] bg-transparent`.
-- Use `mt-5 space-y-2` after answer prose.
-- Summary layout is chevron left, title middle, muted count right.
+- Use inline disclosure controls, not cards or bordered rows: `inline-flex rounded-md bg-transparent`.
+- Use `mt-4 space-y-0.5` after answer prose.
+- Summary layout is chevron left, title, then a muted inline count.
 - Summary typography is `text-[13px] font-medium text-[color:rgb(25_25_24_/_0.5)]`; count is `text-xs font-normal text-[color:rgb(25_25_24_/_0.3)]`.
-- Body content starts below a 50% token-derived border and stays compact: `text-[13px] text-[color:rgb(25_25_24_/_0.5)]`.
+- Body content is unboxed, lightly indented, and compact: `pl-4 text-[13px] text-[color:rgb(25_25_24_/_0.5)]`.
 - Use a small `ChevronRight` from Lucide, rotating with `group-open:rotate-90`.
 - Do not use `klai-hover` or loud hover backgrounds for disclosure summaries.
 - Do not render `Bronnen` or `Agent activiteit` as plain bold headings below the answer.
