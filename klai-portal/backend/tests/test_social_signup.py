@@ -801,6 +801,9 @@ class TestSignupSocial:
             mock_zitadel.create_org = AsyncMock(return_value={"id": "zit-org-new"})
             mock_zitadel.grant_user_role = AsyncMock()
             mock_portal_org.return_value = org_row
+            portal_user_row = MagicMock()
+            portal_user_row.id = 123
+            mock_portal_user.return_value = portal_user_row
 
             background_tasks = MagicMock()
             result = await signup_social(
@@ -825,7 +828,19 @@ class TestSignupSocial:
         assert mock_portal_user.call_args.kwargs["zitadel_user_id"] == _FAKE_USER_ID
         assert mock_portal_user.call_args.kwargs["role"] == "admin"
         assert mock_portal_user.call_args.kwargs["seat_type"] == "knowledge"
-        background_tasks.add_task.assert_called_once_with(mock_provision_tenant, org_row.id)
+        assert background_tasks.add_task.call_count == 2
+        background_tasks.add_task.assert_any_call(mock_provision_tenant, org_row.id)
+        sync_call = background_tasks.add_task.call_args_list[1]
+        assert sync_call.args[0].__name__ == "_sync_signup_to_mailing"
+        assert sync_call.kwargs == {
+            "email": "founder@bedrijf.nl",
+            "name": "founder@bedrijf.nl",
+            "company": "Bedrijf BV",
+            "org_id": org_row.id,
+            "portal_user_id": 123,
+            "zitadel_user_id": _FAKE_USER_ID,
+            "source": "portal_social_signup",
+        }
         mock_emit_event.assert_called_once()
 
     @pytest.mark.asyncio
