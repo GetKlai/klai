@@ -250,30 +250,19 @@ async def invite_user(
 
     zitadel_user_id: str = user_data["userId"]
 
-    # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2: the user now exists in Zitadel
-    # but no invite mail was sent (invite_user used sendCodes=False). Issue
-    # the invite code with an explicit Klai urlTemplate so the activation
-    # link in the mail lands on my.getklai.com/password/set, not on
-    # auth.getklai.com/ui/login/. If this second call fails after the first
-    # succeeded, we return 502 with the orphan userId so an admin can recover
-    # via the resend-invite endpoint (which re-issues only call 2).
-    invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
-    try:
-        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
-    except Exception as exc:
-        _slog.exception(
-            "invite_partial_user_created",
-            zitadel_user_id=zitadel_user_id,
-            email=body.email,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={
-                "code": "invite_partial_failure",
-                "user_id": zitadel_user_id,
-                "message": "User created but invite mail failed — retry via resend-invite",
-            },
-        ) from exc
+    async def _cleanup_zitadel_user(reason: str) -> None:
+        try:
+            await zitadel.remove_user(
+                org_id=settings.zitadel_portal_org_id,
+                zitadel_user_id=zitadel_user_id,
+            )
+        except Exception:
+            _slog.exception(
+                "invite_zitadel_cleanup_failed",
+                zitadel_user_id=zitadel_user_id,
+                email=body.email,
+                reason=reason,
+            )
 
     # SPEC-SEC-TENANT-001 REQ-2 (v0.5.0 / β): only portal_role="admin" gets a
     # Zitadel grant; group-admin and member rely on portal_users.role for
@@ -315,6 +304,7 @@ async def invite_user(
             )
         except Exception as exc:
             logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
+            await _cleanup_zitadel_user("role_grant_failed")
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Failed to assign project role: {exc}",
@@ -337,7 +327,6 @@ async def invite_user(
         seat_type=seat_type_value,
         preferred_language=body.preferred_language,
     )
-    db.add(user_row)
 
     # SPEC-PORTAL-RBAC-001: products are derived from (role, seat_type,
     # platform_unlocked_features) at read time; no per-user entitlement
@@ -349,15 +338,46 @@ async def invite_user(
     # would clear the GUC and trip the strict RLS policy on the KB INSERT —
     # exact same shape as the "Post-commit db.refresh on RLS tables" pitfall in
     # .claude/rules/klai/projects/portal-backend.md. If the KB-creation step
-    # fails, the whole transaction rolls back; the Zitadel-side invite is left
-    # behind (rollback can't undo the external API call) and a retry will hit
-    # Zitadel's 409 path — caller is expected to surface that as a clear error
-    # rather than the previous half-state where portal_users existed without a
-    # personal KB and the admin saw a 500.
+    # or invite-mail step fails, the DB transaction rolls back and the
+    # just-created Zitadel user is removed so the admin can retry the invite
+    # with the same email address. The invite mail is intentionally sent only
+    # after both portal rows have flushed, so validation/RLS failures surface
+    # before an activation link leaves the system.
     from app.services.default_knowledge_bases import create_default_personal_kb
 
-    await create_default_personal_kb(zitadel_user_id, org.id, db)
-    await db.commit()
+    # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2: the user now exists in Zitadel
+    # and any admin grant has succeeded, but no invite mail was sent
+    # (invite_user used sendCodes=False). Issue the invite code with an
+    # explicit Klai urlTemplate so the activation link lands on
+    # my.getklai.com/password/set, not auth.getklai.com/ui/login/.
+    invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
+    failure_step = "portal_db"
+    try:
+        db.add(user_row)
+        await create_default_personal_kb(zitadel_user_id, org.id, db)
+        failure_step = "invite_mail"
+        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
+        failure_step = "portal_commit"
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        await _cleanup_zitadel_user(f"{failure_step}_failed")
+        _slog.exception(
+            "invite_failed_zitadel_user_cleaned_up",
+            zitadel_user_id=zitadel_user_id,
+            email=body.email,
+            org_id=org.id,
+            failure_step=failure_step,
+        )
+        detail = (
+            "Uitnodigingsmail kon niet worden verstuurd. Probeer het opnieuw."
+            if failure_step == "invite_mail"
+            else "Uitnodiging kon niet worden opgeslagen. Probeer het opnieuw."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=detail,
+        ) from exc
     # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-8: emit url_template_host so a
     # VictoriaLogs query can prove the link host across all invites.
     _slog.info(
