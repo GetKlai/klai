@@ -9,7 +9,7 @@ non-auth mail.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import structlog
@@ -275,7 +275,8 @@ async def sync_contact(
             raise ListmonkAPIError(resp.status_code, resp.text)
 
         subscriber_id = _subscriber_id(existing)
-        existing_attribs = existing.get("attribs") if isinstance(existing.get("attribs"), dict) else {}
+        raw_existing_attribs = existing.get("attribs")
+        existing_attribs = cast(dict[str, Any], raw_existing_attribs) if isinstance(raw_existing_attribs, dict) else {}
         await _patch_subscriber(
             client,
             subscriber_id,
