@@ -659,6 +659,19 @@ async def platform_invite(
         if mail_sent
         else f"User aangemaakt voor {body.email}, maar invite-mail kon niet worden verstuurd."
     )
+
+    from app.services.listmonk import sync_portal_user_best_effort
+
+    await sync_portal_user_best_effort(
+        email=body.email,
+        name=f"{body.first_name} {body.last_name}".strip(),
+        company=org.name,
+        org_id=org_id,
+        portal_user_id=getattr(user_row, "id", None),
+        zitadel_user_id=zitadel_user_id,
+        source="portal_platform_invite",
+    )
+
     return PlatformInviteResponse(
         user_id=zitadel_user_id,
         message=message,
@@ -831,17 +844,17 @@ async def platform_create_tenant(
     # future read between this block and handler-return cannot accidentally
     # land on the wrong tenant.
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-10 (Finding A-3)
+    owner_user_row: PortalUser | None = None
     try:
         async with tenant_scoped_session(org_row.id) as tdb:
-            tdb.add(
-                PortalUser(
-                    zitadel_user_id=owner_user_id,
-                    org_id=org_row.id,
-                    role="admin",
-                    seat_type=str(suggest_seat("admin")),
-                    preferred_language=body.preferred_language,
-                )
+            owner_user_row = PortalUser(
+                zitadel_user_id=owner_user_id,
+                org_id=org_row.id,
+                role="admin",
+                seat_type=str(suggest_seat("admin")),
+                preferred_language=body.preferred_language,
             )
+            tdb.add(owner_user_row)
             await tdb.commit()
     except Exception as exc:
         logger.exception("platform_create_tenant_owner_user_db_failed", email=body.owner_email)
@@ -896,6 +909,19 @@ async def platform_create_tenant(
         if mail_sent
         else f"Tenant '{body.company_name}' aangemaakt, maar owner invite-mail kon niet worden verstuurd."
     )
+
+    from app.services.listmonk import sync_portal_user_best_effort
+
+    await sync_portal_user_best_effort(
+        email=body.owner_email,
+        name=f"{body.owner_first_name} {body.owner_last_name}".strip(),
+        company=body.company_name,
+        org_id=org_row.id,
+        portal_user_id=getattr(owner_user_row, "id", None),
+        zitadel_user_id=owner_user_id,
+        source="portal_platform_create_tenant",
+    )
+
     return CreateTenantResponse(
         org_id=org_row.id,
         slug=org_row.slug,

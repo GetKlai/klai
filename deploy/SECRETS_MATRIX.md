@@ -61,6 +61,18 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 | `KNOWLEDGE_INGEST_SECRET` | scribe-api | HMAC auth when scribe pushes transcripts to knowledge-ingest. |
 | `KNOWLEDGE_RETRIEVE_URL` | portal-api | URL of retrieval-api used for gap re-scoring (value, not secret — kept here because it crosses a trust boundary). |
 | `LIBRECHAT_MONGO_ROOT_URI` | portal-api | MongoDB root URI with multi-DB read access for lazy LibreChat user mapping (KB-010). |
+| `LISTMONK_ADMIN_PASSWORD` | listmonk | Optional first-install Super Admin password for mailing.getklai.com. After first boot, listmonk stores users in its DB; keep this in SOPS/Vaultwarden for bootstrap and break-glass recovery notes. |
+| `LISTMONK_ADMIN_USER` | listmonk | Optional first-install Super Admin username/email for mailing.getklai.com. Non-secret but kept with the password for bootstrap consistency. |
+| `LISTMONK_API_TOKEN` | portal-api | listmonk API token for subscriber sync and transactional sends. Mapped with `LISTMONK_API_USER` in portal-api. |
+| `LISTMONK_API_USER` | portal-api | listmonk API user for subscriber sync and transactional sends. Non-secret but paired with the token. |
+| `LISTMONK_DB_PASSWORD` | listmonk | PostgreSQL password used by listmonk to connect to listmonk-db. |
+| `LISTMONK_DB_PASSWORD` | listmonk-db | PostgreSQL bootstrap password for the dedicated listmonk database. |
+| `LISTMONK_LIST_CRM_SELECTED_ID` | portal-api | listmonk list ID for manually selected CRM contacts. Defaults to `3`. |
+| `LISTMONK_LIST_SIGNUPS_ID` | portal-api | listmonk list ID for website waitlist signups. |
+| `LISTMONK_LIST_UPDATES_OPT_IN_ID` | portal-api | listmonk list ID for explicit product/update marketing opt-ins. |
+| `LISTMONK_LIST_USERS_ID` | portal-api | listmonk list ID for real portal/Zitadel users. |
+| `LISTMONK_TX_ONBOARDING_TEMPLATE_ID` | portal-api | listmonk transactional template ID for onboarding invites. Defaults to `5`. |
+| `LISTMONK_URL` | portal-api | Internal listmonk base URL for portal-api. Defaults to `http://listmonk:9000` in Docker Compose. |
 | `LOGO_URL` | klai-mailer | Brand logo URL for email templates. Overrides code default (example.com). Mapped to `LOGO_URL` in-container. Source: klai-infra/core-01/klai-mailer/.env.sops. |
 | `BRAND_URL` | klai-mailer | Brand homepage URL for email templates. Overrides code default (example.com). Mapped to `BRAND_URL` in-container. Source: klai-infra/core-01/klai-mailer/.env.sops. |
 | `MAILER_WEBHOOK_SECRET` | klai-mailer | HMAC secret for Zitadel webhook signature verification. Validator fails closed on empty (SPEC-SEC-MAILER-INJECTION-001 REQ-9.1). Mapped to `WEBHOOK_SECRET` in-container. Source: klai-infra/core-01/klai-mailer/.env.sops. |

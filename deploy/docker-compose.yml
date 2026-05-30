@@ -598,6 +598,15 @@ services:
       # Auth is X-Internal-Secret: ${PORTAL_API_INTERNAL_SECRET}; mailer
       # validates via hmac.compare_digest.
       MAILER_URL: ${MAILER_URL:-http://klai-mailer:8000}
+      # ─── listmonk mailing lists / transactional sends ───────────
+      LISTMONK_URL: ${LISTMONK_URL:-http://listmonk:9000}
+      LISTMONK_API_USER: ${LISTMONK_API_USER:-}
+      LISTMONK_API_TOKEN: ${LISTMONK_API_TOKEN:-}
+      LISTMONK_LIST_CRM_SELECTED_ID: ${LISTMONK_LIST_CRM_SELECTED_ID:-3}
+      LISTMONK_LIST_SIGNUPS_ID: ${LISTMONK_LIST_SIGNUPS_ID:-0}
+      LISTMONK_LIST_USERS_ID: ${LISTMONK_LIST_USERS_ID:-0}
+      LISTMONK_LIST_UPDATES_OPT_IN_ID: ${LISTMONK_LIST_UPDATES_OPT_IN_ID:-0}
+      LISTMONK_TX_ONBOARDING_TEMPLATE_ID: ${LISTMONK_TX_ONBOARDING_TEMPLATE_ID:-5}
       # ─── Application-level encryption (secrets at rest) ─────────
       PORTAL_SECRETS_KEY: ${PORTAL_API_PORTAL_SECRETS_KEY}
       ENCRYPTION_KEY: ${PORTAL_API_ENCRYPTION_KEY}

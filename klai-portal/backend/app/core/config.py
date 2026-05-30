@@ -196,6 +196,18 @@ class Settings(BaseSettings):
     twenty_url: str = ""  # e.g. https://twenty.getklai.com (TWENTY_URL)
     twenty_api_key: str = ""  # TWENTY_API_KEY
 
+    # listmonk mailing platform.
+    # Empty URL/user/token disables mailing sync without breaking signup/auth
+    # flows. List IDs are provisioned in listmonk and injected via SOPS.
+    listmonk_url: str = ""  # e.g. http://listmonk:9000
+    listmonk_api_user: str = ""
+    listmonk_api_token: str = ""
+    listmonk_list_crm_selected_id: int = 0
+    listmonk_list_signups_id: int = 0
+    listmonk_list_users_id: int = 0
+    listmonk_list_updates_opt_in_id: int = 0
+    listmonk_tx_onboarding_template_id: int = 5
+
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod
