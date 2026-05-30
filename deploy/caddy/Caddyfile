@@ -188,6 +188,26 @@
         }
     }
 
+    # listmonk (mailing platform) — campaign builder, lists, public unsubscribe
+    # links, click tracking, and Twenty-selected subscriber sync.
+    @mailing host mailing.{$DOMAIN}
+    handle @mailing {
+        rate_limit {
+            zone listmonk_per_ip {
+                key {remote_host}
+                events 300
+                window 1m
+            }
+        }
+        reverse_proxy listmonk:9000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
     # GlitchTip (frontend error tracking)
     @glitchtip host errors.{$DOMAIN}
     handle @glitchtip {

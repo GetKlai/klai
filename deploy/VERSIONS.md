@@ -20,6 +20,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 |---|---|---|
 | `postgres` | `pgvector/pgvector:pg18` | PostgreSQL major version upgrades require dump/restore. pg18 is the current stable (since Sept 2025). Upgrade path: `pg_dumpall` → stop services → change image → delete volume → restore dump. |
 | `firecrawl-postgres` | `postgres:18-alpine` | Firecrawl-internal queue DB (NUQ schema). Pinned to match main postgres major. Data is transient (queue state), so cross-major migration is just a volume delete. |
+| `listmonk-db` | `postgres:17-alpine` | Dedicated database for listmonk campaigns, subscribers, templates, and admin users. Kept on the upstream listmonk Docker Compose default; dump/restore before any major PostgreSQL bump. |
 | `mongodb` | `mongo:8.2.7` | MongoDB 8 is the current stable major. LibreChat tenants depend on this. Major upgrades require replica-set-aware migration. |
 | `redis` | `redis:8-alpine` | Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. Previously on `redis:alpine` which silently rolled to 8 anyway — now explicit. |
 | `vexa-redis` | `redis:8-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
@@ -62,6 +63,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 |---|---|---|
 | `docker-socket-proxy` | `tecnativa/docker-socket-proxy:v0.4.2` | Limits portal-api to specific Docker API verbs (CONTAINERS, NETWORKS, POST, DELETE). Stable; rare releases. |
 | `garage` | `dxflrs/garage:v2.3.0` | S3-compatible object storage. Config field names change between minor releases — re-verify `garage.toml` after each bump. See `.claude/rules/klai/platform/garage.md`. |
+| `listmonk` | `listmonk/listmonk:v6.1.0` | Self-hosted mailing platform at `mailing.getklai.com` for campaign templates, lists, and Twenty-selected audiences. Upgrade after checking listmonk release notes and database migrations. |
 
 ### Pinned with known upstream gap
 

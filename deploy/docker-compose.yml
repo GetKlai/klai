@@ -28,6 +28,10 @@ networks:
     driver: bridge
     name: klai-net-redis
     internal: true   # only Redis <-> LiteLLM, GlitchTip, LibreChat
+  net-listmonk:
+    driver: bridge
+    name: klai-net-listmonk
+    internal: true   # only listmonk <-> its Postgres database
   net-meilisearch:
     driver: bridge
     name: klai-net-meilisearch
@@ -45,6 +49,8 @@ volumes:
   mongodb-data:
   postgres-data:
   redis-data:
+  listmonk-postgres-data:
+  listmonk-uploads-data:
   meilisearch-data:
   glitchtip-data:
   victoriametrics-data:
@@ -148,6 +154,24 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # ─── listmonk PostgreSQL (mailing.getklai.com) ───────────────────────────
+  listmonk-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    volumes:
+      - listmonk-postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: listmonk
+      POSTGRES_PASSWORD: ${LISTMONK_DB_PASSWORD}
+      POSTGRES_DB: listmonk
+    networks:
+      - net-listmonk
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U listmonk -d listmonk"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
@@ -421,6 +445,48 @@ services:
     networks:
       - klai-net
       - net-redis
+
+  # ─── listmonk (self-hosted mailing platform) ─────────────────────────────
+  # UI: https://mailing.${DOMAIN}
+  # Purpose: compose campaigns, manage templates/lists/subscribers, and receive
+  # selected Twenty CRM People via workflow HTTP requests.
+  listmonk:
+    image: listmonk/listmonk:v6.1.0
+    restart: unless-stopped
+    hostname: mailing.${DOMAIN}
+    depends_on:
+      listmonk-db:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - >
+        ./listmonk --install --idempotent --yes --config '' &&
+        ./listmonk --upgrade --yes --config '' &&
+        ./listmonk --config ''
+    environment:
+      LISTMONK_app__address: 0.0.0.0:9000
+      LISTMONK_db__host: listmonk-db
+      LISTMONK_db__port: "5432"
+      LISTMONK_db__user: listmonk
+      LISTMONK_db__password: ${LISTMONK_DB_PASSWORD}
+      LISTMONK_db__database: listmonk
+      LISTMONK_db__ssl_mode: disable
+      LISTMONK_db__max_open: "25"
+      LISTMONK_db__max_idle: "25"
+      LISTMONK_db__max_lifetime: 300s
+      LISTMONK_ADMIN_USER: ${LISTMONK_ADMIN_USER:-}
+      LISTMONK_ADMIN_PASSWORD: ${LISTMONK_ADMIN_PASSWORD:-}
+      TZ: Europe/Amsterdam
+    volumes:
+      - listmonk-uploads-data:/listmonk/uploads
+    networks:
+      - klai-net
+      - net-listmonk
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   # ─── Vaultwarden (team password manager — Klai shared admin credentials) ──
   # Bitwarden-API-compatible server. Bootstrap pattern: SIGNUPS_ALLOWED=true
