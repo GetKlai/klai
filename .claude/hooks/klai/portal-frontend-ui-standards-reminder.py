@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 PORTAL_PREFIX = "klai-portal/frontend/"
+LIBRECHAT_CLIENT_UI_FILES = {"deploy/librechat/klai-entrypoint.sh"}
 STANDARDS_DOC = "klai-portal/frontend/docs/ui-standards.md"
 UI_EXTENSIONS = {".ts", ".tsx", ".css", ".json", ".md"}
 
@@ -50,6 +51,10 @@ def _is_portal_frontend_edit(path: str) -> bool:
     return suffix in UI_EXTENSIONS
 
 
+def _is_librechat_client_ui_edit(path: str) -> bool:
+    return path in LIBRECHAT_CLIENT_UI_FILES
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -57,14 +62,17 @@ def main() -> int:
         return 0
 
     paths = _candidate_paths(payload)
-    if not any(_is_portal_frontend_edit(path) for path in paths):
+    is_portal_ui = any(_is_portal_frontend_edit(path) for path in paths)
+    is_librechat_ui = any(_is_librechat_client_ui_edit(path) for path in paths)
+    if not is_portal_ui and not is_librechat_ui:
         return 0
 
     message = (
-        "Portal frontend edit detected. Before changing UI, read "
+        "Portal/LibreChat UI edit detected. Before changing UI, read "
         f"`{STANDARDS_DOC}`, name the existing portal reference screen you are "
         "following, and keep portal patterns separate from website/marketing "
-        "patterns."
+        "patterns. For LibreChat provenance UI, follow the Chat Disclosure Rows "
+        "pattern and keep it close to LibreChat's native message metadata."
     )
     print(json.dumps({"systemMessage": message}))
     return 0
