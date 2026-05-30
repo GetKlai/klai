@@ -49,9 +49,7 @@ class ListmonkSendResult:
 
 def is_configured() -> bool:
     return bool(
-        settings.listmonk_url.strip()
-        and settings.listmonk_api_user.strip()
-        and settings.listmonk_api_token.strip()
+        settings.listmonk_url.strip() and settings.listmonk_api_user.strip() and settings.listmonk_api_token.strip()
     )
 
 
