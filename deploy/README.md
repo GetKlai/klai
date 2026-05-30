@@ -140,7 +140,22 @@ Key variable groups:
 | LibreChat | `LIBRECHAT_KLAI_JWT_SECRET`, `LIBRECHAT_KLAI_OIDC_*` |
 | Grafana | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_CADDY_USER`, `GRAFANA_CADDY_HASH` |
 | Portal API | `PORTAL_API_ZITADEL_PAT`, `PORTAL_API_DB_PASSWORD`, `PORTAL_API_INTERNAL_SECRET` |
+| listmonk portal sync | `LISTMONK_API_USER`, `LISTMONK_API_TOKEN`, `LISTMONK_LIST_*`, `LISTMONK_TX_ONBOARDING_TEMPLATE_ID` |
 | Monitoring | `KUMA_TOKEN_*` (Uptime Kuma push tokens) |
+
+### listmonk Portal Automation Role
+
+The portal-api listmonk API user needs permissions for idempotent subscriber
+upserts, duplicate lookup, list membership updates, and transactional sends.
+After creating or rotating the API user/token, run:
+
+```bash
+cd /opt/klai
+LISTMONK_API_USER=twenty-crm-sync bash scripts/listmonk-ensure-portal-role.sh
+```
+
+The script is idempotent and restarts listmonk so role permission changes take
+effect immediately.
 
 ---
 

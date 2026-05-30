@@ -63,8 +63,8 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 | `LIBRECHAT_MONGO_ROOT_URI` | portal-api | MongoDB root URI with multi-DB read access for lazy LibreChat user mapping (KB-010). |
 | `LISTMONK_ADMIN_PASSWORD` | listmonk | Optional first-install Super Admin password for mailing.getklai.com. After first boot, listmonk stores users in its DB; keep this in SOPS/Vaultwarden for bootstrap and break-glass recovery notes. |
 | `LISTMONK_ADMIN_USER` | listmonk | Optional first-install Super Admin username/email for mailing.getklai.com. Non-secret but kept with the password for bootstrap consistency. |
-| `LISTMONK_API_TOKEN` | portal-api | listmonk API token for subscriber sync and transactional sends. Mapped with `LISTMONK_API_USER` in portal-api. |
-| `LISTMONK_API_USER` | portal-api | listmonk API user for subscriber sync and transactional sends. Non-secret but paired with the token. |
+| `LISTMONK_API_TOKEN` | portal-api | listmonk API token for subscriber sync and transactional sends. Mapped with `LISTMONK_API_USER` in portal-api. API user's role must include `lists:get_all`, `lists:manage_all`, `subscribers:get`, `subscribers:get_all`, `subscribers:manage`, `subscribers:sql_query`, `subscribers:import`, and `tx:send`; see `deploy/scripts/listmonk-ensure-portal-role.sh`. |
+| `LISTMONK_API_USER` | portal-api | listmonk API user for subscriber sync and transactional sends. Non-secret but paired with the token. Role is maintained by `deploy/scripts/listmonk-ensure-portal-role.sh`. |
 | `LISTMONK_DB_PASSWORD` | listmonk | PostgreSQL password used by listmonk to connect to listmonk-db. |
 | `LISTMONK_DB_PASSWORD` | listmonk-db | PostgreSQL bootstrap password for the dedicated listmonk database. |
 | `LISTMONK_LIST_CRM_SELECTED_ID` | portal-api | listmonk list ID for manually selected CRM contacts. Defaults to `3`. |
