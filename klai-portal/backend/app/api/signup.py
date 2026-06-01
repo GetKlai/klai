@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import invalidate_tenant_slug_cache
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
+from app.core.password_policy import validate_password_strength
 from app.core.seats import suggest_seat
 from app.models.portal import PortalOrg, PortalUser
 from app.services.auth_links import AuthLinkRoute, build_url_template
@@ -47,24 +48,6 @@ from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
 _slog = structlog.get_logger()
-
-# SPEC-SEC-HYGIENE-001 REQ-22: zxcvbn-backed password-strength check.
-# Pure Python (no native extensions); MIT-licensed. If the import ever
-# fails (misconfigured deployment, future drop), fall back to length-only
-# at REQ-22.4. _ZXCVBN_AVAILABLE is module-level so tests can monkey-patch
-# the unavailable path without breaking the import.
-try:
-    from zxcvbn import zxcvbn as _zxcvbn
-
-    _ZXCVBN_AVAILABLE = True
-except ImportError:
-    _zxcvbn = None  # type: ignore[assignment]
-    _ZXCVBN_AVAILABLE = False
-    logger.exception("zxcvbn_unavailable_falling_back_to_length_check")
-
-# REQ-22.1: zxcvbn 0-4 scale; reject score < 3.
-_ZXCVBN_MIN_SCORE = 3
-_PASSWORD_TOO_WEAK_MSG = "Wachtwoord is te zwak. Kies een langer of minder voorspelbaar wachtwoord."
 
 _IDP_PENDING_COOKIE = "klai_idp_pending"
 _IDP_PENDING_MAX_AGE = 600  # 10 minutes — must match auth.py
@@ -111,16 +94,10 @@ class SignupRequest(BaseModel):
         misconfigured deployment), fall back to the length-only check and
         rely on the module-load error log to surface the degradation.
         """
-        if len(self.password) < 12:
-            raise ValueError("Wachtwoord moet minimaal 12 tekens bevatten")
-        if not _ZXCVBN_AVAILABLE or _zxcvbn is None:
-            return self
-        result = _zxcvbn(
+        validate_password_strength(
             self.password,
             user_inputs=[self.email, self.first_name, self.last_name, self.company_name],
         )
-        if int(result.get("score", 0)) < _ZXCVBN_MIN_SCORE:
-            raise ValueError(_PASSWORD_TOO_WEAK_MSG)
         return self
 
 
