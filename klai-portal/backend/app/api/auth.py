@@ -1498,6 +1498,17 @@ class VerifyEmailRequest(BaseModel):
     org_id: str
 
 
+async def _is_email_already_verified(user_id: str) -> bool:
+    """Best-effort idempotency check for consumed verification links."""
+    try:
+        user_response = await zitadel.get_user_by_id(user_id)
+    except Exception:
+        return False
+
+    email = user_response.get("user", {}).get("human", {}).get("email", {})
+    return bool(email.get("isEmailVerified") or email.get("isVerified"))
+
+
 @router.post("/auth/verify-email", status_code=status.HTTP_204_NO_CONTENT)
 async def verify_email(body: VerifyEmailRequest) -> None:
     """Verify a user's email address using the code from the verification email.
@@ -1508,8 +1519,24 @@ async def verify_email(body: VerifyEmailRequest) -> None:
     try:
         await zitadel.verify_user_email(body.org_id, body.user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        _slog.exception("verify_user_email_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 404):
+            if await _is_email_already_verified(body.user_id):
+                _slog.info(
+                    "verify_email_already_verified",
+                    zitadel_status=exc.response.status_code,
+                    actor_user_id=body.user_id,
+                )
+                await audit.log_event(
+                    org_id=0,
+                    actor=body.user_id,
+                    action="auth.email.verified",
+                    resource_type="user",
+                    resource_id=body.user_id,
+                    details={"reason": "already_verified"},
+                )
+                return
+
+            _slog.exception("verify_user_email_failed", zitadel_status=exc.response.status_code)
             _emit_auth_event(
                 "verify_email_failed",
                 reason="expired_link" if exc.response.status_code == 404 else "invalid_code",
@@ -1522,6 +1549,7 @@ async def verify_email(body: VerifyEmailRequest) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired verification link.",
             ) from exc
+        _slog.exception("verify_user_email_failed", zitadel_status=exc.response.status_code)
         _emit_auth_event(
             "verify_email_failed",
             reason="zitadel_5xx",

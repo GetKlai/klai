@@ -16,6 +16,7 @@ string for structural assertions.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import ClauseElement
@@ -24,6 +25,12 @@ from sqlalchemy.sql import ClauseElement
 def _compile(stmt: ClauseElement) -> str:
     """Compile a SQLAlchemy statement into a literal Postgres SQL string."""
     return str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+
+def _http_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://auth.example.test/v2/users/human")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError("Zitadel error", request=request, response=response)
 
 
 # @MX:ANCHOR REQ-5.1 — must remain coupled to offboard_user's delete shape.
@@ -244,6 +251,157 @@ async def test_invite_user_cleans_up_zitadel_user_when_mail_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invite_user_reuses_existing_global_zitadel_user() -> None:
+    """Tenant invites must link an existing global identity instead of failing on Zitadel 409."""
+    from app.api.admin.users import InviteRequest, invite_user
+    from app.models.portal import PortalUser
+
+    org = MagicMock()
+    org.id = 101
+    org.plan = "knowledge"
+
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none.return_value = None
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[locked_org_result, membership_result])
+
+    added_users: list[PortalUser] = []
+
+    def _record_add(row):
+        if isinstance(row, PortalUser):
+            added_users.append(row)
+
+    mock_db.add = MagicMock(side_effect=_record_add)
+
+    body = InviteRequest(
+        email="existing@example.com",
+        first_name="Existing",
+        last_name="User",
+        role="company",
+        preferred_language="nl",
+    )
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
+
+    with (
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.default_knowledge_bases.create_default_personal_kb",
+            new=AsyncMock(),
+        ) as create_personal_kb,
+    ):
+        mock_zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
+        mock_zitadel.find_user_id_by_email = AsyncMock(return_value="existing-user")
+        mock_zitadel.send_invite_code = AsyncMock()
+        mock_zitadel.remove_user = AsyncMock()
+        mock_zitadel.grant_user_role = AsyncMock()
+
+        response = await invite_user(body=body, perms=perms, db=mock_db)
+
+    mock_zitadel.find_user_id_by_email.assert_awaited_once_with("existing@example.com")
+    mock_zitadel.send_invite_code.assert_not_awaited()
+    mock_zitadel.remove_user.assert_not_awaited()
+    assert response.user_id == "existing-user"
+    assert response.message == "Gebruiker existing@example.com toegevoegd aan deze workspace."
+    assert [user.zitadel_user_id for user in added_users] == ["existing-user"]
+    assert [user.org_id for user in added_users] == [101]
+    create_personal_kb.assert_awaited_once_with("existing-user", 101, mock_db)
+    mock_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_invite_user_existing_global_user_already_in_workspace_returns_409() -> None:
+    """Existing identities are reused only when they are not already members of the tenant."""
+    from fastapi import HTTPException
+
+    from app.api.admin.users import InviteRequest, invite_user
+
+    org = MagicMock()
+    org.id = 101
+    org.plan = "knowledge"
+
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none.return_value = MagicMock()
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[locked_org_result, membership_result])
+    mock_db.add = MagicMock()
+
+    body = InviteRequest(
+        email="member@example.com",
+        first_name="Member",
+        last_name="User",
+        role="company",
+        preferred_language="nl",
+    )
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
+
+    with patch("app.api.admin.users.zitadel") as mock_zitadel:
+        mock_zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
+        mock_zitadel.find_user_id_by_email = AsyncMock(return_value="existing-user")
+        mock_zitadel.send_invite_code = AsyncMock()
+        mock_zitadel.remove_user = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await invite_user(body=body, perms=perms, db=mock_db)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Deze gebruiker is al lid van deze workspace."
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_not_awaited()
+    mock_zitadel.send_invite_code.assert_not_awaited()
+    mock_zitadel.remove_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invite_user_treats_existing_admin_grant_as_success() -> None:
+    """Zitadel may report an existing org:owner grant for reused/admin identities; invite stays idempotent."""
+    from app.api.admin.users import InviteRequest, invite_user
+
+    org = MagicMock()
+    org.id = 101
+    org.plan = "knowledge"
+
+    mock_db = AsyncMock()
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    mock_db.execute.return_value = locked_org_result
+    mock_db.add = MagicMock()
+
+    body = InviteRequest(
+        email="admin@example.com",
+        first_name="Admin",
+        last_name="User",
+        role="admin",
+        preferred_language="nl",
+    )
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
+
+    with (
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.default_knowledge_bases.create_default_personal_kb",
+            new=AsyncMock(),
+        ),
+    ):
+        mock_zitadel.invite_user = AsyncMock(return_value={"userId": "new-admin"})
+        mock_zitadel.grant_user_role = AsyncMock(side_effect=_http_error(409))
+        mock_zitadel.send_invite_code = AsyncMock()
+        mock_zitadel.remove_user = AsyncMock()
+
+        response = await invite_user(body=body, perms=perms, db=mock_db)
+
+    assert response.user_id == "new-admin"
+    mock_zitadel.remove_user.assert_not_awaited()
+    mock_zitadel.send_invite_code.assert_awaited_once()
+    mock_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_invite_user_can_add_multiple_users_to_same_tenant() -> None:
     """A tenant admin can invite multiple distinct users into one workspace."""
     from app.api.admin.users import InviteRequest, invite_user
@@ -431,6 +589,7 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
         call_order.append("send_invite")
 
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
     mock_db.commit = AsyncMock(side_effect=_record_commit)
     locked_org_result = MagicMock()
     locked_org_result.scalar_one.return_value = org

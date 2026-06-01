@@ -279,6 +279,38 @@ async def test_verify_email_invalid_code(respx_zitadel: respx.MockRouter) -> Non
 
 
 @pytest.mark.asyncio
+async def test_verify_email_already_verified_is_idempotent(respx_zitadel: respx.MockRouter) -> None:
+    """A consumed link should still show success if the email is already verified."""
+    respx_zitadel.post("/v2/users/uid-1/email/verify").mock(
+        return_value=httpx.Response(400, json={"error": "code already used"})
+    )
+    respx_zitadel.get("/management/v1/users/uid-1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "user": {
+                    "human": {
+                        "email": {
+                            "email": "founder@example.com",
+                            "isEmailVerified": True,
+                        }
+                    }
+                }
+            },
+        )
+    )
+    body = VerifyEmailRequest(user_id="uid-1", code="123456", org_id="org-1")
+
+    with capture_logs() as captured, _audit_log_patch() as audit_log:
+        await verify_email(body=body)
+
+    audit_log.assert_called_once()
+    assert audit_log.call_args.kwargs["action"] == "auth.email.verified"
+    assert audit_log.call_args.kwargs["details"] == {"reason": "already_verified"}
+    assert _capture_events(captured, "verify_email_failed") == []
+
+
+@pytest.mark.asyncio
 async def test_verify_email_expired_link(respx_zitadel: respx.MockRouter) -> None:
     """REQ-3.8 — expired link (404) → 400 + event with reason=expired_link."""
     respx_zitadel.route().mock(return_value=httpx.Response(404, json={"error": "not found"}))
