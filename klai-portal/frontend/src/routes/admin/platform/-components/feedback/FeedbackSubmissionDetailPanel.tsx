@@ -1,24 +1,24 @@
-import { useState } from "react"
+import { useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import {
   ArchiveX,
   ArrowLeft,
-  ArrowRight,
-  CheckCircle2,
+  Layers,
   LifeBuoy,
   Link2,
   Loader2,
+  type LucideIcon,
   PlusCircle,
+  RotateCcw,
   Save,
   Search,
+  Sparkles,
   Trash2,
-} from "lucide-react"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select } from "@/components/ui/select"
-import { StepIndicator, type StepItem } from "@/components/ui/step-indicator"
-import { Textarea } from "@/components/ui/textarea"
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,30 +28,56 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import * as m from "@/paraglide/messages"
+} from '@/components/ui/alert-dialog'
+import * as m from '@/paraglide/messages'
 import {
   usePlatformFeedbackCreateItem,
   usePlatformFeedbackDeleteSubmission,
   usePlatformFeedbackDismiss,
   usePlatformFeedbackItems,
   usePlatformFeedbackLinkItem,
-  usePlatformFeedbackSupport,
   usePlatformFeedbackUpdateSubmission,
-} from "../../-hooks"
-import type { PlatformFeedbackSubmission } from "../../-types"
+} from '../../-hooks'
+import type { PlatformFeedbackSubmission } from '../../-types'
 import {
-  FeedbackMetaRow,
   feedbackFallbackSummary,
-  feedbackItemKindLabel,
-  feedbackItemSearchTerm,
-  feedbackKindLabel,
   feedbackStatusLabel,
   feedbackSubmissionReporterLabel,
-  feedbackSuggestionActionLabel,
-  feedbackSuggestionPrimaryLabel,
   normalizedFeedbackKind,
-} from "./-feedback-helpers"
+} from './-feedback-helpers'
+
+type TriageMode = 'menu' | 'product' | 'status'
+
+/** A calm, full-width disposition choice on the triage menu. */
+function TriageChoice({
+  icon: Icon,
+  label,
+  hint,
+  onClick,
+  disabled,
+}: {
+  icon: LucideIcon
+  label: string
+  hint: string
+  onClick: () => void
+  disabled?: boolean
+}) {
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      disabled={disabled}
+      onClick={onClick}
+      className="h-auto w-full justify-start gap-3 rounded-xl px-4 py-3 text-left"
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="flex min-w-0 flex-col">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="text-xs font-normal text-gray-400">{hint}</span>
+      </span>
+    </Button>
+  )
+}
 
 export function FeedbackSubmissionDetailPanel({
   item,
@@ -62,642 +88,411 @@ export function FeedbackSubmissionDetailPanel({
   fmtDate: (s: string | null) => string
   onClose: () => void
 }) {
+  const navigate = useNavigate()
+  const canTriage = item.status === 'new'
+  const suggestion = item.triage_suggestion
+  const candidate = suggestion?.duplicate_candidates[0] ?? null
   const defaultKind =
     item.event_type === 'klai_assistant.problem_report' ? 'bug' : 'feature'
-  const suggestion = item.triage_suggestion
-  const bestCandidate = suggestion?.duplicate_candidates[0] ?? null
-  const suggestedKind = normalizedFeedbackKind(suggestion?.classification, defaultKind)
-  const suggestedTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
-  const suggestedSearch = feedbackItemSearchTerm(item, suggestion)
-  const [itemSearch, setItemSearch] = useState(suggestedSearch)
-  const [kind, setKind] = useState(suggestedKind)
-  const [title, setTitle] = useState(suggestedTitle)
-  const [summary, setSummary] = useState(suggestion?.summary ?? item.raw_text ?? '')
-  const [area, setArea] = useState(suggestion?.suggested_area ?? '')
-  const [draftStatus, setDraftStatus] = useState(item.status)
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
-  const [triageAction, setTriageAction] = useState<
-    'recommended' | 'link' | 'create' | 'support' | 'dismiss'
-  >('recommended')
-  const [submissionStep, setSubmissionStep] = useState<'report' | 'proposal' | 'decision'>(
-    'report',
-  )
+  const productKind = normalizedFeedbackKind(suggestion?.classification, defaultKind)
+  const reportText = item.raw_text || feedbackFallbackSummary(item)
+  const defaultTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90).trim()
+  const linkType =
+    item.event_type === 'klai_assistant.problem_report' ? 'bug_repro' : 'evidence'
+  const reporter = feedbackSubmissionReporterLabel(item)
 
-  const items = usePlatformFeedbackItems(itemSearch, 'triage')
-  const existingItems = items.data ?? []
-  const bestSearchMatch = itemSearch.trim().length >= 4 ? (existingItems[0] ?? null) : null
+  const [mode, setMode] = useState<TriageMode>('menu')
+  const [search, setSearch] = useState('')
+  const [draftStatus, setDraftStatus] = useState(item.status)
+  const [confirmDismissOpen, setConfirmDismissOpen] = useState(false)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+
+  const matches = usePlatformFeedbackItems(search, 'triage')
   const updateSubmission = usePlatformFeedbackUpdateSubmission()
   const deleteSubmission = usePlatformFeedbackDeleteSubmission()
   const dismiss = usePlatformFeedbackDismiss()
-  const support = usePlatformFeedbackSupport()
   const createItem = usePlatformFeedbackCreateItem()
   const linkItem = usePlatformFeedbackLinkItem()
   const busy =
     updateSubmission.isPending ||
     deleteSubmission.isPending ||
     dismiss.isPending ||
-    support.isPending ||
     createItem.isPending ||
     linkItem.isPending
-  const canTriage = item.status === 'new'
-  const linkType =
-    item.event_type === 'klai_assistant.problem_report'
-      ? 'bug_repro'
-      : suggestion?.classification === 'support_pattern'
-        ? 'support_signal'
-        : 'evidence'
-  const recommendedAction =
-    bestCandidate || bestSearchMatch
-      ? 'link_existing'
-      : items.isFetching
-        ? 'review'
-      : suggestion?.suggested_action || 'create_item'
-  const recommendedItem = bestCandidate
-    ? {
-        id: bestCandidate.item_id,
-        title: bestCandidate.title ?? `Item #${bestCandidate.item_id}`,
-        kind: bestCandidate.kind,
-        status: bestCandidate.status,
-        area: bestCandidate.area,
-      }
-    : bestSearchMatch
-      ? {
-          id: bestSearchMatch.id,
-          title: bestSearchMatch.title,
-          kind: bestSearchMatch.kind,
-          status: bestSearchMatch.status,
-          area: bestSearchMatch.area,
-        }
-      : null
-  const reportText = item.raw_text || feedbackFallbackSummary(item)
-  const proposalSummary = suggestion?.summary || item.raw_text || feedbackFallbackSummary(item)
-  const saveSubmissionStatus = () => {
-    updateSubmission.mutate({
-      submissionId: item.id,
-      status: draftStatus,
-    })
+
+  const openItem = (itemId: number | null | undefined) => {
+    if (itemId) {
+      void navigate({
+        to: '/admin/platform/feedback/items/$itemId',
+        params: { itemId: String(itemId) },
+      })
+    } else {
+      onClose()
+    }
   }
-  const acceptCreateItem = () => {
-    const fallbackTitle = (suggestion?.summary || item.raw_text || '').slice(0, 90)
+  const linkToItem = (itemId: number) =>
+    linkItem.mutate(
+      { submissionId: item.id, item_id: itemId, link_type: linkType },
+      { onSuccess: onClose },
+    )
+  const createProductItem = () =>
     createItem.mutate(
       {
         submissionId: item.id,
-        kind: suggestedKind,
-        title: fallbackTitle.trim(),
-        summary: item.raw_text || suggestion?.summary || null,
-        area: suggestion?.suggested_area || area.trim() || null,
+        kind: productKind,
+        title: defaultTitle || reportText.slice(0, 90),
+        summary: item.raw_text ?? null,
+        area: suggestion?.suggested_area ?? null,
         link_type: linkType,
       },
+      { onSuccess: (res) => openItem(res.item_id) },
+    )
+  const createSupportItem = () =>
+    createItem.mutate(
+      {
+        submissionId: item.id,
+        kind: 'support_pattern',
+        title: defaultTitle || reportText.slice(0, 90),
+        summary: item.raw_text ?? null,
+        area: suggestion?.suggested_area ?? null,
+        link_type: 'support_signal',
+      },
+      { onSuccess: (res) => openItem(res.item_id) },
+    )
+  const saveStatus = () =>
+    updateSubmission.mutate(
+      { submissionId: item.id, status: draftStatus },
       { onSuccess: onClose },
     )
-  }
-  const acceptRecommendedAction = () => {
-    if (recommendedAction === 'link_existing' && recommendedItem) {
-      linkItem.mutate(
-        {
-          submissionId: item.id,
-          item_id: recommendedItem.id,
-          link_type: linkType,
-        },
-        { onSuccess: onClose },
-      )
-      return
-    }
-    if (recommendedAction === 'support') {
-      support.mutate(item.id, { onSuccess: onClose })
-      return
-    }
-    if (recommendedAction === 'dismiss') {
-      dismiss.mutate(item.id, { onSuccess: onClose })
-      return
-    }
-    acceptCreateItem()
-  }
-  const canAcceptRecommendedAction =
-    (recommendedAction !== 'link_existing' || recommendedItem !== null) &&
-    (recommendedAction !== 'create_item' || suggestedTitle.trim().length >= 3) &&
-    recommendedAction !== 'review'
-  const selectedActionClass =
-    'border-gray-900 bg-gray-900 text-white hover:bg-gray-800 hover:text-white'
-  const actionButtonClass =
-    'h-auto min-h-14 justify-start rounded-lg px-4 py-3 text-left whitespace-normal'
-  const submissionStepOrder: Array<'report' | 'proposal' | 'decision'> = [
-    'report',
-    'proposal',
-    'decision',
-  ]
-  const activeSubmissionStep = submissionStep
-  const submissionStepIndex = Math.max(0, submissionStepOrder.indexOf(activeSubmissionStep))
-  const submissionWizardSteps: StepItem[] = submissionStepOrder.map((step) => ({
-    label:
-      step === 'report'
-        ? m.platform_feedback_read_report_title()
-        : step === 'proposal'
-          ? m.platform_feedback_suggestion_title()
-          : m.platform_feedback_choose_action_title(),
-    onClick: () => setSubmissionStep(step),
-  }))
-  const previousSubmissionStep = () => {
-    if (submissionStepIndex > 0) setSubmissionStep(submissionStepOrder[submissionStepIndex - 1])
-  }
-  const nextSubmissionStep = () => {
-    if (submissionStepIndex < submissionStepOrder.length - 1) {
-      setSubmissionStep(submissionStepOrder[submissionStepIndex + 1])
-    }
-  }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-start gap-3">
-        <div className="flex-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {canTriage
-              ? m.platform_feedback_triage_title()
-              : m.platform_feedback_submission_detail_title()}
-          </h1>
-          <p className="mt-1 text-sm text-gray-400">
-            {item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()} -{' '}
-            {feedbackSubmissionReporterLabel(item)
-              ? `${feedbackSubmissionReporterLabel(item)} - `
-              : ''}
-            {fmtDate(item.created_at)}
-          </p>
-        </div>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          {m.platform_back_to_feedback()}
-        </Button>
+  const header = (
+    <div className="flex items-start gap-3">
+      <div className="flex-1">
+        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          {canTriage
+            ? m.platform_feedback_triage_title()
+            : m.platform_feedback_submission_detail_title()}
+        </h1>
+        <p className="mt-1 text-sm text-gray-400">
+          {item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()}
+          {reporter ? ` · ${reporter}` : ''} · {fmtDate(item.created_at)}
+        </p>
       </div>
+      <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+        <ArrowLeft className="h-4 w-4 mr-2" />
+        {m.platform_back_to_feedback()}
+      </Button>
+    </div>
+  )
 
-      <div className="space-y-8">
-        <StepIndicator steps={submissionWizardSteps} currentIndex={submissionStepIndex} />
+  const reportBlock = (
+    <section className="space-y-2">
+      <p className="whitespace-pre-wrap text-[15px] leading-7 text-gray-900">{reportText}</p>
+      {item.page_url && (
+        <p className="truncate font-mono text-xs text-gray-400">{item.page_url}</p>
+      )}
+    </section>
+  )
 
-        {activeSubmissionStep === 'report' && (
+  const deleteDialog = (
+    <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{m.platform_feedback_delete_submission_title()}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {m.platform_feedback_delete_submission_description()}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+            onClick={() => deleteSubmission.mutate(item.id, { onSuccess: onClose })}
+          >
+            {m.platform_delete()}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+
+  const dismissDialog = (
+    <AlertDialog open={confirmDismissOpen} onOpenChange={setConfirmDismissOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{m.platform_feedback_action_dismiss()}</AlertDialogTitle>
+          <AlertDialogDescription>{m.platform_feedback_dismiss_help()}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => dismiss.mutate(item.id, { onSuccess: onClose })}
+          >
+            {m.platform_feedback_action_dismiss()}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+
+  // --- processed submission: read-only receipt, no triage controls ----
+  if (!canTriage) {
+    return (
+      <div className="space-y-6">
+        {header}
+        {reportBlock}
+        <section className="rounded-xl border border-gray-200 bg-white px-5 py-4">
+          <p className="text-xs font-medium text-gray-400">{m.platform_feedback_processed()}</p>
+          <p className="mt-1 text-sm font-medium text-gray-900">
+            {feedbackStatusLabel(item.status)}
+          </p>
+        </section>
+        <div className="flex items-center justify-between border-t border-gray-200 pt-4">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
+            disabled={busy}
+            onClick={() => setConfirmDeleteOpen(true)}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            {m.platform_delete()}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy}
+            onClick={() =>
+              updateSubmission.mutate(
+                { submissionId: item.id, status: 'new' },
+                { onSuccess: onClose },
+              )
+            }
+          >
+            <RotateCcw className="h-4 w-4" />
+            {m.platform_feedback_reopen()}
+          </Button>
+        </div>
+        {deleteDialog}
+      </div>
+    )
+  }
+
+  // --- new submission: triage router ----------------------------------
+  if (mode === 'product') {
+    const showMatches = search.trim().length >= 2
+    const rows = showMatches
+      ? (matches.data ?? []).map((existing) => ({
+          id: existing.id,
+          title: existing.title,
+          meta: [existing.kind, existing.status, existing.area].filter(Boolean).join(' · '),
+          suggested: false,
+        }))
+      : candidate
+        ? [
+            {
+              id: candidate.item_id,
+              title: candidate.title ?? `#${candidate.item_id}`,
+              meta: [candidate.kind, candidate.status, candidate.area]
+                .filter(Boolean)
+                .join(' · '),
+              suggested: true,
+            },
+          ]
+        : []
+
+    return (
+      <div className="space-y-6">
+        {header}
+        {reportBlock}
         <section className="space-y-4">
-          <div>
-            <h2 className="mt-1 text-base font-display-bold text-gray-900">
-              {m.platform_feedback_read_report_title()}
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-medium text-gray-900">
+              {m.platform_feedback_product_step_title()}
             </h2>
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">
-              {reportText}
+            <Button type="button" variant="ghost" size="sm" onClick={() => setMode('menu')}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              {m.platform_feedback_back()}
+            </Button>
+          </div>
+
+          <span className="relative block">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={m.platform_feedback_search_placeholder()}
+              className="pl-9"
+            />
+          </span>
+
+          {rows.length > 0 && (
+            <div className="divide-y divide-gray-200 border-y border-gray-200">
+              {rows.map((row) => (
+                <div key={row.id} className="flex items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    {row.suggested && (
+                      <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--color-rl-accent-dark)]">
+                        <Sparkles className="h-3 w-3" />
+                        {m.platform_feedback_klai_suggestion()}
+                      </span>
+                    )}
+                    <p className="truncate text-sm font-medium text-gray-900">{row.title}</p>
+                    {row.meta && <p className="truncate text-xs text-gray-400">{row.meta}</p>}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => linkToItem(row.id)}
+                  >
+                    <Link2 className="h-4 w-4" />
+                    {m.platform_feedback_link()}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {showMatches && !matches.isFetching && rows.length === 0 && (
+            <p className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500">
+              {m.platform_feedback_no_existing_item()}
             </p>
-          </div>
-          <div className="grid gap-3 text-sm text-gray-600 sm:grid-cols-2 lg:grid-cols-3">
-            <FeedbackMetaRow
-              label={m.platform_col_organization()}
-              value={item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()}
-            />
-            <FeedbackMetaRow
-              label={m.platform_feedback_reporter_label()}
-              value={feedbackSubmissionReporterLabel(item) ?? '-'}
-            />
-            <FeedbackMetaRow label={m.platform_feedback_page_url()} value={item.page_url ?? '-'} />
-            <FeedbackMetaRow label={m.platform_feedback_route_id()} value={item.route_id ?? '-'} />
-            <FeedbackMetaRow
-              label={m.platform_feedback_context()}
-              value={[item.locale, item.viewport].filter(Boolean).join(' / ') || '-'}
-            />
-            <FeedbackMetaRow label={m.platform_col_created()} value={fmtDate(item.created_at)} />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="outline">{feedbackKindLabel(item.event_type)}</Badge>
-            <Badge variant={item.status === 'new' ? 'outline' : 'secondary'}>
-              {feedbackStatusLabel(item.status)}
-            </Badge>
-            {(item.feedback_type || item.severity) && (
-              <Badge variant="secondary">
-                {item.feedback_type || item.severity}
-              </Badge>
-            )}
+          )}
+
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-gray-300 px-4 py-3">
+            <span className="text-sm text-gray-600">{m.platform_feedback_create_new_fallback()}</span>
+            <Button type="button" disabled={busy} onClick={createProductItem}>
+              {createItem.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <PlusCircle className="h-4 w-4" />
+              )}
+              {m.platform_feedback_create_new_title()}
+            </Button>
           </div>
         </section>
-        )}
-
-            <>
-              {activeSubmissionStep === 'proposal' && (
-              <section className="space-y-4">
-                <div>
-                  <h2 className="mt-1 text-base font-display-bold text-gray-900">
-                    {m.platform_feedback_triage_proposal_title()}
-                  </h2>
-                  <p className="mt-2 text-sm leading-6 text-gray-700">{proposalSummary}</p>
-                </div>
-                <div className="flex flex-wrap gap-2 text-xs">
-                  <Badge variant="outline">
-                    {m.platform_feedback_suggestion_action({
-                      action: feedbackSuggestionActionLabel(recommendedAction),
-                    })}
-                  </Badge>
-                  <Badge variant="outline">
-                    {m.platform_feedback_suggestion_type({
-                      type: feedbackItemKindLabel(suggestedKind),
-                    })}
-                  </Badge>
-                  {suggestion?.suggested_area && (
-                    <Badge variant="outline">
-                      {m.platform_feedback_suggestion_area({
-                        area: suggestion.suggested_area,
-                      })}
-                    </Badge>
-                  )}
-                  {suggestion?.suggested_severity && (
-                    <Badge variant="outline">
-                      {m.platform_feedback_suggestion_severity({
-                        severity: suggestion.suggested_severity,
-                      })}
-                    </Badge>
-                  )}
-                </div>
-                {recommendedItem && (
-                  <div className="rounded-lg border border-gray-200 px-4 py-3">
-                    <p className="text-xs font-medium text-gray-500">
-                      {m.platform_feedback_existing_item_found()}
-                    </p>
-                    <p className="mt-1 truncate text-sm font-medium text-gray-900">
-                      {recommendedItem.title}
-                    </p>
-                    <p className="mt-1 text-xs text-gray-400">
-                      {[recommendedItem.kind, recommendedItem.status, recommendedItem.area]
-                        .filter(Boolean)
-                        .join(' / ')}
-                    </p>
-                  </div>
-                )}
-              </section>
-              )}
-
-              {activeSubmissionStep === 'decision' && (
-              <>
-              <section className="space-y-4">
-                <div>
-                  <h2 className="mt-1 text-base font-display-bold text-gray-900">
-                    {m.platform_feedback_choose_action_title()}
-                  </h2>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className={`${actionButtonClass} ${
-                      triageAction === 'recommended' ? selectedActionClass : ''
-                    }`}
-                    onClick={() => setTriageAction('recommended')}
-                  >
-                    <CheckCircle2 className="h-4 w-4 shrink-0" />
-                    {feedbackSuggestionPrimaryLabel(
-                      recommendedAction,
-                      recommendedItem?.title,
-                      suggestedKind,
-                    )}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className={`${actionButtonClass} ${
-                      triageAction === 'link' ? selectedActionClass : ''
-                    }`}
-                    onClick={() => setTriageAction('link')}
-                  >
-                    <Link2 className="h-4 w-4 shrink-0" />
-                    {m.platform_feedback_link_existing_title()}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className={`${actionButtonClass} ${
-                      triageAction === 'create' ? selectedActionClass : ''
-                    }`}
-                    onClick={() => setTriageAction('create')}
-                  >
-                    <PlusCircle className="h-4 w-4 shrink-0" />
-                    {m.platform_feedback_create_new_title()}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className={`${actionButtonClass} ${
-                      triageAction === 'support' ? selectedActionClass : ''
-                    }`}
-                    onClick={() => setTriageAction('support')}
-                    disabled={busy}
-                  >
-                    <LifeBuoy className="h-4 w-4 shrink-0" />
-                    {m.platform_feedback_primary_support()}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className={`${actionButtonClass} ${
-                      triageAction === 'dismiss' ? selectedActionClass : ''
-                    } md:col-span-2`}
-                    onClick={() => setTriageAction('dismiss')}
-                  >
-                    <ArchiveX className="h-4 w-4 shrink-0" />
-                    {m.platform_feedback_action_dismiss()}
-                  </Button>
-                </div>
-              </section>
-
-              <section className="space-y-4">
-                {triageAction === 'recommended' && (
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-medium text-gray-900">
-                      {m.platform_feedback_recommended_action_title()}
-                    </h3>
-                    <Button
-                      type="button"
-                      disabled={busy || !canAcceptRecommendedAction || items.isFetching}
-                      onClick={acceptRecommendedAction}
-                    >
-                      {items.isFetching ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="h-4 w-4" />
-                      )}
-                      {feedbackSuggestionPrimaryLabel(
-                        recommendedAction,
-                        recommendedItem?.title,
-                        suggestedKind,
-                      )}
-                    </Button>
-                  </div>
-                )}
-
-                {triageAction === 'support' && (
-                  <div className="space-y-3">
-                    <p className="text-sm leading-6 text-gray-600">
-                      {m.platform_feedback_support_help()}
-                    </p>
-                    <Button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        support.mutate(item.id, { onSuccess: onClose })
-                      }}
-                    >
-                      <LifeBuoy className="h-4 w-4" />
-                      {m.platform_feedback_primary_support()}
-                    </Button>
-                  </div>
-                )}
-
-                {triageAction === 'dismiss' && (
-                  <div className="space-y-3">
-                    <p className="text-sm leading-6 text-gray-600">
-                      {m.platform_feedback_dismiss_help()}
-                    </p>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => {
-                        dismiss.mutate(item.id, { onSuccess: onClose })
-                      }}
-                    >
-                      <ArchiveX className="h-4 w-4" />
-                      {m.platform_feedback_action_dismiss()}
-                    </Button>
-                  </div>
-                )}
-
-                {triageAction === 'link' && (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <h3 className="text-sm font-medium text-gray-900">
-                        {m.platform_feedback_link_existing_title()}
-                      </h3>
-                      {items.isFetching && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor={`feedback-item-search-${item.id}`}>
-                        {m.platform_feedback_smart_search_label()}
-                      </Label>
-                      <span className="relative block">
-                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                        <Input
-                          id={`feedback-item-search-${item.id}`}
-                          value={itemSearch}
-                          onChange={(event) => setItemSearch(event.target.value)}
-                          placeholder={m.platform_feedback_search_placeholder()}
-                          className="pl-9"
-                        />
-                      </span>
-                    </div>
-                    <div className="space-y-2">
-                      {(items.data ?? []).map((existing) => (
-                        <div
-                          key={existing.id}
-                          className="flex items-start justify-between gap-3 border-t border-gray-200 py-3 first:border-t-0"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-gray-900">
-                              {existing.title}
-                            </p>
-                            <p className="mt-1 text-xs text-gray-400">
-                              {[existing.kind, existing.status, existing.area]
-                                .filter(Boolean)
-                                .join(' / ')}
-                            </p>
-                            <p className="mt-1 text-xs text-gray-400">
-                              {m.platform_feedback_reporter_counts({
-                                orgs: existing.org_count,
-                                users: existing.user_count,
-                              })}
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            disabled={busy}
-                            onClick={() => {
-                              linkItem.mutate(
-                                {
-                                  submissionId: item.id,
-                                  item_id: existing.id,
-                                  link_type: linkType,
-                                },
-                                { onSuccess: onClose },
-                              )
-                            }}
-                          >
-                            <Link2 className="h-4 w-4" />
-                            {m.platform_feedback_link()}
-                          </Button>
-                        </div>
-                      ))}
-                      {!items.isFetching && (items.data ?? []).length === 0 && (
-                        <p className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500">
-                          {m.platform_feedback_no_existing_item()}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {triageAction === 'create' && (
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-medium text-gray-900">
-                      {m.platform_feedback_create_new_title()}
-                    </h3>
-                    <Select value={kind} onChange={(event) => setKind(event.target.value)}>
-                      <option value="feature">{m.platform_feedback_item_kind_feature()}</option>
-                      <option value="bug">{m.platform_feedback_item_kind_bug()}</option>
-                      <option value="ux_confusion">{m.platform_feedback_item_kind_ux()}</option>
-                      <option value="docs">{m.platform_feedback_item_kind_docs()}</option>
-                      <option value="support_pattern">{m.platform_feedback_item_kind_support()}</option>
-                    </Select>
-                    <Input
-                      value={title}
-                      onChange={(event) => setTitle(event.target.value)}
-                      placeholder={m.platform_feedback_title_placeholder()}
-                    />
-                    <Textarea
-                      value={summary}
-                      onChange={(event) => setSummary(event.target.value)}
-                      rows={4}
-                      placeholder={m.platform_feedback_summary_placeholder()}
-                    />
-                    <Input
-                      value={area}
-                      onChange={(event) => setArea(event.target.value)}
-                      placeholder={m.platform_feedback_area_placeholder()}
-                    />
-                    <Button
-                      type="button"
-                      disabled={busy || title.trim().length < 3}
-                      onClick={() => {
-                        createItem.mutate(
-                          {
-                            submissionId: item.id,
-                            kind,
-                            title: title.trim(),
-                            summary: summary.trim() || null,
-                            area: area.trim() || null,
-                            link_type: linkType,
-                          },
-                          { onSuccess: onClose },
-                        )
-                      }}
-                    >
-                      <PlusCircle className="h-4 w-4" />
-                      {m.platform_feedback_create_item()}
-                    </Button>
-                  </div>
-                )}
-              </section>
-              </>
-              )}
-            </>
-
-          {(dismiss.isSuccess || support.isSuccess || createItem.isSuccess || linkItem.isSuccess) && (
-            <div className="flex items-center gap-2 rounded-lg bg-[var(--color-success-bg)] px-3 py-2 text-sm text-[var(--color-success-text)]">
-              <CheckCircle2 className="h-4 w-4" />
-              {m.admin_settings_saved()}
-            </div>
-          )}
-
-          {activeSubmissionStep === 'decision' && (
-            <section className="space-y-3 border-t border-gray-200 pt-6">
-              <h3 className="text-sm font-medium text-gray-900">
-                {m.platform_feedback_set_status_manually()}
-              </h3>
-              <div className="space-y-1.5">
-                <Label htmlFor={`feedback-submission-status-${item.id}`}>
-                  {m.platform_col_status()}
-                </Label>
-                <Select
-                  id={`feedback-submission-status-${item.id}`}
-                  value={draftStatus}
-                  onChange={(event) => setDraftStatus(event.target.value)}
-                >
-                  <option value="new">{m.platform_feedback_status_new()}</option>
-                  <option value="open">{m.platform_feedback_status_open()}</option>
-                  <option value="support">{m.platform_feedback_status_support()}</option>
-                  <option value="resolved">{m.platform_feedback_status_resolved()}</option>
-                  <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
-                </Select>
-              </div>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={busy || draftStatus === item.status}
-                onClick={saveSubmissionStatus}
-              >
-                {updateSubmission.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {m.admin_shared_save()}
-              </Button>
-              {updateSubmission.isSuccess && (
-                <p className="text-sm text-[var(--color-success)]">
-                  {m.platform_feedback_submission_saved()}
-                </p>
-              )}
-            </section>
-          )}
-
-          <div className="flex items-center justify-between border-t border-gray-200 pt-4">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
-                disabled={busy}
-                onClick={() => setConfirmDeleteOpen(true)}
-              >
-                {deleteSubmission.isPending ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4 mr-2" />
-                )}
-                {m.platform_delete()}
-              </Button>
-              <div className="flex items-center gap-3">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={submissionStepIndex === 0}
-                  onClick={previousSubmissionStep}
-                >
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  {m.admin_shared_wizard_previous()}
-                </Button>
-                {submissionStepIndex < submissionStepOrder.length - 1 && (
-                  <Button type="button" onClick={nextSubmissionStep}>
-                    {m.admin_shared_wizard_next()}
-                    <ArrowRight className="h-4 w-4 ml-2" />
-                  </Button>
-                )}
-              </div>
-            </div>
+        {deleteDialog}
+        {dismissDialog}
       </div>
-      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {m.platform_feedback_delete_submission_title()}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {m.platform_feedback_delete_submission_description()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
-              onClick={() => {
-                deleteSubmission.mutate(item.id, { onSuccess: onClose })
-              }}
+    )
+  }
+
+  if (mode === 'status') {
+    return (
+      <div className="space-y-6">
+        {header}
+        {reportBlock}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-medium text-gray-900">
+              {m.platform_feedback_choice_status()}
+            </h2>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setMode('menu')}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              {m.platform_feedback_back()}
+            </Button>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`feedback-submission-status-${item.id}`}>{m.platform_col_status()}</Label>
+            <Select
+              id={`feedback-submission-status-${item.id}`}
+              value={draftStatus}
+              onChange={(event) => setDraftStatus(event.target.value)}
             >
-              {m.platform_delete()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              <option value="new">{m.platform_feedback_status_new()}</option>
+              <option value="open">{m.platform_feedback_status_open()}</option>
+              <option value="support">{m.platform_feedback_status_support()}</option>
+              <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+              <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+            </Select>
+          </div>
+          <Button type="button" disabled={busy || draftStatus === item.status} onClick={saveStatus}>
+            {updateSubmission.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            {m.admin_shared_save()}
+          </Button>
+        </section>
+        {deleteDialog}
+        {dismissDialog}
+      </div>
+    )
+  }
+
+  // mode === 'menu'
+  return (
+    <div className="space-y-6">
+      {header}
+      {reportBlock}
+
+      {suggestion && (
+        <p className="flex items-start gap-2 text-sm text-[var(--color-rl-accent-dark)]">
+          <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {candidate
+              ? m.platform_feedback_advice_match({
+                  title: candidate.title ?? `#${candidate.item_id}`,
+                })
+              : m.platform_feedback_advice_new()}
+          </span>
+        </p>
+      )}
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium text-gray-900">
+          {m.platform_feedback_triage_question()}
+        </h2>
+        <div className="space-y-2">
+          <TriageChoice
+            icon={Layers}
+            label={m.platform_feedback_choice_product()}
+            hint={m.platform_feedback_choice_product_hint()}
+            onClick={() => setMode('product')}
+          />
+          <TriageChoice
+            icon={LifeBuoy}
+            label={m.platform_feedback_choice_support()}
+            hint={m.platform_feedback_choice_support_hint()}
+            disabled={busy}
+            onClick={createSupportItem}
+          />
+          <TriageChoice
+            icon={ArchiveX}
+            label={m.platform_feedback_action_dismiss()}
+            hint={m.platform_feedback_choice_dismiss_hint()}
+            disabled={busy}
+            onClick={() => setConfirmDismissOpen(true)}
+          />
+        </div>
+        <button
+          type="button"
+          className="text-xs text-gray-400 underline-offset-2 hover:text-gray-600 hover:underline"
+          onClick={() => setMode('status')}
+        >
+          {m.platform_feedback_choice_status()}
+        </button>
+      </section>
+
+      <div className="flex border-t border-gray-200 pt-4">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
+          disabled={busy}
+          onClick={() => setConfirmDeleteOpen(true)}
+        >
+          <Trash2 className="h-4 w-4 mr-2" />
+          {m.platform_delete()}
+        </Button>
+      </div>
+      {deleteDialog}
+      {dismissDialog}
     </div>
   )
 }
