@@ -37,7 +37,7 @@ function PasswordSetPage() {
     e.preventDefault()
     setError(null)
 
-    if (password.length < 8) {
+    if (password.length < 12) {
       setError(m.set_error_min_length())
       return
     }

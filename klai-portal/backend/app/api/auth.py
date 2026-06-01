@@ -59,6 +59,7 @@ from sqlalchemy.orm import selectinload
 from app.api.bearer import bearer  # BFF Phase A4 — session-aware bearer shim
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
+from app.core.password_policy import PasswordPolicyError, validate_password_strength
 from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
 from app.services.auth_links import AuthLinkRoute, build_url_template
@@ -1098,6 +1099,21 @@ async def password_set(body: PasswordSetRequest) -> None:
     passed through ``/api/auth/oidc/start`` so the browser is the one calling
     ``/authorize``) — tracked as a follow-up.
     """
+    try:
+        validate_password_strength(body.new_password)
+    except PasswordPolicyError as exc:
+        _emit_auth_event(
+            "password_set_failed",
+            reason="weak_password",
+            actor_user_id=body.user_id,
+            outcome="400",
+            level="warning",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
     try:
         flow = await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:

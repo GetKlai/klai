@@ -87,9 +87,9 @@ def test_zxcvbn_unavailable_falls_back_to_length() -> None:
     """REQ-22.4: when zxcvbn import fails at module load, the validator
     falls back to length-only. We simulate the unavailability flag.
     """
-    from app.api import signup as signup_module
+    from app.core import password_policy
 
-    with patch.object(signup_module, "_ZXCVBN_AVAILABLE", False):
+    with patch.object(password_policy, "_ZXCVBN_AVAILABLE", False):
         # ``Password1234`` would be rejected by zxcvbn (score 1) but is OK
         # under length-only fallback.
         body = SignupRequest(**_payload("Password1234"))
