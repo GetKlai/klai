@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Final, Literal
 from urllib.parse import urlparse
 
+import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
@@ -156,6 +157,58 @@ class RoleUpdateResponse(MessageResponse):
     zitadel_sync_failed: bool = False
 
 
+async def _reuse_existing_zitadel_user_for_invite(
+    *,
+    body: InviteRequest,
+    org: PortalOrg,
+    db: AsyncSession,
+    conflict_exc: httpx.HTTPStatusError,
+) -> str:
+    # A user may already exist globally because they signed up socially,
+    # belonged to another tenant, or were left behind by an older partial
+    # onboarding attempt. Reuse that identity for this workspace instead
+    # of surfacing Zitadel's global-username 409 as a tenant invite failure.
+    try:
+        existing_user_id = await zitadel.find_user_id_by_email(str(body.email))
+    except Exception as lookup_exc:
+        logger.exception("Existing user lookup failed for %s: %s", body.email, lookup_exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Uitnodiging kon niet worden verwerkt. Probeer het opnieuw.",
+        ) from lookup_exc
+
+    if not existing_user_id:
+        _slog.warning(
+            "invite_existing_zitadel_user_not_found",
+            email=body.email,
+            org_id=org.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Dit e-mailadres bestaat al, maar kon niet aan deze workspace worden gekoppeld.",
+        ) from conflict_exc
+
+    membership_result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == existing_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    if membership_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Deze gebruiker is al lid van deze workspace.",
+        ) from conflict_exc
+
+    _slog.info(
+        "invite_existing_zitadel_user_reused",
+        email=body.email,
+        org_id=org.id,
+        zitadel_user_id=existing_user_id,
+    )
+    return existing_user_id
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -233,6 +286,7 @@ async def invite_user(
     # Both removals are guarded by ``rules/no-portal-plan-gate.yml`` (ast-
     # grep) so a future refactor cannot silently reintroduce them.
 
+    zitadel_user_created = False
     try:
         user_data = await zitadel.invite_user(
             org_id=settings.zitadel_portal_org_id,
@@ -241,6 +295,22 @@ async def invite_user(
             last_name=body.last_name,
             preferred_language=body.preferred_language,
         )
+        zitadel_user_id: str = user_data["userId"]
+        zitadel_user_created = True
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != status.HTTP_409_CONFLICT:
+            logger.exception("User invite failed for %s: %s", body.email, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to invite user: {exc}",
+            ) from exc
+
+        zitadel_user_id = await _reuse_existing_zitadel_user_for_invite(
+            body=body,
+            org=org,
+            db=db,
+            conflict_exc=exc,
+        )
     except Exception as exc:
         logger.exception("User invite failed for %s: %s", body.email, exc)
         raise HTTPException(
@@ -248,9 +318,15 @@ async def invite_user(
             detail=f"Failed to invite user: {exc}",
         ) from exc
 
-    zitadel_user_id: str = user_data["userId"]
-
     async def _cleanup_zitadel_user(reason: str) -> None:
+        if not zitadel_user_created:
+            _slog.info(
+                "invite_zitadel_cleanup_skipped_existing_user",
+                zitadel_user_id=zitadel_user_id,
+                email=body.email,
+                reason=reason,
+            )
+            return
         try:
             await zitadel.remove_user(
                 org_id=settings.zitadel_portal_org_id,
@@ -302,6 +378,21 @@ async def invite_user(
                 user_id=zitadel_user_id,
                 role=zitadel_role,
             )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == status.HTTP_409_CONFLICT:
+                _slog.info(
+                    "invite_zitadel_grant_already_exists",
+                    org_id=org.id,
+                    portal_role=body.role,
+                    zitadel_user_id=zitadel_user_id,
+                )
+            else:
+                logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
+                await _cleanup_zitadel_user("role_grant_failed")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to assign project role: {exc}",
+                ) from exc
         except Exception as exc:
             logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
             await _cleanup_zitadel_user("role_grant_failed")
@@ -355,8 +446,9 @@ async def invite_user(
     try:
         db.add(user_row)
         await create_default_personal_kb(zitadel_user_id, org.id, db)
-        failure_step = "invite_mail"
-        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
+        if zitadel_user_created:
+            failure_step = "invite_mail"
+            await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
         failure_step = "portal_commit"
         await db.commit()
     except Exception as exc:
@@ -402,7 +494,11 @@ async def invite_user(
 
     return InviteResponse(
         user_id=zitadel_user_id,
-        message=f"Uitnodiging verstuurd naar {body.email}.",
+        message=(
+            f"Uitnodiging verstuurd naar {body.email}."
+            if zitadel_user_created
+            else f"Gebruiker {body.email} toegevoegd aan deze workspace."
+        ),
     )
 
 
