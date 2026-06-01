@@ -18,7 +18,7 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useSourceRename, useSourceSync } from '../-sources-hooks'
+import { useSourceDelete, useSourceRename, useSourceSync } from '../-sources-hooks'
 import type { Source } from '../-sources-types'
 
 vi.mock('@/lib/apiFetch', () => ({
@@ -101,6 +101,44 @@ describe('useSourceSync', () => {
     expect(apiFetchMock).toHaveBeenCalledWith(
       '/api/app/knowledge-bases/kb-a/connectors/conn-1/sync',
       { method: 'POST' },
+    )
+  })
+})
+
+describe('useSourceDelete', () => {
+  beforeEach(() => {
+    apiFetchMock.mockReset()
+    apiFetchMock.mockResolvedValue(undefined)
+  })
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('deletes an empty upload source via the upload endpoint', async () => {
+    const wrapper = makeWrapper()
+    const source = uploadSource({
+      id: 'art-empty',
+      chunks_count: 0,
+      index_status: null,
+      status: null,
+    })
+    const { result } = renderHook(() => useSourceDelete('kb-a', source), { wrapper })
+    result.current.mutate()
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/app/knowledge-bases/kb-a/uploads/art-empty',
+      { method: 'DELETE' },
+    )
+  })
+
+  it('deletes a connector source via the connector endpoint', async () => {
+    const wrapper = makeWrapper()
+    const { result } = renderHook(() => useSourceDelete('kb-a', connectorSource()), { wrapper })
+    result.current.mutate()
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/app/knowledge-bases/kb-a/connectors/conn-1',
+      { method: 'DELETE' },
     )
   })
 })

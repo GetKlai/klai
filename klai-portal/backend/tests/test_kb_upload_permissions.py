@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -21,7 +22,7 @@ from tests.conftest import make_perms
 # ---------------------------------------------------------------------------
 
 _KB_SLUG = "test-kb"
-_ARTIFACT_ID = "art-abc123"
+_ARTIFACT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 _ORG_ID = 1
 _USER_ID = "user-contributor"
 _OWNER_USER_ID = "user-owner"
@@ -44,19 +45,30 @@ def _make_kb() -> MagicMock:
     return kb
 
 
-def _make_db(kb_upload: object | None = None) -> AsyncMock:
+def _make_db(
+    kb_upload: object | None = None,
+    *,
+    artifact_upload: object | None = None,
+) -> AsyncMock:
     """Build a mock AsyncSession.
 
     Pass ``kb_upload=row`` to simulate the KBUpload-by-id lookup hitting; the
     default ``None`` makes that lookup return no row so callers exercise the
-    legacy artifact-id fallback path in ``delete_kb_upload``.
+    legacy artifact-id fallback path in ``delete_kb_upload``. Pass
+    ``artifact_upload=row`` to simulate the by-id lookup missing and the
+    artifact_id lookup hitting.
     """
     db = AsyncMock()
     db.add = MagicMock()
     db.delete = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=kb_upload)
-    db.execute = AsyncMock(return_value=result)
+    id_result = MagicMock()
+    id_result.scalar_one_or_none = MagicMock(return_value=kb_upload)
+    if artifact_upload is None:
+        db.execute = AsyncMock(return_value=id_result)
+    else:
+        artifact_result = MagicMock()
+        artifact_result.scalar_one_or_none = MagicMock(return_value=artifact_upload)
+        db.execute = AsyncMock(side_effect=[id_result, artifact_result])
     return db
 
 
@@ -506,6 +518,109 @@ async def test_delete_done_upload_cascades_to_artifact_then_deletes_row() -> Non
         user_id=None,  # owner
     )
     db.delete.assert_awaited_once_with(upload)
+
+
+@pytest.mark.asyncio
+async def test_delete_done_upload_by_artifact_id_deletes_kb_upload_row() -> None:
+    """A finished upload rendered in the Sources tab sends artifact_id.
+
+    The endpoint must still delete the matching kb_uploads row; otherwise
+    list_kb_sources re-surfaces it as a stale done upload after the artifact
+    is removed.
+    """
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb()
+    perms = make_perms(role="admin", user_id=_OWNER_USER_ID, org_id=_ORG_ID)
+    upload = _make_kb_upload(artifact_id=_ARTIFACT_ID, status_value="done")
+    db = _make_db(kb_upload=None, artifact_upload=upload)
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="owner"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(return_value=None),
+        ) as mock_delete,
+    ):
+        result = await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=_ARTIFACT_ID,
+            perms=perms,
+            db=db,
+        )
+
+    assert result is None
+    mock_delete.assert_awaited_once_with(
+        org.zitadel_org_id,
+        kb.slug,
+        _ARTIFACT_ID,
+        user_id=None,
+    )
+    db.delete.assert_awaited_once_with(upload)
+    db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_stale_done_upload_by_artifact_id_treats_ingest_404_as_success() -> None:
+    """A stale done upload has a kb_uploads row but no active ingest artifact.
+
+    Deleting it should remove the local row even when knowledge-ingest says
+    the artifact is already gone.
+    """
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb()
+    perms = make_perms(role="admin", user_id=_OWNER_USER_ID, org_id=_ORG_ID)
+    upload = _make_kb_upload(artifact_id=_ARTIFACT_ID, status_value="done")
+    db = _make_db(kb_upload=None, artifact_upload=upload)
+    not_found = httpx.HTTPStatusError(
+        "not found",
+        request=httpx.Request("DELETE", "http://knowledge-ingest/uploads/art"),
+        response=httpx.Response(404),
+    )
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="owner"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(side_effect=not_found),
+        ) as mock_delete,
+    ):
+        result = await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=_ARTIFACT_ID,
+            perms=perms,
+            db=db,
+        )
+
+    assert result is None
+    mock_delete.assert_awaited_once()
+    db.delete.assert_awaited_once_with(upload)
+    db.commit.assert_awaited()
 
 
 @pytest.mark.asyncio

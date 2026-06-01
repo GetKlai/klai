@@ -5,6 +5,7 @@ import datetime as dt
 import json
 from datetime import datetime, timedelta
 from typing import Literal
+from uuid import UUID
 
 import httpx
 import structlog
@@ -1567,23 +1568,11 @@ async def delete_kb_upload(
             detail="Contributor or owner access required",
         )
 
-    # Try to find a KBUpload row by id — this handles the
-    # processing/ingesting/failed case where no artifact exists yet
-    # (or where the artifact failed to materialise).
-    upload_row = await db.execute(
-        select(KBUpload).where(
-            KBUpload.id == upload_or_artifact_id,
-            KBUpload.org_id == perms.org_id,
-            KBUpload.kb_id == kb.id,
-        )
-    )
-    upload = upload_row.scalar_one_or_none()
-
     # Contributors: pass user_id so knowledge-ingest enforces ownership.
     # Owners: omit user_id to allow cross-user deletes.
     caller_user_id = perms.user_id if role == "contributor" else None
 
-    if upload is not None:
+    async def delete_tracked_upload(upload: KBUpload) -> None:
         # Contributor ownership check for in-flight uploads — mirrors
         # knowledge-ingest's X-User-ID gate on the artifact-side delete.
         if role == "contributor" and upload.created_by != perms.user_id:
@@ -1634,7 +1623,40 @@ async def delete_kb_upload(
         )
         return
 
-    # No KBUpload row — treat as a legacy artifact_id and forward.
+    upload: KBUpload | None = None
+    try:
+        upload_id = UUID(upload_or_artifact_id)
+    except ValueError:
+        upload_id = None
+
+    # Try to find a KBUpload row by id — this handles the
+    # processing/ingesting/failed case where no artifact exists yet
+    # (or where the artifact failed to materialise).
+    if upload_id is not None:
+        upload_row = await db.execute(
+            select(KBUpload).where(
+                KBUpload.id == upload_id,
+                KBUpload.org_id == perms.org_id,
+                KBUpload.kb_id == kb.id,
+            )
+        )
+        upload = upload_row.scalar_one_or_none()
+
+    if upload is None:
+        upload_row = await db.execute(
+            select(KBUpload).where(
+                KBUpload.artifact_id == upload_or_artifact_id,
+                KBUpload.org_id == perms.org_id,
+                KBUpload.kb_id == kb.id,
+            )
+        )
+        upload = upload_row.scalar_one_or_none()
+
+    if upload is not None:
+        await delete_tracked_upload(upload)
+        return
+
+    # No KBUpload row — treat as a standalone artifact_id and forward.
     # The artifact-side delete enforces its own ownership check on
     # contributor calls (user_id query param).
     await knowledge_ingest_client.delete_kb_upload(
