@@ -25,6 +25,7 @@ import structlog
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.core.provisioning_names import validate_slug_for_provisioning
 from app.services.provisioning.infrastructure import (
     _caddy_lock,
     _reload_caddy,
@@ -82,7 +83,8 @@ async def _delete_caddy_upstream(state: _DeprovisionState) -> None:
 
     # @MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.
     """
-    tenant_file = Path(settings.caddy_tenants_path) / f"{state.slug}.caddyfile"
+    names = validate_slug_for_provisioning(state.slug, domain=settings.domain)
+    tenant_file = Path(settings.caddy_tenants_path) / names.caddyfile_name
     tenant_file.unlink(missing_ok=True)
     loop = asyncio.get_running_loop()
     async with _caddy_lock:
@@ -100,7 +102,7 @@ async def _delete_librechat_container(state: _DeprovisionState) -> None:
 
     # @MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.
     """
-    container_name = f"librechat-{state.slug}"
+    container_name = validate_slug_for_provisioning(state.slug, domain=settings.domain).librechat_container
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _sync_remove_container, container_name)
     logger.info("librechat_container_removed", slug=state.slug)

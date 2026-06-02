@@ -84,7 +84,7 @@ async def step_external_kb_delete(state: _UserDeletionState) -> None:
 
     Both sub-operations are applied; errors from either propagate up.
     """
-    from app.services.kb_offboarding import apply_dispositions
+    from app.services.kb_offboarding import apply_dispositions, revoke_user_credentials
 
     if state.kb_dispositions:
         assert state.db_for_steps is not None, "db_for_steps must be set before step_external_kb_delete"
@@ -102,8 +102,15 @@ async def step_external_kb_delete(state: _UserDeletionState) -> None:
             zitadel_user_id=state.zitadel_user_id,
         )
 
-    # Credentials were already revoked in the request handler before calling the
-    # orchestrator; the counts are stored in state.
+    assert state.db_for_steps is not None, "db_for_steps must be set before step_external_kb_delete"
+    api_keys_count, mcp_tokens_count = await revoke_user_credentials(
+        state.zitadel_user_id,
+        state.org_id,
+        state.db_for_steps,
+    )
+    state.api_keys_count = api_keys_count
+    state.mcp_tokens_count = mcp_tokens_count
+
     logger.info(
         "user_deletion.credentials_revoked",
         api_keys=state.api_keys_count,
