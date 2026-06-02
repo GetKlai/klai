@@ -1,6 +1,6 @@
-from types import SimpleNamespace
 import urllib.parse
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
