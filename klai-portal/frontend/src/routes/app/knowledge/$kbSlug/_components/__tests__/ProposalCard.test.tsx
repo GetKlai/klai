@@ -3,8 +3,8 @@
  * SPEC-PORTAL-TAXONOMY-SPLIT-001 commit 4.
  *
  * Focus on the state-machine paths the extraction is most likely to
- * break (singleton edit-mode + singleton reject-mode + the edit
- * buffer initialisation on isEditing transition). Static JSX (badge
+ * break (singleton edit-mode + direct reject + the edit buffer
+ * initialisation on isEditing transition). Static JSX (badge
  * colours, date formatting) is intentionally NOT asserted - the live
  * Playwright pass on Voys covers that.
  */
@@ -35,15 +35,12 @@ function defaultProps() {
   return {
     canEdit: true,
     isEditing: false,
-    isRejecting: false,
     approvePending: false,
     rejectPending: false,
     onStartEdit: vi.fn(),
     onSubmitEdit: vi.fn(),
     onCancelEdit: vi.fn(),
-    onStartReject: vi.fn(),
-    onSubmitReject: vi.fn(),
-    onCancelReject: vi.fn(),
+    onReject: vi.fn(),
     onApprove: vi.fn(),
   }
 }
@@ -219,50 +216,14 @@ describe('ProposalCard - edit-mode', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Reject-mode
+// Direct reject
 // ---------------------------------------------------------------------------
 
-describe('ProposalCard - reject-mode', () => {
-  it('calls onStartReject when Reject button clicked', () => {
+describe('ProposalCard - direct reject', () => {
+  it('calls onReject when Reject button clicked', () => {
     const props = defaultProps()
     render(<ProposalCard proposal={proposal()} {...props} />)
     fireEvent.click(screen.getByText('Reject'))
-    expect(props.onStartReject).toHaveBeenCalledTimes(1)
-  })
-
-  it('shows reject input when isRejecting becomes true', () => {
-    const props = defaultProps()
-    const { rerender } = render(
-      <ProposalCard proposal={proposal()} {...props} isRejecting={false} />,
-    )
-    expect(screen.queryByPlaceholderText(/reason/i)).toBeNull()
-    rerender(<ProposalCard proposal={proposal()} {...props} isRejecting />)
-    expect(screen.getByPlaceholderText(/rejected/i)).toBeDefined()
-  })
-
-  it('calls onSubmitReject with typed reason', () => {
-    const props = defaultProps()
-    render(<ProposalCard proposal={proposal()} {...props} isRejecting />)
-    const reasonInput = screen.getByPlaceholderText(/rejected/i)
-    fireEvent.change(reasonInput, { target: { value: 'duplicate' } })
-    // In reject-mode the initial 'Reject' trigger is hidden; only the
-    // submit Button labelled 'Reject' remains, so getByText is enough.
-    fireEvent.click(screen.getByText('Reject'))
-    expect(props.onSubmitReject).toHaveBeenCalledTimes(1)
-    expect(props.onSubmitReject).toHaveBeenCalledWith('duplicate')
-  })
-
-  it('clears reject buffer when isRejecting flips from false to true (idempotent open)', () => {
-    const props = defaultProps()
-    const { rerender } = render(
-      <ProposalCard proposal={proposal()} {...props} isRejecting />,
-    )
-    const reasonInput = screen.getByPlaceholderText(/rejected/i)
-    fireEvent.change(reasonInput, { target: { value: 'typed' } })
-    // Close + re-open via prop changes
-    rerender(<ProposalCard proposal={proposal()} {...props} isRejecting={false} />)
-    rerender(<ProposalCard proposal={proposal()} {...props} isRejecting />)
-    const reopened = screen.getByPlaceholderText(/rejected/i)
-    expect((reopened as HTMLInputElement).value).toBe('')
+    expect(props.onReject).toHaveBeenCalledTimes(1)
   })
 })
