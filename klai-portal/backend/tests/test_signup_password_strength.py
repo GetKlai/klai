@@ -42,9 +42,9 @@ def test_short_password_rejected_with_length_error() -> None:
 @pytest.mark.parametrize(
     "weak_password",
     [
-        "Password1234",  # zxcvbn score 1
-        "aaaaaaaaaaaa",  # all-same chars, score 0
-        "1234567890ab",  # numeric run + suffix, score 0
+        "Password1234!",  # zxcvbn score 1
+        "aaaaaaaaaaaa!",  # all-same chars, score 0
+        "1234567890ab!",  # numeric run + suffix, score 0
     ],
 )
 def test_weak_password_rejected_by_zxcvbn(weak_password: str) -> None:
@@ -60,14 +60,14 @@ def test_user_input_context_lowers_score() -> None:
     be passed to zxcvbn so a password derived from the user's own PII
     scores below threshold even if it would otherwise look ok.
 
-    "Mark.Vletter" scores 3 (passes) without context, but drops to 2
+    "Mark!Vletter" scores 3 (passes) without context, but drops to 2
     once first_name/last_name are passed as user_inputs — the canonical
     proof that the wiring is in effect.
     """
     with pytest.raises(ValidationError) as exc_info:
         SignupRequest(
             **_payload(
-                "Mark.Vletter",
+                "Mark!Vletter",
                 first_name="Mark",
                 last_name="Vletter",
                 email="mark@voys.nl",
@@ -79,8 +79,8 @@ def test_user_input_context_lowers_score() -> None:
 
 def test_strong_passphrase_accepted() -> None:
     """REQ-22.1 positive: a high-entropy passphrase passes."""
-    body = SignupRequest(**_payload("correct horse battery staple"))
-    assert body.password == "correct horse battery staple"
+    body = SignupRequest(**_payload("correct horse battery staple!"))
+    assert body.password == "correct horse battery staple!"
 
 
 def test_zxcvbn_unavailable_falls_back_to_length() -> None:
@@ -92,5 +92,5 @@ def test_zxcvbn_unavailable_falls_back_to_length() -> None:
     with patch.object(password_policy, "_ZXCVBN_AVAILABLE", False):
         # ``Password1234`` would be rejected by zxcvbn (score 1) but is OK
         # under length-only fallback.
-        body = SignupRequest(**_payload("Password1234"))
-    assert body.password == "Password1234"
+        body = SignupRequest(**_payload("Password1234!"))
+    assert body.password == "Password1234!"

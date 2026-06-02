@@ -207,7 +207,7 @@ class TestOffboardEndpointHappyPath:
         assert user.status == "offboarded"
         db.commit.assert_awaited_once()
         # Zitadel deactivate called AFTER commit.
-        mock_zitadel.deactivate_user.assert_awaited_once()
+        mock_zitadel.deactivate_user.assert_awaited_once_with("uid-leaving", "zitadel-portal-org-id")
         # user.offboarded audit event includes the new metrics.
         offboard_calls = [c for c in mock_log.await_args_list if c.kwargs.get("action") == "user.offboarded"]
         assert len(offboard_calls) == 1

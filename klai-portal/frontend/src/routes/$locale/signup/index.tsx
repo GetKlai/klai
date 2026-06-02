@@ -80,11 +80,16 @@ function SignupPage() {
     setError(null)
 
     // SPEC-LAUNCH-SOFTLAUNCH-001 B-1: block before server roundtrip when
-    // the password obviously fails the backend ≥12 char floor. The backend
+    // the password obviously fails the backend length/symbol floor. The backend
     // zxcvbn check (score >= 3, REQ-22.1 SPEC-SEC-HYGIENE-001) still runs
     // server-side and surfaces a more specific error if the password is
     // long enough but too predictable.
-    if (form.password.length < 12) {
+    if (
+      form.password.length < 12 ||
+      !Array.from(form.password).some((char) =>
+        /[^\p{L}\p{N}\s]/u.test(char),
+      )
+    ) {
       setError(m.signup_password_too_short())
       return
     }
