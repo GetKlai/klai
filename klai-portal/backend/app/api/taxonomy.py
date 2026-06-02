@@ -941,6 +941,29 @@ async def get_backfill_status(
         ) from None
 
 
+@router.get("/{kb_slug}/taxonomy/backfill-active", dependencies=[Depends(get_kb_with_access)])
+async def get_active_backfill(
+    kb_slug: str,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Proxy the active queued/running taxonomy backfill for this KB."""
+    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
+    await _require_role(kb, perms.user_id, db, "contributor")
+
+    org = await _load_org_or_500(db, perms.org_id)
+
+    from app.services.knowledge_ingest_client import get_active_taxonomy_backfill
+
+    try:
+        return await get_active_taxonomy_backfill(org.zitadel_org_id, kb_slug)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not fetch active backfill status",
+        ) from None
+
+
 # -- Coverage stats -----------------------------------------------------------
 
 # 5-minute in-memory cache: key = (org_id_str, kb_slug), value = (monotonic_ts, data_dict)
