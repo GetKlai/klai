@@ -376,6 +376,7 @@ async def rotate_api_key(
         rotated_from_key_id=source_key.id,
     )
     db.add(new_key)
+    await db.flush()
 
     for row in kb_rows:
         db.add(
