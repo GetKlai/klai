@@ -9,8 +9,8 @@
  *   1. Empty KB: shown when total chunks >= SUGGEST_MIN_CHUNKS.
  *   2. Populated KB: shown when untagged_count >=
  *      SUGGEST_MIN_CHUNKS AND untagged percentage > SUGGEST_MIN_PCT.
- *      This triggers re-tagging against existing nodes, not category
- *      proposal generation.
+ *      This categorizes missing chunks against existing nodes, not category
+ *      proposal generation or full reclassification.
  */
 import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
