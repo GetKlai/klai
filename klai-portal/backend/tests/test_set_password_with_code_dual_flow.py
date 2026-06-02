@@ -1,7 +1,7 @@
 """Coverage for set_password_with_code's dual-path (invite + reset) behaviour.
 
 Zitadel has two flows that both arrive on Klai's /password/set page:
-  - Invite:  POST /v2/users/{id}/invite_code/verify  + POST /v2/users/{id}/password
+  - Invite:  POST /v2/users/{id}/invite_code/verify  + PATCH /v2/users/{id}
   - Reset:   POST /v2/users/{id}/password (with verificationCode in the body)
 
 set_password_with_code MUST try invite first, then fall back to reset on 4xx.
@@ -20,6 +20,7 @@ def _client_with_mocked_http():
 
     client = ZitadelClient.__new__(ZitadelClient)
     client._http = MagicMock()
+    client._http.patch = AsyncMock()
     return client
 
 
@@ -41,28 +42,33 @@ def _resp(status: int, json_body: dict | None = None) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_invite_flow_happy_path() -> None:
-    """invite_code/verify 200 → password (no code) 200 → return."""
+    """invite_code/verify 200 -> update-user password 200 -> return."""
     client = _client_with_mocked_http()
     client._http.post = AsyncMock(
         side_effect=[
             _resp(200, {"details": {"sequence": "11"}}),  # invite_code/verify
-            _resp(200, {"details": {"sequence": "12"}}),  # password (no code)
         ]
     )
+    client._http.patch = AsyncMock(return_value=_resp(200, {"details": {"sequence": "12"}}))
 
     flow = await client.set_password_with_code("uid-1", "INVITE", "NewSecret123!")
     assert flow == "invite"
 
-    assert client._http.post.await_count == 2
-    # First call: verify
+    assert client._http.post.await_count == 1
     first = client._http.post.await_args_list[0]
     assert first.args[0] == "/v2/users/uid-1/invite_code/verify"
     assert first.kwargs["json"] == {"verificationCode": "INVITE"}
-    # Second call: password without verificationCode
-    second = client._http.post.await_args_list[1]
-    assert second.args[0] == "/v2/users/uid-1/password"
-    assert "verificationCode" not in second.kwargs["json"]
-    assert second.kwargs["json"]["newPassword"]["password"] == "NewSecret123!"
+
+    client._http.patch.assert_awaited_once()
+    second = client._http.patch.await_args
+    assert second.args[0] == "/v2/users/uid-1"
+    assert second.kwargs["json"] == {
+        "human": {
+            "password": {
+                "password": {"password": "NewSecret123!", "changeRequired": False},
+            }
+        }
+    }
 
 
 @pytest.mark.asyncio
@@ -80,6 +86,7 @@ async def test_invite_verify_4xx_falls_back_to_reset_flow() -> None:
     assert flow == "reset"
 
     assert client._http.post.await_count == 2
+    client._http.patch.assert_not_awaited()
     second = client._http.post.await_args_list[1]
     assert second.args[0] == "/v2/users/uid-1/password"
     # Reset flow includes verificationCode
@@ -97,6 +104,7 @@ async def test_invite_verify_5xx_propagates() -> None:
     assert exc.value.response.status_code == 502
     # No fallback attempted on 5xx.
     assert client._http.post.await_count == 1
+    client._http.patch.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -114,19 +122,21 @@ async def test_reset_flow_4xx_invalid_code() -> None:
         await client.set_password_with_code("uid-1", "BOGUS", "NewSecret123!")
     assert exc.value.response.status_code == 400
     assert client._http.post.await_count == 2
+    client._http.patch.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_invite_flow_password_step_5xx() -> None:
-    """invite_code/verify 200 → password 502 → propagate 502."""
+    """invite_code/verify 200 -> update-user password 502 -> propagate 502."""
     client = _client_with_mocked_http()
     client._http.post = AsyncMock(
         side_effect=[
             _resp(200, {"details": {"sequence": "11"}}),
-            _resp(502, {"error": "bad gw"}),
         ]
     )
+    client._http.patch = AsyncMock(return_value=_resp(502, {"error": "bad gw"}))
 
     with pytest.raises(httpx.HTTPStatusError) as exc:
         await client.set_password_with_code("uid-1", "INVITE", "NewSecret123!")
     assert exc.value.response.status_code == 502
+    client._http.patch.assert_awaited_once()
