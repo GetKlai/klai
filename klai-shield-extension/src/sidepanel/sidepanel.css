@@ -78,16 +78,11 @@ svg {
 .login-brand {
   display: flex;
   align-items: center;
-  gap: 11px;
-}
-
-.login-mark {
-  width: 42px;
-  height: 42px;
+  min-height: 46px;
 }
 
 .login-logo {
-  width: 112px;
+  width: 142px;
   height: auto;
 }
 
@@ -140,12 +135,6 @@ svg {
   padding: 12px 14px;
 }
 
-.header-mark {
-  width: 27px;
-  height: 27px;
-  flex: 0 0 auto;
-}
-
 .header-title {
   display: flex;
   min-width: 0;
@@ -154,7 +143,7 @@ svg {
 }
 
 .header-logo {
-  width: 55px;
+  width: 72px;
   height: auto;
 }
 
