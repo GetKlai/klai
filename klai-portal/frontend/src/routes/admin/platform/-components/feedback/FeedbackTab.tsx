@@ -96,7 +96,7 @@ function InboxPanel({
         <Select
           value={statusFilter}
           onChange={(event) => setStatusFilter(event.target.value)}
-          className="h-9 min-w-[150px]"
+          className="h-9 w-48"
           aria-label={m.platform_feedback_filter_status()}
         >
           <option value="">{m.platform_feedback_filter_all_statuses()}</option>
@@ -109,7 +109,7 @@ function InboxPanel({
         <Select
           value={kindFilter}
           onChange={(event) => setKindFilter(event.target.value)}
-          className="h-9 min-w-[130px]"
+          className="h-9 w-48"
           aria-label={m.platform_feedback_filter_type()}
         >
           <option value="">{m.platform_feedback_filter_all_types()}</option>
@@ -238,7 +238,7 @@ function OpenItemsPanel({
           <Select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
-            className="h-9 min-w-[150px]"
+            className="h-9 w-48"
             aria-label={m.platform_feedback_filter_status()}
           >
             <option value="active">{m.platform_feedback_filter_active()}</option>
@@ -250,7 +250,7 @@ function OpenItemsPanel({
           <Select
             value={kindFilter}
             onChange={(event) => setKindFilter(event.target.value)}
-            className="h-9 min-w-[130px]"
+            className="h-9 w-48"
             aria-label={m.platform_feedback_filter_type()}
           >
             <option value="all">{m.platform_feedback_filter_all_types()}</option>
