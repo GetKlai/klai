@@ -31,7 +31,9 @@ from qdrant_client import AsyncQdrantClient  # noqa: E402
 from qdrant_client.models import (  # noqa: E402
     FieldCondition,
     Filter,
+    IsEmptyCondition,
     MatchValue,
+    PayloadField,
 )
 
 from knowledge_ingest.config import settings  # noqa: E402
@@ -81,6 +83,29 @@ class BootstrapResponse(BaseModel):
     # or fell back, base_clusters_found equals clusters_found.
     base_clusters_found: int | None = None
     reason: str | None = None
+
+
+def _build_bootstrap_scroll_filter(
+    org_id: str,
+    kb_slug: str,
+    *,
+    only_untagged: bool,
+) -> Filter:
+    """Build the Qdrant filter for taxonomy proposal bootstrap.
+
+    Initial taxonomy bootstrap (no existing nodes) needs the whole KB. Once
+    taxonomy nodes exist, the UI entry point is attached to the Untagged row,
+    so proposal discovery must only inspect chunks not yet assigned to any
+    node. Scanning the whole KB here rediscovers existing categories and
+    produces near-duplicate proposals.
+    """
+    must = [
+        FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+        FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+    ]
+    if only_untagged:
+        must.append(IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_ids")))
+    return Filter(must=must)
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +245,8 @@ async def taxonomy_bootstrap_proposals(
     """Scan existing Qdrant chunks and generate bootstrap taxonomy proposals.
 
     SPEC-TAXONOMY-V2-001: Clio-style density-driven path that:
-    - Samples ALL documents (not just first 50)
+    - Samples all documents when bootstrapping an empty taxonomy; samples
+      only untagged documents once taxonomy nodes already exist
     - Uses HDBSCAN clustering to determine category count
     - Names each cluster with a focused LLM call (batched cross-cluster aware,
       with per-cluster fallback). Naming criteria are shared across the two
@@ -242,17 +268,18 @@ async def taxonomy_bootstrap_proposals(
         api_key=settings.qdrant_api_key or None,
     )
 
-    scroll_filter = Filter(
-        must=[
-            FieldCondition(key="org_id", match=MatchValue(value=req.org_id)),
-            FieldCondition(key="kb_slug", match=MatchValue(value=req.kb_slug)),
-        ]
-    )
-
     # Fetch existing taxonomy nodes for dedup
     existing_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
+    scroll_filter = _build_bootstrap_scroll_filter(
+        req.org_id,
+        req.kb_slug,
+        only_untagged=bool(existing_nodes),
+    )
 
-    # V2 path: scroll ALL docs with vectors, group by artifact_id, average vectors
+    # V2 path: scroll docs with vectors, group by artifact_id. With no
+    # existing taxonomy this is a full-KB bootstrap; with existing nodes it is
+    # restricted to untagged chunks so the "Suggest categories" CTA does not
+    # rediscover already-covered categories.
     seen_artifacts_v2: set[str] = set()
     doc_summaries: list[DocumentSummary] = []
     doc_vecs: list[list[float]] = []

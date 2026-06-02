@@ -12,8 +12,8 @@
  *   - filter (activeNodeId, activeTags)
  *   - suggest-flow state machine (suggestState)
  *   - inline add-form (showAddRoot, addParentId, newNodeName)
- *   - singleton ids for proposal edit / reject (per-card input
- *     buffers live inside ProposalCard)
+ *   - singleton id for proposal edit (per-card input buffers live
+ *     inside ProposalCard)
  *   - applyAllMutation + handleApplyAll (loops raw apiFetch + fires
  *     backfill - see SPEC Beslissingen § B5 for why orchestration
  *     stays here and not in a hook)
@@ -116,11 +116,10 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   const [showAddRoot, setShowAddRoot] = useState(false)
   const [addParentId, setAddParentId] = useState<number | null>(null)
   const [newNodeName, setNewNodeName] = useState('')
-  // Singleton ids - only one proposal may be in edit OR reject mode at
-  // any time. Per-card edit / reject input buffers live inside
-  // ProposalCard. SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve.
+  // Singleton id - only one proposal may be in edit mode at any time.
+  // Per-card edit buffers live inside ProposalCard.
+  // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve.
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null)
-  const [rejectingProposalId, setRejectingProposalId] = useState<number | null>(null)
 
   const nodesQuery = useTaxonomyNodes(kbSlug, auth.isAuthenticated)
   // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 3: fetches ALL statuses so approved
@@ -145,7 +144,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   // classification to a single backfill at the end.
   const approveMutation = useApproveProposal(kbSlug)
 
-  const rejectMutation = useRejectProposal(kbSlug, () => setRejectingProposalId(null))
+  const rejectMutation = useRejectProposal(kbSlug, () => undefined)
 
   // -- Suggest categories flow --
   const [suggestState, setSuggestState] = useState<SuggestState>('idle')
@@ -323,8 +322,13 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
               coverage={coverageQuery.data}
               activeNodeId={activeNodeId}
               onNodeClick={toggleNode}
-              onSuggest={canEdit && (suggestState === 'idle' || suggestState === 'generating') ? () => bootstrapMutation.mutate() : undefined}
-              isSuggesting={bootstrapMutation.isPending}
+              onSuggest={canEdit && (suggestState === 'idle' || suggestState === 'generating')
+                ? () => {
+                    if (nodes.length > 0) backfillMutation.mutate()
+                    else bootstrapMutation.mutate()
+                  }
+                : undefined}
+              isSuggesting={nodes.length > 0 ? backfillMutation.isPending : bootstrapMutation.isPending}
               isBackfilling={backfillMutation.isPending || applyAllMutation.isPending}
               canEdit={canEdit}
               onRename={(nodeId, newName, description) => renameNodeMutation.mutate({ nodeId, name: newName, description })}
@@ -386,7 +390,6 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
                 proposal={proposal}
                 canEdit={canEdit}
                 isEditing={editingProposalId === proposal.id}
-                isRejecting={rejectingProposalId === proposal.id}
                 approvePending={approveMutation.isPending}
                 rejectPending={rejectMutation.isPending}
                 onStartEdit={() => setEditingProposalId(proposal.id)}
@@ -399,9 +402,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
                   setEditingProposalId(null)
                 }}
                 onCancelEdit={() => setEditingProposalId(null)}
-                onStartReject={() => setRejectingProposalId(proposal.id)}
-                onSubmitReject={(reason) => rejectMutation.mutate({ proposalId: proposal.id, reason })}
-                onCancelReject={() => setRejectingProposalId(null)}
+                onReject={() => rejectMutation.mutate({ proposalId: proposal.id })}
                 onApprove={() => approveMutation.mutate({ proposalId: proposal.id })}
               />
             ))}
