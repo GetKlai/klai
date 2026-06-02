@@ -267,12 +267,12 @@ export function useRejectProposal(kbSlug: string, onSuccess: () => void) {
       proposalId: number
       reason?: string
     }) => {
-      const trimmedReason = reason?.trim()
-      const init: { method: string; body?: string } = { method: 'POST' }
-      if (trimmedReason) init.body = JSON.stringify({ reason: trimmedReason })
       await apiFetch(
         `/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/reject`,
-        init,
+        {
+          method: 'POST',
+          body: JSON.stringify({ reason: reason?.trim() ?? '' }),
+        },
       )
     },
     onSuccess: () => {
