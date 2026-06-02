@@ -66,19 +66,16 @@ It is **cross-platform** — all platform-specific settings live in local config
     },
     "grafana": {
       "type": "stdio",
-      "command": "uvx",
-      "args": ["mcp-grafana", "--disable-write"],
-      "env": {
-        "GRAFANA_URL": "https://grafana.getklai.com"
-      }
+      "command": "node",
+      "args": [".claude/scripts/grafana-launcher.mjs"],
+      "env": {}
     },
     "victorialogs": {
       "type": "stdio",
       "command": "node",
       "args": [".claude/scripts/victorialogs-launcher.mjs"],
       "env": {
-        "VL_INSTANCE_ENTRYPOINT": "http://localhost:9428",
-        "VL_INSTANCE_HEADERS": "Authorization=Basic ${VICTORIALOGS_BASIC_AUTH_B64}"
+        "VL_INSTANCE_ENTRYPOINT": "http://localhost:9428"
       }
     }
   }
@@ -93,8 +90,8 @@ It is **cross-platform** — all platform-specific settings live in local config
 | **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
 | **playwright** | Browser automation for E2E spot-checks and visual verification. Headed Chrome with a per-workspace **persistent profile** (login state survives Claude Code restarts). Parallel-safe across workspaces via `{workspace-hash}` profile naming. Set `PLAYWRIGHT_ISOLATED=1` to opt into an ephemeral, logged-out profile. See Section 3. |
 | **codeindex** | Graph-powered code intelligence — call graphs, impact analysis, semantic search, communities, and enrichment queries (git hotspots, SPEC links, test coverage, PageRank). |
-| **grafana** | Read-only access to Grafana dashboards, Prometheus/VictoriaMetrics queries, and alerts. Cannot query VictoriaLogs — use the `victorialogs` MCP for log queries instead. |
-| **victorialogs** | Production log queries via LogsQL against VictoriaLogs. Requires SSH tunnel (`./scripts/victorialogs-tunnel.sh`) and `VICTORIALOGS_BASIC_AUTH_B64` env var. Preferred over `docker logs` for investigating issues. |
+| **grafana** | Read-only access to Grafana dashboards, Prometheus/VictoriaMetrics queries, and alerts. The launcher maps `GRAFANA_SERVICE_ACCOUNT_TOKEN` to `GRAFANA_API_KEY`. Cannot query VictoriaLogs — use the `victorialogs` MCP for log queries instead. |
+| **victorialogs** | Production log queries via LogsQL against VictoriaLogs. The launcher reads `VICTORIALOGS_BASIC_AUTH_B64`, injects `VL_INSTANCE_HEADERS`, and opens a per-MCP-process SSH tunnel automatically. Preferred over `docker logs` for investigating issues. |
 
 ### CodeIndex stale-index prevention
 
