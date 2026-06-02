@@ -3,12 +3,11 @@ SPEC-SEC-004 + SPEC-SEC-IDENTITY-ASSERT-002 REQ-3: Defense-in-depth
 auth guard middleware for scribe-api.
 
 After SPEC-002 scribe-api is BFF-only: every request (except explicitly
-exempt paths) MUST carry an ``X-Internal-Secret`` header. The full
-identity check lives in ``Depends(get_authenticated_caller)`` — which
-constant-time-compares the secret AND requires the
-``X-Klai-Verified-*`` headers. This middleware is a safety net that
-rejects requests without the secret-header *before* the route handler
-runs.
+exempt paths) MUST carry an ``X-Internal-Secret`` header. User-facing
+routes validate the secret plus portal-verified identity headers via
+``Depends(get_authenticated_caller)``. Internal service routes validate
+only the shared secret. This middleware is a safety net that rejects
+requests without the secret-header *before* the route handler runs.
 """
 
 from __future__ import annotations
@@ -34,10 +33,10 @@ _EXEMPT_PREFIXES: tuple[str, ...] = (
 class AuthGuardMiddleware(BaseHTTPMiddleware):
     """Reject any request without ``X-Internal-Secret`` early.
 
-    Secret value validation (constant-time compare) and the
-    ``X-Klai-Verified-*`` header presence check are performed downstream
-    by :func:`app.core.auth.get_authenticated_caller`. This guard only
-    checks for *presence* of ``X-Internal-Secret``.
+    Secret value validation (constant-time compare) is performed downstream
+    by each route's auth dependency. User-facing routes additionally require
+    ``X-Klai-Verified-*`` headers via :func:`app.core.auth.get_authenticated_caller`.
+    This guard only checks for *presence* of ``X-Internal-Secret``.
     """
 
     async def dispatch(

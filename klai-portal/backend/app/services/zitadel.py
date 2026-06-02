@@ -367,7 +367,14 @@ class ZitadelClient:
         resp.raise_for_status()
 
     async def remove_user(self, org_id: str, zitadel_user_id: str) -> None:
-        """Deactivate a user in the org (does not delete the Zitadel account)."""
+        """Permanently delete a Zitadel user account (Management RemoveUser).
+
+        Issues ``DELETE /management/v1/users/{id}`` — this REMOVES the account,
+        it is NOT a soft deactivate. For login-disable-without-delete use
+        :meth:`deactivate_user`. Idempotent: 403/404 are logged and treated as
+        already-absent (returns without raising), so callers that need to
+        confirm actual removal must verify via :meth:`get_user_by_id`.
+        """
         resp = await self._http.delete(
             f"/management/v1/users/{zitadel_user_id}",
             headers={"x-zitadel-orgid": org_id},

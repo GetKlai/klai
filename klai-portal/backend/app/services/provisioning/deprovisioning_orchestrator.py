@@ -4,7 +4,7 @@ Entry point: `deprovision_tenant(org_id, deprovisioner_user_id, deprovisioner_ty
 Called as a FastAPI BackgroundTask by both the owner-self-service and platform-admin
 DELETE endpoints.
 
-Failure strategy: fail-loud with Camp 1 light retries. Each of the 17 steps is
+Failure strategy: fail-loud with Camp 1 light retries. Each of the 21 steps is
 idempotent and gets 3 attempts with exponential back-off (1 s, 2 s, 4 s). On
 final step failure the status transitions to `failed_deprovisioning` and
 `last_failure` JSONB is populated. The admin retry endpoint can restart the
@@ -70,7 +70,7 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 class _DeprovisionState:
     """Resource handles loaded at the start of the deprovisioning run.
 
-    All fields needed by the 17 step functions are resolved once in `_load_state`
+    All fields needed by the 21 step functions are resolved once in `_load_state`
     before any step runs. This avoids mid-sequence DB reads and keeps each step
     self-contained.
 
@@ -83,8 +83,8 @@ class _DeprovisionState:
     org_id: int
     slug: str
     zitadel_org_id: str
-    zitadel_oidc_app_id: str  # "" if not found (step 14 skips gracefully)
-    litellm_team_id: str  # "" if not found (step 11 skips gracefully)
+    zitadel_oidc_app_id: str  # "" only when the app is confirmed absent
+    litellm_team_id: str  # "" only when the team is confirmed absent
     moneybird_subscription_id: str | None
     moneybird_contact_id: str | None
     deprovisioner_user_id: str
@@ -142,7 +142,18 @@ async def deprovision_tenant(
 
 async def _run(org_id: int, actor_id: str, actor_type: str, db: AsyncSession) -> None:
     """Main deprovisioning loop. Runs all steps sequentially."""
-    state = await _load_state(org_id, actor_id, actor_type, db)
+    try:
+        state = await _load_state(org_id, actor_id, actor_type, db)
+    except Exception as exc:
+        logger.exception(
+            "deprovisioning_failed",
+            org_id=org_id,
+            step="_load_state",
+            error=str(exc),
+        )
+        await _mark_failed(db, org_id, "_load_state", str(exc), attempt=1)
+        return
+
     logger.info("deprovisioning_started", org_id=org_id, slug=state.slug, actor_type=actor_type)
 
     try:
@@ -166,8 +177,8 @@ async def _load_state(org_id: int, actor_id: str, actor_type: str, db: AsyncSess
     """Read org row and resolve external resource IDs into state.
 
     Looks up LiteLLM team_id by team_alias={slug} and Zitadel OIDC app_id
-    by client_id from portal_orgs. Both are non-fatal if not found — the
-    corresponding steps skip gracefully.
+    by client_id from portal_orgs. Confirmed absence is non-fatal; lookup
+    failures propagate so the run lands in failed_deprovisioning.
 
     # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-001 R3 — load-once pattern. No mid-run
     #   DB reads in step functions (except _finalize_postgres_delete which owns
@@ -176,11 +187,23 @@ async def _load_state(org_id: int, actor_id: str, actor_type: str, db: AsyncSess
     result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
     org = result.scalar_one()
 
-    zitadel_oidc_app_id = await _resolve_zitadel_oidc_app_id(
-        slug=org.slug,
-        client_id=org.zitadel_librechat_client_id,
-    )
-    litellm_team_id = await _resolve_litellm_team_id(org.slug)
+    # H2 fix (SPEC-INFRA-TENANT-DELETE): prefer the IDs persisted at
+    # provisioning time. Resolving by fuzzy LiteLLM/Zitadel list lookups
+    # returns "" (= "confirmed absent → skip the delete") on any
+    # false-negative response, silently orphaning the team/app. The stored
+    # column is exact. Legacy rows provisioned before migration e9f1a2b3c4d5
+    # have NULL columns and fall back to the resolve path — those tenants can
+    # be back-filled by the H2 backfill script; until then the fallback keeps
+    # them deletable.
+    zitadel_oidc_app_id = org.zitadel_oidc_app_id
+    if zitadel_oidc_app_id is None:
+        zitadel_oidc_app_id = await _resolve_zitadel_oidc_app_id(
+            slug=org.slug,
+            client_id=org.zitadel_librechat_client_id,
+        )
+    litellm_team_id = org.litellm_team_id
+    if litellm_team_id is None:
+        litellm_team_id = await _resolve_litellm_team_id(org.slug)
     single_membership_users = (
         select(PortalUser.zitadel_user_id)
         .group_by(PortalUser.zitadel_user_id)
@@ -215,8 +238,8 @@ async def _load_state(org_id: int, actor_id: str, actor_type: str, db: AsyncSess
 async def _resolve_zitadel_oidc_app_id(slug: str | None, client_id: str | None = None) -> str:
     """Look up the Zitadel OIDC app_id by the tenant slug.
 
-    Returns "" when slug is empty or the lookup fails — step 14 skips
-    gracefully when app_id is empty.
+    Returns "" only when Zitadel confirms no matching app exists. Lookup
+    failures propagate so tenant delete fails loudly instead of orphaning apps.
 
     SPEC-INFRA-TENANT-DELETE-003 Bug 1 fix: the previous version searched on
     ``nameQuery.name = client_id``, but the Zitadel app name is
@@ -234,46 +257,33 @@ async def _resolve_zitadel_oidc_app_id(slug: str | None, client_id: str | None =
     catches a future Zitadel API surprise.
 
     # @MX:NOTE: app_id is NOT stored in portal_orgs (only client_id is). We must
-    #   query Zitadel's app list. If the list endpoint is unavailable, we proceed
-    #   without it — worst case the OIDC app is orphaned in Zitadel.
+    #   query Zitadel's app list. If the list endpoint is unavailable, abort
+    #   deprovisioning so the operator can retry after Zitadel recovers.
     """
     if not slug:
-        logger.info("zitadel_oidc_app_id_lookup_skipped_no_slug")
-        return ""
+        raise RuntimeError("slug is required to resolve Zitadel OIDC app id")
 
     expected_name = f"librechat-{slug}"
 
-    try:
-        async with httpx.AsyncClient(
-            base_url=settings.zitadel_base_url,
-            headers={"Authorization": f"Bearer {settings.zitadel_pat}"},
-            timeout=10.0,
-        ) as http:
-            resp = await http.post(
-                f"/management/v1/projects/{settings.zitadel_project_id}/apps/_search",
-                json={"queries": [{"nameQuery": {"name": expected_name, "method": "APP_QUERY_METHOD_EQUALS"}}]},
-            )
-            resp.raise_for_status()
-            apps = resp.json().get("result", [])
-            for app in apps:
-                # Belt+braces verification — if both clientId and slug match,
-                # we are sure this is the right app. If only slug matches
-                # (client_id is empty / never stored), trust the slug match.
-                app_client_id = app.get("oidcConfig", {}).get("clientId", "")
-                if client_id and app_client_id and app_client_id != client_id:
-                    continue
-                return app.get("id", "")
-    except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
-        # HTTPError: Zitadel down/4xx/5xx. KeyError/ValueError/TypeError: malformed
-        # JSON response shape. We deliberately NARROW the catch — bare `except`
-        # would mask AttributeError or IndexError which signal a programming bug,
-        # not "service degraded". Step 14 handles empty app_id gracefully.
-        logger.warning(
-            "zitadel_oidc_app_id_lookup_failed",
-            client_id=client_id,
-            error=type(exc).__name__,
-            exc_info=True,
+    async with httpx.AsyncClient(
+        base_url=settings.zitadel_base_url,
+        headers={"Authorization": f"Bearer {settings.zitadel_pat}"},
+        timeout=10.0,
+    ) as http:
+        resp = await http.post(
+            f"/management/v1/projects/{settings.zitadel_project_id}/apps/_search",
+            json={"queries": [{"nameQuery": {"name": expected_name, "method": "APP_QUERY_METHOD_EQUALS"}}]},
         )
+        resp.raise_for_status()
+        apps = resp.json().get("result", [])
+        for app in apps:
+            # Belt+braces verification — if both clientId and slug match,
+            # we are sure this is the right app. If only slug matches
+            # (client_id is empty / never stored), trust the slug match.
+            app_client_id = app.get("oidcConfig", {}).get("clientId", "")
+            if client_id and app_client_id and app_client_id != client_id:
+                continue
+            return app.get("id", "")
 
     return ""
 
@@ -281,33 +291,26 @@ async def _resolve_zitadel_oidc_app_id(slug: str | None, client_id: str | None =
 async def _resolve_litellm_team_id(slug: str) -> str:
     """Look up the LiteLLM team_id by team_alias={slug}.
 
-    Returns "" when not found or on error — step 11 skips gracefully.
+    Returns "" only when LiteLLM confirms no matching team exists. Lookup
+    failures propagate so tenant delete fails loudly instead of orphaning teams.
 
     # @MX:NOTE: litellm_team_id is NOT stored in portal_orgs (only litellm_team_key
     #   is stored as encrypted bytes). We resolve at deprovisioning time by querying
-    #   LiteLLM's /team/list. If LiteLLM is unavailable, step 11 will catch the
-    #   error and retry per the retry policy.
+    #   LiteLLM's /team/list. If LiteLLM is unavailable, the HTTPError propagates
+    #   and the orchestrator marks the tenant failed for retry.
     """
-    try:
-        async with httpx.AsyncClient(
-            base_url=settings.litellm_base_url,
-            headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-            timeout=10.0,
-        ) as http:
-            resp = await http.get("/team/list", params={"team_alias": slug})
-            resp.raise_for_status()
-            teams = resp.json() if isinstance(resp.json(), list) else resp.json().get("teams", [])
-            for team in teams:
-                if team.get("team_alias") == slug:
-                    return str(team.get("team_id", ""))
-    except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
-        # Same narrowing rationale as _resolve_zitadel_oidc_app_id above.
-        logger.warning(
-            "litellm_team_id_lookup_failed",
-            slug=slug,
-            error=type(exc).__name__,
-            exc_info=True,
-        )
+    async with httpx.AsyncClient(
+        base_url=settings.litellm_base_url,
+        headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
+        timeout=10.0,
+    ) as http:
+        resp = await http.get("/team/list", params={"team_alias": slug})
+        resp.raise_for_status()
+        payload = resp.json()
+        teams = payload if isinstance(payload, list) else payload.get("teams", [])
+        for team in teams:
+            if team.get("team_alias") == slug:
+                return str(team.get("team_id", ""))
 
     return ""
 

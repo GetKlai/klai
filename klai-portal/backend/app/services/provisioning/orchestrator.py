@@ -538,6 +538,13 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             org.zitadel_librechat_client_id = client_id
             org.zitadel_librechat_client_secret = portal_secrets.encrypt(client_secret)
             org.litellm_team_key = portal_secrets.encrypt(litellm_team_key) if litellm_team_key else None
+            # SPEC-INFRA-TENANT-DELETE H2 — persist the exact external resource
+            # IDs so deprovisioning deletes them directly instead of resolving
+            # via fuzzy LiteLLM/Zitadel list lookups (which silently orphaned
+            # the team/app on any false-negative response). `or None` keeps the
+            # column NULL when an ID was never produced rather than storing "".
+            org.litellm_team_id = state.litellm_team_id or None
+            org.zitadel_oidc_app_id = state.zitadel_app_id or None
             await transition_state(
                 db,
                 org_id,
