@@ -228,6 +228,7 @@ describe('CoverageWidget - taxonomy action CTA gating', () => {
     const nodes = Array.from({ length: 9 }, (_, i) =>
       node({ taxonomy_node_id: i + 1, taxonomy_node_name: `N${i}`, chunk_count: 5 }),
     )
+    const onCategorizeMissing = vi.fn()
     const onSuggest = vi.fn()
     render(
       <CoverageWidget
@@ -239,15 +240,18 @@ describe('CoverageWidget - taxonomy action CTA gating', () => {
         }}
         activeNodeId={null}
         onNodeClick={() => {}}
+        onCategorizeMissing={onCategorizeMissing}
         onSuggest={onSuggest}
       />,
     )
     fireEvent.click(screen.getByText('Categorize missing chunks'))
+    expect(onCategorizeMissing).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByText('Suggest new categories'))
     expect(onSuggest).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('Suggest categories')).toBeNull()
   })
 
   it('shows missing-chunks CTA in populated state when untagged_count >= 10 AND untagged_pct > 5', () => {
+    const onCategorizeMissing = vi.fn()
     const onSuggest = vi.fn()
     render(
       <CoverageWidget
@@ -259,15 +263,18 @@ describe('CoverageWidget - taxonomy action CTA gating', () => {
         }}
         activeNodeId={null}
         onNodeClick={() => {}}
+        onCategorizeMissing={onCategorizeMissing}
         onSuggest={onSuggest}
       />,
     )
     fireEvent.click(screen.getByText('Categorize missing chunks'))
+    expect(onCategorizeMissing).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByText('Suggest new categories'))
     expect(onSuggest).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('Suggest categories')).toBeNull()
   })
 
-  it('hidden in populated state when untagged_pct ≤ 5', () => {
+  it('keeps missing-chunks CTA but hides AI suggestions when untagged_pct ≤ 5', () => {
+    const onCategorizeMissing = vi.fn()
     const onSuggest = vi.fn()
     render(
       <CoverageWidget
@@ -279,11 +286,14 @@ describe('CoverageWidget - taxonomy action CTA gating', () => {
         }}
         activeNodeId={null}
         onNodeClick={() => {}}
+        onCategorizeMissing={onCategorizeMissing}
         onSuggest={onSuggest}
       />,
     )
+    fireEvent.click(screen.getByText('Categorize missing chunks'))
+    expect(onCategorizeMissing).toHaveBeenCalledTimes(1)
     expect(
-      screen.queryByText('Suggest categories'),
+      screen.queryByText('Suggest new categories'),
     ).toBeNull()
   })
 })

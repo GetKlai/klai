@@ -1368,6 +1368,7 @@
   "knowledge_taxonomy_filter_tag": "Tag: {name}",
   "knowledge_taxonomy_filter_clear_all": "Clear all filters",
   "knowledge_taxonomy_suggest_categories": "Suggest categories",
+  "knowledge_taxonomy_suggest_new_categories": "Suggest new categories",
   "knowledge_taxonomy_suggest_generating": "Analysing knowledge base...",
   "knowledge_taxonomy_suggest_loading_hint": "This may take up to a minute for larger knowledge bases.",
   "knowledge_taxonomy_suggest_ready": "{count} category suggestions ready - review and apply below",
