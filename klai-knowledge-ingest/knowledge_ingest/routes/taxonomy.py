@@ -67,6 +67,17 @@ class BackfillStatusResponse(BaseModel):
     result: dict | None = None
 
 
+class RemoveNodeRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+    node_id: int
+    batch_size: int = 1000
+
+
+class RemoveNodeResponse(BaseModel):
+    chunks_updated: int
+
+
 class BootstrapRequest(BaseModel):
     org_id: str
     kb_slug: str
@@ -106,6 +117,87 @@ def _build_bootstrap_scroll_filter(
     if only_untagged:
         must.append(IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_ids")))
     return Filter(must=must)
+
+
+def _payload_int(value: object) -> int | None:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+async def _remove_taxonomy_node_from_qdrant(
+    client: AsyncQdrantClient,
+    org_id: str,
+    kb_slug: str,
+    node_id: int,
+    batch_size: int = 1000,
+) -> int:
+    """Remove a deleted taxonomy node id from all chunk payloads.
+
+    If a chunk has no remaining taxonomy_node_ids after removal, it becomes
+    untagged and the normal missing-chunks backfill can classify it again.
+    """
+    updated = 0
+    offset = None
+    scroll_filter = Filter(
+        must=[
+            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+            FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+        ]
+    )
+
+    while True:
+        points, next_offset = await asyncio.wait_for(
+            client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=scroll_filter,
+                limit=batch_size,
+                offset=offset,
+                with_payload=["taxonomy_node_id", "taxonomy_node_ids"],
+                with_vectors=False,
+            ),
+            timeout=30.0,
+        )
+        if not points:
+            break
+
+        for point in points:
+            payload = point.payload or {}
+            raw_ids = payload.get("taxonomy_node_ids") or []
+            if not isinstance(raw_ids, list):
+                raw_ids = [raw_ids]
+
+            remaining_ids = [
+                raw_id
+                for raw_id in raw_ids
+                if _payload_int(raw_id) != node_id
+            ]
+            ids_changed = len(remaining_ids) != len(raw_ids)
+            legacy_changed = _payload_int(payload.get("taxonomy_node_id")) == node_id
+
+            if not ids_changed and not legacy_changed:
+                continue
+
+            if ids_changed:
+                await client.set_payload(
+                    COLLECTION,
+                    payload={"taxonomy_node_ids": remaining_ids},
+                    points=[point.id],
+                )
+            if legacy_changed:
+                await client.delete_payload(
+                    COLLECTION,
+                    keys=["taxonomy_node_id"],
+                    points=[point.id],
+                )
+            updated += 1
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    return updated
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +328,35 @@ async def taxonomy_backfill_status(request: Request, job_id: int) -> BackfillSta
             result = json.loads(raw) if isinstance(raw, str) else raw
 
     return BackfillStatusResponse(job_id=job_id, status=status, result=result)
+
+
+@router.post("/ingest/v1/taxonomy/remove-node", response_model=RemoveNodeResponse)
+async def taxonomy_remove_node(request: Request, req: RemoveNodeRequest) -> RemoveNodeResponse:
+    """Remove a deleted taxonomy node id from chunk payloads.
+
+    Portal owns taxonomy node records. When a node is deleted there, Qdrant
+    must stop carrying that stale id; otherwise affected chunks are neither
+    visible under a category nor eligible for missing-chunks backfill.
+    """
+    client = AsyncQdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
+    )
+    chunks_updated = await _remove_taxonomy_node_from_qdrant(
+        client=client,
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        node_id=req.node_id,
+        batch_size=req.batch_size,
+    )
+    logger.info(
+        "taxonomy_node_removed_from_chunks",
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        node_id=req.node_id,
+        chunks_updated=chunks_updated,
+    )
+    return RemoveNodeResponse(chunks_updated=chunks_updated)
 
 
 @router.post("/ingest/v1/taxonomy/bootstrap-proposals", response_model=BootstrapResponse)
