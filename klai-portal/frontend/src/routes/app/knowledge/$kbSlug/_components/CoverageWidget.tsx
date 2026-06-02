@@ -5,12 +5,9 @@
  * Owns the singleton state for which row is being edited / asked-to-
  * confirm-delete. Per-row buffers live in the row component itself.
  *
- * The taxonomy action button has three gates baked in:
+ * The taxonomy action button has two gates baked in:
  *   1. Empty KB: shown when total chunks >= SUGGEST_MIN_CHUNKS.
- *   2. Populated KB at IA target: hidden once node count reaches
- *      MAX_HEALTHY_NODE_COUNT (Miller's Law 5-9 - more categories
- *      makes the taxonomy worse).
- *   3. Populated KB below target: shown when untagged_count >=
+ *   2. Populated KB: shown when untagged_count >=
  *      SUGGEST_MIN_CHUNKS AND untagged percentage > SUGGEST_MIN_PCT.
  *      This triggers re-tagging against existing nodes, not category
  *      proposal generation.
@@ -20,14 +17,6 @@ import { Loader2, Sparkles } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import type { TaxonomyCoverage } from '../-kb-types'
 import { CoverageNodeRow } from './CoverageNodeRow'
-
-// SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: cap on healthy taxonomy size.
-// Mirrors the backend's ``taxonomy_consolidate_target_max`` (default 9).
-// When the KB already has this many root taxonomy nodes, hide the
-// "Suggest categories" affordance - Miller's Law makes more categories
-// counter-productive (see SPEC-TAXONOMY-MERGE-DETECT-001 motivation).
-// If the backend value drifts, revisit this constant.
-const MAX_HEALTHY_NODE_COUNT = 9
 
 /** Minimum chunks before the Suggest CTA is offered at all. */
 const SUGGEST_MIN_CHUNKS = 10
@@ -115,7 +104,6 @@ export function CoverageWidget({
     coverage.untagged_count >= SUGGEST_MIN_CHUNKS &&
     total > 0 &&
     untaggedPct > SUGGEST_MIN_PCT
-  const atHealthyMax = coverage.nodes.length >= MAX_HEALTHY_NODE_COUNT
 
   return (
     <div className="space-y-2">
@@ -162,14 +150,6 @@ export function CoverageWidget({
                   <Loader2 className="h-3 w-3 animate-spin" />
                   <span>{m.knowledge_taxonomy_categorising_status()}</span>
                 </div>
-              ) : atHealthyMax ? (
-                // SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: with the IA target
-                // already met (Miller's Law 5-9), suggesting more categories
-                // makes the taxonomy worse, not better. Hide the taxonomy
-                // action and explain why so operators don't pile on duplicates.
-                <span className="text-xs text-gray-400 italic">
-                  {m.knowledge_taxonomy_enough_categories_hint()}
-                </span>
               ) : (
                 showSuggestInUntagged && (
                   <button
