@@ -133,6 +133,9 @@ export interface PlatformFeedbackSubmission {
   viewport: string | null
   created_at: string
   triage_suggestion: PlatformFeedbackTriageSuggestion | null
+  linked_item_id: number | null
+  linked_item_title: string | null
+  linked_item_status: string | null
 }
 
 export interface PlatformFeedbackItem {

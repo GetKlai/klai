@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import {
   ArchiveX,
   ArrowLeft,
+  ChevronRight,
   Layers,
   LifeBuoy,
   Link2,
@@ -241,12 +242,34 @@ export function FeedbackSubmissionDetailPanel({
       <div className="space-y-6">
         {header}
         {reportBlock}
-        <section className="rounded-xl border border-gray-200 bg-white px-5 py-4">
-          <p className="text-xs font-medium text-gray-400">{m.platform_feedback_processed()}</p>
-          <p className="mt-1 text-sm font-medium text-gray-900">
-            {feedbackStatusLabel(item.status)}
-          </p>
-        </section>
+        {item.linked_item_id ? (
+          <button
+            type="button"
+            onClick={() => openItem(item.linked_item_id)}
+            className="flex w-full items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-5 py-4 text-left klai-hover"
+          >
+            <span className="min-w-0">
+              <span className="block text-xs font-medium text-gray-400">
+                {m.platform_feedback_belongs_to_item()}
+              </span>
+              <span className="mt-0.5 block truncate text-sm font-medium text-gray-900">
+                #{item.linked_item_id}
+                {item.linked_item_title ? ` · ${item.linked_item_title}` : ''}
+              </span>
+              <span className="mt-0.5 block text-xs text-gray-400">
+                {feedbackStatusLabel(item.status)}
+              </span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" />
+          </button>
+        ) : (
+          <section className="rounded-xl border border-gray-200 bg-white px-5 py-4">
+            <p className="text-xs font-medium text-gray-400">{m.platform_col_status()}</p>
+            <p className="mt-1 text-sm font-medium text-gray-900">
+              {feedbackStatusLabel(item.status)}
+            </p>
+          </section>
+        )}
         <div className="flex items-center justify-between border-t border-gray-200 pt-4">
           <Button
             type="button"
