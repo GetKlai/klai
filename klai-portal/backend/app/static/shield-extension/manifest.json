@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Klai Shield",
+  "description": "Use Klai Shield compliance checks and knowledge context in external LLMs.",
+  "version": "0.1.0",
+  "permissions": ["activeTab", "sidePanel", "storage"],
+  "host_permissions": [
+    "https://my.getklai.com/*",
+    "https://getklai.com/*",
+    "http://localhost:*/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://www.perplexity.ai/*"
+      ],
+      "js": ["src/content/injector.js"],
+      "css": ["src/content/shield.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Klai Shield"
+  }
+}

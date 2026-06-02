@@ -1,10 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { BookOpen, Plus, RotateCw, Search } from 'lucide-react'
+import { BookOpen, Check, Copy, Download, Key, Plus, RotateCw, Search, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { fetchMe } from '@/lib/api-me'
 import { useAuth } from '@/lib/auth'
 import { getLocale } from '@/paraglide/runtime'
@@ -41,6 +43,14 @@ const VALID_TABS = new Set<PlatformTab>([
 
 type PlatformSearch = {
   tab?: PlatformTab
+}
+
+type ShieldTokenCreateResponse = {
+  id: string
+  name: string
+  token: string
+  token_prefix: string
+  expires_at: string | null
 }
 
 export const Route = createFileRoute('/admin/platform/')({
@@ -83,6 +93,8 @@ function PlatformConsole() {
   const [search, setSearch] = useState('')
   const [feedbackStatus, setFeedbackStatus] = useState('')
   const [feedbackKind, setFeedbackKind] = useState('')
+  const [shieldToken, setShieldToken] = useState<string | null>(null)
+  const [shieldCopied, setShieldCopied] = useState(false)
   const auth = useAuth()
   const meQuery = useQuery({
     queryKey: ['me'],
@@ -96,6 +108,21 @@ function PlatformConsole() {
   const tab = routeSearch.tab ?? 'users'
   const newFeedbackCount = stats?.new_feedback_count ?? 0
   const chatErrorCount = stats?.chat_error_count ?? 0
+  const extensionDownloadUrl = `${API_BASE}/api/app/shield/extension.zip`
+  const shieldTokenMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch<ShieldTokenCreateResponse>('/api/app/shield/tokens', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Platform admin browser test',
+          expires_in_days: 30,
+        }),
+      }),
+    onSuccess: (data) => {
+      setShieldToken(data.token)
+      setShieldCopied(false)
+    },
+  })
 
   function setPlatformTab(nextTab: PlatformTab) {
     void navigate({
@@ -133,6 +160,13 @@ function PlatformConsole() {
     void queryClient.invalidateQueries({ queryKey: ['platform-feedback-submissions'] })
   }
 
+  async function copyShieldToken() {
+    if (!shieldToken) return
+    await navigator.clipboard.writeText(shieldToken)
+    setShieldCopied(true)
+    window.setTimeout(() => setShieldCopied(false), 1800)
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-6 py-10">
       <div className="flex items-start justify-between gap-4">
@@ -163,6 +197,61 @@ function PlatformConsole() {
             {m.platform_new_tenant()}
           </Button>
         </div>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white px-4 py-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-gray-500" />
+              <h2 className="text-sm font-semibold text-gray-900">
+                Shield browser test
+              </h2>
+            </div>
+            <p className="mt-1 max-w-2xl text-sm text-gray-500">
+              Download de extensie en maak een tijdelijk platform-admin token voor Chrome of Edge.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button type="button" variant="secondary" asChild>
+              <a href={extensionDownloadUrl}>
+                <Download className="h-4 w-4" />
+                Download extensie
+              </a>
+            </Button>
+            <Button
+              type="button"
+              onClick={() => shieldTokenMutation.mutate()}
+              disabled={shieldTokenMutation.isPending}
+            >
+              <Key className="h-4 w-4" />
+              {shieldTokenMutation.isPending ? 'Token maken...' : 'Maak testtoken'}
+            </Button>
+          </div>
+        </div>
+        {shieldTokenMutation.error && (
+          <p className="mt-3 text-sm text-[var(--color-destructive)]">
+            Token aanmaken is mislukt.
+          </p>
+        )}
+        {shieldToken && (
+          <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <p className="text-xs font-medium text-gray-500">
+              Eenmalig getoond token
+            </p>
+            <div className="mt-2 flex gap-2">
+              <input
+                readOnly
+                value={shieldToken}
+                className="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-xs text-gray-800"
+              />
+              <Button type="button" variant="secondary" size="sm" onClick={() => void copyShieldToken()}>
+                {shieldCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {shieldCopied ? 'Gekopieerd' : 'Kopieer'}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

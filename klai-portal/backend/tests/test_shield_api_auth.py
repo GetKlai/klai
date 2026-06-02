@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import zipfile
 
 import pytest
 from fastapi import HTTPException
@@ -44,3 +45,23 @@ async def test_shield_auth_requires_active_platform_admin_user():
     with pytest.raises(HTTPException) as exc:
         await get_shield_auth(request, db=FakeDb())
     assert exc.value.status_code == 401
+
+
+def test_build_extension_zip_contains_manifest_and_source(tmp_path):
+    from app.api.shield import _build_extension_zip_bytes
+
+    extension_dir = tmp_path / "shield-extension"
+    source_dir = extension_dir / "src" / "background"
+    source_dir.mkdir(parents=True)
+    (extension_dir / "manifest.json").write_text('{"manifest_version":3}', encoding="utf-8")
+    (source_dir / "service-worker.js").write_text("console.log('ok')", encoding="utf-8")
+
+    zip_bytes = _build_extension_zip_bytes(extension_dir)
+    zip_path = tmp_path / "extension.zip"
+    zip_path.write_bytes(zip_bytes)
+
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+
+    assert "klai-shield-extension/manifest.json" in names
+    assert "klai-shield-extension/src/background/service-worker.js" in names
