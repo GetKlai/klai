@@ -65,6 +65,7 @@ async def test_unknown_org_returns_404(monkeypatch):
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
     monkeypatch.setattr(internal, "set_tenant", AsyncMock())
+    monkeypatch.setattr(internal, "ensure_default_templates", AsyncMock(return_value=0))
 
     db = MagicMock()
     db.execute = AsyncMock(return_value=_scalar_one_or_none_result(None))
@@ -83,6 +84,7 @@ async def test_unknown_librechat_user_returns_empty_200_failsafe(monkeypatch):
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
     monkeypatch.setattr(internal, "set_tenant", AsyncMock())
+    monkeypatch.setattr(internal, "ensure_default_templates", AsyncMock(return_value=0))
 
     org = _org()
     db = MagicMock()
@@ -109,6 +111,7 @@ async def test_null_active_template_ids_returns_empty(monkeypatch):
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
     monkeypatch.setattr(internal, "set_tenant", AsyncMock())
+    monkeypatch.setattr(internal, "ensure_default_templates", AsyncMock(return_value=0))
 
     org = _org()
     user = _portal_user(active_ids=None)
@@ -135,6 +138,7 @@ async def test_empty_active_template_ids_returns_empty(monkeypatch):
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
     monkeypatch.setattr(internal, "set_tenant", AsyncMock())
+    monkeypatch.setattr(internal, "ensure_default_templates", AsyncMock(return_value=0))
 
     org = _org()
     user = _portal_user(active_ids=[])
@@ -161,6 +165,7 @@ async def test_preserves_user_specified_order(monkeypatch):
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
     monkeypatch.setattr(internal, "set_tenant", AsyncMock())
+    monkeypatch.setattr(internal, "ensure_default_templates", AsyncMock(return_value=0))
 
     org = _org()
     user = _portal_user(active_ids=[3, 1, 2])
@@ -197,6 +202,7 @@ async def test_silently_skips_missing_and_inactive(monkeypatch):
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
     monkeypatch.setattr(internal, "set_tenant", AsyncMock())
+    monkeypatch.setattr(internal, "ensure_default_templates", AsyncMock(return_value=0))
 
     org = _org()
     user = _portal_user(active_ids=[1, 2, 99])  # 99 doesn't exist, 2 inactive
