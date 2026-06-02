@@ -476,13 +476,6 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
         </div>
       )}
 
-      {suggestState === 'applying' && (
-        <div className="rounded-lg border border-gray-200 bg-[var(--color-secondary)] p-4 flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-          <p className="text-sm text-gray-900">{m.knowledge_taxonomy_suggest_applying()}</p>
-        </div>
-      )}
-
       {suggestState === 'done' && (
         <div className="rounded-lg border border-[var(--color-success)] bg-[var(--color-success)]/5 p-4">
           <p className="text-sm font-medium text-gray-900">
