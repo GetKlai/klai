@@ -82,9 +82,9 @@ def validate_slug_for_provisioning(slug: str, *, domain: str) -> ProvisioningNam
 
 __all__ = [
     "DNS_LABEL_MAX_LENGTH",
+    "TENANT_SLUG_MAX_LENGTH",
     "ProvisioningNameError",
     "ProvisioningNames",
-    "TENANT_SLUG_MAX_LENGTH",
     "provisioning_names_for_slug",
     "validate_provisioning_names",
     "validate_slug_for_provisioning",

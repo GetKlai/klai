@@ -21,7 +21,11 @@ def test_slug_at_chat_dns_label_limit_passes() -> None:
 
 
 def test_slug_beyond_chat_dns_label_limit_fails() -> None:
-    from app.core.provisioning_names import ProvisioningNameError, TENANT_SLUG_MAX_LENGTH, validate_slug_for_provisioning
+    from app.core.provisioning_names import (
+        TENANT_SLUG_MAX_LENGTH,
+        ProvisioningNameError,
+        validate_slug_for_provisioning,
+    )
 
     slug = "a" * (TENANT_SLUG_MAX_LENGTH + 1)
 
