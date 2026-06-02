@@ -21,12 +21,32 @@ def _count_result(n: int) -> MagicMock:
     return r
 
 
+def _scalar_one_or_none_result(value) -> MagicMock:
+    r = MagicMock()
+    r.scalar_one_or_none = MagicMock(return_value=value)
+    return r
+
+
+def _scalars_all_result(values: list) -> MagicMock:
+    scalars = MagicMock()
+    scalars.all = MagicMock(return_value=values)
+    r = MagicMock()
+    r.scalars = MagicMock(return_value=scalars)
+    return r
+
+
 @pytest.mark.asyncio
 async def test_first_call_inserts_exactly_four_defaults():
     from app.services import default_templates
 
     db = MagicMock()
-    db.execute = AsyncMock(return_value=_count_result(0))
+    db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(),  # set_tenant
+            _scalar_one_or_none_result("nl"),
+            _count_result(0),
+        ]
+    )
     db.add = MagicMock()
     db.flush = AsyncMock()
     db.rollback = AsyncMock()
@@ -35,7 +55,34 @@ async def test_first_call_inserts_exactly_four_defaults():
 
     assert inserted == 4
     assert db.add.call_count == 4
-    assert db.execute.await_count == 2
+    assert db.execute.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_first_call_uses_org_default_language_for_english_defaults():
+    from app.services import default_templates
+
+    db = MagicMock()
+    added = []
+    db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(),  # set_tenant
+            _scalar_one_or_none_result("en"),
+            _count_result(0),
+        ]
+    )
+    db.add = MagicMock(side_effect=added.append)
+    db.flush = AsyncMock()
+    db.rollback = AsyncMock()
+
+    inserted = await default_templates.ensure_default_templates(org_id=42, created_by="system", db=db)
+
+    assert inserted == 4
+    names = {tpl.name for tpl in added}
+    assert names == {"Customer service", "Formal", "Creative", "Summarizer"}
+    summarizer = next(tpl for tpl in added if tpl.slug == "samenvatter")
+    assert "latest substantive input" in summarizer.prompt_text
+    assert "language of that content" in summarizer.prompt_text
 
 
 @pytest.mark.asyncio
@@ -43,7 +90,14 @@ async def test_sets_tenant_context_before_counting_templates():
     from app.services import default_templates
 
     db = MagicMock()
-    db.execute = AsyncMock(return_value=_count_result(4))
+    db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(),
+            _scalar_one_or_none_result("nl"),
+            _count_result(4),
+            _scalars_all_result([]),
+        ]
+    )
     db.add = MagicMock()
     db.flush = AsyncMock()
 
@@ -58,7 +112,14 @@ async def test_second_call_is_no_op():
     from app.services import default_templates
 
     db = MagicMock()
-    db.execute = AsyncMock(return_value=_count_result(4))  # already seeded
+    db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(),
+            _scalar_one_or_none_result("nl"),
+            _count_result(4),  # already seeded
+            _scalars_all_result([]),
+        ]
+    )
     db.add = MagicMock()
     db.flush = AsyncMock()
 
@@ -74,7 +135,13 @@ async def test_defaults_use_org_scope_and_system_created_by():
     from app.services import default_templates
 
     db = MagicMock()
-    db.execute = AsyncMock(return_value=_count_result(0))
+    db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(),
+            _scalar_one_or_none_result("nl"),
+            _count_result(0),
+        ]
+    )
     added = []
     db.add = MagicMock(side_effect=added.append)
     db.flush = AsyncMock()
@@ -87,6 +154,70 @@ async def test_defaults_use_org_scope_and_system_created_by():
         assert tpl.scope == "org"
         assert tpl.created_by == "system"
         assert tpl.org_id == 42
+
+
+@pytest.mark.asyncio
+async def test_existing_legacy_defaults_are_upgraded_to_org_language():
+    from app.services import default_templates
+
+    legacy = next(t for t in default_templates._LEGACY_DEFAULT_TEMPLATES if t["slug"] == "samenvatter")
+    existing = MagicMock()
+    existing.slug = "samenvatter"
+    existing.name = legacy["name"]
+    existing.description = legacy["description"]
+    existing.prompt_text = legacy["prompt_text"]
+
+    db = MagicMock()
+    db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(),
+            _scalar_one_or_none_result("en"),
+            _count_result(4),
+            _scalars_all_result([existing]),
+        ]
+    )
+    db.flush = AsyncMock()
+    db.rollback = AsyncMock()
+
+    changed = await default_templates.ensure_default_templates(org_id=42, created_by="system", db=db)
+
+    assert changed == 1
+    assert existing.name == "Summarizer"
+    assert existing.description == "Summarize text faithfully and structurally"
+    assert "Your task is to summarize" in existing.prompt_text
+    assert "language of that content" in existing.prompt_text
+    db.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_existing_customized_defaults_are_not_overwritten():
+    from app.services import default_templates
+
+    existing = MagicMock()
+    existing.slug = "samenvatter"
+    existing.name = "Mijn samenvatter"
+    existing.description = "Eigen beschrijving"
+    existing.prompt_text = "Vat samen zoals onze directie dat wil."
+
+    db = MagicMock()
+    db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(),
+            _scalar_one_or_none_result("en"),
+            _count_result(4),
+            _scalars_all_result([existing]),
+        ]
+    )
+    db.flush = AsyncMock()
+    db.rollback = AsyncMock()
+
+    changed = await default_templates.ensure_default_templates(org_id=42, created_by="system", db=db)
+
+    assert changed == 0
+    assert existing.name == "Mijn samenvatter"
+    assert existing.description == "Eigen beschrijving"
+    assert existing.prompt_text == "Vat samen zoals onze directie dat wil."
+    db.flush.assert_not_called()
 
 
 def test_defaults_constant_has_expected_slugs():
@@ -126,9 +257,10 @@ def test_klantenservice_default_is_language_agnostic():
     assert "Antwoord altijd in het Nederlands" not in prompt, (
         "Klantenservice default seed must remain language-agnostic. See commit a0d72cea + post_deploy_e44f9da674fe.sql."
     )
-    # Positive: the new wording explicitly mirrors the user's question
-    # language. This anchor lets a future reviewer trace the rule back.
-    assert "in dezelfde taal als de vraag van de gebruiker" in prompt
+    # Positive: the wording explicitly follows the actual chat input,
+    # not the language this template happens to be written in.
+    assert "taal van de laatste inhoudelijke gebruikersinput" in prompt
+    assert "instructie is geschreven is niet leidend" in prompt
 
 
 @pytest.mark.asyncio
