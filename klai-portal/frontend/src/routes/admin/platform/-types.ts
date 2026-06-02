@@ -136,7 +136,6 @@ export interface PlatformFeedbackSubmission {
   linked_item_id: number | null
   linked_item_title: string | null
   linked_item_status: string | null
-  link_type: string | null
 }
 
 export interface PlatformFeedbackItem {
