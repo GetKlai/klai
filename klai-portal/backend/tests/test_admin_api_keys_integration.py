@@ -146,6 +146,12 @@ async def test_rotate_api_key_clones_permissions_and_kb_access():
     kb_access = FakeKbAccessRow(partner_api_key_id="key-old", kb_id=123, access_level="read_write")
     db = AsyncMock()
     db.add = MagicMock()
+    rotated_to_seen_at_flush: list[str | None] = []
+
+    async def fake_flush():
+        rotated_to_seen_at_flush.append(source_key.rotated_to_key_id)
+
+    db.flush = AsyncMock(side_effect=fake_flush)
 
     async def fake_refresh(row):
         row.created_at = datetime(2026, 1, 1, tzinfo=UTC)
@@ -174,5 +180,6 @@ async def test_rotate_api_key_clones_permissions_and_kb_access():
     assert result.kb_access_count == 1
     assert source_key.rotated_to_key_id == result.id
     assert source_key.rotation_started_at is not None
+    assert rotated_to_seen_at_flush == [None, result.id]
     db.commit.assert_awaited_once()
     assert db.add.call_count == 2  # new key row + cloned KB access row
