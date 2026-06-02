@@ -39,7 +39,6 @@ import type {
 } from "../../-types"
 import {
   CLOSED_FEEDBACK_ITEM_STATUSES,
-  FeedbackMetaRow,
   buildFeedbackDebugInstructions,
   defaultResolutionSummary,
   feedbackActionErrorMessage,
@@ -143,7 +142,7 @@ function FeedbackItemDetailForm({
         : step === 'debug'
           ? m.platform_feedback_copy_debug_title()
           : step === 'fix'
-            ? m.platform_feedback_follow_up_title()
+            ? m.platform_feedback_edit_item_title()
             : resolveLabel.title,
     onClick: () => setItemStep(step),
   }))
@@ -158,12 +157,17 @@ function FeedbackItemDetailForm({
   const saveItem = () => {
     updateItem.mutate({
       itemId: item.id,
-      status,
       title: title.trim(),
       summary: summary.trim() || null,
     })
   }
   const closeItem = () => {
+    // Non-resolved outcomes (reopen / dismiss) just persist the status; no
+    // customer message is sent for those.
+    if (status !== 'resolved') {
+      updateItem.mutate({ itemId: item.id, status }, { onSuccess: onClose })
+      return
+    }
     const channels: Array<'in_app' | 'email'> = []
     if (notifyInApp) channels.push('in_app')
     if (notifyEmail) channels.push('email')
@@ -213,41 +217,33 @@ function FeedbackItemDetailForm({
 
       {itemStep === 'understand' && (
         <>
-      <section className="space-y-4">
-        <div>
-          <h2 className="mt-1 text-xl font-display-bold text-gray-900">{title}</h2>
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">
-            {summary || m.platform_feedback_no_description()}
-          </p>
-        </div>
-        <div className="grid gap-3 text-sm text-gray-600 sm:grid-cols-2 lg:grid-cols-4">
-          <FeedbackMetaRow label={m.platform_col_status()} value={feedbackItemStatusLabel(status)} />
-          <FeedbackMetaRow label={m.platform_col_created()} value={fmtDate(item.created_at)} />
-          <FeedbackMetaRow label={m.platform_feedback_col_updated()} value={fmtDate(item.updated_at)} />
-          <FeedbackMetaRow
-            label={m.platform_feedback_item_signal()}
-            value={m.platform_feedback_reporter_counts({
-              orgs: String(item.org_count),
-              users: String(item.user_count),
-            })}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs text-gray-500">
-          <Badge variant="outline">{feedbackItemKindLabel(item.kind)}</Badge>
+      <section className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-xl font-display-bold text-gray-900">{title}</h2>
           <Badge variant={isClosed ? 'secondary' : 'outline'}>
             {feedbackItemStatusLabel(status)}
           </Badge>
-          <Badge variant="outline">
-            {m.platform_feedback_org_count({ count: String(item.org_count) })}
-          </Badge>
-          <Badge variant="outline">
-            {m.platform_feedback_user_count({ count: String(item.user_count) })}
-          </Badge>
-          <Badge variant="outline">
-            {m.platform_feedback_score({ score: String(item.priority_score) })}
-          </Badge>
-          {item.area && <Badge variant="outline">{item.area}</Badge>}
         </div>
+        <p className="whitespace-pre-wrap text-sm leading-6 text-gray-700">
+          {summary || m.platform_feedback_no_description()}
+        </p>
+        <p className="text-xs text-gray-400">
+          {[
+            feedbackItemKindLabel(item.kind),
+            item.area,
+            m.platform_feedback_reporter_counts({
+              orgs: String(item.org_count),
+              users: String(item.user_count),
+            }),
+            m.platform_feedback_score({ score: String(item.priority_score) }),
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+        <p className="text-xs text-gray-400">
+          {m.platform_col_created()} {fmtDate(item.created_at)} · {m.platform_feedback_col_updated()}{' '}
+          {fmtDate(item.updated_at)}
+        </p>
       </section>
 
       <section className="space-y-3">
@@ -315,7 +311,7 @@ function FeedbackItemDetailForm({
         <section className="space-y-4">
         <div>
           <h3 className="mt-1 text-base font-display-bold text-gray-900">
-            {m.platform_feedback_follow_up_title()}
+            {m.platform_feedback_edit_item_title()}
           </h3>
         </div>
         <div className="space-y-4">
@@ -341,20 +337,6 @@ function FeedbackItemDetailForm({
               rows={4}
               placeholder={m.platform_feedback_short_note_placeholder()}
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor={`feedback-item-status-${item.id}`}>
-              {m.platform_col_status()}
-            </Label>
-            <Select
-              id={`feedback-item-status-${item.id}`}
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-            >
-              <option value="open">{m.platform_feedback_status_open()}</option>
-              <option value="resolved">{m.platform_feedback_status_resolved()}</option>
-              <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
-            </Select>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -400,65 +382,81 @@ function FeedbackItemDetailForm({
             {m.platform_feedback_resolve_description()}
           </p>
         </div>
-        {isClosed && resolutionSummary && (
-          <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900">
-            {resolutionSummary}
-          </div>
-        )}
         <div className="space-y-1.5">
-          <Label htmlFor={`feedback-item-resolution-${item.id}`}>
-            {m.platform_feedback_resolution_placeholder()}
-          </Label>
-          <Textarea
-            id={`feedback-item-resolution-${item.id}`}
-            value={resolutionSummary}
-            onChange={(event) => setResolutionSummary(event.target.value)}
-            rows={3}
-            placeholder={m.platform_feedback_resolution_placeholder()}
-          />
+          <Label htmlFor={`feedback-item-status-${item.id}`}>{m.platform_col_status()}</Label>
+          <Select
+            id={`feedback-item-status-${item.id}`}
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+          >
+            <option value="open">{m.platform_feedback_status_open()}</option>
+            <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+            <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+          </Select>
         </div>
-        <div className="flex flex-wrap items-center gap-5">
-          <Checkbox
-            checked={notifyInApp}
-            onChange={(event) => setNotifyInApp(event.target.checked)}
-            label={m.platform_feedback_channel_in_app()}
-          />
-          <Checkbox
-            checked={notifyEmail}
-            onChange={(event) => setNotifyEmail(event.target.checked)}
-            label={m.platform_feedback_channel_email()}
-          />
-        </div>
+        {status === 'resolved' && (
+          <>
+            <div className="space-y-1.5">
+              <Label htmlFor={`feedback-item-resolution-${item.id}`}>
+                {m.platform_feedback_resolution_placeholder()}
+              </Label>
+              <Textarea
+                id={`feedback-item-resolution-${item.id}`}
+                value={resolutionSummary}
+                onChange={(event) => setResolutionSummary(event.target.value)}
+                rows={3}
+                placeholder={m.platform_feedback_resolution_placeholder()}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-5">
+              <Checkbox
+                checked={notifyInApp}
+                onChange={(event) => setNotifyInApp(event.target.checked)}
+                label={m.platform_feedback_channel_in_app()}
+              />
+              <Checkbox
+                checked={notifyEmail}
+                onChange={(event) => setNotifyEmail(event.target.checked)}
+                label={m.platform_feedback_channel_email()}
+              />
+            </div>
+          </>
+        )}
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
             variant="secondary"
             disabled={
-              resolveItem.isPending ||
-              resolutionSummary.trim().length < 3 ||
-              (!notifyInApp && !notifyEmail)
+              status === 'resolved'
+                ? resolveItem.isPending ||
+                  resolutionSummary.trim().length < 3 ||
+                  (!notifyInApp && !notifyEmail)
+                : updateItem.isPending || status === item.status
             }
             onClick={closeItem}
           >
-            {resolveItem.isPending ? (
+            {resolveItem.isPending || updateItem.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <CheckCircle2 className="h-4 w-4" />
             )}
-            {resolveItem.isPending
-              ? m.platform_feedback_resolving()
-              : isClosed
-                ? m.platform_feedback_resend_update()
-                : resolveLabel.button}
+            {status !== 'resolved'
+              ? m.admin_shared_save()
+              : resolveItem.isPending
+                ? m.platform_feedback_resolving()
+                : isClosed
+                  ? m.platform_feedback_resend_update()
+                  : resolveLabel.button}
           </Button>
           {resolveNotice && (
-            <p className="text-sm text-[var(--color-success)]">
-              {resolveNotice}
-            </p>
+            <p className="text-sm text-[var(--color-success)]">{resolveNotice}</p>
           )}
           {resolveError && (
-            <p className="text-sm text-[var(--color-destructive)]">
-              {resolveError}
+            <p className="text-sm text-[var(--color-destructive)]">{resolveError}</p>
+          )}
+          {updateItem.isSuccess && status !== 'resolved' && (
+            <p className="text-sm text-[var(--color-success)]">
+              {m.platform_feedback_item_saved()}
             </p>
           )}
         </div>
