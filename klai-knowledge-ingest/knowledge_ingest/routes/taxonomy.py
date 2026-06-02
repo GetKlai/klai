@@ -265,6 +265,28 @@ async def _fetch_backfill_result(pool: Any, job_id: int) -> dict | None:
     return json.loads(raw) if isinstance(raw, str) else raw
 
 
+async def _requeue_orphaned_backfill(pool: Any, job_id: int) -> bool:
+    """Reset an orphaned doing job so a live worker can pick it up again."""
+    result = await pool.execute(
+        """
+        UPDATE procrastinate_jobs
+        SET status = 'todo',
+            scheduled_at = NULL,
+            worker_id = NULL,
+            lock = NULL,
+            abort_requested = false
+        WHERE id = $1
+          AND status = 'doing'
+          AND worker_id IS NULL
+        """,
+        job_id,
+    )
+    updated = result.endswith(" 1")
+    if updated:
+        logger.warning("taxonomy_backfill_orphan_requeued", job_id=job_id)
+    return updated
+
+
 @router.post("/ingest/v1/taxonomy/backfill", response_model=BackfillEnqueueResponse)
 async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillEnqueueResponse:
     """Enqueue a taxonomy backfill job for the given KB.
@@ -289,7 +311,7 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillE
     pool = await get_pool()
     existing = await pool.fetchrow(
         """
-        SELECT id, status
+        SELECT id, status, worker_id
         FROM procrastinate_jobs
         WHERE queueing_lock = $1
           AND status IN ('todo', 'doing')
@@ -299,16 +321,20 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillE
         lock,
     )
     if existing:
+        status = existing["status"]
+        if status == "doing" and existing["worker_id"] is None:
+            await _requeue_orphaned_backfill(pool, existing["id"])
+            status = "todo"
         logger.info(
             "taxonomy_backfill_dedup",
             org_id=req.org_id,
             kb_slug=req.kb_slug,
             existing_job_id=existing["id"],
-            existing_status=existing["status"],
+            existing_status=status,
         )
         return BackfillEnqueueResponse(
             job_id=existing["id"],
-            status=_STATUS_MAP.get(existing["status"], existing["status"]),
+            status=_STATUS_MAP.get(status, status),
         )
 
     # Enqueue a new backfill job
@@ -341,7 +367,7 @@ async def active_taxonomy_backfill(
     pool = await get_pool()
     row = await pool.fetchrow(
         """
-        SELECT id, status, task_name
+        SELECT id, status, task_name, worker_id
         FROM procrastinate_jobs
         WHERE queueing_lock = $1
           AND status IN ('todo', 'doing', 'aborting')
@@ -354,9 +380,14 @@ async def active_taxonomy_backfill(
     if not row or not _is_taxonomy_backfill_task(row["task_name"]):
         return ActiveBackfillResponse(status="idle")
 
+    status = row["status"]
+    if status == "doing" and row["worker_id"] is None:
+        await _requeue_orphaned_backfill(pool, row["id"])
+        status = "todo"
+
     return ActiveBackfillResponse(
         job_id=row["id"],
-        status=_STATUS_MAP.get(row["status"], row["status"]),
+        status=_STATUS_MAP.get(status, status),
     )
 
 
@@ -372,7 +403,7 @@ async def taxonomy_backfill_status(request: Request, job_id: int) -> BackfillSta
     pool = await get_pool()
     row = await pool.fetchrow(
         """
-        SELECT id, status, task_name
+        SELECT id, status, task_name, worker_id
         FROM procrastinate_jobs
         WHERE id = $1
         """,
@@ -385,10 +416,15 @@ async def taxonomy_backfill_status(request: Request, job_id: int) -> BackfillSta
     if not _is_taxonomy_backfill_task(row["task_name"]):
         raise HTTPException(status_code=404, detail="Job not found")
 
-    status = _STATUS_MAP.get(row["status"], row["status"])
+    raw_status = row["status"]
+    if raw_status == "doing" and row["worker_id"] is None:
+        await _requeue_orphaned_backfill(pool, job_id)
+        raw_status = "todo"
+
+    status = _STATUS_MAP.get(raw_status, raw_status)
 
     result = None
-    if row["status"] == "succeeded":
+    if raw_status == "succeeded":
         result = await _fetch_backfill_result(pool, job_id)
 
     return BackfillStatusResponse(job_id=job_id, status=status, result=result)
