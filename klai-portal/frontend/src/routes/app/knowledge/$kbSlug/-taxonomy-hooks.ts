@@ -39,7 +39,7 @@ type SuggestStateSetter = (
 
 export type BackfillJobStatus = {
   job_id: number | null
-  status: 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | string
+  status: string
   result?: Record<string, unknown> | null
 }
 
