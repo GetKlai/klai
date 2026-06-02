@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Klai Shield",
-  "description": "Use Klai Shield compliance checks and knowledge context in external LLMs.",
-  "version": "0.1.1",
-  "permissions": ["activeTab", "sidePanel", "storage"],
+  "description": "Gebruik Klai compliance checks en kenniscontext in ChatGPT, Claude, Cursor, Gemini, Copilot en andere LLM-tools.",
+  "version": "0.2.0",
+  "permissions": ["activeTab", "clipboardWrite", "identity", "sidePanel", "storage", "tabs"],
   "host_permissions": [
+    "<all_urls>",
     "https://my.getklai.com/*",
     "https://getklai.com/*",
     "http://localhost:*/*"
@@ -13,25 +14,33 @@
     "service_worker": "src/background/service-worker.js",
     "type": "module"
   },
-  "side_panel": {
-    "default_path": "src/sidepanel/index.html"
-  },
   "content_scripts": [
     {
-      "matches": [
-        "https://chatgpt.com/*",
-        "https://chat.openai.com/*",
-        "https://claude.ai/*",
-        "https://gemini.google.com/*",
-        "https://copilot.microsoft.com/*",
-        "https://www.perplexity.ai/*"
-      ],
+      "matches": ["<all_urls>"],
       "js": ["src/content/injector.js"],
       "css": ["src/content/shield.css"],
       "run_at": "document_idle"
     }
   ],
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
   "action": {
-    "default_title": "Klai Shield"
+    "default_popup": "src/popup/index.html",
+    "default_icon": {
+      "16": "src/assets/icons/icon-16.png",
+      "32": "src/assets/icons/icon-32.png",
+      "48": "src/assets/icons/icon-48.png",
+      "128": "src/assets/icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "src/assets/icons/icon-16.png",
+    "32": "src/assets/icons/icon-32.png",
+    "48": "src/assets/icons/icon-48.png",
+    "128": "src/assets/icons/icon-128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; style-src 'self'; img-src 'self' data:"
   }
 }

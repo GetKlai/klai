@@ -43,6 +43,30 @@ class PortalShieldToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class PortalShieldAuthCode(Base):
+    __tablename__ = "portal_shield_auth_codes"
+    __table_args__ = (
+        Index("ix_portal_shield_auth_codes_code_hash", "code_hash", unique=True),
+        Index("ix_portal_shield_auth_codes_expires_at", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        server_default=func.gen_random_uuid().cast(String),
+    )
+    org_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("portal_orgs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class PortalShieldLog(Base):
     __tablename__ = "portal_shield_logs"
     __table_args__ = (
