@@ -524,7 +524,8 @@ class ZitadelClient:
         """Set a new password using a one-time code from email.
 
         Returns ``"invite"`` if the code was consumed via the invite flow
-        (``invite_code/verify`` + ``password`` without code) and ``"reset"``
+        (``invite_code/verify`` + ``PATCH /users`` with the first password)
+        and ``"reset"``
         if it was consumed via the legacy single-call reset flow
         (``password`` with verificationCode). Callers should record this
         in their structured logs so operators can split metrics by path.
@@ -541,8 +542,8 @@ class ZitadelClient:
           1. ``POST /v2/users/{id}/invite_code/verify`` with
              ``{verificationCode: code}`` — verifies the invite code AND
              marks the user's email as verified.
-          2. ``POST /v2/users/{id}/password`` with ``{newPassword}`` (no
-             code) — sets the password on the now-verified user.
+          2. ``PATCH /v2/users/{id}`` with ``human.password`` — sets the
+             first password on the now-verified user.
 
           The invite_code consumer does NOT accept reset-style codes, and
           the password endpoint does NOT accept invite codes. Without this
@@ -561,10 +562,20 @@ class ZitadelClient:
             json={"verificationCode": code},
         )
         if verify_resp.is_success:
-            # Invite verified; set the password without a code on the now-verified user.
-            password_resp = await self._http.post(
-                f"/v2/users/{user_id}/password",
-                json={"newPassword": {"password": new_password, "changeRequired": False}},
+            # Invite verified; set the user's first password with the v2
+            # update-user API. The deprecated /password endpoint expects
+            # currentPassword or a password-reset verificationCode, and can
+            # reject this step after the one-time invite code is already
+            # consumed.
+            password_resp = await self._http.patch(
+                f"/v2/users/{user_id}",
+                json={
+                    "human": {
+                        "password": {
+                            "password": {"password": new_password, "changeRequired": False},
+                        }
+                    }
+                },
             )
             password_resp.raise_for_status()
             return "invite"
