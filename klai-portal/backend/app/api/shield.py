@@ -8,8 +8,11 @@ checks, query retrieval, and write privacy-aware Shield logs.
 from __future__ import annotations
 
 import asyncio
+import io
+import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -18,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import StreamingResponse
 
 from app.core.config import settings
 from app.core.database import get_db, set_tenant, tenant_scoped_session
@@ -39,6 +43,8 @@ router = APIRouter(tags=["Shield"])
 
 _AUTH_ERROR = {"error": {"type": "authentication_error", "message": "Invalid Shield token"}}
 _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
+_EXTENSION_DIR = Path(__file__).resolve().parent.parent / "static" / "shield-extension"
+_EXTENSION_ZIP_NAME = "klai-shield-extension.zip"
 
 
 class ShieldTokenCreateRequest(BaseModel):
@@ -63,6 +69,13 @@ class ShieldTokenListItem(BaseModel):
     revoked_at: datetime | None
     last_used_at: datetime | None
     created_at: datetime | None
+
+
+class ShieldExtensionInfoResponse(BaseModel):
+    name: str
+    version: str
+    download_url: str
+    platform_admin_only: bool = True
 
 
 class ShieldConfigResponse(BaseModel):
@@ -175,6 +188,50 @@ async def get_shield_auth(
 
     structlog.contextvars.bind_contextvars(org_id=str(org.id), user_id=user.zitadel_user_id)
     return ShieldAuthContext(token=token, org=org, user=user)
+
+
+def _build_extension_zip_bytes(extension_dir: Path) -> bytes:
+    manifest = extension_dir / "manifest.json"
+    if not manifest.exists():
+        raise FileNotFoundError("Shield extension manifest not found")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(extension_dir.rglob("*")):
+            if path.is_dir():
+                continue
+            archive.write(path, Path("klai-shield-extension") / path.relative_to(extension_dir))
+    return buffer.getvalue()
+
+
+@router.get("/api/app/shield/extension", response_model=ShieldExtensionInfoResponse)
+async def shield_extension_info(
+    _perms: UserPermissions = Depends(require_platform_admin()),
+) -> ShieldExtensionInfoResponse:
+    return ShieldExtensionInfoResponse(
+        name="Klai Shield",
+        version="0.1.0",
+        download_url="/api/app/shield/extension.zip",
+    )
+
+
+@router.get("/api/app/shield/extension.zip")
+async def download_shield_extension(
+    _perms: UserPermissions = Depends(require_platform_admin()),
+) -> StreamingResponse:
+    try:
+        data = _build_extension_zip_bytes(_EXTENSION_DIR)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shield extension package not found") from exc
+
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_EXTENSION_ZIP_NAME}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/api/app/shield/tokens", response_model=ShieldTokenCreateResponse)

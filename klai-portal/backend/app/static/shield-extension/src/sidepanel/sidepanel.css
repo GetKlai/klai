@@ -1,0 +1,137 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f6f7f9;
+  color: #17202a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.panel {
+  min-height: 100vh;
+  padding: 16px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
+.pill {
+  border: 1px solid #cfd6df;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 4px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pill[data-state="ok"] {
+  border-color: #37a66b;
+  color: #17633b;
+}
+
+.pill[data-state="error"] {
+  border-color: #d94d4d;
+  color: #9f2222;
+}
+
+.section {
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #344054;
+  margin-bottom: 10px;
+}
+
+input,
+textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
+  padding: 9px 10px;
+  color: #17202a;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+button {
+  border: 1px solid #1d4f73;
+  border-radius: 6px;
+  background: #1d4f73;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 11px;
+}
+
+button:disabled {
+  border-color: #cfd6df;
+  background: #e9edf2;
+  color: #667085;
+  cursor: not-allowed;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+pre {
+  overflow: auto;
+  max-height: 180px;
+  margin: 10px 0 0;
+  border-radius: 6px;
+  background: #101828;
+  color: #f2f4f7;
+  padding: 10px;
+  font-size: 12px;
+}
+
+.result {
+  border-top: 1px solid #e4e8ee;
+  padding: 10px 0;
+  font-size: 13px;
+}
+
+.result:first-child {
+  border-top: 0;
+}
+
+.result strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.result p {
+  margin: 0;
+  color: #475467;
+  line-height: 1.45;
+}
