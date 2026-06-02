@@ -446,9 +446,8 @@ async def invite_user(
     try:
         db.add(user_row)
         await create_default_personal_kb(zitadel_user_id, org.id, db)
-        if zitadel_user_created:
-            failure_step = "invite_mail"
-            await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
+        failure_step = "invite_mail"
+        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
         failure_step = "portal_commit"
         await db.commit()
     except Exception as exc:
@@ -1022,7 +1021,7 @@ async def offboard_user(
     # Post-commit external side-effects. Failures here leave us in the
     # documented "DB-side offboarded, IdP-side still active" state — same
     # behaviour as before this SPEC.
-    await zitadel.deactivate_user(settings.zitadel_portal_org_id, zitadel_user_id)
+    await zitadel.deactivate_user(zitadel_user_id, settings.zitadel_portal_org_id)
     if user.github_username:
         await remove_github_org_member(user.github_username)
     else:

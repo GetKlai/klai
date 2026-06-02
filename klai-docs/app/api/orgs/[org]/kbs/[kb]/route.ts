@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
+import { giteaOrgNameForSlug } from "@/lib/gitea_org";
 import * as ki from "@/lib/knowledge_ingest";
 
 export async function DELETE(
@@ -27,7 +28,8 @@ export async function DELETE(
   }
 
   // Delete Gitea repo
-  await gitea.deleteRepo(`org-${orgSlug}`, kbSlug);
+  const giteaOrg = typeof org.gitea_org_name === "string" ? org.gitea_org_name : giteaOrgNameForSlug(orgSlug);
+  await gitea.deleteRepo(giteaOrg, kbSlug);
 
   // Delete from DB (cascades to knowledge_bases, page_edit_restrictions)
   await db.query("DELETE FROM docs.knowledge_bases WHERE id = $1", [kb.id]);

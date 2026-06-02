@@ -86,6 +86,7 @@ class TestAssertSafeSlug:
         "_start_librechat_container",
         "_write_tenant_caddyfile",
         "_flush_redis_and_restart_librechat",
+        "_sync_drop_mongodb_tenant_database",
         "_sync_drop_mongodb_tenant_user",
         "_create_mongodb_tenant_user",
     ],

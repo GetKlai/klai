@@ -13,6 +13,7 @@ import {
   usePlatformDeleteUser,
   usePlatformDeprovisionTenant,
   usePlatformInvite,
+  usePlatformRetryDeleteUser,
   usePlatformSuspend,
 } from '../-hooks'
 import { PlatformMiniStat } from './PlatformShell'
@@ -156,6 +157,7 @@ export function UsersSection({
   const changeRole = usePlatformChangeRole(orgId)
   const suspend = usePlatformSuspend(orgId)
   const del = usePlatformDeleteUser(orgId)
+  const retryDelete = usePlatformRetryDeleteUser(orgId)
 
   return (
     <section>
@@ -197,7 +199,11 @@ export function UsersSection({
                     changeRole.variables?.zid === u.zitadel_user_id) ||
                   (suspend.isPending &&
                     suspend.variables?.zid === u.zitadel_user_id) ||
-                  (del.isPending && del.variables === u.zitadel_user_id)
+                  (del.isPending && del.variables === u.zitadel_user_id) ||
+                  (retryDelete.isPending &&
+                    retryDelete.variables === u.zitadel_user_id)
+                const deleteFailed = u.deletion_status === 'failed_partial'
+                const failureStep = u.deletion_last_attempted_step
                 return (
                   <tr
                     key={u.zitadel_user_id}
@@ -241,10 +247,23 @@ export function UsersSection({
                     </td>
                     <td className={TD}>
                       <Badge
-                        variant={u.status === 'active' ? 'success' : 'outline'}
+                        variant={
+                          deleteFailed
+                            ? 'outline'
+                            : u.status === 'active'
+                              ? 'success'
+                              : 'outline'
+                        }
                       >
-                        {u.status}
+                        {deleteFailed
+                          ? m.platform_user_delete_failed_status()
+                          : u.status}
                       </Badge>
+                      {deleteFailed && failureStep ? (
+                        <p className="mt-1 text-xs text-[var(--color-destructive)]">
+                          {failureStep}
+                        </p>
+                      ) : null}
                     </td>
                     <td className={TD}>
                       <div className="flex items-center gap-3">
@@ -325,16 +344,42 @@ export function UsersSection({
                             </Button>
                           </span>
                         ) : (
-                          <Button
-                            type="button"
-                            variant="link"
-                            disabled={busy}
-                            onClick={() => setConfirmDelete(u.zitadel_user_id)}
-                            className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            {m.platform_delete()}
-                          </Button>
+                          <>
+                            {deleteFailed ? (
+                              <Button
+                                type="button"
+                                variant="link"
+                                disabled={busy}
+                                onClick={() =>
+                                  retryDelete.mutate(u.zitadel_user_id, {
+                                    onSuccess: () =>
+                                      toast.success(m.platform_user_deleted()),
+                                    onError: (err) =>
+                                      toast.error(
+                                        err instanceof Error
+                                          ? err.message
+                                          : m.platform_delete_failed(),
+                                      ),
+                                  })
+                                }
+                                className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
+                              >
+                                {busy
+                                  ? m.platform_busy()
+                                  : m.platform_retry_delete()}
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="link"
+                              disabled={busy}
+                              onClick={() => setConfirmDelete(u.zitadel_user_id)}
+                              className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              {m.platform_delete()}
+                            </Button>
+                          </>
                         )}
                       </div>
                     </td>

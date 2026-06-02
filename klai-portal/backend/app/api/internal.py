@@ -41,6 +41,7 @@ from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.core.permissions import resolve_user_permissions
+from app.core.provisioning_names import validate_slug_for_provisioning
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
@@ -1534,7 +1535,7 @@ async def regenerate_librechat_configs(
         client = docker.from_env()
         restart_errors: list[str] = []
         for slug in slugs:
-            container_name = f"librechat-{slug}"
+            container_name = validate_slug_for_provisioning(slug, domain=settings.domain).librechat_container
             try:
                 ctr = client.containers.get(container_name)
                 ctr.restart(timeout=10)
