@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import secrets
 
-
 SHIELD_TOKEN_PREFIX = "ks_live_"
 SHIELD_AUTH_CODE_PREFIX = "ks_code_"
 

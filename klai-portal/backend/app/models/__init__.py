@@ -1,10 +1,10 @@
-from app.models.taxonomy import PortalTaxonomyNode, PortalTaxonomyProposal
 from app.models.shield import PortalShieldAuthCode, PortalShieldLog, PortalShieldToken
+from app.models.taxonomy import PortalTaxonomyNode, PortalTaxonomyProposal
 
 __all__ = [
-    "PortalTaxonomyNode",
-    "PortalTaxonomyProposal",
     "PortalShieldAuthCode",
     "PortalShieldLog",
     "PortalShieldToken",
+    "PortalTaxonomyNode",
+    "PortalTaxonomyProposal",
 ]
