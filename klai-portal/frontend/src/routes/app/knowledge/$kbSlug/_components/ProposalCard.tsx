@@ -1,21 +1,17 @@
 /**
- * One taxonomy proposal card - pending / approved / rejected status,
- * inline edit-before-approve form (SPEC-TAXONOMY-REVIEW-FLOW-001
- * Issue 5), inline reject-with-reason form.
+ * One taxonomy proposal card - pending / approved / rejected status and
+ * inline edit-before-approve form (SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5).
  *
  * Extracted from the `proposals.map()` callback in TaxonomyTab.tsx
  * by SPEC-PORTAL-TAXONOMY-SPLIT-001 commit 4.
  *
  * State machine:
- * - `isEditing` and `isRejecting` are SINGLETONS owned by the parent
- *   (TaxonomyTab keeps `editingProposalId` and `rejectingProposalId`
- *   so only one card may be in edit OR reject mode at any time).
- * - Per-card edit-buffer state (`editingTitle`, `editingDescription`,
- *   `rejectReason`) lives here. It is initialised when `isEditing` /
- *   `isRejecting` transitions to true.
+ * - `isEditing` is a SINGLETON owned by the parent (TaxonomyTab keeps
+ *   `editingProposalId` so only one card may be in edit mode at any time).
+ * - Per-card edit-buffer state (`editingTitle`, `editingDescription`)
+ *   lives here. It is initialised when `isEditing` transitions to true.
  */
 import { useEffect, useRef, useState } from 'react'
-import { X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -36,7 +32,6 @@ export interface ProposalCardProps {
   proposal: TaxonomyProposal
   canEdit: boolean
   isEditing: boolean
-  isRejecting: boolean
   /** Parent's approveMutation.isPending - shared across all cards. */
   approvePending: boolean
   /** Parent's rejectMutation.isPending - shared across all cards. */
@@ -44,9 +39,7 @@ export interface ProposalCardProps {
   onStartEdit: () => void
   onSubmitEdit: (title: string, description: string) => void
   onCancelEdit: () => void
-  onStartReject: () => void
-  onSubmitReject: (reason: string) => void
-  onCancelReject: () => void
+  onReject: () => void
   onApprove: () => void
 }
 
@@ -58,20 +51,16 @@ export function ProposalCard({
   proposal,
   canEdit,
   isEditing,
-  isRejecting,
   approvePending,
   rejectPending,
   onStartEdit,
   onSubmitEdit,
   onCancelEdit,
-  onStartReject,
-  onSubmitReject,
-  onCancelReject,
+  onReject,
   onApprove,
 }: ProposalCardProps) {
   const [editingTitle, setEditingTitle] = useState(proposal.title)
   const [editingDescription, setEditingDescription] = useState(payloadDescription(proposal.payload))
-  const [rejectReason, setRejectReason] = useState('')
 
   // Initialise edit buffers ONLY when the parent flips this card from
   // not-editing to editing - not on every re-render while editing is
@@ -94,15 +83,6 @@ export function ProposalCard({
     // overwriting the user's typed input.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing])
-
-  // Reject reason: same transition guard. The buffer should clear only
-  // when the card transitions into reject-mode, not on every render
-  // while it stays in reject-mode.
-  const prevIsRejecting = useRef(false)
-  useEffect(() => {
-    if (isRejecting && !prevIsRejecting.current) setRejectReason('')
-    prevIsRejecting.current = isRejecting
-  }, [isRejecting])
 
   const typeInfo =
     proposalTypeBadge[proposal.proposal_type] ??
@@ -198,56 +178,31 @@ export function ProposalCard({
           </div>
           {canEdit && isPending && !isEditing && (
             <div className="flex items-center gap-1.5 shrink-0">
-              {isRejecting ? (
-                <form
-                  className="flex items-center gap-1.5"
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    onSubmitReject(rejectReason)
-                  }}
-                >
-                  <Input
-                    value={rejectReason}
-                    onChange={(e) => setRejectReason(e.target.value)}
-                    placeholder={m.knowledge_taxonomy_proposals_reject_reason_placeholder()}
-                    className="h-7 text-xs w-48"
-                    autoFocus
-                  />
-                  <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2" disabled={rejectPending}>
-                    {m.knowledge_taxonomy_proposals_reject()}
-                  </Button>
-                  <Button type="button" size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={onCancelReject}>
-                    <X className="h-3 w-3" />
-                  </Button>
-                </form>
-              ) : (
-                <>
-                  <Button
-                    size="sm"
-                    className="h-7 text-xs px-2.5 bg-[var(--color-success)] text-white hover:opacity-90"
-                    onClick={onApprove}
-                    disabled={approvePending}
-                  >
-                    {m.knowledge_taxonomy_proposals_approve()}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs px-2.5"
-                    onClick={onStartEdit}
-                  >
-                    {m.knowledge_taxonomy_proposals_edit()}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs px-2.5 text-[var(--color-destructive)] border-[var(--color-destructive)]/30 hover:bg-[var(--color-destructive)]/5"
-                    onClick={onStartReject}
-                  >
-                    {m.knowledge_taxonomy_proposals_reject()}
-                  </Button>
-                </>
-              )}
+              <Button
+                size="sm"
+                className="h-7 text-xs px-2.5 bg-[var(--color-success)] text-white hover:opacity-90"
+                onClick={onApprove}
+                disabled={approvePending}
+              >
+                {m.knowledge_taxonomy_proposals_approve()}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs px-2.5"
+                onClick={onStartEdit}
+              >
+                {m.knowledge_taxonomy_proposals_edit()}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs px-2.5 text-[var(--color-destructive)] border-[var(--color-destructive)]/30 hover:bg-[var(--color-destructive)]/5"
+                onClick={onReject}
+                disabled={rejectPending}
+              >
+                {m.knowledge_taxonomy_proposals_reject()}
+              </Button>
             </div>
           )}
         </div>

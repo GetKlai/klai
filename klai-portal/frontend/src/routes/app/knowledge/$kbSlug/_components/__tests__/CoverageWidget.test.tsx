@@ -193,7 +193,7 @@ describe('CoverageWidget - delete-confirm', () => {
 // Suggest button gating
 // ---------------------------------------------------------------------------
 
-describe('CoverageWidget - Suggest CTA gating', () => {
+describe('CoverageWidget - taxonomy action CTA gating', () => {
   it('shown in empty state when total_chunks >= 10 AND onSuggest is provided', () => {
     const onSuggest = vi.fn()
     render(
@@ -252,7 +252,7 @@ describe('CoverageWidget - Suggest CTA gating', () => {
     ).toBeNull()
   })
 
-  it('shown in populated state below MAX when untagged_count >= 10 AND untagged_pct > 5', () => {
+  it('shows re-tag CTA in populated state below MAX when untagged_count >= 10 AND untagged_pct > 5', () => {
     const onSuggest = vi.fn()
     render(
       <CoverageWidget
@@ -267,9 +267,9 @@ describe('CoverageWidget - Suggest CTA gating', () => {
         onSuggest={onSuggest}
       />,
     )
-    expect(
-      screen.getByText('Suggest categories'),
-    ).toBeDefined()
+    fireEvent.click(screen.getByText('Re-tag documents'))
+    expect(onSuggest).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Suggest categories')).toBeNull()
   })
 
   it('hidden in populated state when untagged_pct ≤ 5', () => {

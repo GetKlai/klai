@@ -254,8 +254,8 @@ export function useApproveProposal(kbSlug: string) {
 
 /**
  * Reject a proposal. `onSuccess` is called after the
- * `taxonomy-proposals` invalidation so the caller can reset its
- * reject-form state (`rejectingProposalId`, `rejectReason`).
+ * `taxonomy-proposals` invalidation so the caller can reset any local
+ * reject UI state.
  */
 export function useRejectProposal(kbSlug: string, onSuccess: () => void) {
   const queryClient = useQueryClient()
@@ -265,14 +265,14 @@ export function useRejectProposal(kbSlug: string, onSuccess: () => void) {
       reason,
     }: {
       proposalId: number
-      reason: string
+      reason?: string
     }) => {
+      const trimmedReason = reason?.trim()
+      const init: { method: string; body?: string } = { method: 'POST' }
+      if (trimmedReason) init.body = JSON.stringify({ reason: trimmedReason })
       await apiFetch(
         `/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/reject`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ reason }),
-        },
+        init,
       )
     },
     onSuccess: () => {

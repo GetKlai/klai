@@ -620,6 +620,14 @@ async def run_crawl_job(
                         retired_count=retired_count,
                     )
 
+        if terminal_status == "completed" and pages_done > 0:
+            await _enqueue_taxonomy_backfill_after_crawl(
+                org_id=org_id,
+                kb_slug=kb_slug,
+                job_id=job_id,
+                pages_done=pages_done,
+            )
+
         logger.info(
             "crawl_job_complete",
             job_id=job_id,
@@ -641,6 +649,53 @@ async def run_crawl_job(
     except Exception as exc:
         logger.exception("crawl_job_error", job_id=job_id, error=str(exc))
         await _update_job(conn, job_id, status="failed", error=str(exc))
+
+
+async def _enqueue_taxonomy_backfill_after_crawl(
+    *,
+    org_id: str,
+    kb_slug: str,
+    job_id: str,
+    pages_done: int,
+) -> object | None:
+    """Queue a deduped taxonomy backfill after a successful crawl.
+
+    Per-page ingest already attempts taxonomy classification synchronously.
+    This background pass is a safety net for transient node-fetch/LLM failures
+    and for pages that were ingested before taxonomy existed. The backfill
+    only classifies chunks whose ``taxonomy_node_ids`` field is empty.
+    """
+    from knowledge_ingest.enrichment_tasks import get_app
+    from knowledge_ingest.portal_client import fetch_taxonomy_nodes
+
+    taxonomy_nodes = await fetch_taxonomy_nodes(kb_slug, org_id)
+    if not taxonomy_nodes:
+        logger.info(
+            "crawl_taxonomy_backfill_skipped_no_nodes",
+            org_id=org_id,
+            kb_slug=kb_slug,
+            job_id=job_id,
+        )
+        return None
+
+    proc_app = get_app()
+    lock = f"taxonomy-backfill:{org_id}:{kb_slug}"
+    backfill_job_id = await proc_app.run_taxonomy_backfill.configure(  # type: ignore[attr-defined]
+        queueing_lock=lock,
+    ).defer_async(
+        org_id=org_id,
+        kb_slug=kb_slug,
+        batch_size=100,
+    )
+    logger.info(
+        "crawl_taxonomy_backfill_enqueued",
+        org_id=org_id,
+        kb_slug=kb_slug,
+        crawl_job_id=job_id,
+        taxonomy_backfill_job_id=backfill_job_id,
+        pages_done=pages_done,
+    )
+    return backfill_job_id
 
 
 async def _ingest_crawl_result(
