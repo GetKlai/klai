@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { BookOpen, Plus, RotateCw, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select } from '@/components/ui/select'
 import { fetchMe } from '@/lib/api-me'
 import { useAuth } from '@/lib/auth'
 import { getLocale } from '@/paraglide/runtime'
@@ -81,8 +80,6 @@ function PlatformConsole() {
   const navigate = useNavigate()
   const routeSearch = Route.useSearch()
   const [search, setSearch] = useState('')
-  const [feedbackStatus, setFeedbackStatus] = useState('')
-  const [feedbackKind, setFeedbackKind] = useState('')
   const auth = useAuth()
   const meQuery = useQuery({
     queryKey: ['me'],
@@ -294,32 +291,6 @@ function PlatformConsole() {
             className="pl-9"
           />
         </div>
-        {tab === 'feedback' && (
-          <>
-            <Select
-              value={feedbackStatus}
-              onChange={(event) => setFeedbackStatus(event.target.value)}
-              className="w-44"
-            >
-              <option value="">{m.platform_feedback_filter_all_statuses()}</option>
-              <option value="new">{m.platform_feedback_status_new()}</option>
-              <option value="open">{m.platform_feedback_status_open()}</option>
-              <option value="resolved">{m.platform_feedback_status_resolved()}</option>
-              <option value="support">{m.platform_feedback_status_support()}</option>
-              <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
-            </Select>
-            <Select
-              value={feedbackKind}
-              onChange={(event) => setFeedbackKind(event.target.value)}
-              className="w-40"
-            >
-              <option value="">{m.platform_feedback_filter_all_types()}</option>
-              <option value="feedback">{m.platform_feedback_kind_feedback()}</option>
-              <option value="problem">{m.platform_feedback_kind_problem()}</option>
-              <option value="question">{m.platform_feedback_kind_question()}</option>
-            </Select>
-          </>
-        )}
         <Button type="button" onClick={refresh} variant="secondary">
           <RotateCw className="h-4 w-4" />
           {m.platform_refresh()}
@@ -337,12 +308,7 @@ function PlatformConsole() {
       )}
       {tab === 'bots' && <BotsTab search={search} fmtDate={fmtDate} />}
       {tab === 'feedback' && (
-        <FeedbackTab
-          search={search}
-          status={feedbackStatus}
-          kind={feedbackKind}
-          fmtDate={fmtDate}
-        />
+        <FeedbackTab search={search} fmtDate={fmtDate} />
       )}
       {tab === 'chat-errors' && <ChatErrorsTab fmtDate={fmtDate} />}
       {tab === 'status' && <StatusTab />}

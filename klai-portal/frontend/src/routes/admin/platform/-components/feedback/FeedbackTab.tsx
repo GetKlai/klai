@@ -20,19 +20,13 @@ import {
 
 export function FeedbackTab({
   search,
-  status,
-  kind,
   fmtDate,
 }: {
   search: string
-  status: string
-  kind: string
   fmtDate: (s: string | null) => string
 }) {
-  const { data, isLoading } = usePlatformFeedbackSubmissions(search, status, kind)
   const navigate = useNavigate()
   const [feedbackView, setFeedbackView] = useState<'inbox' | 'items'>('inbox')
-  const rows = data ?? []
 
   return (
     <>
@@ -67,38 +61,89 @@ export function FeedbackTab({
           }
         />
       ) : (
-        <PlatformTableShell
-          loading={isLoading}
-          empty={rows.length === 0}
-          emptyText={m.platform_empty_feedback()}
-        >
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className={TH}>{m.platform_col_type()}</th>
-              <th className={TH}>{m.platform_col_status()}</th>
-              <th className={TH}>{m.platform_col_organization()}</th>
-              <th className={TH}>{m.platform_col_detail()}</th>
-              <th className={TH}>{m.platform_col_time()}</th>
-              <th className={TH}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((item) => (
-              <FeedbackSubmissionRow
-                key={item.id}
-                item={item}
-                fmtDate={fmtDate}
-                onOpen={() =>
-                  void navigate({
-                    to: '/admin/platform/feedback/submissions/$submissionId',
-                    params: { submissionId: String(item.id) },
-                  })
-                }
-              />
-            ))}
-          </tbody>
-        </PlatformTableShell>
+        <InboxPanel
+          search={search}
+          fmtDate={fmtDate}
+          onOpen={(submissionId) =>
+            void navigate({
+              to: '/admin/platform/feedback/submissions/$submissionId',
+              params: { submissionId: String(submissionId) },
+            })
+          }
+        />
       )}
+    </>
+  )
+}
+
+function InboxPanel({
+  search,
+  fmtDate,
+  onOpen,
+}: {
+  search: string
+  fmtDate: (s: string | null) => string
+  onOpen: (submissionId: number) => void
+}) {
+  const [statusFilter, setStatusFilter] = useState('')
+  const [kindFilter, setKindFilter] = useState('')
+  const { data, isLoading } = usePlatformFeedbackSubmissions(search, statusFilter, kindFilter)
+  const rows = data ?? []
+
+  return (
+    <>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Select
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value)}
+          className="h-9 min-w-[150px]"
+          aria-label={m.platform_feedback_filter_status()}
+        >
+          <option value="">{m.platform_feedback_filter_all_statuses()}</option>
+          <option value="new">{m.platform_feedback_status_new()}</option>
+          <option value="open">{m.platform_feedback_status_open()}</option>
+          <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+          <option value="support">{m.platform_feedback_status_support()}</option>
+          <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+        </Select>
+        <Select
+          value={kindFilter}
+          onChange={(event) => setKindFilter(event.target.value)}
+          className="h-9 min-w-[130px]"
+          aria-label={m.platform_feedback_filter_type()}
+        >
+          <option value="">{m.platform_feedback_filter_all_types()}</option>
+          <option value="feedback">{m.platform_feedback_kind_feedback()}</option>
+          <option value="problem">{m.platform_feedback_kind_problem()}</option>
+          <option value="question">{m.platform_feedback_kind_question()}</option>
+        </Select>
+      </div>
+      <PlatformTableShell
+        loading={isLoading}
+        empty={rows.length === 0}
+        emptyText={m.platform_empty_feedback()}
+      >
+        <thead>
+          <tr className="border-b border-gray-200">
+            <th className={TH}>{m.platform_col_type()}</th>
+            <th className={TH}>{m.platform_col_status()}</th>
+            <th className={TH}>{m.platform_col_organization()}</th>
+            <th className={TH}>{m.platform_col_detail()}</th>
+            <th className={TH}>{m.platform_col_time()}</th>
+            <th className={TH}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((item) => (
+            <FeedbackSubmissionRow
+              key={item.id}
+              item={item}
+              fmtDate={fmtDate}
+              onOpen={() => onOpen(item.id)}
+            />
+          ))}
+        </tbody>
+      </PlatformTableShell>
     </>
   )
 }
