@@ -53,3 +53,27 @@ def test_verify_shield_token_uses_constant_time_compare():
     with patch("app.services.shield_tokens.hmac.compare_digest", return_value=True) as mock_cmp:
         assert verify_shield_token(plaintext, token_hash) is True
         mock_cmp.assert_called_once()
+
+
+def test_generate_shield_auth_code_format():
+    from app.services.shield_tokens import SHIELD_AUTH_CODE_PREFIX, generate_shield_auth_code
+
+    plaintext, _hash = generate_shield_auth_code()
+    assert plaintext.startswith(SHIELD_AUTH_CODE_PREFIX)
+    hex_part = plaintext[len(SHIELD_AUTH_CODE_PREFIX) :]
+    assert len(hex_part) == 48
+    assert re.fullmatch(r"[0-9a-f]{48}", hex_part)
+
+
+def test_verify_shield_auth_code_accepts_matching_code():
+    from app.services.shield_tokens import generate_shield_auth_code, verify_shield_auth_code
+
+    plaintext, code_hash = generate_shield_auth_code()
+    assert verify_shield_auth_code(plaintext, code_hash) is True
+
+
+def test_verify_shield_auth_code_rejects_wrong_code():
+    from app.services.shield_tokens import generate_shield_auth_code, verify_shield_auth_code
+
+    _plaintext, code_hash = generate_shield_auth_code()
+    assert verify_shield_auth_code("ks_code_" + "b" * 48, code_hash) is False

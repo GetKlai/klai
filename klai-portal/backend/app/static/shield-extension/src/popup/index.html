@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Klai Shield</title>
+    <style>
+      :root {
+        --accent: #fcaa2d;
+        --accent-soft: #fff4df;
+        --ink: #191918;
+        --muted: #7b7770;
+        --surface: #ffffff;
+        --page: #faf9f6;
+        --border: #e8e6de;
+        --border-hover: #d1d0c6;
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { width: 320px; background: var(--page); color: var(--ink); }
+      .header { display: flex; align-items: center; gap: 10px; padding: 14px; border-bottom: 1px solid var(--border); background: var(--surface); }
+      .mark { width: 28px; height: 28px; }
+      .logo { width: 58px; height: auto; }
+      .header span { color: var(--muted); font-size: 12px; font-weight: 760; }
+      .content { padding: 12px; }
+      .card { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 12px; margin-bottom: 8px; }
+      .user { display: flex; align-items: center; gap: 10px; }
+      .avatar { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; background: var(--accent); color: var(--ink); font-weight: 800; }
+      .name { font-size: 13px; font-weight: 740; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .email, .sub { color: var(--muted); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; }
+      .row + .row { border-top: 1px solid var(--border); }
+      .row-label { font-size: 13px; font-weight: 700; }
+      .pill { border-radius: 999px; background: var(--accent-soft); color: #7a4600; padding: 3px 8px; font-size: 11px; font-weight: 760; }
+      .actions { display: grid; gap: 8px; margin-top: 10px; }
+      button { min-height: 35px; border-radius: 999px; border: 1px solid transparent; font: inherit; font-size: 13px; font-weight: 760; cursor: pointer; }
+      .primary { background: var(--ink); color: #fff; }
+      .secondary { background: var(--surface); color: var(--ink); border-color: var(--border); }
+      .secondary:hover { border-color: var(--border-hover); }
+      .error { color: #bd2d20; font-size: 12px; line-height: 1.4; min-height: 17px; margin-top: 8px; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <header class="header">
+      <img src="../assets/klai-mark.svg" alt="" class="mark" />
+      <img src="../assets/klai-logo.svg" alt="Klai" class="logo" />
+      <span>Shield</span>
+    </header>
+    <main class="content">
+      <section id="login-view" class="card">
+        <div class="row-label">Niet ingelogd</div>
+        <p class="sub">Log in met je Klai-account om Shield te gebruiken.</p>
+        <div class="actions">
+          <button type="button" class="primary" id="login-btn">Inloggen met Klai</button>
+        </div>
+        <div class="error" id="login-error"></div>
+      </section>
+
+      <section id="app-view" class="hidden">
+        <div class="card user">
+          <div class="avatar" id="avatar">K</div>
+          <div>
+            <div class="name" id="user-name">Klai gebruiker</div>
+            <div class="email" id="user-email"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="row"><span class="row-label">Shield</span><span class="pill" id="shield-state">Actief</span></div>
+          <div class="row"><span class="row-label">Kennisbanken</span><span class="pill" id="kb-count">0</span></div>
+        </div>
+        <div class="actions">
+          <button type="button" class="primary" id="open-sidepanel">Open paneel</button>
+          <button type="button" class="secondary" id="refresh-btn">Verversen</button>
+          <button type="button" class="secondary" id="logout-btn">Uitloggen</button>
+        </div>
+      </section>
+    </main>
+    <script src="./popup.js" type="module"></script>
+  </body>
+</html>

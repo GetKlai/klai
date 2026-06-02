@@ -8,6 +8,7 @@ import secrets
 
 
 SHIELD_TOKEN_PREFIX = "ks_live_"
+SHIELD_AUTH_CODE_PREFIX = "ks_code_"
 
 
 def hash_shield_token(plaintext: str) -> str:
@@ -29,4 +30,16 @@ def generate_shield_token() -> tuple[str, str]:
 
 def verify_shield_token(plaintext: str, stored_hash: str) -> bool:
     """Constant-time comparison of a plaintext Shield token against a hash."""
+    return hmac.compare_digest(hash_shield_token(plaintext), stored_hash)
+
+
+def generate_shield_auth_code() -> tuple[str, str]:
+    """Generate a short-lived extension login code and its persisted hash."""
+    random_hex = secrets.token_hex(24)
+    plaintext = f"{SHIELD_AUTH_CODE_PREFIX}{random_hex}"
+    return plaintext, hash_shield_token(plaintext)
+
+
+def verify_shield_auth_code(plaintext: str, stored_hash: str) -> bool:
+    """Constant-time comparison of a plaintext extension login code."""
     return hmac.compare_digest(hash_shield_token(plaintext), stored_hash)

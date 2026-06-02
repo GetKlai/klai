@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import urllib.parse
 import zipfile
 
 import pytest
@@ -65,3 +66,13 @@ def test_build_extension_zip_contains_manifest_and_source(tmp_path):
 
     assert "klai-shield-extension/manifest.json" in names
     assert "klai-shield-extension/src/background/service-worker.js" in names
+
+
+def test_extension_login_return_to_hides_absolute_chrome_redirect():
+    from app.api.shield import _extension_login_return_to
+
+    request = SimpleNamespace(url=SimpleNamespace(path="/api/app/shield/extension/login"))
+    return_to = _extension_login_return_to(request, "https://abc123.chromiumapp.org/shield")
+
+    assert return_to.startswith("/api/app/shield/extension/login?redirect_uri_b64=")
+    assert "://" not in urllib.parse.unquote(return_to)

@@ -8,7 +8,10 @@ checks, query retrieval, and write privacy-aware Shield logs.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import io
+import urllib.parse
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -21,19 +24,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.responses import StreamingResponse
+from starlette.responses import RedirectResponse, StreamingResponse
 
 from app.core.config import settings
 from app.core.database import get_db, set_tenant, tenant_scoped_session
-from app.core.permissions import UserPermissions, require_platform_admin
+from app.core.permissions import ProfileRole, UserPermissions, require_platform_admin, resolve_user_permissions
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
-from app.models.shield import PortalShieldLog, PortalShieldToken
+from app.models.shield import PortalShieldAuthCode, PortalShieldLog, PortalShieldToken
 from app.services.shield_compliance import check_compliance
 from app.services.shield_tokens import (
+    SHIELD_AUTH_CODE_PREFIX,
     SHIELD_TOKEN_PREFIX,
+    generate_shield_auth_code,
     generate_shield_token,
     hash_shield_token,
+    verify_shield_auth_code,
     verify_shield_token,
 )
 from app.trace import get_trace_headers
@@ -45,6 +51,8 @@ _AUTH_ERROR = {"error": {"type": "authentication_error", "message": "Invalid Shi
 _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
 _EXTENSION_DIR = Path(__file__).resolve().parent.parent / "static" / "shield-extension"
 _EXTENSION_ZIP_NAME = "klai-shield-extension.zip"
+_EXTENSION_AUTH_CODE_TTL = timedelta(minutes=10)
+_EXTENSION_TOKEN_TTL = timedelta(days=30)
 
 
 class ShieldTokenCreateRequest(BaseModel):
@@ -76,6 +84,18 @@ class ShieldExtensionInfoResponse(BaseModel):
     version: str
     download_url: str
     platform_admin_only: bool = True
+
+
+class ShieldExtensionExchangeRequest(BaseModel):
+    code: str = Field(..., min_length=len(SHIELD_AUTH_CODE_PREFIX) + 16, max_length=128)
+
+
+class ShieldExtensionExchangeResponse(BaseModel):
+    success: bool = True
+    token: str
+    expires_at: datetime
+    user: dict[str, Any]
+    organization: dict[str, Any]
 
 
 class ShieldConfigResponse(BaseModel):
@@ -204,13 +224,195 @@ def _build_extension_zip_bytes(extension_dir: Path) -> bytes:
     return buffer.getvalue()
 
 
+def _append_query(url: str, params: dict[str, str]) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    query.update(params)
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query), parsed.fragment)
+    )
+
+
+def _validated_extension_redirect_uri(value: str) -> str:
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme != "https" or not parsed.netloc.endswith(".chromiumapp.org"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid extension redirect_uri")
+    path = parsed.path or "/"
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def _extension_error_redirect(redirect_uri: str, error: str) -> RedirectResponse:
+    return RedirectResponse(url=_append_query(redirect_uri, {"error": error}), status_code=302)
+
+
+def _encode_redirect_uri(value: str) -> str:
+    return base64.urlsafe_b64encode(value.encode()).decode().rstrip("=")
+
+
+def _decode_redirect_uri(value: str) -> str:
+    padded = f"{value}{'=' * (-len(value) % 4)}"
+    try:
+        return base64.urlsafe_b64decode(padded.encode()).decode()
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid extension redirect_uri") from exc
+
+
+def _extension_login_return_to(request: Request, redirect_uri: str) -> str:
+    encoded = _encode_redirect_uri(redirect_uri)
+    return f"{request.url.path}?redirect_uri_b64={encoded}"
+
+
+def _resolve_extension_redirect_uri(redirect_uri: str | None, redirect_uri_b64: str | None) -> str:
+    if redirect_uri_b64:
+        return _validated_extension_redirect_uri(_decode_redirect_uri(redirect_uri_b64))
+    if redirect_uri:
+        return _validated_extension_redirect_uri(redirect_uri)
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing extension redirect_uri")
+
+
+async def _load_platform_admin_user(
+    db: AsyncSession,
+    *,
+    org_id: int | None,
+    user_id: str,
+) -> tuple[PortalOrg, PortalUser] | None:
+    if org_id is None:
+        return None
+
+    perms = await resolve_user_permissions(user_id, db, org_id=org_id)
+    if (
+        perms is None
+        or not perms.is_platform_admin
+        or perms.effective_role != ProfileRole.ADMIN
+        or perms.status != "active"
+    ):
+        return None
+
+    result = await db.execute(
+        select(PortalOrg, PortalUser)
+        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
+        .where(
+            PortalOrg.id == org_id,
+            PortalOrg.slug == settings.platform_org_slug,
+            PortalUser.zitadel_user_id == user_id,
+            PortalUser.status == "active",
+            PortalUser.role == "admin",
+        )
+    )
+    return result.one_or_none()
+
+
+@router.get("/api/app/shield/extension/login")
+async def shield_extension_login(
+    request: Request,
+    redirect_uri: str | None = None,
+    redirect_uri_b64: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    safe_redirect_uri = _resolve_extension_redirect_uri(redirect_uri, redirect_uri_b64)
+    session = getattr(request.state, "session", None)
+    if session is None:
+        return_to = _extension_login_return_to(request, safe_redirect_uri)
+        login_query = urllib.parse.urlencode({"return_to": return_to})
+        return RedirectResponse(url=f"/api/auth/oidc/start?{login_query}", status_code=302)
+
+    row = await _load_platform_admin_user(
+        db,
+        org_id=getattr(session, "org_id", None),
+        user_id=getattr(session, "zitadel_user_id", ""),
+    )
+    if row is None:
+        return _extension_error_redirect(safe_redirect_uri, "platform_admin_required")
+
+    org, user = row
+    await set_tenant(db, org.id)
+
+    code, code_hash = generate_shield_auth_code()
+    now = datetime.now(UTC)
+    db.add(
+        PortalShieldAuthCode(
+            org_id=org.id,
+            user_id=user.zitadel_user_id,
+            code_hash=code_hash,
+            expires_at=now + _EXTENSION_AUTH_CODE_TTL,
+        )
+    )
+    await db.commit()
+    return RedirectResponse(url=_append_query(safe_redirect_uri, {"code": code}), status_code=302)
+
+
+@router.post("/api/app/shield/extension/exchange", response_model=ShieldExtensionExchangeResponse)
+async def exchange_shield_extension_code(
+    body: ShieldExtensionExchangeRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ShieldExtensionExchangeResponse:
+    plaintext = body.code.strip()
+    if not plaintext.startswith(SHIELD_AUTH_CODE_PREFIX):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+
+    now = datetime.now(UTC)
+    code_hash = hash_shield_token(plaintext)
+    result = await db.execute(
+        select(PortalShieldAuthCode)
+        .where(
+            PortalShieldAuthCode.code_hash == code_hash,
+            PortalShieldAuthCode.consumed_at.is_(None),
+            PortalShieldAuthCode.expires_at > now,
+        )
+        .with_for_update()
+    )
+    auth_code = result.scalar_one_or_none()
+    if auth_code is None or not verify_shield_auth_code(plaintext, auth_code.code_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+
+    row = await _load_platform_admin_user(db, org_id=auth_code.org_id, user_id=auth_code.user_id)
+    if row is None:
+        auth_code.consumed_at = now
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: platform admin required")
+
+    org, user = row
+    await set_tenant(db, org.id)
+
+    token, token_hash = generate_shield_token()
+    expires_at = now + _EXTENSION_TOKEN_TTL
+    db.add(
+        PortalShieldToken(
+            org_id=org.id,
+            user_id=user.zitadel_user_id,
+            name="Browser extension login",
+            token_prefix=token[:16],
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+    )
+    auth_code.consumed_at = now
+    await db.commit()
+
+    return ShieldExtensionExchangeResponse(
+        token=token,
+        expires_at=expires_at,
+        user={
+            "id": user.zitadel_user_id,
+            "display_name": user.display_name,
+            "email": user.email,
+            "role": user.role,
+        },
+        organization={
+            "id": org.id,
+            "slug": org.slug,
+            "name": org.name,
+        },
+    )
+
+
 @router.get("/api/app/shield/extension", response_model=ShieldExtensionInfoResponse)
 async def shield_extension_info(
     _perms: UserPermissions = Depends(require_platform_admin()),
 ) -> ShieldExtensionInfoResponse:
     return ShieldExtensionInfoResponse(
         name="Klai Shield",
-        version="0.1.1",
+        version="0.2.0",
         download_url="/api/app/shield/extension.zip",
     )
 

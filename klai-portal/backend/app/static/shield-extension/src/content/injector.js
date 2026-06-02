@@ -10,6 +10,17 @@ const SEND_BUTTON_SELECTORS = [
   "button[aria-label*='Verstuur']",
   "button[type='submit']"
 ];
+const SUPPORTED_LLM_HOSTS = new Set([
+  "chatgpt.com",
+  "chat.openai.com",
+  "claude.ai",
+  "gemini.google.com",
+  "copilot.microsoft.com",
+  "chat.mistral.ai",
+  "poe.com",
+  "perplexity.ai",
+  "www.perplexity.ai"
+]);
 
 let suppressNextSubmit = false;
 let lastCheck = { text: "", result: null, checkedAt: 0 };
@@ -38,12 +49,16 @@ function findSendButton(root = document) {
     .sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0] || null;
 }
 
+function isSupportedLlmHost() {
+  return SUPPORTED_LLM_HOSTS.has(window.location.hostname);
+}
+
 function sendRuntimeMessage(payload) {
   return chrome.runtime.sendMessage(payload).then((response) => {
-    if (!response?.ok) {
+    if (!response?.ok && !response?.success) {
       throw new Error(response?.error || "Shield request failed.");
     }
-    return response.result;
+    return response.result || response;
   });
 }
 
@@ -64,7 +79,11 @@ function showNotice(kind, text, warnings = []) {
   notice._hideTimer = window.setTimeout(() => notice.remove(), kind === "blocked" ? 9000 : 5000);
 }
 
-async function checkText(text) {
+async function getSettings() {
+  return sendRuntimeMessage({ type: "KLAI_SHIELD_GET_SETTINGS" });
+}
+
+async function checkText(text, level) {
   if (!text.trim()) return { status: "green", should_block: false, warnings: [] };
   const now = Date.now();
   if (lastCheck.text === text && lastCheck.result && now - lastCheck.checkedAt < 15000) {
@@ -73,7 +92,7 @@ async function checkText(text) {
   const result = await sendRuntimeMessage({
     type: "KLAI_SHIELD_CHECK_TEXT",
     text,
-    level: "basic",
+    level: level || "basic",
     checkType: "input"
   });
   lastCheck = { text, result, checkedAt: now };
@@ -102,11 +121,24 @@ async function guardAndSubmit(submit) {
   const text = getComposerText(composer);
   if (!text.trim()) return;
 
+  let settings;
+  try {
+    settings = await getSettings();
+  } catch {
+    submit();
+    return;
+  }
+  if (!settings.token || settings.enabled === false || settings.complianceEnabled === false) {
+    submit();
+    return;
+  }
+
   let result;
   try {
-    result = await checkText(text);
+    result = await checkText(text, settings.complianceLevel || "basic");
   } catch (error) {
-    showNotice("warning", error.message || "Klai Shield is niet bereikbaar.");
+    showNotice("warning", error.message || "Klai Shield kon deze prompt niet controleren.");
+    submit();
     return;
   }
 
@@ -141,41 +173,43 @@ function insertTextIntoComposer(text) {
   document.execCommand("insertText", false, value);
 }
 
-document.addEventListener(
-  "keydown",
-  (event) => {
-    if (event.key !== "Enter" || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
-    const composer = event.target?.closest?.(COMPOSER_SELECTORS.join(","));
-    if (!composer) return;
-    if (suppressNextSubmit) {
-      suppressNextSubmit = false;
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    guardAndSubmit(() => {
-      const button = findSendButton();
-      if (button) button.click();
-    });
-  },
-  true
-);
+if (isSupportedLlmHost()) {
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "Enter" || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+      const composer = event.target?.closest?.(COMPOSER_SELECTORS.join(","));
+      if (!composer) return;
+      if (suppressNextSubmit) {
+        suppressNextSubmit = false;
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      guardAndSubmit(() => {
+        const button = findSendButton();
+        if (button) button.click();
+      });
+    },
+    true
+  );
 
-document.addEventListener(
-  "click",
-  (event) => {
-    const button = event.target?.closest?.(SEND_BUTTON_SELECTORS.join(","));
-    if (!button) return;
-    if (suppressNextSubmit) {
-      suppressNextSubmit = false;
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    guardAndSubmit(() => button.click());
-  },
-  true
-);
+  document.addEventListener(
+    "click",
+    (event) => {
+      const button = event.target?.closest?.(SEND_BUTTON_SELECTORS.join(","));
+      if (!button) return;
+      if (suppressNextSubmit) {
+        suppressNextSubmit = false;
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      guardAndSubmit(() => button.click());
+    },
+    true
+  );
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "KLAI_SHIELD_INSERT_CONTEXT") return false;
