@@ -150,7 +150,7 @@ export function CoverageWidget({
             </span>
             <div className="flex items-center gap-2 shrink-0">
               <span className="text-xs text-gray-400 tabular-nums">
-                {untaggedPct}%
+                {untaggedPct}% {m.knowledge_taxonomy_coverage_untagged().toLowerCase()}
               </span>
               {isBackfilling ? (
                 <div className="inline-flex items-center gap-1 text-xs text-gray-400">
