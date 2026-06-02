@@ -81,8 +81,7 @@ def upgrade() -> None:
 
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON portal_shield_tokens")
     op.execute(
-        "CREATE POLICY tenant_isolation ON portal_shield_tokens "
-        f"USING (org_id = {_TENANT} OR {_TENANT_IS_NULL})"
+        f"CREATE POLICY tenant_isolation ON portal_shield_tokens USING (org_id = {_TENANT} OR {_TENANT_IS_NULL})"
     )
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON portal_shield_logs")
     op.execute(

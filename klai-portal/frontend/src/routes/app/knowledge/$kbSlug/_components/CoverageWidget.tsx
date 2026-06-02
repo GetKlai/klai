@@ -1,31 +1,21 @@
 /**
  * Coverage widget - a list of `<CoverageNodeRow>` plus the untagged
- * tail section + a contextual "Suggest categories" CTA.
+ * tail section + contextual taxonomy actions.
  *
  * Owns the singleton state for which row is being edited / asked-to-
  * confirm-delete. Per-row buffers live in the row component itself.
  *
- * The Suggest button has three gates baked in:
+ * The taxonomy actions have two gates baked in:
  *   1. Empty KB: shown when total chunks >= SUGGEST_MIN_CHUNKS.
- *   2. Populated KB at IA target: hidden once node count reaches
- *      MAX_HEALTHY_NODE_COUNT (Miller's Law 5-9 - more categories
- *      makes the taxonomy worse).
- *   3. Populated KB below target: shown when untagged_count >=
- *      SUGGEST_MIN_CHUNKS AND untagged percentage > SUGGEST_MIN_PCT.
+ *   2. Populated KB: missing chunks can always be categorized against
+ *      existing nodes; AI category suggestions are shown once there is
+ *      enough untagged content to produce useful proposals.
  */
 import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import type { TaxonomyCoverage } from '../-kb-types'
 import { CoverageNodeRow } from './CoverageNodeRow'
-
-// SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: cap on healthy taxonomy size.
-// Mirrors the backend's ``taxonomy_consolidate_target_max`` (default 9).
-// When the KB already has this many root taxonomy nodes, hide the
-// "Suggest categories" affordance - Miller's Law makes more categories
-// counter-productive (see SPEC-TAXONOMY-MERGE-DETECT-001 motivation).
-// If the backend value drifts, revisit this constant.
-const MAX_HEALTHY_NODE_COUNT = 9
 
 /** Minimum chunks before the Suggest CTA is offered at all. */
 const SUGGEST_MIN_CHUNKS = 10
@@ -36,11 +26,13 @@ export interface CoverageWidgetProps {
   coverage: TaxonomyCoverage
   activeNodeId: number | null
   onNodeClick: (nodeId: number) => void
+  onCategorizeMissing?: () => void
   onSuggest?: () => void
+  isCategorizingMissing?: boolean
   isSuggesting?: boolean
   /**
-   * SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: while backfill is running
-   * the Suggest button is hidden and an inline categorising indicator
+   * SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: while backfill/apply-all is
+   * running, missing-chunk categorization is disabled and an inline status
    * is shown instead.
    */
   isBackfilling?: boolean
@@ -53,7 +45,9 @@ export function CoverageWidget({
   coverage,
   activeNodeId,
   onNodeClick,
+  onCategorizeMissing,
   onSuggest,
+  isCategorizingMissing,
   isSuggesting,
   isBackfilling,
   canEdit = false,
@@ -63,6 +57,7 @@ export function CoverageWidget({
   const total = coverage.total_chunks
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const isMissingActionBusy = !!isBackfilling || !!isCategorizingMissing
 
   if (coverage.nodes.length === 0) {
     // Empty-state: KB has no taxonomy nodes yet. When chunks exist
@@ -108,12 +103,14 @@ export function CoverageWidget({
   }
 
   const untaggedPct = total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0
-  const showSuggestInUntagged =
+  const showMissingCategorizeInUntagged =
+    !!onCategorizeMissing &&
+    coverage.untagged_count > 0
+  const showAiSuggestInUntagged =
     !!onSuggest &&
     coverage.untagged_count >= SUGGEST_MIN_CHUNKS &&
     total > 0 &&
     untaggedPct > SUGGEST_MIN_PCT
-  const atHealthyMax = coverage.nodes.length >= MAX_HEALTHY_NODE_COUNT
 
   return (
     <div className="space-y-2">
@@ -160,29 +157,41 @@ export function CoverageWidget({
                   <Loader2 className="h-3 w-3 animate-spin" />
                   <span>{m.knowledge_taxonomy_categorising_status()}</span>
                 </div>
-              ) : atHealthyMax ? (
-                // SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: with the IA target
-                // already met (Miller's Law 5-9), suggesting more categories
-                // makes the taxonomy worse, not better. Hide the Suggest
-                // button and explain why so operators don't pile on duplicates.
-                <span className="text-xs text-gray-400 italic">
-                  {m.knowledge_taxonomy_enough_categories_hint()}
-                </span>
               ) : (
-                showSuggestInUntagged && (
-                  <button
-                    type="button"
-                    onClick={() => onSuggest?.()}
-                    disabled={isSuggesting}
-                    className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-gray-900 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
-                  >
-                    {isSuggesting
-                      ? <Loader2 className="h-3 w-3 animate-spin" />
-                      : <Sparkles className="h-3 w-3" />
-                    }
-                    {m.knowledge_taxonomy_suggest_categories()}
-                  </button>
-                )
+                <>
+                  {showMissingCategorizeInUntagged && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isMissingActionBusy) onCategorizeMissing?.()
+                      }}
+                      disabled={isMissingActionBusy}
+                      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-gray-900 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                    >
+                      {isCategorizingMissing
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Sparkles className="h-3 w-3" />
+                      }
+                      {m.knowledge_taxonomy_retag()}
+                    </button>
+                  )}
+                  {showAiSuggestInUntagged && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isSuggesting) onSuggest?.()
+                      }}
+                      disabled={isSuggesting}
+                      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium border border-gray-200 bg-white text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50"
+                    >
+                      {isSuggesting
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Sparkles className="h-3 w-3" />
+                      }
+                      {m.knowledge_taxonomy_suggest_new_categories()}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>

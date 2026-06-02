@@ -299,7 +299,11 @@ async def _load_platform_admin_user(
             PortalUser.role == "admin",
         )
     )
-    return result.one_or_none()
+    row = result.one_or_none()
+    if row is None:
+        return None
+    org, user = row
+    return org, user
 
 
 @router.get("/api/app/shield/extension/login")
@@ -516,13 +520,11 @@ async def shield_config(
     auth: ShieldAuthContext = Depends(get_shield_auth),
     db: AsyncSession = Depends(get_db),
 ) -> ShieldConfigResponse:
+    await set_tenant(db, auth.org_id)
     kb_result = await db.execute(
         select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == auth.org_id).order_by(PortalKnowledgeBase.name)
     )
-    knowledge_bases = [
-        {"id": kb.id, "name": kb.name, "slug": kb.slug}
-        for kb in kb_result.scalars().all()
-    ]
+    knowledge_bases = [{"id": kb.id, "name": kb.name, "slug": kb.slug} for kb in kb_result.scalars().all()]
     return ShieldConfigResponse(
         user={
             "id": auth.user.zitadel_user_id,
@@ -631,7 +633,9 @@ async def shield_query(
             result = resp.json()
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         logger.warning("shield_retrieval_failed", org_id=auth.org_id, error=str(exc))
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Knowledge retrieval unavailable") from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Knowledge retrieval unavailable"
+        ) from exc
 
     evidence_pack = result.get("evidence_pack") or {}
     chunks = result.get("chunks")

@@ -325,6 +325,24 @@ describe('useRejectProposal', () => {
     expect(onSuccess).toHaveBeenCalledTimes(1)
   })
 
+  it('POSTs an empty reason body when reason is omitted', async () => {
+    apiFetchMock.mockResolvedValue(undefined)
+    const client = makeClient()
+    const onSuccess = vi.fn()
+    const { result } = renderHook(() => useRejectProposal('kb-a', onSuccess), {
+      wrapper: makeWrapper(client),
+    })
+
+    result.current.mutate({ proposalId: 9 })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/app/knowledge-bases/kb-a/taxonomy/proposals/9/reject',
+      { method: 'POST', body: JSON.stringify({ reason: '' }) },
+    )
+    expect(onSuccess).toHaveBeenCalledTimes(1)
+  })
+
   it('does NOT call onSuccess when the request fails', async () => {
     apiFetchMock.mockRejectedValue(new Error('500'))
     const client = makeClient()

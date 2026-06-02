@@ -193,7 +193,7 @@ describe('CoverageWidget - delete-confirm', () => {
 // Suggest button gating
 // ---------------------------------------------------------------------------
 
-describe('CoverageWidget - Suggest CTA gating', () => {
+describe('CoverageWidget - taxonomy action CTA gating', () => {
   it('shown in empty state when total_chunks >= 10 AND onSuggest is provided', () => {
     const onSuggest = vi.fn()
     render(
@@ -224,10 +224,11 @@ describe('CoverageWidget - Suggest CTA gating', () => {
     ).toBeNull()
   })
 
-  it('hidden in populated state once node count reaches MAX_HEALTHY_NODE_COUNT (9)', () => {
+  it('shows missing-chunks CTA in populated state even when node count reaches 9', () => {
     const nodes = Array.from({ length: 9 }, (_, i) =>
       node({ taxonomy_node_id: i + 1, taxonomy_node_name: `N${i}`, chunk_count: 5 }),
     )
+    const onCategorizeMissing = vi.fn()
     const onSuggest = vi.fn()
     render(
       <CoverageWidget
@@ -239,20 +240,18 @@ describe('CoverageWidget - Suggest CTA gating', () => {
         }}
         activeNodeId={null}
         onNodeClick={() => {}}
+        onCategorizeMissing={onCategorizeMissing}
         onSuggest={onSuggest}
       />,
     )
-    // Hint shown instead
-    expect(
-      screen.getByText('Enough categories - adding more reduces clarity'),
-    ).toBeDefined()
-    // Button absent
-    expect(
-      screen.queryByText('Suggest categories'),
-    ).toBeNull()
+    fireEvent.click(screen.getByText('Categorize missing chunks'))
+    expect(onCategorizeMissing).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByText('Suggest new categories'))
+    expect(onSuggest).toHaveBeenCalledTimes(1)
   })
 
-  it('shown in populated state below MAX when untagged_count >= 10 AND untagged_pct > 5', () => {
+  it('shows missing-chunks CTA in populated state when untagged_count >= 10 AND untagged_pct > 5', () => {
+    const onCategorizeMissing = vi.fn()
     const onSuggest = vi.fn()
     render(
       <CoverageWidget
@@ -264,15 +263,18 @@ describe('CoverageWidget - Suggest CTA gating', () => {
         }}
         activeNodeId={null}
         onNodeClick={() => {}}
+        onCategorizeMissing={onCategorizeMissing}
         onSuggest={onSuggest}
       />,
     )
-    expect(
-      screen.getByText('Suggest categories'),
-    ).toBeDefined()
+    fireEvent.click(screen.getByText('Categorize missing chunks'))
+    expect(onCategorizeMissing).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByText('Suggest new categories'))
+    expect(onSuggest).toHaveBeenCalledTimes(1)
   })
 
-  it('hidden in populated state when untagged_pct ≤ 5', () => {
+  it('keeps missing-chunks CTA but hides AI suggestions when untagged_pct ≤ 5', () => {
+    const onCategorizeMissing = vi.fn()
     const onSuggest = vi.fn()
     render(
       <CoverageWidget
@@ -284,11 +286,14 @@ describe('CoverageWidget - Suggest CTA gating', () => {
         }}
         activeNodeId={null}
         onNodeClick={() => {}}
+        onCategorizeMissing={onCategorizeMissing}
         onSuggest={onSuggest}
       />,
     )
+    fireEvent.click(screen.getByText('Categorize missing chunks'))
+    expect(onCategorizeMissing).toHaveBeenCalledTimes(1)
     expect(
-      screen.queryByText('Suggest categories'),
+      screen.queryByText('Suggest new categories'),
     ).toBeNull()
   })
 })

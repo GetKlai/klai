@@ -288,7 +288,7 @@ async def trigger_taxonomy_bootstrap(org_id: str, kb_slug: str) -> dict:
 
 
 async def trigger_taxonomy_backfill(org_id: str, kb_slug: str) -> dict:
-    """Trigger taxonomy backfill to tag all existing chunks.
+    """Trigger taxonomy backfill to categorize missing chunks.
 
     Enqueues a Procrastinate background job in knowledge-ingest.
     Returns {"job_id": N, "status": "queued"}.
@@ -306,6 +306,29 @@ async def trigger_taxonomy_backfill(org_id: str, kb_slug: str) -> dict:
         resp = await client.post(
             "/ingest/v1/taxonomy/backfill",
             json={"org_id": org_id, "kb_slug": kb_slug},
+        )
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+
+async def remove_taxonomy_node_from_chunks(org_id: str, kb_slug: str, node_id: int) -> dict:
+    """Remove a deleted taxonomy node id from Qdrant chunk payloads.
+
+    Raises on failure so the portal delete endpoint can keep the DB node
+    intact instead of leaving chunks with stale taxonomy references.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={
+            "X-Internal-Secret": settings.knowledge_ingest_secret,
+            "X-Caller-Service": "portal-api",
+            **get_trace_headers(),
+        },
+        timeout=30.0,
+    ) as client:
+        resp = await client.post(
+            "/ingest/v1/taxonomy/remove-node",
+            json={"org_id": org_id, "kb_slug": kb_slug, "node_id": node_id},
         )
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]

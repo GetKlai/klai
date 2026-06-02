@@ -12,8 +12,8 @@
  *   - filter (activeNodeId, activeTags)
  *   - suggest-flow state machine (suggestState)
  *   - inline add-form (showAddRoot, addParentId, newNodeName)
- *   - singleton ids for proposal edit / reject (per-card input
- *     buffers live inside ProposalCard)
+ *   - singleton id for proposal edit (per-card input buffers live
+ *     inside ProposalCard)
  *   - applyAllMutation + handleApplyAll (loops raw apiFetch + fires
  *     backfill - see SPEC Beslissingen § B5 for why orchestration
  *     stays here and not in a hook)
@@ -116,11 +116,10 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   const [showAddRoot, setShowAddRoot] = useState(false)
   const [addParentId, setAddParentId] = useState<number | null>(null)
   const [newNodeName, setNewNodeName] = useState('')
-  // Singleton ids - only one proposal may be in edit OR reject mode at
-  // any time. Per-card edit / reject input buffers live inside
-  // ProposalCard. SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve.
+  // Singleton id - only one proposal may be in edit mode at any time.
+  // Per-card edit buffers live inside ProposalCard.
+  // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 5: edit-before-approve.
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null)
-  const [rejectingProposalId, setRejectingProposalId] = useState<number | null>(null)
 
   const nodesQuery = useTaxonomyNodes(kbSlug, auth.isAuthenticated)
   // SPEC-TAXONOMY-REVIEW-FLOW-001 Issue 3: fetches ALL statuses so approved
@@ -145,7 +144,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   // classification to a single backfill at the end.
   const approveMutation = useApproveProposal(kbSlug)
 
-  const rejectMutation = useRejectProposal(kbSlug, () => setRejectingProposalId(null))
+  const rejectMutation = useRejectProposal(kbSlug, () => undefined)
 
   // -- Suggest categories flow --
   const [suggestState, setSuggestState] = useState<SuggestState>('idle')
@@ -223,6 +222,8 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   })
 
   const isAddingChild = addParentId !== null
+  const isRetagging = backfillMutation.isPending || applyAllMutation.isPending
+  const canRequestCategorySuggestions = canEdit && pendingProposals.length === 0
 
   // Resolve active node name for filter chips.
   const activeNode = useMemo(
@@ -292,24 +293,6 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
                   {m.knowledge_taxonomy_node_add_root()}
                 </Button>
               )}
-              {canEdit && nodes.length > 0 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 text-xs px-2 text-gray-400"
-                  onClick={() => backfillMutation.mutate()}
-                  disabled={backfillMutation.isPending || suggestState === 'applying'}
-                  title={backfillMutation.isPending || suggestState === 'applying'
-                    ? m.knowledge_taxonomy_retag_running()
-                    : m.knowledge_taxonomy_retag()}
-                >
-                  {backfillMutation.isPending || suggestState === 'applying'
-                    ? <Loader2 className="h-3 w-3 animate-spin" />
-                    : <Sparkles className="h-3 w-3" />
-                  }
-                  {m.knowledge_taxonomy_retag()}
-                </Button>
-              )}
             </div>
           </div>
           {coverageQuery.isLoading && (
@@ -323,9 +306,15 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
               coverage={coverageQuery.data}
               activeNodeId={activeNodeId}
               onNodeClick={toggleNode}
-              onSuggest={canEdit && (suggestState === 'idle' || suggestState === 'generating') ? () => bootstrapMutation.mutate() : undefined}
+              onCategorizeMissing={canEdit && nodes.length > 0 && !isRetagging
+                ? () => backfillMutation.mutate()
+                : undefined}
+              onSuggest={canRequestCategorySuggestions
+                ? () => bootstrapMutation.mutate()
+                : undefined}
+              isCategorizingMissing={backfillMutation.isPending}
               isSuggesting={bootstrapMutation.isPending}
-              isBackfilling={backfillMutation.isPending || applyAllMutation.isPending}
+              isBackfilling={isRetagging}
               canEdit={canEdit}
               onRename={(nodeId, newName, description) => renameNodeMutation.mutate({ nodeId, name: newName, description })}
               onDelete={(nodeId) => deleteNodeMutation.mutate(nodeId)}
@@ -386,7 +375,6 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
                 proposal={proposal}
                 canEdit={canEdit}
                 isEditing={editingProposalId === proposal.id}
-                isRejecting={rejectingProposalId === proposal.id}
                 approvePending={approveMutation.isPending}
                 rejectPending={rejectMutation.isPending}
                 onStartEdit={() => setEditingProposalId(proposal.id)}
@@ -399,9 +387,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
                   setEditingProposalId(null)
                 }}
                 onCancelEdit={() => setEditingProposalId(null)}
-                onStartReject={() => setRejectingProposalId(proposal.id)}
-                onSubmitReject={(reason) => rejectMutation.mutate({ proposalId: proposal.id, reason })}
-                onCancelReject={() => setRejectingProposalId(null)}
+                onReject={() => rejectMutation.mutate({ proposalId: proposal.id })}
                 onApprove={() => approveMutation.mutate({ proposalId: proposal.id })}
               />
             ))}

@@ -104,7 +104,7 @@ class ApproveProposalRequest(BaseModel):
 
 
 class RejectRequest(BaseModel):
-    reason: str
+    reason: str | None = None
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -352,7 +352,7 @@ async def delete_taxonomy_node(
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Delete a taxonomy node. Reassigns children and docs to parent. Requires owner role."""
+    """Delete a taxonomy node. Reparents children and removes its id from chunks. Requires owner role."""
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
     await _require_role(kb, perms.user_id, db, "owner")
     org = await _load_org_or_500(db, perms.org_id)
@@ -376,6 +376,24 @@ async def delete_taxonomy_node(
         )
         .values(parent_id=node.parent_id)
     )
+
+    # Remove this node id from Qdrant chunk payloads before deleting the
+    # portal-owned taxonomy row. If this fails, keep the node so chunks do not
+    # retain stale ids that are no longer visible in the taxonomy tree.
+    from app.services.knowledge_ingest_client import remove_taxonomy_node_from_chunks
+
+    try:
+        await remove_taxonomy_node_from_chunks(org.zitadel_org_id, kb_slug, node_id)
+    except Exception:
+        await db.rollback()
+        log.exception(
+            "taxonomy_node_chunk_cleanup_failed",
+            extra={"org_id": org.zitadel_org_id, "kb_slug": kb_slug, "node_id": node_id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not remove category from chunks",
+        ) from None
 
     # Document counts are no longer denormalised on portal_taxonomy_nodes
     # (column dropped in fd9c4a39d14b). Live counts come from Qdrant via the
@@ -794,7 +812,7 @@ async def approve_proposal(
 async def reject_proposal(
     kb_slug: str,
     proposal_id: int,
-    body: RejectRequest,
+    body: RejectRequest | None = None,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalOut:
@@ -817,7 +835,7 @@ async def reject_proposal(
     proposal.status = "rejected"
     proposal.reviewed_by = perms.user_id
     proposal.reviewed_at = datetime.now(tz=UTC)
-    proposal.rejection_reason = body.reason
+    proposal.rejection_reason = body.reason.strip() if body and body.reason else None
 
     await db.commit()
     # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
@@ -871,10 +889,10 @@ async def trigger_backfill(
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Trigger taxonomy backfill to tag all existing chunks. Requires contributor role.
+    """Trigger taxonomy backfill to categorize missing chunks. Requires contributor role.
 
-    Enqueues a background job in knowledge-ingest that classifies and tags
-    all existing chunks with the approved taxonomy nodes.
+    Enqueues a background job in knowledge-ingest that classifies chunks
+    missing taxonomy_node_ids with the approved taxonomy nodes.
     """
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
     await _require_role(kb, perms.user_id, db, "contributor")
