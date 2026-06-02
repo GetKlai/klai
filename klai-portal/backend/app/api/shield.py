@@ -519,10 +519,7 @@ async def shield_config(
     kb_result = await db.execute(
         select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == auth.org_id).order_by(PortalKnowledgeBase.name)
     )
-    knowledge_bases = [
-        {"id": kb.id, "name": kb.name, "slug": kb.slug}
-        for kb in kb_result.scalars().all()
-    ]
+    knowledge_bases = [{"id": kb.id, "name": kb.name, "slug": kb.slug} for kb in kb_result.scalars().all()]
     return ShieldConfigResponse(
         user={
             "id": auth.user.zitadel_user_id,
@@ -631,7 +628,9 @@ async def shield_query(
             result = resp.json()
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         logger.warning("shield_retrieval_failed", org_id=auth.org_id, error=str(exc))
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Knowledge retrieval unavailable") from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Knowledge retrieval unavailable"
+        ) from exc
 
     evidence_pack = result.get("evidence_pack") or {}
     chunks = result.get("chunks")
