@@ -10,6 +10,7 @@ Covers SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-SEED:
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,14 +25,6 @@ def _count_result(n: int) -> MagicMock:
 def _scalar_one_or_none_result(value) -> MagicMock:
     r = MagicMock()
     r.scalar_one_or_none = MagicMock(return_value=value)
-    return r
-
-
-def _scalars_all_result(values: list) -> MagicMock:
-    scalars = MagicMock()
-    scalars.all = MagicMock(return_value=values)
-    r = MagicMock()
-    r.scalars = MagicMock(return_value=scalars)
     return r
 
 
@@ -95,7 +88,6 @@ async def test_sets_tenant_context_before_counting_templates():
             MagicMock(),
             _scalar_one_or_none_result("nl"),
             _count_result(4),
-            _scalars_all_result([]),
         ]
     )
     db.add = MagicMock()
@@ -117,7 +109,6 @@ async def test_second_call_is_no_op():
             MagicMock(),
             _scalar_one_or_none_result("nl"),
             _count_result(4),  # already seeded
-            _scalars_all_result([]),
         ]
     )
     db.add = MagicMock()
@@ -126,6 +117,7 @@ async def test_second_call_is_no_op():
     inserted = await default_templates.ensure_default_templates(org_id=42, created_by="sys", db=db)
 
     assert inserted == 0
+    assert db.execute.await_count == 3
     db.add.assert_not_called()
     db.flush.assert_not_called()
 
@@ -157,40 +149,7 @@ async def test_defaults_use_org_scope_and_system_created_by():
 
 
 @pytest.mark.asyncio
-async def test_existing_legacy_defaults_are_upgraded_to_org_language():
-    from app.services import default_templates
-
-    legacy = next(t for t in default_templates._LEGACY_DEFAULT_TEMPLATES if t["slug"] == "samenvatter")
-    existing = MagicMock()
-    existing.slug = "samenvatter"
-    existing.name = legacy["name"]
-    existing.description = legacy["description"]
-    existing.prompt_text = legacy["prompt_text"]
-
-    db = MagicMock()
-    db.execute = AsyncMock(
-        side_effect=[
-            MagicMock(),
-            _scalar_one_or_none_result("en"),
-            _count_result(4),
-            _scalars_all_result([existing]),
-        ]
-    )
-    db.flush = AsyncMock()
-    db.rollback = AsyncMock()
-
-    changed = await default_templates.ensure_default_templates(org_id=42, created_by="system", db=db)
-
-    assert changed == 1
-    assert existing.name == "Summarizer"
-    assert existing.description == "Summarize text faithfully and structurally"
-    assert "Your task is to summarize" in existing.prompt_text
-    assert "language of that content" in existing.prompt_text
-    db.flush.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_existing_customized_defaults_are_not_overwritten():
+async def test_existing_templates_are_not_rewritten_by_seed_path():
     from app.services import default_templates
 
     existing = MagicMock()
@@ -205,7 +164,6 @@ async def test_existing_customized_defaults_are_not_overwritten():
             MagicMock(),
             _scalar_one_or_none_result("en"),
             _count_result(4),
-            _scalars_all_result([existing]),
         ]
     )
     db.flush = AsyncMock()
@@ -214,6 +172,7 @@ async def test_existing_customized_defaults_are_not_overwritten():
     changed = await default_templates.ensure_default_templates(org_id=42, created_by="system", db=db)
 
     assert changed == 0
+    assert db.execute.await_count == 3
     assert existing.name == "Mijn samenvatter"
     assert existing.description == "Eigen beschrijving"
     assert existing.prompt_text == "Vat samen zoals onze directie dat wil."
@@ -234,6 +193,18 @@ def test_defaults_constant_has_non_empty_prompt_text():
         assert tpl["prompt_text"].strip(), f"{tpl['slug']} has empty prompt_text"
         # All under the CHECK constraint limit.
         assert len(tpl["prompt_text"]) <= 8000
+
+
+def test_post_deploy_backfill_is_explicit_and_exact_match_only():
+    sql = Path("alembic/versions/post_deploy_c7cfe1d2_default_instruction_templates_v2.sql").read_text()
+
+    assert "default_instruction_templates_v2_backfill" in sql
+    assert "t.name = d.old_name" in sql
+    assert "t.description = d.old_description" in sql
+    assert "t.prompt_text = d.old_prompt_text" in sql
+    assert "t.created_by = 'system'" in sql
+    assert "Your task is to summarize" not in sql
+    assert "Je taak is samenvatten, niet herschrijven of aanvullen." in sql
 
 
 def test_klantenservice_default_is_language_agnostic():
