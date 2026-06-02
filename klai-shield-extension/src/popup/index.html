@@ -19,9 +19,8 @@
       }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { width: 320px; background: var(--page); color: var(--ink); }
-      .header { display: flex; align-items: center; gap: 10px; padding: 14px; border-bottom: 1px solid var(--border); background: var(--surface); }
-      .mark { width: 28px; height: 28px; }
-      .logo { width: 58px; height: auto; }
+      .header { display: flex; align-items: baseline; gap: 8px; padding: 14px; border-bottom: 1px solid var(--border); background: var(--surface); }
+      .logo { width: 74px; height: auto; }
       .header span { color: var(--muted); font-size: 12px; font-weight: 760; }
       .content { padding: 12px; }
       .card { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 12px; margin-bottom: 8px; }
@@ -44,7 +43,6 @@
   </head>
   <body>
     <header class="header">
-      <img src="../assets/klai-mark.svg" alt="" class="mark" />
       <img src="../assets/klai-logo.svg" alt="Klai" class="logo" />
       <span>Shield</span>
     </header>
