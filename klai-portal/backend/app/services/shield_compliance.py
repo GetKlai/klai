@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from typing import Literal, TypedDict
 
-
 ShieldLevel = Literal["basic", "extended", "strict"]
 ShieldCheckType = Literal["input", "output"]
 ShieldStatus = Literal["green", "yellow", "orange", "red"]
