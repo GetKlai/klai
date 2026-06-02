@@ -210,7 +210,7 @@ async def shield_extension_info(
 ) -> ShieldExtensionInfoResponse:
     return ShieldExtensionInfoResponse(
         name="Klai Shield",
-        version="0.1.0",
+        version="0.1.1",
         download_url="/api/app/shield/extension.zip",
     )
 

@@ -7,44 +7,78 @@
     <link rel="stylesheet" href="./sidepanel.css" />
   </head>
   <body>
-    <main class="panel">
-      <header>
-        <h1>Klai Shield</h1>
-        <span id="status-pill" class="pill">Niet verbonden</span>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">K</div>
+          <div>
+            <h1>Klai Shield</h1>
+            <p>Browser test</p>
+          </div>
+        </div>
+        <span id="status-pill" class="status-pill">Niet verbonden</span>
       </header>
 
-      <section class="section">
-        <label>
-          API base
-          <input id="api-base" type="url" placeholder="https://my.getklai.com" />
-        </label>
-        <label>
-          Shield token
-          <input id="token" type="password" placeholder="ks_live_..." />
-        </label>
-        <div class="row">
-          <button id="save-settings" type="button">Opslaan</button>
-          <button id="refresh-config" type="button">Verbinden</button>
+      <section class="surface">
+        <div class="section-head">
+          <div>
+            <h2>Verbinding</h2>
+            <p>Gebruik je platform-admin testtoken.</p>
+          </div>
+        </div>
+        <div class="field-stack">
+          <label>
+            <span>API base</span>
+            <input id="api-base" type="url" placeholder="https://my.getklai.com" autocomplete="off" />
+          </label>
+          <label>
+            <span>Shield token</span>
+            <input id="token" type="password" placeholder="ks_live_..." autocomplete="off" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="save-settings" class="button button-secondary" type="button">Opslaan</button>
+          <button id="refresh-config" class="button button-primary" type="button">Verbinden</button>
         </div>
       </section>
 
-      <section class="section">
+      <section class="surface">
+        <div class="section-head">
+          <div>
+            <h2>Compliance</h2>
+            <p>Check prompts voordat je ze verstuurt.</p>
+          </div>
+        </div>
         <label>
-          Compliance check
-          <textarea id="check-text" rows="5" placeholder="Plak een prompt of antwoord..."></textarea>
+          <span>Prompt of antwoord</span>
+          <textarea id="check-text" rows="5" placeholder="Plak tekst die je wilt controleren..."></textarea>
         </label>
-        <button id="run-check" type="button">Check</button>
-        <pre id="check-result"></pre>
+        <div class="actions">
+          <button id="run-check" class="button button-primary" type="button">Check tekst</button>
+        </div>
+        <div id="check-summary" class="result-panel empty">Nog geen check uitgevoerd.</div>
+        <details class="raw-details">
+          <summary>Details</summary>
+          <pre id="check-result"></pre>
+        </details>
       </section>
 
-      <section class="section">
+      <section class="surface">
+        <div class="section-head">
+          <div>
+            <h2>Kennis</h2>
+            <p>Haal Klai-context op voor je actieve LLM.</p>
+          </div>
+        </div>
         <label>
-          Zoek kennis
+          <span>Zoekvraag</span>
           <textarea id="knowledge-query" rows="3" placeholder="Waar moet Klai context over zoeken?"></textarea>
         </label>
-        <button id="run-query" type="button">Zoeken</button>
-        <div id="knowledge-results"></div>
-        <button id="insert-context" type="button" disabled>Context invoegen</button>
+        <div class="actions">
+          <button id="run-query" class="button button-primary" type="button">Zoeken</button>
+          <button id="insert-context" class="button button-secondary" type="button" disabled>Context invoegen</button>
+        </div>
+        <div id="knowledge-results" class="knowledge-results empty">Geen resultaten geladen.</div>
       </section>
     </main>
     <script src="./sidepanel.js" type="module"></script>
