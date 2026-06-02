@@ -45,7 +45,6 @@ from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.models.templates import PortalTemplate
-from app.services.default_templates import ensure_default_templates
 from app.services.connector_credentials import credential_store
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
@@ -1610,13 +1609,6 @@ async def get_effective_templates(
 
     # Scope RLS to this org for all subsequent queries.
     await set_tenant(db, org.id)
-
-    # Keep active default instructions current even when nobody opens the
-    # Instructions page. This only mutates templates that still exactly match
-    # known product defaults; user-edited prompts are left untouched.
-    default_templates_changed = await ensure_default_templates(org.id, "system", db)
-    if default_templates_changed:
-        await db.commit()
 
     user_row = await db.execute(
         select(PortalUser).where(

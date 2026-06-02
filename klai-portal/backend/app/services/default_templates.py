@@ -1,11 +1,14 @@
 """Seed default prompt templates per tenant.
 
 Every new tenant gets 4 starter templates (Klantenservice / Formeel /
-Creatief / Samenvatter) so the Templates page is immediately useful.
+Creatief / Samenvatter, or English equivalents for English tenants) so the
+Templates page is immediately useful.
 Templates are org-scoped (``scope="org"``) and ``created_by="system"``.
 
 Idempotent via a row-count check: if the tenant already has one or
-more templates, this is a no-op. Called from two places:
+more templates, this is a no-op. Existing tenant-owned templates are never
+rewritten here; default content backfills belong in explicit post-deploy SQL.
+Called from two places:
 
 1. ``app.services.provisioning.orchestrator`` (step ``defaults_templates``,
    non-fatal on failure).
@@ -13,7 +16,7 @@ more templates, this is a no-op. Called from two places:
    orgs that existed before this feature landed or whose provisioning
    step failed).
 
-# @MX:NOTE: Template slugs and prompt_text are product content. Changes
+# @MX:NOTE: Template names and prompt_text are product content. Changes
 # here change the default seed for EVERY new org. The 4 starter
 # templates were chosen by the product team. Edits to prompt_text need
 # product approval AND must respect the multilingual contract from
@@ -35,54 +38,6 @@ from app.models.portal import PortalOrg
 from app.models.templates import PortalTemplate
 
 logger = structlog.get_logger()
-
-
-_LEGACY_DEFAULT_TEMPLATES: list[dict[str, str]] = [
-    {
-        "name": "Klantenservice",
-        "slug": "klantenservice",
-        "description": "Vriendelijke, behulpzame toon voor klantcontact",
-        "prompt_text": (
-            "Je bent een behulpzame klantenservicemedewerker. "
-            "Gebruik een vriendelijke en professionele toon, in dezelfde taal als de vraag van de gebruiker. "
-            "Houd antwoorden kort en bondig. Bied proactief oplossingen aan. "
-            "Als je het antwoord niet weet, zeg dat eerlijk en verwijs door naar de juiste afdeling."
-        ),
-    },
-    {
-        "name": "Formeel",
-        "slug": "formeel",
-        "description": "Zakelijke, professionele schrijfstijl",
-        "prompt_text": (
-            "Schrijf in een formele, professionele toon. "
-            "Gebruik volledige zinnen en vermijd informeel taalgebruik. "
-            "Structureer je antwoord duidelijk met alinea's. "
-            "Geschikt voor zakelijke communicatie, rapporten en officiële documenten."
-        ),
-    },
-    {
-        "name": "Creatief",
-        "slug": "creatief",
-        "description": "Originele, inspirerende schrijfstijl",
-        "prompt_text": (
-            "Schrijf op een creatieve en inspirerende manier. "
-            "Gebruik beeldspraak, variatie in zinslengte en een vlotte stijl. "
-            "Denk buiten de gebaande paden en bied verrassende invalshoeken. "
-            "Geschikt voor blogposts, social media en marketingteksten."
-        ),
-    },
-    {
-        "name": "Samenvatter",
-        "slug": "samenvatter",
-        "description": "Vat lange teksten bondig samen",
-        "prompt_text": (
-            "Vat de aangeleverde tekst samen in heldere, beknopte punten. "
-            "Gebruik een bullet-list voor de belangrijkste inzichten. "
-            "Bewaar de kernboodschap en laat details weg. "
-            "Sluit af met een conclusie van maximaal twee zinnen."
-        ),
-    },
-]
 
 
 DEFAULT_TEMPLATES_BY_LANGUAGE: dict[str, list[dict[str, str]]] = {
@@ -257,22 +212,10 @@ DEFAULT_TEMPLATES_BY_LANGUAGE: dict[str, list[dict[str, str]]] = {
 }
 
 
-# Backwards-compatible export used by tests and any existing imports.
+# Backwards-compatible export used by tests and any existing imports. The
+# runtime seed path selects a language-specific variant via
+# ``default_templates_for_language``.
 DEFAULT_TEMPLATES: list[dict[str, str]] = DEFAULT_TEMPLATES_BY_LANGUAGE["nl"]
-
-
-_DEFAULT_SLUGS = {template["slug"] for template in DEFAULT_TEMPLATES}
-_KNOWN_DEFAULTS_BY_SLUG: dict[str, dict[str, set[str]]] = {
-    slug: {"name": set(), "description": set(), "prompt_text": set()}
-    for slug in _DEFAULT_SLUGS
-}
-for template in _LEGACY_DEFAULT_TEMPLATES:
-    for field in _KNOWN_DEFAULTS_BY_SLUG[template["slug"]]:
-        _KNOWN_DEFAULTS_BY_SLUG[template["slug"]][field].add(template[field])
-for templates in DEFAULT_TEMPLATES_BY_LANGUAGE.values():
-    for template in templates:
-        for field in _KNOWN_DEFAULTS_BY_SLUG[template["slug"]]:
-            _KNOWN_DEFAULTS_BY_SLUG[template["slug"]][field].add(template[field])
 
 
 def default_templates_for_language(language: str | None) -> list[dict[str, str]]:
@@ -290,9 +233,9 @@ async def ensure_default_templates(
     created_by: str,
     db: AsyncSession,
 ) -> int:
-    """Seed or upgrade untouched default templates for a tenant.
+    """Seed default templates for a tenant that has no templates yet.
 
-    Returns the number of templates inserted or upgraded.
+    Returns the number of templates inserted.
     Non-fatal: any exception is logged and swallowed — callers MUST NOT
     depend on this for correctness.
 
@@ -304,7 +247,6 @@ async def ensure_default_templates(
         await set_tenant(db, org_id)
         language = await _default_language_for_org(org_id, db)
         desired_templates = default_templates_for_language(language)
-        desired_by_slug = {template["slug"]: template for template in desired_templates}
 
         count_result = await db.execute(
             select(func.count()).select_from(PortalTemplate).where(PortalTemplate.org_id == org_id)
@@ -312,44 +254,7 @@ async def ensure_default_templates(
         existing_count = count_result.scalar() or 0
 
         if existing_count > 0:
-            existing_rows = await db.execute(
-                select(PortalTemplate).where(
-                    PortalTemplate.org_id == org_id,
-                    PortalTemplate.slug.in_(_DEFAULT_SLUGS),
-                )
-            )
-            upgraded = 0
-            for template in existing_rows.scalars().all():
-                desired = desired_by_slug.get(template.slug)
-                known = _KNOWN_DEFAULTS_BY_SLUG.get(template.slug)
-                if desired is None or known is None:
-                    continue
-
-                changed = False
-                if template.prompt_text in known["prompt_text"] and template.prompt_text != desired["prompt_text"]:
-                    template.prompt_text = desired["prompt_text"]
-                    changed = True
-                if template.name in known["name"] and template.name != desired["name"]:
-                    template.name = desired["name"]
-                    changed = True
-                if (
-                    template.description in known["description"]
-                    and template.description != desired["description"]
-                ):
-                    template.description = desired["description"]
-                    changed = True
-                if changed:
-                    upgraded += 1
-
-            if upgraded:
-                await db.flush()
-                logger.info(
-                    "default_templates_upgraded",
-                    org_id=org_id,
-                    language=language,
-                    count=upgraded,
-                )
-            return upgraded
+            return 0
 
         for tmpl in desired_templates:
             db.add(
