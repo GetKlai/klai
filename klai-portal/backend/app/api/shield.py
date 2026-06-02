@@ -299,7 +299,11 @@ async def _load_platform_admin_user(
             PortalUser.role == "admin",
         )
     )
-    return result.one_or_none()
+    row = result.one_or_none()
+    if row is None:
+        return None
+    org, user = row
+    return org, user
 
 
 @router.get("/api/app/shield/extension/login")
