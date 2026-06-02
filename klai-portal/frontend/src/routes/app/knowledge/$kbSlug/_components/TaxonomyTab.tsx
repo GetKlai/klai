@@ -223,6 +223,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
 
   const isAddingChild = addParentId !== null
   const isRetagging = backfillMutation.isPending || applyAllMutation.isPending
+  const canRequestCategorySuggestions = canEdit && pendingProposals.length === 0
 
   // Resolve active node name for filter chips.
   const activeNode = useMemo(
@@ -292,24 +293,6 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
                   {m.knowledge_taxonomy_node_add_root()}
                 </Button>
               )}
-              {canEdit && nodes.length > 0 && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 text-xs px-2"
-                  onClick={() => backfillMutation.mutate()}
-                  disabled={isRetagging}
-                  title={isRetagging
-                    ? m.knowledge_taxonomy_retag_running()
-                    : m.knowledge_taxonomy_retag()}
-                >
-                  {isRetagging
-                    ? <Loader2 className="h-3 w-3 animate-spin" />
-                    : <Sparkles className="h-3 w-3" />
-                  }
-                  {m.knowledge_taxonomy_retag()}
-                </Button>
-              )}
             </div>
           </div>
           {coverageQuery.isLoading && (
@@ -323,13 +306,14 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
               coverage={coverageQuery.data}
               activeNodeId={activeNodeId}
               onNodeClick={toggleNode}
-              onSuggest={canEdit && (nodes.length > 0 || suggestState === 'idle' || suggestState === 'generating')
-                ? () => {
-                    if (nodes.length > 0) backfillMutation.mutate()
-                    else bootstrapMutation.mutate()
-                  }
+              onCategorizeMissing={canEdit && nodes.length > 0 && !isRetagging
+                ? () => backfillMutation.mutate()
                 : undefined}
-              isSuggesting={nodes.length > 0 ? backfillMutation.isPending : bootstrapMutation.isPending}
+              onSuggest={canRequestCategorySuggestions
+                ? () => bootstrapMutation.mutate()
+                : undefined}
+              isCategorizingMissing={backfillMutation.isPending}
+              isSuggesting={bootstrapMutation.isPending}
               isBackfilling={isRetagging}
               canEdit={canEdit}
               onRename={(nodeId, newName, description) => renameNodeMutation.mutate({ nodeId, name: newName, description })}

@@ -1,16 +1,15 @@
 /**
  * Coverage widget - a list of `<CoverageNodeRow>` plus the untagged
- * tail section + a contextual taxonomy action CTA.
+ * tail section + contextual taxonomy actions.
  *
  * Owns the singleton state for which row is being edited / asked-to-
  * confirm-delete. Per-row buffers live in the row component itself.
  *
- * The taxonomy action button has two gates baked in:
+ * The taxonomy actions have two gates baked in:
  *   1. Empty KB: shown when total chunks >= SUGGEST_MIN_CHUNKS.
- *   2. Populated KB: shown when untagged_count >=
- *      SUGGEST_MIN_CHUNKS AND untagged percentage > SUGGEST_MIN_PCT.
- *      This categorizes missing chunks against existing nodes, not category
- *      proposal generation or full reclassification.
+ *   2. Populated KB: missing chunks can always be categorized against
+ *      existing nodes; AI category suggestions are shown once there is
+ *      enough untagged content to produce useful proposals.
  */
 import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
@@ -27,11 +26,13 @@ export interface CoverageWidgetProps {
   coverage: TaxonomyCoverage
   activeNodeId: number | null
   onNodeClick: (nodeId: number) => void
+  onCategorizeMissing?: () => void
   onSuggest?: () => void
+  isCategorizingMissing?: boolean
   isSuggesting?: boolean
   /**
-   * SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: while backfill is running
-   * the Suggest button is hidden and an inline categorising indicator
+   * SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: while backfill/apply-all is
+   * running, missing-chunk categorization is disabled and an inline status
    * is shown instead.
    */
   isBackfilling?: boolean
@@ -44,7 +45,9 @@ export function CoverageWidget({
   coverage,
   activeNodeId,
   onNodeClick,
+  onCategorizeMissing,
   onSuggest,
+  isCategorizingMissing,
   isSuggesting,
   isBackfilling,
   canEdit = false,
@@ -54,6 +57,7 @@ export function CoverageWidget({
   const total = coverage.total_chunks
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const isMissingActionBusy = !!isBackfilling || !!isCategorizingMissing
 
   if (coverage.nodes.length === 0) {
     // Empty-state: KB has no taxonomy nodes yet. When chunks exist
@@ -99,7 +103,10 @@ export function CoverageWidget({
   }
 
   const untaggedPct = total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0
-  const showSuggestInUntagged =
+  const showMissingCategorizeInUntagged =
+    !!onCategorizeMissing &&
+    coverage.untagged_count > 0
+  const showAiSuggestInUntagged =
     !!onSuggest &&
     coverage.untagged_count >= SUGGEST_MIN_CHUNKS &&
     total > 0 &&
@@ -151,20 +158,40 @@ export function CoverageWidget({
                   <span>{m.knowledge_taxonomy_categorising_status()}</span>
                 </div>
               ) : (
-                showSuggestInUntagged && (
-                  <button
-                    type="button"
-                    onClick={() => onSuggest?.()}
-                    disabled={isSuggesting}
-                    className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-gray-900 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
-                  >
-                    {isSuggesting
-                      ? <Loader2 className="h-3 w-3 animate-spin" />
-                      : <Sparkles className="h-3 w-3" />
-                    }
-                    {m.knowledge_taxonomy_retag()}
-                  </button>
-                )
+                <>
+                  {showMissingCategorizeInUntagged && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isMissingActionBusy) onCategorizeMissing?.()
+                      }}
+                      disabled={isMissingActionBusy}
+                      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-gray-900 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                    >
+                      {isCategorizingMissing
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Sparkles className="h-3 w-3" />
+                      }
+                      {m.knowledge_taxonomy_retag()}
+                    </button>
+                  )}
+                  {showAiSuggestInUntagged && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isSuggesting) onSuggest?.()
+                      }}
+                      disabled={isSuggesting}
+                      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium border border-gray-200 bg-white text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50"
+                    >
+                      {isSuggesting
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Sparkles className="h-3 w-3" />
+                      }
+                      {m.knowledge_taxonomy_suggest_new_categories()}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>

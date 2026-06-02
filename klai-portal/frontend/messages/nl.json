@@ -1368,6 +1368,7 @@
   "knowledge_taxonomy_filter_tag": "Tag: {name}",
   "knowledge_taxonomy_filter_clear_all": "Alle filters wissen",
   "knowledge_taxonomy_suggest_categories": "Categorieën voorstellen",
+  "knowledge_taxonomy_suggest_new_categories": "Nieuwe categorieën voorstellen",
   "knowledge_taxonomy_suggest_generating": "Kennisbank analyseren...",
   "knowledge_taxonomy_suggest_loading_hint": "Dit kan tot een minuut duren bij grotere kennisbanken.",
   "knowledge_taxonomy_suggest_ready": "{count} categorievoorstellen klaar - bekijk en activeer hieronder",
