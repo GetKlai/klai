@@ -172,7 +172,6 @@ class PlatformFeedbackSubmission(BaseModel):
     linked_item_id: int | None = None
     linked_item_title: str | None = None
     linked_item_status: str | None = None
-    link_type: str | None = None
 
 
 class PlatformFeedbackReporterOrg(BaseModel):
@@ -460,7 +459,6 @@ def _platform_feedback_submission(
         linked_item_id=linked.id if linked is not None else None,
         linked_item_title=linked.title if linked is not None else None,
         linked_item_status=linked.status if linked is not None else None,
-        link_type=linked.link_type if linked is not None else None,
     )
 
 
@@ -1225,7 +1223,6 @@ async def platform_feedback_submission_detail(
                     FeedbackItem.id.label("id"),
                     FeedbackItem.title.label("title"),
                     FeedbackItem.status.label("status"),
-                    FeedbackItemLink.link_type.label("link_type"),
                 )
                 .select_from(FeedbackItemLink)
                 .join(FeedbackItem, FeedbackItem.id == FeedbackItemLink.item_id)
