@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import warnings
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
@@ -63,6 +64,12 @@ class BackfillEnqueueResponse(BaseModel):
 
 class BackfillStatusResponse(BaseModel):
     job_id: int
+    status: str
+    result: dict | None = None
+
+
+class ActiveBackfillResponse(BaseModel):
+    job_id: int | None = None
     status: str
     result: dict | None = None
 
@@ -215,6 +222,48 @@ _STATUS_MAP = {
     "aborting": "running",
 }
 
+_TAXONOMY_BACKFILL_TASK = "run_taxonomy_backfill"
+
+
+def _is_taxonomy_backfill_task(task_name: str | None) -> bool:
+    """Accept both short and fully-qualified Procrastinate task names."""
+    return bool(task_name) and task_name.split(".")[-1] == _TAXONOMY_BACKFILL_TASK
+
+
+async def _fetch_backfill_result(pool: Any, job_id: int) -> dict | None:
+    """Return a succeeded job result when the Procrastinate schema stores one."""
+    has_result_column = await pool.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'procrastinate_events'
+              AND column_name = 'result'
+        )
+        """
+    )
+    if not has_result_column:
+        return None
+
+    event_row = await pool.fetchrow(
+        """
+        SELECT result
+        FROM procrastinate_events
+        WHERE job_id = $1
+          AND type = 'succeeded'
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        job_id,
+    )
+    if not event_row or not event_row["result"]:
+        return None
+
+    import json
+
+    raw = event_row["result"]
+    return json.loads(raw) if isinstance(raw, str) else raw
+
 
 @router.post("/ingest/v1/taxonomy/backfill", response_model=BackfillEnqueueResponse)
 async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillEnqueueResponse:
@@ -280,6 +329,37 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillE
     return BackfillEnqueueResponse(job_id=job_id, status="queued")
 
 
+@router.get("/ingest/v1/taxonomy/backfill/active", response_model=ActiveBackfillResponse)
+async def active_taxonomy_backfill(
+    request: Request,
+    org_id: str,
+    kb_slug: str,
+) -> ActiveBackfillResponse:
+    """Return the active taxonomy backfill for a KB, if one is queued/running."""
+    from knowledge_ingest.db import get_pool
+
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT id, status, task_name
+        FROM procrastinate_jobs
+        WHERE queueing_lock = $1
+          AND status IN ('todo', 'doing', 'aborting')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        f"taxonomy-backfill:{org_id}:{kb_slug}",
+    )
+
+    if not row or not _is_taxonomy_backfill_task(row["task_name"]):
+        return ActiveBackfillResponse(status="idle")
+
+    return ActiveBackfillResponse(
+        job_id=row["id"],
+        status=_STATUS_MAP.get(row["status"], row["status"]),
+    )
+
+
 @router.get("/ingest/v1/taxonomy/backfill/{job_id}", response_model=BackfillStatusResponse)
 async def taxonomy_backfill_status(request: Request, job_id: int) -> BackfillStatusResponse:
     """Check the status of a taxonomy backfill job.
@@ -302,30 +382,14 @@ async def taxonomy_backfill_status(request: Request, job_id: int) -> BackfillSta
     if not row:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if row["task_name"] != "run_taxonomy_backfill":
+    if not _is_taxonomy_backfill_task(row["task_name"]):
         raise HTTPException(status_code=404, detail="Job not found")
 
     status = _STATUS_MAP.get(row["status"], row["status"])
 
-    # Procrastinate stores task return values in procrastinate_events
     result = None
     if row["status"] == "succeeded":
-        event_row = await pool.fetchrow(
-            """
-            SELECT result
-            FROM procrastinate_events
-            WHERE job_id = $1
-              AND type = 'succeeded'
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            job_id,
-        )
-        if event_row and event_row["result"]:
-            import json
-
-            raw = event_row["result"]
-            result = json.loads(raw) if isinstance(raw, str) else raw
+        result = await _fetch_backfill_result(pool, job_id)
 
     return BackfillStatusResponse(job_id=job_id, status=status, result=result)
 
