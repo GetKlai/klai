@@ -224,7 +224,7 @@ describe('CoverageWidget - taxonomy action CTA gating', () => {
     ).toBeNull()
   })
 
-  it('shows re-tag CTA in populated state even when node count reaches 9', () => {
+  it('shows missing-chunks CTA in populated state even when node count reaches 9', () => {
     const nodes = Array.from({ length: 9 }, (_, i) =>
       node({ taxonomy_node_id: i + 1, taxonomy_node_name: `N${i}`, chunk_count: 5 }),
     )
@@ -242,12 +242,12 @@ describe('CoverageWidget - taxonomy action CTA gating', () => {
         onSuggest={onSuggest}
       />,
     )
-    fireEvent.click(screen.getByText('Re-tag documents'))
+    fireEvent.click(screen.getByText('Categorize missing chunks'))
     expect(onSuggest).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('Suggest categories')).toBeNull()
   })
 
-  it('shows re-tag CTA in populated state below MAX when untagged_count >= 10 AND untagged_pct > 5', () => {
+  it('shows missing-chunks CTA in populated state when untagged_count >= 10 AND untagged_pct > 5', () => {
     const onSuggest = vi.fn()
     render(
       <CoverageWidget
@@ -262,7 +262,7 @@ describe('CoverageWidget - taxonomy action CTA gating', () => {
         onSuggest={onSuggest}
       />,
     )
-    fireEvent.click(screen.getByText('Re-tag documents'))
+    fireEvent.click(screen.getByText('Categorize missing chunks'))
     expect(onSuggest).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('Suggest categories')).toBeNull()
   })
