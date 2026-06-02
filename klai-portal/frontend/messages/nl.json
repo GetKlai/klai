@@ -2200,6 +2200,7 @@
   "platform_feedback_item_signal": "Signaal",
   "platform_feedback_no_linked_feedback_warning": "Geen gekoppelde feedback. Koppel eerst bewijs vanuit de triage voordat je dit item laat fixen.",
   "platform_feedback_follow_up_title": "Fix opvolgen",
+  "platform_feedback_edit_item_title": "Item bewerken",
   "platform_feedback_item_saved": "Open item opgeslagen.",
   "platform_feedback_delete_item": "Verwijder item",
   "platform_feedback_delete_item_title": "Open item verwijderen?",

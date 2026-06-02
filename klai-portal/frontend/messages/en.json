@@ -2200,6 +2200,7 @@
   "platform_feedback_item_signal": "Signal",
   "platform_feedback_no_linked_feedback_warning": "No linked feedback. Link evidence from triage before asking an agent to fix this item.",
   "platform_feedback_follow_up_title": "Track the fix",
+  "platform_feedback_edit_item_title": "Edit item",
   "platform_feedback_item_saved": "Open item saved.",
   "platform_feedback_delete_item": "Delete item",
   "platform_feedback_delete_item_title": "Delete open item?",
