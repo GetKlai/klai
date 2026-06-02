@@ -3,10 +3,13 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
+  ChevronRight,
   Copy,
   Loader2,
+  Pencil,
   Save,
   Trash2,
+  X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -124,16 +127,17 @@ function FeedbackItemDetailForm({
   const [resolveError, setResolveError] = useState<string | null>(null)
   const [copyNotice, setCopyNotice] = useState<string | null>(null)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
-  const [itemStep, setItemStep] = useState<'understand' | 'debug' | 'fix' | 'message'>(
+  const [isEditing, setIsEditing] = useState(false)
+  const [itemStep, setItemStep] = useState<'understand' | 'debug' | 'message'>(
     'understand',
   )
   const resolveLabel = feedbackResolveLabel(item.kind)
   const isClosed = CLOSED_FEEDBACK_ITEM_STATUSES.has(status)
   const debugInstructions = buildFeedbackDebugInstructions(item, submissions, fmtDate)
-  const itemStepOrder: Array<'understand' | 'debug' | 'fix' | 'message'> =
+  const itemStepOrder: Array<'understand' | 'debug' | 'message'> =
     item.kind === 'bug'
-      ? ['understand', 'debug', 'fix', 'message']
-      : ['understand', 'fix', 'message']
+      ? ['understand', 'debug', 'message']
+      : ['understand', 'message']
   const itemStepIndex = Math.max(0, itemStepOrder.indexOf(itemStep))
   const itemWizardSteps: StepItem[] = itemStepOrder.map((step) => ({
     label:
@@ -141,9 +145,7 @@ function FeedbackItemDetailForm({
         ? m.platform_feedback_item_details()
         : step === 'debug'
           ? m.platform_feedback_copy_debug_title()
-          : step === 'fix'
-            ? m.platform_feedback_edit_item_title()
-            : resolveLabel.title,
+          : resolveLabel.title,
     onClick: () => setItemStep(step),
   }))
   const previousItemStep = () => {
@@ -155,11 +157,15 @@ function FeedbackItemDetailForm({
     }
   }
   const saveItem = () => {
-    updateItem.mutate({
-      itemId: item.id,
-      title: title.trim(),
-      summary: summary.trim() || null,
-    })
+    updateItem.mutate(
+      { itemId: item.id, title: title.trim(), summary: summary.trim() || null },
+      { onSuccess: () => setIsEditing(false) },
+    )
+  }
+  const cancelEdit = () => {
+    setTitle(item.title)
+    setSummary(item.summary ?? '')
+    setIsEditing(false)
   }
   const closeItem = () => {
     // Non-resolved outcomes (reopen / dismiss) just persist the status; no
@@ -219,14 +225,90 @@ function FeedbackItemDetailForm({
         <>
       <section className="space-y-3">
         <div className="flex items-start justify-between gap-3">
-          <h2 className="text-xl font-display-bold text-gray-900">{title}</h2>
-          <Badge variant={isClosed ? 'secondary' : 'outline'}>
-            {feedbackItemStatusLabel(status)}
-          </Badge>
+          {isEditing ? (
+            <div className="flex-1 space-y-1.5">
+              <Label htmlFor={`feedback-item-title-${item.id}`}>
+                {m.platform_feedback_title_placeholder()}
+              </Label>
+              <Input
+                id={`feedback-item-title-${item.id}`}
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder={m.platform_feedback_title_placeholder()}
+              />
+            </div>
+          ) : (
+            <h2 className="text-xl font-display-bold text-gray-900">{title}</h2>
+          )}
+          <div className="flex shrink-0 items-center gap-1">
+            <Badge variant={isClosed ? 'secondary' : 'outline'}>
+              {feedbackItemStatusLabel(status)}
+            </Badge>
+            {!isEditing && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(true)}
+                  aria-label={m.platform_feedback_edit_item_title()}
+                  title={m.platform_feedback_edit_item_title()}
+                  className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteOpen(true)}
+                  aria-label={m.platform_feedback_delete_item()}
+                  title={m.platform_feedback_delete_item()}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </>
+            )}
+          </div>
         </div>
-        <p className="whitespace-pre-wrap text-sm leading-6 text-gray-700">
-          {summary || m.platform_feedback_no_description()}
-        </p>
+
+        {isEditing ? (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor={`feedback-item-summary-${item.id}`}>
+                {m.platform_feedback_short_note_placeholder()}
+              </Label>
+              <Textarea
+                id={`feedback-item-summary-${item.id}`}
+                value={summary}
+                onChange={(event) => setSummary(event.target.value)}
+                rows={4}
+                placeholder={m.platform_feedback_short_note_placeholder()}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                disabled={updateItem.isPending || title.trim().length < 3}
+                onClick={saveItem}
+              >
+                {updateItem.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                {m.admin_shared_save()}
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={cancelEdit}>
+                <X className="h-4 w-4" />
+                {m.admin_users_cancel()}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className="whitespace-pre-wrap text-sm leading-6 text-gray-700">
+            {summary || m.platform_feedback_no_description()}
+          </p>
+        )}
+
         <p className="text-xs text-gray-400">
           {[
             feedbackItemKindLabel(item.kind),
@@ -244,20 +326,33 @@ function FeedbackItemDetailForm({
           {m.platform_col_created()} {fmtDate(item.created_at)} · {m.platform_feedback_col_updated()}{' '}
           {fmtDate(item.updated_at)}
         </p>
+        {updateItem.isSuccess && !isEditing && (
+          <p className="text-sm text-[var(--color-success)]">
+            {m.platform_feedback_item_saved()}
+          </p>
+        )}
       </section>
 
-      <section className="space-y-3">
-        <h3 className="text-sm font-medium text-gray-900">
-          {m.platform_feedback_linked_feedback({ count: String(submissions.length) })}
-        </h3>
-        {submissions.length === 0 ? (
+      {submissions.length === 0 ? (
+        <section className="space-y-3">
+          <h3 className="text-sm font-medium text-gray-900">
+            {m.platform_feedback_linked_feedback({ count: '0' })}
+          </h3>
           <p className="rounded-lg border border-gray-200 px-4 py-3 text-sm text-gray-600">
             {m.platform_feedback_no_linked_feedback_warning()}
           </p>
-        ) : (
-          <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
+        </section>
+      ) : (
+        <details className="group rounded-xl border border-gray-200 bg-white">
+          <summary className="flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 py-3 text-sm text-gray-700 [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-90" />
+            <span className="min-w-0 flex-1 font-medium">
+              {m.platform_feedback_linked_feedback({ count: String(submissions.length) })}
+            </span>
+          </summary>
+          <div className="divide-y divide-gray-200 border-t border-gray-200">
             {submissions.map((submission) => (
-              <div key={submission.id} className="py-4">
+              <div key={submission.id} className="px-4 py-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline">{feedbackKindLabel(submission.event_type)}</Badge>
                   <Badge variant="secondary">{feedbackLinkTypeLabel(submission.link_type)}</Badge>
@@ -278,8 +373,8 @@ function FeedbackItemDetailForm({
               </div>
             ))}
           </div>
-        )}
-      </section>
+        </details>
+      )}
         </>
       )}
 
@@ -305,73 +400,6 @@ function FeedbackItemDetailForm({
             )}
           </div>
         </section>
-      )}
-
-      {itemStep === 'fix' && (
-        <section className="space-y-4">
-        <div>
-          <h3 className="mt-1 text-base font-display-bold text-gray-900">
-            {m.platform_feedback_edit_item_title()}
-          </h3>
-        </div>
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor={`feedback-item-title-${item.id}`}>
-              {m.platform_feedback_title_placeholder()}
-            </Label>
-            <Input
-              id={`feedback-item-title-${item.id}`}
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder={m.platform_feedback_title_placeholder()}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor={`feedback-item-summary-${item.id}`}>
-              {m.platform_feedback_short_note_placeholder()}
-            </Label>
-            <Textarea
-              id={`feedback-item-summary-${item.id}`}
-              value={summary}
-              onChange={(event) => setSummary(event.target.value)}
-              rows={4}
-              placeholder={m.platform_feedback_short_note_placeholder()}
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={updateItem.isPending || deleteItem.isPending}
-              onClick={() => setConfirmDeleteOpen(true)}
-            >
-              {deleteItem.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              {m.platform_feedback_delete_item()}
-            </Button>
-            <Button
-              type="button"
-              disabled={updateItem.isPending || deleteItem.isPending || title.trim().length < 3}
-              onClick={saveItem}
-            >
-              {updateItem.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              {m.admin_shared_save()}
-            </Button>
-          </div>
-        </div>
-        {updateItem.isSuccess && (
-          <p className="text-sm text-[var(--color-success)]">
-            {m.platform_feedback_item_saved()}
-          </p>
-        )}
-      </section>
       )}
 
       {itemStep === 'message' && (
