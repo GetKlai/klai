@@ -224,7 +224,7 @@ describe('CoverageWidget - taxonomy action CTA gating', () => {
     ).toBeNull()
   })
 
-  it('hidden in populated state once node count reaches MAX_HEALTHY_NODE_COUNT (9)', () => {
+  it('shows re-tag CTA in populated state even when node count reaches 9', () => {
     const nodes = Array.from({ length: 9 }, (_, i) =>
       node({ taxonomy_node_id: i + 1, taxonomy_node_name: `N${i}`, chunk_count: 5 }),
     )
@@ -242,14 +242,9 @@ describe('CoverageWidget - taxonomy action CTA gating', () => {
         onSuggest={onSuggest}
       />,
     )
-    // Hint shown instead
-    expect(
-      screen.getByText('Enough categories - adding more reduces clarity'),
-    ).toBeDefined()
-    // Button absent
-    expect(
-      screen.queryByText('Suggest categories'),
-    ).toBeNull()
+    fireEvent.click(screen.getByText('Re-tag documents'))
+    expect(onSuggest).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Suggest categories')).toBeNull()
   })
 
   it('shows re-tag CTA in populated state below MAX when untagged_count >= 10 AND untagged_pct > 5', () => {
