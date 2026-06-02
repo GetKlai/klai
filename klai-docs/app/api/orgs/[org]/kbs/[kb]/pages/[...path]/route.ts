@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuthOrService, requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
+import { giteaOrgNameForSlug } from "@/lib/gitea_org";
 import {
   serializePage,
   parsePage,
@@ -98,7 +99,8 @@ export async function PUT(
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const denied = checkKBAccess(kb, payload.sub);
   if (denied) return denied;
-  await gitea.ensureOrgDescription(`org-${orgSlug}`, org.zitadel_org_id);
+  const giteaOrg = typeof org.gitea_org_name === "string" ? org.gitea_org_name : giteaOrgNameForSlug(orgSlug);
+  await gitea.ensureOrgDescription(giteaOrg, org.zitadel_org_id);
 
   const pagePath = path.join("/");
 

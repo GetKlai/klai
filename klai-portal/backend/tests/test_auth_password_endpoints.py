@@ -29,7 +29,7 @@ from app.api.auth import (
     verify_email,
 )
 
-_STRONG_PASSWORD = "correct horse battery staple"
+_STRONG_PASSWORD = "correct horse battery staple!"
 
 # ---------------------------------------------------------------------------
 # Scenario P1 — password_reset known email → 204 + audit (REQ-3.1)
@@ -168,7 +168,7 @@ async def test_password_set_rejects_weak_password_before_consuming_invite_code(
     respx_zitadel: respx.MockRouter,
 ) -> None:
     """Weak passwords must fail before invite_code/verify consumes the one-time link."""
-    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="Password1234")
+    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="Password1234!")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         with pytest.raises(HTTPException) as exc:
@@ -176,6 +176,27 @@ async def test_password_set_rejects_weak_password_before_consuming_invite_code(
 
     assert exc.value.status_code == 400
     assert "Wachtwoord is te zwak" in exc.value.detail
+    assert len(respx_zitadel.calls) == 0
+    audit_log.assert_not_called()
+    events = _capture_events(captured, "password_set_failed")
+    assert len(events) == 1
+    assert events[0]["reason"] == "weak_password"
+    assert events[0]["outcome"] == "400"
+
+
+@pytest.mark.asyncio
+async def test_password_set_rejects_missing_symbol_before_consuming_invite_code(
+    respx_zitadel: respx.MockRouter,
+) -> None:
+    """Passwords that ZITADEL would reject for missing a symbol must fail before invite-code verify."""
+    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="correct horse battery staple")
+
+    with capture_logs() as captured, _audit_log_patch() as audit_log:
+        with pytest.raises(HTTPException) as exc:
+            await password_set(body=body)
+
+    assert exc.value.status_code == 400
+    assert "symbool" in exc.value.detail
     assert len(respx_zitadel.calls) == 0
     audit_log.assert_not_called()
     events = _capture_events(captured, "password_set_failed")

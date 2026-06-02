@@ -15,6 +15,7 @@ import structlog
 import yaml
 
 from app.core.config import settings
+from app.core.provisioning_names import validate_slug_for_provisioning
 from app.services.secrets import decrypt_mcp_secret, is_secret_var
 
 logger = structlog.get_logger()
@@ -96,6 +97,7 @@ def _generate_librechat_env(
 ) -> str:
     """Generate the per-tenant LibreChat .env file content."""
     domain = settings.domain
+    names = validate_slug_for_provisioning(slug, domain=domain)
     jwt_secret = secrets.token_hex(32)
     jwt_refresh_secret = secrets.token_hex(32)
     session_secret = secrets.token_hex(32)
@@ -132,7 +134,7 @@ def _generate_librechat_env(
 # Tenant: {slug}
 
 # MongoDB -- tenant-isolated database (per-tenant user, NOT the shared admin)
-MONGO_URI=mongodb://librechat-{slug}:{mongo_password}@mongodb:27017/librechat-{slug}?authSource=librechat-{slug}
+MONGO_URI=mongodb://{names.mongodb_user}:{mongo_password}@mongodb:27017/{names.mongodb_database}?authSource={names.mongodb_database}
 
 # Zitadel OIDC
 OPENID_ISSUER=https://auth.{domain}
@@ -161,8 +163,8 @@ ALLOW_SOCIAL_REGISTRATION=true
 LOGIN_MAX=250
 
 # App settings
-DOMAIN_CLIENT=https://chat-{slug}.{domain}
-DOMAIN_SERVER=https://chat-{slug}.{domain}
+DOMAIN_CLIENT={names.chat_origin}
+DOMAIN_SERVER={names.chat_origin}
 APP_TITLE=Klai Chat
 ALLOW_IFRAME=true
 ALLOW_SHARED_LINKS=true

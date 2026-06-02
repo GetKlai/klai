@@ -36,8 +36,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import cross_org_session, get_db, tenant_scoped_session
 from app.core.permissions import UserPermissions, require_platform_admin
+from app.core.provisioning_names import TENANT_SLUG_MAX_LENGTH, validate_slug_for_provisioning
 from app.core.seats import suggest_seat
 from app.models.portal import PortalOrg, PortalUser
 from app.services.audit import log_event
@@ -61,8 +63,10 @@ def _slugify(name: str) -> str:
 def _to_slug(name: str, suffix: str = "") -> str:
     base = re.sub(r"[^a-z0-9]+", "-", _slugify(name).lower()).strip("-") or "org"
     if suffix:
-        base = f"{base}-{suffix[:8]}"
-    return base[:64]
+        suffix_part = f"-{suffix[:8]}"
+        base = base[: TENANT_SLUG_MAX_LENGTH - len(suffix_part)].strip("-") or "org"
+        return f"{base}{suffix_part}"
+    return base[:TENANT_SLUG_MAX_LENGTH].strip("-") or "org"
 
 
 logger = structlog.get_logger()
@@ -459,7 +463,6 @@ async def _execute_user_delete(
     from app.services.kb_offboarding import (
         KbDisposition,
         compute_offboard_preview,
-        revoke_user_credentials,
     )
 
     if zitadel_user_id == perms.user_id:
@@ -491,15 +494,15 @@ async def _execute_user_delete(
             )
         delete_global_identity = membership_summary.remaining_count == 0
 
-        # Pre-compute KB dispositions + revoke credentials before entering the
-        # state machine. Credential revocation is safe to do here because it is
-        # idempotent (already-revoked keys are skipped).
+        # Pre-compute KB dispositions before entering the state machine.
+        # Credential revocation is intentionally part of step_external_kb_delete,
+        # so a zitadel_remove failure cannot commit revoked credentials while
+        # the user identity and portal row remain active.
         preview = await compute_offboard_preview(zitadel_user_id, org_id, db)
         kb_dispositions = [
             KbDisposition(kb_id=kb.kb_id, action="delete")
             for kb in (*preview.personal_kbs, *preview.org_kbs_solely_owned)
         ]
-        api_keys, mcp_tokens = await revoke_user_credentials(zitadel_user_id, org_id, db)
 
         # Delegate to the state machine. It records partial failures and emits
         # the audit event. We pass the open tenant-scoped session so step 3
@@ -510,8 +513,8 @@ async def _execute_user_delete(
             actor_user_id=perms.user_id,
             delete_global_identity=delete_global_identity,
             kb_dispositions=kb_dispositions,
-            api_keys_count=api_keys,
-            mcp_tokens_count=mcp_tokens,
+            api_keys_count=0,
+            mcp_tokens_count=0,
             org=org,
             portal_user=user,
             db=db,
@@ -817,15 +820,17 @@ async def platform_create_tenant(
     # Commit immediately so the org_id is durable + visible to the
     # tenant-scoped session that follows.
     owner_email_domain = body.owner_email.split("@")[-1].strip().lower()
-    org_row = PortalOrg(
-        zitadel_org_id=zitadel_org_id,
-        name=body.company_name,
-        slug=_to_slug(body.company_name, zitadel_org_id),
-        plan="knowledge",
-        primary_domain=primary_domain_for_email_domain(owner_email_domain),
-        auto_accept_same_domain=False,
-    )
     try:
+        org_slug = _to_slug(body.company_name, zitadel_org_id)
+        validate_slug_for_provisioning(org_slug, domain=settings.domain)
+        org_row = PortalOrg(
+            zitadel_org_id=zitadel_org_id,
+            name=body.company_name,
+            slug=org_slug,
+            plan="knowledge",
+            primary_domain=primary_domain_for_email_domain(owner_email_domain),
+            auto_accept_same_domain=False,
+        )
         db.add(org_row)
         await db.commit()
     except Exception as exc:

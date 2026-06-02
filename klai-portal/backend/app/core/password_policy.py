@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 MIN_PASSWORD_LENGTH = 12
 ZXCVBN_MIN_SCORE = 3
 PASSWORD_TOO_SHORT_MSG = "Wachtwoord moet minimaal 12 tekens bevatten"
+PASSWORD_MISSING_SYMBOL_MSG = "Wachtwoord moet minimaal één symbool bevatten"
 PASSWORD_TOO_WEAK_MSG = "Wachtwoord is te zwak. Kies een langer of minder voorspelbaar wachtwoord."
 
 try:
@@ -35,6 +36,9 @@ def validate_password_strength(password: str, *, user_inputs: Iterable[str] = ()
     """Raise when ``password`` is too short or too easy to guess."""
     if len(password) < MIN_PASSWORD_LENGTH:
         raise PasswordPolicyError(PASSWORD_TOO_SHORT_MSG)
+
+    if not any(not char.isalnum() and not char.isspace() for char in password):
+        raise PasswordPolicyError(PASSWORD_MISSING_SYMBOL_MSG)
 
     if not _ZXCVBN_AVAILABLE or _zxcvbn is None:
         return

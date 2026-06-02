@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { giteaOrgNameForSlug } from "@/lib/gitea_org";
 
 // Use individual params to avoid URL-encoding issues with special chars in password.
 // DATABASE_URL is kept as a fallback for local dev convenience.
@@ -61,7 +62,7 @@ export const db = {
   },
 
   async createOrg(slug: string, name: string, zitadelOrgId: string) {
-    const gitea_org_name = `org-${slug}`;
+    const gitea_org_name = giteaOrgNameForSlug(slug);
     const { rows } = await pool.query(
       `INSERT INTO docs.organizations (slug, name, zitadel_org_id, gitea_org_name)
        VALUES ($1, $2, $3, $4)

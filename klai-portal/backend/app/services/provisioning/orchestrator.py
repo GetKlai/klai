@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, pin_session
+from app.core.provisioning_names import validate_slug_for_provisioning
 from app.core.system_groups import create_system_groups
 from app.models.portal import PortalOrg, PortalUser
 from app.services.provisioning.generators import _generate_librechat_env
@@ -142,7 +143,8 @@ async def _compensate_container(state: _ProvisionState) -> None:
         return
     try:
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _sync_remove_container, f"librechat-{state.slug}")
+        container_name = validate_slug_for_provisioning(state.slug, domain=settings.domain).librechat_container
+        await loop.run_in_executor(None, _sync_remove_container, container_name)
     except Exception as exc:
         logger.warning("rollback_container_removal_failed", slug=state.slug, error=str(exc), exc_info=True)
 
@@ -151,7 +153,8 @@ async def _compensate_caddy(state: _ProvisionState) -> None:
     if not state.caddy_written:
         return
     try:
-        tenant_file = Path(settings.caddy_tenants_path) / f"{state.slug}.caddyfile"
+        names = validate_slug_for_provisioning(state.slug, domain=settings.domain)
+        tenant_file = Path(settings.caddy_tenants_path) / names.caddyfile_name
         tenant_file.unlink(missing_ok=True)
         loop = asyncio.get_running_loop()
         async with _caddy_lock:
@@ -270,6 +273,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
     # Single source of truth: `org.slug`. signup.py already enforces
     # uniqueness via the zitadel-id suffix.
     slug = org.slug
+    names = validate_slug_for_provisioning(slug, domain=settings.domain)
 
     # Capture mcp_servers now — ensure_default_knowledge_bases commits the
     # session, which expires all ORM attributes. Accessing org.mcp_servers
@@ -277,7 +281,13 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
     # MissingGreenlet crash.
     mcp_servers = org.mcp_servers
     zitadel_org_id = org.zitadel_org_id
-    logger.info("provisioning_tenant_start", slug=slug, org_id=org_id)
+    logger.info(
+        "provisioning_tenant_start",
+        slug=slug,
+        org_id=org_id,
+        chat_label_length=len(names.chat_label),
+        chat_label_max=63,
+    )
 
     state = _ProvisionState(slug=slug)
     last_state: str | None = None
@@ -306,8 +316,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             )
             last_state = "creating_zitadel_app"
 
-            redirect_uri = f"https://chat-{slug}.{settings.domain}/oauth/openid/callback"
-            oidc_data = await zitadel.create_librechat_oidc_app(slug, redirect_uri)
+            oidc_data = await zitadel.create_librechat_oidc_app(slug, names.zitadel_redirect_uri)
             client_id = oidc_data.get("clientId", "")
             client_secret = oidc_data.get("clientSecret", "")
             state.zitadel_app_id = oidc_data.get("appId", "")
@@ -333,7 +342,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
                 },
                 timeout=10.0,
             ) as llm_client:
-                team_resp = await llm_client.post("/team/new", json={"team_alias": slug})
+                team_resp = await llm_client.post("/team/new", json={"team_alias": names.litellm_team_alias})
                 team_resp.raise_for_status()
                 team_id = team_resp.json()["team_id"]
                 state.litellm_team_id = team_id
@@ -534,7 +543,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             # Finalize org fields — done in-row before the ready transition so the
             # state flip is the observable marker that everything is wired up.
             org.slug = slug
-            org.librechat_container = f"librechat-{slug}"
+            org.librechat_container = names.librechat_container
             org.zitadel_librechat_client_id = client_id
             org.zitadel_librechat_client_secret = portal_secrets.encrypt(client_secret)
             org.litellm_team_key = portal_secrets.encrypt(litellm_team_key) if litellm_team_key else None
