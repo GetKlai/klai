@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Klai Shield</title>
+    <link rel="stylesheet" href="./sidepanel.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header>
+        <h1>Klai Shield</h1>
+        <span id="status-pill" class="pill">Niet verbonden</span>
+      </header>
+
+      <section class="section">
+        <label>
+          API base
+          <input id="api-base" type="url" placeholder="https://my.getklai.com" />
+        </label>
+        <label>
+          Shield token
+          <input id="token" type="password" placeholder="ks_live_..." />
+        </label>
+        <div class="row">
+          <button id="save-settings" type="button">Opslaan</button>
+          <button id="refresh-config" type="button">Verbinden</button>
+        </div>
+      </section>
+
+      <section class="section">
+        <label>
+          Compliance check
+          <textarea id="check-text" rows="5" placeholder="Plak een prompt of antwoord..."></textarea>
+        </label>
+        <button id="run-check" type="button">Check</button>
+        <pre id="check-result"></pre>
+      </section>
+
+      <section class="section">
+        <label>
+          Zoek kennis
+          <textarea id="knowledge-query" rows="3" placeholder="Waar moet Klai context over zoeken?"></textarea>
+        </label>
+        <button id="run-query" type="button">Zoeken</button>
+        <div id="knowledge-results"></div>
+        <button id="insert-context" type="button" disabled>Context invoegen</button>
+      </section>
+    </main>
+    <script src="./sidepanel.js" type="module"></script>
+  </body>
+</html>
