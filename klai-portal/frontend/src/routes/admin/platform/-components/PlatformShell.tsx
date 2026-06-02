@@ -18,7 +18,7 @@ export function PlatformStatCard({
   onClick,
 }: {
   label: string
-  value: number | string | undefined
+  value: ReactNode
   sub?: string
   loading: boolean
   alert?: boolean

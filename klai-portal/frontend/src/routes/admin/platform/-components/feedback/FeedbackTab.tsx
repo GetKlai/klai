@@ -13,6 +13,7 @@ import {
   feedbackItemReporterSummary,
   feedbackItemStatusLabel,
   feedbackKindLabel,
+  feedbackSignalLabel,
   feedbackStatusLabel,
   feedbackSubmissionReporterLabel,
 } from "./-feedback-helpers"
@@ -133,10 +134,8 @@ function FeedbackSubmissionRow({
           >
             {feedbackKindLabel(item.event_type)}
           </Badge>
-          {(item.feedback_type || item.severity) && (
-            <span className="text-xs text-gray-400">
-              {item.feedback_type || item.severity}
-            </span>
+          {feedbackSignalLabel(item) && (
+            <span className="text-xs text-gray-400">{feedbackSignalLabel(item)}</span>
           )}
         </div>
       </td>

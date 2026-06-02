@@ -216,7 +216,16 @@ function PlatformConsole() {
         />
         <PlatformStatCard
           label={m.platform_tab_feedback()}
-          value={stats ? m.platform_stat_new_feedback_value({ count: stats.new_feedback_count }) : undefined}
+          value={
+            stats ? (
+              <>
+                {stats.new_feedback_count}{' '}
+                <span className="font-display text-gray-400">
+                  {m.platform_stat_new_feedback_unit()}
+                </span>
+              </>
+            ) : undefined
+          }
           sub={
             stats
               ? m.platform_stat_feedback_total({ count: stats.total_feedback_count })

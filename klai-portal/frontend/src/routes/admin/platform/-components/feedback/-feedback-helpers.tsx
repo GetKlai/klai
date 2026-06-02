@@ -19,6 +19,35 @@ export function feedbackSubmissionReporterLabel(item: PlatformFeedbackSubmission
   return item.user_display_name || item.user_email || item.user_id || null
 }
 
+/**
+ * Human label for a submission's reporter-chosen signal: the feedback type
+ * (idea/improvement/...) or the problem severity (blocked/workaround/minor).
+ * Returns null for unknown codes so raw enum values never leak into the UI.
+ */
+export function feedbackSignalLabel(item: PlatformFeedbackSubmission): string | null {
+  switch (item.feedback_type) {
+    case 'idea':
+      return m.klai_assistant_feedback_type_idea()
+    case 'improvement':
+      return m.klai_assistant_feedback_type_improvement()
+    case 'confusing':
+      return m.klai_assistant_feedback_type_confusing()
+    case 'missing':
+      return m.klai_assistant_feedback_type_missing()
+    case 'compliment':
+      return m.klai_assistant_feedback_type_compliment()
+  }
+  switch (item.severity) {
+    case 'blocked':
+      return m.klai_assistant_problem_severity_blocked()
+    case 'workaround':
+      return m.klai_assistant_problem_severity_workaround()
+    case 'minor':
+      return m.klai_assistant_problem_severity_minor()
+  }
+  return null
+}
+
 export function feedbackStatusLabel(status: string): string {
   if (status === 'open') return m.platform_feedback_status_open()
   if (status === 'resolved') return m.platform_feedback_status_resolved()
@@ -263,11 +292,13 @@ export function buildFeedbackDebugInstructions(
     'Linked customer evidence:',
     evidence,
     '',
-    'Instructions:',
-    '1. Start from the Area and Routes above to locate the affected module in the codebase.',
-    '2. Reproduce or trace the issue from the linked URL, route, and raw customer text.',
-    '3. Identify the smallest backend/frontend change that fixes the actual cause.',
-    '4. Add or update focused regression coverage for the broken behavior.',
-    '5. Report changed files, tests run, and any residual risk.',
+    'Approach (leave the code better than you found it):',
+    '1. Start from the Area and Routes above to locate the affected module.',
+    '2. Reproduce or trace the issue from the linked URL, route, and raw customer text. Confirm the real root cause before changing anything; treat the customer report as a symptom, not the diagnosis.',
+    '3. Fix the root cause with the cleanest solution that fits the existing architecture and patterns. Do not patch around the symptom.',
+    '4. If the root cause is a deeper design or architectural problem, investigate it and fix it properly. If a full fix is genuinely out of scope, write down exactly what the underlying problem is and what the right fix would be.',
+    '5. Leave the code you touch better than you found it (clearer names, less duplication, better structure), while keeping the change proportionate to the problem. Elegant, not a sprawling rewrite.',
+    '6. Add or update focused regression coverage for the fixed behavior.',
+    '7. Report the root cause, changed files, any architectural findings, tests run, and residual risk.',
   ].join('\n')
 }
