@@ -258,9 +258,9 @@ class Settings(BaseSettings):
     feedback_triage_model: str = "klai-fast"
 
     # SPEC-INFRA-TENANT-DELETE-001: Garage S3 for Scribe artifact deletion.
-    # Feature-flag pattern: empty endpoint = step disabled (no S3 configured).
     # Generate credentials via: garage key new --name portal-api
-    garage_s3_endpoint: str = ""  # e.g. http://garage:3900 (empty = feature disabled)
+    scribe_api_url: str = "http://scribe-api:8020"
+    garage_s3_endpoint: str = ""  # e.g. http://garage:3900
     garage_s3_access_key: str = ""
     garage_s3_secret_key: str = ""
     garage_s3_bucket: str = "klai-scribe"  # default bucket name for scribe artifacts

@@ -293,6 +293,11 @@ class TestLoadState:
             moneybird_subscription_id="sub-1",
             moneybird_contact_id="contact-1",
             name="ACME Corp",
+            # Legacy row (provisioned before migration e9f1a2b3c4d5): both
+            # persisted-ID columns are NULL, so _load_state falls back to the
+            # resolve-by-lookup path.
+            litellm_team_id=None,
+            zitadel_oidc_app_id=None,
         )
         org_result = MagicMock()
         org_result.scalar_one.return_value = mock_org
@@ -322,6 +327,48 @@ class TestLoadState:
         user_query = str(db.execute.await_args_list[1].args[0]).lower()
         assert "group by" in user_query
         assert "having count" in user_query
+
+    @pytest.mark.asyncio
+    async def test_prefers_persisted_ids_over_resolve(self) -> None:
+        """H2 (SPEC-INFRA-TENANT-DELETE): when portal_orgs has the persisted
+        external IDs, _load_state must use them verbatim and MUST NOT call the
+        fuzzy resolve-by-lookup helpers (which can false-negative → orphan)."""
+        mock_org = SimpleNamespace(
+            id=42,
+            slug="acme",
+            zitadel_org_id="zit-org",
+            zitadel_librechat_client_id="client-abc",
+            moneybird_subscription_id=None,
+            moneybird_contact_id=None,
+            name="ACME Corp",
+            litellm_team_id="stored-team-99",
+            zitadel_oidc_app_id="stored-app-99",
+        )
+        org_result = MagicMock()
+        org_result.scalar_one.return_value = mock_org
+        user_scalars = MagicMock()
+        user_scalars.all.return_value = []
+        user_result = MagicMock()
+        user_result.scalars.return_value = user_scalars
+        db = AsyncMock()
+        db.execute.side_effect = [org_result, user_result]
+
+        with (
+            patch(
+                "app.services.provisioning.deprovisioning_orchestrator._resolve_zitadel_oidc_app_id",
+                new=AsyncMock(),
+            ) as mock_resolve_app,
+            patch(
+                "app.services.provisioning.deprovisioning_orchestrator._resolve_litellm_team_id",
+                new=AsyncMock(),
+            ) as mock_resolve_team,
+        ):
+            state = await _load_state(42, "actor-1", "platform_admin", db)
+
+        assert state.zitadel_oidc_app_id == "stored-app-99"
+        assert state.litellm_team_id == "stored-team-99"
+        mock_resolve_app.assert_not_awaited()
+        mock_resolve_team.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -373,8 +420,8 @@ class TestResolveLitellmTeamId:
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_returns_empty_on_http_error(self) -> None:
-        """Network failure returns empty string — non-fatal."""
+    async def test_raises_on_http_error(self) -> None:
+        """Network failure must fail loudly so the team is not orphaned."""
         with patch("app.services.provisioning.deprovisioning_orchestrator.settings") as mock_settings:
             mock_settings.litellm_base_url = "http://litellm:4000"
             mock_settings.litellm_master_key = "key"
@@ -382,9 +429,8 @@ class TestResolveLitellmTeamId:
                 mock_client_class.return_value.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("down"))
                 mock_client_class.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                result = await _resolve_litellm_team_id("acme")
-
-        assert result == ""
+                with pytest.raises(httpx.ConnectError):
+                    await _resolve_litellm_team_id("acme")
 
 
 # ---------------------------------------------------------------------------
@@ -394,13 +440,13 @@ class TestResolveLitellmTeamId:
 
 class TestResolveZitadelOidcAppId:
     @pytest.mark.asyncio
-    async def test_returns_empty_when_no_slug(self) -> None:
-        """Empty slug returns empty string without network call."""
-        result = await _resolve_zitadel_oidc_app_id(None)
-        assert result == ""
+    async def test_raises_when_no_slug(self) -> None:
+        """Empty slug is corrupt deprovisioning state and must fail loudly."""
+        with pytest.raises(RuntimeError, match="slug"):
+            await _resolve_zitadel_oidc_app_id(None)
 
-        result = await _resolve_zitadel_oidc_app_id("")
-        assert result == ""
+        with pytest.raises(RuntimeError, match="slug"):
+            await _resolve_zitadel_oidc_app_id("")
 
     @pytest.mark.asyncio
     async def test_queries_zitadel_by_app_name_not_client_id(self) -> None:
@@ -481,8 +527,8 @@ class TestResolveZitadelOidcAppId:
         assert result == "app-from-slug"
 
     @pytest.mark.asyncio
-    async def test_returns_empty_on_http_error(self) -> None:
-        """HTTP failure returns empty string — non-fatal."""
+    async def test_raises_on_http_error(self) -> None:
+        """HTTP failure must fail loudly so the OIDC app is not orphaned."""
         with patch("app.services.provisioning.deprovisioning_orchestrator.settings") as mock_settings:
             mock_settings.zitadel_base_url = "https://auth.example.com"
             mock_settings.zitadel_pat = "pat-token"
@@ -491,9 +537,8 @@ class TestResolveZitadelOidcAppId:
                 mock_client_class.return_value.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("down"))
                 mock_client_class.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                result = await _resolve_zitadel_oidc_app_id(slug="acme", client_id="client-abc")
-
-        assert result == ""
+                with pytest.raises(httpx.ConnectError):
+                    await _resolve_zitadel_oidc_app_id(slug="acme", client_id="client-abc")
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +606,30 @@ class TestRunHappyPath:
         assert len(fail_step_calls) == 1
         assert len(post_fail_calls) == 0
         mock_mark_failed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_load_state_failure_calls_mark_failed_before_steps(self) -> None:
+        """Lookup failures before the step loop must still mark the org failed."""
+
+        async def _unexpected_step(_state):
+            raise AssertionError("steps must not run when _load_state fails")
+
+        db = AsyncMock()
+        with (
+            patch(
+                "app.services.provisioning.deprovisioning_orchestrator._load_state",
+                new=AsyncMock(side_effect=httpx.ConnectError("litellm down")),
+            ),
+            patch("app.services.provisioning.deprovisioning_orchestrator.STEPS", new=[_unexpected_step]),
+            patch(
+                "app.services.provisioning.deprovisioning_orchestrator._mark_failed",
+                new=AsyncMock(),
+            ) as mock_mark_failed,
+        ):
+            await _run(42, "user-1", "owner", db)
+
+        mock_mark_failed.assert_awaited_once()
+        assert mock_mark_failed.await_args.args[:3] == (db, 42, "_load_state")
 
 
 # ---------------------------------------------------------------------------

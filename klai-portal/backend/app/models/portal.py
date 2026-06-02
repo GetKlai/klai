@@ -78,6 +78,15 @@ class PortalOrg(Base):
     zitadel_librechat_client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     zitadel_librechat_client_secret: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     litellm_team_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # SPEC-INFRA-TENANT-DELETE H2 — external resource IDs persisted at
+    # provisioning time (orchestrator finalize) so deprovisioning deletes the
+    # exact LiteLLM team / Zitadel OIDC app instead of resolving via fuzzy
+    # list lookups that silently returned "" (= "skip") on a false-negative.
+    # NULL on legacy rows provisioned before migration e9f1a2b3c4d5;
+    # deprovisioning_orchestrator._load_state falls back to the resolve path
+    # for those rows.
+    litellm_team_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    zitadel_oidc_app_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     provisioning_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="pending", server_default="pending"
     )
