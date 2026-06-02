@@ -1,7 +1,7 @@
 """
 Tenant deprovisioning steps — SPEC-INFRA-TENANT-DELETE-001.
 
-20 idempotent step-functions that are called in order by the deprovisioning
+21 idempotent step-functions that are called in order by the deprovisioning
 orchestrator. Each step accepts a ``_DeprovisionState`` dataclass (defined in
 ``deprovisioning_orchestrator.py``) and returns None on success.
 
@@ -310,13 +310,7 @@ async def _delete_falkordb_graph(state: _DeprovisionState) -> None:
     from app.trace import get_trace_headers
 
     if not settings.knowledge_ingest_url:
-        logger.warning(
-            "falkordb_wipe_skipped_no_url",
-            org_id=state.org_id,
-            zitadel_org_id=state.zitadel_org_id,
-            slug=state.slug,
-        )
-        return
+        raise RuntimeError("knowledge_ingest_url is required for tenant deprovisioning FalkorDB wipe")
 
     # CRIT fix (audit 2026-05-05): FalkorDB writer (knowledge-ingest's Graphiti
     # adapter) stores group_id as the Zitadel resourceowner ID. Passing
@@ -331,14 +325,6 @@ async def _delete_falkordb_graph(state: _DeprovisionState) -> None:
         timeout=60.0,
     ) as client:
         resp = await client.post(f"/internal/v1/orgs/{state.zitadel_org_id}/wipe-graph")
-        if resp.status_code == 404:
-            logger.info(
-                "falkordb_graph_already_absent",
-                org_id=state.org_id,
-                zitadel_org_id=state.zitadel_org_id,
-                slug=state.slug,
-            )
-            return
         resp.raise_for_status()
         data = resp.json()
         logger.info(
@@ -374,13 +360,7 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
     from app.trace import get_trace_headers
 
     if not settings.knowledge_ingest_url:
-        logger.warning(
-            "knowledge_postgres_wipe_skipped_no_url",
-            org_id=state.org_id,
-            zitadel_org_id=state.zitadel_org_id,
-            slug=state.slug,
-        )
-        return
+        raise RuntimeError("knowledge_ingest_url is required for tenant deprovisioning Postgres wipe")
 
     # CRIT fix (audit 2026-05-05): knowledge.* tables store the Zitadel
     # resourceowner ID in their org_id columns (verified live: values like
@@ -395,19 +375,6 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
         timeout=60.0,
     ) as client:
         resp = await client.post(f"/internal/v1/orgs/{state.zitadel_org_id}/wipe-postgres")
-        if resp.status_code == 404:
-            # Endpoint not deployed yet (rolling deploy ordering). Idempotent
-            # safe-ish: rows persist until next deprovision retry, but the
-            # rest of the deprovision continues. Logged at WARN so the
-            # operator sees the gap in VictoriaLogs.
-            logger.warning(
-                "knowledge_postgres_wipe_endpoint_not_found",
-                org_id=state.org_id,
-                zitadel_org_id=state.zitadel_org_id,
-                slug=state.slug,
-                status=resp.status_code,
-            )
-            return
         if resp.status_code >= 400:
             # Surface body before raise_for_status so retry-failure root
             # cause (auth misconfig, schema drift) is one VictoriaLogs query
@@ -439,11 +406,15 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
 async def _wipe_klai_connector_state(state: _DeprovisionState) -> None:
     """POST to klai-connector /internal/v1/orgs/{org_id}/wipe-state.
 
-    Closes G6 of audit Cluster F. The endpoint hard-deletes
-    ``connector.sync_runs`` rows for the given org_id. The
-    klai-connector schema lives in the connector container's DB and
-    does NOT cascade with portal_orgs DELETE — this is the only purge
-    path.
+    Closes G6 of audit Cluster F. The endpoint hard-deletes BOTH
+    tenant-scoped tables in the ``connector`` schema in one transaction:
+    ``connector.sync_runs`` (sync history) AND ``connector.connectors``
+    (per-tenant adapter config + encrypted OAuth/API credentials in
+    ``portal_secret_id``). Deleting connectors is the GDPR-critical part —
+    without it the deprovisioned tenant's credentials remain at rest. The
+    response ``rows_deleted`` is the total across both tables. The
+    klai-connector schema lives in the connector container's DB and does NOT
+    cascade with portal_orgs DELETE — this is the only purge path.
 
     Authenticates via ``klai_connector_secret`` (matches klai-connector's
     ``portal_caller_secret``). NULL-org legacy rows are intentionally
@@ -454,13 +425,7 @@ async def _wipe_klai_connector_state(state: _DeprovisionState) -> None:
     from app.trace import get_trace_headers
 
     if not settings.klai_connector_url:
-        logger.warning(
-            "klai_connector_state_wipe_skipped_no_url",
-            org_id=state.org_id,
-            zitadel_org_id=state.zitadel_org_id,
-            slug=state.slug,
-        )
-        return
+        raise RuntimeError("klai_connector_url is required for tenant deprovisioning connector wipe")
 
     # CRIT fix (audit 2026-05-05): connector.sync_runs.org_id stores the Zitadel
     # resourceowner ID (VARCHAR(255) like "100000000000000002"), NOT the
@@ -477,15 +442,6 @@ async def _wipe_klai_connector_state(state: _DeprovisionState) -> None:
         timeout=60.0,
     ) as client:
         resp = await client.post(f"/internal/v1/orgs/{state.zitadel_org_id}/wipe-state")
-        if resp.status_code == 404:
-            logger.warning(
-                "klai_connector_state_wipe_endpoint_not_found",
-                org_id=state.org_id,
-                zitadel_org_id=state.zitadel_org_id,
-                slug=state.slug,
-                status=resp.status_code,
-            )
-            return
         if resp.status_code >= 400:
             logger.error(
                 "klai_connector_state_wipe_endpoint_error",
@@ -507,14 +463,54 @@ async def _wipe_klai_connector_state(state: _DeprovisionState) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 10 — delete_scribe_artifacts
+# Step 10 — wipe_scribe_state
+# ---------------------------------------------------------------------------
+
+
+async def _wipe_scribe_state(state: _DeprovisionState) -> None:
+    """POST to scribe-api /internal/v1/orgs/{org_id}/wipe-state."""
+    from app.trace import get_trace_headers
+
+    if not settings.scribe_api_url:
+        raise RuntimeError("scribe_api_url is required for tenant deprovisioning Scribe wipe")
+
+    async with httpx.AsyncClient(
+        base_url=settings.scribe_api_url,
+        headers={
+            "X-Internal-Secret": settings.internal_secret,
+            **get_trace_headers(),
+        },
+        timeout=60.0,
+    ) as client:
+        resp = await client.post(f"/internal/v1/orgs/{state.zitadel_org_id}/wipe-state")
+        if resp.status_code >= 400:
+            logger.error(
+                "scribe_state_wipe_endpoint_error",
+                org_id=state.org_id,
+                zitadel_org_id=state.zitadel_org_id,
+                slug=state.slug,
+                status=resp.status_code,
+                body=resp.text[:500],
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info(
+            "scribe_state_wiped",
+            org_id=state.org_id,
+            zitadel_org_id=state.zitadel_org_id,
+            slug=state.slug,
+            rows_deleted=data.get("rows_deleted", 0),
+            audio_files_deleted=data.get("audio_files_deleted", 0),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Step 11 — delete_scribe_artifacts
 # ---------------------------------------------------------------------------
 
 
 async def _delete_scribe_artifacts(state: _DeprovisionState) -> None:
     """S3 batch delete under s3://klai-scribe/{slug}/.
-
-    Uses feature-flag pattern: if garage_s3_endpoint is empty, log and no-op.
 
     # @MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.
     """
@@ -523,12 +519,7 @@ async def _delete_scribe_artifacts(state: _DeprovisionState) -> None:
 
     s3_endpoint = settings.garage_s3_endpoint
     if not s3_endpoint:
-        logger.warning(
-            "scribe_artifacts_delete_skipped_no_s3_endpoint",
-            slug=state.slug,
-            reason="garage_s3_endpoint not configured",
-        )
-        return
+        raise RuntimeError("garage_s3_endpoint is required for tenant deprovisioning Scribe artifact wipe")
 
     # Production `GARAGE_S3_ENDPOINT` is the schemeless form `garage:3900`
     # because the canonical reader (`app/api/kb_images.py::_make_minio_client`)
@@ -643,12 +634,7 @@ async def _archive_moneybird_subscription(state: _DeprovisionState) -> None:
         return
 
     if not settings.moneybird_api_token or not settings.moneybird_api_token.strip():
-        logger.warning(
-            "moneybird_skipped_not_configured",
-            slug=state.slug,
-            reason="moneybird_api_token empty",
-        )
-        return
+        raise RuntimeError("moneybird_api_token is required when a tenant has Moneybird IDs to archive")
 
     from app.services.moneybird_client import get_moneybird_client
 
@@ -744,45 +730,39 @@ async def _delete_zitadel_users(state: _DeprovisionState) -> None:
     if not org_ids:
         raise RuntimeError("No Zitadel org id configured for user deletion")
 
-    deleted = 0
-    already_absent = 0
+    # H3 fix (SPEC-INFRA-TENANT-DELETE): ``zitadel.remove_user`` swallows
+    # 403/404 internally and returns None — it NEVER raises for "already
+    # absent". The previous implementation broke on the first remove_user
+    # call and counted it as deleted, so the per-org fallback and the
+    # "still exists" safety check were dead code and a wrong-org 404 was
+    # reported as a successful delete. We now (1) call remove_user for every
+    # candidate org context (idempotent best-effort delete), then (2) verify
+    # with get_user_by_id — the authoritative check — and fail loud if the
+    # account is still resolvable, so an orphaned identity lands the tenant in
+    # failed_deprovisioning instead of being silently reported deleted.
+    removed = 0
     for user_id in state.zitadel_user_ids:
-        removed = False
-        last_error: httpx.HTTPStatusError | None = None
         for org_id in org_ids:
-            try:
-                await zitadel.remove_user(org_id, user_id)
-                deleted += 1
-                removed = True
-                logger.info("zitadel_user_deleted", slug=state.slug, zitadel_user_id=user_id, org_id=org_id)
-                break
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code in (403, 404):
-                    last_error = exc
-                    continue
-                raise
-
-        if removed:
-            continue
+            await zitadel.remove_user(org_id, user_id)
 
         try:
             await zitadel.get_user_by_id(user_id)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
-                already_absent += 1
-                logger.info("zitadel_user_already_absent", slug=state.slug, zitadel_user_id=user_id)
+                removed += 1
+                logger.info("zitadel_user_removed", slug=state.slug, zitadel_user_id=user_id)
                 continue
             raise
 
-        if last_error is not None:
-            raise last_error
+        # Still resolvable after deleting from every org context — none of the
+        # contexts owned the user, or Zitadel rejected the delete. Fail loud.
         raise RuntimeError(f"Zitadel user still exists after deletion attempts: {user_id}")
 
     logger.info(
         "zitadel_users_deleted",
         slug=state.slug,
-        deleted=deleted,
-        already_absent=already_absent,
+        removed=removed,
+        total=len(state.zitadel_user_ids),
     )
 
 
@@ -853,6 +833,16 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
         actor_type=state.deprovisioner_type,
         properties={
             "deprovisioner_type": state.deprovisioner_type,
+            "zitadel_org_id": state.zitadel_org_id,
+            "zitadel_oidc_app_id": state.zitadel_oidc_app_id,
+            "litellm_team_id": state.litellm_team_id,
+            "moneybird_subscription_id": state.moneybird_subscription_id,
+            "moneybird_contact_id": state.moneybird_contact_id,
+            # M2 (SPEC-INFRA-TENANT-DELETE): record which Zitadel identities were
+            # removed so post-hard-delete historical verification is possible
+            # once portal_users is gone. Empty tuple → [] (e.g. all members were
+            # multi-tenant and kept their global identity).
+            "zitadel_user_ids": list(state.zitadel_user_ids),
         },
     )
 
@@ -880,6 +870,8 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
     # portal_knowledge_bases — cascades portal_user_kb_access + portal_group_kb_access
     # (both have ondelete=CASCADE on their kb_id FK).
     await db.execute(text("DELETE FROM portal_knowledge_bases WHERE org_id = :id"), {"id": state.org_id})
+    # legacy docs libraries — direct org_id FK without cascade in z2a3b4c5d6e7.
+    await db.execute(text("DELETE FROM portal_docs_libraries WHERE org_id = :id"), {"id": state.org_id})
     # portal_kb_tombstones — independent table tracking deleted KBs per org.
     await db.execute(text("DELETE FROM portal_kb_tombstones WHERE org_id = :id"), {"id": state.org_id})
     # vexa_meetings — meetings owned by org users; FK has no ondelete so blocks portal_orgs DELETE.
@@ -960,6 +952,7 @@ STEPS = [
     # purge tenant rows" steps live as a contiguous block in the SPEC R5 order.
     _wipe_knowledge_postgres,
     _wipe_klai_connector_state,
+    _wipe_scribe_state,
     _delete_scribe_artifacts,
     _delete_litellm_team,
     _archive_moneybird_subscription,

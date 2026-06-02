@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.internal import router as internal_router
 from app.api.transcribe import router as transcribe_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -86,4 +87,5 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(internal_router)
 app.include_router(transcribe_router)
