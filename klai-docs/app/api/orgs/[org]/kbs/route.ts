@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthOrService, requireOrgAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
+import { giteaOrgNameForSlug } from "@/lib/gitea_org";
 import * as ki from "@/lib/knowledge_ingest";
 import { slugify } from "@/lib/markdown";
 
@@ -49,16 +50,19 @@ export async function POST(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     org = await db.createOrg(orgSlug, orgSlug, zitadelOrgId);
-    await gitea.createOrg(`org-${orgSlug}`, orgSlug, zitadelOrgId);
+    await gitea.createOrg(org.gitea_org_name, orgSlug, zitadelOrgId);
   } else {
     // Existing org: verify caller belongs to it
     if (payload.org_id && payload.org_id !== org.zitadel_org_id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    await gitea.ensureOrgDescription(`org-${orgSlug}`, org.zitadel_org_id);
+    await gitea.ensureOrgDescription(
+      org.gitea_org_name ?? giteaOrgNameForSlug(orgSlug),
+      org.zitadel_org_id
+    );
   }
 
-  const giteaOrg = `org-${orgSlug}`;
+  const giteaOrg = org.gitea_org_name ?? giteaOrgNameForSlug(orgSlug);
   const giteaRepo = `${giteaOrg}/${slug}`;
   await gitea.createRepo(giteaOrg, slug, name);
 

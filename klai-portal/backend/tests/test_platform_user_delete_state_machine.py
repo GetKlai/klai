@@ -94,6 +94,39 @@ async def test_delete_user_steps_execute_in_order() -> None:
     assert call_order == ["zitadel_remove", "external_kb_delete", "portal_db_delete"]
 
 
+@pytest.mark.asyncio
+async def test_external_kb_delete_step_revokes_credentials_after_kb_dispositions() -> None:
+    """Credential revoke belongs to the external cleanup step, after Zitadel removal has succeeded."""
+    from app.services.user_deletion_steps import step_external_kb_delete
+
+    call_order: list[str] = []
+
+    async def _apply_dispositions(*_args, **_kwargs):
+        call_order.append("apply_dispositions")
+
+    async def _revoke_user_credentials(*_args, **_kwargs):
+        call_order.append("revoke_user_credentials")
+        return (3, 2)
+
+    state = _deletion_state(api_keys=0, mcp_tokens=0)
+    state.db_for_steps = AsyncMock()
+    state.org = MagicMock()
+
+    with (
+        patch("app.services.kb_offboarding.apply_dispositions", new=AsyncMock(side_effect=_apply_dispositions)),
+        patch(
+            "app.services.kb_offboarding.revoke_user_credentials",
+            new=AsyncMock(side_effect=_revoke_user_credentials),
+        ),
+    ):
+        await step_external_kb_delete(state)
+
+    assert call_order == ["apply_dispositions", "revoke_user_credentials"]
+    assert state.kbs_deleted_externally == len(state.kb_dispositions)
+    assert state.api_keys_count == 3
+    assert state.mcp_tokens_count == 2
+
+
 # ---------------------------------------------------------------------------
 # AC4.2 — Zitadel step failure → failed_partial + audit event
 # ---------------------------------------------------------------------------
@@ -369,7 +402,7 @@ async def test_platform_delete_user_calls_orchestrator() -> None:
             ),
         ),
         patch("app.services.kb_offboarding.compute_offboard_preview", new=AsyncMock(return_value=preview)),
-        patch("app.services.kb_offboarding.revoke_user_credentials", new=AsyncMock(return_value=(2, 1))),
+        patch("app.services.kb_offboarding.revoke_user_credentials", new=AsyncMock(return_value=(2, 1))) as revoke,
         patch(
             "app.api.admin.platform_manage.delete_user_with_state_machine",
             new=orchestrator_mock,
@@ -379,6 +412,7 @@ async def test_platform_delete_user_calls_orchestrator() -> None:
         await platform_delete_user(org_id=42, zitadel_user_id="target-user", perms=_platform_perms())
 
     orchestrator_mock.assert_awaited_once()
+    revoke.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +465,7 @@ async def test_retry_delete_endpoint_calls_orchestrator() -> None:
             ),
         ),
         patch("app.services.kb_offboarding.compute_offboard_preview", new=AsyncMock(return_value=preview)),
-        patch("app.services.kb_offboarding.revoke_user_credentials", new=AsyncMock(return_value=(0, 0))),
+        patch("app.services.kb_offboarding.revoke_user_credentials", new=AsyncMock(return_value=(0, 0))) as revoke,
         patch(
             "app.api.admin.platform_manage.delete_user_with_state_machine",
             new=orchestrator_mock,
@@ -441,6 +475,7 @@ async def test_retry_delete_endpoint_calls_orchestrator() -> None:
         await platform_retry_user_delete(org_id=42, zitadel_user_id="target-user", perms=_platform_perms())
 
     orchestrator_mock.assert_awaited_once()
+    revoke.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -21,6 +23,17 @@ class AsyncContext:
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
+
+
+class TextRows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+    def all(self):
+        return self.rows
 
 
 def _org(org_id: int = 42):
@@ -116,6 +129,67 @@ async def test_platform_delete_keeps_global_identity_when_other_memberships_exis
     # Multi-tenant user: delete_global_identity must be False
     assert call_kwargs["delete_global_identity"] is False
     assert response.message == "Gebruiker uit tenant verwijderd."
+
+
+@pytest.mark.asyncio
+async def test_platform_org_detail_exposes_delete_failure_state() -> None:
+    from app.api.admin.platform import platform_org_detail
+
+    now = datetime(2026, 1, 1, 12, 0, 0)
+    db = AsyncMock()
+    db.execute = AsyncMock(
+        side_effect=[
+            TextRows(
+                [
+                    SimpleNamespace(
+                        id=42,
+                        name="Yoobi",
+                        slug="yoobi",
+                        plan="knowledge",
+                        billing_status="active",
+                        billing_cycle="monthly",
+                        seats=10,
+                        provisioning_status="ready",
+                        user_count=1,
+                        bot_count=0,
+                        kb_count=0,
+                        created_at=now,
+                    )
+                ]
+            ),
+            TextRows(
+                [
+                    SimpleNamespace(
+                        zitadel_user_id="target-user",
+                        email="target@example.com",
+                        display_name="Target User",
+                        role="company",
+                        status="active",
+                        deletion_status="failed_partial",
+                        failure_reason={"step": "external_kb_delete", "error": "docs-app down"},
+                        last_attempted_step="external_kb_delete",
+                        created_at=now,
+                    )
+                ]
+            ),
+            TextRows([]),
+            TextRows([]),
+            TextRows([]),
+        ]
+    )
+
+    with (
+        patch("app.api.admin.platform.cross_org_session", return_value=AsyncContext(db)),
+        patch("app.api.admin.platform._audit", new=AsyncMock()),
+        patch("app.api.admin.platform._zitadel_identity_map", new=AsyncMock(return_value={})),
+    ):
+        response = await platform_org_detail(org_id=42, perms=_platform_perms())
+
+    assert len(response.users) == 1
+    user = response.users[0]
+    assert user.deletion_status == "failed_partial"
+    assert user.deletion_failure_reason == {"step": "external_kb_delete", "error": "docs-app down"}
+    assert user.deletion_last_attempted_step == "external_kb_delete"
 
 
 @pytest.mark.asyncio

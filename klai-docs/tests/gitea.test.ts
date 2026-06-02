@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFile } from "fs/promises";
 
 async function loadGitea() {
   vi.resetModules();
@@ -10,6 +11,38 @@ beforeEach(() => {
 });
 
 describe("gitea org metadata", () => {
+  it("keeps short org slugs readable", async () => {
+    const { giteaOrgNameForSlug } = await import("../lib/gitea_org");
+
+    expect(giteaOrgNameForSlug("yoobi-37568691")).toBe("org-yoobi-37568691");
+    expect(giteaOrgNameForSlug("stichting-nieuw-nabuurschap-37568663")).toBe(
+      "org-stichting-nieuw-nabuurschap-37568663"
+    );
+  });
+
+  it("shortens long org slugs to fit Gitea username limits", async () => {
+    const { giteaOrgNameForSlug } = await import("../lib/gitea_org");
+
+    const name = giteaOrgNameForSlug("deepblue-security-intelligence-37491434");
+
+    expect(name).toHaveLength(40);
+    expect(name).toMatch(/^org-deepblue-security-[a-z-]+-[0-9a-f]{8}$/u);
+    expect(giteaOrgNameForSlug("deepblue-security-intelligence-37491434")).toBe(name);
+  });
+
+  it("does not hardcode org-prefixed Gitea names in API routes", async () => {
+    const routeFiles = [
+      "app/api/orgs/[org]/kbs/route.ts",
+      "app/api/orgs/[org]/kbs/[kb]/route.ts",
+      "app/api/orgs/[org]/kbs/[kb]/pages/[...path]/route.ts",
+    ];
+
+    for (const routeFile of routeFiles) {
+      const source = await readFile(routeFile, "utf-8");
+      expect(source).not.toContain("`org-${orgSlug}`");
+    }
+  });
+
   it("stores the Zitadel org id in the Gitea org description on create", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

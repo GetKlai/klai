@@ -34,6 +34,7 @@ from app.api.auth import invalidate_tenant_slug_cache
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.core.password_policy import validate_password_strength
+from app.core.provisioning_names import TENANT_SLUG_MAX_LENGTH, validate_slug_for_provisioning
 from app.core.seats import suggest_seat
 from app.models.portal import PortalOrg, PortalUser
 from app.services.auth_links import AuthLinkRoute, build_url_template
@@ -123,8 +124,10 @@ def _to_slug(name: str, suffix: str = "") -> str:
     if not base:
         base = "org"
     if suffix:
-        base = f"{base}-{suffix[:8]}"
-    return base[:64]
+        suffix_part = f"-{suffix[:8]}"
+        base = base[: TENANT_SLUG_MAX_LENGTH - len(suffix_part)].strip("-") or "org"
+        return f"{base}{suffix_part}"
+    return base[:TENANT_SLUG_MAX_LENGTH].strip("-") or "org"
 
 
 async def _sync_signup_to_mailing(
@@ -281,10 +284,12 @@ async def signup(
 
     # 4. Persist to PostgreSQL
     try:
+        org_slug = _to_slug(body.company_name, zitadel_org_id)
+        validate_slug_for_provisioning(org_slug, domain=settings.domain)
         org_row = PortalOrg(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
-            slug=_to_slug(body.company_name, zitadel_org_id),
+            slug=org_slug,
             plan="knowledge",
             primary_domain=primary_domain_for_email_domain(_email_domain),
             auto_accept_same_domain=False,
@@ -540,10 +545,12 @@ async def signup_social(
 
     # 4. Persist to PostgreSQL
     try:
+        org_slug = _to_slug(body.company_name, zitadel_org_id)
+        validate_slug_for_provisioning(org_slug, domain=settings.domain)
         org_row = PortalOrg(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
-            slug=_to_slug(body.company_name, zitadel_org_id),
+            slug=org_slug,
             plan="knowledge",
             primary_domain=primary_domain_for_email_domain(_social_domain),
             auto_accept_same_domain=False,
