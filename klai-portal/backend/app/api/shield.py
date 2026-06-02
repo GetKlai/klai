@@ -520,6 +520,7 @@ async def shield_config(
     auth: ShieldAuthContext = Depends(get_shield_auth),
     db: AsyncSession = Depends(get_db),
 ) -> ShieldConfigResponse:
+    await set_tenant(db, auth.org_id)
     kb_result = await db.execute(
         select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == auth.org_id).order_by(PortalKnowledgeBase.name)
     )
