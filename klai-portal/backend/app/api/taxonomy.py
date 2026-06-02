@@ -104,7 +104,7 @@ class ApproveProposalRequest(BaseModel):
 
 
 class RejectRequest(BaseModel):
-    reason: str
+    reason: str | None = None
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -794,7 +794,7 @@ async def approve_proposal(
 async def reject_proposal(
     kb_slug: str,
     proposal_id: int,
-    body: RejectRequest,
+    body: RejectRequest | None = None,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> ProposalOut:
@@ -817,7 +817,7 @@ async def reject_proposal(
     proposal.status = "rejected"
     proposal.reviewed_by = perms.user_id
     proposal.reviewed_at = datetime.now(tz=UTC)
-    proposal.rejection_reason = body.reason
+    proposal.rejection_reason = body.reason.strip() if body and body.reason else None
 
     await db.commit()
     # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).

@@ -1,17 +1,19 @@
 /**
  * Coverage widget - a list of `<CoverageNodeRow>` plus the untagged
- * tail section + a contextual "Suggest categories" CTA.
+ * tail section + a contextual taxonomy action CTA.
  *
  * Owns the singleton state for which row is being edited / asked-to-
  * confirm-delete. Per-row buffers live in the row component itself.
  *
- * The Suggest button has three gates baked in:
+ * The taxonomy action button has three gates baked in:
  *   1. Empty KB: shown when total chunks >= SUGGEST_MIN_CHUNKS.
  *   2. Populated KB at IA target: hidden once node count reaches
  *      MAX_HEALTHY_NODE_COUNT (Miller's Law 5-9 - more categories
  *      makes the taxonomy worse).
  *   3. Populated KB below target: shown when untagged_count >=
  *      SUGGEST_MIN_CHUNKS AND untagged percentage > SUGGEST_MIN_PCT.
+ *      This triggers re-tagging against existing nodes, not category
+ *      proposal generation.
  */
 import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
@@ -163,8 +165,8 @@ export function CoverageWidget({
               ) : atHealthyMax ? (
                 // SPEC-TAXONOMY-REVIEW-FLOW-001 follow-up: with the IA target
                 // already met (Miller's Law 5-9), suggesting more categories
-                // makes the taxonomy worse, not better. Hide the Suggest
-                // button and explain why so operators don't pile on duplicates.
+                // makes the taxonomy worse, not better. Hide the taxonomy
+                // action and explain why so operators don't pile on duplicates.
                 <span className="text-xs text-gray-400 italic">
                   {m.knowledge_taxonomy_enough_categories_hint()}
                 </span>
@@ -180,7 +182,7 @@ export function CoverageWidget({
                       ? <Loader2 className="h-3 w-3 animate-spin" />
                       : <Sparkles className="h-3 w-3" />
                     }
-                    {m.knowledge_taxonomy_suggest_categories()}
+                    {m.knowledge_taxonomy_retag()}
                   </button>
                 )
               )}
