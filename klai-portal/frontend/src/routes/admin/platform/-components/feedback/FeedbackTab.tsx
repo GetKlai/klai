@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
-import { useState } from "react"
+import { type ReactNode, useState } from "react"
 import { ChevronRight, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -28,59 +28,61 @@ export function FeedbackTab({
   const navigate = useNavigate()
   const [feedbackView, setFeedbackView] = useState<'inbox' | 'items'>('inbox')
 
-  return (
-    <>
-      <div className="mb-5 inline-flex rounded-lg border border-gray-200 bg-white p-1">
-        <Button
-          type="button"
-          size="sm"
-          variant={feedbackView === 'inbox' ? 'default' : 'ghost'}
-          onClick={() => setFeedbackView('inbox')}
-        >
-          {m.platform_feedback_view_inbox()}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={feedbackView === 'items' ? 'default' : 'ghost'}
-          onClick={() => setFeedbackView('items')}
-        >
-          {m.platform_feedback_view_items()}
-        </Button>
-      </div>
+  const viewToggle = (
+    <div className="inline-flex shrink-0 rounded-lg border border-gray-200 bg-white p-1">
+      <Button
+        type="button"
+        size="sm"
+        variant={feedbackView === 'inbox' ? 'default' : 'ghost'}
+        onClick={() => setFeedbackView('inbox')}
+      >
+        {m.platform_feedback_view_inbox()}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant={feedbackView === 'items' ? 'default' : 'ghost'}
+        onClick={() => setFeedbackView('items')}
+      >
+        {m.platform_feedback_view_items()}
+      </Button>
+    </div>
+  )
 
-      {feedbackView === 'items' ? (
-        <OpenItemsPanel
-          search={search}
-          fmtDate={fmtDate}
-          onOpenItem={(itemId) =>
-            void navigate({
-              to: '/admin/platform/feedback/items/$itemId',
-              params: { itemId: String(itemId) },
-            })
-          }
-        />
-      ) : (
-        <InboxPanel
-          search={search}
-          fmtDate={fmtDate}
-          onOpen={(submissionId) =>
-            void navigate({
-              to: '/admin/platform/feedback/submissions/$submissionId',
-              params: { submissionId: String(submissionId) },
-            })
-          }
-        />
-      )}
-    </>
+  return feedbackView === 'items' ? (
+    <OpenItemsPanel
+      toggle={viewToggle}
+      search={search}
+      fmtDate={fmtDate}
+      onOpenItem={(itemId) =>
+        void navigate({
+          to: '/admin/platform/feedback/items/$itemId',
+          params: { itemId: String(itemId) },
+        })
+      }
+    />
+  ) : (
+    <InboxPanel
+      toggle={viewToggle}
+      search={search}
+      fmtDate={fmtDate}
+      onOpen={(submissionId) =>
+        void navigate({
+          to: '/admin/platform/feedback/submissions/$submissionId',
+          params: { submissionId: String(submissionId) },
+        })
+      }
+    />
   )
 }
 
 function InboxPanel({
+  toggle,
   search,
   fmtDate,
   onOpen,
 }: {
+  toggle: ReactNode
   search: string
   fmtDate: (s: string | null) => string
   onOpen: (submissionId: number) => void
@@ -92,7 +94,9 @@ function InboxPanel({
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        {toggle}
+        <div className="flex flex-wrap items-center gap-2">
         <Select
           value={statusFilter}
           onChange={(event) => setStatusFilter(event.target.value)}
@@ -117,6 +121,7 @@ function InboxPanel({
           <option value="problem">{m.platform_feedback_kind_problem()}</option>
           <option value="question">{m.platform_feedback_kind_question()}</option>
         </Select>
+        </div>
       </div>
       <PlatformTableShell
         loading={isLoading}
@@ -218,10 +223,12 @@ function FeedbackSubmissionRow({
 }
 
 function OpenItemsPanel({
+  toggle,
   search,
   fmtDate,
   onOpenItem,
 }: {
+  toggle: ReactNode
   search: string
   fmtDate: (s: string | null) => string
   onOpenItem: (itemId: number) => void
@@ -233,7 +240,8 @@ function OpenItemsPanel({
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+        {toggle}
         <div className="flex flex-wrap items-center gap-2">
           <Select
             value={statusFilter}
@@ -261,10 +269,10 @@ function OpenItemsPanel({
             <option value="support_pattern">{m.platform_feedback_item_kind_support()}</option>
           </Select>
         </div>
-        <p className="text-xs text-gray-400">
-          {m.platform_feedback_closed_hidden_hint()}
-        </p>
       </div>
+      <p className="mb-4 text-xs text-gray-400">
+        {m.platform_feedback_closed_hidden_hint()}
+      </p>
       {items.isFetching && !items.isLoading && (
         <p className="mb-2 text-xs text-gray-400">
           <Loader2 className="mr-2 inline h-3 w-3 animate-spin" />
