@@ -26,7 +26,7 @@
 import { useParams } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, Loader2, BarChart2,
   X, Tag, Filter, Sparkles,
@@ -42,6 +42,7 @@ import type { KnowledgeBase, MembersResponse } from '../-kb-types'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
 import {
   useApproveProposal,
+  useActiveTaxonomyBackfill,
   useBackfillTaxonomy,
   useBootstrapTaxonomy,
   useCreateNode,
@@ -112,6 +113,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
   const isContributor = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && (u.role === 'owner' || u.role === 'contributor')))
   const isAdmin = user?.isAdmin === true
+  const canEdit = isContributor || isAdmin
 
   const [showAddRoot, setShowAddRoot] = useState(false)
   const [addParentId, setAddParentId] = useState<number | null>(null)
@@ -128,6 +130,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   const proposalsQuery = useTaxonomyProposals(kbSlug, auth.isAuthenticated)
   const coverageQuery = useTaxonomyCoverage(kbSlug, auth.isAuthenticated && isAdmin)
   const topTagsQuery = useTopTags(kbSlug, activeNodeId, auth.isAuthenticated)
+  const activeBackfillQuery = useActiveTaxonomyBackfill(kbSlug, auth.isAuthenticated && canEdit)
 
   const createNodeMutation = useCreateNode(kbSlug, () => {
     setNewNodeName('')
@@ -149,7 +152,6 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   // -- Suggest categories flow --
   const [suggestState, setSuggestState] = useState<SuggestState>('idle')
 
-  const canEdit = isContributor || isAdmin
   // Stable empty-array fallbacks - TanStack Query returns undefined
   // until the first response, and a fresh `[]` per render would defeat
   // the useMemo'd derivations below.
@@ -222,8 +224,27 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
   })
 
   const isAddingChild = addParentId !== null
-  const isRetagging = backfillMutation.isPending || applyAllMutation.isPending
+  const activeBackfillStatus = activeBackfillQuery.data?.status
+  const isServerBackfillRunning = activeBackfillStatus === 'queued' || activeBackfillStatus === 'running'
+  const sawServerBackfillRef = useRef(false)
+  const isRetagging = backfillMutation.isPending || applyAllMutation.isPending || isServerBackfillRunning
   const canRequestCategorySuggestions = canEdit && pendingProposals.length === 0
+
+  useEffect(() => {
+    if (isServerBackfillRunning) {
+      sawServerBackfillRef.current = true
+      setSuggestState('applying')
+      return
+    }
+    if (!activeBackfillQuery.isSuccess || !sawServerBackfillRef.current) return
+
+    sawServerBackfillRef.current = false
+    setSuggestState('done')
+    void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
+    void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
+    void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
+    void queryClient.invalidateQueries({ queryKey: ['taxonomy-top-tags', kbSlug] })
+  }, [activeBackfillQuery.isSuccess, isServerBackfillRunning, kbSlug, queryClient])
 
   // Resolve active node name for filter chips.
   const activeNode = useMemo(
@@ -312,7 +333,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
               onSuggest={canRequestCategorySuggestions
                 ? () => bootstrapMutation.mutate()
                 : undefined}
-              isCategorizingMissing={backfillMutation.isPending}
+              isCategorizingMissing={backfillMutation.isPending || isServerBackfillRunning}
               isSuggesting={bootstrapMutation.isPending}
               isBackfilling={isRetagging}
               canEdit={canEdit}

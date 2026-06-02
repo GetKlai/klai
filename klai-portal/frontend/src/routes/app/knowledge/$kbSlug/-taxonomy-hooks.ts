@@ -37,6 +37,12 @@ type SuggestStateSetter = (
   next: SuggestState | ((prev: SuggestState) => SuggestState),
 ) => void
 
+export type BackfillJobStatus = {
+  job_id: number | null
+  status: 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | string
+  result?: Record<string, unknown> | null
+}
+
 /**
  * Stale window for the heavier server-side aggregations (coverage +
  * top-tags). They're expensive to recompute on every navigation and
@@ -78,6 +84,17 @@ export function useTaxonomyProposals(kbSlug: string, enabled = true) {
       }
     },
     enabled,
+  })
+}
+
+export function useActiveTaxonomyBackfill(kbSlug: string, enabled = true) {
+  return useQuery<BackfillJobStatus>({
+    queryKey: ['taxonomy-backfill-active', kbSlug],
+    queryFn: async () => apiFetch<BackfillJobStatus>(
+      `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill-active`,
+    ),
+    enabled,
+    refetchInterval: 5_000,
   })
 }
 
@@ -366,11 +383,13 @@ export function useBackfillTaxonomy(
         `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill-trigger`,
         { method: 'POST' },
       )
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-backfill-active', kbSlug] })
       return pollBackfillJob(kbSlug, enqueue.job_id)
     },
     onMutate: () => onStateChange('applying'),
     onSuccess: () => {
       onStateChange('done')
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-backfill-active', kbSlug] })
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
@@ -385,6 +404,7 @@ export function useBackfillTaxonomy(
         }
         return prev
       })
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-backfill-active', kbSlug] })
     },
   })
 }
