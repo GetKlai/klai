@@ -169,6 +169,9 @@ class PlatformFeedbackSubmission(BaseModel):
     viewport: str | None
     created_at: datetime
     triage_suggestion: PlatformFeedbackTriageSuggestion | None = None
+    linked_item_id: int | None = None
+    linked_item_title: str | None = None
+    linked_item_status: str | None = None
 
 
 class PlatformFeedbackReporterOrg(BaseModel):
@@ -432,6 +435,7 @@ async def _platform_feedback_triage_suggestions(
 def _platform_feedback_submission(
     row: Any,
     triage_suggestions: dict[int, PlatformFeedbackTriageSuggestion],
+    linked: Any | None = None,
 ) -> PlatformFeedbackSubmission:
     return PlatformFeedbackSubmission(
         id=row.id,
@@ -452,6 +456,9 @@ def _platform_feedback_submission(
         viewport=row.viewport,
         created_at=row.created_at,
         triage_suggestion=triage_suggestions.get(row.id),
+        linked_item_id=linked.id if linked is not None else None,
+        linked_item_title=linked.title if linked is not None else None,
+        linked_item_status=linked.status if linked is not None else None,
     )
 
 
@@ -1210,8 +1217,22 @@ async def platform_feedback_submission_detail(
             raise HTTPException(status_code=404, detail="Feedback submission not found")
         row = rows[0]
         triage_suggestions = await _platform_feedback_triage_suggestions(db, [row.id])
+        link_row = (
+            await db.execute(
+                select(
+                    FeedbackItem.id.label("id"),
+                    FeedbackItem.title.label("title"),
+                    FeedbackItem.status.label("status"),
+                )
+                .select_from(FeedbackItemLink)
+                .join(FeedbackItem, FeedbackItem.id == FeedbackItemLink.item_id)
+                .where(FeedbackItemLink.submission_id == submission_id)
+                .order_by(FeedbackItemLink.created_at.desc())
+                .limit(1)
+            )
+        ).first()
 
-    return _platform_feedback_submission(row, triage_suggestions)
+    return _platform_feedback_submission(row, triage_suggestions, linked=link_row)
 
 
 @router.get("/feedback/items", response_model=list[PlatformFeedbackItem])

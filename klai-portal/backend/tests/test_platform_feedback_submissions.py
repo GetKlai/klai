@@ -20,13 +20,19 @@ class _Result:
     def scalars(self):
         return _Result([])
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
     def __iter__(self):
         return iter(self._rows)
 
 
 class _Session:
-    def __init__(self, rows):
+    def __init__(self, rows, result_sets=None):
         self.rows = rows
+        # Optional per-execute result sets, consumed in order. Falls back to
+        # `rows` for every call when not provided (legacy single-query tests).
+        self.result_sets = list(result_sets) if result_sets is not None else None
         self.params = None
         self.closed = False
         self.flushed = False
@@ -42,6 +48,9 @@ class _Session:
     async def execute(self, _query, params=None):
         if params is not None:
             self.params = params
+        if self.result_sets is not None:
+            rows = self.result_sets.pop(0) if self.result_sets else []
+            return _Result(rows)
         return _Result(self.rows)
 
     async def commit(self):
@@ -256,7 +265,9 @@ async def test_platform_feedback_submission_detail_returns_one_submission(monkey
             created_at=created_at,
         )
     ]
-    session = _Session(rows)
+    # Per-query results: (1) the submission row, (2) triage suggestions (none),
+    # (3) the linked-item lookup (none for this submission).
+    session = _Session(rows, result_sets=[rows, [], []])
 
     async def fake_audit(*_args, **_kwargs):
         return None
@@ -273,6 +284,7 @@ async def test_platform_feedback_submission_detail_returns_one_submission(monkey
     assert result.id == 123
     assert result.event_type == "klai_assistant.problem_report"
     assert result.status == "open"
+    assert result.linked_item_id is None
     assert result.raw_text == "BT ticket instructies veranderen opmaak."
 
 
