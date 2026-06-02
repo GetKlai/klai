@@ -480,8 +480,8 @@ class TestDeleteFalkordbGraph:
                     await _delete_falkordb_graph(state)
 
     @pytest.mark.asyncio
-    async def test_404_is_idempotent(self) -> None:
-        """404 means graph already absent — no exception."""
+    async def test_404_propagates(self) -> None:
+        """404 means the wipe endpoint/path is unavailable and must fail loudly."""
         state = _make_state(org_id=42, slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
@@ -492,18 +492,20 @@ class TestDeleteFalkordbGraph:
                     router.post("/internal/v1/orgs/zitadel-org-abc/wipe-graph").mock(return_value=httpx.Response(404))
                     from app.services.provisioning.deprovisioning_steps import _delete_falkordb_graph
 
-                    await _delete_falkordb_graph(state)
+                    with pytest.raises(httpx.HTTPStatusError):
+                        await _delete_falkordb_graph(state)
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_url(self) -> None:
-        """Empty knowledge_ingest_url means step is skipped gracefully."""
+    async def test_raises_when_no_url(self) -> None:
+        """Empty knowledge_ingest_url is configuration drift and must fail loudly."""
         state = _make_state(org_id=42, slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.knowledge_ingest_url = ""
             from app.services.provisioning.deprovisioning_steps import _delete_falkordb_graph
 
-            await _delete_falkordb_graph(state)  # must not raise or make network calls
+            with pytest.raises(RuntimeError, match="knowledge_ingest_url"):
+                await _delete_falkordb_graph(state)
 
 
 # ---------------------------------------------------------------------------
@@ -540,8 +542,8 @@ class TestWipeKnowledgePostgres:
                     await _wipe_knowledge_postgres(state)
 
     @pytest.mark.asyncio
-    async def test_404_is_idempotent(self) -> None:
-        """404 — endpoint not deployed yet (rolling deploy ordering). Logged WARN, no raise."""
+    async def test_404_propagates(self) -> None:
+        """404 means the wipe endpoint/path is unavailable and must fail loudly."""
         state = _make_state(org_id=42, slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
@@ -554,18 +556,20 @@ class TestWipeKnowledgePostgres:
                     )
                     from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
 
-                    await _wipe_knowledge_postgres(state)
+                    with pytest.raises(httpx.HTTPStatusError):
+                        await _wipe_knowledge_postgres(state)
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_url(self) -> None:
-        """Empty knowledge_ingest_url skips gracefully (matches falkordb-step pattern)."""
+    async def test_raises_when_no_url(self) -> None:
+        """Empty knowledge_ingest_url is configuration drift and must fail loudly."""
         state = _make_state(org_id=42, slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.knowledge_ingest_url = ""
             from app.services.provisioning.deprovisioning_steps import _wipe_knowledge_postgres
 
-            await _wipe_knowledge_postgres(state)  # must not raise or make network calls
+            with pytest.raises(RuntimeError, match="knowledge_ingest_url"):
+                await _wipe_knowledge_postgres(state)
 
     @pytest.mark.asyncio
     async def test_500_propagates_for_retry(self) -> None:
@@ -668,8 +672,8 @@ class TestWipeKlaiConnectorState:
         assert captured_headers.get("authorization") == "Bearer connector-secret-12345"
 
     @pytest.mark.asyncio
-    async def test_404_is_idempotent(self) -> None:
-        """404 — endpoint not deployed yet. Logged WARN, no raise."""
+    async def test_404_propagates(self) -> None:
+        """404 means the wipe endpoint/path is unavailable and must fail loudly."""
         state = _make_state(org_id=42, slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
@@ -680,36 +684,116 @@ class TestWipeKlaiConnectorState:
                     router.post("/internal/v1/orgs/zitadel-org-abc/wipe-state").mock(return_value=httpx.Response(404))
                     from app.services.provisioning.deprovisioning_steps import _wipe_klai_connector_state
 
-                    await _wipe_klai_connector_state(state)
+                    with pytest.raises(httpx.HTTPStatusError):
+                        await _wipe_klai_connector_state(state)
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_url(self) -> None:
-        """Empty klai_connector_url skips gracefully."""
+    async def test_raises_when_no_url(self) -> None:
+        """Empty klai_connector_url is configuration drift and must fail loudly."""
         state = _make_state(org_id=42, slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.klai_connector_url = ""
             from app.services.provisioning.deprovisioning_steps import _wipe_klai_connector_state
 
-            await _wipe_klai_connector_state(state)
+            with pytest.raises(RuntimeError, match="klai_connector_url"):
+                await _wipe_klai_connector_state(state)
 
 
 # ---------------------------------------------------------------------------
-# Step 10 — _delete_scribe_artifacts
+# Step 10 — _wipe_scribe_state
+# ---------------------------------------------------------------------------
+
+
+class TestWipeScribeState:
+    @pytest.mark.asyncio
+    async def test_200_ok(self) -> None:
+        """200 response with rows and audio counts means Scribe wipe succeeded."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.scribe_api_url = "http://scribe-api:8020"
+            mock_settings.internal_secret = "portal-secret"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://scribe-api:8020") as router:
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-state").mock(
+                        return_value=httpx.Response(
+                            200,
+                            json={"rows_deleted": 3, "audio_files_deleted": 2, "status": "ok"},
+                        )
+                    )
+                    from app.services.provisioning.deprovisioning_steps import _wipe_scribe_state
+
+                    await _wipe_scribe_state(state)
+
+    @pytest.mark.asyncio
+    async def test_uses_x_internal_secret_header(self) -> None:
+        """Scribe internal wipe authenticates with the portal internal secret."""
+        state = _make_state(org_id=42, slug="acme")
+        captured_headers: dict[str, str] = {}
+
+        def _capture(request: httpx.Request) -> httpx.Response:
+            captured_headers.update(request.headers)
+            return httpx.Response(200, json={"rows_deleted": 0, "audio_files_deleted": 0, "status": "ok"})
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.scribe_api_url = "http://scribe-api:8020"
+            mock_settings.internal_secret = "portal-secret-123"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://scribe-api:8020") as router:
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-state").mock(side_effect=_capture)
+                    from app.services.provisioning.deprovisioning_steps import _wipe_scribe_state
+
+                    await _wipe_scribe_state(state)
+
+        assert captured_headers.get("x-internal-secret") == "portal-secret-123"
+
+    @pytest.mark.asyncio
+    async def test_404_propagates(self) -> None:
+        """404 means the Scribe wipe endpoint/path is unavailable and must fail loudly."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.scribe_api_url = "http://scribe-api:8020"
+            mock_settings.internal_secret = "secret"
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://scribe-api:8020") as router:
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-state").mock(return_value=httpx.Response(404))
+                    from app.services.provisioning.deprovisioning_steps import _wipe_scribe_state
+
+                    with pytest.raises(httpx.HTTPStatusError):
+                        await _wipe_scribe_state(state)
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_url(self) -> None:
+        """Empty scribe_api_url is configuration drift and must fail loudly."""
+        state = _make_state(org_id=42, slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.scribe_api_url = ""
+            from app.services.provisioning.deprovisioning_steps import _wipe_scribe_state
+
+            with pytest.raises(RuntimeError, match="scribe_api_url"):
+                await _wipe_scribe_state(state)
+
+
+# ---------------------------------------------------------------------------
+# Step 11 — _delete_scribe_artifacts
 # ---------------------------------------------------------------------------
 
 
 class TestDeleteScribeArtifacts:
     @pytest.mark.asyncio
-    async def test_skips_when_no_s3_endpoint(self) -> None:
-        """Empty garage_s3_endpoint disables the step (feature-flag)."""
+    async def test_raises_when_no_s3_endpoint(self) -> None:
+        """Empty garage_s3_endpoint is configuration drift and must fail loudly."""
         state = _make_state(slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.garage_s3_endpoint = ""
             from app.services.provisioning.deprovisioning_steps import _delete_scribe_artifacts
 
-            await _delete_scribe_artifacts(state)  # must not raise
+            with pytest.raises(RuntimeError, match="garage_s3_endpoint"):
+                await _delete_scribe_artifacts(state)
 
     @pytest.mark.asyncio
     async def test_deletes_s3_objects(self) -> None:
@@ -783,7 +867,7 @@ class TestDeleteScribeArtifacts:
     async def test_no_such_bucket_is_idempotent(self) -> None:
         """SPEC R3 — al-weg = geen exception. If the scribe S3 bucket itself
         does not exist (tenant never uploaded audio, or Scribe backend not
-        yet provisioned), the step must return gracefully rather than
+        yet provisioned), the step must remain idempotent rather than
         propagate ``NoSuchBucket`` as a step failure.
 
         SPEC-INFRA-TENANT-DELETE-003 Bug D — surfaced on the e2e tenant
@@ -851,7 +935,7 @@ class TestDeleteLitellmTeam:
 
     @pytest.mark.asyncio
     async def test_skips_when_no_team_id(self) -> None:
-        """Empty litellm_team_id skips the step gracefully."""
+        """Empty litellm_team_id means no confirmed LiteLLM resource to delete."""
         state = _make_state(slug="acme", litellm_team_id="")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
@@ -906,15 +990,16 @@ class TestArchiveMoneybirdSubscription:
             await _archive_moneybird_subscription(state)  # must not raise
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_api_token(self) -> None:
-        """Empty moneybird_api_token skips the step with a warning."""
+    async def test_raises_when_no_api_token(self) -> None:
+        """Empty moneybird_api_token is configuration drift when Moneybird IDs exist."""
         state = _make_state(moneybird_subscription_id="sub-1", moneybird_contact_id=None)
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.moneybird_api_token = ""
             from app.services.provisioning.deprovisioning_steps import _archive_moneybird_subscription
 
-            await _archive_moneybird_subscription(state)  # must not raise
+            with pytest.raises(RuntimeError, match="moneybird_api_token"):
+                await _archive_moneybird_subscription(state)
 
 
 # ---------------------------------------------------------------------------
@@ -1002,34 +1087,19 @@ class TestDeleteZitadelOidcApp:
 
 class TestDeleteZitadelUsers:
     @pytest.mark.asyncio
-    async def test_deletes_all_captured_zitadel_users_from_portal_org(self) -> None:
-        """Tenant users are explicitly removed before portal_users is deleted."""
+    async def test_deletes_all_captured_users_and_verifies_absence(self) -> None:
+        """H3: remove_user is best-effort across every org context, then
+        get_user_by_id is the authoritative verification (404 = gone).
+
+        remove_user swallows 403/404 and returns None — it never raises for
+        "already absent" — so the step MUST NOT treat a remove_user return as
+        proof of deletion. Verification is via get_user_by_id."""
         state = _make_state(zitadel_user_ids=("user-a", "user-b"))
+        not_found = _http_status_error(404, method="GET")
 
         with (
             patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
             patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock()) as mock_remove,
-            patch("app.services.zitadel.zitadel.get_user_by_id", new=AsyncMock()) as mock_get_user,
-        ):
-            mock_settings.zitadel_portal_org_id = "portal-org"
-            mock_settings.zitadel_org_id = "legacy-org"
-            from app.services.provisioning.deprovisioning_steps import _delete_zitadel_users
-
-            await _delete_zitadel_users(state)
-
-        assert mock_remove.await_args_list[0].args == ("portal-org", "user-a")
-        assert mock_remove.await_args_list[1].args == ("portal-org", "user-b")
-        mock_get_user.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_404_is_idempotent_when_user_is_already_absent(self) -> None:
-        """A missing Zitadel user is treated as already deleted."""
-        state = _make_state(zitadel_user_ids=("missing-user",))
-        not_found = _http_status_error(404)
-
-        with (
-            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
-            patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock(side_effect=not_found)) as mock_remove,
             patch(
                 "app.services.zitadel.zitadel.get_user_by_id",
                 new=AsyncMock(side_effect=not_found),
@@ -1041,21 +1111,71 @@ class TestDeleteZitadelUsers:
 
             await _delete_zitadel_users(state)
 
+        # 2 users x 3 distinct org contexts (portal-org, legacy-org, tenant org).
+        assert mock_remove.await_count == 6
+        assert mock_remove.await_args_list[0].args == ("portal-org", "user-a")
+        # Every user is verified gone via get_user_by_id.
+        assert mock_get_user.await_count == 2
+        assert mock_get_user.await_args_list[0].args == ("user-a",)
+
+    @pytest.mark.asyncio
+    async def test_404_on_verify_is_idempotent(self) -> None:
+        """A user that is absent on verification (404) counts as removed."""
+        state = _make_state(zitadel_user_ids=("missing-user",))
+        not_found = _http_status_error(404, method="GET")
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock()) as mock_remove,
+            patch(
+                "app.services.zitadel.zitadel.get_user_by_id",
+                new=AsyncMock(side_effect=not_found),
+            ) as mock_get_user,
+        ):
+            mock_settings.zitadel_portal_org_id = "portal-org"
+            mock_settings.zitadel_org_id = "legacy-org"
+            from app.services.provisioning.deprovisioning_steps import _delete_zitadel_users
+
+            await _delete_zitadel_users(state)  # must not raise
+
         assert mock_remove.await_count == 3
         mock_get_user.assert_awaited_once_with("missing-user")
 
     @pytest.mark.asyncio
     async def test_raises_when_user_still_exists_after_delete_attempts(self) -> None:
-        """If all delete attempts fail but lookup still finds the user, the step fails."""
+        """If the account is still resolvable after deleting from every org
+        context, the step fails loud (orphaned identity must not be reported
+        as a successful delete)."""
         state = _make_state(zitadel_user_ids=("still-present",))
-        not_found = _http_status_error(404)
 
         with (
             patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
-            patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock(side_effect=not_found)),
+            patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock()),
             patch(
                 "app.services.zitadel.zitadel.get_user_by_id",
                 new=AsyncMock(return_value={"id": "still-present"}),
+            ),
+        ):
+            mock_settings.zitadel_portal_org_id = "portal-org"
+            mock_settings.zitadel_org_id = "legacy-org"
+            from app.services.provisioning.deprovisioning_steps import _delete_zitadel_users
+
+            with pytest.raises(RuntimeError, match="still exists"):
+                await _delete_zitadel_users(state)
+
+    @pytest.mark.asyncio
+    async def test_propagates_non_404_verify_error(self) -> None:
+        """A non-404 error from the verification lookup must propagate so the
+        run lands in failed_deprovisioning rather than silently passing."""
+        state = _make_state(zitadel_user_ids=("user-x",))
+        server_error = _http_status_error(500, method="GET")
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("app.services.zitadel.zitadel.remove_user", new=AsyncMock()),
+            patch(
+                "app.services.zitadel.zitadel.get_user_by_id",
+                new=AsyncMock(side_effect=server_error),
             ),
         ):
             mock_settings.zitadel_portal_org_id = "portal-org"
@@ -1130,6 +1250,15 @@ class TestFinalizePostgresDelete:
             await _finalize_postgres_delete(state)
 
         mock_emit.assert_awaited_once()
+        properties = mock_emit.await_args.kwargs["properties"]
+        assert properties["zitadel_org_id"] == state.zitadel_org_id
+        assert properties["zitadel_oidc_app_id"] == state.zitadel_oidc_app_id
+        assert properties["litellm_team_id"] == state.litellm_team_id
+        assert properties["moneybird_subscription_id"] == state.moneybird_subscription_id
+        assert properties["moneybird_contact_id"] == state.moneybird_contact_id
+        # M2: deleted Zitadel identities are recorded for post-hard-delete
+        # historical verification once portal_users is gone.
+        assert properties["zitadel_user_ids"] == list(state.zitadel_user_ids)
         state.db.commit.assert_awaited_once()
         # Verify tenant context is set before DELETEs run — without it the
         # Category-D RLS policies on portal_knowledge_bases / portal_groups /
@@ -1138,10 +1267,11 @@ class TestFinalizePostgresDelete:
 
     @pytest.mark.asyncio
     async def test_execute_called_for_each_non_cascading_child_table(self) -> None:
-        """db.execute called exactly 11 times: 10 explicit child DELETEs + 1 portal_orgs DELETE.
+        """db.execute called exactly 12 times: 11 explicit child DELETEs + 1 portal_orgs DELETE.
 
-        Order MUST be: portal_knowledge_bases, portal_kb_tombstones, vexa_meetings,
-        portal_group_products, portal_groups, portal_templates,
+        Order MUST be: portal_knowledge_bases, portal_docs_libraries,
+        portal_kb_tombstones, vexa_meetings, portal_group_products,
+        portal_groups, portal_templates,
         portal_user_products, portal_user_seat_history, portal_users,
         portal_join_requests, portal_orgs.
 
@@ -1173,11 +1303,12 @@ class TestFinalizePostgresDelete:
 
             await _finalize_postgres_delete(state)
 
-        assert state.db.execute.await_count == 11
+        assert state.db.execute.await_count == 12
 
         # Verify the table-name + order of every executed DELETE.
         expected_tables_in_order = [
             "portal_knowledge_bases",
+            "portal_docs_libraries",
             "portal_kb_tombstones",
             "vexa_meetings",
             "portal_group_products",
@@ -1210,22 +1341,22 @@ class TestFinalizePostgresDelete:
 
 
 class TestStepsList:
-    def test_has_20_entries(self) -> None:
-        """STEPS must contain exactly 20 entries.
+    def test_has_21_entries(self) -> None:
+        """STEPS must contain exactly 21 entries.
 
         Original SPEC-INFRA-TENANT-DELETE-001 had 17 steps. SPEC-INFRA-TENANT-DELETE-002
         G3 + G6 inserted two adjacent wipes-via-internal-endpoint steps after
         ``_delete_falkordb_graph``: ``_wipe_knowledge_postgres`` (G3) and
         ``_wipe_klai_connector_state`` (G6). Tenant deprovisioning must also
         explicitly remove portal-owned Zitadel users before deleting the tenant
-        org. Total: 17 + 2 + 1 = 20.
+        org, and Scribe now has a first-class service wipe. Total: 17 + 2 + 1 + 1 = 21.
         """
         from app.services.provisioning.deprovisioning_steps import STEPS
 
-        assert len(STEPS) == 20
+        assert len(STEPS) == 21
 
-    def test_g3_g6_steps_are_adjacent_to_falkordb(self) -> None:
-        """SPEC-INFRA-TENANT-DELETE-002 G3+G6 ordering invariant.
+    def test_external_service_wipes_are_before_finalize(self) -> None:
+        """External service-owned tenant rows must be wiped before portal finalizes.
 
         The two new wipe-via-internal-endpoint steps MUST come AFTER
         ``_delete_falkordb_graph`` (so they share the "external service
@@ -1242,15 +1373,18 @@ class TestStepsList:
             _finalize_postgres_delete,
             _wipe_klai_connector_state,
             _wipe_knowledge_postgres,
+            _wipe_scribe_state,
         )
 
         idx_falkordb = STEPS.index(_delete_falkordb_graph)
         idx_kp = STEPS.index(_wipe_knowledge_postgres)
         idx_kc = STEPS.index(_wipe_klai_connector_state)
+        idx_scribe = STEPS.index(_wipe_scribe_state)
         idx_finalize = STEPS.index(_finalize_postgres_delete)
 
         assert idx_falkordb < idx_kp < idx_finalize, "G3 step must come AFTER falkordb and BEFORE finalize"
         assert idx_falkordb < idx_kc < idx_finalize, "G6 step must come AFTER falkordb and BEFORE finalize"
+        assert idx_falkordb < idx_scribe < idx_finalize, "Scribe step must come AFTER falkordb and BEFORE finalize"
 
     def test_zitadel_users_deleted_before_zitadel_org_and_postgres_rows(self) -> None:
         """Captured users must be deleted while state still has portal_users data."""
@@ -1269,14 +1403,74 @@ class TestStepsList:
 
     def test_all_entries_are_callables(self) -> None:
         """Every entry in STEPS must be an async callable."""
-        import asyncio
+        import inspect
 
         from app.services.provisioning.deprovisioning_steps import STEPS
 
         for step in STEPS:
             assert callable(step)
             # Each step should be a coroutine function
-            assert asyncio.iscoroutinefunction(step), f"{step.__name__} is not a coroutine function"
+            assert inspect.iscoroutinefunction(step), f"{step.__name__} is not a coroutine function"
+
+
+# ---------------------------------------------------------------------------
+# L4 — mechanical FK-coverage guard (SPEC-INFRA-TENANT-DELETE)
+# ---------------------------------------------------------------------------
+
+
+class TestFinalizeFkCoverage:
+    """Introspect the ORM metadata and fail if any non-cascading FK to
+    portal_orgs.id is missing from _finalize_postgres_delete's DELETE list.
+
+    The existing `test_execute_called_for_each_non_cascading_child_table` locks
+    in a HARDCODED list (and its order). This test is the complementary
+    mechanical guard: it derives the required set from the live model
+    definitions, so a NEW model with a non-cascading FK to portal_orgs fails
+    CI here even if nobody remembered to update the hardcoded list — preventing
+    the FK-violation-at-hard-delete class of regression.
+    """
+
+    def test_delete_list_covers_all_noncascading_fks_to_portal_orgs(self) -> None:
+        import importlib
+        import inspect
+        import pkgutil
+        import re
+
+        import app.models as models_pkg
+        from app.models.base import Base
+
+        # Import every model module so the shared MetaData is fully populated.
+        for module in pkgutil.iter_modules(models_pkg.__path__):
+            importlib.import_module(f"app.models.{module.name}")
+
+        # Tables with a FK to portal_orgs.id whose ondelete is neither CASCADE
+        # nor SET NULL MUST be deleted explicitly before portal_orgs.
+        required: set[str] = set()
+        for table in Base.metadata.tables.values():
+            for fk_constraint in table.foreign_key_constraints:
+                targets_portal_orgs = any(
+                    element.column.table.name == "portal_orgs" and element.column.name == "id"
+                    for element in fk_constraint.elements
+                )
+                if not targets_portal_orgs:
+                    continue
+                ondelete = (fk_constraint.ondelete or "").upper()
+                if ondelete not in ("CASCADE", "SET NULL"):
+                    required.add(table.name)
+
+        # The DELETE list is the single source of truth in the step body.
+        from app.services.provisioning.deprovisioning_steps import _finalize_postgres_delete
+
+        src = inspect.getsource(_finalize_postgres_delete)
+        deleted = set(re.findall(r"DELETE FROM (\w+)", src))
+
+        missing = required - deleted
+        assert not missing, (
+            "Non-cascading FK(s) to portal_orgs.id are NOT in the "
+            "_finalize_postgres_delete DELETE list — the final hard-delete will "
+            f"throw an FK violation for: {sorted(missing)}. Add an explicit "
+            "DELETE (and update test_execute_called_for_each_non_cascading_child_table)."
+        )
 
 
 # ---------------------------------------------------------------------------
