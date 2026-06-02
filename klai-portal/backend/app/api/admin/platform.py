@@ -86,6 +86,9 @@ class PlatformUser(BaseModel):
     role: str
     is_admin: bool
     status: str
+    deletion_status: str | None = None
+    deletion_failure_reason: dict[str, Any] | None = None
+    deletion_last_attempted_step: str | None = None
     org_id: int
     org_name: str
     org_slug: str
@@ -571,7 +574,8 @@ async def platform_users(
             result = await db.execute(
                 text(
                     "SELECT u.zitadel_user_id, u.email, u.display_name, u.role, "
-                    "u.status, u.created_at, o.id AS org_id, o.name AS org_name, "
+                    "u.status, u.deletion_status, u.failure_reason, u.last_attempted_step, "
+                    "u.created_at, o.id AS org_id, o.name AS org_name, "
                     "o.slug AS org_slug, o.plan AS org_plan, "
                     "o.provisioning_status AS prov "
                     "FROM portal_users u "
@@ -587,7 +591,8 @@ async def platform_users(
             result = await db.execute(
                 text(
                     "SELECT u.zitadel_user_id, u.email, u.display_name, u.role, "
-                    "u.status, u.created_at, o.id AS org_id, o.name AS org_name, "
+                    "u.status, u.deletion_status, u.failure_reason, u.last_attempted_step, "
+                    "u.created_at, o.id AS org_id, o.name AS org_name, "
                     "o.slug AS org_slug, o.plan AS org_plan, "
                     "o.provisioning_status AS prov "
                     "FROM portal_users u "
@@ -610,6 +615,9 @@ async def platform_users(
             role=r.role,
             is_admin=r.role == "admin",
             status=r.status,
+            deletion_status=r.deletion_status,
+            deletion_failure_reason=r.failure_reason,
+            deletion_last_attempted_step=r.last_attempted_step,
             org_id=r.org_id,
             org_name=r.org_name,
             org_slug=r.org_slug,
@@ -716,7 +724,8 @@ async def platform_org_detail(
             await db.execute(
                 text(
                     "SELECT u.zitadel_user_id, u.email, u.display_name, u.role, "
-                    "u.status, u.created_at FROM portal_users u "
+                    "u.status, u.deletion_status, u.failure_reason, u.last_attempted_step, "
+                    "u.created_at FROM portal_users u "
                     "WHERE u.org_id = :org_id AND u.status <> 'offboarded' "
                     "ORDER BY u.created_at DESC"
                 ),
@@ -789,6 +798,9 @@ async def platform_org_detail(
             role=u.role,
             is_admin=u.role == "admin",
             status=u.status,
+            deletion_status=u.deletion_status,
+            deletion_failure_reason=u.failure_reason,
+            deletion_last_attempted_step=u.last_attempted_step,
             org_id=org.id,
             org_name=org.name,
             org_slug=org.slug,

@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.core.provisioning_names import validate_slug_for_provisioning
 from app.models.portal import PortalOrg, PortalUser
 from app.services.provisioning.deprovisioning_steps import STEPS
 
@@ -241,7 +242,7 @@ async def _resolve_zitadel_oidc_app_id(slug: str | None, client_id: str | None =
         logger.info("zitadel_oidc_app_id_lookup_skipped_no_slug")
         return ""
 
-    expected_name = f"librechat-{slug}"
+    expected_name = validate_slug_for_provisioning(slug, domain=settings.domain).zitadel_oidc_app_name
 
     try:
         async with httpx.AsyncClient(

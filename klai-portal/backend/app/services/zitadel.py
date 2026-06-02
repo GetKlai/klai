@@ -11,6 +11,7 @@ from typing import Literal
 import httpx
 
 from app.core.config import settings
+from app.core.provisioning_names import validate_slug_for_provisioning
 from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = logging.getLogger(__name__)
@@ -823,10 +824,11 @@ class ZitadelClient:
 
     async def create_librechat_oidc_app(self, slug: str, redirect_uri: str) -> dict:
         """Create a per-tenant LibreChat OIDC app in the Klai Platform project."""
+        names = validate_slug_for_provisioning(slug, domain=settings.domain)
         resp = await self._http.post(
             f"/management/v1/projects/{settings.zitadel_project_id}/apps/oidc",
             json={
-                "name": f"librechat-{slug}",
+                "name": names.zitadel_oidc_app_name,
                 "redirectUris": [redirect_uri],
                 "responseTypes": ["OIDC_RESPONSE_TYPE_CODE"],
                 "grantTypes": [
@@ -835,10 +837,7 @@ class ZitadelClient:
                 ],
                 "appType": "OIDC_APP_TYPE_WEB",
                 "authMethodType": "OIDC_AUTH_METHOD_TYPE_POST",
-                "postLogoutRedirectUris": [
-                    f"https://chat-{slug}.{settings.domain}",
-                    f"https://chat-{slug}.{settings.domain}/login",
-                ],
+                "postLogoutRedirectUris": list(names.zitadel_post_logout_redirect_uris),
             },
         )
         resp.raise_for_status()

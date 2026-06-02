@@ -24,6 +24,9 @@ export interface PlatformUser {
   role: string
   is_admin: boolean
   status: string
+  deletion_status: string | null
+  deletion_failure_reason: Record<string, unknown> | null
+  deletion_last_attempted_step: string | null
   org_id: number
   org_name: string
   org_slug: string

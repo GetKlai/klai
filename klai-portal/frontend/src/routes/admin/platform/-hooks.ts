@@ -487,6 +487,22 @@ export function usePlatformDeleteUser(orgId: string) {
   })
 }
 
+export function usePlatformRetryDeleteUser(orgId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (zid: string) =>
+      apiFetch(
+        `/api/admin/platform/organizations/${orgId}/users/${zid}/retry-delete`,
+        { method: 'POST' },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-org-detail', orgId] })
+      void qc.invalidateQueries({ queryKey: ['platform-users'] })
+      void qc.invalidateQueries({ queryKey: ['platform-stats'] })
+    },
+  })
+}
+
 // Deprovision (delete) an entire tenant by slug - runs the 16-step
 // orchestrator in the background. Returns 202 {status: "queued"}.
 export function usePlatformDeprovisionTenant() {
