@@ -24,12 +24,14 @@ logger = structlog.get_logger()
 
 
 async def main() -> None:
-    from sqlalchemy import select
+    from sqlalchemy import select, text
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
 
     from app.core.config import settings
     from app.models.connectors import PortalConnector
+    from app.models.knowledge_bases import PortalKnowledgeBase  # noqa: F401
+    from app.models.portal import PortalOrg  # noqa: F401
     from app.services.connector_credentials import SENSITIVE_FIELDS, ConnectorCredentialStore
 
     if not settings.encryption_key:
@@ -58,6 +60,11 @@ async def main() -> None:
                 skipped_count += 1
                 continue
 
+            await db.execute(
+                text("SELECT set_config('app.current_org_id', :org_id, true)"),
+                {"org_id": str(connector.org_id)},
+            )
+
             merged_credentials: dict = {}
             if connector.encrypted_credentials is not None:
                 merged_credentials = await store.decrypt_credentials(
@@ -81,6 +88,7 @@ async def main() -> None:
                 sys.exit(1)
             connector.encrypted_credentials = encrypted_blob
             connector.config = stripped_config
+            await db.commit()
             remediated_count += 1
 
             if (i + 1) % 100 == 0:
