@@ -1,22 +1,23 @@
 """Tests for connector credential encryption in API layer.
 
 Verifies that:
-- _connector_out masks sensitive fields with '***'
+- _connector_out rejects plaintext sensitive fields instead of masking them
 - The internal get_connector_config decrypts and merges credentials
-- Legacy connectors (encrypted_credentials=None) work as fallback
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.api.connectors import _connector_out, _cookie_names_from_credentials
+import pytest
+
+from app.api.connectors import _connector_out, _cookie_names_from_credentials, _merge_saved_sensitive_credentials
 from app.services.connector_credentials import SENSITIVE_FIELDS
 
 # Test-only placeholder values (NOT real credentials)
 FAKE_TOKEN = "test-placeholder-value"
 
 
-class TestConnectorOutMasking:
-    """_connector_out masks all sensitive fields per SENSITIVE_FIELDS mapping."""
+class TestConnectorOutPlaintextSecretRejection:
+    """_connector_out must fail closed when storage still contains plaintext secrets."""
 
     def _make_connector(self, connector_type: str, config: dict) -> MagicMock:
         c = MagicMock()
@@ -36,32 +37,43 @@ class TestConnectorOutMasking:
         c.encrypted_credentials = None
         return c
 
-    def test_github_sensitive_fields_masked(self) -> None:
+    @pytest.mark.parametrize("connector_type,fields", sorted(SENSITIVE_FIELDS.items()))
+    def test_sensitive_fields_rejected(self, connector_type: str, fields: list[str]) -> None:
+        config = {field: FAKE_TOKEN for field in fields}
+        config["safe_field"] = "visible"
+        with pytest.raises(RuntimeError, match="plaintext sensitive fields"):
+            _connector_out(self._make_connector(connector_type, config))
+
+    def test_github_sensitive_fields_rejected(self) -> None:
         config = {
             "repo": "GetKlai/klai",
             "access_token": FAKE_TOKEN,
             "installation_token": FAKE_TOKEN,
             "app_private_key": FAKE_TOKEN,
         }
-        out = _connector_out(self._make_connector("github", config))
-        assert out.config["access_token"] == "***"
-        assert out.config["installation_token"] == "***"
-        assert out.config["app_private_key"] == "***"
-        assert out.config["repo"] == "GetKlai/klai"
+        with pytest.raises(RuntimeError, match="plaintext sensitive fields"):
+            _connector_out(self._make_connector("github", config))
 
-    def test_notion_sensitive_fields_masked(self) -> None:
+    def test_notion_sensitive_fields_rejected(self) -> None:
         config = {"workspace_id": "ws-123", "access_token": FAKE_TOKEN}
-        out = _connector_out(self._make_connector("notion", config))
-        assert out.config["access_token"] == "***"
-        assert out.config["workspace_id"] == "ws-123"
+        with pytest.raises(RuntimeError, match="plaintext sensitive fields"):
+            _connector_out(self._make_connector("notion", config))
 
-    def test_web_crawler_sensitive_fields_masked(self) -> None:
+    def test_web_crawler_sensitive_fields_rejected(self) -> None:
         config = {"url": "https://example.com", "auth_headers": FAKE_TOKEN}
-        out = _connector_out(self._make_connector("web_crawler", config))
-        assert out.config["auth_headers"] == "***"
-        assert out.config["url"] == "https://example.com"
+        with pytest.raises(RuntimeError, match="plaintext sensitive fields"):
+            _connector_out(self._make_connector("web_crawler", config))
 
-    def test_unknown_type_no_masking(self) -> None:
+    def test_confluence_api_token_rejected(self) -> None:
+        config = {
+            "base_url": "https://example.atlassian.net/wiki",
+            "email": "admin@example.com",
+            "api_token": FAKE_TOKEN,
+        }
+        with pytest.raises(RuntimeError, match="plaintext sensitive fields"):
+            _connector_out(self._make_connector("confluence", config))
+
+    def test_unknown_type_no_secret_contract(self) -> None:
         config = {"url": "https://example.com", "custom_field": "safe"}
         out = _connector_out(self._make_connector("unknown_type", config))
         assert out.config["url"] == "https://example.com"
@@ -95,12 +107,30 @@ def test_cookie_names_from_credentials_returns_names_without_values() -> None:
     assert names == ["prod-knowledgebase-session", "XSRF-TOKEN"]
     assert FAKE_TOKEN not in names
 
-    def test_all_connector_types_mask_correctly(self) -> None:
-        """Every connector type in SENSITIVE_FIELDS has its fields masked."""
-        for connector_type, fields in SENSITIVE_FIELDS.items():
-            config = {f: FAKE_TOKEN for f in fields}
-            config["safe_field"] = "visible"
-            out = _connector_out(self._make_connector(connector_type, config))
-            for f in fields:
-                assert out.config[f] == "***", f"Field {f} not masked for {connector_type}"
-            assert out.config["safe_field"] == "visible"
+
+@pytest.mark.asyncio
+async def test_merge_saved_sensitive_credentials_fills_omitted_confluence_token() -> None:
+    connector = MagicMock()
+    connector.connector_type = "confluence"
+    connector.encrypted_credentials = b"ENCRYPTED"
+
+    with patch("app.api.connectors.credential_store") as mock_store:
+        mock_store.decrypt_credentials = AsyncMock(return_value={"api_token": FAKE_TOKEN})
+
+        merged = await _merge_saved_sensitive_credentials(
+            connector=connector,
+            config={
+                "base_url": "https://example.atlassian.net/wiki",
+                "email": "admin@example.com",
+                "space_keys": ["ENG"],
+            },
+            org_id=77,
+            db=AsyncMock(),
+        )
+
+    assert merged == {
+        "base_url": "https://example.atlassian.net/wiki",
+        "email": "admin@example.com",
+        "space_keys": ["ENG"],
+        "api_token": FAKE_TOKEN,
+    }

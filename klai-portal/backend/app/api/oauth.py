@@ -612,14 +612,14 @@ async def callback_provider(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Credential store not configured",
         )
-    encrypted_blob, redacted_config = await credential_store.encrypt_credentials(
+    encrypted_blob, stripped_config = await credential_store.encrypt_credentials(
         org_id=connector.org_id,
         connector_type=connector.connector_type,
         config=new_config,
         db=db,
     )
     connector.encrypted_credentials = encrypted_blob
-    connector.config = redacted_config
+    connector.config = stripped_config
     # Clear auth_error so the badge + Reconnect CTA disappear on the next list
     # query. sync_engine will overwrite this again on the next run; clearing
     # here is a best-effort UX improvement so users aren't left staring at a

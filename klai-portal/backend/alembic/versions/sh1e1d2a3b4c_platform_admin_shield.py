@@ -81,12 +81,25 @@ def upgrade() -> None:
 
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON portal_shield_tokens")
     op.execute(
-        f"CREATE POLICY tenant_isolation ON portal_shield_tokens USING (org_id = {_TENANT} OR {_TENANT_IS_NULL})"
+        sa.text(
+            """
+            CREATE POLICY tenant_isolation ON portal_shield_tokens
+            USING (
+                org_id = NULLIF(current_setting('app.current_org_id', true), '')::int
+                OR NULLIF(current_setting('app.current_org_id', true), '') IS NULL
+            )
+            """
+        )
     )
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON portal_shield_logs")
     op.execute(
-        "CREATE POLICY tenant_isolation ON portal_shield_logs "
-        f"USING (org_id = {_TENANT}) WITH CHECK (org_id = {_TENANT})"
+        sa.text(
+            """
+            CREATE POLICY tenant_isolation ON portal_shield_logs
+            USING (org_id = NULLIF(current_setting('app.current_org_id', true), '')::int)
+            WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::int)
+            """
+        )
     )
 
 

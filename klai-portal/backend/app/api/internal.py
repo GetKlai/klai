@@ -46,7 +46,7 @@ from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.models.templates import PortalTemplate
-from app.services.connector_credentials import credential_store
+from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
 from app.services.gap_rescorer import schedule_rescore
@@ -60,6 +60,57 @@ logger = logging.getLogger(__name__)
 structlog_logger = structlog.get_logger()
 
 router = APIRouter(prefix="/internal", tags=["internal"])
+
+_REQUIRED_ENCRYPTED_CREDENTIAL_FIELDS: dict[str, set[str]] = {
+    "confluence": {"api_token"},
+    "airtable": {"api_key"},
+}
+
+
+def _sensitive_fields_for_connector(connector_type: str) -> set[str]:
+    return set(SENSITIVE_FIELDS.get(connector_type, []))
+
+
+def _plaintext_sensitive_fields(connector: PortalConnector) -> list[str]:
+    config = connector.config or {}
+    return sorted(field for field in _sensitive_fields_for_connector(connector.connector_type) if field in config)
+
+
+def _raise_plaintext_sensitive_config(connector: PortalConnector, fields: list[str]) -> None:
+    logger.error(
+        "connector_plaintext_sensitive_config_detected",
+        extra={
+            "connector_id": str(connector.id),
+            "connector_type": connector.connector_type,
+            "fields": fields,
+        },
+    )
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail={"error_code": "connector_plaintext_secret_detected"},
+    )
+
+
+def _assert_connector_credentials_readable(connector: PortalConnector) -> None:
+    fields = _plaintext_sensitive_fields(connector)
+    if fields:
+        _raise_plaintext_sensitive_config(connector, fields)
+
+    required_fields = _REQUIRED_ENCRYPTED_CREDENTIAL_FIELDS.get(connector.connector_type, set())
+    if required_fields and connector.encrypted_credentials is None:
+        logger.error(
+            "connector_required_encrypted_credentials_missing",
+            extra={
+                "connector_id": str(connector.id),
+                "connector_type": connector.connector_type,
+                "fields": sorted(required_fields),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error_code": "connector_required_credentials_missing"},
+        )
+
 
 # SPEC-SEC-005 REQ-2.3: hold references to fire-and-forget audit tasks so the
 # event loop cannot GC them mid-flight. Same pattern as partner_dependencies._pending.
@@ -528,12 +579,25 @@ async def get_connector_config(
         )
     connector, kb, org = row
 
-    # Merge decrypted credentials into config for internal consumers
-    # @MX:NOTE: [AUTO] Fallback: encrypted_credentials IS NULL => read plaintext config (legacy).
-    # Remove after cleanup migration.
+    _assert_connector_credentials_readable(connector)
+
+    # Merge decrypted credentials into config for internal consumers.
+    # Public app endpoints never receive this merged shape; it is only sent to
+    # klai-connector over the internal API after the service secret check.
     merged_config = dict(connector.config) if connector.config else {}
-    if connector.encrypted_credentials is not None and credential_store is not None:
-        decrypted = await credential_store.decrypt_credentials(
+    if connector.encrypted_credentials is not None and credential_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "credential_store_unavailable"},
+        )
+    if connector.encrypted_credentials is not None:
+        store = credential_store
+        if store is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error_code": "credential_store_unavailable"},
+            )
+        decrypted = await store.decrypt_credentials(
             org_id=connector.org_id,
             encrypted_credentials=connector.encrypted_credentials,
             db=db,
@@ -636,8 +700,8 @@ async def update_connector_credentials(
     2. Load connector and set tenant context.
     3. Decrypt current credentials (preserves refresh_token, etc.).
     4. Merge in the new access_token + optional token_expiry.
-    5. Re-encrypt and persist. The plaintext config column is overwritten
-       with the redacted form (sensitive fields masked as "***").
+    5. Re-encrypt and persist. The config column is overwritten with the
+       stripped non-secret config returned by the credential store.
     """
     await _require_internal_token(request)
     connector = await db.get(PortalConnector, connector_id)
@@ -651,7 +715,11 @@ async def update_connector_credentials(
             detail="Credential store not configured",
         )
 
-    # Start from whatever is currently stored (encrypted or legacy plaintext).
+    _assert_connector_credentials_readable(connector)
+
+    # Start from encrypted credentials only. Plaintext config fallback is a
+    # security bug: it keeps leaked secrets alive and hides incomplete
+    # remediation.
     merged: dict = {}
     if connector.encrypted_credentials is not None:
         merged = await credential_store.decrypt_credentials(
@@ -659,8 +727,6 @@ async def update_connector_credentials(
             encrypted_credentials=connector.encrypted_credentials,
             db=db,
         )
-    else:
-        merged = dict(connector.config or {})
 
     # Apply the patch — NEVER log access_token / refresh_token values.
     merged["access_token"] = body.access_token
@@ -671,14 +737,15 @@ async def update_connector_credentials(
     if body.refresh_token is not None:
         merged["refresh_token"] = body.refresh_token
 
-    encrypted_blob, redacted_config = await credential_store.encrypt_credentials(
+    encrypted_blob, stripped_config = await credential_store.encrypt_credentials(
         org_id=connector.org_id,
         connector_type=connector.connector_type,
         config=merged,
         db=db,
     )
     connector.encrypted_credentials = encrypted_blob
-    connector.config = redacted_config
+    connector.config = stripped_config
+    _assert_connector_credentials_readable(connector)
     await db.commit()
     await _audit_internal_call(request, org_id=connector.org_id)
 
