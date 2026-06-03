@@ -46,6 +46,7 @@ from log_utils import sanitize_response_body, verify_shared_secret
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from shield_compliance import check_compliance as _shield_check_compliance
 
 from logging_setup import setup_logging
 
@@ -93,6 +94,7 @@ MCP_OAUTH_RESOURCE_URL = os.environ.get("MCP_OAUTH_RESOURCE_URL", "https://mcp.g
 # SPEC-MCP-AUTH-001: portal-api OAuth issuer base URL — appears in PRM as
 # the authorization-server location (RFC 9728).
 MCP_OAUTH_ISSUER_BASE_URL = os.environ.get("MCP_OAUTH_ISSUER_BASE_URL", "https://my.getklai.com")
+PLATFORM_ORG_SLUG = os.environ.get("PLATFORM_ORG_SLUG", "getklai")
 
 # SPEC-SEC-INTERNAL-001 REQ-9.5: enforce non-empty values. ``os.environ[...]``
 # above raises KeyError on missing; the assertions below close the
@@ -152,6 +154,10 @@ _ERR_ASSERTION_MODE = (
 _ERR_KB_UNAVAILABLE = (
     "Kennisbank tijdelijk niet bereikbaar. Probeer het later opnieuw.\n"
     "(Knowledge base unavailable. Please try again.)"
+)
+_ERR_SHIELD_PLATFORM_ADMIN = (
+    "Shield is nu alleen beschikbaar voor platform admins.\n"
+    "(Shield is currently available only to platform admins.)"
 )
 
 
@@ -302,6 +308,11 @@ _TOOL_MIN_ROLE: dict[str, str] = {
 def _role_at_least(actual: str, minimum: str) -> bool:
     """Return True when *actual* is ranked at or above *minimum*."""
     return _ROLE_ORDER.get(actual, -1) >= _ROLE_ORDER.get(minimum, 0)
+
+
+def _require_shield_platform_admin(identity: _VerifiedIdentity) -> None:
+    if identity.org_slug != PLATFORM_ORG_SLUG or identity.effective_role != "admin":
+        raise ToolError(_ERR_SHIELD_PLATFORM_ADMIN)
 
 
 # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-18: per-user active-session registry
@@ -1170,6 +1181,68 @@ async def search_knowledge(
         }
         for c in chunks
     ]
+
+
+# -- Tools: Shield guardrails -------------------------------------------------
+@mcp.tool(
+    description="""Check text with Klai Shield guardrails.
+
+Platform-admin-only test tool for Claude Desktop, Cursor, and other MCP
+clients. Use before sending sensitive prompts to an external LLM, or before
+returning generated output to a user.
+
+PARAMETERS:
+  text       - prompt or generated answer to check.
+  level      - "basic", "extended", or "strict"; default "basic".
+  check_type - "input" or "output"; default "input".
+
+RETURNS: status green/yellow/orange/red, risk_score, should_block, warnings.
+"""
+)
+async def shield_check_compliance(
+    text: str,
+    ctx: Context,
+    level: str = "basic",
+    check_type: str = "input",
+) -> dict:
+    identity = await _identify_request(ctx)
+    _require_shield_platform_admin(identity)
+    return {
+        "organization": {"id": identity.org_id, "slug": identity.org_slug},
+        **_shield_check_compliance(text, level=level, check_type=check_type),
+    }
+
+
+@mcp.tool(
+    description="""Prepare a prompt for an external LLM with Klai Shield.
+
+Platform-admin-only test tool. It checks the prompt and returns a clear
+allowed/blocked decision. If blocked, do not send the prompt to the external
+LLM. Use search_knowledge separately when the prompt needs organisation
+context.
+
+PARAMETERS:
+  prompt - prompt text the client wants to send.
+  level  - "basic", "extended", or "strict"; default "basic".
+
+RETURNS: allowed boolean, original prompt when allowed, compliance details.
+"""
+)
+async def shield_prepare_prompt(
+    prompt: str,
+    ctx: Context,
+    level: str = "basic",
+) -> dict:
+    identity = await _identify_request(ctx)
+    _require_shield_platform_admin(identity)
+    compliance = _shield_check_compliance(prompt, level=level, check_type="input")
+    allowed = not compliance["should_block"]
+    return {
+        "allowed": allowed,
+        "prompt": prompt if allowed else None,
+        "organization": {"id": identity.org_id, "slug": identity.org_slug},
+        "compliance": compliance,
+    }
 
 
 # -- ASGI app -----------------------------------------------------------------

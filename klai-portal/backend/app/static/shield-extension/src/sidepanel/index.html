@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Klai Shield</title>
+    <link rel="stylesheet" href="./sidepanel.css" />
+  </head>
+  <body>
+    <div class="login-overlay" id="login-overlay">
+      <div class="login-brand">
+        <img src="../assets/klai-logo.svg" alt="Klai" class="login-logo" />
+      </div>
+      <h2>Klai Shield</h2>
+      <p>Gebruik je Klai-account om compliance en kenniscontext in je LLM-tools te gebruiken.</p>
+      <button type="button" class="primary-btn" id="login-btn">Inloggen met Klai</button>
+      <a href="https://my.getklai.com/" target="_blank" rel="noopener" class="login-link">Open Klai portal</a>
+      <div class="error" id="login-error"></div>
+    </div>
+
+    <div id="main-ui" class="main-ui">
+      <header class="header">
+        <div class="header-title">
+          <img src="../assets/klai-logo.svg" alt="Klai" class="header-logo" />
+          <span>Shield</span>
+        </div>
+        <span class="badge" id="status-badge">-</span>
+        <button class="icon-btn logout-btn" id="logout-btn" type="button" title="Uitloggen" aria-label="Uitloggen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        </button>
+      </header>
+
+      <section class="panel-section active" id="tab-bronnen">
+        <h1 class="page-title">Bronnen</h1>
+        <p class="page-sub">Selecteer Klai kennisbanken en voeg context in bij je actieve LLM.</p>
+
+        <div class="section-header">Kennisbanken</div>
+        <div id="collection-list"></div>
+
+        <div class="section-header">Context invoegen</div>
+        <label class="field">
+          <span>Zoekvraag</span>
+          <textarea id="knowledge-query" rows="4" placeholder="Waar moet Klai context over zoeken?"></textarea>
+        </label>
+        <div class="btn-row">
+          <button type="button" class="secondary-btn" id="run-query">Zoeken</button>
+          <button type="button" class="primary-btn" id="insert-context" disabled>Invoegen</button>
+        </div>
+        <div id="knowledge-results" class="result-panel empty">Geen resultaten geladen.</div>
+      </section>
+
+      <section class="panel-section" id="tab-templates">
+        <h1 class="page-title">Instructies</h1>
+        <p class="page-sub">Gebruik Klai instructies voor consistente prompts in externe tools.</p>
+        <div id="template-list"></div>
+      </section>
+
+      <section class="panel-section" id="tab-veiligheid">
+        <h1 class="page-title">Veiligheid</h1>
+        <p class="page-sub">Controleer prompts voordat ze naar een externe LLM gaan.</p>
+
+        <div class="toggle-card on" id="tc-aiact">
+          <div class="t-row">
+            <div class="t-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+            </div>
+            <div class="t-body">
+              <div class="t-label">Shield check actief</div>
+              <div class="t-sub">Compliance pre-flight voor prompts</div>
+            </div>
+            <label class="sw"><input type="checkbox" id="sw-aiact" checked /><span class="sl"></span></label>
+          </div>
+        </div>
+
+        <div class="levels" id="levels">
+          <button type="button" class="lvl active" data-level="basic"><span class="name">Basis</span><span class="desc">PII & transparantie</span></button>
+          <button type="button" class="lvl" data-level="extended"><span class="name">Uitgebreid</span><span class="desc">+ risico & domein</span></button>
+          <button type="button" class="lvl" data-level="strict"><span class="name">Strikt</span><span class="desc">+ blokkeren</span></button>
+        </div>
+
+        <label class="field mt-16">
+          <span>Prompt of antwoord</span>
+          <textarea id="check-text" rows="5" placeholder="Plak tekst die je wilt controleren..."></textarea>
+        </label>
+        <div class="btn-row">
+          <button type="button" class="primary-btn" id="run-check">Check tekst</button>
+        </div>
+        <div id="check-summary" class="result-panel empty">Nog geen check uitgevoerd.</div>
+      </section>
+
+      <section class="panel-section" id="tab-instellingen">
+        <h1 class="page-title">Instellingen</h1>
+        <p class="page-sub">Je Klai-account en extensieverbinding.</p>
+
+        <div class="toggle-card">
+          <div class="t-row">
+            <div class="t-icon t-icon-user">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
+            <div class="t-body">
+              <div class="t-label" id="account-name">-</div>
+              <div class="t-sub" id="account-email">-</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="toggle-card">
+          <div class="t-row">
+            <div class="t-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-3"/></svg>
+            </div>
+            <div class="t-body">
+              <div class="t-label" id="org-name">Organisatie</div>
+              <div class="t-sub" id="org-sub">Klai platform admin</div>
+            </div>
+          </div>
+        </div>
+
+        <details class="advanced">
+          <summary>Portal endpoint</summary>
+          <label class="field">
+            <span>Klai portal</span>
+            <input id="api-base" type="url" placeholder="https://my.getklai.com" autocomplete="off" />
+          </label>
+          <button type="button" class="secondary-btn" id="save-settings">Opslaan</button>
+        </details>
+
+        <a class="dashboard-link" href="https://my.getklai.com/app/platform-console" target="_blank" rel="noopener">Open Klai platform console</a>
+      </section>
+    </div>
+
+    <nav class="tab-bar" id="tab-bar" aria-label="Hoofdnavigatie">
+      <button class="tab-btn active" data-tab="tab-bronnen" aria-label="Bronnen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        <span>Bronnen</span>
+      </button>
+      <button class="tab-btn" data-tab="tab-templates" aria-label="Instructies">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        <span>Instructies</span>
+      </button>
+      <button class="tab-btn" data-tab="tab-veiligheid" aria-label="Veiligheid">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+        <span>Veiligheid</span>
+      </button>
+      <button class="tab-btn" data-tab="tab-instellingen" aria-label="Instellingen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        <span>Instellingen</span>
+      </button>
+    </nav>
+
+    <script src="./sidepanel.js" type="module"></script>
+  </body>
+</html>
