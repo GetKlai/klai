@@ -5,6 +5,7 @@ import { KeyRound } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { API_BASE } from '@/lib/api'
+import { readCsrfCookie } from '@/lib/auth'
 
 type SearchParams = {
   userID?: string
@@ -30,6 +31,7 @@ function PasswordSetPage() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [invalidLink, setInvalidLink] = useState(false)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
 
@@ -59,6 +61,10 @@ function PasswordSetPage() {
 
       if (!resp.ok) {
         const data = (await resp.json().catch(() => ({}))) as { detail?: string }
+        if (resp.status === 400 && isInvalidResetLinkDetail(data?.detail)) {
+          await clearExistingBffSession()
+          setInvalidLink(true)
+        }
         setError(data?.detail ?? m.set_error_server())
         return
       }
@@ -92,7 +98,7 @@ function PasswordSetPage() {
       <AuthPageLayout leftContent={leftContent} showLocale>
         <div className="space-y-3 text-center">
           <p className="text-sm text-[var(--color-destructive-text)]">{m.set_invalid_link()}</p>
-          <a href="/" className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline">
+          <a href="/password/forgot" className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline">
             {m.set_invalid_link_back()}
           </a>
         </div>
@@ -118,6 +124,23 @@ function PasswordSetPage() {
               (e.g. the tabPrompt chunk that throws on /password/set). */}
           <Button asChild size="lg" className="w-full">
             <a href="/">{m.set_done_continue()}</a>
+          </Button>
+        </div>
+      ) : invalidLink ? (
+        <div className="space-y-4 text-center">
+          <div className="space-y-2">
+            <h2 className="text-xl font-semibold text-gray-900">
+              {m.set_invalid_link_heading()}
+            </h2>
+            <p className="text-sm text-gray-400">
+              {m.set_invalid_link_body()}
+            </p>
+          </div>
+          {error && (
+            <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
+          )}
+          <Button asChild size="lg" className="w-full">
+            <a href="/password/forgot">{m.set_invalid_link_request_new()}</a>
           </Button>
         </div>
       ) : (
@@ -181,4 +204,24 @@ function PasswordSetPage() {
       )}
     </AuthPageLayout>
   )
+}
+
+function isInvalidResetLinkDetail(detail: string | undefined) {
+  return detail?.includes('expired or is invalid') ?? false
+}
+
+async function clearExistingBffSession() {
+  const csrf = readCsrfCookie()
+  const headers: Record<string, string> = {}
+  if (csrf) headers['X-CSRF-Token'] = csrf
+
+  try {
+    await fetch(`${API_BASE}/api/auth/bff/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+    })
+  } catch {
+    // The reset failure must remain visible even when there is no session to clear.
+  }
 }
