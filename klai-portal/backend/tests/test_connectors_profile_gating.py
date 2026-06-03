@@ -77,6 +77,7 @@ class TestCreateConnectorProfilePlanMatrix:
         out = _make_out("notion")
 
         db = AsyncMock()
+        db.add = MagicMock()
         body = ConnectorCreateRequest(
             connector_type="notion",
             config={},
@@ -90,7 +91,7 @@ class TestCreateConnectorProfilePlanMatrix:
                 new_callable=AsyncMock,
                 return_value={"kb.connectors", "kb.connectors.external"},
             ),
-            patch("app.api.connectors._validate_connector_config", new_callable=AsyncMock, return_value=None),
+            patch("app.api.connectors._validate_connector_config", return_value={}),
             patch("app.api.connectors._auto_fill_canary_fingerprint", return_value=None),
             patch("app.api.connectors.credential_store", None),
             patch("app.api.connectors._connector_out", return_value=out),
@@ -179,6 +180,7 @@ class TestCreateConnectorProfilePlanMatrix:
         out = _make_out("url")
 
         db = AsyncMock()
+        db.add = MagicMock()
         body = _make_body("url")
 
         caps_mock = AsyncMock(return_value={"kb.connectors", "kb.connectors.external"})
@@ -186,7 +188,7 @@ class TestCreateConnectorProfilePlanMatrix:
         with (
             patch("app.api.connectors._get_kb_with_owner_check", new_callable=AsyncMock, return_value=kb),
             patch("app.api.connectors.get_effective_capabilities", caps_mock),
-            patch("app.api.connectors._validate_connector_config", new_callable=AsyncMock, return_value=None),
+            patch("app.api.connectors._validate_connector_config", return_value={}),
             patch("app.api.connectors._auto_fill_canary_fingerprint", return_value=None),
             patch("app.api.connectors.credential_store", None),
             patch("app.api.connectors._connector_out", return_value=out),
@@ -212,6 +214,7 @@ class TestCreateConnectorProfilePlanMatrix:
         out = _make_out("url")
 
         db = AsyncMock()
+        db.add = MagicMock()
         body = _make_body("url")
 
         caps_mock = AsyncMock(return_value={"kb.connectors"})
@@ -219,7 +222,7 @@ class TestCreateConnectorProfilePlanMatrix:
         with (
             patch("app.api.connectors._get_kb_with_owner_check", new_callable=AsyncMock, return_value=kb),
             patch("app.api.connectors.get_effective_capabilities", caps_mock),
-            patch("app.api.connectors._validate_connector_config", new_callable=AsyncMock, return_value=None),
+            patch("app.api.connectors._validate_connector_config", return_value={}),
             patch("app.api.connectors._auto_fill_canary_fingerprint", return_value=None),
             patch("app.api.connectors.credential_store", None),
             patch("app.api.connectors._connector_out", return_value=out),

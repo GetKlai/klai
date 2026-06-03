@@ -147,30 +147,36 @@ function renderAccount() {
 function renderCollections() {
   const collections = currentSettings.knowledgeBases || currentSettings.config?.knowledge_bases || [];
   const active = currentSettings.activeKnowledgeBases || [];
+  clearChildren(els.collectionList);
   if (!collections.length) {
-    els.collectionList.innerHTML = '<div class="result-panel empty">Geen kennisbanken gevonden in Klai.</div>';
+    els.collectionList.appendChild(emptyPanel("Geen kennisbanken gevonden in Klai."));
     return;
   }
-  els.collectionList.innerHTML = collections
-    .map((kb) => {
-      const slug = kb.slug || kb.id;
-      const on = active.includes(slug);
-      return `
-        <div class="toggle-card ${on ? "on" : ""}">
-          <div class="t-row">
-            <div class="t-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/></svg>
-            </div>
-            <div class="t-body">
-              <div class="t-label">${escapeHtml(kb.name || slug || "Klai kennisbank")}</div>
-              <div class="t-sub">${escapeHtml(slug || "knowledge")}</div>
-            </div>
-            <label class="sw"><input type="checkbox" data-kb="${escapeAttr(slug)}" ${on ? "checked" : ""}><span class="sl"></span></label>
-          </div>
-        </div>
-      `;
-    })
-    .join("");
+
+  collections.forEach((kb) => {
+    const slug = kb.slug || kb.id || "";
+    const on = active.includes(slug);
+    const card = toggleCard({ on });
+    const row = div("t-row");
+    row.appendChild(icon("folder"));
+
+    const body = div("t-body");
+    body.appendChild(textDiv("t-label", kb.name || slug || "Klai kennisbank"));
+    body.appendChild(textDiv("t-sub", slug || "knowledge"));
+    row.appendChild(body);
+
+    const label = div("sw", "label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.dataset.kb = slug;
+    checkbox.checked = on;
+    label.appendChild(checkbox);
+    label.appendChild(div("sl", "span"));
+    row.appendChild(label);
+
+    card.appendChild(row);
+    els.collectionList.appendChild(card);
+  });
 
   els.collectionList.querySelectorAll("input[data-kb]").forEach((checkbox) => {
     checkbox.addEventListener("change", async () => {
@@ -188,26 +194,33 @@ function renderCollections() {
 
 function renderTemplates() {
   const templates = currentSettings.templates || [];
+  clearChildren(els.templateList);
   if (!templates.length) {
-    els.templateList.innerHTML = '<div class="result-panel empty">Klai gebruikt nu automatisch het context-template.</div>';
+    els.templateList.appendChild(emptyPanel("Klai gebruikt nu automatisch het context-template."));
     return;
   }
-  els.templateList.innerHTML = templates
-    .map((template) => `
-      <div class="toggle-card on">
-        <div class="t-row">
-          <div class="t-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
-          </div>
-          <div class="t-body">
-            <div class="t-label">${escapeHtml(template.name || "Klai template")}</div>
-            <div class="t-sub">${escapeHtml(template.description || "Actief voor context-injectie")}</div>
-          </div>
-          <label class="sw"><input type="checkbox" checked disabled><span class="sl"></span></label>
-        </div>
-      </div>
-    `)
-    .join("");
+  templates.forEach((template) => {
+    const card = toggleCard({ on: true });
+    const row = div("t-row");
+    row.appendChild(icon("document"));
+
+    const body = div("t-body");
+    body.appendChild(textDiv("t-label", template.name || "Klai template"));
+    body.appendChild(textDiv("t-sub", template.description || "Actief voor context-injectie"));
+    row.appendChild(body);
+
+    const label = div("sw", "label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.disabled = true;
+    label.appendChild(checkbox);
+    label.appendChild(div("sl", "span"));
+    row.appendChild(label);
+
+    card.appendChild(row);
+    els.templateList.appendChild(card);
+  });
 }
 
 function renderCompliance() {
@@ -261,20 +274,22 @@ function renderComplianceResult(result) {
   const warnings = result.warnings || [];
   els.checkSummary.classList.remove("empty");
   els.checkSummary.dataset.status = status;
-  els.checkSummary.innerHTML = `
-    <div class="result-title">
-      <span>${escapeHtml(statusLabel(status))}</span>
-      <span>${Number(result.risk_score || 0)}/100</span>
-    </div>
-    ${
-      warnings.length
-        ? `<ul class="warning-list">${warnings
-            .slice(0, 4)
-            .map((warning) => `<li>${escapeHtml(warning.label || warning.id || "Waarschuwing")}</li>`)
-            .join("")}</ul>`
-        : `<p class="empty">Deze tekst kan door volgens de huidige regels.</p>`
-    }
-  `;
+  clearChildren(els.checkSummary);
+
+  const title = div("result-title");
+  title.appendChild(textDiv("", statusLabel(status), "span"));
+  title.appendChild(textDiv("", `${Number(result.risk_score || 0)}/100`, "span"));
+  els.checkSummary.appendChild(title);
+
+  if (warnings.length) {
+    const list = div("warning-list", "ul");
+    warnings.slice(0, 4).forEach((warning) => {
+      list.appendChild(textDiv("", warning.label || warning.id || "Waarschuwing", "li"));
+    });
+    els.checkSummary.appendChild(list);
+  } else {
+    els.checkSummary.appendChild(textDiv("empty", "Deze tekst kan door volgens de huidige regels.", "p"));
+  }
 }
 
 async function runQuery() {
@@ -296,14 +311,15 @@ function renderChunks(chunks) {
     return;
   }
   els.results.classList.remove("empty");
-  els.results.innerHTML = latestChunks
-    .slice(0, 6)
-    .map((chunk, index) => {
-      const title = chunk.title || chunk.source || chunk.metadata?.title || `Bron ${index + 1}`;
-      const text = (chunk.text || chunk.content || "").trim().slice(0, 260);
-      return `<article class="result"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(text)}</p></article>`;
-    })
-    .join("");
+  clearChildren(els.results);
+  latestChunks.slice(0, 6).forEach((chunk, index) => {
+    const title = chunk.title || chunk.source || chunk.metadata?.title || `Bron ${index + 1}`;
+    const text = (chunk.text || chunk.content || "").trim().slice(0, 260);
+    const article = div("result", "article");
+    article.appendChild(textDiv("", title, "strong"));
+    article.appendChild(textDiv("", text, "p"));
+    els.results.appendChild(article);
+  });
 }
 
 async function insertContext() {
@@ -343,17 +359,48 @@ function bindButton(button, handler) {
   });
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function clearChildren(node) {
+  node.replaceChildren();
 }
 
-function escapeAttr(value) {
-  return escapeHtml(value).replaceAll("`", "&#096;");
+function emptyPanel(text) {
+  return textDiv("result-panel empty", text);
+}
+
+function toggleCard({ on }) {
+  const card = div("toggle-card");
+  card.classList.toggle("on", on);
+  return card;
+}
+
+function div(className, tagName = "div") {
+  const element = document.createElement(tagName);
+  if (className) element.className = className;
+  return element;
+}
+
+function textDiv(className, text, tagName = "div") {
+  const element = div(className, tagName);
+  element.textContent = String(text ?? "");
+  return element;
+}
+
+function icon(kind) {
+  const wrapper = div("t-icon");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const paths =
+    kind === "folder"
+      ? ["M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"]
+      : ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6"];
+  paths.forEach((pathDefinition) => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathDefinition);
+    svg.appendChild(path);
+  });
+  wrapper.appendChild(svg);
+  return wrapper;
 }
 
 init();
