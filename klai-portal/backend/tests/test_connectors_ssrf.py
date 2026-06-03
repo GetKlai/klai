@@ -174,8 +174,22 @@ class TestValidateConnectorConfig:
             )
         assert excinfo.value.status_code == 422
 
-    def test_unknown_connector_type_passes_through(self) -> None:
-        """github / notion / etc. have no SSRF config surface today.
+    def test_airtable_dispatch_invokes_validator(self) -> None:
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as excinfo:
+            _validate_connector_config(
+                "airtable",
+                {
+                    "api_key": "pat_placeholder",
+                    "base_id": "not-an-airtable-base",
+                    "table_names": ["Customers"],
+                },
+            )
+        assert excinfo.value.status_code == 422
+
+    def test_connector_type_without_config_schema_passes_through(self) -> None:
+        """github has no portal-side user credential config surface today.
 
         Pass through unchanged — any future SSRF-relevant connector
         adds itself to ``_CONFIG_SCHEMA`` to opt in.

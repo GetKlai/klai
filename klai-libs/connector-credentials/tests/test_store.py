@@ -92,6 +92,12 @@ class TestSensitiveFieldsMapping:
     def test_web_crawler_fields(self) -> None:
         assert set(SENSITIVE_FIELDS["web_crawler"]) == {"auth_headers", "cookies"}
 
+    def test_confluence_fields(self) -> None:
+        assert SENSITIVE_FIELDS["confluence"] == ["api_token"]
+
+    def test_airtable_fields(self) -> None:
+        assert SENSITIVE_FIELDS["airtable"] == ["api_key"]
+
     def test_all_connector_types_present(self) -> None:
         assert set(SENSITIVE_FIELDS.keys()) == {
             "github",
@@ -99,6 +105,8 @@ class TestSensitiveFieldsMapping:
             "google_drive",
             "ms_docs",
             "web_crawler",
+            "confluence",
+            "airtable",
         }
 
 
@@ -175,6 +183,60 @@ class TestRoundTrip:
             decrypted = await store.decrypt_credentials(org_id=42, encrypted_credentials=blob, db=db)
             assert decrypted["cookies"] == [{"name": "session", "value": "s-abc"}]
             assert decrypted["auth_headers"] == {"X-Sso": "token-xyz"}
+
+    @pytest.mark.asyncio()
+    async def test_confluence_roundtrip(self) -> None:
+        store = _make_store()
+        db = AsyncMock()
+        config = {
+            "base_url": "https://example.atlassian.net/wiki",
+            "email": "admin@example.com",
+            "api_token": FAKE_TOKEN_A,
+            "space_keys": ["ENG"],
+        }
+        with patch.object(store, "get_or_create_dek", return_value=os.urandom(32)):
+            blob, stripped = await store.encrypt_credentials(
+                org_id=7,
+                connector_type="confluence",
+                config=config,
+                db=db,
+            )
+            assert "api_token" not in stripped
+            assert stripped == {
+                "base_url": "https://example.atlassian.net/wiki",
+                "email": "admin@example.com",
+                "space_keys": ["ENG"],
+            }
+
+            assert blob is not None
+            decrypted = await store.decrypt_credentials(org_id=7, encrypted_credentials=blob, db=db)
+            assert decrypted == {"api_token": FAKE_TOKEN_A}
+
+    @pytest.mark.asyncio()
+    async def test_airtable_roundtrip(self) -> None:
+        store = _make_store()
+        db = AsyncMock()
+        config = {
+            "api_key": FAKE_TOKEN_A,
+            "base_id": "app123456789",
+            "table_names": ["Customers"],
+        }
+        with patch.object(store, "get_or_create_dek", return_value=os.urandom(32)):
+            blob, stripped = await store.encrypt_credentials(
+                org_id=8,
+                connector_type="airtable",
+                config=config,
+                db=db,
+            )
+            assert "api_key" not in stripped
+            assert stripped == {
+                "base_id": "app123456789",
+                "table_names": ["Customers"],
+            }
+
+            assert blob is not None
+            decrypted = await store.decrypt_credentials(org_id=8, encrypted_credentials=blob, db=db)
+            assert decrypted == {"api_key": FAKE_TOKEN_A}
 
     @pytest.mark.asyncio()
     async def test_unknown_connector_type_is_passthrough(self) -> None:
