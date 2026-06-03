@@ -278,6 +278,26 @@ class TestCsrfEnforcement:
         resp = client.post("/api/perf", cookies={SESSION_COOKIE_NAME: sid})
         assert resp.status_code == 200
 
+    @pytest.mark.asyncio
+    async def test_shield_bearer_api_is_csrf_exempt_with_stale_session_cookie(
+        self,
+        app: FastAPI,
+        wire_redis: AsyncMock,
+    ) -> None:
+        # /api/shield/* is authenticated by Shield Bearer tokens, not the BFF
+        # cookie. A stale portal session cookie must not block the extension.
+        sid, _csrf = await _create_session(wire_redis)
+        app = FastAPI()
+        app.add_middleware(SessionMiddleware)
+
+        @app.post("/api/shield/query")
+        async def shield_query():  # type: ignore[no-untyped-def]
+            return {"ok": True}
+
+        client = TestClient(app)
+        resp = client.post("/api/shield/query", cookies={SESSION_COOKIE_NAME: sid})
+        assert resp.status_code == 200
+
 
 # ---------------------------------------------------------------------------
 # AUTH_DEV_MODE synthetic session

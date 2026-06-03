@@ -37,6 +37,7 @@ from app.api.oauth import router as oauth_router
 from app.api.partner import router as partner_router
 from app.api.proxy import aclose as proxy_aclose
 from app.api.proxy import router as proxy_router
+from app.api.shield import router as shield_router
 from app.api.taxonomy import router as taxonomy_router
 from app.api.vitals import router as vitals_router
 from app.api.webhooks import router as webhooks_router
@@ -389,6 +390,7 @@ app.include_router(mcp_servers_router)
 app.include_router(admin_api_keys_router)
 app.include_router(admin_widgets_router)
 app.include_router(partner_router)
+app.include_router(shield_router)
 app.include_router(oauth_router)
 
 # Static files for portal-api owned assets (e.g. OAuth consent page CSS).

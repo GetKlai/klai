@@ -121,6 +121,14 @@ _CSRF_EXEMPT_PREFIXES: tuple[str, ...] = (
     # not the BFF cookie. CSRF is a cookie-based threat.
     # REQ-3.1 / AC-9, AC-11
     "/partner/",
+    # no session: Shield extension API endpoints authenticate with Bearer
+    # ks_... tokens, not the BFF cookie. CSRF is a cookie-based threat.
+    # REQ-3.1 / AC-9, AC-11
+    "/api/shield/",
+    # pre-session: browser extension exchanges a one-time Shield code, not the
+    # BFF cookie. A stale BFF session cookie must not force extension CSRF.
+    # REQ-4.3 / AC-2
+    "/api/app/shield/extension/exchange",
     # /widget/ prefix has NO mounted handlers in portal-api (audited 2026-04-25:
     # grep for prefix="/widget" returns zero results). Removed per REQ-4 audit.
     # Widget traffic now lives under /partner/v1/widget-config (see partner CORS REQ-2).

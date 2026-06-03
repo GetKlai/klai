@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { BookOpen, Plus, RotateCw, Search } from 'lucide-react'
+import { BookOpen, Download, Plus, RotateCw, Search, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { API_BASE } from '@/lib/api'
 import { fetchMe } from '@/lib/api-me'
 import { useAuth } from '@/lib/auth'
 import { getLocale } from '@/paraglide/runtime'
@@ -93,6 +94,7 @@ function PlatformConsole() {
   const tab = routeSearch.tab ?? 'users'
   const newFeedbackCount = stats?.new_feedback_count ?? 0
   const chatErrorCount = stats?.chat_error_count ?? 0
+  const extensionDownloadUrl = `${API_BASE}/api/app/shield/extension.zip`
 
   function setPlatformTab(nextTab: PlatformTab) {
     void navigate({
@@ -159,6 +161,30 @@ function PlatformConsole() {
             <Plus className="h-4 w-4" />
             {m.platform_new_tenant()}
           </Button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white px-4 py-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-gray-500" />
+              <h2 className="text-sm font-semibold text-gray-900">
+                Shield browser test
+              </h2>
+            </div>
+            <p className="mt-1 max-w-2xl text-sm text-gray-500">
+              Download de extensie en log in met je Klai-account in Chrome of Edge.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button type="button" variant="secondary" asChild>
+              <a href={extensionDownloadUrl}>
+                <Download className="h-4 w-4" />
+                Download extensie
+              </a>
+            </Button>
+          </div>
         </div>
       </div>
 

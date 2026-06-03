@@ -1,0 +1,577 @@
+body.klai-shield-loaded #superdock-shield-badge,
+body.klai-shield-loaded #superdock-shield-card {
+  display: none !important;
+}
+
+#klai-shield-badge,
+#klai-shield-card,
+#klai-shield-toast,
+#klai-shield-loading,
+#klai-review-overlay,
+.klai-mp {
+  color: #191918;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+#klai-shield-badge {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483643;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  max-width: min(260px, calc(100vw - 36px));
+  border: 1px solid #e8e6de;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(25, 25, 24, 0.12);
+  color: #191918;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 740;
+  line-height: 1;
+  padding: 6px 10px;
+}
+
+#klai-shield-badge .klai-mark {
+  color: #fcaa2d;
+  flex: 0 0 auto;
+}
+
+#klai-shield-badge.klai-badge-off {
+  color: #7b7770;
+}
+
+#klai-shield-badge.klai-badge-off .klai-mark {
+  color: #b9b6ad;
+}
+
+#klai-shield-badge span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#klai-shield-card {
+  position: fixed;
+  right: 18px;
+  bottom: 54px;
+  z-index: 2147483644;
+  display: none;
+  width: 258px;
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(25, 25, 24, 0.18);
+  font-size: 13px;
+  padding: 12px;
+}
+
+#klai-shield-card.is-open {
+  display: block;
+}
+
+.klai-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.klai-card-row strong {
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.klai-card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #bd2d20;
+}
+
+.klai-card-dot.on {
+  background: #16834a;
+}
+
+.klai-card-detail {
+  color: #4b4945;
+  font-size: 12px;
+  margin-top: 5px;
+  padding-left: 16px;
+}
+
+.klai-card-muted {
+  color: #7b7770;
+}
+
+.klai-card-hint {
+  border-top: 1px solid #e8e6de;
+  color: #7b7770;
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 10px;
+  padding-top: 9px;
+}
+
+#klai-shield-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483647;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 36px));
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #191918;
+  box-shadow: 0 18px 48px rgba(25, 25, 24, 0.24);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 680;
+  opacity: 0;
+  padding: 11px 12px;
+  transform: translateY(8px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+#klai-shield-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#klai-shield-toast .klai-mark {
+  color: #fcaa2d;
+  flex: 0 0 auto;
+}
+
+#klai-shield-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483645;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+#klai-shield-loading.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.klai-loading-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(25, 25, 24, 0.16);
+}
+
+.klai-loading-card {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 20px 54px rgba(25, 25, 24, 0.2);
+  font-size: 13px;
+  font-weight: 720;
+  padding: 12px 14px;
+}
+
+.klai-loading-mark {
+  display: grid;
+  place-items: center;
+}
+
+.klai-loading-mark .klai-mark {
+  animation: klai-spin 900ms linear infinite;
+  color: #fcaa2d;
+}
+
+@keyframes klai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+#klai-review-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+#klai-review-overlay.is-visible {
+  opacity: 1;
+}
+
+.klai-r-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(25, 25, 24, 0.24);
+}
+
+.klai-r-modal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #faf9f6;
+  box-shadow: 0 28px 80px rgba(25, 25, 24, 0.28);
+  transform: translate(-50%, -48%);
+  transition: transform 160ms ease;
+}
+
+#klai-review-overlay.is-visible .klai-r-modal {
+  transform: translate(-50%, -50%);
+}
+
+.klai-r-header,
+.klai-r-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-color: #e8e6de;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+.klai-r-header {
+  border-bottom: 1px solid #e8e6de;
+}
+
+.klai-r-footer {
+  border-top: 1px solid #e8e6de;
+}
+
+.klai-r-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 780;
+}
+
+.klai-r-light {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #16834a;
+}
+
+.klai-r-light.yellow {
+  background: #d89113;
+}
+
+.klai-r-light.orange {
+  background: #b46900;
+}
+
+.klai-r-light.red {
+  background: #bd2d20;
+}
+
+.klai-r-close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #7b7770;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.klai-r-body {
+  overflow: auto;
+  padding: 14px;
+}
+
+.klai-r-section {
+  margin-bottom: 14px;
+}
+
+.klai-r-section-label {
+  color: #7b7770;
+  font-size: 11px;
+  font-weight: 780;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+
+.klai-r-prompt,
+.klai-r-details pre {
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #191918;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
+.klai-r-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.klai-r-tag,
+.klai-r-none,
+.klai-r-ok {
+  border: 1px solid #e8e6de;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b4945;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 9px;
+}
+
+.klai-r-ok {
+  display: inline-flex;
+  color: #16834a;
+}
+
+.klai-r-none {
+  color: #7b7770;
+}
+
+.klai-r-warning {
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #ffffff;
+  margin-bottom: 8px;
+  padding: 10px;
+}
+
+.klai-r-warning-red {
+  border-color: rgba(189, 45, 32, 0.28);
+  background: #fff0ef;
+}
+
+.klai-r-warning-orange,
+.klai-r-warning-yellow {
+  border-color: rgba(180, 105, 0, 0.28);
+  background: #fff7e8;
+}
+
+.klai-r-warning-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.klai-r-warning-top span {
+  color: #7b7770;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.klai-r-warning-desc {
+  color: #4b4945;
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 5px;
+}
+
+.klai-r-details summary {
+  color: #4b4945;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 720;
+  margin-bottom: 8px;
+}
+
+.klai-r-btn {
+  min-height: 34px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 760;
+  padding: 8px 13px;
+}
+
+.klai-r-btn-secondary {
+  border: 1px solid #e8e6de;
+  background: #ffffff;
+  color: #191918;
+}
+
+.klai-r-btn-primary {
+  border: 1px solid #191918;
+  background: #191918;
+  color: #ffffff;
+}
+
+.klai-r-blocked {
+  color: #bd2d20;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.klai-mp {
+  z-index: 2147483646;
+  width: 320px;
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 52px rgba(25, 25, 24, 0.22);
+  overflow: hidden;
+}
+
+.klai-mp-head,
+.klai-mp-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #ffffff;
+  padding: 9px 10px;
+}
+
+.klai-mp-head {
+  border-bottom: 1px solid #e8e6de;
+}
+
+.klai-mp-logo {
+  display: grid;
+  place-items: center;
+  color: #fcaa2d;
+}
+
+.klai-mp-title {
+  font-size: 13px;
+  font-weight: 790;
+}
+
+.klai-mp-context {
+  color: #7b7770;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.klai-mp-close {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #7b7770;
+  cursor: pointer;
+}
+
+.klai-mp-input {
+  display: block;
+  width: 100%;
+  min-height: 70px;
+  border: 0;
+  border-bottom: 1px solid #e8e6de;
+  outline: none;
+  padding: 10px;
+  resize: none;
+  color: #191918;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.klai-mp-input:focus {
+  box-shadow: inset 0 0 0 2px rgba(252, 170, 45, 0.22);
+}
+
+.klai-mp-foot {
+  justify-content: space-between;
+}
+
+.klai-mp-status {
+  min-width: 0;
+  overflow: hidden;
+  color: #7b7770;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.klai-mp-send {
+  min-height: 30px;
+  border: 1px solid #191918;
+  border-radius: 999px;
+  background: #191918;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 760;
+  padding: 6px 11px;
+}
+
+.klai-mp-send:disabled {
+  border-color: #e8e6de;
+  background: #f1f0ea;
+  color: #7b7770;
+  cursor: wait;
+}
+
+.klai-shield-notice {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483647;
+  max-width: min(360px, calc(100vw - 36px));
+  border: 1px solid #e8e6de;
+  border-radius: 8px;
+  background: #faf9f6;
+  color: #191918;
+  box-shadow: 0 16px 48px rgba(25, 25, 24, 0.18);
+  padding: 14px 16px;
+}
+
+.klai-shield-notice[data-kind="blocked"] {
+  border-color: rgba(192, 57, 43, 0.35);
+  background: #fef2f2;
+}
+
+.klai-shield-notice[data-kind="warning"] {
+  border-color: rgba(217, 119, 6, 0.35);
+  background: #fffbeb;
+}
+
+.klai-shield-notice__title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.klai-shield-notice__body,
+.klai-shield-notice li {
+  color: rgba(25, 25, 24, 0.72);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.klai-shield-notice ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
