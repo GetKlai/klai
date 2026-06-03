@@ -92,6 +92,12 @@ class TestSensitiveFieldsMapping:
     def test_web_crawler_fields(self) -> None:
         assert set(SENSITIVE_FIELDS["web_crawler"]) == {"auth_headers", "cookies"}
 
+    def test_confluence_fields(self) -> None:
+        assert SENSITIVE_FIELDS["confluence"] == ["api_token"]
+
+    def test_airtable_fields(self) -> None:
+        assert SENSITIVE_FIELDS["airtable"] == ["api_key"]
+
     def test_all_connector_types_present(self) -> None:
         assert set(SENSITIVE_FIELDS.keys()) == {
             "github",
@@ -99,6 +105,8 @@ class TestSensitiveFieldsMapping:
             "google_drive",
             "ms_docs",
             "web_crawler",
+            "confluence",
+            "airtable",
         }
 
 

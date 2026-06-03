@@ -207,12 +207,28 @@ class ConfluenceConfig(BaseModel):
         return self
 
 
+class AirtableConfig(BaseModel):
+    """Validated configuration schema for Airtable connectors."""
+
+    api_key: str
+    base_id: str
+    table_names: list[str] = Field(min_length=1)
+    view_name: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_airtable_config(self) -> "AirtableConfig":
+        if not self.base_id.startswith("app"):
+            raise ValueError("base_id must start with 'app'")
+        return self
+
+
 # Connector-type -> pydantic config class. Adding a new entry wires
 # validation (including SSRF) into both create_connector and
 # update_connector without further per-endpoint code.
 _CONFIG_SCHEMA: dict[str, type[BaseModel]] = {
     "web_crawler": WebcrawlerConfig,
     "confluence": ConfluenceConfig,
+    "airtable": AirtableConfig,
 }
 
 
@@ -234,7 +250,7 @@ def _validate_connector_config(connector_type: str, config: dict) -> dict:
         # Surface the original validation message so the UI can
         # display which field was rejected.
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     # model_dump keeps the dict-on-disk contract; sensitive fields
@@ -393,18 +409,89 @@ def _compute_needs_reconfiguration(c: PortalConnector) -> bool:
     return c.connector_type == "web_crawler" and c.last_sync_status == "failed"
 
 
+def _sensitive_fields_for(connector_type: str) -> set[str]:
+    return set(SENSITIVE_FIELDS.get(connector_type, []))
+
+
+def _plaintext_sensitive_fields(connector_type: str, config: dict | None) -> list[str]:
+    if not config:
+        return []
+    sensitive_fields = _sensitive_fields_for(connector_type)
+    return sorted(field for field in sensitive_fields if field in config)
+
+
+def _assert_no_plaintext_sensitive_config(
+    *,
+    connector_type: str,
+    config: dict | None,
+    connector_id: str | None = None,
+) -> None:
+    fields = _plaintext_sensitive_fields(connector_type, config)
+    if not fields:
+        return
+    logger.error(
+        "connector_plaintext_sensitive_config_detected",
+        extra={
+            "connector_id": connector_id,
+            "connector_type": connector_type,
+            "fields": fields,
+        },
+    )
+    raise RuntimeError("connector config contains plaintext sensitive fields")
+
+
+def _require_credential_store_for_sensitive_config(connector_type: str, config: dict) -> None:
+    fields = _plaintext_sensitive_fields(connector_type, config)
+    if fields and credential_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "credential_store_required_for_sensitive_connector"},
+        )
+
+
+async def _merge_saved_sensitive_credentials(
+    *,
+    connector: PortalConnector,
+    config: dict,
+    org_id: int,
+    db: AsyncSession,
+) -> dict:
+    """Fill omitted secret fields from encrypted storage for edit requests."""
+    sensitive_fields = _sensitive_fields_for(connector.connector_type)
+    missing_fields = sensitive_fields - set(config)
+    if not missing_fields or connector.encrypted_credentials is None:
+        return config
+    if credential_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "credential_store_unavailable"},
+        )
+
+    saved_credentials = await credential_store.decrypt_credentials(
+        org_id=org_id,
+        encrypted_credentials=bytes(connector.encrypted_credentials),
+        db=db,
+    )
+    merged = dict(config)
+    for field in missing_fields:
+        if field in saved_credentials:
+            merged[field] = saved_credentials[field]
+    return merged
+
+
 def _connector_out(c: PortalConnector) -> ConnectorOut:
-    # Mask sensitive fields so they never appear in public API responses
-    masked_config = dict(c.config) if c.config else {}
-    for field in SENSITIVE_FIELDS.get(c.connector_type, []):
-        if field in masked_config:
-            masked_config[field] = "***"
+    _assert_no_plaintext_sensitive_config(
+        connector_type=c.connector_type,
+        config=c.config,
+        connector_id=str(c.id),
+    )
+    public_config = dict(c.config) if c.config else {}
     return ConnectorOut(
         id=str(c.id),
         kb_id=c.kb_id,
         name=c.name,
         connector_type=c.connector_type,
-        config=masked_config,
+        config=public_config,
         schedule=c.schedule,
         is_enabled=c.is_enabled,
         last_sync_at=c.last_sync_at,
@@ -508,7 +595,7 @@ async def create_connector(
         invalid = set(body.allowed_assertion_modes) - VALID_ASSERTION_MODES
         if invalid:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Invalid assertion modes: {sorted(invalid)}. Valid: {sorted(VALID_ASSERTION_MODES)}",
             )
     # SPEC-SEC-SSRF-001 REQ-2 / REQ-8 / AC-7 / AC-19: validate the
@@ -523,6 +610,7 @@ async def create_connector(
     # Encrypt sensitive fields if credential store is configured
     config_to_store = config_for_save
     encrypted_blob = None
+    _require_credential_store_for_sensitive_config(body.connector_type, config_for_save)
     if credential_store is not None:
         encrypted_blob, config_to_store = await credential_store.encrypt_credentials(
             org_id=perms.org_id,
@@ -530,6 +618,10 @@ async def create_connector(
             config=config_for_save,
             db=db,
         )
+    _assert_no_plaintext_sensitive_config(
+        connector_type=body.connector_type,
+        config=config_to_store,
+    )
     connector = PortalConnector(
         kb_id=kb.id,
         org_id=perms.org_id,
@@ -641,12 +733,21 @@ async def update_connector(
     if body.name is not None:
         connector.name = body.name
     if body.config is not None:
+        config_input = body.config
+        if not body.clear_credentials:
+            config_input = await _merge_saved_sensitive_credentials(
+                connector=connector,
+                config=config_input,
+                org_id=perms.org_id,
+                db=db,
+            )
         # SPEC-SEC-SSRF-001 REQ-2.1 / AC-8 / AC-20: SSRF + allowlist
         # validation runs before any downstream fingerprint fetch
         # (which would dispatch an HTTP request to the candidate URL).
-        validated_config = _validate_connector_config(connector.connector_type, body.config)
+        validated_config = _validate_connector_config(connector.connector_type, config_input)
         # SPEC-CRAWL-004: auto-compute canary fingerprint before encryption
         config_for_save = await _auto_fill_canary_fingerprint(validated_config)
+        _require_credential_store_for_sensitive_config(connector.connector_type, config_for_save)
         if credential_store is not None:
             encrypted_blob, stripped_config = await credential_store.encrypt_credentials(
                 org_id=perms.org_id,
@@ -659,6 +760,11 @@ async def update_connector(
                 connector.encrypted_credentials = encrypted_blob
         else:
             connector.config = config_for_save
+        _assert_no_plaintext_sensitive_config(
+            connector_type=connector.connector_type,
+            config=connector.config,
+            connector_id=str(connector.id),
+        )
     if body.clear_credentials:
         connector.encrypted_credentials = None
     if body.schedule is not None:
@@ -671,7 +777,7 @@ async def update_connector(
         invalid = set(body.allowed_assertion_modes) - VALID_ASSERTION_MODES
         if invalid:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Invalid assertion modes: {sorted(invalid)}. Valid: {sorted(VALID_ASSERTION_MODES)}",
             )
         connector.allowed_assertion_modes = body.allowed_assertion_modes

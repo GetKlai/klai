@@ -412,9 +412,7 @@ class TestCallbackEndpoint:
             db.get = AsyncMock(return_value=mock_connector)
             db.commit = AsyncMock()
 
-            mock_store.encrypt_credentials = AsyncMock(
-                return_value=(b"ENCRYPTED_BLOB", {"access_token": "***", "refresh_token": "***"})
-            )
+            mock_store.encrypt_credentials = AsyncMock(return_value=(b"ENCRYPTED_BLOB", {}))
 
             response = await callback_provider(
                 provider="google_drive",
@@ -564,9 +562,7 @@ class TestInternalCredentialsWriteback:
                     "refresh_token": "placeholder-refresh-value",
                 }
             )
-            mock_store.encrypt_credentials = AsyncMock(
-                return_value=(b"NEW_ENCRYPTED", {"access_token": "***", "refresh_token": "***"})
-            )
+            mock_store.encrypt_credentials = AsyncMock(return_value=(b"NEW_ENCRYPTED", {}))
 
             await update_connector_credentials(
                 connector_id="conn-uuid-2",
@@ -627,9 +623,7 @@ class TestInternalCredentialsWriteback:
                     "refresh_token": "placeholder-old-refresh-value",
                 }
             )
-            mock_store.encrypt_credentials = AsyncMock(
-                return_value=(b"NEW_ENCRYPTED", {"access_token": "***", "refresh_token": "***"})
-            )
+            mock_store.encrypt_credentials = AsyncMock(return_value=(b"NEW_ENCRYPTED", {}))
 
             await update_connector_credentials(
                 connector_id="conn-uuid-ms-r9",
@@ -683,9 +677,7 @@ class TestInternalCredentialsWriteback:
                     "refresh_token": "placeholder-stored-refresh-value",
                 }
             )
-            mock_store.encrypt_credentials = AsyncMock(
-                return_value=(b"NEW_ENCRYPTED", {"access_token": "***", "refresh_token": "***"})
-            )
+            mock_store.encrypt_credentials = AsyncMock(return_value=(b"NEW_ENCRYPTED", {}))
 
             await update_connector_credentials(
                 connector_id="conn-uuid-gdrive",
@@ -863,9 +855,7 @@ class TestMsDocsProvider:
             db.get = AsyncMock(return_value=mock_connector)
             db.commit = AsyncMock()
 
-            mock_store.encrypt_credentials = AsyncMock(
-                return_value=(b"ENCRYPTED_BLOB", {"access_token": "***", "refresh_token": "***"})
-            )
+            mock_store.encrypt_credentials = AsyncMock(return_value=(b"ENCRYPTED_BLOB", {}))
 
             response = await callback_provider(
                 provider="ms_docs",
