@@ -757,6 +757,73 @@ def _llm_safety_short_circuit(
     return data
 
 
+_KLAI_SOURCES_METADATA_MARKER_RE = re.compile(
+    r"\n?<!--\s*klai_sources=[A-Za-z0-9_-]+={0,2}\s*-->\n?",
+    re.IGNORECASE,
+)
+_KLAI_BACKEND_FOOTER_HEADING_RE = re.compile(
+    r"(?im)^[ \t]*(?:\*\*)?(Bronnen|Agent activiteit)(?:\*\*)?[ \t]*$"
+)
+
+
+def _strip_klai_backend_footer_from_text(text: str) -> str:
+    """Remove Klai-managed citation/provenance footer from assistant history."""
+    without_marker = _KLAI_SOURCES_METADATA_MARKER_RE.sub("\n", text)
+    matches = list(_KLAI_BACKEND_FOOTER_HEADING_RE.finditer(without_marker))
+    first_activity_index = next(
+        (
+            index
+            for index, match in enumerate(matches)
+            if match.group(1).lower() == "agent activiteit"
+        ),
+        None,
+    )
+    if first_activity_index is None:
+        return without_marker.rstrip() if without_marker != text else text
+
+    cut_match = matches[first_activity_index]
+    for match in reversed(matches[:first_activity_index]):
+        if match.group(1).lower() == "bronnen":
+            cut_match = match
+            break
+    return without_marker[: cut_match.start()].rstrip()
+
+
+def _strip_klai_backend_footer_from_content(content: object) -> object:
+    if isinstance(content, str):
+        return _strip_klai_backend_footer_from_text(content)
+    if isinstance(content, list):
+        changed = False
+        stripped_parts: list[object] = []
+        for part in content:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                stripped_text = _strip_klai_backend_footer_from_text(part["text"])
+                if stripped_text != part["text"]:
+                    changed = True
+                    part = {**part, "text": stripped_text}
+            stripped_parts.append(part)
+        return stripped_parts if changed else content
+    return content
+
+
+def _sanitize_assistant_history_messages(messages: object) -> object:
+    """Strip backend-only footers from assistant messages before model input."""
+    if not isinstance(messages, list):
+        return messages
+    sanitized: list[object] = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            sanitized.append(message)
+            continue
+        content = message.get("content")
+        stripped_content = _strip_klai_backend_footer_from_content(content)
+        if stripped_content == content:
+            sanitized.append(message)
+        else:
+            sanitized.append({**message, "content": stripped_content})
+    return sanitized
+
+
 def _build_conversation_history(messages: list[dict]) -> list[dict]:
     """Return up to the last 6 turns (3 exchanges) of user/assistant history.
 
@@ -764,7 +831,12 @@ def _build_conversation_history(messages: list[dict]) -> list[dict]:
     Used by retrieval-api for coreference resolution ("hij" → "Jan Pietersen").
     """
     history = [
-        {"role": m["role"], "content": m["content"]}
+        {
+            "role": m["role"],
+            "content": _strip_klai_backend_footer_from_text(m["content"])
+            if m.get("role") == "assistant"
+            else m["content"],
+        }
         for m in messages[:-1]
         if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
     ]
@@ -2624,7 +2696,8 @@ class KlaiKnowledgeHook(CustomLogger):
         if call_type not in ("completion", "acompletion"):
             return data
 
-        messages = data.get("messages", [])
+        messages = _sanitize_assistant_history_messages(data.get("messages", []))
+        data["messages"] = messages
         query = _last_user_message(messages)
         if not query or _is_trivial(query):
             return data
