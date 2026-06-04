@@ -1987,11 +1987,6 @@ def _render_kb_citation_content(
         ):
             decision["no_citable_reason"] = "strict_refusal_no_supported_sources"
             return strict_refusal, [], True, decision
-        fallback_sources = _trusted_sources_visible_fallback(trusted_sources)
-        if fallback_sources:
-            decision["fallback"] = "document_level_trusted_sources"
-            decision["no_citable_reason"] = "selector_rejected_all_sources_fallback"
-            return composed.content or text, fallback_sources, False, decision
         if kb_narrow:
             decision["no_citable_reason"] = "selector_rejected_all_sources"
             return strict_refusal, [], True, decision
@@ -2135,32 +2130,6 @@ def _prepend_primary_upload_source(
         updated["label"] = str(index)
         relabelled.append(updated)
     return relabelled
-
-
-def _trusted_sources_visible_fallback(
-    trusted_sources: list[dict[str, Any]],
-    *,
-    max_sources: int = 3,
-) -> list[dict[str, Any]]:
-    """Render document-level sources when answer/source text matching is too strict."""
-    sources: list[dict[str, Any]] = []
-    seen_keys: set[str] = set()
-    for source in trusted_sources:
-        url = _normalise_guard_url(source.get("url"))
-        key = url or str(
-            source.get("artifact_id")
-            or source.get("source_id")
-            or source.get("title")
-            or source.get("source_label")
-            or ""
-        ).strip()
-        if not key or key in seen_keys:
-            continue
-        seen_keys.add(key)
-        sources.append(_source_with_metadata(source, label=str(len(sources) + 1)))
-        if len(sources) >= max_sources:
-            break
-    return sources
 
 
 def _plural_nl(count: int, singular: str, plural: str) -> str:

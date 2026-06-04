@@ -3308,21 +3308,18 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_falls_back_to_document_sources_when_selector_rejects(
+    async def test_post_call_guard_does_not_cite_document_sources_when_selector_rejects(
         self, monkeypatch, caplog
     ):
-        """LibreChat must still show provenance when trusted KB sources exist."""
+        """Retrieved docs are not answer citations when source support fails."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         caplog.set_level("WARNING", logger="klai_knowledge")
+        original_answer = "Frank Wolters trekt Data Readiness en Governance & Ethiek."
         response = SimpleNamespace(
             choices=[
                 SimpleNamespace(
-                    message=SimpleNamespace(
-                        content=(
-                            "Frank Wolters trekt Data Readiness en Governance & Ethiek."
-                        )
-                    )
+                    message=SimpleNamespace(content=original_answer)
                 )
             ]
         )
@@ -3346,7 +3343,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                         }
                     ],
                     # Deliberately no evidence_ids/source text match for the
-                    # selector. The fallback must still show the trusted doc.
+                    # selector. The retrieved doc must not be shown as an
+                    # answer citation when support cannot be established.
                     "trusted_sources": [
                         {
                             "label": "1",
@@ -3363,20 +3361,11 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert returned is response
         content = response.choices[0].message.content
-        assert "Frank Wolters trekt Data Readiness" in content
-        assert "**Bronnen**" in content
-        assert "- [Organogram](https://kb.getklai.test/organogram.pdf)" in content
-        assert "**Agent activiteit**" in content
-        assert "- Gebruikte bronnen: Organogram." in content
-        assert response.choices[0].message.sources == [
-            {
-                "label": "1",
-                "title": "Organogram",
-                "url": "https://kb.getklai.test/organogram.pdf",
-                "evidence_ids": ["different-evidence-id"],
-            }
-        ]
-        assert "selector_rejected_all_sources_fallback" in caplog.text
+        assert content == original_answer
+        assert "**Bronnen**" not in content
+        assert "Organogram" not in content
+        assert not hasattr(response.choices[0].message, "sources")
+        assert "selector_rejected_all_sources_fallback" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_post_call_guard_renders_uploaded_document_source_without_url(
