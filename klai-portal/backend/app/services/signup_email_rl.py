@@ -29,8 +29,8 @@ from app.services.redis_client import get_redis_pool
 logger = structlog.get_logger(__name__)
 _stdlib_logger = logging.getLogger(__name__)
 
-# REQ-19.1: 3 successful signups within 24h → 429 on the 4th attempt.
-EMAIL_RL_LIMIT = 3
+# REQ-19.1: cap repeated signup attempts for one normalised email.
+EMAIL_RL_LIMIT = 10
 # REQ-19.2: 24-hour window.
 EMAIL_RL_WINDOW_SECONDS = 24 * 60 * 60
 
