@@ -14,7 +14,7 @@ _BASE: dict = {
     "first_name": "Jan",
     "last_name": "Jansen",
     "email": "founder@bedrijf.nl",
-    "password": "Correct!Battery!Horse!",
+    "password": "Correct horse battery staple 2026!",
     "company_name": "Bedrijf BV",
     "preferred_language": "nl",
 }

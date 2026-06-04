@@ -151,7 +151,7 @@ async def test_endpoint_returns_429_when_rate_limited() -> None:
         first_name="Eve",
         last_name="Attacker",
         email="attacker@example.com",
-        password="strong-passphrase-for-test",
+        password="Correct horse battery staple 2026!",
         company_name="ACME",
     )
 
@@ -187,7 +187,7 @@ async def test_free_email_rejection_does_not_consume_rate_limit() -> None:
         first_name="Eve",
         last_name="User",
         email="eve@gmail.com",
-        password="strong-passphrase-for-test",
+        password="Correct horse battery staple 2026!",
         company_name="ACME",
     )
 
@@ -210,7 +210,7 @@ async def test_invited_signup_bypasses_email_rate_limit() -> None:
         first_name="Eve",
         last_name="User",
         email="eve@gmail.com",
-        password="strong-passphrase-for-test",
+        password="Correct horse battery staple 2026!",
         company_name="ACME",
         invite_token="valid-token",
     )
@@ -248,7 +248,7 @@ async def test_endpoint_passes_rate_limit_then_proceeds() -> None:
         first_name="Eve",
         last_name="User",
         email="real-user@example.com",
-        password="strong-passphrase-for-test",
+        password="Correct horse battery staple 2026!",
         company_name="ACME",
     )
 
