@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from helpers import make_request
 
 
 class TestPendingEntrySchema:
@@ -71,7 +72,7 @@ def _zitadel_mocks(email: str = "test@acme.nl") -> MagicMock:
 
 class TestIdpCallbackCase1NoMemberNoDomain:
     @pytest.mark.asyncio
-    async def test_finalizes_login_before_no_account_routing(self) -> None:
+    async def test_redirects_to_no_account_without_finalizing_login(self) -> None:
         from app.api.auth import idp_callback
 
         mr = MagicMock()
@@ -86,16 +87,29 @@ class TestIdpCallbackCase1NoMemberNoDomain:
             patch("app.api.auth.emit_event"),
             patch("app.api.auth.audit.log_event", AsyncMock()),
             patch("app.api.auth._get_tenant_slug_allowlist", AsyncMock(return_value={"acme"})),
+            patch("app.api.auth._get_sso_fernet") as mock_fernet,
         ):
-            response = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
+            mock_fernet.return_value.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
+            response = await idp_callback(
+                id="intent-1",
+                token="tok-1",
+                auth_request_id="ar-1",
+                request=make_request(),
+                db=mock_db,
+            )
         assert response.status_code == 302
-        assert "acme.getklai.com" in response.headers.get("location", "")
-        assert "klai_sso" in response.headers.get("set-cookie", "")
-        zit.finalize_auth_request.assert_awaited_once_with(
-            auth_request_id="ar-1",
-            session_id="sid",
-            session_token="stk",
-        )
+        assert response.headers.get("location") == "/no-account?email=test%40acme.nl"
+        assert "klai_sso" not in response.headers.get("set-cookie", "")
+        assert "klai_idp_pending" in response.headers.get("set-cookie", "")
+        pending_payload = mock_fernet.return_value.encrypt.call_args.args[0]
+        assert b'"session_id": "sid"' in pending_payload
+        assert b'"session_token": "stk"' in pending_payload
+        assert b'"zitadel_user_id": "zuser1"' in pending_payload
+        assert b'"email": "test@acme.nl"' in pending_payload
+        assert b'"has_valid_invite": false' in pending_payload
+        assert b'"ua_hash": ""' in pending_payload
+        assert b'"ip_subnet": "127.0.0.0"' in pending_payload
+        zit.finalize_auth_request.assert_not_awaited()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("email", ["user@gmail.com", "user@hotmail.nl", "user@protonmail.com"])
@@ -106,16 +120,31 @@ class TestIdpCallbackCase1NoMemberNoDomain:
         mr.scalars.return_value.all.return_value = []
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(return_value=mr)
+        zit = _zitadel_mocks(email)
         with (
-            patch("app.api.auth.zitadel", _zitadel_mocks(email)),
+            patch("app.api.auth.zitadel", zit),
             patch("app.api.auth.emit_event"),
             patch("app.api.auth.audit.log_event", AsyncMock()),
             patch("app.api.auth._get_tenant_slug_allowlist", AsyncMock(return_value={"acme"})),
+            patch("app.api.auth._get_sso_fernet") as mock_fernet,
         ):
-            response = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
+            mock_fernet.return_value.encrypt = MagicMock(return_value=b"ENCRYPTED_PENDING")
+            response = await idp_callback(
+                id="intent-1",
+                token="tok-1",
+                auth_request_id="ar-1",
+                request=make_request(),
+                db=mock_db,
+            )
         assert response.status_code == 302
-        assert "acme.getklai.com" in response.headers.get("location", "")
-        assert "klai_sso" in response.headers.get("set-cookie", "")
+        assert response.headers.get("location") == f"/no-account?email={email.replace('@', '%40')}"
+        assert "klai_sso" not in response.headers.get("set-cookie", "")
+        assert "klai_idp_pending" in response.headers.get("set-cookie", "")
+        pending_payload = mock_fernet.return_value.encrypt.call_args.args[0]
+        assert b'"has_valid_invite": false' in pending_payload
+        assert b'"ua_hash": ""' in pending_payload
+        assert b'"ip_subnet": "127.0.0.0"' in pending_payload
+        zit.finalize_auth_request.assert_not_awaited()
         assert mock_db.execute.await_count == 1
 
 
@@ -140,7 +169,13 @@ class TestIdpCallbackCase2SingleMemberNoDomain:
             patch("app.api.auth.emit_event"),
             patch("app.api.auth._get_tenant_slug_allowlist", AsyncMock(return_value={"acme"})),
         ):
-            response = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
+            response = await idp_callback(
+                id="intent-1",
+                token="tok-1",
+                auth_request_id="ar-1",
+                request=make_request(),
+                db=mock_db,
+            )
         assert response.status_code == 302
         assert "acme.getklai.com" in response.headers.get("location", "")
         assert "klai_sso" in response.headers.get("set-cookie", "")
@@ -165,7 +200,13 @@ class TestIdpCallbackCase3SingleDomainMatch:
             inst = AsyncMock()
             inst.store = AsyncMock(return_value="test-ref-uuid")
             MockSvc.return_value = inst
-            response = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
+            response = await idp_callback(
+                id="intent-1",
+                token="tok-1",
+                auth_request_id="ar-1",
+                request=make_request(),
+                db=mock_db,
+            )
         assert response.status_code == 302
         loc = response.headers.get("location", "")
         assert "/select-workspace" in loc
@@ -189,7 +230,13 @@ class TestIdpCallbackCase3SingleDomainMatch:
             inst = AsyncMock()
             inst.store = AsyncMock(return_value="r")
             MockSvc.return_value = inst
-            await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
+            await idp_callback(
+                id="intent-1",
+                token="tok-1",
+                auth_request_id="ar-1",
+                request=make_request(),
+                db=mock_db,
+            )
         kw = inst.store.call_args.kwargs
         entries = kw.get("entries", [])
         assert len(entries) == 1
@@ -217,7 +264,13 @@ class TestIdpCallbackCase4Multiple:
             inst = AsyncMock()
             inst.store = AsyncMock(return_value="multi")
             MockSvc.return_value = inst
-            response = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
+            response = await idp_callback(
+                id="intent-1",
+                token="tok-1",
+                auth_request_id="ar-1",
+                request=make_request(),
+                db=mock_db,
+            )
         assert response.status_code == 302
         assert "/select-workspace" in response.headers.get("location", "")
 
@@ -239,7 +292,13 @@ class TestIdpCallbackCase4Multiple:
             inst = AsyncMock()
             inst.store = AsyncMock(return_value="mixed")
             MockSvc.return_value = inst
-            await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=mock_db)
+            await idp_callback(
+                id="intent-1",
+                token="tok-1",
+                auth_request_id="ar-1",
+                request=make_request(),
+                db=mock_db,
+            )
         kw = inst.store.call_args.kwargs
         entries = kw.get("entries", [])
         kinds = {e["kind"] for e in entries}

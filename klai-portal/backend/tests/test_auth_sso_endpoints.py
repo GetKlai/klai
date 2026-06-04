@@ -10,6 +10,8 @@ All Zitadel HTTP calls mocked via respx against the real
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import httpx
 import pytest
 import respx
@@ -35,12 +37,18 @@ async def test_sso_complete_happy_path(respx_zitadel: respx.MockRouter) -> None:
     )
     body = SSOCompleteRequest(auth_request_id="ar-sso-1")
     cookie = _make_sso_cookie()
+    response = MagicMock()
     audit_patch, emit_patch = _audit_emit_patches()
 
     with capture_logs() as captured, audit_patch, emit_patch:
-        result = await sso_complete(body=body, klai_sso=cookie)
+        result = await sso_complete(body=body, response=response, klai_sso=cookie)
 
     assert result.callback_url == "https://chat.getklai.com/cb"
+    response.delete_cookie.assert_called_once_with(
+        key="klai_idp_pending",
+        domain=".getklai.com",
+        path="/",
+    )
     # REQ-4.4: SSO success is silent — no audit log, no failure event
     assert _capture_events(captured, "sso_complete_failed") == []
 
@@ -57,7 +65,7 @@ async def test_sso_complete_missing_cookie(respx_zitadel: respx.MockRouter) -> N
 
     with capture_logs() as captured, audit_patch, emit_patch:
         with pytest.raises(HTTPException) as exc:
-            await sso_complete(body=body, klai_sso=None)
+            await sso_complete(body=body, response=MagicMock(), klai_sso=None)
 
     assert exc.value.status_code == 401
     assert exc.value.detail == "No SSO session"
@@ -83,7 +91,7 @@ async def test_sso_complete_tampered_cookie(respx_zitadel: respx.MockRouter) -> 
 
     with capture_logs() as captured, audit_patch, emit_patch:
         with pytest.raises(HTTPException) as exc:
-            await sso_complete(body=body, klai_sso="not-a-valid-fernet-token")
+            await sso_complete(body=body, response=MagicMock(), klai_sso="not-a-valid-fernet-token")
 
     assert exc.value.status_code == 401
     assert exc.value.detail == "SSO cookie invalid"
@@ -112,7 +120,7 @@ async def test_sso_complete_finalize_5xx(respx_zitadel: respx.MockRouter) -> Non
 
     with capture_logs() as captured, audit_patch, emit_patch:
         with pytest.raises(HTTPException) as exc:
-            await sso_complete(body=body, klai_sso=cookie)
+            await sso_complete(body=body, response=MagicMock(), klai_sso=cookie)
 
     assert exc.value.status_code == 401
     assert exc.value.detail == "SSO session no longer valid"
