@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { evaluateSignupPassword, hasSignupPasswordSymbol } from '../password-strength'
+import { basicSignupPasswordIssues, evaluateSignupPassword, hasSignupPasswordSymbol } from '../password-strength'
 
 describe('signup password strength', () => {
   it('requires the current Zitadel-compatible symbol rule', () => {
@@ -9,7 +9,7 @@ describe('signup password strength', () => {
   })
 
   it('accepts a strong passphrase with a symbol', async () => {
-    const result = await evaluateSignupPassword('correct horse battery staple!', [
+    const result = await evaluateSignupPassword('Correct horse battery staple 2026!', [
       'mark@example.com',
       'Mark',
       'Example BV',
@@ -17,6 +17,12 @@ describe('signup password strength', () => {
 
     expect(result.isAcceptable).toBe(true)
     expect(result.issues).toEqual([])
+  })
+
+  it('mirrors Zitadel composition requirements before submit', () => {
+    expect(basicSignupPasswordIssues('correct horse battery staple 2026!')).toContain('missing_uppercase')
+    expect(basicSignupPasswordIssues('Correct horse battery staple!')).toContain('missing_number')
+    expect(basicSignupPasswordIssues('Correct horse battery staple 2026')).toContain('missing_symbol')
   })
 
   it('rejects passwords based on personal context', async () => {

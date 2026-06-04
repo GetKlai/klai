@@ -311,6 +311,9 @@ function SignupPage() {
 
 function signupPasswordIssueMessage(issue: SignupPasswordIssue | undefined) {
   if (issue === 'too_short') return m.signup_password_too_short()
+  if (issue === 'missing_uppercase') return m.signup_password_missing_uppercase()
+  if (issue === 'missing_lowercase') return m.signup_password_missing_lowercase()
+  if (issue === 'missing_number') return m.signup_password_missing_number()
   if (issue === 'missing_symbol') return m.signup_password_missing_symbol()
   return m.signup_password_too_weak()
 }
