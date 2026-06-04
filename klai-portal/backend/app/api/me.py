@@ -59,6 +59,7 @@ class MeResponse(BaseModel):
     provisioning_status: str = "pending"
     mfa_enrolled: bool = False
     mfa_policy: str = "optional"
+    requires_2fa_setup: bool = False
     preferred_language: Literal["nl", "en"] = "nl"
     portal_role: str = "personal"
     products: list[str] = []
@@ -194,6 +195,7 @@ async def me(
         provisioning_status=provisioning_status,
         mfa_enrolled=mfa_enrolled,
         mfa_policy=mfa_policy,
+        requires_2fa_setup=mfa_policy == "required" and not mfa_enrolled,
         preferred_language=preferred_language,
         portal_role=portal_role,
         products=_products,

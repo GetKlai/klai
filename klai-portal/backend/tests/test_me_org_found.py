@@ -99,6 +99,50 @@ class TestMeOrgFound:
             response = await me(credentials=mock_credentials, db=mock_db)
 
         assert response.org_found is True
+        assert response.requires_2fa_setup is False
+
+    @pytest.mark.asyncio
+    async def test_required_mfa_without_enrolment_sets_setup_flag(self) -> None:
+        """Required org MFA should tell the SPA to keep the user in the setup flow."""
+        from app.api.me import me
+
+        org = _mock_org()
+        org.mfa_policy = "required"
+        portal_user = _mock_portal_user()
+        perms = _mock_perms(org_id=org.id)
+
+        mock_row = MagicMock()
+        mock_row.__iter__ = lambda self: iter((org, portal_user))
+
+        mock_result = MagicMock()
+        mock_result.one_or_none.return_value = mock_row
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        mock_db.commit = AsyncMock()
+
+        mock_credentials = MagicMock()
+        mock_credentials.credentials = "test-token"
+
+        userinfo = {
+            "sub": "user-123",
+            "email": "test@acme.nl",
+            "name": "Test User",
+        }
+
+        with (
+            patch("app.api.me.zitadel") as mock_zitadel,
+            patch("app.api.me.resolve_user_permissions", new=AsyncMock(return_value=perms)),
+            patch("app.api.me.set_tenant", new_callable=AsyncMock),
+        ):
+            mock_zitadel.get_userinfo = AsyncMock(return_value=userinfo)
+            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+
+            response = await me(credentials=mock_credentials, db=mock_db)
+
+        assert response.mfa_policy == "required"
+        assert response.mfa_enrolled is False
+        assert response.requires_2fa_setup is True
 
     @pytest.mark.asyncio
     async def test_org_found_false_when_no_portal_user(self) -> None:

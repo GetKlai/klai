@@ -20,6 +20,7 @@ import pytest
 import respx
 from auth_test_helpers import (
     _audit_emit_patches,
+    _capture_events,
     _expected_email_hash,
     _make_db_mock,
     _make_login_body,
@@ -208,6 +209,45 @@ async def test_happy_path_optional_no_mfa_sets_cookie(respx_zitadel: respx.MockR
     assert result.status == "ok"
     response.set_cookie.assert_called_once()  # session cookie minted by _finalize_and_set_cookie
     assert _mfa_events(captured) == []
+
+
+# ---------------------------------------------------------------------------
+# Scenario 5a — required policy + no MFA → setup bootstrap, not lockout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_required_no_mfa_allows_setup_bootstrap(respx_zitadel: respx.MockRouter) -> None:
+    respx_zitadel.post("/v2/users").mock(
+        return_value=httpx.Response(
+            200, json={"result": [{"userId": "uid-req", "details": {"resourceOwner": "zorg-req"}}]}
+        )
+    )
+    auth_methods = respx_zitadel.get("/v2/users/uid-req/authentication_methods").mock(
+        return_value=httpx.Response(200, json={"authMethodTypes": []})
+    )
+    respx_zitadel.post("/v2/sessions").mock(return_value=httpx.Response(200, json=_session_ok()))
+    respx_zitadel.post(url__regex=r"/v2/oidc/auth_requests/.+").mock(
+        return_value=httpx.Response(200, json={"callbackUrl": "https://chat.getklai.com/cb"})
+    )
+
+    db = _make_db_mock(org_mfa_policy="required")
+    response = MagicMock()
+    audit_patch, emit_patch = _audit_emit_patches()
+
+    with capture_logs() as captured, audit_patch, emit_patch:
+        result = await login(body=_make_login_body(), response=response, request=make_request(), db=db)
+
+    assert result.status == "ok"
+    response.set_cookie.assert_called_once()
+    assert auth_methods.call_count == 2  # has_totp UI probe + required-policy has_any_mfa check
+    assert _mfa_events(captured) == []
+
+    setup_events = _capture_events(captured, "mfa_setup_required")
+    assert len(setup_events) == 1
+    assert setup_events[0]["reason"] == "no_mfa_enrolled"
+    assert setup_events[0]["mfa_policy"] == "required"
+    assert setup_events[0]["outcome"] == "allow-setup"
 
 
 # ---------------------------------------------------------------------------

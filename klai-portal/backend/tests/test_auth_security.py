@@ -294,8 +294,8 @@ class TestMFAPolicyEnforcement:
     """Verify that org-level MFA policy is enforced during login."""
 
     @pytest.mark.asyncio
-    async def test_mfa_required_no_mfa_enrolled_returns_403(self) -> None:
-        """When org.mfa_policy='required' and user has no MFA, login returns 403."""
+    async def test_mfa_required_no_mfa_enrolled_allows_setup_session(self) -> None:
+        """When org.mfa_policy='required' and user has no MFA, login creates the setup session."""
         from app.api.auth import LoginRequest, login
 
         body = LoginRequest(email="user@test.com", password="pass123", auth_request_id="ar-mfa-1")
@@ -312,6 +312,7 @@ class TestMFAPolicyEnforcement:
             mock_zitadel.has_totp = AsyncMock(return_value=False)
             mock_zitadel.create_session_with_password = AsyncMock(return_value=_make_session_response())
             mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
 
             # Portal user belongs to an org with mfa_policy=required
             mock_portal_user = MagicMock()
@@ -323,11 +324,10 @@ class TestMFAPolicyEnforcement:
 
             mock_audit.log_event = AsyncMock()
 
-            with pytest.raises(Exception) as exc_info:
-                await login(body=body, response=response, request=make_request(), db=db)
+            result = await login(body=body, response=response, request=make_request(), db=db)
 
-            assert exc_info.value.status_code == 403  # type: ignore[union-attr]
-            assert "MFA required" in str(exc_info.value.detail)  # type: ignore[union-attr]
+            assert result.status == "ok"
+            response.set_cookie.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_mfa_required_with_mfa_enrolled_proceeds(self, fake_redis) -> None:
