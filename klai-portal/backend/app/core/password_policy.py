@@ -70,7 +70,7 @@ def validate_password_strength(password: str, *, user_inputs: Iterable[str] = ()
 def is_zitadel_password_policy_error(exc: object) -> bool:
     """Return True for Zitadel 400 responses caused by password policy drift."""
     response = getattr(exc, "response", None)
-    if getattr(response, "status_code", None) != 400:
+    if response is None or getattr(response, "status_code", None) != 400:
         return False
 
     payload = ""
