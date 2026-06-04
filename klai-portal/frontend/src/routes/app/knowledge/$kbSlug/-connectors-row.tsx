@@ -36,6 +36,7 @@ interface ConnectorRowProps {
   isOwner: boolean
   isSyncing: boolean
   liveProgress?: ConnectorLiveProgress
+  syncError?: string
   reconnecting: boolean
   reconnectFailed: boolean
   onSync: (connectorId: string) => void
@@ -50,6 +51,7 @@ export function ConnectorRow({
   isOwner,
   isSyncing,
   liveProgress,
+  syncError,
   reconnecting,
   reconnectFailed,
   onSync,
@@ -108,6 +110,11 @@ export function ConnectorRow({
         {connector.last_sync_documents_ok != null && connector.last_sync_documents_ok > 0 && (
           <p className="mt-0.5 text-xs text-gray-400 tabular-nums">
             {connector.last_sync_documents_ok.toLocaleString()} {m.connectors_documents_indexed()}
+          </p>
+        )}
+        {syncError && (
+          <p className="mt-1 max-w-44 truncate text-xs text-[var(--color-destructive)]" title={syncError}>
+            {syncError}
           </p>
         )}
         {/* SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-5/REQ-7 - actionable error badge. */}

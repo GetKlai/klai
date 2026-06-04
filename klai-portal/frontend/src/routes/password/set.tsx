@@ -64,6 +64,8 @@ function PasswordSetPage() {
         if (resp.status === 400 && isInvalidResetLinkDetail(data?.detail)) {
           await clearExistingBffSession()
           setInvalidLink(true)
+          setError(m.set_error_invalid_link())
+          return
         }
         setError(data?.detail ?? m.set_error_server())
         return

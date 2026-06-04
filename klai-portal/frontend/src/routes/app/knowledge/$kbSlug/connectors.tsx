@@ -21,6 +21,7 @@ import type { ConnectorSummary, KnowledgeBase, MembersResponse } from './-kb-typ
 import { kbQueryKeys } from '@/lib/kb-query-keys'
 import { useConnectorDelete, useConnectorReconnect, useConnectorSync } from './-connectors-hooks'
 import { ConnectorRow, type ConnectorLiveProgress } from './-connectors-row'
+import { summarizeConnectorSyncError } from './-connectors-sync-errors'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/connectors')({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -87,37 +88,45 @@ function ConnectorsTab() {
   // fields - they live on connector.sync_runs and are surfaced by
   // SyncRunResolver. Backend caches the upstream call 30s per remote_job_id,
   // so a UI-side 5s poll only generates one upstream call every six ticks.
-  const runningConnectorIds = connectors
-    .filter((c) => c.last_sync_status?.toUpperCase() === 'RUNNING')
-    .map((c) => c.id)
-  const liveProgressQueries = useQueries({
-    queries: runningConnectorIds.map((connectorId) => ({
-      queryKey: ['connector-sync-latest', kbSlug, connectorId],
-      queryFn: async () => {
-        const runs = await apiFetch<Array<{
-          id: string
-          status: string
-          pages_done?: number | null
-          pages_total?: number | null
-          live_resolution_failed?: boolean
-        }>>(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}/syncs?limit=1`)
-        return runs[0] ?? null
-      },
-      refetchInterval: 5000,
-      enabled: auth.isAuthenticated,
-    })),
+  const latestRunConnectors = connectors
+    .filter((c) => ['RUNNING', 'FAILED', 'AUTH_ERROR'].includes(c.last_sync_status?.toUpperCase() ?? ''))
+  const latestRunConnectorIds = latestRunConnectors.map((c) => c.id)
+  const latestRunQueries = useQueries({
+    queries: latestRunConnectors.map((connector) => {
+      const connectorId = connector.id
+      return {
+        queryKey: ['connector-sync-latest', kbSlug, connectorId],
+        queryFn: async () => {
+          const runs = await apiFetch<Array<{
+            id: string
+            status: string
+            documents_failed?: number | null
+            error_details?: Array<Record<string, unknown>> | null
+            pages_done?: number | null
+            pages_total?: number | null
+            live_resolution_failed?: boolean
+          }>>(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}/syncs?limit=1`)
+          return runs[0] ?? null
+        },
+        refetchInterval: connector.last_sync_status?.toUpperCase() === 'RUNNING' ? 5000 : false,
+        enabled: auth.isAuthenticated,
+      }
+    }),
   })
   // Build an id → live-progress map for the JSX below. Empty for terminal rows.
   const liveProgressById: Record<string, ConnectorLiveProgress | undefined> = {}
-  runningConnectorIds.forEach((connectorId, index) => {
-    const run = liveProgressQueries[index]?.data
-    if (run) {
+  const syncErrorById: Record<string, string | undefined> = {}
+  latestRunConnectorIds.forEach((connectorId, index) => {
+    const run = latestRunQueries[index]?.data
+    if (run?.status?.toUpperCase() === 'RUNNING') {
       liveProgressById[connectorId] = {
         pagesDone: run.pages_done ?? null,
         pagesTotal: run.pages_total ?? null,
         liveResolutionFailed: run.live_resolution_failed ?? false,
       }
     }
+    const errorSummary = summarizeConnectorSyncError(run)
+    if (errorSummary) syncErrorById[connectorId] = errorSummary
   })
 
   if (isLoading) {
@@ -169,6 +178,7 @@ function ConnectorsTab() {
                 isOwner={isOwner}
                 isSyncing={syncingIds.has(connector.id)}
                 liveProgress={liveProgressById[connector.id]}
+                syncError={syncErrorById[connector.id]}
                 reconnecting={reconnectingId === connector.id}
                 reconnectFailed={reconnectErrorId === connector.id}
                 onSync={(connectorId) => void sync(connectorId)}

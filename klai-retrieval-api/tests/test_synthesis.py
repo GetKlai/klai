@@ -436,3 +436,12 @@ class TestSynthesize:
         assert items[0] == "I cannot answer this reliably from the available knowledge sources."
         assert items[1]["citations"] == []
         assert items[1]["evidence_pack"]["no_citable_reason"] == "no_evidence"
+
+    async def test_no_citable_evidence_refuses_in_user_language(self):
+        items = []
+        async for item in synthesize("Wat staat er over Obsidian?", [], []):
+            items.append(item)
+
+        assert items[0] == "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+        assert items[1]["citations"] == []
+        assert items[1]["evidence_pack"]["no_citable_reason"] == "no_evidence"
