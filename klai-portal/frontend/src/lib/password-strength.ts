@@ -91,13 +91,14 @@ export async function evaluateSignupPassword(
   userInputs: Array<string | null | undefined>,
 ): Promise<SignupPasswordStrength> {
   const context = userInputs.map((value) => value?.trim()).filter((value): value is string => Boolean(value))
+  const issues = basicSignupPasswordIssues(password)
   const check = await loadZxcvbn()
   const result = check(password, context)
-  const score = Number(result.score)
-  const issues = basicSignupPasswordIssues(password)
-  if (password.length > 0 && score < SIGNUP_PASSWORD_MIN_SCORE) {
+  const rawScore = Number(result.score)
+  if (password.length > 0 && rawScore < SIGNUP_PASSWORD_MIN_SCORE) {
     issues.push('too_predictable')
   }
+  const score = issues.length === 0 ? rawScore : Math.min(rawScore, SIGNUP_PASSWORD_MIN_SCORE - 1)
 
   return {
     score,
