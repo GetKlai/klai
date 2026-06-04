@@ -6,6 +6,7 @@ import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { API_BASE } from '@/lib/api'
 import { readCsrfCookie } from '@/lib/auth'
+import { basicSignupPasswordIssues } from '@/lib/password-strength'
 
 type SearchParams = {
   userID?: string
@@ -39,10 +40,7 @@ function PasswordSetPage() {
     e.preventDefault()
     setError(null)
 
-    if (
-      password.length < 12 ||
-      !Array.from(password).some((char) => /[^\p{L}\p{N}\s]/u.test(char))
-    ) {
+    if (basicSignupPasswordIssues(password).length > 0) {
       setError(m.set_error_min_length())
       return
     }

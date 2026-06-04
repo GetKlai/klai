@@ -1,7 +1,13 @@
 export const SIGNUP_PASSWORD_MIN_LENGTH = 12
 export const SIGNUP_PASSWORD_MIN_SCORE = 3
 
-export type SignupPasswordIssue = 'too_short' | 'missing_symbol' | 'too_predictable'
+export type SignupPasswordIssue =
+  | 'too_short'
+  | 'missing_uppercase'
+  | 'missing_lowercase'
+  | 'missing_number'
+  | 'missing_symbol'
+  | 'too_predictable'
 
 export interface SignupPasswordStrength {
   score: number
@@ -37,10 +43,31 @@ export function hasSignupPasswordSymbol(password: string) {
   return Array.from(password).some((char) => /[^\p{L}\p{N}\s]/u.test(char))
 }
 
+export function hasSignupPasswordUppercase(password: string) {
+  return Array.from(password).some((char) => /\p{Lu}/u.test(char))
+}
+
+export function hasSignupPasswordLowercase(password: string) {
+  return Array.from(password).some((char) => /\p{Ll}/u.test(char))
+}
+
+export function hasSignupPasswordNumber(password: string) {
+  return Array.from(password).some((char) => /\p{N}/u.test(char))
+}
+
 export function basicSignupPasswordIssues(password: string) {
   const issues: SignupPasswordIssue[] = []
   if (password.length < SIGNUP_PASSWORD_MIN_LENGTH) {
     issues.push('too_short')
+  }
+  if (!hasSignupPasswordUppercase(password)) {
+    issues.push('missing_uppercase')
+  }
+  if (!hasSignupPasswordLowercase(password)) {
+    issues.push('missing_lowercase')
+  }
+  if (!hasSignupPasswordNumber(password)) {
+    issues.push('missing_number')
   }
   if (!hasSignupPasswordSymbol(password)) {
     issues.push('missing_symbol')
@@ -50,7 +77,7 @@ export function basicSignupPasswordIssues(password: string) {
 
 export function estimateSignupPasswordStrength(password: string): SignupPasswordStrength {
   const issues = basicSignupPasswordIssues(password)
-  const score = password.length >= SIGNUP_PASSWORD_MIN_LENGTH && hasSignupPasswordSymbol(password) ? 2 : 0
+  const score = issues.length === 0 ? 2 : 0
   return {
     score,
     issues,
