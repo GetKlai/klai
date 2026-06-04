@@ -61,6 +61,11 @@ if (E2E_MODE === 'isolated-tenant') {
 const STORAGE_STATE_ISOLATED = path.resolve(__dirname, 'storageState.json')
 const STORAGE_STATE_VOYS = path.resolve(__dirname, 'storageState.voys.json')
 const STORAGE_STATE = E2E_MODE === 'voys-attached' ? STORAGE_STATE_VOYS : STORAGE_STATE_ISOLATED
+const BROWSER_CHANNEL = process.env.PLAYWRIGHT_BROWSER_CHANNEL
+const DESKTOP_CHROME = {
+  ...devices['Desktop Chrome'],
+  ...(BROWSER_CHANNEL ? { channel: BROWSER_CHANNEL } : {}),
+}
 
 export default defineConfig({
   testDir: path.resolve(__dirname, '..'),
@@ -92,7 +97,7 @@ export default defineConfig({
             name: 'authenticated-journeys',
             testIgnore: ['J01-login.spec.ts'],
             use: {
-              ...devices['Desktop Chrome'],
+              ...DESKTOP_CHROME,
               storageState: STORAGE_STATE,
             },
           },
@@ -102,7 +107,7 @@ export default defineConfig({
             name: 'login',
             testMatch: ['J01-login.spec.ts'],
             use: {
-              ...devices['Desktop Chrome'],
+              ...DESKTOP_CHROME,
               storageState: undefined,
             },
           },
@@ -111,7 +116,7 @@ export default defineConfig({
             testIgnore: ['J01-login.spec.ts'],
             dependencies: ['login'],
             use: {
-              ...devices['Desktop Chrome'],
+              ...DESKTOP_CHROME,
               storageState: STORAGE_STATE,
             },
           },

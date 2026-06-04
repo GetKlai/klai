@@ -7,7 +7,7 @@ integration test in ``test_signup_email_rl_integration``.
 
 Covers:
 - REQ-19.3: email normalisation (lowercase + strip +alias).
-- REQ-19.1, REQ-19.2: INCR + EXPIRE flow, 4th attempt blocked.
+- REQ-19.1, REQ-19.2: INCR + EXPIRE flow, 11th attempt blocked.
 - REQ-19.4: fail-open when Redis is unreachable.
 """
 
@@ -63,14 +63,14 @@ def _redis_mock(incr_returns: list[int]) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_first_three_attempts_allowed() -> None:
-    redis_mock = _redis_mock([1, 2, 3])
+async def test_first_ten_attempts_allowed() -> None:
+    redis_mock = _redis_mock(list(range(1, EMAIL_RL_LIMIT + 1)))
     with patch("app.services.signup_email_rl.get_redis_pool", AsyncMock(return_value=redis_mock)):
-        for expected_count in (1, 2, 3):
+        for expected_count in range(1, EMAIL_RL_LIMIT + 1):
             allowed = await check_signup_email_rate_limit("attacker@example.com")
             assert allowed is True
             del expected_count
-    assert redis_mock.incr.await_count == 3
+    assert redis_mock.incr.await_count == EMAIL_RL_LIMIT
     # EXPIRE only on the first INCR (count == 1).
     redis_mock.expire.assert_awaited_once()
     args, _ = redis_mock.expire.call_args
@@ -78,11 +78,11 @@ async def test_first_three_attempts_allowed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fourth_attempt_blocked() -> None:
-    redis_mock = _redis_mock([4])
+async def test_attempt_over_limit_blocked() -> None:
+    redis_mock = _redis_mock([EMAIL_RL_LIMIT + 1])
     with patch("app.services.signup_email_rl.get_redis_pool", AsyncMock(return_value=redis_mock)):
         allowed = await check_signup_email_rate_limit("attacker@example.com")
-    assert allowed is False, f"REQ-19.1: 4th attempt within window must be blocked. limit={EMAIL_RL_LIMIT}"
+    assert allowed is False, f"REQ-19.1: attempt over limit within window must be blocked. limit={EMAIL_RL_LIMIT}"
 
 
 @pytest.mark.asyncio
@@ -132,7 +132,7 @@ async def test_fail_open_when_redis_call_raises() -> None:
 
 
 def test_constants() -> None:
-    assert EMAIL_RL_LIMIT == 3
+    assert EMAIL_RL_LIMIT == 10
     assert EMAIL_RL_WINDOW_SECONDS == 24 * 60 * 60
 
 
