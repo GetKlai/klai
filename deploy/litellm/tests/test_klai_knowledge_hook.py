@@ -2,9 +2,7 @@
 
 litellm is not installed locally (runs in Docker), so we mock the import.
 """
-import base64
 import importlib
-import json
 import sys
 import types
 from contextlib import contextmanager
@@ -88,12 +86,6 @@ def _load_hook(monkeypatch, extra_env=None, *, mock_fire_and_forget=True):
         monkeypatch.setattr(klai_knowledge, "_fire_gap_event", MagicMock())
         monkeypatch.setattr(klai_knowledge, "_fire_retrieval_log", MagicMock())
     return klai_knowledge
-
-
-def _decode_sources_marker(content):
-    encoded = content.split("<!-- klai_sources=", 1)[1].split(" -->", 1)[0]
-    padding = "=" * (-len(encoded) % 4)
-    return json.loads(base64.urlsafe_b64decode(f"{encoded}{padding}").decode())
 
 
 def _make_cache(feature_enabled: bool | None = None, feature: dict | None = None):
@@ -2707,38 +2699,6 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             "\n\n**Bronnen**\n- Verantwoordelijkheden per bouwblok.pdf"
         )
 
-    def test_librechat_source_split_keeps_native_and_visible_fallback(self, monkeypatch):
-        """URL-backed sources get metadata and remain visible in Markdown."""
-        mod = _load_hook(monkeypatch)
-        sources = [
-            {
-                "label": "1",
-                "title": "Public doc",
-                "url": "https://docs.getklai.com/public",
-            },
-            {
-                "label": "2",
-                "title": "Upload.pdf",
-                "url": "",
-                "artifact_id": "artifact-upload",
-            },
-        ]
-
-        structured_sources, visible_sources = mod._split_sources_for_librechat_render(sources)
-        content = mod._append_visible_sources_section(
-            "Answer.",
-            sources,
-            visible_sources=visible_sources,
-            metadata_sources=structured_sources,
-        )
-
-        assert structured_sources == [sources[0]]
-        assert visible_sources == sources
-        visible_block = content.split("**Bronnen**\n", 1)[1].split("\n\n", 1)[0]
-        assert "- [Public doc](https://docs.getklai.com/public)" in visible_block
-        assert "- Upload.pdf" in visible_block
-        assert _decode_sources_marker(content) == [sources[0]]
-
     def _system_msg(self, result: dict) -> str:
         msgs = [m for m in result["messages"] if m["role"] == "system"]
         assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
@@ -3438,7 +3398,15 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "- [CV_Jantine_Doornbos.pdf]" not in content
         assert "**Agent activiteit**" in content
         assert "- Gebruikte bronnen: CV_Jantine_Doornbos.pdf." in content
-        assert not hasattr(response.choices[0].message, "sources")
+        assert response.choices[0].message.sources == [
+            {
+                "label": "1",
+                "title": "CV_Jantine_Doornbos.pdf",
+                "url": "",
+                "evidence_ids": ["E1"],
+                "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
+            }
+        ]
         assert "kb_citations_rendered_structured" in caplog.text
 
     @pytest.mark.asyncio
@@ -3965,7 +3933,18 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "**Agent activiteit**" in footer_delta["content"]
         assert "- Modus: Strict, alleen kennisbank." in footer_delta["content"]
         assert "- Retrieval score: low; bronfragmenten gekoppeld." in footer_delta["content"]
-        assert "sources" not in footer_delta
+        assert footer_delta["sources"] == [
+            {
+                "label": "1",
+                "title": "CV_Jantine_Doornbos.pdf",
+                "url": "",
+                "source_id": "S1",
+                "evidence_ids": ["E1"],
+                "artifact_id": "ca867993-6498-4ce2-bee5-647ffc8cfa21",
+                "source_label": "personal-374185638016057361",
+                "relevance_score": 0.07,
+            }
+        ]
         assert final["choices"][0]["finish_reason"] == "stop"
         assert final_delta == {"content": ""}
 
@@ -4052,7 +4031,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         footer_delta = streamed[1]["choices"][0]["delta"]
         assert streamed[1]["choices"][0]["finish_reason"] is None
         assert "- Verantwoordelijkheden per bouwblok.pdf" in footer_delta["content"]
-        assert "sources" not in footer_delta
+        assert footer_delta["sources"][0]["title"] == "Verantwoordelijkheden per bouwblok.pdf"
+        assert footer_delta["sources"][0]["artifact_id"] == "artifact-responsibilities"
         assert final["choices"][0]["finish_reason"] == "stop"
         assert final["choices"][0]["delta"] == {"content": ""}
 
