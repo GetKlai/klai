@@ -412,6 +412,131 @@ async def test_invite_user_existing_global_user_already_in_workspace_returns_409
 
 
 @pytest.mark.asyncio
+async def test_invite_user_reactivates_offboarded_workspace_member() -> None:
+    """Offboarded members can be invited again with a fresh invite code."""
+    from app.api.admin.users import InviteRequest, invite_user
+
+    org = MagicMock()
+    org.id = 101
+    org.plan = "knowledge"
+
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    offboarded_member = MagicMock()
+    offboarded_member.status = "offboarded"
+    offboarded_member.role = "admin"
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none.return_value = offboarded_member
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[locked_org_result, membership_result])
+    mock_db.add = MagicMock()
+
+    body = InviteRequest(
+        email="returning@example.com",
+        first_name="Returning",
+        last_name="User",
+        role="company",
+        preferred_language="nl",
+    )
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
+    call_order: list[str] = []
+
+    async def _record_unlock(*_args, **_kwargs):
+        call_order.append("unlock")
+
+    async def _record_send_invite(*_args, **_kwargs):
+        call_order.append("send_invite")
+
+    async def _record_commit(*_args, **_kwargs):
+        call_order.append("commit")
+
+    mock_db.commit = AsyncMock(side_effect=_record_commit)
+
+    with (
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.default_knowledge_bases.create_default_personal_kb",
+            new=AsyncMock(),
+        ) as create_personal_kb,
+        patch("app.api.admin.users._sync_zitadel_role_grant", new=AsyncMock()) as sync_role,
+    ):
+        mock_zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
+        mock_zitadel.find_user_id_by_email = AsyncMock(return_value="returning-user")
+        mock_zitadel.grant_user_role = AsyncMock()
+        mock_zitadel.unlock_user = AsyncMock(side_effect=_record_unlock)
+        mock_zitadel.send_invite_code = AsyncMock(side_effect=_record_send_invite)
+        mock_zitadel.deactivate_user = AsyncMock()
+        mock_zitadel.remove_user = AsyncMock()
+
+        response = await invite_user(body=body, perms=perms, db=mock_db)
+
+    assert response.user_id == "returning-user"
+    assert response.message == "Gebruiker returning@example.com opnieuw uitgenodigd."
+    assert offboarded_member.status == "active"
+    assert offboarded_member.role == "company"
+    assert offboarded_member.seat_type == "chat"
+    assert offboarded_member.preferred_language == "nl"
+    assert call_order == ["unlock", "send_invite", "commit"]
+    mock_db.add.assert_not_called()
+    create_personal_kb.assert_awaited_once_with("returning-user", 101, mock_db)
+    mock_zitadel.unlock_user.assert_awaited_once()
+    mock_zitadel.send_invite_code.assert_awaited_once_with("returning-user", url_template=ANY)
+    mock_zitadel.deactivate_user.assert_not_awaited()
+    sync_role.assert_awaited_once_with("returning-user", old_role="admin", new_role="company")
+
+
+@pytest.mark.asyncio
+async def test_resend_invite_reactivates_offboarded_workspace_member() -> None:
+    """The users-table resend action must also recover offboarded members."""
+    from app.api.admin.users import resend_invite
+
+    offboarded_member = MagicMock()
+    offboarded_member.status = "offboarded"
+    offboarded_member.email = "returning@example.com"
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = offboarded_member
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=user_result)
+    call_order: list[str] = []
+
+    async def _record_unlock(*_args, **_kwargs):
+        call_order.append("unlock")
+
+    async def _record_send_invite(*_args, **_kwargs):
+        call_order.append("send_invite")
+
+    async def _record_commit(*_args, **_kwargs):
+        call_order.append("commit")
+
+    mock_db.commit = AsyncMock(side_effect=_record_commit)
+
+    with (
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.default_knowledge_bases.create_default_personal_kb",
+            new=AsyncMock(),
+        ) as create_personal_kb,
+    ):
+        mock_zitadel.unlock_user = AsyncMock(side_effect=_record_unlock)
+        mock_zitadel.send_invite_code = AsyncMock(side_effect=_record_send_invite)
+        mock_zitadel.deactivate_user = AsyncMock()
+
+        response = await resend_invite(
+            zitadel_user_id="returning-user",
+            perms=make_perms(role="admin", user_id="admin-1", org_id=101),
+            db=mock_db,
+        )
+
+    assert response.message == "Invitation resent."
+    assert offboarded_member.status == "active"
+    assert call_order == ["unlock", "send_invite", "commit"]
+    create_personal_kb.assert_awaited_once_with("returning-user", 101, mock_db)
+    mock_zitadel.deactivate_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_invite_user_treats_existing_admin_grant_as_success() -> None:
     """Zitadel may report an existing org:owner grant for reused/admin identities; invite stays idempotent."""
     from app.api.admin.users import InviteRequest, invite_user

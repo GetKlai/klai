@@ -111,6 +111,132 @@ _ZITADEL_ROLE_BY_PORTAL_ROLE: dict[str, str | None] = {
 }
 
 
+async def _find_existing_zitadel_user_for_platform_invite(
+    *,
+    email: str,
+    org_id: int,
+    perms: UserPermissions,
+    conflict_exc: httpx.HTTPStatusError,
+) -> str:
+    existing_user_id = await zitadel.find_user_id_by_email(email)
+    if existing_user_id:
+        logger.info(
+            "platform_invite_existing_zitadel_user_reused",
+            email=email,
+            target_org_id=org_id,
+            zitadel_user_id=existing_user_id,
+        )
+        return existing_user_id
+
+    await _emit_audit_safe(
+        action="platform_admin.invite_existing_zitadel_user_not_found",
+        details={"target_email": email, "target_org_id": org_id},
+        perms=perms,
+    )
+    raise HTTPException(
+        status_code=409,
+        detail="Dit e-mailadres bestaat al, maar kon niet aan deze tenant worden gekoppeld.",
+    ) from conflict_exc
+
+
+async def _create_or_reuse_platform_invite_zitadel_user(
+    *,
+    body: PlatformInviteRequest,
+    org_id: int,
+    perms: UserPermissions,
+) -> tuple[str, bool]:
+    try:
+        user_data = await zitadel.invite_user(
+            org_id=settings.zitadel_portal_org_id,
+            email=body.email,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            preferred_language=body.preferred_language,
+        )
+        return user_data["userId"], True
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == status.HTTP_409_CONFLICT:
+            existing_user_id = await _find_existing_zitadel_user_for_platform_invite(
+                email=body.email,
+                org_id=org_id,
+                perms=perms,
+                conflict_exc=exc,
+            )
+            return existing_user_id, False
+        logger.exception("platform_invite_zitadel_failed", email=body.email)
+        await _emit_audit_safe(
+            action="platform_admin.invite_zitadel_invite_failed",
+            details={
+                "target_email": body.email,
+                "target_org_id": org_id,
+                "error": str(exc)[:200],
+            },
+            perms=perms,
+        )
+        raise HTTPException(status_code=502, detail=f"Zitadel invite mislukt: {exc}") from exc
+    except Exception as exc:
+        logger.exception("platform_invite_zitadel_failed", email=body.email)
+        await _emit_audit_safe(
+            action="platform_admin.invite_zitadel_invite_failed",
+            details={
+                "target_email": body.email,
+                "target_org_id": org_id,
+                "error": str(exc)[:200],
+            },
+            perms=perms,
+        )
+        raise HTTPException(status_code=502, detail=f"Zitadel invite mislukt: {exc}") from exc
+
+
+async def _grant_platform_invite_role_or_rollback(
+    *,
+    role: PortalRole,
+    email: str,
+    org_id: int,
+    zitadel_user_id: str,
+    zitadel_user_created: bool,
+    perms: UserPermissions,
+) -> None:
+    zitadel_role = _ZITADEL_ROLE_BY_PORTAL_ROLE.get(role)
+    if zitadel_role is None:
+        return
+
+    try:
+        await zitadel.grant_user_role(
+            org_id=settings.zitadel_portal_org_id,
+            user_id=zitadel_user_id,
+            role=zitadel_role,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == status.HTTP_409_CONFLICT:
+            logger.info(
+                "platform_invite_grant_already_exists",
+                target_org_id=org_id,
+                zitadel_user_id=zitadel_user_id,
+                role=role,
+            )
+            return
+        logger.exception("platform_invite_grant_failed", zitadel_user_id=zitadel_user_id)
+        await _emit_audit_safe(
+            action="platform_admin.invite_grant_role_failed",
+            details={"target_email": email, "target_org_id": org_id, "error": str(exc)[:200]},
+            perms=perms,
+        )
+        if zitadel_user_created:
+            await _rollback_zitadel_user(zitadel_user_id)
+        raise HTTPException(status_code=502, detail=f"Rol-grant mislukt: {exc}") from exc
+    except Exception as exc:
+        logger.exception("platform_invite_grant_failed", zitadel_user_id=zitadel_user_id)
+        await _emit_audit_safe(
+            action="platform_admin.invite_grant_role_failed",
+            details={"target_email": email, "target_org_id": org_id, "error": str(exc)[:200]},
+            perms=perms,
+        )
+        if zitadel_user_created:
+            await _rollback_zitadel_user(zitadel_user_id)
+        raise HTTPException(status_code=502, detail=f"Rol-grant mislukt: {exc}") from exc
+
+
 class MessageResponse(BaseModel):
     message: str
 
@@ -567,71 +693,85 @@ async def platform_invite(
     org = await _load_org_or_404(org_id)
     from app.core.config import settings  # local import avoids cycle
 
-    # 1. Create the Zitadel user (single portal org), no auto-mail.
-    try:
-        user_data = await zitadel.invite_user(
-            org_id=settings.zitadel_portal_org_id,
-            email=body.email,
-            first_name=body.first_name,
-            last_name=body.last_name,
-            preferred_language=body.preferred_language,
-        )
-    except Exception as exc:
-        logger.exception("platform_invite_zitadel_failed", email=body.email)
-        # REQ-6 (Finding A-7): emit audit event for permanent trail even though
-        # VictoriaLogs captures the exception above (30-day retention only).
-        await _emit_audit_safe(
-            action="platform_admin.invite_zitadel_invite_failed",
-            details={
-                "target_email": body.email,
-                "target_org_id": org_id,
-                "error": str(exc)[:200],
-            },
-            perms=perms,
-        )
-        raise HTTPException(status_code=502, detail=f"Zitadel invite mislukt: {exc}") from exc
-    zitadel_user_id: str = user_data["userId"]
+    # 1. Create or reuse the Zitadel user (single portal org), no auto-mail.
+    zitadel_user_id, zitadel_user_created = await _create_or_reuse_platform_invite_zitadel_user(
+        body=body,
+        org_id=org_id,
+        perms=perms,
+    )
 
     # 2. Admin-only Zitadel grant.
-    zitadel_role = _ZITADEL_ROLE_BY_PORTAL_ROLE.get(body.role)
-    if zitadel_role is not None:
-        try:
-            await zitadel.grant_user_role(
-                org_id=settings.zitadel_portal_org_id,
-                user_id=zitadel_user_id,
-                role=zitadel_role,
-            )
-        except Exception as exc:
-            logger.exception("platform_invite_grant_failed", zitadel_user_id=zitadel_user_id)
-            await _emit_audit_safe(
-                action="platform_admin.invite_grant_role_failed",
-                details={
-                    "target_email": body.email,
-                    "target_org_id": org_id,
-                    "error": str(exc)[:200],
-                },
-                perms=perms,
-            )
-            await _rollback_zitadel_user(zitadel_user_id)
-            raise HTTPException(status_code=502, detail=f"Rol-grant mislukt: {exc}") from exc
+    await _grant_platform_invite_role_or_rollback(
+        role=body.role,
+        email=body.email,
+        org_id=org_id,
+        zitadel_user_id=zitadel_user_id,
+        zitadel_user_created=zitadel_user_created,
+        perms=perms,
+    )
 
     # 3. portal_user row + personal KB in the TARGET tenant context.
+    reactivated_offboarded = False
+    reactivated_old_role: str | None = None
     try:
         async with tenant_scoped_session(org_id) as db:
-            user_row = PortalUser(
-                zitadel_user_id=zitadel_user_id,
-                org_id=org_id,
-                role=body.role,
-                seat_type=str(suggest_seat(body.role)),
-                preferred_language=body.preferred_language,
-            )
-            db.add(user_row)
+            existing_membership = (
+                await db.execute(
+                    select(PortalUser).where(
+                        PortalUser.zitadel_user_id == zitadel_user_id,
+                        PortalUser.org_id == org_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_membership is not None and existing_membership.status != "offboarded":
+                raise HTTPException(status_code=409, detail="Deze gebruiker is al lid van deze tenant.")
+            if existing_membership is None:
+                user_row = PortalUser(
+                    zitadel_user_id=zitadel_user_id,
+                    org_id=org_id,
+                    role=body.role,
+                    seat_type=str(suggest_seat(body.role)),
+                    preferred_language=body.preferred_language,
+                )
+                db.add(user_row)
+            else:
+                reactivated_old_role = existing_membership.role
+                existing_membership.status = "active"
+                existing_membership.role = body.role
+                existing_membership.seat_type = str(suggest_seat(body.role))
+                existing_membership.preferred_language = body.preferred_language
+                user_row = existing_membership
+                reactivated_offboarded = True
             await create_default_personal_kb(zitadel_user_id, org_id, db)
+            if reactivated_offboarded:
+                await zitadel.unlock_user(
+                    zitadel_user_id=zitadel_user_id,
+                    org_id=settings.zitadel_portal_org_id,
+                )
             await db.commit()
+    except HTTPException:
+        if zitadel_user_created:
+            await _rollback_zitadel_user(zitadel_user_id)
+        raise
     except Exception:
         logger.exception("platform_invite_db_failed", zitadel_user_id=zitadel_user_id)
-        await _rollback_zitadel_user(zitadel_user_id)
+        if zitadel_user_created:
+            await _rollback_zitadel_user(zitadel_user_id)
+        if reactivated_offboarded:
+            with suppress(Exception):
+                await zitadel.deactivate_user(
+                    user_id=zitadel_user_id,
+                    org_id=settings.zitadel_portal_org_id,
+                )
         raise
+
+    if not zitadel_user_created and reactivated_offboarded:
+        with suppress(Exception):
+            await _sync_zitadel_role_grant(
+                zitadel_user_id,
+                old_role=reactivated_old_role or "",
+                new_role=body.role,
+            )
 
     # 4. Send the activation mail after the portal row exists. If mail fails,
     # keep the valid portal account so support can retry delivery.
@@ -655,13 +795,15 @@ async def platform_invite(
             "role": body.role,
             "url_template_host": urlparse(invite_url_template).netloc,
             "invite_mail_sent": mail_sent,
+            "reactivated_offboarded": reactivated_offboarded,
         },
     )
-    message = (
-        f"Uitnodiging verstuurd naar {body.email}."
-        if mail_sent
-        else f"User aangemaakt voor {body.email}, maar invite-mail kon niet worden verstuurd."
-    )
+    if mail_sent:
+        message = f"Uitnodiging verstuurd naar {body.email}."
+    elif reactivated_offboarded:
+        message = f"User hersteld voor {body.email}, maar invite-mail kon niet worden verstuurd."
+    else:
+        message = f"User aangemaakt voor {body.email}, maar invite-mail kon niet worden verstuurd."
 
     from app.services.listmonk import sync_portal_user_best_effort
 

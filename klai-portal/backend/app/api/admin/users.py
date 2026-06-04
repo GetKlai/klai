@@ -1,7 +1,8 @@
 """Admin user lifecycle endpoints."""
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, Literal
 from urllib.parse import urlparse
@@ -75,6 +76,15 @@ _ZITADEL_ROLE_BY_PORTAL_ROLE: Final[Mapping[str, str | None]] = {
 }
 
 router = APIRouter()
+
+
+@dataclass(frozen=True)
+class ExistingInviteIdentity:
+    user_id: str
+    membership: PortalUser | None = None
+
+
+CleanupInviteUser = Callable[[str], Awaitable[None]]
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +173,7 @@ async def _reuse_existing_zitadel_user_for_invite(
     org: PortalOrg,
     db: AsyncSession,
     conflict_exc: httpx.HTTPStatusError,
-) -> str:
+) -> ExistingInviteIdentity:
     # A user may already exist globally because they signed up socially,
     # belonged to another tenant, or were left behind by an older partial
     # onboarding attempt. Reuse that identity for this workspace instead
@@ -194,11 +204,21 @@ async def _reuse_existing_zitadel_user_for_invite(
             PortalUser.org_id == org.id,
         )
     )
-    if membership_result.scalar_one_or_none() is not None:
+    membership = membership_result.scalar_one_or_none()
+    if membership is not None and membership.status != "offboarded":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Deze gebruiker is al lid van deze workspace.",
         ) from conflict_exc
+
+    if membership is not None:
+        _slog.info(
+            "invite_offboarded_zitadel_user_reused",
+            email=body.email,
+            org_id=org.id,
+            zitadel_user_id=existing_user_id,
+        )
+        return ExistingInviteIdentity(user_id=existing_user_id, membership=membership)
 
     _slog.info(
         "invite_existing_zitadel_user_reused",
@@ -206,7 +226,145 @@ async def _reuse_existing_zitadel_user_for_invite(
         org_id=org.id,
         zitadel_user_id=existing_user_id,
     )
-    return existing_user_id
+    return ExistingInviteIdentity(user_id=existing_user_id)
+
+
+def _invite_failure_detail(failure_step: str) -> str:
+    if failure_step == "invite_mail":
+        return "Uitnodigingsmail kon niet worden verstuurd. Probeer het opnieuw."
+    if failure_step == "zitadel_reactivate":
+        return "Gebruiker kon niet opnieuw worden geactiveerd. Probeer het opnieuw."
+    return "Uitnodiging kon niet worden opgeslagen. Probeer het opnieuw."
+
+
+async def _restore_reactivated_zitadel_user_if_needed(
+    *,
+    reactivated_zitadel_user: bool,
+    zitadel_user_id: str,
+    email: str,
+    org_id: int,
+    failure_step: str,
+) -> None:
+    if not reactivated_zitadel_user:
+        return
+    try:
+        await zitadel.deactivate_user(zitadel_user_id, settings.zitadel_portal_org_id)
+    except Exception:
+        _slog.exception(
+            "invite_reactivated_zitadel_restore_failed",
+            zitadel_user_id=zitadel_user_id,
+            email=email,
+            org_id=org_id,
+            failure_step=failure_step,
+        )
+
+
+async def _persist_invited_user_and_send_code(
+    *,
+    db: AsyncSession,
+    org: PortalOrg,
+    body: InviteRequest,
+    zitadel_user_id: str,
+    user_row: PortalUser,
+    reactivated_membership: PortalUser | None,
+    invite_url_template: str,
+    cleanup_zitadel_user: CleanupInviteUser,
+) -> None:
+    from app.services.default_knowledge_bases import create_default_personal_kb
+
+    failure_step = "portal_db"
+    reactivated_zitadel_user = False
+    try:
+        if reactivated_membership is None:
+            db.add(user_row)
+        await create_default_personal_kb(zitadel_user_id, org.id, db)
+        if reactivated_membership is not None:
+            failure_step = "zitadel_reactivate"
+            await zitadel.unlock_user(zitadel_user_id, settings.zitadel_portal_org_id)
+            reactivated_zitadel_user = True
+        failure_step = "invite_mail"
+        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
+        failure_step = "portal_commit"
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        await _restore_reactivated_zitadel_user_if_needed(
+            reactivated_zitadel_user=reactivated_zitadel_user,
+            zitadel_user_id=zitadel_user_id,
+            email=str(body.email),
+            org_id=org.id,
+            failure_step=failure_step,
+        )
+        await cleanup_zitadel_user(f"{failure_step}_failed")
+        _slog.exception(
+            "invite_failed_zitadel_user_cleaned_up",
+            zitadel_user_id=zitadel_user_id,
+            email=body.email,
+            org_id=org.id,
+            failure_step=failure_step,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=_invite_failure_detail(failure_step),
+        ) from exc
+
+
+async def _grant_invited_user_role(
+    *,
+    body: InviteRequest,
+    org: PortalOrg,
+    zitadel_user_id: str,
+    cleanup_zitadel_user: CleanupInviteUser,
+) -> None:
+    try:
+        zitadel_role = _ZITADEL_ROLE_BY_PORTAL_ROLE[body.role]
+    except KeyError as exc:
+        logger.exception(
+            "invite_role_not_in_mapping",
+            extra={"portal_role": body.role, "email": body.email},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unsupported role",
+        ) from exc
+
+    if zitadel_role is None:
+        _slog.info(
+            "invite_no_zitadel_grant",
+            org_id=org.id,
+            portal_role=body.role,
+            zitadel_user_id=zitadel_user_id,
+        )
+        return
+
+    try:
+        await zitadel.grant_user_role(
+            org_id=settings.zitadel_portal_org_id,
+            user_id=zitadel_user_id,
+            role=zitadel_role,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == status.HTTP_409_CONFLICT:
+            _slog.info(
+                "invite_zitadel_grant_already_exists",
+                org_id=org.id,
+                portal_role=body.role,
+                zitadel_user_id=zitadel_user_id,
+            )
+            return
+        logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
+        await cleanup_zitadel_user("role_grant_failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to assign project role: {exc}",
+        ) from exc
+    except Exception as exc:
+        logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
+        await cleanup_zitadel_user("role_grant_failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to assign project role: {exc}",
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +445,7 @@ async def invite_user(
     # grep) so a future refactor cannot silently reintroduce them.
 
     zitadel_user_created = False
+    reactivated_membership: PortalUser | None = None
     try:
         user_data = await zitadel.invite_user(
             org_id=settings.zitadel_portal_org_id,
@@ -305,12 +464,14 @@ async def invite_user(
                 detail=f"Failed to invite user: {exc}",
             ) from exc
 
-        zitadel_user_id = await _reuse_existing_zitadel_user_for_invite(
+        existing_identity = await _reuse_existing_zitadel_user_for_invite(
             body=body,
             org=org,
             db=db,
             conflict_exc=exc,
         )
+        zitadel_user_id = existing_identity.user_id
+        reactivated_membership = existing_identity.membership
     except Exception as exc:
         logger.exception("User invite failed for %s: %s", body.email, exc)
         raise HTTPException(
@@ -345,61 +506,12 @@ async def invite_user(
     # authorization. v0.1 hardcoded role="org:owner" for every invite — the
     # finding #10 time-bomb. v0.5.0 keeps the admin grant as before and
     # explicitly skips the Zitadel call for non-admins.
-    try:
-        zitadel_role = _ZITADEL_ROLE_BY_PORTAL_ROLE[body.role]
-    except KeyError as exc:
-        # REQ-2.3: pydantic Literal blocks this at parse time; the runtime
-        # check exists to keep the mapping and the InviteRequest schema in
-        # lock-step. Reaching this branch means the schema added a value the
-        # mapping has not — a developer error, not a user-supplied input.
-        logger.exception(
-            "invite_role_not_in_mapping",
-            extra={"portal_role": body.role, "email": body.email},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unsupported role",
-        ) from exc
-
-    if zitadel_role is None:
-        # REQ-2.1 observability: structured event so the absence-of-grant is
-        # queryable in VictoriaLogs (e.g. confirm zero org:* grants land for
-        # non-admin invites in production).
-        _slog.info(
-            "invite_no_zitadel_grant",
-            org_id=org.id,
-            portal_role=body.role,
-            zitadel_user_id=zitadel_user_id,
-        )
-    else:
-        try:
-            await zitadel.grant_user_role(
-                org_id=settings.zitadel_portal_org_id,
-                user_id=zitadel_user_id,
-                role=zitadel_role,
-            )
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == status.HTTP_409_CONFLICT:
-                _slog.info(
-                    "invite_zitadel_grant_already_exists",
-                    org_id=org.id,
-                    portal_role=body.role,
-                    zitadel_user_id=zitadel_user_id,
-                )
-            else:
-                logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
-                await _cleanup_zitadel_user("role_grant_failed")
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"Failed to assign project role: {exc}",
-                ) from exc
-        except Exception as exc:
-            logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
-            await _cleanup_zitadel_user("role_grant_failed")
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to assign project role: {exc}",
-            ) from exc
+    await _grant_invited_user_role(
+        body=body,
+        org=org,
+        zitadel_user_id=zitadel_user_id,
+        cleanup_zitadel_user=_cleanup_zitadel_user,
+    )
 
     # SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0: account-type is DERIVED
     # from role server-side. The Phase 2 ``body.seat_type`` override
@@ -411,13 +523,22 @@ async def invite_user(
 
     seat_type_value = str(suggest_seat(body.role))
 
-    user_row = PortalUser(
-        zitadel_user_id=zitadel_user_id,
-        org_id=org.id,
-        role=body.role,
-        seat_type=seat_type_value,
-        preferred_language=body.preferred_language,
-    )
+    reactivated_old_role: str | None = None
+    if reactivated_membership is None:
+        user_row = PortalUser(
+            zitadel_user_id=zitadel_user_id,
+            org_id=org.id,
+            role=body.role,
+            seat_type=seat_type_value,
+            preferred_language=body.preferred_language,
+        )
+    else:
+        reactivated_old_role = reactivated_membership.role
+        reactivated_membership.status = "active"
+        reactivated_membership.role = body.role
+        reactivated_membership.seat_type = seat_type_value
+        reactivated_membership.preferred_language = body.preferred_language
+        user_row = reactivated_membership
 
     # SPEC-PORTAL-RBAC-001: products are derived from (role, seat_type,
     # platform_unlocked_features) at read time; no per-user entitlement
@@ -434,41 +555,22 @@ async def invite_user(
     # with the same email address. The invite mail is intentionally sent only
     # after both portal rows have flushed, so validation/RLS failures surface
     # before an activation link leaves the system.
-    from app.services.default_knowledge_bases import create_default_personal_kb
-
     # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-2: the user now exists in Zitadel
     # and any admin grant has succeeded, but no invite mail was sent
     # (invite_user used sendCodes=False). Issue the invite code with an
     # explicit Klai urlTemplate so the activation link lands on
     # my.getklai.com/password/set, not auth.getklai.com/ui/login/.
     invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
-    failure_step = "portal_db"
-    try:
-        db.add(user_row)
-        await create_default_personal_kb(zitadel_user_id, org.id, db)
-        failure_step = "invite_mail"
-        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
-        failure_step = "portal_commit"
-        await db.commit()
-    except Exception as exc:
-        await db.rollback()
-        await _cleanup_zitadel_user(f"{failure_step}_failed")
-        _slog.exception(
-            "invite_failed_zitadel_user_cleaned_up",
-            zitadel_user_id=zitadel_user_id,
-            email=body.email,
-            org_id=org.id,
-            failure_step=failure_step,
-        )
-        detail = (
-            "Uitnodigingsmail kon niet worden verstuurd. Probeer het opnieuw."
-            if failure_step == "invite_mail"
-            else "Uitnodiging kon niet worden opgeslagen. Probeer het opnieuw."
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=detail,
-        ) from exc
+    await _persist_invited_user_and_send_code(
+        db=db,
+        org=org,
+        body=body,
+        zitadel_user_id=zitadel_user_id,
+        user_row=user_row,
+        reactivated_membership=reactivated_membership,
+        invite_url_template=invite_url_template,
+        cleanup_zitadel_user=_cleanup_zitadel_user,
+    )
     # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-8: emit url_template_host so a
     # VictoriaLogs query can prove the link host across all invites.
     _slog.info(
@@ -491,13 +593,32 @@ async def invite_user(
         source="portal_admin_invite",
     )
 
+    if reactivated_membership is not None and reactivated_old_role != body.role:
+        try:
+            await _sync_zitadel_role_grant(
+                zitadel_user_id,
+                old_role=reactivated_old_role or "",
+                new_role=body.role,
+            )
+        except Exception:
+            _slog.exception(
+                "invite_reactivated_user_zitadel_role_sync_failed",
+                zitadel_user_id=zitadel_user_id,
+                org_id=org.id,
+                old_role=reactivated_old_role,
+                new_role=body.role,
+            )
+
+    if zitadel_user_created:
+        message = f"Uitnodiging verstuurd naar {body.email}."
+    elif reactivated_membership is not None:
+        message = f"Gebruiker {body.email} opnieuw uitgenodigd."
+    else:
+        message = f"Gebruiker {body.email} toegevoegd aan deze workspace."
+
     return InviteResponse(
         user_id=zitadel_user_id,
-        message=(
-            f"Uitnodiging verstuurd naar {body.email}."
-            if zitadel_user_created
-            else f"Gebruiker {body.email} toegevoegd aan deze workspace."
-        ),
+        message=message,
     )
 
 
@@ -709,9 +830,13 @@ async def resend_invite(
             PortalUser.org_id == perms.org_id,
         )
     )
-    if not result.scalar_one_or_none():
+    user = result.scalar_one_or_none()
+    if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    reactivating_offboarded = user.status == "offboarded"
+    failure_step = "invite_mail"
+    reactivated_zitadel_user = False
     try:
         # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-3: replaces the legacy
         # resend_init_mail. Same v2 endpoint, but with an explicit Klai
@@ -719,11 +844,37 @@ async def resend_invite(
         # per-user url_template cache (a previous Zitadel-default URL would
         # otherwise persist).
         invite_url_template = build_url_template(AuthLinkRoute.PASSWORD_SET)
+        if reactivating_offboarded:
+            from app.services.default_knowledge_bases import create_default_personal_kb
+
+            failure_step = "portal_db"
+            user.status = "active"
+            await create_default_personal_kb(zitadel_user_id, perms.org_id, db)
+            failure_step = "zitadel_reactivate"
+            await zitadel.unlock_user(zitadel_user_id, settings.zitadel_portal_org_id)
+            reactivated_zitadel_user = True
+            failure_step = "invite_mail"
         await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
+        if reactivating_offboarded:
+            failure_step = "portal_commit"
+            await db.commit()
     except Exception as exc:
+        if reactivating_offboarded:
+            await db.rollback()
+            await _restore_reactivated_zitadel_user_if_needed(
+                reactivated_zitadel_user=reactivated_zitadel_user,
+                zitadel_user_id=zitadel_user_id,
+                email=getattr(user, "email", "") or "",
+                org_id=perms.org_id,
+                failure_step=failure_step,
+            )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to resend invitation: {exc}",
+            detail=(
+                _invite_failure_detail(failure_step)
+                if reactivating_offboarded
+                else f"Failed to resend invitation: {exc}"
+            ),
         ) from exc
 
     # SPEC-PORTAL-AUTH-EMAIL-LINKS-001 REQ-8: same observability field on resend.
@@ -732,6 +883,7 @@ async def resend_invite(
         zitadel_user_id=zitadel_user_id,
         org_id=perms.org_id,
         url_template_host=urlparse(invite_url_template).netloc,
+        reactivated_offboarded=reactivating_offboarded,
     )
     return MessageResponse(message="Invitation resent.")
 

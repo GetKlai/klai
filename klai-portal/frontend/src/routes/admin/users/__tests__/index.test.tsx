@@ -112,6 +112,18 @@ const usersResponse = {
       created_at: '2026-05-02T00:00:00Z',
       invite_pending: true,
     },
+    {
+      zitadel_user_id: 'u3',
+      email: 'cleo@example.com',
+      first_name: 'Cleo',
+      last_name: 'Offboarded',
+      role: 'company',
+      seat_type: 'chat',
+      status: 'offboarded',
+      preferred_language: 'en',
+      created_at: '2026-05-03T00:00:00Z',
+      invite_pending: false,
+    },
   ],
 }
 
@@ -143,7 +155,8 @@ describe('Admin users index', () => {
     })
 
     expect(screen.getByText('Bob Builder')).toBeTruthy()
-    expect(screen.getByText('2 users')).toBeTruthy()
+    expect(screen.getByText('Cleo Offboarded')).toBeTruthy()
+    expect(screen.getByText('3 users')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('Search users'), {
       target: { value: 'bob@' },
@@ -151,6 +164,37 @@ describe('Admin users index', () => {
 
     expect(screen.queryByText('Ada Lovelace')).toBeNull()
     expect(screen.getByText('Bob Builder')).toBeTruthy()
+  })
+
+  it('allows resending invites for active and offboarded users', async () => {
+    renderUsersPage()
+
+    await waitFor(() => {
+      expect(screen.getByText('Ada Lovelace')).toBeTruthy()
+    })
+
+    const resendButtons = screen.getAllByLabelText('Resend invite')
+    expect(resendButtons).toHaveLength(3)
+
+    fireEvent.click(resendButtons[0])
+    fireEvent.click(resendButtons[2])
+
+    await waitFor(() => {
+      expect(
+        apiFetchMock.mock.calls.some(
+          ([url, options]) =>
+            url === '/api/admin/users/u1/resend-invite' &&
+            (options as { method?: string } | undefined)?.method === 'POST',
+        ),
+      ).toBe(true)
+      expect(
+        apiFetchMock.mock.calls.some(
+          ([url, options]) =>
+            url === '/api/admin/users/u3/resend-invite' &&
+            (options as { method?: string } | undefined)?.method === 'POST',
+        ),
+      ).toBe(true)
+    })
   })
 
   it('keeps delete available only for pending invites and calls the delete endpoint after confirmation', async () => {
