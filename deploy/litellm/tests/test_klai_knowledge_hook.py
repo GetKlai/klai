@@ -2707,8 +2707,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             "\n\n**Bronnen**\n- Verantwoordelijkheden per bouwblok.pdf"
         )
 
-    def test_librechat_source_split_keeps_native_and_fallback_disjoint(self, monkeypatch):
-        """URL-backed sources go to metadata; URL-less uploads go to Markdown only."""
+    def test_librechat_source_split_keeps_native_and_visible_fallback(self, monkeypatch):
+        """URL-backed sources get metadata and remain visible in Markdown."""
         mod = _load_hook(monkeypatch)
         sources = [
             {
@@ -2733,10 +2733,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         )
 
         assert structured_sources == [sources[0]]
-        assert visible_sources == [sources[1]]
+        assert visible_sources == sources
         visible_block = content.split("**Bronnen**\n", 1)[1].split("\n\n", 1)[0]
+        assert "- [Public doc](https://docs.getklai.com/public)" in visible_block
         assert "- Upload.pdf" in visible_block
-        assert "Public doc" not in visible_block
         assert _decode_sources_marker(content) == [sources[0]]
 
     def _system_msg(self, result: dict) -> str:
@@ -3220,8 +3220,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         content = response.choices[0].message.content
         assert "Zie het diagram bron en fake." in content
         assert "https://example.com" not in content
-        assert "**Bronnen**" not in content
-        assert "- [Diagram](https://docs.getklai.com/diagram)" not in content
+        assert "**Bronnen**" in content
+        assert "- [Diagram](https://docs.getklai.com/diagram)" in content
         assert "**Agent activiteit**" in content
         assert "- Kennisbank geraadpleegd: 1 fragment opgehaald in 12 ms." in content
         assert "- Bronselectie: 1 bron gekoppeld" in content
@@ -3287,10 +3287,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert returned is response
         content = response.choices[0].message.content
         assert "Je kunt iemand uitnodigen via het beheerscherm." in content
-        assert "**Bronnen**" not in content
+        assert "**Bronnen**" in content
         assert (
             "- [Invite and remove people](https://docs.getklai.com/admin/invite-remove-people)"
-            not in content
+            in content
         )
         assert "**Agent activiteit**" in content
         assert "- Modus: Open, kennisbank met fallback." in content
@@ -3364,8 +3364,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert returned is response
         content = response.choices[0].message.content
         assert "Frank Wolters trekt Data Readiness" in content
-        assert "**Bronnen**" not in content
-        assert "- [Organogram](https://kb.getklai.test/organogram.pdf)" not in content
+        assert "**Bronnen**" in content
+        assert "- [Organogram](https://kb.getklai.test/organogram.pdf)" in content
         assert "**Agent activiteit**" in content
         assert "- Gebruikte bronnen: Organogram." in content
         assert response.choices[0].message.sources == [
@@ -3769,8 +3769,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert footer.choices[0].finish_reason is None
         assert "https://bad.example" not in footer.choices[0].delta.content
         assert "fake." in footer.choices[0].delta.content
-        assert "**Bronnen**" not in footer.choices[0].delta.content
-        assert "- [Diagram](https://docs.getklai.com/diagram)" not in footer.choices[0].delta.content
+        assert "**Bronnen**" in footer.choices[0].delta.content
+        assert "- [Diagram](https://docs.getklai.com/diagram)" in footer.choices[0].delta.content
         assert "**Agent activiteit**" in footer.choices[0].delta.content
         assert footer.choices[0].delta.sources == [
             {
@@ -3875,8 +3875,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert streamed == [only]
         content = streamed[0]["choices"][0]["delta"]["content"]
         assert "Zie diagram." in content
-        assert "**Bronnen**" not in content
-        assert "- [Diagram](https://docs.getklai.com/diagram)" not in content
+        assert "**Bronnen**" in content
+        assert "- [Diagram](https://docs.getklai.com/diagram)" in content
         assert "**Agent activiteit**" in content
         assert streamed[0]["choices"][0]["delta"]["sources"] == [
             {

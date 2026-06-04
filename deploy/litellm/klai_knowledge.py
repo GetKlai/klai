@@ -2183,20 +2183,18 @@ def _format_visible_sources_markdown(sources: list[dict[str, Any]]) -> str:
 def _split_sources_for_librechat_render(
     sources: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Split sources into disjoint native metadata and Markdown fallback sets.
+    """Return structured metadata plus a visible Markdown fallback.
 
-    LibreChat's native source UI owns URL-backed sources. URL-less uploads are
-    rendered only in the Markdown fallback so they remain visible without being
-    duplicated if the client also decides to show metadata-only sources.
+    LibreChat does not reliably surface ``message.sources`` for every KB chat
+    path, so the answer text must still carry the deterministic source footer.
+    Keep URL-backed sources in structured metadata for clients that do support
+    it, but render all selected sources visibly so citations cannot disappear.
     """
     structured_sources: list[dict[str, Any]] = []
-    visible_fallback_sources: list[dict[str, Any]] = []
     for source in sources:
         if _normalise_guard_url(source.get("url")):
             structured_sources.append(source)
-        else:
-            visible_fallback_sources.append(source)
-    return structured_sources, visible_fallback_sources
+    return structured_sources, sources
 
 
 def _append_visible_sources_section(
