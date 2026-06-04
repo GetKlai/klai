@@ -774,8 +774,6 @@ async def _resolve_and_enforce_mfa(
         HTTPException(503): Org fetch failed (cannot determine policy for a
             known portal user) OR Zitadel/connection failure during
             ``has_any_mfa`` under ``mfa_policy="required"``.
-        HTTPException(403): ``mfa_policy="required"`` and the user has no MFA
-            enrolled (existing behaviour, unchanged).
 
     Fail-open paths (login proceeds):
         - portal_user lookup raised — cannot map email to org; preserve
@@ -893,9 +891,18 @@ async def _resolve_and_enforce_mfa(
         raise _mfa_unavailable() from exc
 
     if not user_has_mfa:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="MFA required by your organization. Please set up two-factor authentication.",
+        # Bootstrap path for org-required MFA: the password has been verified,
+        # so allow the OIDC/BFF session to be created solely so the frontend can
+        # route the user to /setup/mfa and the setup endpoints can register the
+        # first factor. Post-login navigation is still gated by /api/me's
+        # requires_2fa_setup signal and the protected-route guard.
+        _emit_auth_event(
+            "mfa_setup_required",
+            reason="no_mfa_enrolled",
+            mfa_policy="required",
+            outcome="allow-setup",
+            email=email,
+            level="warning",
         )
 
     return portal_user

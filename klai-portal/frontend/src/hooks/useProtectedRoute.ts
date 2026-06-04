@@ -91,6 +91,10 @@ function workspaceHandoffUrl(workspaceUrl: string | null | undefined): string | 
   }
 }
 
+function isMfaSetupPath(pathname: string): boolean {
+  return pathname === '/setup/mfa' || pathname === '/setup/2fa'
+}
+
 export function useProtectedRoute(
   options: UseProtectedRouteOptions = {},
 ): UseProtectedRouteResult {
@@ -103,6 +107,8 @@ export function useProtectedRoute(
   const navigate = useNavigate()
   const { user, isPending: userLoading } = useCurrentUser()
   const workspaceRedirectUrl = user ? workspaceHandoffUrl(user.workspace_url) : null
+  const currentPath = window.location.pathname
+  const blockedByMfaSetup = !!user?.requires_2fa_setup && !isMfaSetupPath(currentPath)
 
   useEffect(() => {
     if (auth.isLoading) return
@@ -117,9 +123,9 @@ export function useProtectedRoute(
       window.location.replace(workspaceRedirectUrl)
       return
     }
-    // 2. MFA setup pending - send to the setup flow.
-    if (user?.requires_2fa_setup) {
-      window.location.replace('/setup/2fa')
+    // 2. MFA setup pending - send to the setup flow, but let that flow render.
+    if (blockedByMfaSetup) {
+      window.location.replace('/setup/mfa')
       return
     }
     // 3. Role-gated route with an insufficient-role caller.
@@ -132,6 +138,7 @@ export function useProtectedRoute(
     user,
     userLoading,
     workspaceRedirectUrl,
+    blockedByMfaSetup,
     needsRoleCheck,
     fallback,
     noRoleFallback,
@@ -140,7 +147,8 @@ export function useProtectedRoute(
   ])
 
   const roleOk = !needsRoleCheck || hasRequiredRole(user, options)
-  const isResolving = auth.isLoading || !auth.isAuthenticated || userLoading || !!workspaceRedirectUrl || !roleOk
+  const isResolving =
+    auth.isLoading || !auth.isAuthenticated || userLoading || !!workspaceRedirectUrl || blockedByMfaSetup || !roleOk
 
   return {
     user,

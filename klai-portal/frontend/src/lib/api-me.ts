@@ -17,6 +17,7 @@ export interface MeResponse {
   provisioning_status?: string
   mfa_enrolled?: boolean
   mfa_policy?: string
+  requires_2fa_setup?: boolean
   preferred_language?: 'nl' | 'en'
   portal_role?: string
   products?: string[]

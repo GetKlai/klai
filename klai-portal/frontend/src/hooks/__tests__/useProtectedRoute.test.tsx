@@ -166,14 +166,26 @@ describe('useProtectedRoute', () => {
     expect(result.current.canRender).toBe(true)
   })
 
-  it('redirects to /setup/2fa when requires_2fa_setup is true', () => {
+  it('redirects to /setup/mfa when requires_2fa_setup is true', () => {
     const replace = vi.fn()
-    vi.stubGlobal('location', { replace } as unknown as Location)
+    vi.stubGlobal('location', { pathname: '/app', replace } as unknown as Location)
     mockQuery = { user: userFixture({ requires_2fa_setup: true }), isPending: false }
-    renderHook(() => useProtectedRoute(), {
+    const { result } = renderHook(() => useProtectedRoute(), {
       wrapper: wrapperFor(makeAuth({ isLoading: false, isAuthenticated: true })),
     })
-    expect(replace).toHaveBeenCalledWith('/setup/2fa')
+    expect(replace).toHaveBeenCalledWith('/setup/mfa')
+    expect(result.current.canRender).toBe(false)
+  })
+
+  it('allows the setup route to render when requires_2fa_setup is true', () => {
+    const replace = vi.fn()
+    vi.stubGlobal('location', { pathname: '/setup/mfa', replace } as unknown as Location)
+    mockQuery = { user: userFixture({ requires_2fa_setup: true }), isPending: false }
+    const { result } = renderHook(() => useProtectedRoute(), {
+      wrapper: wrapperFor(makeAuth({ isLoading: false, isAuthenticated: true })),
+    })
+    expect(replace).not.toHaveBeenCalled()
+    expect(result.current.canRender).toBe(true)
   })
 
   it('redirects to noRoleFallback when requireAdmin is true and user lacks the role', () => {
