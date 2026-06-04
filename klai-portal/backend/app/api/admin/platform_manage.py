@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from contextlib import suppress
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -730,7 +730,7 @@ async def platform_invite(
                     zitadel_user_id=zitadel_user_id,
                     org_id=org_id,
                     role=body.role,
-                    seat_type=str(suggest_seat(body.role)),
+                    seat_type=cast(Literal["chat", "knowledge"], suggest_seat(body.role).value),
                     preferred_language=body.preferred_language,
                 )
                 db.add(user_row)
@@ -738,7 +738,7 @@ async def platform_invite(
                 reactivated_old_role = existing_membership.role
                 existing_membership.status = "active"
                 existing_membership.role = body.role
-                existing_membership.seat_type = str(suggest_seat(body.role))
+                existing_membership.seat_type = cast(Literal["chat", "knowledge"], suggest_seat(body.role).value)
                 existing_membership.preferred_language = body.preferred_language
                 user_row = existing_membership
                 reactivated_offboarded = True

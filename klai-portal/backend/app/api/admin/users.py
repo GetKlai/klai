@@ -4,7 +4,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Final, Literal
+from typing import Final, Literal, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -521,7 +521,7 @@ async def invite_user(
     # when the Profile dropdown changes.
     from app.core.seats import suggest_seat
 
-    seat_type_value = str(suggest_seat(body.role))
+    seat_type_value = cast(Literal["chat", "knowledge"], suggest_seat(body.role).value)
 
     reactivated_old_role: str | None = None
     if reactivated_membership is None:
