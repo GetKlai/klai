@@ -303,6 +303,50 @@ def _patch_http(monkeypatch, portal_resp=None, retrieval_resp=None):
 # ─── Legacy tests (preserved, updated for new hook) ─────────────────────────
 
 class TestKlaiKnowledgeHookLegacy:
+    def test_strips_backend_footer_from_assistant_history_text(self, monkeypatch):
+        """Prior deterministic footers must not be fed back to the model."""
+        mod = _load_hook(monkeypatch)
+
+        content = (
+            "Het antwoord zelf blijft beschikbaar.\n\n"
+            "**Bronnen**\n"
+            "- [Handleiding](https://docs.example/manual)\n\n"
+            "**Agent activiteit**\n"
+            "- Modus: Strict, alleen kennisbank.\n"
+            "- Kennisbank geraadpleegd: 9 fragmenten opgehaald in 1004 ms.\n\n"
+            "<!-- klai_sources=eyJ0ZXN0IjpbXX0 -->"
+        )
+
+        assert mod._strip_klai_backend_footer_from_text(content) == (
+            "Het antwoord zelf blijft beschikbaar."
+        )
+
+    def test_sanitizes_assistant_history_content_parts(self, monkeypatch):
+        """LibreChat can send text content as parts; strip those too."""
+        mod = _load_hook(monkeypatch)
+
+        messages = [
+            {"role": "user", "content": "Wat is het budget?"},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Het budget is 100k.\n\n"
+                            "**Agent activiteit**\n"
+                            "- Modus: Open, kennisbank met fallback."
+                        ),
+                    }
+                ],
+            },
+        ]
+
+        sanitized = mod._sanitize_assistant_history_messages(messages)
+
+        assert sanitized[0] is messages[0]
+        assert sanitized[1]["content"][0]["text"] == "Het budget is 100k."
+
     @pytest.mark.asyncio
     async def test_retrieve_request_includes_auth_header(self, monkeypatch):
         """V001: retrieve request must include X-Internal-Secret header.
@@ -362,6 +406,32 @@ class TestKlaiKnowledgeHookLegacy:
             if post_call:
                 headers = post_call.kwargs.get("headers") or {}
                 assert "X-Internal-Secret" not in headers
+
+    @pytest.mark.asyncio
+    async def test_no_kb_branch_strips_assistant_footer_from_provider_input(self, monkeypatch):
+        """Even non-retrieval branches must not feed old footers to the model."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=False)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Wat is het budget?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Het budget is 100k.\n\n"
+                    "**Agent activiteit**\n"
+                    "- Modus: Strict, alleen kennisbank."
+                ),
+            },
+            {"role": "user", "content": "En wie beheert het?"},
+        ]}
+
+        result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+        assistant = next(message for message in result["messages"] if message["role"] == "assistant")
+        assert assistant["content"] == "Het budget is 100k."
+        assert "**Agent activiteit**" not in assistant["content"]
 
 
 # ─── SPEC-SEC-SERVICE-AUTH-001 Phase C-1 — dual-auth tests ──────────────────
@@ -1415,7 +1485,17 @@ class TestKlaiKnowledgeHookKB010:
 
         data = {"user": "aabbcc112233445566778899", "messages": [
             {"role": "user", "content": "Wat is het budget?"},
-            {"role": "assistant", "content": "Het budget is 100k."},
+            {
+                "role": "assistant",
+                "content": (
+                    "Het budget is 100k.\n\n"
+                    "**Bronnen**\n"
+                    "- [Budgetplan](https://docs.example/budget)\n\n"
+                    "**Agent activiteit**\n"
+                    "- Modus: Strict, alleen kennisbank.\n"
+                    "- Kennisbank geraadpleegd: 12 fragmenten opgehaald in 804 ms."
+                ),
+            },
             {"role": "user", "content": "Wie heeft dat besloten?"},
         ]}
 
@@ -1433,6 +1513,11 @@ class TestKlaiKnowledgeHookKB010:
             assert len(history) == 2
             assert history[0]["role"] == "user"
             assert history[1]["role"] == "assistant"
+            assert history[1]["content"] == "Het budget is 100k."
+            assert "**Bronnen**" not in history[1]["content"]
+            assert "**Agent activiteit**" not in history[1]["content"]
+            assistant = next(message for message in data["messages"] if message["role"] == "assistant")
+            assert assistant["content"] == "Het budget is 100k."
 
     @pytest.mark.asyncio
     async def test_gate_bypass_no_injection(self, monkeypatch):
