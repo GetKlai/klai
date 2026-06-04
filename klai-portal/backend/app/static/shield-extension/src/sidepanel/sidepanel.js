@@ -70,6 +70,70 @@ function statusLabel(status) {
   }[status] || "Onbekende status";
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+const KNOWLEDGE_ICON_PATHS = [
+  "M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"
+];
+const TEMPLATE_ICON_PATHS = [
+  "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z",
+  "M14 2v6h6"
+];
+
+function textElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  element.textContent = text ?? "";
+  return element;
+}
+
+function setEmptyPanel(container, message) {
+  container.replaceChildren(textElement("div", "result-panel empty", message));
+}
+
+function createToggleIcon(paths) {
+  const icon = textElement("div", "t-icon");
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  paths.forEach((pathDefinition) => {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", pathDefinition);
+    svg.appendChild(path);
+  });
+  icon.appendChild(svg);
+  return icon;
+}
+
+function createToggleCard({ title, subtitle, iconPaths, checked = false, disabled = false, data = {} }) {
+  const card = textElement("div", "toggle-card");
+  card.classList.toggle("on", checked);
+
+  const row = textElement("div", "t-row");
+  const body = textElement("div", "t-body");
+  body.appendChild(textElement("div", "t-label", title));
+  body.appendChild(textElement("div", "t-sub", subtitle));
+
+  const label = textElement("label", "sw");
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  input.disabled = disabled;
+  Object.entries(data).forEach(([key, value]) => {
+    input.dataset[key] = String(value ?? "");
+  });
+  label.append(input, textElement("span", "sl"));
+
+  row.append(createToggleIcon(iconPaths), body, label);
+  card.appendChild(row);
+  return { card, input };
+}
+
+function createResultArticle(title, text) {
+  const article = textElement("article", "result");
+  article.append(textElement("strong", "", title), textElement("p", "", text));
+  return article;
+}
+
 async function init() {
   setupTabs();
   bindButton(els.login, login);
@@ -148,40 +212,32 @@ function renderCollections() {
   const collections = currentSettings.knowledgeBases || currentSettings.config?.knowledge_bases || [];
   const active = currentSettings.activeKnowledgeBases || [];
   if (!collections.length) {
-    els.collectionList.innerHTML = '<div class="result-panel empty">Geen kennisbanken gevonden in Klai.</div>';
+    setEmptyPanel(els.collectionList, "Geen kennisbanken gevonden in Klai.");
     return;
   }
-  els.collectionList.innerHTML = collections
-    .map((kb) => {
-      const slug = kb.slug || kb.id;
-      const on = active.includes(slug);
-      return `
-        <div class="toggle-card ${on ? "on" : ""}">
-          <div class="t-row">
-            <div class="t-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/></svg>
-            </div>
-            <div class="t-body">
-              <div class="t-label">${escapeHtml(kb.name || slug || "Klai kennisbank")}</div>
-              <div class="t-sub">${escapeHtml(slug || "knowledge")}</div>
-            </div>
-            <label class="sw"><input type="checkbox" data-kb="${escapeAttr(slug)}" ${on ? "checked" : ""}><span class="sl"></span></label>
-          </div>
-        </div>
-      `;
-    })
-    .join("");
+  const cards = collections.map((kb) => {
+    const slug = kb.slug || kb.id || "";
+    const on = active.includes(slug);
+    return createToggleCard({
+      title: kb.name || slug || "Klai kennisbank",
+      subtitle: slug || "knowledge",
+      iconPaths: KNOWLEDGE_ICON_PATHS,
+      checked: on,
+      data: { kb: slug }
+    });
+  });
+  els.collectionList.replaceChildren(...cards.map(({ card }) => card));
 
-  els.collectionList.querySelectorAll("input[data-kb]").forEach((checkbox) => {
-    checkbox.addEventListener("change", async () => {
-      const slug = checkbox.dataset.kb;
+  cards.forEach(({ card, input }) => {
+    input.addEventListener("change", async () => {
+      const slug = input.dataset.kb;
       const next = new Set(currentSettings.activeKnowledgeBases || []);
-      if (checkbox.checked) next.add(slug);
+      if (input.checked) next.add(slug);
       else next.delete(slug);
       currentSettings = await msg("KLAI_SHIELD_SET_SETTINGS", {
         settings: { activeKnowledgeBases: Array.from(next) }
       });
-      checkbox.closest(".toggle-card").classList.toggle("on", checkbox.checked);
+      card.classList.toggle("on", input.checked);
     });
   });
 }
@@ -189,25 +245,19 @@ function renderCollections() {
 function renderTemplates() {
   const templates = currentSettings.templates || [];
   if (!templates.length) {
-    els.templateList.innerHTML = '<div class="result-panel empty">Klai gebruikt nu automatisch de standaardinstructie voor context.</div>';
+    setEmptyPanel(els.templateList, "Klai gebruikt nu automatisch de standaardinstructie voor context.");
     return;
   }
-  els.templateList.innerHTML = templates
-    .map((template) => `
-      <div class="toggle-card on">
-        <div class="t-row">
-          <div class="t-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
-          </div>
-          <div class="t-body">
-            <div class="t-label">${escapeHtml(template.name || "Klai instructie")}</div>
-            <div class="t-sub">${escapeHtml(template.description || "Actief voor context-injectie")}</div>
-          </div>
-          <label class="sw"><input type="checkbox" checked disabled><span class="sl"></span></label>
-        </div>
-      </div>
-    `)
-    .join("");
+  const cards = templates.map((template) =>
+    createToggleCard({
+      title: template.name || "Klai instructie",
+      subtitle: template.description || "Actief voor context-injectie",
+      iconPaths: TEMPLATE_ICON_PATHS,
+      checked: true,
+      disabled: true
+    }).card
+  );
+  els.templateList.replaceChildren(...cards);
 }
 
 function renderCompliance() {
@@ -261,20 +311,19 @@ function renderComplianceResult(result) {
   const warnings = result.warnings || [];
   els.checkSummary.classList.remove("empty");
   els.checkSummary.dataset.status = status;
-  els.checkSummary.innerHTML = `
-    <div class="result-title">
-      <span>${escapeHtml(statusLabel(status))}</span>
-      <span>${Number(result.risk_score || 0)}/100</span>
-    </div>
-    ${
-      warnings.length
-        ? `<ul class="warning-list">${warnings
-            .slice(0, 4)
-            .map((warning) => `<li>${escapeHtml(warning.label || warning.id || "Waarschuwing")}</li>`)
-            .join("")}</ul>`
-        : `<p class="empty">Deze tekst kan door volgens de huidige regels.</p>`
-    }
-  `;
+
+  const title = textElement("div", "result-title");
+  title.append(textElement("span", "", statusLabel(status)), textElement("span", "", `${Number(result.risk_score || 0)}/100`));
+
+  if (warnings.length) {
+    const list = textElement("ul", "warning-list");
+    warnings.slice(0, 4).forEach((warning) => {
+      list.appendChild(textElement("li", "", warning.label || warning.id || "Waarschuwing"));
+    });
+    els.checkSummary.replaceChildren(title, list);
+  } else {
+    els.checkSummary.replaceChildren(title, textElement("p", "empty", "Deze tekst kan door volgens de huidige regels."));
+  }
 }
 
 async function runQuery() {
@@ -296,14 +345,13 @@ function renderChunks(chunks) {
     return;
   }
   els.results.classList.remove("empty");
-  els.results.innerHTML = latestChunks
-    .slice(0, 6)
-    .map((chunk, index) => {
+  els.results.replaceChildren(
+    ...latestChunks.slice(0, 6).map((chunk, index) => {
       const title = chunk.title || chunk.source || chunk.metadata?.title || `Bron ${index + 1}`;
       const text = (chunk.text || chunk.content || "").trim().slice(0, 260);
-      return `<article class="result"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(text)}</p></article>`;
+      return createResultArticle(title, text);
     })
-    .join("");
+  );
 }
 
 async function insertContext() {
@@ -353,19 +401,6 @@ function bindButton(button, handler) {
       button.disabled = false;
     }
   });
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function escapeAttr(value) {
-  return escapeHtml(value).replaceAll("`", "&#096;");
 }
 
 init();
