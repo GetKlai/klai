@@ -541,51 +541,6 @@ def _record_emitted_source_key(
     return True
 
 
-def _source_payload_from_keys(
-    source_keys: list[str],
-    citation_source_metadata: dict[str, dict[str, str]],
-) -> list[dict[str, str]]:
-    sources: list[dict[str, str]] = []
-    for index, source_key in enumerate(source_keys, 1):
-        metadata = citation_source_metadata.get(source_key) or {}
-        url = _normalise_guard_url(metadata.get("url") or source_key)
-        if not url:
-            continue
-        title = (metadata.get("title") or "").strip() or "Source"
-        sources.append({"label": str(index), "title": title, "url": url})
-    return sources
-
-
-def _source_payload_from_trusted_sources(
-    trusted_sources: list[dict[str, Any]],
-) -> tuple[list[dict[str, str]], list[str]]:
-    sources: list[dict[str, str]] = []
-    source_keys: list[str] = []
-    seen_keys: set[str] = set()
-    for source in trusted_sources:
-        title = str(source.get("title") or source.get("source_label") or "Source").strip()
-        url = _normalise_guard_url(source.get("url") or source.get("source_url"))
-        key = _source_url_key(url) if url else ""
-        if not key:
-            for fallback_key in ("artifact_id", "source_id", "title", "source_label"):
-                value = source.get(fallback_key)
-                if isinstance(value, str) and value.strip():
-                    key = f"{fallback_key}:{value.strip()}"
-                    break
-        if not key or key in seen_keys:
-            continue
-        seen_keys.add(key)
-        source_keys.append(key)
-        sources.append(
-            {
-                "label": str(len(sources) + 1),
-                "title": title or "Source",
-                "url": url,
-            }
-        )
-    return sources, source_keys
-
-
 def _dedupe_adjacent_citation_links(text: str) -> str:
     output: list[str] = []
     pos = 0
@@ -1307,7 +1262,12 @@ async def _chat_completion_streaming_with_composed_citations(
     citation_chunks: list[dict] | None,
     emit_sources: bool = True,
 ) -> AsyncGenerator[bytes]:
-    """Collect widget text, compose deterministic citations, then stream once."""
+    """Collect text, compose deterministic citations, then stream once.
+
+    Marker-mode clients receive backend-managed document-level citations. The
+    model is explicitly told not to write citation markers, so source selection
+    must happen after generation against the final answer text.
+    """
     raw_text_parts: list[str] = []
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
@@ -1365,6 +1325,17 @@ async def _chat_completion_streaming_with_composed_citations(
         selected_count=len(sources),
         decision=decision,
     )
+    if citation_chunks:
+        yield _sse_activity_delta(
+            [
+                {
+                    "step": "knowledge_retrieved",
+                    "label": "Kennisbank geraadpleegd",
+                    "detail": f"{len(citation_chunks)} passages gevonden",
+                    "count": len(citation_chunks),
+                }
+            ]
+        )
     if not sources or not emit_sources:
         yield _sse_content_delta(content)
         yield b"data: [DONE]\n\n"
@@ -1376,6 +1347,16 @@ async def _chat_completion_streaming_with_composed_citations(
         return
 
     yield _sse_sources_delta(sources)
+    yield _sse_activity_delta(
+        [
+            {
+                "step": "sources_attached",
+                "label": "Bronnen gekoppeld",
+                "detail": f"{len(sources)} bronnen beschikbaar",
+                "count": len(sources),
+            }
+        ]
+    )
     yield _sse_content_delta(content)
     yield b"data: [DONE]\n\n"
     _emit_language_correctness_log(
@@ -1383,18 +1364,6 @@ async def _chat_completion_streaming_with_composed_citations(
         query=user_query,
         response_text=content,
     )
-
-
-def _maybe_sse_sources_delta(
-    *,
-    citation_output: CitationOutput,
-    emitted_source_key_order: list[str],
-    citation_source_metadata: dict[str, dict[str, str]],
-) -> bytes | None:
-    if citation_output != "markers":
-        return None
-    sources = _source_payload_from_keys(emitted_source_key_order, citation_source_metadata)
-    return _sse_sources_delta(sources) if sources else None
 
 
 def _build_system_prompt(
@@ -1751,57 +1720,33 @@ async def chat_completion_streaming(
     emit_sources: bool = True,
     page_context: PageContext | None = None,
 ) -> AsyncGenerator[bytes]:
-    """Stream LiteLLM SSE response with KB-source URL sanitization.
+    """Stream LiteLLM SSE response with backend-managed KB citations.
 
-    POST to LiteLLM with stream=true, yield sanitized content deltas. Collects
-    the streamed assistant text alongside the byte forwarding so the
-    ``chat_synthesis_complete`` log event (REQ-07) gets the full
-    response text even though we never buffer it for the client.
+    Marker mode is the current partner/widget API path: it buffers the model
+    output, runs the deterministic citation composer, then emits only sources
+    that support the final answer. Link mode is the legacy sanitizer path.
     """
 
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
     user_query = source_query or _last_user_message(messages) or ""
+    if citation_output == "markers":
+        async for chunk in _chat_completion_streaming_with_composed_citations(
+            augmented_messages=augmented_messages,
+            model=model,
+            temperature=temperature,
+            settings=settings,
+            org_id=org_id,
+            user_query=user_query,
+            trusted_sources=trusted_sources,
+            citation_chunks=citation_chunks,
+            emit_sources=emit_sources,
+        ):
+            yield chunk
+        return
+
     citation_source_metadata = citation_source_metadata or (
         _citation_source_metadata_from_chunks(citation_chunks or []) if citation_chunks else {}
     )
-    initial_sources: list[dict[str, str]] = []
-    initial_source_keys: list[str] = []
-
-    if citation_output == "markers":
-        trusted_source_list = [s for s in (trusted_sources or []) if isinstance(s, dict)]
-        initial_sources, initial_source_keys = _source_payload_from_trusted_sources(trusted_source_list)
-        if not initial_sources:
-            initial_source_keys = list(citation_source_metadata.keys())
-            initial_sources = _source_payload_from_keys(initial_source_keys, citation_source_metadata)
-        if citation_chunks and not initial_sources:
-            message = _no_citable_sources_message(user_query)
-            yield _sse_content_delta(message)
-            yield b"data: [DONE]\n\n"
-            _emit_language_correctness_log(org_id=org_id, query=user_query, response_text=message)
-            return
-        if citation_chunks:
-            yield _sse_activity_delta(
-                [
-                    {
-                        "step": "knowledge_retrieved",
-                        "label": "Kennisbank geraadpleegd",
-                        "detail": f"{len(citation_chunks)} passages gevonden",
-                        "count": len(citation_chunks),
-                    }
-                ]
-            )
-        if initial_sources:
-            yield _sse_sources_delta(initial_sources)
-            yield _sse_activity_delta(
-                [
-                    {
-                        "step": "sources_attached",
-                        "label": "Bronnen gekoppeld",
-                        "detail": f"{len(initial_sources)} bronnen beschikbaar",
-                        "count": len(initial_sources),
-                    }
-                ]
-            )
 
     async for chunk in _chat_completion_streaming_sanitized(
         augmented_messages=augmented_messages,
@@ -1814,8 +1759,6 @@ async def chat_completion_streaming(
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
         citation_output=citation_output,
-        preemitted_source_keys=initial_source_keys if citation_output == "markers" else None,
-        sources_sent_initially=bool(initial_sources) if citation_output == "markers" else False,
     ):
         yield chunk
 
@@ -1847,17 +1790,15 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     citation_source_urls: dict[int, str] | None,
     citation_source_metadata: dict[str, dict[str, str]] | None,
     citation_output: CitationOutput,
-    preemitted_source_keys: list[str] | None = None,
-    sources_sent_initially: bool = False,
 ) -> AsyncGenerator[bytes]:
-    """Partner streaming path with URL sanitization and linked citations.
+    """Legacy partner streaming path with URL sanitization and linked citations.
 
     This path buffers sanitized text until the upstream stream is complete,
     then runs the output-safety gate before emitting any assistant content.
     That is intentional: hazardous instructions can span many deltas, and an
-    incremental gate can leak an early phrase before the later topic token
-    makes the full policy match. Source/activity metadata may be emitted
-    before completion, but assistant text is fail-closed.
+    incremental gate can leak an early phrase before the later topic token makes
+    the full policy match. Current marker-mode clients are handled by
+    _chat_completion_streaming_with_composed_citations before this helper runs.
     """
     litellm_url = settings.litellm_base_url
     allowed_source_urls = allowed_source_urls or set()
@@ -1865,9 +1806,8 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     citation_source_metadata = citation_source_metadata or {}
     collected_text_parts: list[str] = []
     pending_text = ""
-    emitted_source_keys: set[str] = set(preemitted_source_keys or [])
-    emitted_source_key_order: list[str] = list(preemitted_source_keys or [])
-    sources_sent = sources_sent_initially
+    emitted_source_keys: set[str] = set()
+    emitted_source_key_order: list[str] = []
     stripped_links = 0
     safety_aborted = False
 
@@ -1921,14 +1861,6 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
                         break
                     if full_text:
                         yield _sse_content_delta(full_text)
-                    if not sources_sent:
-                        if source_delta := _maybe_sse_sources_delta(
-                            citation_output=citation_output,
-                            emitted_source_key_order=emitted_source_key_order,
-                            citation_source_metadata=citation_source_metadata,
-                        ):
-                            yield source_delta
-                        sources_sent = True
                     yield b"data: [DONE]\n\n"
                     _emit_language_correctness_log(
                         org_id=org_id,
@@ -1998,18 +1930,6 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
         return
     if full_text:
         yield _sse_content_delta(full_text)
-
-    source_delta = (
-        None
-        if sources_sent
-        else _maybe_sse_sources_delta(
-            citation_output=citation_output,
-            emitted_source_key_order=emitted_source_key_order,
-            citation_source_metadata=citation_source_metadata,
-        )
-    )
-    if source_delta:
-        yield source_delta
 
     if stripped_links:
         logger.warning(
