@@ -662,6 +662,7 @@ async def _finalize_and_set_cookie(
         samesite="lax",
         max_age=settings.sso_cookie_max_age,
     )
+    _delete_idp_pending_cookie(response)
     return LoginResponse(callback_url=await _validate_callback_url(callback_url))
 
 
@@ -1021,6 +1022,59 @@ def _invite_token_matches_email(invite_token: str | None, email_norm: str) -> bo
         return False
     invite_payload = verify_invite_token(invite_token)
     return invite_payload is not None and invite_payload.email == email_norm
+
+
+def _idp_pending_cookie_domain() -> str | None:
+    return f".{settings.domain}" if settings.domain else None
+
+
+def _set_idp_pending_cookie(
+    response: Response,
+    request: Request,
+    *,
+    session_id: str,
+    session_token: str,
+    zitadel_user_id: str,
+    email: str,
+    has_valid_invite: bool,
+) -> bytes:
+    """Mint the pending social-signup cookie used by /api/signup/social.
+
+    Both social-signup origins (explicit signup and login-with-unknown-account)
+    must serialize the same payload shape. Keep the cookie attributes here in
+    sync with the consume/delete side in app.api.signup.
+    """
+    pending_payload = json.dumps(
+        {
+            "session_id": session_id,
+            "session_token": session_token,
+            "zitadel_user_id": zitadel_user_id,
+            "email": email,
+            "has_valid_invite": has_valid_invite,
+            "ua_hash": SessionService.hash_metadata(request.headers.get("user-agent")),
+            "ip_subnet": resolve_caller_ip_subnet(request),
+        }
+    ).encode()
+    encrypted_pending = _get_sso_fernet().encrypt(pending_payload).decode()
+    response.set_cookie(
+        key=_IDP_PENDING_COOKIE,
+        value=encrypted_pending,
+        max_age=_IDP_PENDING_MAX_AGE,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        domain=_idp_pending_cookie_domain(),
+        path="/",
+    )
+    return pending_payload
+
+
+def _delete_idp_pending_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=_IDP_PENDING_COOKIE,
+        domain=_idp_pending_cookie_domain(),
+        path="/",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1450,6 +1504,7 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
 @router.post("/auth/sso-complete", response_model=LoginResponse)
 async def sso_complete(
     body: SSOCompleteRequest,
+    response: Response,
     klai_sso: str | None = Cookie(default=None),
 ) -> LoginResponse:
     """Auto-complete a Zitadel OIDC auth request using the portal SSO session.
@@ -1493,6 +1548,7 @@ async def sso_complete(
             detail="SSO session no longer valid",
         ) from exc
 
+    _delete_idp_pending_cookie(response)
     return LoginResponse(callback_url=await _validate_callback_url(callback_url))
 
 
@@ -1962,6 +2018,7 @@ async def idp_callback(
     id: str,
     token: str,
     auth_request_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
     """Handle the redirect back from a social IDP after authentication.
@@ -2081,39 +2138,29 @@ async def idp_callback(
 
     total = len(entries)
 
-    # Case 1: no member orgs AND no domain_orgs -> still complete the BFF
-    # login. The frontend callback will route org_found=false users to
-    # /no-account, but it needs a valid session first so they can submit a join
-    # request from that page.
+    # Case 1: no member orgs AND no domain_orgs -> do not complete login.
+    # The IDP identity is valid, but Klai does not know this account yet.
+    # Route to an explicit UX instead of silently finalizing into a portal
+    # session with no workspace.
     if total == 0:
-        try:
-            callback_url = await zitadel.finalize_auth_request(
-                auth_request_id=auth_request_id,
-                session_id=session_id,
-                session_token=session_token,
-            )
-        except httpx.HTTPStatusError as exc:
-            _slog.exception("idp_callback_finalize_no_account_failed", zitadel_status=exc.response.status_code)
-            _emit_auth_event(
-                "idp_callback_failed",
-                reason="finalize_no_account_5xx",
-                zitadel_status=exc.response.status_code,
-                outcome="302→failure_url",
-                level="error",
-            )
-            return RedirectResponse(url=failure_url, status_code=302)
-
-        redirect = RedirectResponse(url=await _validate_callback_url(callback_url), status_code=302)
-        redirect.set_cookie(
-            key="klai_sso",
-            value=_encrypt_sso(session_id, session_token),
-            domain=f".{settings.domain}",
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            max_age=settings.sso_cookie_max_age,
+        no_account_url = f"/no-account?email={quote(email)}" if email else "/no-account"
+        redirect = RedirectResponse(url=no_account_url, status_code=302)
+        _set_idp_pending_cookie(
+            redirect,
+            request,
+            session_id=session_id,
+            session_token=session_token,
+            zitadel_user_id=zitadel_user_id,
+            email=email,
+            has_valid_invite=False,
         )
-        emit_event("login", user_id=zitadel_user_id or None, properties={"method": "idp", "org_found": False})
+        _emit_auth_event(
+            "idp_callback_no_account",
+            reason="no_portal_account",
+            outcome="302→no-account",
+            email=email or None,
+            level="info",
+        )
         if zitadel_user_id:
             await audit.log_event(
                 org_id=0,
@@ -2177,6 +2224,7 @@ async def idp_callback(
         samesite="lax",
         max_age=settings.sso_cookie_max_age,
     )
+    _delete_idp_pending_cookie(redirect)
     emit_event("login", user_id=zitadel_user_id or None, properties={"method": "idp"})
     # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.3: audit log on successful IDP callback completion
     if zitadel_user_id:
@@ -2433,6 +2481,7 @@ async def idp_signup_callback(  # noqa: C901 - existing callback flow has many e
             samesite="lax",
             max_age=settings.sso_cookie_max_age,
         )
+        _delete_idp_pending_cookie(response)
         emit_event("login", user_id=zitadel_user_id, properties={"method": "idp"})
         # SPEC-SEC-AUTH-COVERAGE-001 REQ-2.7: audit log on successful existing-
         # user IDP signup-callback (existing portal_user → SSO cookie path)
@@ -2457,38 +2506,18 @@ async def idp_signup_callback(  # noqa: C901 - existing callback flow has many e
             return RedirectResponse(url=failure_url, status_code=302)
 
     # 4. New user — store pending session in encrypted cookie, redirect to company name form.
-    # SPEC-SEC-SESSION-001 REQ-2.1: snapshot the issuing browser + IP-subnet
-    # so the consume side (signup_social) can reject a stolen-cookie replay
-    # from a different origin context.
-    pending_ua_hash = SessionService.hash_metadata(request.headers.get("user-agent"))
-    pending_ip_subnet = resolve_caller_ip_subnet(request)
-    pending_payload = json.dumps(
-        {
-            "session_id": session_id,
-            "session_token": session_token,
-            "zitadel_user_id": zitadel_user_id,
-            "email": email,
-            "has_valid_invite": has_valid_invite,
-            "ua_hash": pending_ua_hash,
-            "ip_subnet": pending_ip_subnet,
-        }
-    ).encode()
-    encrypted_pending = _get_sso_fernet().encrypt(pending_payload).decode()
-
     social_url = (
         f"{settings.portal_url}/{locale}/signup/social"
         f"?first_name={quote(first_name)}&last_name={quote(last_name)}&email={quote(email)}"
     )
     response = RedirectResponse(url=social_url, status_code=302)
-    cookie_domain = f".{settings.domain}" if settings.domain else None
-    response.set_cookie(
-        key=_IDP_PENDING_COOKIE,
-        value=encrypted_pending,
-        max_age=_IDP_PENDING_MAX_AGE,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        domain=cookie_domain,
-        path="/",
+    _set_idp_pending_cookie(
+        response,
+        request,
+        session_id=session_id,
+        session_token=session_token,
+        zitadel_user_id=zitadel_user_id,
+        email=email,
+        has_valid_invite=has_valid_invite,
     )
     return response
