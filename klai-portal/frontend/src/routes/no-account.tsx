@@ -1,17 +1,29 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
-import { ArrowRight } from 'lucide-react'
+import { LogIn, UserPlus } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 
+type SearchParams = {
+  email: string
+  first_name: string
+  last_name: string
+}
+
 export const Route = createFileRoute('/no-account')({
+  validateSearch: (search: Record<string, unknown>): SearchParams => ({
+    email: typeof search.email === 'string' ? search.email : '',
+    first_name: typeof search.first_name === 'string' ? search.first_name : '',
+    last_name: typeof search.last_name === 'string' ? search.last_name : '',
+  }),
   component: NoAccountPage,
 })
 
 function NoAccountPage() {
-  useLocale()
-  const navigate = useNavigate()
+  const { locale } = useLocale()
+  const { email, first_name, last_name } = Route.useSearch()
+  const canContinueSocialSignup = Boolean(email)
 
   const leftContent = (
     <>
@@ -37,22 +49,31 @@ function NoAccountPage() {
         </p>
       </div>
 
-      <Button
-        onClick={() => { void navigate({ to: '/join-request' }) }}
-        size="lg"
-        className="w-full gap-3"
-      >
-        {m.no_account_request_access()}
-        <ArrowRight size={16} />
-      </Button>
+      {canContinueSocialSignup ? (
+        <Button asChild size="lg" className="w-full gap-3">
+          <Link
+            to="/$locale/signup/social"
+            params={{ locale }}
+            search={{ email, first_name, last_name }}
+          >
+            {m.no_account_request_access()}
+            <UserPlus size={16} />
+          </Link>
+        </Button>
+      ) : (
+        <Button asChild size="lg" className="w-full gap-3">
+          <Link to="/$locale/signup" params={{ locale }}>
+            {m.no_account_request_access()}
+            <UserPlus size={16} />
+          </Link>
+        </Button>
+      )}
 
-      <Button
-        variant="ghost"
-        onClick={() => { window.location.replace('/') }}
-        size="lg"
-        className="w-full"
-      >
-        {m.no_account_cta()}
+      <Button asChild variant="ghost" size="lg" className="w-full gap-3">
+        <a href="/">
+          {m.no_account_cta()}
+          <LogIn size={16} />
+        </a>
       </Button>
     </AuthPageLayout>
   )

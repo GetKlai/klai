@@ -271,7 +271,13 @@ async def test_idp_callback_session_creation_5xx(respx_zitadel: respx.MockRouter
     db = _make_idp_db_mock()
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
-        result = await idp_callback(id="intent-1", token="tok-1", auth_request_id="ar-1", db=db)
+        result = await idp_callback(
+            id="intent-1",
+            token="tok-1",
+            auth_request_id="ar-1",
+            request=make_request(),
+            db=db,
+        )
 
     assert result.status_code == 302
     assert "/login?authRequest=ar-1" in result.headers["location"]
@@ -303,7 +309,13 @@ async def test_idp_callback_no_session_in_response(respx_zitadel: respx.MockRout
             AsyncMock(return_value={}),  # no sessionId / sessionToken
         ),
     ):
-        result = await idp_callback(id="intent-2", token="tok-2", auth_request_id="ar-2", db=db)
+        result = await idp_callback(
+            id="intent-2",
+            token="tok-2",
+            auth_request_id="ar-2",
+            request=make_request(),
+            db=db,
+        )
 
     assert result.status_code == 302
     audit_log.assert_not_called()
@@ -344,7 +356,13 @@ async def test_idp_callback_finalize_5xx(respx_zitadel: respx.MockRouter) -> Non
             AsyncMock(return_value={"zitadel_user_id": "uid-x", "email": "x@example.com"}),
         ),
     ):
-        result = await idp_callback(id="intent-3", token="tok-3", auth_request_id="ar-3", db=db)
+        result = await idp_callback(
+            id="intent-3",
+            token="tok-3",
+            auth_request_id="ar-3",
+            request=make_request(),
+            db=db,
+        )
 
     assert result.status_code == 302
     assert "/login?authRequest=ar-3" in result.headers["location"]
