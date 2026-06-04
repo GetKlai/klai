@@ -70,6 +70,9 @@ export function UserActions({
   const isDeleting =
     deleteMutation.isPending &&
     deleteMutation.variables?.zitadel_user_id === user.zitadel_user_id
+  const canResendInvite =
+    user.invite_pending || user.status === 'active' || user.status === 'offboarded'
+  const canOffboard = user.status === 'active' || user.status === 'suspended'
 
   return (
     <InlineDeleteConfirm
@@ -84,7 +87,7 @@ export function UserActions({
       onCancel={() => onConfirmDelete(null)}
     >
       <div className="flex items-start justify-end gap-2 mt-px">
-        {user.invite_pending && (
+        {canResendInvite && (
           <Tooltip label={m.admin_users_resend_invite()}>
             <button
               disabled={isResending}
@@ -187,14 +190,18 @@ export function UserActions({
                       {m.admin_users_action_reactivate()}
                     </DropdownMenuItem>
                   )}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => onConfirmOffboard(user.zitadel_user_id)}
-                    className="text-[var(--color-destructive)]"
-                  >
-                    <UserX className="mr-2 h-4 w-4" />
-                    {m.admin_users_action_offboard()}
-                  </DropdownMenuItem>
+                  {canOffboard && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => onConfirmOffboard(user.zitadel_user_id)}
+                        className="text-[var(--color-destructive)]"
+                      >
+                        <UserX className="mr-2 h-4 w-4" />
+                        {m.admin_users_action_offboard()}
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </>
               )}
             </DropdownMenuContent>
