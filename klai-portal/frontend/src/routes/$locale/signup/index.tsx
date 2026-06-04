@@ -1,11 +1,17 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, CheckCircle } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { useLocale } from '@/lib/locale'
 import { API_BASE } from '@/lib/api'
+import {
+  evaluateSignupPassword,
+  estimateSignupPasswordStrength,
+  type SignupPasswordIssue,
+  type SignupPasswordStrength,
+} from '@/lib/password-strength'
 
 export const Route = createFileRoute('/$locale/signup/')({
   component: SignupPage,
@@ -48,6 +54,27 @@ function SignupPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+  const passwordInputs = useMemo(
+    () => [form.email, form.first_name, form.last_name, form.company_name, 'Klai'],
+    [form.company_name, form.email, form.first_name, form.last_name],
+  )
+  const [passwordStrength, setPasswordStrength] = useState<SignupPasswordStrength>(() =>
+    estimateSignupPasswordStrength(''),
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    setPasswordStrength(estimateSignupPasswordStrength(form.password))
+    if (!form.password) return
+
+    void evaluateSignupPassword(form.password, passwordInputs).then((result) => {
+      if (!cancelled) setPasswordStrength(result)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [form.password, passwordInputs])
 
   async function handleSocialSignup(idpId: string) {
     setError(null)
@@ -79,18 +106,10 @@ function SignupPage() {
     e.preventDefault()
     setError(null)
 
-    // SPEC-LAUNCH-SOFTLAUNCH-001 B-1: block before server roundtrip when
-    // the password obviously fails the backend length/symbol floor. The backend
-    // zxcvbn check (score >= 3, REQ-22.1 SPEC-SEC-HYGIENE-001) still runs
-    // server-side and surfaces a more specific error if the password is
-    // long enough but too predictable.
-    if (
-      form.password.length < 12 ||
-      !Array.from(form.password).some((char) =>
-        /[^\p{L}\p{N}\s]/u.test(char),
-      )
-    ) {
-      setError(m.signup_password_too_short())
+    const latestPasswordStrength = await evaluateSignupPassword(form.password, passwordInputs)
+    setPasswordStrength(latestPasswordStrength)
+    if (!latestPasswordStrength.isAcceptable) {
+      setError(signupPasswordIssueMessage(latestPasswordStrength.issues[0]))
       return
     }
 
@@ -111,8 +130,12 @@ function SignupPage() {
       })
 
       if (!resp.ok) {
+        if (resp.status === 429) {
+          setError(m.signup_error_rate_limited())
+          return
+        }
         const data = await resp.json().catch(() => ({}))
-        setError(data?.detail ?? m.signup_error_server({ status: String(resp.status) }))
+        setError(readSignupError(data, resp.status))
         return
       }
 
@@ -260,6 +283,11 @@ function SignupPage() {
           hint={m.signup_field_password_hint()}
           required
         />
+        <PasswordStrengthMeter
+          score={passwordStrength.score}
+          issues={passwordStrength.issues}
+          show={form.password.length > 0}
+        />
 
         {error && (
           <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
@@ -278,6 +306,80 @@ function SignupPage() {
         </a>
       </p>
     </AuthPageLayout>
+  )
+}
+
+function signupPasswordIssueMessage(issue: SignupPasswordIssue | undefined) {
+  if (issue === 'too_short') return m.signup_password_too_short()
+  if (issue === 'missing_symbol') return m.signup_password_missing_symbol()
+  return m.signup_password_too_weak()
+}
+
+function readSignupError(data: unknown, status: number) {
+  const detail = typeof data === 'object' && data !== null && 'detail' in data ? data.detail : null
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const firstPasswordError = detail.find((item) => {
+      if (typeof item !== 'object' || item === null) return false
+      const loc = 'loc' in item && Array.isArray(item.loc) ? item.loc : []
+      const msg = 'msg' in item && typeof item.msg === 'string' ? item.msg : ''
+      return loc.includes('password') || msg.toLowerCase().includes('wachtwoord') || msg.toLowerCase().includes('password')
+    })
+    if (typeof firstPasswordError === 'object' && firstPasswordError !== null && 'msg' in firstPasswordError) {
+      const msg = firstPasswordError.msg
+      if (typeof msg === 'string' && msg.trim()) return msg
+    }
+  }
+  return m.signup_error_server({ status: String(status) })
+}
+
+function PasswordStrengthMeter({
+  score,
+  issues,
+  show,
+}: {
+  score: number
+  issues: SignupPasswordIssue[]
+  show: boolean
+}) {
+  if (!show) return null
+
+  const level = Math.max(0, Math.min(4, score))
+  const labels = [
+    m.signup_password_strength_very_weak(),
+    m.signup_password_strength_weak(),
+    m.signup_password_strength_fair(),
+    m.signup_password_strength_good(),
+    m.signup_password_strength_strong(),
+  ]
+  const activeClass =
+    level >= 3
+      ? 'bg-emerald-500'
+      : level === 2
+        ? 'bg-amber-500'
+        : 'bg-[var(--color-destructive-text)]'
+
+  return (
+    <div className="space-y-2" aria-live="polite">
+      <div className="grid grid-cols-4 gap-1" aria-hidden="true">
+        {[0, 1, 2, 3].map((index) => (
+          <div
+            key={index}
+            className={`h-1.5 rounded-full ${index <= level - 1 ? activeClass : 'bg-gray-200'}`}
+          />
+        ))}
+      </div>
+      <div className="flex items-start justify-between gap-3 text-xs">
+        <span className={issues.length === 0 ? 'text-emerald-700' : 'text-gray-500'}>
+          {labels[level]}
+        </span>
+        {issues.length === 0 ? (
+          <span className="text-emerald-700">{m.signup_password_ready()}</span>
+        ) : (
+          <span className="text-gray-500">{signupPasswordIssueMessage(issues[0])}</span>
+        )}
+      </div>
+    </div>
   )
 }
 
