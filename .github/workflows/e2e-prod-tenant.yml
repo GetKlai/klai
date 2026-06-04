@@ -75,8 +75,10 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Install Playwright browsers (Chromium only)
-        run: npx playwright install chromium --with-deps
+      - name: Verify hosted Chrome
+        run: |
+          command -v google-chrome
+          google-chrome --version
 
       - name: Generate audio fixture (if missing)
         run: |
@@ -92,6 +94,7 @@ jobs:
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
           E2E_TOTP_SECRET: ${{ secrets.E2E_TOTP_SECRET }}
+          PLAYWRIGHT_BROWSER_CHANNEL: chrome
         run: npm run test:e2e:prod
 
       - name: Upload Playwright report
