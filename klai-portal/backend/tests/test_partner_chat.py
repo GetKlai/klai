@@ -1784,7 +1784,7 @@ def test_stream_sanitizer_converts_bare_number_citation_runs_for_widget_markers(
 
 @pytest.mark.asyncio
 async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
-    """Widget streams receive controlled source metadata before DONE."""
+    """Widget streams receive controlled source metadata selected after generation."""
     from app.services.partner_chat import chat_completion_streaming
 
     events = [{"choices": [{"delta": {"content": "Naam 4(https://getklai.com/docs/legal/privacy)."}}]}]
@@ -1865,13 +1865,15 @@ async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
     assert (
         '"sources": [{"label": "1", "title": "Privacy policy", "url": "https://getklai.com/docs/legal/privacy"}]'
     ) in body
+    assert '"step": "knowledge_retrieved"' in body
+    assert '"step": "sources_attached"' in body
     assert "4(https://getklai.com/docs/legal/privacy)" not in body
     assert "[DONE]" in body
 
 
 @pytest.mark.asyncio
 async def test_streaming_widget_mode_composes_sources_without_model_citations(monkeypatch):
-    """Production regression: a plain widget answer must still receive clickable sources."""
+    """Production regression: a plain answer must still receive selected sources."""
     from app.services.partner_chat import chat_completion_streaming
 
     events = [
@@ -1948,8 +1950,185 @@ async def test_streaming_widget_mode_composes_sources_without_model_citations(mo
 
 
 @pytest.mark.asyncio
+async def test_streaming_widget_mode_respects_emit_sources_false(monkeypatch):
+    """Marker streaming can hide structured sources without dropping content."""
+    from app.services.partner_chat import chat_completion_streaming
+
+    events = [
+        {"choices": [{"delta": {"content": "Klai is steward-owned and mission-led."}}]},
+    ]
+
+    class _StreamResp:
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def aiter_lines(self):
+            for event in events:
+                yield "data: " + json.dumps(event)
+            yield "data: [DONE]"
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, *_, **__):
+            return _StreamResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm"
+    settings.litellm_master_key = "secret"
+
+    chunks = []
+    async for chunk in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Wat is Klai?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=settings,
+        citation_chunks=[
+            {
+                "title": "Steward ownership",
+                "source_url": "https://www.getklai.com/docs/company/steward-ownership",
+                "text": "Klai is steward-owned and mission-led.",
+            }
+        ],
+        trusted_sources=[
+            {
+                "label": "1",
+                "title": "Steward ownership",
+                "url": "https://getklai.com/docs/company/steward-ownership",
+            }
+        ],
+        citation_output="markers",
+        emit_sources=False,
+    ):
+        chunks.append(chunk)
+
+    body = b"".join(chunks).decode()
+    assert "Klai is steward-owned and mission-led." in body
+    assert '"sources"' not in body
+    assert '"step": "knowledge_retrieved"' in body
+    assert '"step": "sources_attached"' not in body
+    assert "[DONE]" in body
+
+
+@pytest.mark.asyncio
+async def test_streaming_widget_mode_filters_sources_against_composed_answer(monkeypatch):
+    """Streaming marker mode must not emit every retrieved source up front.
+
+    The source list has to come from the deterministic citation composer after
+    seeing the final answer; otherwise unrelated retrieval hits appear as
+    clickable provenance for an answer they do not support.
+    """
+    from app.services.partner_chat import chat_completion_streaming
+
+    events = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "content": (
+                            "Controleer bij een Yealink toestel na een routerwissel eerst "
+                            "SIP-registratie, SIP ALG en NAT/firewall instellingen."
+                        )
+                    }
+                }
+            ]
+        },
+    ]
+
+    class _StreamResp:
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def aiter_lines(self):
+            for event in events:
+                yield "data: " + json.dumps(event)
+            yield "data: [DONE]"
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, *_, **__):
+            return _StreamResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm"
+    settings.litellm_master_key = "secret"
+
+    chunks = []
+    async for chunk in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Welke diagnosevragen zijn logisch?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=settings,
+        citation_chunks=[
+            {
+                "evidence_id": "E1",
+                "title": "Telefoonproblemen",
+                "source_url": "https://help.voys.nl/telefoonproblemen",
+                "text": "Bij telefoonproblemen na een routerwissel controleer je SIP-registratie, SIP ALG, NAT en firewall.",
+            },
+            {
+                "evidence_id": "E2",
+                "title": "Wachtrijstatistieken",
+                "source_url": "https://help.voys.nl/wachtrijstatistieken",
+                "text": "Wachtrijstatistieken tonen wachttijd, bezetting en gemiste gesprekken.",
+            },
+        ],
+        trusted_sources=[
+            {
+                "label": "1",
+                "title": "Telefoonproblemen",
+                "url": "https://help.voys.nl/telefoonproblemen",
+                "evidence_ids": ["E1"],
+            },
+            {
+                "label": "2",
+                "title": "Wachtrijstatistieken",
+                "url": "https://help.voys.nl/wachtrijstatistieken",
+                "evidence_ids": ["E2"],
+            },
+        ],
+        citation_output="markers",
+    ):
+        chunks.append(chunk)
+
+    body = b"".join(chunks).decode()
+    assert "Telefoonproblemen" in body
+    assert "https://help.voys.nl/telefoonproblemen" in body
+    assert "Wachtrijstatistieken" not in body
+    assert "https://help.voys.nl/wachtrijstatistieken" not in body
+    assert body.index('"sources"') < body.index('"content"')
+
+
+@pytest.mark.asyncio
 async def test_streaming_widget_mode_keeps_uploaded_document_source_without_url(monkeypatch):
-    """Uploaded PDF sources have no public URL but are still citable provenance."""
+    """Uploaded PDF sources have no public URL but are still selected provenance."""
     from app.services.partner_chat import chat_completion_streaming
 
     events = [
