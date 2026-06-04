@@ -6,12 +6,13 @@ import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { useLocale } from '@/lib/locale'
 import { API_BASE } from '@/lib/api'
+import { PasswordStrengthMeter } from '@/components/auth/PasswordStrengthMeter'
 import {
   evaluateSignupPassword,
   estimateSignupPasswordStrength,
-  type SignupPasswordIssue,
   type SignupPasswordStrength,
 } from '@/lib/password-strength'
+import { passwordPolicyIssueMessage } from '@/lib/password-policy-copy'
 
 export const Route = createFileRoute('/$locale/signup/')({
   component: SignupPage,
@@ -109,7 +110,7 @@ function SignupPage() {
     const latestPasswordStrength = await evaluateSignupPassword(form.password, passwordInputs)
     setPasswordStrength(latestPasswordStrength)
     if (!latestPasswordStrength.isAcceptable) {
-      setError(signupPasswordIssueMessage(latestPasswordStrength.issues[0]))
+      setError(passwordPolicyIssueMessage(latestPasswordStrength.issues[0]))
       return
     }
 
@@ -309,15 +310,6 @@ function SignupPage() {
   )
 }
 
-function signupPasswordIssueMessage(issue: SignupPasswordIssue | undefined) {
-  if (issue === 'too_short') return m.signup_password_too_short()
-  if (issue === 'missing_uppercase') return m.signup_password_missing_uppercase()
-  if (issue === 'missing_lowercase') return m.signup_password_missing_lowercase()
-  if (issue === 'missing_number') return m.signup_password_missing_number()
-  if (issue === 'missing_symbol') return m.signup_password_missing_symbol()
-  return m.signup_password_too_weak()
-}
-
 function readSignupError(data: unknown, status: number) {
   const detail = typeof data === 'object' && data !== null && 'detail' in data ? data.detail : null
   if (typeof detail === 'string') return detail
@@ -334,56 +326,6 @@ function readSignupError(data: unknown, status: number) {
     }
   }
   return m.signup_error_server({ status: String(status) })
-}
-
-function PasswordStrengthMeter({
-  score,
-  issues,
-  show,
-}: {
-  score: number
-  issues: SignupPasswordIssue[]
-  show: boolean
-}) {
-  if (!show) return null
-
-  const level = Math.max(0, Math.min(4, score))
-  const labels = [
-    m.signup_password_strength_very_weak(),
-    m.signup_password_strength_weak(),
-    m.signup_password_strength_fair(),
-    m.signup_password_strength_good(),
-    m.signup_password_strength_strong(),
-  ]
-  const activeClass =
-    level >= 3
-      ? 'bg-emerald-500'
-      : level === 2
-        ? 'bg-amber-500'
-        : 'bg-[var(--color-destructive-text)]'
-
-  return (
-    <div className="space-y-2" aria-live="polite">
-      <div className="grid grid-cols-4 gap-1" aria-hidden="true">
-        {[0, 1, 2, 3].map((index) => (
-          <div
-            key={index}
-            className={`h-1.5 rounded-full ${index <= level - 1 ? activeClass : 'bg-gray-200'}`}
-          />
-        ))}
-      </div>
-      <div className="flex items-start justify-between gap-3 text-xs">
-        <span className={issues.length === 0 ? 'text-emerald-700' : 'text-gray-500'}>
-          {labels[level]}
-        </span>
-        {issues.length === 0 ? (
-          <span className="text-emerald-700">{m.signup_password_ready()}</span>
-        ) : (
-          <span className="text-gray-500">{signupPasswordIssueMessage(issues[0])}</span>
-        )}
-      </div>
-    </div>
-  )
 }
 
 function Field({

@@ -98,10 +98,8 @@ export async function evaluateSignupPassword(
   if (password.length > 0 && rawScore < SIGNUP_PASSWORD_MIN_SCORE) {
     issues.push('too_predictable')
   }
-  const score = issues.length === 0 ? rawScore : Math.min(rawScore, SIGNUP_PASSWORD_MIN_SCORE - 1)
-
   return {
-    score,
+    score: rawScore,
     issues,
     isAcceptable: issues.length === 0,
     estimated: false,

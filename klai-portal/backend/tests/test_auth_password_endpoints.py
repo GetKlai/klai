@@ -286,6 +286,29 @@ async def test_password_set_invalid_code(respx_zitadel: respx.MockRouter) -> Non
     assert events[0]["outcome"] == "400"
 
 
+@pytest.mark.asyncio
+async def test_password_set_maps_zitadel_password_policy_400(respx_zitadel: respx.MockRouter) -> None:
+    """If Zitadel policy drifts beyond local checks, return a password-policy error, not invalid-link copy."""
+    respx_zitadel.post("/v2/users/uid-1/invite_code/verify").mock(return_value=httpx.Response(200, json={}))
+    respx_zitadel.patch("/v2/users/uid-1").mock(
+        return_value=httpx.Response(400, json={"message": "password violates password complexity policy"})
+    )
+
+    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password=_STRONG_PASSWORD)
+
+    with capture_logs() as captured, _audit_log_patch() as audit_log:
+        with pytest.raises(HTTPException) as exc:
+            await password_set(body=body)
+
+    assert exc.value.status_code == 400
+    assert "Wachtwoord voldoet niet" in exc.value.detail
+    audit_log.assert_not_called()
+    events = _capture_events(captured, "password_set_failed")
+    assert len(events) == 1
+    assert events[0]["reason"] == "zitadel_password_policy"
+    assert events[0]["outcome"] == "400"
+
+
 # ---------------------------------------------------------------------------
 # Scenario P8 — password_set Zitadel 5xx → 502 + event (REQ-3.6)
 # ---------------------------------------------------------------------------

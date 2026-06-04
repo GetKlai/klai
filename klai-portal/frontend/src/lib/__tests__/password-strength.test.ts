@@ -30,7 +30,7 @@ describe('signup password strength', () => {
     expect(basicSignupPasswordIssues('Correct horse battery staple 2026')).toContain('missing_symbol')
   })
 
-  it('does not show a passing score while a composition requirement is missing', async () => {
+  it('keeps strength separate from policy compliance', async () => {
     const result = await evaluateSignupPassword('Correct horse battery staple!', [
       'mark@example.com',
       'Mark',
@@ -39,7 +39,7 @@ describe('signup password strength', () => {
 
     expect(result.isAcceptable).toBe(false)
     expect(result.issues).toContain('missing_number')
-    expect(result.score).toBeLessThan(SIGNUP_PASSWORD_MIN_SCORE)
+    expect(result.score).toBeGreaterThanOrEqual(SIGNUP_PASSWORD_MIN_SCORE)
   })
 
   it('rejects passwords based on personal context', async () => {

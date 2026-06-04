@@ -54,6 +54,21 @@ vi.mock('@/paraglide/messages', () => ({
   set_submit: () => 'Save',
   set_submit_loading: () => 'Saving...',
   set_subheading: () => 'Enter your new password.',
+  signup_password_missing_lowercase: () => 'Add at least one lowercase letter.',
+  signup_password_missing_number: () => 'Add at least one number.',
+  signup_password_missing_symbol: () => 'Add at least one symbol.',
+  signup_password_missing_uppercase: () => 'Add at least one uppercase letter.',
+  signup_password_policy_label: () => 'Policy',
+  signup_password_policy_met: () => 'Meets policy',
+  signup_password_ready: () => 'Ready',
+  signup_password_strength_fair: () => 'Could be stronger',
+  signup_password_strength_good: () => 'Good',
+  signup_password_strength_label: () => 'Strength',
+  signup_password_strength_strong: () => 'Strong',
+  signup_password_strength_very_weak: () => 'Very weak',
+  signup_password_strength_weak: () => 'Weak',
+  signup_password_too_short: () => 'Use at least 12 characters.',
+  signup_password_too_weak: () => 'Choose a less predictable password.',
 }))
 
 import { Route } from '../set'
@@ -86,10 +101,10 @@ describe('PasswordSetPage', () => {
     renderPasswordSetPage()
 
     fireEvent.change(screen.getByLabelText('Password'), {
-      target: { value: 'CorrectHorseBatteryStaple!' },
+      target: { value: 'Correct horse battery staple 2026!' },
     })
     fireEvent.change(screen.getByLabelText('Confirm password'), {
-      target: { value: 'CorrectHorseBatteryStaple!' },
+      target: { value: 'Correct horse battery staple 2026!' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -122,14 +137,31 @@ describe('PasswordSetPage', () => {
     renderPasswordSetPage()
 
     fireEvent.change(screen.getByLabelText('Password'), {
-      target: { value: 'CorrectHorseBatteryStaple!' },
+      target: { value: 'Correct horse battery staple 2026!' },
     })
     fireEvent.change(screen.getByLabelText('Confirm password'), {
-      target: { value: 'CorrectHorseBatteryStaple!' },
+      target: { value: 'Correct horse battery staple 2026!' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByText('Password does not meet policy')).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks submit with the shared password policy before calling the backend', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+
+    renderPasswordSetPage()
+
+    fireEvent.change(screen.getByLabelText('Password'), {
+      target: { value: 'Correct horse battery staple!' },
+    })
+    fireEvent.change(screen.getByLabelText('Confirm password'), {
+      target: { value: 'Correct horse battery staple!' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Add at least one number.')).toBeTruthy()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
