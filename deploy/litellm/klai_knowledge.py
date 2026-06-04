@@ -2180,16 +2180,45 @@ def _format_visible_sources_markdown(sources: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _split_sources_for_librechat_render(
+    sources: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split sources into disjoint native metadata and Markdown fallback sets.
+
+    LibreChat's native source UI owns URL-backed sources. URL-less uploads are
+    rendered only in the Markdown fallback so they remain visible without being
+    duplicated if the client also decides to show metadata-only sources.
+    """
+    structured_sources: list[dict[str, Any]] = []
+    visible_fallback_sources: list[dict[str, Any]] = []
+    for source in sources:
+        if _normalise_guard_url(source.get("url")):
+            structured_sources.append(source)
+        else:
+            visible_fallback_sources.append(source)
+    return structured_sources, visible_fallback_sources
+
+
 def _append_visible_sources_section(
     content: str,
     sources: list[dict[str, Any]],
     *,
     kb_meta: dict[str, Any] | None = None,
+    visible_sources: list[dict[str, Any]] | None = None,
+    metadata_sources: list[dict[str, Any]] | None = None,
+    include_metadata_marker: bool = True,
 ) -> str:
-    """Append backend-selected sources for clients that ignore structured metadata."""
+    """Append backend-selected fallback sections.
+
+    ``visible_sources=None`` preserves the legacy/dumb-client behaviour: render
+    all sources as Markdown. Structured clients can pass a filtered list so
+    only sources that need a text fallback are rendered. ``metadata_sources``
+    controls the hidden LibreChat recovery marker and defaults to ``sources``.
+    """
     sections: list[str] = []
-    if sources:
-        sources_markdown = _format_visible_sources_markdown(sources).strip()
+    fallback_sources = sources if visible_sources is None else visible_sources
+    if fallback_sources:
+        sources_markdown = _format_visible_sources_markdown(fallback_sources).strip()
         if sources_markdown:
             sections.append(f"**Bronnen**\n{sources_markdown}")
     has_no_citable_reason = (
@@ -2201,8 +2230,9 @@ def _append_visible_sources_section(
         activity = _format_visible_agent_activity(kb_meta, sources)
         if activity:
             sections.append(f"**Agent activiteit**\n{activity}")
-    if sources:
-        marker = _format_sources_metadata_marker(sources)
+    marker_sources = sources if metadata_sources is None else metadata_sources
+    if include_metadata_marker and marker_sources:
+        marker = _format_sources_metadata_marker(marker_sources)
         if marker:
             sections.append(marker)
     if not sections:
@@ -2357,8 +2387,19 @@ def _flush_citation_stream_buffer(
             decision,
             no_citable_sources=no_citable_sources,
         )
-        _set_message_content(delta, _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta))
-        _set_message_field(delta, "sources", sources)
+        structured_sources, visible_sources = _split_sources_for_librechat_render(sources)
+        _set_message_content(
+            delta,
+            _append_visible_sources_section(
+                rendered_content,
+                sources,
+                kb_meta=kb_meta,
+                visible_sources=visible_sources,
+                metadata_sources=structured_sources,
+            ),
+        )
+        if structured_sources:
+            _set_message_field(delta, "sources", structured_sources)
         stream_parts.clear()
         stats.mutated_messages += 1
         stats.rendered_messages += 1
@@ -2428,11 +2469,19 @@ def _compose_non_streaming_kb_response(
                     decision,
                     no_citable_sources=no_citable_sources,
                 )
+                structured_sources, visible_sources = _split_sources_for_librechat_render(sources)
                 _set_message_content(
                     message,
-                    _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta),
+                    _append_visible_sources_section(
+                        rendered_content,
+                        sources,
+                        kb_meta=kb_meta,
+                        visible_sources=visible_sources,
+                        metadata_sources=structured_sources,
+                    ),
                 )
-                _set_message_field(message, "sources", sources)
+                if structured_sources:
+                    _set_message_field(message, "sources", structured_sources)
                 stats.mutated_messages += 1
                 stats.rendered_messages += 1
                 stats.rendered_sources = max(stats.rendered_sources, len(sources))
@@ -2497,9 +2546,16 @@ def _compose_streaming_kb_response(
                 decision,
                 no_citable_sources=no_citable_sources,
             )
+            structured_sources, visible_sources = _split_sources_for_librechat_render(sources)
             _set_message_content(
                 delta,
-                _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta),
+                _append_visible_sources_section(
+                    rendered_content,
+                    sources,
+                    kb_meta=kb_meta,
+                    visible_sources=visible_sources,
+                    metadata_sources=structured_sources,
+                ),
             )
             kb_meta["_citation_stream_sources_appended"] = True
             kb_meta["_citation_stream_guard_buffer"] = ""
@@ -2544,10 +2600,17 @@ def _compose_streaming_kb_response(
             decision,
             no_citable_sources=no_citable_sources,
         )
-        final_text = _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta)
+        structured_sources, visible_sources = _split_sources_for_librechat_render(sources)
+        final_text = _append_visible_sources_section(
+            rendered_content,
+            sources,
+            kb_meta=kb_meta,
+            visible_sources=visible_sources,
+            metadata_sources=structured_sources,
+        )
         final_text = _remove_already_streamed_prefix(final_text, emitted_text)
-        if sources:
-            _set_message_field(delta, "sources", sources)
+        if structured_sources:
+            _set_message_field(delta, "sources", structured_sources)
         _set_message_content(delta, final_text)
         kb_meta["_citation_stream_sources_appended"] = True
         kb_meta["_citation_stream_guard_buffer"] = ""
