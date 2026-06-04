@@ -37,6 +37,7 @@ vi.mock('@/paraglide/messages', () => ({
   set_done_body: () => 'You can now log in.',
   set_done_continue: () => 'Log in',
   set_done_heading: () => 'Password set',
+  set_error_invalid_link: () => 'This link has expired or is invalid. Request a new link or ask your admin to resend the invitation.',
   set_error_min_length: () => 'Password must be at least 12 characters and contain one symbol',
   set_error_mismatch: () => 'Passwords do not match',
   set_error_server: () => 'Failed to set password',
@@ -47,7 +48,7 @@ vi.mock('@/paraglide/messages', () => ({
   set_hero_heading: () => 'Set your password',
   set_invalid_link: () => 'This link is invalid or has expired.',
   set_invalid_link_back: () => 'Back to login',
-  set_invalid_link_body: () => 'Request a new reset link and use the latest email.',
+  set_invalid_link_body: () => 'Request a new reset link, or ask your admin to resend the invitation if you were invited by email.',
   set_invalid_link_heading: () => 'This link has expired',
   set_invalid_link_request_new: () => 'Request a new reset link',
   set_submit: () => 'Save',
@@ -92,7 +93,7 @@ describe('PasswordSetPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    expect(await screen.findByText(/Link has expired or is invalid/)).toBeTruthy()
+    expect(await screen.findByText(/Request a new link or ask your admin/)).toBeTruthy()
     expect(screen.getByText('This link has expired')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Request a new reset link' }).getAttribute('href')).toBe(
       '/password/forgot',

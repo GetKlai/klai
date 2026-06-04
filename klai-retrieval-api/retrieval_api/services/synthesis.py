@@ -20,7 +20,7 @@ import re
 from collections.abc import AsyncIterator
 
 import httpx
-from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT, no_citable_sources_message
 from klai_citations import normalise_source_url, render_evidence_context, source_url_key
 
 from retrieval_api.config import settings
@@ -215,7 +215,7 @@ async def synthesize(
     if blocked_context_count:
         evidence_pack = build_evidence_pack(chunks, query=query_resolved)
     if not evidence_pack.sources:
-        message = "I cannot answer this reliably from the available knowledge sources."
+        message = no_citable_sources_message(query_resolved)
         yield message
         yield {
             "citations": [],

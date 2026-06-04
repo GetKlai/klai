@@ -640,7 +640,7 @@ async def receive_sync_status(
     """Receive sync completion callback from klai-connector.
 
     Updates last_sync_at and last_sync_status on the portal connector record.
-    Called by klai-connector after each sync run completes (success or failure).
+    Called by klai-connector after each sync run completes.
     """
     await _require_internal_token(request)
     connector = await db.get(PortalConnector, connector_id)
@@ -652,7 +652,7 @@ async def receive_sync_status(
     connector.last_sync_documents_ok = body.documents_ok
     await db.commit()
 
-    if body.status == "success":
+    if body.status == "completed":
         # Load org's zitadel_org_id for re-scoring
         org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == connector.org_id))
         org = org_result.scalar_one_or_none()
