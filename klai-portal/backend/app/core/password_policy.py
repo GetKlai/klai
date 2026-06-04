@@ -7,6 +7,7 @@ password, and leave the user with a used-up link.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterable
 
@@ -20,6 +21,9 @@ PASSWORD_MISSING_LOWERCASE_MSG = "Wachtwoord moet minimaal één kleine letter b
 PASSWORD_MISSING_NUMBER_MSG = "Wachtwoord moet minimaal één cijfer bevatten"
 PASSWORD_MISSING_SYMBOL_MSG = "Wachtwoord moet minimaal één symbool bevatten"
 PASSWORD_TOO_WEAK_MSG = "Wachtwoord is te zwak. Kies een langer of minder voorspelbaar wachtwoord."
+ZITADEL_PASSWORD_POLICY_MSG = (
+    "Wachtwoord voldoet niet aan het wachtwoordbeleid. Kies een langer of minder voorspelbaar wachtwoord."
+)
 
 try:
     from zxcvbn import zxcvbn as _zxcvbn
@@ -61,3 +65,39 @@ def validate_password_strength(password: str, *, user_inputs: Iterable[str] = ()
     )
     if int(result.get("score", 0)) < ZXCVBN_MIN_SCORE:
         raise PasswordPolicyError(PASSWORD_TOO_WEAK_MSG)
+
+
+def is_zitadel_password_policy_error(exc: object) -> bool:
+    """Return True for Zitadel 400 responses caused by password policy drift."""
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) != 400:
+        return False
+
+    payload = ""
+    try:
+        payload = _json_dumps_lower(response.json())
+    except Exception:
+        payload = str(getattr(response, "text", "")).lower()
+
+    if "password" not in payload:
+        return False
+
+    policy_markers = (
+        "policy",
+        "complex",
+        "strength",
+        "weak",
+        "minimum",
+        "minlength",
+        "min length",
+        "uppercase",
+        "lowercase",
+        "digit",
+        "number",
+        "symbol",
+    )
+    return any(marker in payload for marker in policy_markers)
+
+
+def _json_dumps_lower(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True).lower()

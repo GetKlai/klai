@@ -59,7 +59,12 @@ from sqlalchemy.orm import selectinload
 from app.api.bearer import bearer  # BFF Phase A4 — session-aware bearer shim
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
-from app.core.password_policy import PasswordPolicyError, validate_password_strength
+from app.core.password_policy import (
+    ZITADEL_PASSWORD_POLICY_MSG,
+    PasswordPolicyError,
+    is_zitadel_password_policy_error,
+    validate_password_strength,
+)
 from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
 from app.services.auth_links import AuthLinkRoute, build_url_template
@@ -1125,6 +1130,19 @@ async def password_set(body: PasswordSetRequest) -> None:
         flow = await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
         _slog.exception("set_password_with_code_failed", zitadel_status=exc.response.status_code)
+        if is_zitadel_password_policy_error(exc):
+            _emit_auth_event(
+                "password_set_failed",
+                reason="zitadel_password_policy",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=body.user_id,
+                outcome="400",
+                level="warning",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ZITADEL_PASSWORD_POLICY_MSG,
+            ) from exc
         if exc.response.status_code in (400, 404, 410):
             _emit_auth_event(
                 "password_set_failed",

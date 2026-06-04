@@ -33,7 +33,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import invalidate_tenant_slug_cache
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
-from app.core.password_policy import validate_password_strength
+from app.core.password_policy import (
+    ZITADEL_PASSWORD_POLICY_MSG,
+    is_zitadel_password_policy_error,
+    validate_password_strength,
+)
 from app.core.provisioning_names import TENANT_SLUG_MAX_LENGTH, validate_slug_for_provisioning
 from app.core.seats import suggest_seat
 from app.models.portal import PortalOrg, PortalUser
@@ -92,7 +96,7 @@ class SignupRequest(BaseModel):
         company "Voys") scores low against itself.
 
         REQ-22.4: if zxcvbn is unavailable (import failed at module load —
-        misconfigured deployment), fall back to the length-only check and
+        misconfigured deployment), fall back to the local composition gates and
         rely on the module-load error log to surface the degradation.
         """
         validate_password_strength(
@@ -196,7 +200,7 @@ async def signup(
     if not _has_valid_invite and not await check_signup_email_rate_limit(body.email):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many signup attempts for this email. Please try again tomorrow.",
+            detail="Too many signup attempts for this email. Please wait a while and try again.",
         )
 
     # 1. Create Zitadel org
@@ -251,6 +255,11 @@ async def signup(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This email address is already registered. Please try logging in.",
+            ) from exc
+        if is_zitadel_password_policy_error(exc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ZITADEL_PASSWORD_POLICY_MSG,
             ) from exc
         logger.exception("User creation failed during signup for org %s: %s", body.company_name, exc)
         raise HTTPException(

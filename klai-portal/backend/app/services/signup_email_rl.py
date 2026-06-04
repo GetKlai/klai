@@ -6,7 +6,7 @@ Caddy already limits ``/api/signup`` at 10 events/min per client IP
 - A single actor cycling email addresses from a single IP.
 - A single email attempting signup repeatedly from many IPs (botnet style).
 
-This module layers a 24-hour Redis counter keyed on the SHA-256 of the
+This module layers a short Redis counter keyed on the SHA-256 of the
 normalised email, on top of the IP limit. Email normalisation lowercases
 the address and strips ``+alias`` from the local-part so
 ``Mark+signup@voys.nl`` and ``mark@voys.nl`` share a counter.
@@ -30,9 +30,10 @@ logger = structlog.get_logger(__name__)
 _stdlib_logger = logging.getLogger(__name__)
 
 # REQ-19.1: cap repeated signup attempts for one normalised email.
-EMAIL_RL_LIMIT = 10
-# REQ-19.2: 24-hour window.
-EMAIL_RL_WINDOW_SECONDS = 24 * 60 * 60
+EMAIL_RL_LIMIT = 20
+# REQ-19.2: 1-hour window. A day-long per-email block is too punishing for
+# legitimate signup retries after upstream policy/config drift.
+EMAIL_RL_WINDOW_SECONDS = 60 * 60
 
 
 def normalise_email(email: str) -> str:
@@ -71,7 +72,7 @@ async def check_signup_email_rate_limit(
     """Return True iff this signup attempt is permitted.
 
     REQ-19.1 / REQ-19.2: INCR + EXPIRE counter at
-    ``signup_email_rl:<sha256(normalised_email)>`` with a 24-hour TTL.
+    ``signup_email_rl:<sha256(normalised_email)>`` with a short TTL.
     EXPIRE is set only on the first INCR of the window (count == 1) so
     repeated attempts inside the window do not extend it indefinitely.
 

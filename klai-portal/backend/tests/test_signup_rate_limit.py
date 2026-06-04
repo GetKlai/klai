@@ -7,7 +7,7 @@ integration test in ``test_signup_email_rl_integration``.
 
 Covers:
 - REQ-19.3: email normalisation (lowercase + strip +alias).
-- REQ-19.1, REQ-19.2: INCR + EXPIRE flow, 11th attempt blocked.
+- REQ-19.1, REQ-19.2: INCR + EXPIRE flow, attempt over the limit blocked.
 - REQ-19.4: fail-open when Redis is unreachable.
 """
 
@@ -63,7 +63,7 @@ def _redis_mock(incr_returns: list[int]) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_first_ten_attempts_allowed() -> None:
+async def test_attempts_up_to_limit_are_allowed() -> None:
     redis_mock = _redis_mock(list(range(1, EMAIL_RL_LIMIT + 1)))
     with patch("app.services.signup_email_rl.get_redis_pool", AsyncMock(return_value=redis_mock)):
         for expected_count in range(1, EMAIL_RL_LIMIT + 1):
@@ -132,8 +132,8 @@ async def test_fail_open_when_redis_call_raises() -> None:
 
 
 def test_constants() -> None:
-    assert EMAIL_RL_LIMIT == 10
-    assert EMAIL_RL_WINDOW_SECONDS == 24 * 60 * 60
+    assert EMAIL_RL_LIMIT == 20
+    assert EMAIL_RL_WINDOW_SECONDS == 60 * 60
 
 
 # REQ-19.5: integration with /api/signup ----------------------------------- #
@@ -172,7 +172,7 @@ async def test_endpoint_returns_429_when_rate_limited() -> None:
 
     assert exc_info.value.status_code == 429
     assert "Too many signup attempts" in str(exc_info.value.detail)
-    assert exc_info.value.detail.endswith("try again tomorrow.")  # type: ignore[union-attr]
+    assert exc_info.value.detail.endswith("try again.")  # type: ignore[union-attr]
     fake_zitadel.create_org.assert_not_called()
 
 

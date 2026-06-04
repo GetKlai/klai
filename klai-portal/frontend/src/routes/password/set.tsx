@@ -1,12 +1,18 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { KeyRound } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { API_BASE } from '@/lib/api'
 import { readCsrfCookie } from '@/lib/auth'
-import { basicSignupPasswordIssues } from '@/lib/password-strength'
+import { PasswordStrengthMeter } from '@/components/auth/PasswordStrengthMeter'
+import {
+  evaluateSignupPassword,
+  estimateSignupPasswordStrength,
+  type SignupPasswordStrength,
+} from '@/lib/password-strength'
+import { passwordPolicyIssueMessage } from '@/lib/password-policy-copy'
 
 type SearchParams = {
   userID?: string
@@ -35,13 +41,32 @@ function PasswordSetPage() {
   const [invalidLink, setInvalidLink] = useState(false)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+  const [passwordStrength, setPasswordStrength] = useState<SignupPasswordStrength>(() =>
+    estimateSignupPasswordStrength(''),
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    setPasswordStrength(estimateSignupPasswordStrength(password))
+    if (!password) return
+
+    void evaluateSignupPassword(password, []).then((result) => {
+      if (!cancelled) setPasswordStrength(result)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [password])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
 
-    if (basicSignupPasswordIssues(password).length > 0) {
-      setError(m.set_error_min_length())
+    const latestPasswordStrength = await evaluateSignupPassword(password, [])
+    setPasswordStrength(latestPasswordStrength)
+    if (!latestPasswordStrength.isAcceptable) {
+      setError(passwordPolicyIssueMessage(latestPasswordStrength.issues[0]))
       return
     }
     if (password !== confirm) {
@@ -168,6 +193,11 @@ function PasswordSetPage() {
                 autoComplete="new-password"
                 autoFocus
                 className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+              />
+              <PasswordStrengthMeter
+                score={passwordStrength.score}
+                issues={passwordStrength.issues}
+                show={password.length > 0}
               />
             </div>
 
