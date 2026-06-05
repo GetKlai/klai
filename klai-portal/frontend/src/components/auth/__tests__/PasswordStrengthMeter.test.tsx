@@ -11,6 +11,8 @@ vi.mock("@/paraglide/messages", () => ({
   signup_password_strength_good: () => "Good",
   signup_password_strength_label: () => "Strength",
   signup_password_strength_strong: () => "Strong",
+  signup_password_strength_too_short: ({ strength }: { strength: string }) =>
+    `${strength}, but too short`,
   signup_password_strength_very_weak: () => "Very weak",
   signup_password_strength_weak: () => "Weak",
   signup_password_too_short: ({ minLength }: { minLength: string }) =>
@@ -19,8 +21,8 @@ vi.mock("@/paraglide/messages", () => ({
 }));
 
 describe("PasswordStrengthMeter", () => {
-  it("does not show a strong password while the minimum length policy fails", () => {
-    render(
+  it("shows strength feedback while making clear that a strong password is still too short", () => {
+    const { container } = render(
       <PasswordStrengthMeter
         score={4}
         issues={["too_short"]}
@@ -34,9 +36,11 @@ describe("PasswordStrengthMeter", () => {
       />,
     );
 
-    expect(screen.getByText("Very weak")).toBeTruthy();
-    expect(screen.queryByText("Strong")).toBeNull();
+    expect(screen.getByText("Strong, but too short")).toBeTruthy();
+    expect(screen.queryByText("Very weak")).toBeNull();
     expect(screen.getByText("Use at least 15 characters.")).toBeTruthy();
+    expect(container.querySelectorAll(".bg-amber-500")).toHaveLength(4);
+    expect(container.querySelectorAll(".bg-emerald-500")).toHaveLength(0);
   });
 
   it("does not show policy compliance while strength is still estimated", () => {
