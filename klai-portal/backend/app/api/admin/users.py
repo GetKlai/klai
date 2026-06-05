@@ -45,6 +45,7 @@ from app.services.user_memberships import get_user_membership_summary
 from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 from app.services.zitadel_identity_recovery import (
     ZitadelIdentityRecoveryError,
+    email_hash_for_log,
     recover_existing_zitadel_identity_for_invite,
 )
 
@@ -187,7 +188,11 @@ async def _reuse_existing_zitadel_user_for_invite(
     try:
         existing_user_id = await zitadel.find_user_id_by_email(str(body.email))
     except Exception as lookup_exc:
-        logger.exception("Existing user lookup failed for %s: %s", body.email, lookup_exc)
+        logger.exception(
+            "Existing user lookup failed email_hash=%s error=%s",
+            email_hash_for_log(str(body.email)),
+            lookup_exc,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Uitnodiging kon niet worden verwerkt. Probeer het opnieuw.",
@@ -196,7 +201,7 @@ async def _reuse_existing_zitadel_user_for_invite(
     if not existing_user_id:
         _slog.warning(
             "invite_existing_zitadel_user_not_found",
-            email=body.email,
+            email_hash=email_hash_for_log(str(body.email)),
             org_id=org.id,
         )
         raise HTTPException(
@@ -220,7 +225,7 @@ async def _reuse_existing_zitadel_user_for_invite(
     if membership is not None:
         _slog.info(
             "invite_offboarded_zitadel_user_reused",
-            email=body.email,
+            email_hash=email_hash_for_log(str(body.email)),
             org_id=org.id,
             zitadel_user_id=existing_user_id,
         )
@@ -239,7 +244,7 @@ async def _reuse_existing_zitadel_user_for_invite(
     except ZitadelIdentityRecoveryError as recovery_exc:
         _slog.exception(
             "invite_existing_zitadel_identity_recovery_failed",
-            email=body.email,
+            email_hash=email_hash_for_log(str(body.email)),
             org_id=org.id,
             zitadel_user_id=existing_user_id,
         )
@@ -250,7 +255,7 @@ async def _reuse_existing_zitadel_user_for_invite(
 
     _slog.info(
         "invite_existing_zitadel_user_reused",
-        email=body.email,
+        email_hash=email_hash_for_log(str(body.email)),
         org_id=org.id,
         zitadel_user_id=recovery.user_id,
         original_zitadel_user_id=existing_user_id,
@@ -288,7 +293,7 @@ async def _restore_reactivated_zitadel_user_if_needed(
         _slog.exception(
             "invite_reactivated_zitadel_restore_failed",
             zitadel_user_id=zitadel_user_id,
-            email=email,
+            email_hash=email_hash_for_log(email),
             org_id=org_id,
             failure_step=failure_step,
         )
@@ -335,7 +340,7 @@ async def _persist_invited_user_and_send_code(
         _slog.exception(
             "invite_failed_zitadel_user_cleaned_up",
             zitadel_user_id=zitadel_user_id,
-            email=body.email,
+            email_hash=email_hash_for_log(str(body.email)),
             org_id=org.id,
             failure_step=failure_step,
         )
@@ -495,7 +500,7 @@ async def invite_user(
         zitadel_user_created = True
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code != status.HTTP_409_CONFLICT:
-            logger.exception("User invite failed for %s: %s", body.email, exc)
+            logger.exception("User invite failed email_hash=%s error=%s", email_hash_for_log(str(body.email)), exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Failed to invite user: {exc}",
@@ -512,7 +517,7 @@ async def invite_user(
         zitadel_user_created = existing_identity.created_new_zitadel_user
         reactivated_existing_zitadel_user = existing_identity.reactivated_zitadel_user
     except Exception as exc:
-        logger.exception("User invite failed for %s: %s", body.email, exc)
+        logger.exception("User invite failed email_hash=%s error=%s", email_hash_for_log(str(body.email)), exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to invite user: {exc}",
@@ -523,7 +528,7 @@ async def invite_user(
             _slog.info(
                 "invite_zitadel_cleanup_skipped_existing_user",
                 zitadel_user_id=zitadel_user_id,
-                email=body.email,
+                email_hash=email_hash_for_log(str(body.email)),
                 reason=reason,
             )
             return
@@ -536,7 +541,7 @@ async def invite_user(
             _slog.exception(
                 "invite_zitadel_cleanup_failed",
                 zitadel_user_id=zitadel_user_id,
-                email=body.email,
+                email_hash=email_hash_for_log(str(body.email)),
                 reason=reason,
             )
 

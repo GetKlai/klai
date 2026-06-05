@@ -37,7 +37,7 @@ def _policy_errors(payload: dict[str, Any]) -> list[str]:
         else:
             if actual is None and expected is False:
                 actual = False
-            matches = actual is expected
+            matches = actual == expected
         if not matches:
             errors.append(f"{key}: expected {expected!r}, got {actual!r}")
     return errors

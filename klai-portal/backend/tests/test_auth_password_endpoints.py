@@ -378,6 +378,9 @@ async def test_password_set_maps_zitadel_password_policy_400(respx_zitadel: resp
     respx_zitadel.patch("/v2/users/uid-1").mock(
         return_value=httpx.Response(400, json={"message": "password violates password complexity policy"})
     )
+    invite_reissue_route = respx_zitadel.post("/v2/users/uid-1/invite_code").mock(
+        return_value=httpx.Response(200, json={})
+    )
 
     body = PasswordSetRequest(user_id="uid-1", code="123456", new_password=_STRONG_PASSWORD)
 
@@ -387,6 +390,7 @@ async def test_password_set_maps_zitadel_password_policy_400(respx_zitadel: resp
 
     assert exc.value.status_code == 400
     assert "Wachtwoord voldoet niet" in exc.value.detail
+    assert invite_reissue_route.called
     audit_log.assert_not_called()
     events = _capture_events(captured, "password_set_failed")
     assert len(events) == 1

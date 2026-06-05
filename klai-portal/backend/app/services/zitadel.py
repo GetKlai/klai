@@ -534,7 +534,14 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()["callbackUrl"]
 
-    async def set_password_with_code(self, user_id: str, code: str, new_password: str) -> Literal["invite", "reset"]:
+    async def set_password_with_code(
+        self,
+        user_id: str,
+        code: str,
+        new_password: str,
+        *,
+        invite_retry_url_template: str | None = None,
+    ) -> Literal["invite", "reset"]:
         """Set a new password using a one-time code from email.
 
         Returns ``"invite"`` if the code was consumed via the invite flow
@@ -567,8 +574,15 @@ class ZitadelClient:
         common case (every newly invited user goes through it). If the
         verify step returns a 4xx we fall back to the reset-flow.
 
-        Raises ``httpx.HTTPStatusError`` (caller maps to 400/502) when
-        both flows fail or Zitadel returns a 5xx during verify.
+        If the invite verify step succeeds but the later password PATCH fails,
+        the invite code has already been consumed by Zitadel. When
+        ``invite_retry_url_template`` is provided, we immediately issue a fresh
+        invite code before re-raising the original PATCH error so the user is
+        not left with only an exhausted link.
+
+        Raises ``httpx.HTTPStatusError`` (caller maps to 400/502) when both
+        flows fail, Zitadel returns a 5xx during verify, or the invite password
+        PATCH fails.
         """
         # ---- Path 1: invite flow ------------------------------------------------
         verify_resp = await self._http.post(
@@ -591,7 +605,23 @@ class ZitadelClient:
                     }
                 },
             )
-            password_resp.raise_for_status()
+            try:
+                password_resp.raise_for_status()
+            except httpx.HTTPStatusError:
+                if invite_retry_url_template is not None:
+                    try:
+                        await self.send_invite_code(user_id, url_template=invite_retry_url_template)
+                    except Exception:
+                        logger.exception(
+                            "invite_code_reissue_after_password_failure_failed zitadel_status=%d",
+                            password_resp.status_code,
+                        )
+                    else:
+                        logger.warning(
+                            "invite_code_reissued_after_password_failure zitadel_status=%d",
+                            password_resp.status_code,
+                        )
+                raise
             return "invite"
 
         # invite_code/verify returned 4xx/5xx. Two reasons it might:

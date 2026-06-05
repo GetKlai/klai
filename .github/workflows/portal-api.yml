@@ -274,8 +274,34 @@ jobs:
         working-directory: klai-portal/backend
         run: psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 < alembic/versions/post_deploy_rls_rollback_to_nullif_pattern.sql
 
+  zitadel-password-policy-drift:
+    # Deployment gate for the fail-loud startup guard in
+    # app.services.password_policy_guard. Without this, a Zitadel drift would
+    # be discovered first by the new portal-api container and could crashloop
+    # production. Keep this read-only: policy changes are still an explicit
+    # operator/runbook action.
+    needs: quality
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-portal/backend
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+
+      - name: Verify production Zitadel password policy
+        env:
+          ZITADEL_ADMIN_PAT: ${{ secrets.ZITADEL_ADMIN_PAT }}
+          ZITADEL_BASE_URL: https://auth.getklai.com
+        run: uv run --with httpx python scripts/update_zitadel_password_policy.py
+
   build-push:
-    needs: [quality, rls-policy-smoke-test]
+    needs: [quality, rls-policy-smoke-test, zitadel-password-policy-drift]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 

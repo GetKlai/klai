@@ -1242,7 +1242,12 @@ async def password_set(body: PasswordSetRequest) -> None:
         ) from exc
 
     try:
-        flow = await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
+        flow = await zitadel.set_password_with_code(
+            body.user_id,
+            body.code,
+            body.new_password,
+            invite_retry_url_template=build_url_template(AuthLinkRoute.PASSWORD_SET),
+        )
     except httpx.HTTPStatusError as exc:
         _slog.exception("set_password_with_code_failed", zitadel_status=exc.response.status_code)
         if is_zitadel_password_policy_error(exc):
