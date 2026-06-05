@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Check, Loader2, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { cn } from '@/lib/utils'
 
 export interface InlineEditRowSubmit {
@@ -184,26 +184,19 @@ export function InlineEditRow({
       <div className="flex shrink-0 items-center gap-1">
         {isEditing ? (
           <>
-            <Button
+            <InlineRowButton
               type="button"
-              size="sm"
+              tone="success"
               disabled={isSaving || !name.trim()}
               onClick={submit}
-              className="h-6 gap-1 px-2 text-xs [&_svg]:size-3 bg-[var(--color-success)] text-white hover:opacity-70"
             >
               {isSaving ? <Loader2 className="animate-spin" /> : <Check />}
               {saveLabel}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={onCancel}
-              className="h-6 gap-1 px-2 text-xs [&_svg]:size-3"
-            >
+            </InlineRowButton>
+            <InlineRowButton type="button" onClick={onCancel}>
               <X />
               {cancelLabel}
-            </Button>
+            </InlineRowButton>
           </>
         ) : (
           actions

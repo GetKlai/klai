@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { Check, X } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
@@ -86,23 +86,19 @@ function AdminJoinRequestsPage() {
                     <td className="py-4 pr-4 align-top">{req.email}</td>
                     <td className="py-4 align-top text-right w-36">
                       <div className="flex items-center justify-end gap-1">
-                        <Button
-                          size="sm"
-                          className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-success)] text-white hover:opacity-70"
+                        <InlineRowButton
+                          tone="success"
                           onClick={() => approveMutation.mutate(req.id)}
                           disabled={approveMutation.isPending}
                         >
                           <Check /> {m.admin_join_requests_approve()}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5"
+                        </InlineRowButton>
+                        <InlineRowButton
                           onClick={() => denyMutation.mutate(req.id)}
                           disabled={denyMutation.isPending}
                         >
                           <X /> {m.admin_join_requests_deny()}
-                        </Button>
+                        </InlineRowButton>
                       </div>
                     </td>
                   </tr>

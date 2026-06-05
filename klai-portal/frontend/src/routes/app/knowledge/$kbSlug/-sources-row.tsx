@@ -13,13 +13,13 @@
  *   - Settings → connector edit-config route
  *   - NotebookPen → open in docs editor
  *
- * Inline rename overlay uses the `<InlineEdit>` primitive and the
- * documented `h-6 text-[10px] [&_svg]:size-2.5` Save/Cancel Button
- * pattern from portal-frontend.md.
+ * Inline rename overlay uses the `<InlineEdit>` field primitive and the
+ * shared `<InlineRowButton>` for Save/Cancel (the single source of truth
+ * for inline-row action pills — see ui-standards.md).
  */
 import { useState } from 'react'
 import { Check, Loader2, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { InlineEdit } from '@/components/ui/inline-edit'
 import * as m from '@/paraglide/messages'
 import { SourceContent } from './-sources-content'
@@ -128,24 +128,18 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
           />
           {isRenaming && (
             <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
-              <Button
-                size="sm"
-                className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-success)] text-white hover:opacity-70"
+              <InlineRowButton
+                tone="success"
                 disabled={renameMutation.isPending || !draftName.trim()}
                 onClick={saveRename}
               >
                 {renameMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
                 {m.kb_sources_row_save()}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5"
-                onClick={cancelRename}
-              >
+              </InlineRowButton>
+              <InlineRowButton onClick={cancelRename}>
                 <X />
                 {m.kb_sources_row_cancel()}
-              </Button>
+              </InlineRowButton>
             </div>
           )}
         </div>

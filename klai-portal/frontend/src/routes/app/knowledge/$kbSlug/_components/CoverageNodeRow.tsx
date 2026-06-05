@@ -15,7 +15,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { Pencil, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { InlineRowButton } from '@/components/ui/inline-row-button'
 import * as m from '@/paraglide/messages'
 import type { TaxonomyCoverageNode } from '../-kb-types'
 
@@ -145,26 +145,22 @@ export function CoverageNodeRow({
             )}
             {isConfirmingDelete && (
               <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                <Button
-                  size="sm"
-                  className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
-                  onClick={onConfirmDelete}
-                >
+                <InlineRowButton tone="destructive" onClick={onConfirmDelete}>
                   {m.knowledge_taxonomy_node_delete()}
-                </Button>
-                <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={onCancelDelete}>
+                </InlineRowButton>
+                <InlineRowButton onClick={onCancelDelete}>
                   {m.knowledge_taxonomy_node_add_cancel()}
-                </Button>
+                </InlineRowButton>
               </div>
             )}
             {isEditing && (
               <span className="inline-flex items-center gap-1">
-                <Button type="submit" size="sm" className="h-6 text-xs px-2" disabled={!editingName.trim()}>
+                <InlineRowButton type="submit" tone="success" disabled={!editingName.trim()}>
                   {m.knowledge_taxonomy_node_edit_submit()}
-                </Button>
-                <Button type="button" size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={onCancelEdit}>
+                </InlineRowButton>
+                <InlineRowButton type="button" onClick={onCancelEdit}>
                   {m.knowledge_taxonomy_node_add_cancel()}
-                </Button>
+                </InlineRowButton>
               </span>
             )}
             {!isConfirmingDelete && !isEditing && (
