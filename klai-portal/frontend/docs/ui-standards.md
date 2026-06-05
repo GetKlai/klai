@@ -195,11 +195,12 @@ headers), prefer the `list` primitives instead (see List Primitives). Use
 metadata that needs labels. Put it as the first child of `ListFrame`. The
 header and every row must share the same grid template and `px-4` horizontal
 padding, including the trailing action column, so the top/header/row divider
-lines span the full content width. The action column must be wide enough for
-the widest visible action group (for example `112px` for three 32px icon
-buttons with two `gap-1` gaps) and the action group must be right-aligned
-inside that column with `justify-self-end`; do not let row actions overflow
-past the list frame. Plain title/description lists stay headerless.
+lines span the full content width. The action column must be wider than the
+widest visible action group (for example `144px` for three 32px icon buttons
+with two `gap-1` gaps) so the buttons do not feel pressed into the page margin.
+Keep the action group right-aligned inside that column with `justify-self-end`,
+and center the header label inside the fixed action column. Plain
+title/description lists stay headerless.
 
 Row actions (edit, delete, sync, ...) use the `row-action` components, never
 raw `<button>` icons. See Row Actions And Action Tones.
