@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
+import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface ListFrameProps extends React.HTMLAttributes<HTMLDivElement> {}
@@ -83,6 +84,17 @@ function ListRowActions({ className, ...props }: ListRowActionsProps) {
   )
 }
 
+interface ListRowChevronProps extends React.HTMLAttributes<HTMLSpanElement> {}
+
+/** Trailing chevron for navigation rows (a row that links somewhere). */
+function ListRowChevron({ className, ...props }: ListRowChevronProps) {
+  return (
+    <span className={cn('shrink-0 self-center text-gray-300', className)} {...props}>
+      <ChevronRight className="h-4 w-4" />
+    </span>
+  )
+}
+
 export {
   ListFrame,
   ListRow,
@@ -91,4 +103,5 @@ export {
   ListRowTitle,
   ListRowDescription,
   ListRowActions,
+  ListRowChevron,
 }

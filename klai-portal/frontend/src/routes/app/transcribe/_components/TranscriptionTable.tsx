@@ -265,7 +265,9 @@ export function TranscriptionTable({
               return (
                 <tr
                   key={`${item.source}-${item.id}`}
-                  className="border-b border-gray-200 last:border-b-0"
+                  className={`border-b border-gray-200 last:border-b-0 ${
+                    isConfirmingDelete ? 'bg-[var(--color-hover)]' : ''
+                  }`}
                 >
                   {/* Source icon */}
                   <td className="py-4 pr-2 align-top w-6">
