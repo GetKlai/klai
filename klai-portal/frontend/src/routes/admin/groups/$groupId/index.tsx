@@ -5,8 +5,21 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { Tooltip } from '@/components/ui/tooltip'
-import { ArrowLeft, Loader2, Pencil, Trash2, UserPlus } from 'lucide-react'
+import {
+  RowActionGroup,
+  RowActionIconButton,
+  BorderedRowActionIconButton,
+} from '@/components/ui/row-action'
+import {
+  DataTable,
+  DataTableHeader,
+  DataTableBody,
+  DataTableRow,
+  DataTableHead,
+  DataTableCell,
+} from '@/components/ui/data-table'
+import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
+import { ArrowLeft, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
@@ -129,19 +142,16 @@ function AdminGroupDetail() {
 
   if (groupLoading) {
     return (
-      <div className="p-6">
-        <p className="text-sm text-gray-400">
-          <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-          Loading...
-        </p>
+      <div className="mx-auto max-w-2xl px-6 pt-4 pb-10">
+        <ListLoadingState label={m.admin_shared_loading()} />
       </div>
     )
   }
 
   if (!groupData) {
     return (
-      <div className="p-6">
-        <p className="text-sm text-[var(--color-destructive)]">Group not found</p>
+      <div className="mx-auto max-w-2xl px-6 pt-4 pb-10">
+        <ListEmptyState title={m.admin_groups_not_found()} />
       </div>
     )
   }
@@ -162,18 +172,16 @@ function AdminGroupDetail() {
         </div>
         <div className="flex items-center gap-2">
           {!groupData.is_system && (
-            <button
+            <RowActionIconButton
+              action="edit"
+              label={m.admin_groups_edit()}
               onClick={() =>
                 navigate({
                   to: '/admin/groups/$groupId/edit',
                   params: { groupId },
                 })
               }
-              className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-              aria-label={m.admin_groups_edit()}
-            >
-              <Pencil className="h-4 w-4" />
-            </button>
+            />
           )}
           <Button
             variant="ghost"
@@ -208,33 +216,20 @@ function AdminGroupDetail() {
           </div>
 
           {membersLoading ? (
-            <p className="text-sm text-gray-400">
-              <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-              Loading...
-            </p>
+            <ListLoadingState label={m.admin_shared_loading()} />
           ) : members.length === 0 ? (
-            <p className="text-sm text-gray-400 py-4 text-center">
-              {m.admin_groups_members_empty()}
-            </p>
+            <ListEmptyState title={m.admin_groups_members_empty()} />
           ) : (
-            <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                    {m.admin_groups_name()}
-                  </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                    Email
-                  </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-28">
-                    {m.admin_groups_members_joined_at()}
-                  </th>
-                  <th className="py-3 text-right text-xs font-medium text-gray-400 tracking-wide w-16">
-                    {/* Actions */}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
+            <DataTable>
+              <DataTableHeader>
+                <DataTableRow>
+                  <DataTableHead>{m.admin_groups_name()}</DataTableHead>
+                  <DataTableHead>{m.admin_groups_members_email()}</DataTableHead>
+                  <DataTableHead>{m.admin_groups_members_joined_at()}</DataTableHead>
+                  <DataTableHead align="right" />
+                </DataTableRow>
+              </DataTableHeader>
+              <DataTableBody>
                 {members.map((member) => {
                   const user = usersMap.get(member.zitadel_user_id)
                   const isRemoving =
@@ -243,20 +238,15 @@ function AdminGroupDetail() {
                   const isConfirming = confirmRemoveId === member.zitadel_user_id
 
                   return (
-                    <tr
-                      key={member.zitadel_user_id}
-                      className="border-b border-gray-200 last:border-b-0"
-                    >
-                      <td className="py-4 pr-4 align-top text-gray-900">
-                        {displayName(user, member)}
-                      </td>
-                      <td className="py-4 pr-4 align-top text-gray-400">
+                    <DataTableRow key={member.zitadel_user_id} confirming={isConfirming}>
+                      <DataTableCell>{displayName(user, member)}</DataTableCell>
+                      <DataTableCell className="text-gray-400">
                         {displayEmail(user)}
-                      </td>
-                      <td className="py-4 pr-4 align-top text-gray-900 whitespace-nowrap tabular-nums w-28">
+                      </DataTableCell>
+                      <DataTableCell className="whitespace-nowrap tabular-nums">
                         {formatDate(member.joined_at)}
-                      </td>
-                      <td className="py-4 align-top text-right w-16">
+                      </DataTableCell>
+                      <DataTableCell align="right">
                         <InlineDeleteConfirm
                           isConfirming={isConfirming}
                           isPending={isRemoving}
@@ -265,24 +255,20 @@ function AdminGroupDetail() {
                           onConfirm={() => removeMemberMutation.mutate(member.zitadel_user_id)}
                           onCancel={() => setConfirmRemoveId(null)}
                         >
-                          <div className="flex items-start justify-end gap-2 mt-px">
-                            <Tooltip label={m.admin_groups_members_remove()}>
-                              <button
-                                onClick={() => setConfirmRemoveId(member.zitadel_user_id)}
-                                aria-label={m.admin_groups_members_remove()}
-                                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </Tooltip>
-                          </div>
+                          <RowActionGroup>
+                            <BorderedRowActionIconButton
+                              action="delete"
+                              label={m.admin_groups_members_remove()}
+                              onClick={() => setConfirmRemoveId(member.zitadel_user_id)}
+                            />
+                          </RowActionGroup>
                         </InlineDeleteConfirm>
-                      </td>
-                    </tr>
+                      </DataTableCell>
+                    </DataTableRow>
                   )
                 })}
-              </tbody>
-            </table>
+              </DataTableBody>
+            </DataTable>
           )}
         </CardContent>
       </Card>
