@@ -27,9 +27,10 @@ CSS variables), themed with Klai tokens from `index.css`. On top of the
 standard shadcn primitives (`button`, `badge`, `card`, `dialog`,
 `alert-dialog`, `dropdown-menu`, `popover`, `command`, `sheet`, `tooltip`,
 form controls, `sonner`) sit Klai's own additions (`row-action`, `list`,
-`list-state`, `inline-edit-row`, `inline-row-button`, `inline-delete-confirm`,
-`step-indicator`, `inline-edit`, `multi-select`, `query-error-state`,
-`delete-*`). The widget (`klai-widget`) and website
+`list-state`, `pagination`, `inline-edit-row`, `inline-row-button`,
+`inline-delete-confirm`, `step-indicator`, `inline-edit`, `multi-select`,
+`query-error-state`, `delete-*`) plus the `use-list-controls` hook that drives
+overview search + pagination. The widget (`klai-widget`) and website
 (`klai-website`) are separate systems with their own components — this
 library is portal-only.
 
@@ -48,6 +49,8 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `data-table` | Admin table primitives: `DataTable`, `DataTableHeader`, `DataTableBody`, `DataTableRow` (`interactive`/`confirming`), `DataTableHead`, `DataTableCell` (`align`) | Yes |
 | `list` | List primitives: `ListFrame`, `ListHeader`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
 | `list-state` | List/table loading and empty states: `ListLoadingState`, `ListEmptyState` | Yes |
+| `pagination` | Numbered pager for overviews (`Pagination`): previous, clickable page numbers with `…` truncation, next; current page highlighted and not clickable. Controlled; pair with `useListControls` | Yes |
+| `use-list-controls` | Hook (`useListControls`) encoding the search/pagination threshold + paging math for overviews | Yes |
 | `inline-row-button` | The single source for small inline-row action pills (`InlineRowButton`): Save/Cancel, Delete/Cancel, Approve/Deny. Tones: success/destructive/neutral | Yes |
 | `inline-edit-row` | Canonical inline edit for a list row (`InlineEditRow`): name + optional description, zero layout shift, owns Save/Cancel | Yes |
 | `inline-delete-confirm` | Inline destructive confirmation inside a row (no layout shift) | Yes |
@@ -178,6 +181,78 @@ page title.
 ```
 
 ## Lists And Tables
+
+### Choosing: divider list vs divider-list-with-header vs data table
+
+A collection is one of three shapes. Pick by the user's job, not by habit.
+The research backing this: start with a list for scanning a single stream;
+move to a table only when comparing many aligned columns is the dominant task
+(NN/G "Data Tables", uxpatterns.dev "Table vs List vs Cards").
+
+| Shape | Use when | Header? | Reference |
+|---|---|---|---|
+| **Divider list, headerless** | Each row carries a primary title (+ optional one-line description) and trailing actions. The job is open/edit a single item. | No | `/app/instructions`, the `/app` navigation launcher, knowledge sources |
+| **Divider list with `ListHeader`** | Each row carries two or more short metadata attributes the user scans across rows (role, type, status, date), but it is still a "manage these entities" surface that must degrade to a stacked card on mobile. | Yes — responsive grid, `hidden … lg:grid` | `/admin/users` (`UsersTable`) |
+| **`DataTable`** | Dense tabular data where comparison across aligned columns is the dominant task and real `<table>` semantics matter; no mobile card-stack needed. | Yes (`DataTableHeader`) | admin profiles pages |
+
+When does a divider list get a header? **Only** when its rows use a
+multi-column grid with two or more metadata columns beyond the title. A plain
+title/description list is always headerless. The header must share the exact
+grid template and `px-4` padding as the rows (including the trailing action
+column) and is `lg:`-only, because column labels only make sense at desktop
+width — on mobile the row stacks and the labels would be noise.
+
+### Search and pagination: the 10-item threshold
+
+Overview controls appear only once a collection outgrows a single page. Short
+lists get no search box and no pager — they are chrome that a 6-row list does
+not need (NN/G: short lists do not warrant pagination; offer one default page
+size). The rule, encoded once in `useListControls` so it never drifts into
+copy-pasted `> 10` checks:
+
+- Default `pageSize` is **10**.
+- `items ≤ 10` → render everything, **no** search, **no** pagination.
+- `items > 10` → `SearchInput` above (the `/admin/users` pattern), 10 rows per
+  page, `Pagination` below.
+- Search filters the full set. The pager shows when the **filtered** set is
+  longer than one page; the search box stays visible while the **unfiltered**
+  set is longer than one page (so a narrowed query can still be cleared).
+
+```tsx
+import { useListControls } from '@/components/ui/use-list-controls'
+import { SearchInput } from '@/components/ui/search-input'
+import { Pagination } from '@/components/ui/pagination'
+
+const list = useListControls(items, {
+  pageSize: 10,
+  filter: (item, q) => item.name.toLowerCase().includes(q.trim().toLowerCase()),
+})
+
+{list.showSearch && (
+  <div className="max-w-sm">
+    <SearchInput value={list.query} onChange={(e) => list.setQuery(e.target.value)} />
+  </div>
+)}
+
+<ListFrame>{list.pageItems.map(renderRow)}</ListFrame>
+
+{list.showPagination && (
+  <Pagination page={list.page} pageCount={list.pageCount} onPageChange={list.setPage} />
+)}
+```
+
+`Pagination` is presentational and controlled — it owns no page state; pair it
+with `useListControls`. It renders the canonical numbered pager (W3C / USWDS /
+Carbon / MUI convention): a previous control, clickable page numbers, and a
+next control. The first and last page are always shown, a window of
+`siblingCount` pages (default 1) surrounds the current page, and skipped pages
+collapse to a non-clickable `…` ellipsis that never sits at the first or last
+slot. The current page is highlighted (`bg-gray-900 text-white`) and is not a
+button. Previous/next disable at the bounds. The `/dev/ui` "Volledig
+lijstoverzicht" section renders the full anatomy (PageHeader → PageIntro →
+search → list → pager) as the proof.
+
+### Building the rows
 
 Use table/list views for admin collections. Never hand-roll a `<table>` with
 manual `th`/`td` padding classes — use the `data-table` primitives so every
@@ -659,14 +734,34 @@ info     → bg var(--color-info)/10      text var(--color-info)
 ```
 
 So a green status badge and a green sync icon are the same green, just softer.
-Structural (non-semantic) variants stay neutral: `secondary` (gray fill),
-`outline`, `default`/`accent` (dark). Do not hand-roll status pills with ad-hoc
-`/10` tints — use `Badge`.
+Structural (non-semantic) variants stay neutral: `secondary` (gray fill with a
+neutral border), `outline`, `default`/`accent` (dark). Do not hand-roll status
+pills with ad-hoc `/10` tints — use `Badge`.
 
 Use `ActionTag` for compact open/closed action-state tags, such as a row marker
 that shows an item is currently active/open. `open` keeps the existing green
 outline style; `closed` is neutral gray. Do not recreate these tags with
 one-off `border-green-*` or gray pill classes.
+
+Open/closed tags follow the common status-tag pattern: they are read-only
+state markers, not actions. Use short adjective labels (`Open`, `Closed`,
+`Actief`, `Gesloten`) and never verbs that imply clickability (`Openen`,
+`Sluiten`). Show a single positive/open tag when the opposite state is implied
+by absence; show both open and closed only in lists or tables where users scan
+mixed states. Treat `open` as green only when it means available, active, or
+currently usable. Treat `closed` as neutral when it means ended, inactive, or
+not currently selected. Use a semantic `Badge` (`destructive`, `warning`) only
+when the closed state is actually an error, failure, or risk.
+
+External design-system references checked for this rule: [Scottish Government
+Status tag](https://designsystem.gov.scot/components/status-tag), [Atlassian
+Lozenge](https://atlassian.design/components/lozenge), [Ontario
+Badges](https://designsystem.ontario.ca/components/detail/badges.html),
+[Designsystemet Badge](https://designsystemet.no/en/components/docs/badge/overview),
+and [CMS Badge](https://design.cms.gov/components/badge/). The shared pattern:
+status indicators are non-interactive, use text labels in addition to colour,
+keep labels short, use colours consistently with the user's mental model, and
+avoid mixing clickable and non-clickable badge-like UI.
 
 ## Borders And Cascade Layers
 

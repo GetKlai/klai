@@ -118,6 +118,7 @@ function AdminProfiles() {
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.admin_profiles_title()}
+        count={rows.length}
         description={m.admin_profiles_subtitle()}
       />
 

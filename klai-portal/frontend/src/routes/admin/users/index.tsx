@@ -2,7 +2,9 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { PageHeader, PageIntro } from '@/components/ui/page-header'
+import { Pagination } from '@/components/ui/pagination'
 import { SearchInput } from '@/components/ui/search-input'
+import { useListControls } from '@/components/ui/use-list-controls'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,11 +28,7 @@ import {
   useLeaveWorkspaceMutation,
   useResendInviteMutation,
 } from './-users-hooks'
-import {
-  filterUsers,
-  userCountLabel,
-  userDisplayName,
-} from './-users-helpers'
+import { userDisplayName } from './-users-helpers'
 import { UserActions } from './_components/UserActions'
 import { UsersTable } from './_components/UsersTable'
 
@@ -44,7 +42,6 @@ function UsersPage() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [confirmingOffboardId, setConfirmingOffboardId] = useState<string | null>(null)
   const [confirmingLeave, setConfirmingLeave] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
 
   const usersQuery = useAdminUsers()
   const suspendMutation = useSuspendUser()
@@ -56,7 +53,16 @@ function UsersPage() {
 
   const currentUserId = auth.user?.profile?.sub
   const users = useMemo(() => usersQuery.data?.users ?? [], [usersQuery.data])
-  const filteredUsers = useMemo(() => filterUsers(users, searchQuery), [users, searchQuery])
+  const controls = useListControls(users, {
+    pageSize: 10,
+    filter: (u, q) => {
+      const s = q.trim().toLowerCase()
+      return (
+        `${u.first_name} ${u.last_name}`.toLowerCase().includes(s) ||
+        u.email.toLowerCase().includes(s)
+      )
+    },
+  })
 
   const mutationError = adminUsersMutationError({
     deleteError: deleteMutation.error,
@@ -73,6 +79,7 @@ function UsersPage() {
     <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.admin_users_heading()}
+        count={!usersQuery.isLoading && !usersQuery.error ? users.length : undefined}
         description={m.admin_users_subtitle()}
         actions={
           <Button
@@ -88,9 +95,6 @@ function UsersPage() {
       <PageIntro>
         <p>{m.admin_users_intro_body()}</p>
         <p>{m.admin_users_intro_lifecycle()}</p>
-        {!usersQuery.isLoading && !usersQuery.error ? (
-          <p className="text-gray-400">{userCountLabel(users.length)}</p>
-        ) : null}
       </PageIntro>
 
       {usersQuery.error ? (
@@ -104,13 +108,13 @@ function UsersPage() {
             <p className="text-sm text-[var(--color-destructive)]">{mutationError}</p>
           )}
 
-          {users.length > 0 && (
+          {controls.showSearch && (
             <div className="max-w-sm">
               <SearchInput
                 type="search"
                 placeholder={m.admin_users_search_placeholder()}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                value={controls.query}
+                onChange={(e) => controls.setQuery(e.target.value)}
                 aria-label={m.admin_users_search_placeholder()}
               />
             </div>
@@ -120,13 +124,17 @@ function UsersPage() {
             <p className="py-8 text-sm text-gray-400">
               {m.admin_users_loading()}
             </p>
-          ) : users.length === 0 || filteredUsers.length === 0 ? (
+          ) : users.length === 0 ? (
             <p className="py-8 text-sm text-gray-400">
               {m.admin_users_empty()}
             </p>
+          ) : controls.filteredCount === 0 ? (
+            <p className="py-8 text-sm text-gray-400">
+              {m.list_no_results()}
+            </p>
           ) : (
             <UsersTable
-              users={filteredUsers}
+              users={controls.pageItems}
               onRowClick={(user) =>
                 void navigate({
                   to: '/admin/users/$userId/edit',
@@ -148,6 +156,14 @@ function UsersPage() {
                   onConfirmLeave={() => setConfirmingLeave(true)}
                 />
               )}
+            />
+          )}
+
+          {controls.showPagination && (
+            <Pagination
+              page={controls.page}
+              pageCount={controls.pageCount}
+              onPageChange={controls.setPage}
             />
           )}
 

@@ -12,6 +12,9 @@ import { Button } from '@/components/ui/button'
 import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { Pagination } from '@/components/ui/pagination'
+import { SearchInput } from '@/components/ui/search-input'
+import { useListControls } from '@/components/ui/use-list-controls'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import {
   DataTable,
@@ -118,6 +121,10 @@ function AdminGroups() {
   })
 
   const groups = data?.groups ?? []
+  const controls = useListControls(groups, {
+    pageSize: 10,
+    filter: (g, q) => g.name.toLowerCase().includes(q.trim().toLowerCase()),
+  })
   const usersMap = new Map(
     (usersData?.users ?? []).map((u) => [u.zitadel_user_id, u]),
   )
@@ -224,7 +231,7 @@ function AdminGroups() {
 
   // eslint-disable-next-line react-hooks/incompatible-library -- useReactTable returns functions that React Compiler cannot memoize safely; this is expected TanStack Table behaviour
   const table = useReactTable({
-    data: groups,
+    data: controls.pageItems,
     columns,
     getCoreRowModel: getCoreRowModel(),
   })
@@ -233,6 +240,7 @@ function AdminGroups() {
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.admin_groups_title()}
+        count={!isLoading && !error ? groups.length : undefined}
         description={m.admin_groups_subtitle()}
         actions={
           <Button size="sm" onClick={() => void navigate({ to: '/admin/groups/new' })}>
@@ -254,8 +262,23 @@ function AdminGroups() {
       ) : groups.length === 0 ? (
         <ListEmptyState title={m.admin_groups_empty()} />
       ) : (
-        <DataTable>
-          <DataTableHeader>
+        <>
+          {controls.showSearch && (
+            <div className="max-w-sm">
+              <SearchInput
+                type="search"
+                value={controls.query}
+                onChange={(e) => controls.setQuery(e.target.value)}
+                placeholder={m.admin_groups_search_placeholder()}
+                aria-label={m.admin_groups_search_placeholder()}
+              />
+            </div>
+          )}
+          {controls.filteredCount === 0 ? (
+            <ListEmptyState title={m.admin_groups_empty()} />
+          ) : (
+            <DataTable>
+              <DataTableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <DataTableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
@@ -297,7 +320,16 @@ function AdminGroups() {
               </DataTableRow>
             ))}
           </DataTableBody>
-        </DataTable>
+            </DataTable>
+          )}
+          {controls.showPagination && (
+            <Pagination
+              page={controls.page}
+              pageCount={controls.pageCount}
+              onPageChange={controls.setPage}
+            />
+          )}
+        </>
       )}
     </div>
   )

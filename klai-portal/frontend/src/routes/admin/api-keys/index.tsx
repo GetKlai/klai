@@ -17,6 +17,9 @@ import {
   DataTableRow,
 } from '@/components/ui/data-table'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { Pagination } from '@/components/ui/pagination'
+import { SearchInput } from '@/components/ui/search-input'
+import { useListControls } from '@/components/ui/use-list-controls'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import {
   BorderedRowActionIconButton,
@@ -53,6 +56,13 @@ function ApiKeysPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const apiKeys = Array.isArray(data) ? data : []
+  const controls = useListControls(apiKeys, {
+    pageSize: 10,
+    filter: (k, q) => {
+      const s = q.trim().toLowerCase()
+      return k.name.toLowerCase().includes(s) || k.key_prefix.toLowerCase().includes(s)
+    },
+  })
 
   const openKey = (id: ApiKeyResponse['id']) =>
     void navigate({ to: '/admin/api-keys/$id', params: { id: String(id) } })
@@ -123,7 +133,7 @@ function ApiKeysPage() {
 
   // eslint-disable-next-line react-hooks/incompatible-library -- useReactTable returns functions that React Compiler cannot memoize safely; this is expected TanStack Table behaviour
   const table = useReactTable({
-    data: apiKeys,
+    data: controls.pageItems,
     columns,
     getCoreRowModel: getCoreRowModel(),
   })
@@ -132,6 +142,7 @@ function ApiKeysPage() {
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.admin_api_keys_title()}
+        count={!isLoading && !error ? apiKeys.length : undefined}
         description={m.admin_api_keys_subtitle()}
         actions={
           <Button
@@ -161,8 +172,23 @@ function ApiKeysPage() {
           description={m.admin_api_keys_empty_description()}
         />
       ) : (
-        <DataTable>
-          <DataTableHeader>
+        <>
+          {controls.showSearch && (
+            <div className="max-w-sm">
+              <SearchInput
+                type="search"
+                value={controls.query}
+                onChange={(e) => controls.setQuery(e.target.value)}
+                placeholder={m.admin_api_keys_search_placeholder()}
+                aria-label={m.admin_api_keys_search_placeholder()}
+              />
+            </div>
+          )}
+          {controls.filteredCount === 0 ? (
+            <ListEmptyState title={m.admin_api_keys_empty()} />
+          ) : (
+            <DataTable>
+              <DataTableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <DataTableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
@@ -204,7 +230,16 @@ function ApiKeysPage() {
               </DataTableRow>
             ))}
           </DataTableBody>
-        </DataTable>
+            </DataTable>
+          )}
+          {controls.showPagination && (
+            <Pagination
+              page={controls.page}
+              pageCount={controls.pageCount}
+              onPageChange={controls.setPage}
+            />
+          )}
+        </>
       )}
     </div>
   )

@@ -5,16 +5,24 @@ import { cn } from '@/lib/utils'
 // ReactNode heading without a TS2430 "incorrectly extends" collision.
 interface PageHeaderProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
   title: ReactNode
+  // Collection size for list/overview pages, rendered muted after the title as
+  // "Gebruikers (4)". Pass the TOTAL count (not the filtered count) and omit it
+  // while the data is still loading. Keep the count OUT of the subtitle — the
+  // `description` stays a purely descriptive subheader.
+  count?: number
   description?: ReactNode
   actions?: ReactNode
 }
 
-function PageHeader({ title, description, actions, className, ...props }: PageHeaderProps) {
+function PageHeader({ title, count, description, actions, className, ...props }: PageHeaderProps) {
   return (
     <div className={cn('space-y-1', className)} {...props}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {title}
+          {count != null ? (
+            <span className="ml-2 font-display text-gray-400">({count})</span>
+          ) : null}
         </h1>
         {actions ? (
           <div className="flex shrink-0 items-center justify-start sm:ml-auto sm:justify-end">

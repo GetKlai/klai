@@ -17,10 +17,13 @@ import {
   ListRowDescription,
   ListRowTitle,
 } from '@/components/ui/list'
-import { ListLoadingState } from '@/components/ui/list-state'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import { PageHeader, PageIntro } from '@/components/ui/page-header'
+import { Pagination } from '@/components/ui/pagination'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
+import { SearchInput } from '@/components/ui/search-input'
+import { useListControls } from '@/components/ui/use-list-controls'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
 
@@ -81,6 +84,15 @@ export function InstructionsPage() {
     onError: () => setConfirmingDeleteId(null),
   })
 
+  const instructions = instructionsQuery.data ?? []
+  const controls = useListControls(instructions, {
+    pageSize: 10,
+    filter: (t, q) => {
+      const s = q.trim().toLowerCase()
+      return t.name.toLowerCase().includes(s) || (t.description ?? '').toLowerCase().includes(s)
+    },
+  })
+
   const activeIds = new Set(prefQuery.data?.active_template_ids ?? [])
 
   function canMutate(t: Instruction): boolean {
@@ -98,6 +110,7 @@ export function InstructionsPage() {
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.instructions_page_title()}
+        count={instructionsQuery.data ? instructions.length : undefined}
         description={m.instructions_page_subtitle()}
         actions={
           <Button
@@ -150,9 +163,26 @@ export function InstructionsPage() {
         </div>
       )}
 
-      {instructionsQuery.data && instructionsQuery.data.length > 0 && (
-        <ListFrame>
-          {instructionsQuery.data.map((t) => {
+      {instructionsQuery.data && instructions.length > 0 && (
+        <>
+          {controls.showSearch && (
+            <div className="max-w-sm">
+              <SearchInput
+                type="search"
+                value={controls.query}
+                onChange={(e) => controls.setQuery(e.target.value)}
+                placeholder={m.instructions_search_placeholder()}
+                aria-label={m.instructions_search_placeholder()}
+              />
+            </div>
+          )}
+          {controls.filteredCount === 0 ? (
+            <ListFrame>
+              <ListEmptyState title={m.list_no_results()} />
+            </ListFrame>
+          ) : (
+          <ListFrame>
+          {controls.pageItems.map((t) => {
             const mutateAllowed = canMutate(t)
             const isConfirming = confirmingDeleteId === t.id
             const isPending = deleteMutation.isPending && confirmingDeleteId === t.id
@@ -232,7 +262,16 @@ export function InstructionsPage() {
               </ListRow>
             )
           })}
-        </ListFrame>
+          </ListFrame>
+          )}
+          {controls.showPagination && (
+            <Pagination
+              page={controls.page}
+              pageCount={controls.pageCount}
+              onPageChange={controls.setPage}
+            />
+          )}
+        </>
       )}
     </div>
   )
