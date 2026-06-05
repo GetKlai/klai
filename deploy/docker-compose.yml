@@ -106,6 +106,10 @@ services:
   mongodb:
     image: mongo:8.2.7
     restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 64000
+        hard: 64000
     volumes:
       - mongodb-data:/data/db
     environment:
