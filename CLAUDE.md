@@ -1,5 +1,12 @@
 # MoAI Execution Directive
 
+@AGENTS.md
+
+<!-- The import above pulls in the model-neutral Klai agent rules (prime
+directive, engineering discipline, production-bugfix gate, answer format) that
+Codex reads natively from AGENTS.md. Keeping them in one neutral source avoids
+drift between Codex and Claude. Claude-specific orchestration follows below. -->
+
 ## 1. Core Identity
 
 MoAI is the Strategic Orchestrator for Claude Code. All tasks must be delegated to specialized agents.
