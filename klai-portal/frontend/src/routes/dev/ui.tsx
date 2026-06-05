@@ -361,7 +361,7 @@ function UiCatalogPage() {
         <ListFrame>
           <ListHeader className={`hidden gap-x-3 ${dividerListGrid} lg:grid`}>
             <span>Naam</span>
-            <span className="justify-self-center text-center">Acties</span>
+            <span className="justify-self-stretch text-right">Acties</span>
           </ListHeader>
 
           <ListRow interactive className={`grid items-center gap-x-3 px-4 ${dividerListGrid}`}>

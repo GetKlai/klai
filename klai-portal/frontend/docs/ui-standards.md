@@ -200,7 +200,7 @@ lines span the full content width. The action column must be wider than the
 widest visible action group (for example `144px` for three 32px icon buttons
 with two `gap-1` gaps) so the buttons do not feel pressed into the page margin.
 Keep the action group right-aligned inside that column with `justify-self-end`,
-and center the header label inside the fixed action column. Plain
+and right-align the header label inside the fixed action column. Plain
 title/description lists stay headerless.
 
 Row actions (edit, delete, sync, ...) use the `row-action` components, never
