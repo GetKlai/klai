@@ -20,7 +20,7 @@ interface Props {
 }
 
 const userListGrid =
-  'lg:grid-cols-[minmax(240px,1.4fr)_minmax(120px,0.75fr)_minmax(130px,0.85fr)_minmax(96px,0.65fr)_minmax(90px,0.55fr)_112px]'
+  'lg:grid-cols-[minmax(200px,1.15fr)_minmax(120px,0.75fr)_minmax(130px,0.85fr)_minmax(96px,0.65fr)_minmax(90px,0.55fr)_144px]'
 
 export function UsersTable({ users, onRowClick, renderActions }: Props) {
   return (
@@ -31,7 +31,7 @@ export function UsersTable({ users, onRowClick, renderActions }: Props) {
         <span>{m.admin_users_col_account_type()}</span>
         <span>{m.admin_users_col_status()}</span>
         <span>{m.admin_users_col_invited()}</span>
-        <span className="text-right">{m.admin_users_col_actions()}</span>
+        <span className="justify-self-center text-center">{m.admin_users_col_actions()}</span>
       </ListHeader>
 
       {users.map((user) => {

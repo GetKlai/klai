@@ -222,7 +222,7 @@ const multiSelectOptions = [
   { value: 'widgets', label: 'Widgets' },
 ]
 const commandItems = ['Kennisbank', 'Chat', 'Connectors', 'Widgets', 'Instellingen']
-const dividerListGrid = 'lg:grid-cols-[minmax(0,1fr)_112px]'
+const dividerListGrid = 'lg:grid-cols-[minmax(0,1fr)_144px]'
 
 function UiCatalogPage() {
   const [confirming, setConfirming] = useState(false)
@@ -353,7 +353,7 @@ function UiCatalogPage() {
         <ListFrame>
           <ListHeader className={`hidden gap-x-3 ${dividerListGrid} lg:grid`}>
             <span>Naam</span>
-            <span className="text-right">Acties</span>
+            <span className="justify-self-center text-center">Acties</span>
           </ListHeader>
 
           <ListRow interactive className={`grid items-center gap-x-3 px-4 ${dividerListGrid}`}>
