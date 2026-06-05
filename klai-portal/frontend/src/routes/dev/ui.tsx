@@ -50,6 +50,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from '@/components/ui/data-table'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { InlineEditRow } from '@/components/ui/inline-edit-row'
 import { Input } from '@/components/ui/input'
@@ -216,6 +224,7 @@ const commandItems = ['Kennisbank', 'Chat', 'Connectors', 'Widgets', 'Instelling
 
 function UiCatalogPage() {
   const [confirming, setConfirming] = useState(false)
+  const [tableDeleteConfirm, setTableDeleteConfirm] = useState(false)
   const [checked, setChecked] = useState(true)
   const [wizardStep, setWizardStep] = useState(1)
   const [activeTab, setActiveTab] = useState('Details')
@@ -421,33 +430,55 @@ function UiCatalogPage() {
         </ListFrame>
       </Section>
 
-      <Section title="Table spacing">
-        <table className="w-full border-y border-gray-200 text-sm">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="px-2 py-3 text-left text-xs font-medium text-gray-400">Naam</th>
-              <th className="px-2 py-3 text-left text-xs font-medium text-gray-400">Status</th>
-              <th className="px-2 py-3 text-right text-xs font-medium text-gray-400">Acties</th>
-            </tr>
-          </thead>
-          <tbody>
+      <Section title="Data table">
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>Naam</DataTableHead>
+              <DataTableHead>Status</DataTableHead>
+              <DataTableHead align="right">Acties</DataTableHead>
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
             {['Admin users', 'Widgets', 'Sources'].map((name) => (
-              <tr key={name} className="border-b border-gray-200 last:border-b-0 klai-hover">
-                <td className="px-2 py-4 font-medium text-gray-900">{name}</td>
-                <td className="px-2 py-4">
+              <DataTableRow
+                key={name}
+                interactive
+                confirming={name === 'Sources' && tableDeleteConfirm}
+              >
+                <DataTableCell className="font-medium">{name}</DataTableCell>
+                <DataTableCell>
                   <Badge variant="secondary">Actief</Badge>
-                </td>
-                <td className="px-2 py-4">
-                  <RowActionGroup>
-                    <BorderedRowActionIconButton label="Bewerken" action="edit" />
-                    <BorderedRowActionIconButton label="Verwijderen" action="delete" />
-                    <BorderedRowActionIconButton label="Meer acties" action="more" />
-                  </RowActionGroup>
-                </td>
-              </tr>
+                </DataTableCell>
+                <DataTableCell align="right" onClick={(e) => e.stopPropagation()}>
+                  {name === 'Sources' ? (
+                    <InlineDeleteConfirm
+                      isConfirming={tableDeleteConfirm}
+                      label="Sources verwijderen?"
+                      cancelLabel="Annuleren"
+                      onConfirm={() => setTableDeleteConfirm(false)}
+                      onCancel={() => setTableDeleteConfirm(false)}
+                    >
+                      <RowActionGroup>
+                        <BorderedRowActionIconButton label="Bewerken" action="edit" />
+                        <BorderedRowActionIconButton
+                          label="Verwijderen"
+                          action="delete"
+                          onClick={() => setTableDeleteConfirm(true)}
+                        />
+                      </RowActionGroup>
+                    </InlineDeleteConfirm>
+                  ) : (
+                    <RowActionGroup>
+                      <BorderedRowActionIconButton label="Bewerken" action="edit" />
+                      <BorderedRowActionIconButton label="Meer acties" action="more" />
+                    </RowActionGroup>
+                  )}
+                </DataTableCell>
+              </DataTableRow>
             ))}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
       </Section>
 
       <Section title="List states">

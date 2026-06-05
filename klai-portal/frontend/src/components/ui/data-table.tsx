@@ -20,14 +20,26 @@ function DataTableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSe
 
 interface DataTableRowProps extends React.HTMLAttributes<HTMLTableRowElement> {
   interactive?: boolean
+  /**
+   * Tint the row while an inline delete-confirm overlay is open, so the
+   * `bg-[var(--color-hover)]` overlay has no seam against the row. Mirrors
+   * `ListRow confirming`.
+   */
+  confirming?: boolean
 }
 
-function DataTableRow({ interactive = false, className, ...props }: DataTableRowProps) {
+function DataTableRow({
+  interactive = false,
+  confirming = false,
+  className,
+  ...props
+}: DataTableRowProps) {
   return (
     <tr
       className={cn(
-        'border-b border-gray-200 last:border-b-0',
+        'border-b border-gray-200 last:border-b-0 transition-colors',
         interactive && 'cursor-pointer klai-hover',
+        confirming && 'bg-[var(--color-hover)]',
         className,
       )}
       {...props}

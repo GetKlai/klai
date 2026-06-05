@@ -9,7 +9,16 @@ import {
 } from '@tanstack/react-table'
 import * as m from '@/paraglide/messages'
 import { QueryErrorState } from '@/components/ui/query-error-state'
-import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from '@/components/ui/data-table'
+import { ListLoadingState } from '@/components/ui/list-state'
 import { apiFetch } from '@/lib/apiFetch'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 
@@ -82,7 +91,7 @@ function AdminProfiles() {
       header: () => '',
       cell: ({ row }) => (
         <RowActionGroup>
-          <RowActionIconButton
+          <BorderedRowActionIconButton
             label={m.admin_profiles_view_members()}
             action="view"
             onClick={() =>
@@ -123,61 +132,51 @@ function AdminProfiles() {
           onRetry={() => void refetch()}
         />
       ) : isLoading ? (
-        <p className="py-8 text-sm text-gray-400">
-          {m.admin_profiles_loading()}
-        </p>
+        <ListLoadingState label={m.admin_profiles_loading()} />
       ) : (
-        <table className="w-full text-sm border-t border-b border-gray-200">
-          <thead>
+        <DataTable>
+          <DataTableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <tr
-                key={headerGroup.id}
-                className="border-b border-gray-200"
-              >
+              <DataTableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
-                  <th
+                  <DataTableHead
                     key={header.id}
-                    className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide"
+                    align={header.column.id === 'actions' ? 'right' : 'left'}
                   >
-                    {flexRender(
-                      header.column.columnDef.header,
-                      header.getContext(),
-                    )}
-                  </th>
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                  </DataTableHead>
                 ))}
-              </tr>
+              </DataTableRow>
             ))}
-          </thead>
-          <tbody>
+          </DataTableHeader>
+          <DataTableBody>
             {table.getRowModel().rows.map((row) => (
-              <tr
+              <DataTableRow
                 key={row.id}
+                interactive
                 onClick={() =>
                   void navigate({
                     to: '/admin/profiles/$profile',
                     params: { profile: row.original.role },
                   })
                 }
-                className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
               >
                 {row.getVisibleCells().map((cell) => {
                   const isActionCell = cell.column.id === 'actions'
                   return (
-                    <td
+                    <DataTableCell
                       key={cell.id}
-                      className="py-4 pr-4 align-top text-gray-900"
-                      onClick={
-                        isActionCell ? (e) => e.stopPropagation() : undefined
-                      }
+                      align={isActionCell ? 'right' : 'left'}
+                      onClick={isActionCell ? (e) => e.stopPropagation() : undefined}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
+                    </DataTableCell>
                   )
                 })}
-              </tr>
+              </DataTableRow>
             ))}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
       )}
     </div>
   )

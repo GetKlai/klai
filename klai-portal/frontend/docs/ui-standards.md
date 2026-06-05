@@ -39,10 +39,12 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | Component | Purpose | Canonical? |
 |---|---|---|
 | `button` | All buttons (variants: default/secondary/ghost/outline/destructive; sizes: default/sm/icon) | Yes |
+| `page-header` | Page title, description/count, and right-aligned page action (`PageHeader`) | Yes |
 | `badge` | Inline status labels (secondary/success/warning/destructive/outline) | Yes |
 | `input` `select` `textarea` `label` `checkbox` | Form controls | Yes |
 | `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
-| `row-action` | List/table row actions: `RowActionIconButton`, `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
+| `row-action` | List/table row actions: `RowActionIconButton`, `BorderedRowActionIconButton` (visible bordered hitbox — the default in tables), `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
+| `data-table` | Admin table primitives: `DataTable`, `DataTableHeader`, `DataTableBody`, `DataTableRow` (`interactive`/`confirming`), `DataTableHead`, `DataTableCell` (`align`) | Yes |
 | `list` | List primitives: `ListFrame`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
 | `list-state` | List/table loading and empty states: `ListLoadingState`, `ListEmptyState` | Yes |
 | `inline-row-button` | The single source for small inline-row action pills (`InlineRowButton`): Save/Cancel, Delete/Cancel, Approve/Deny. Tones: success/destructive/neutral | Yes |
@@ -99,7 +101,33 @@ existing parent surface is intentionally full-width. Authenticated page
 containers use `pt-6 pb-10` so page headings sit in visual rhythm with the
 sidebar navigation; full-width tool surfaces such as chat own their own layout.
 
-## Headers And Back Actions
+## Headers And Page Actions
+
+List and overview pages use `PageHeader`. The header action belongs in the
+same content container as the list/table below it. It aligns to the right edge
+of that content width, not the viewport, and sits on the title row so the
+primary page action reads as part of the page heading.
+
+```tsx
+import { PageHeader } from '@/components/ui/page-header'
+
+<PageHeader
+  title={title}
+  description={countLabel}
+  actions={
+    <Button size="sm" onClick={onCreate}>
+      {createLabel}
+    </Button>
+  }
+/>
+```
+
+Do not hand-roll page headers with local `flex justify-between` unless the
+page has a genuinely custom layout. If the action appears visually detached
+from the title or from the right edge of the list/table, use `PageHeader` and
+adjust the page container width instead of adding local offsets.
+
+## Back Actions
 
 Back/cancel actions belong in the page header, on the right side, using
 `Button variant="ghost" size="sm"`. Do not place a loose back link above the
@@ -122,23 +150,46 @@ page title.
 
 ## Lists And Tables
 
-Use table/list views for admin collections. Rows use `klai-hover`; never use
-`hover:bg-gray-50` for interactive rows.
+Use table/list views for admin collections. Never hand-roll a `<table>` with
+manual `th`/`td` padding classes — use the `data-table` primitives so every
+admin table shares the same `px-4` cell rhythm, header treatment, `klai-hover`,
+and right-aligned action column.
 
 ```tsx
-<table className="w-full text-sm border-t border-b border-gray-200">
-  <tbody>
-    <tr className="border-b border-gray-200 klai-hover cursor-pointer">
-      ...
-    </tr>
-  </tbody>
-</table>
+import {
+  DataTable, DataTableHeader, DataTableBody,
+  DataTableRow, DataTableHead, DataTableCell,
+} from '@/components/ui/data-table'
+
+<DataTable>
+  <DataTableHeader>
+    <DataTableRow>
+      <DataTableHead>Naam</DataTableHead>
+      <DataTableHead align="right">Acties</DataTableHead>
+    </DataTableRow>
+  </DataTableHeader>
+  <DataTableBody>
+    <DataTableRow interactive confirming={isConfirming} onClick={open}>
+      <DataTableCell>{name}</DataTableCell>
+      <DataTableCell align="right" onClick={(e) => e.stopPropagation()}>
+        <RowActionGroup>…</RowActionGroup>
+      </DataTableCell>
+    </DataTableRow>
+  </DataTableBody>
+</DataTable>
 ```
 
-For new lists, prefer the `list` primitives over a hand-built table when the
-content is a stack of titled rows with a description and trailing actions
-(see List Primitives). Use a real `<table>` only when you need columns with
-headers and aligned cells.
+- `DataTableRow interactive` adds `klai-hover` + pointer; `confirming` tints the
+  row (`bg-[var(--color-hover)]`) so an inline delete-confirm overlay has no
+  seam. Never re-add `hover:bg-gray-50` or a hand-written confirm tint class.
+- `DataTableHead`/`DataTableCell` take `align="right"` for the action column.
+  Put `onClick={(e) => e.stopPropagation()}` on the action cell when the row is
+  clickable so action clicks don't trigger row navigation.
+- Admin profiles pages are the reference implementations.
+
+For a stack of titled rows with a description and trailing actions (not column
+headers), prefer the `list` primitives instead (see List Primitives). Use
+`DataTable` when you have columns with headers and aligned cells.
 
 Row actions (edit, delete, sync, ...) use the `row-action` components, never
 raw `<button>` icons. See Row Actions And Action Tones.
@@ -243,6 +294,12 @@ import {
   secondary line.
 - `ListRowActions` is the trailing action cell; put a `RowActionGroup` or
   loose `RowActionIconButton`s inside.
+- For admin collection rows where the first cell needs a primary label plus
+  secondary metadata (for example user name + email), use `ListFrame`/`ListRow`
+  with a responsive grid inside the row. `UsersTable`
+  (`admin/users/_components/UsersTable.tsx`) is the reference: name and email
+  live in `ListRowTitle`/`ListRowDescription`, metadata is in compact grid
+  cells, and actions use `ListRowActions` on the right.
 
 ### Navigation list
 
