@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import type { ComponentProps, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 import {
   FileText,
@@ -67,8 +67,10 @@ import {
   ListRowIcon,
   ListRowTitle,
 } from '@/components/ui/list'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import { RadioCardGroup } from '@/components/ui/radio-card-group'
 import {
+  BorderedRowActionIconButton,
   RowActionButton,
   RowActionGroup,
   RowActionIconButton,
@@ -175,25 +177,6 @@ const actionColorSemantics: Array<{
     swatchClassName: 'bg-[var(--color-destructive)]',
   },
 ]
-
-function BorderedRowActionIconButton({
-  action,
-  tone,
-  className,
-  ...props
-}: ComponentProps<typeof RowActionIconButton>) {
-  return (
-    <RowActionIconButton
-      action={action}
-      tone={tone}
-      className={[
-        'h-7 w-7 border border-current bg-transparent [&_svg]:h-3.5 [&_svg]:w-3.5',
-        className,
-      ].filter(Boolean).join(' ')}
-      {...props}
-    />
-  )
-}
 
 function Section({
   title,
@@ -465,6 +448,20 @@ function UiCatalogPage() {
             ))}
           </tbody>
         </table>
+      </Section>
+
+      <Section title="List states">
+        <div className="grid gap-6 sm:grid-cols-2">
+          <div className="border-y border-gray-200">
+            <ListLoadingState label="Laden..." />
+          </div>
+          <div className="border-y border-gray-200">
+            <ListEmptyState
+              title="Geen resultaten"
+              description="Gebruik deze rustige lege staat voor lijst- en tabeloverzichten."
+            />
+          </div>
+        </div>
       </Section>
 
       <Section title="Wizard steps">
