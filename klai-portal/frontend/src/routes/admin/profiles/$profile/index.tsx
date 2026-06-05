@@ -2,11 +2,10 @@ import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-ro
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { Tooltip } from '@/components/ui/tooltip'
-import { ArrowLeft, Loader2, Trash2, UserPlus } from 'lucide-react'
+import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+import { ArrowLeft, Loader2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
@@ -106,37 +105,36 @@ function AdminProfileDetail() {
       </div>
 
       {/* Members section */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-medium">
-              {m.admin_groups_members_title()}
-            </h2>
-            <Button
-              size="sm"
-              onClick={() =>
-                navigate({
-                  to: '/admin/profiles/$profile/add-member',
-                  params: { profile: profileRole },
-                })
-              }
-            >
-              <UserPlus className="h-4 w-4 mr-2" />
-              {m.admin_groups_members_add()}
-            </Button>
-          </div>
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-medium text-gray-900">
+            {m.admin_groups_members_title()}
+          </h2>
+          <Button
+            size="sm"
+            onClick={() =>
+              navigate({
+                to: '/admin/profiles/$profile/add-member',
+                params: { profile: profileRole },
+              })
+            }
+          >
+            <UserPlus className="h-4 w-4 mr-2" />
+            {m.admin_groups_members_add()}
+          </Button>
+        </div>
 
-          {isLoading ? (
-            <p className="text-sm text-gray-400">
-              <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-              {m.admin_profiles_loading()}
-            </p>
-          ) : members.length === 0 ? (
-            <p className="text-sm text-gray-400 py-4 text-center">
-              {m.admin_profiles_drill_in_empty()}
-            </p>
-          ) : (
-            <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
+        {isLoading ? (
+          <p className="text-sm text-gray-400">
+            <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
+            {m.admin_profiles_loading()}
+          </p>
+        ) : members.length === 0 ? (
+          <p className="text-sm text-gray-400 py-4 text-center">
+            {m.admin_profiles_drill_in_empty()}
+          </p>
+        ) : (
+          <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
               <thead>
                 <tr className="border-b border-gray-200">
                   <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-12">
@@ -173,7 +171,9 @@ function AdminProfileDetail() {
                   return (
                     <tr
                       key={user.zitadel_user_id}
-                      className="border-b border-gray-200 last:border-b-0"
+                      className={`border-b border-gray-200 last:border-b-0 ${
+                        isConfirming ? 'bg-[var(--color-hover)]' : ''
+                      }`}
                     >
                       <td className="py-4 pr-4 align-top w-12">
                         <UserAvatar
@@ -206,20 +206,16 @@ function AdminProfileDetail() {
                             onConfirm={() => removeMemberMutation.mutate(user.zitadel_user_id)}
                             onCancel={() => setConfirmDemoteId(null)}
                           >
-                            <div className="flex items-start justify-end gap-2 mt-px">
-                              <Tooltip label={demoteTooltip}>
-                                <button
-                                  onClick={() => {
-                                    if (!demoteDisabled) setConfirmDemoteId(user.zitadel_user_id)
-                                  }}
-                                  disabled={demoteDisabled}
-                                  aria-label={demoteTooltip}
-                                  className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70 disabled:opacity-30 disabled:cursor-not-allowed"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </Tooltip>
-                            </div>
+                            <RowActionGroup>
+                              <RowActionIconButton
+                                label={demoteTooltip}
+                                action="delete"
+                                disabled={demoteDisabled}
+                                onClick={() => {
+                                  if (!demoteDisabled) setConfirmDemoteId(user.zitadel_user_id)
+                                }}
+                              />
+                            </RowActionGroup>
                           </InlineDeleteConfirm>
                         )}
                       </td>
@@ -228,9 +224,8 @@ function AdminProfileDetail() {
                 })}
               </tbody>
             </table>
-          )}
-        </CardContent>
-      </Card>
+        )}
+      </section>
     </div>
   )
 }

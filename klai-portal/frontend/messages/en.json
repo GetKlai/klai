@@ -1794,6 +1794,7 @@
   "admin_profiles_member_count_other": "{count} members",
   "admin_profiles_back": "Back to profiles",
   "admin_profiles_drill_in_empty": "No members in this profile yet.",
+  "admin_profiles_view_members": "View members",
   "admin_profiles_move_to": "Move to",
   "admin_profiles_bulk_move_button": "Move {count} to",
   "admin_profiles_bulk_move_confirm": "Moving {count} to {target}...",
