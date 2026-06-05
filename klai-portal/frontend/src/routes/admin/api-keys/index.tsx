@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-table'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { PageHeader } from '@/components/ui/page-header'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import {
   DataTable,
   DataTableBody,
@@ -142,6 +142,11 @@ function ApiKeysPage() {
           </Button>
         }
       />
+
+      <PageIntro>
+        <p>{m.admin_api_keys_intro_body()}</p>
+        <p>{m.admin_api_keys_intro_limits()}</p>
+      </PageIntro>
 
       {error ? (
         <QueryErrorState

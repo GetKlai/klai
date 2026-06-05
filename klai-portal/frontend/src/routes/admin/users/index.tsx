@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { PageHeader } from '@/components/ui/page-header'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { SearchInput } from '@/components/ui/search-input'
 import {
   AlertDialog,
@@ -73,7 +73,7 @@ function UsersPage() {
     <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.admin_users_heading()}
-        description={!usersQuery.isLoading && !usersQuery.error ? userCountLabel(users.length) : undefined}
+        description={m.admin_users_subtitle()}
         actions={
           <Button
             size="sm"
@@ -84,6 +84,14 @@ function UsersPage() {
           </Button>
         }
       />
+
+      <PageIntro>
+        <p>{m.admin_users_intro_body()}</p>
+        <p>{m.admin_users_intro_lifecycle()}</p>
+        {!usersQuery.isLoading && !usersQuery.error ? (
+          <p className="text-gray-400">{userCountLabel(users.length)}</p>
+        ) : null}
+      </PageIntro>
 
       {usersQuery.error ? (
         <QueryErrorState
