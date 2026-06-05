@@ -152,7 +152,9 @@ export function ChatConfigBar() {
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-6 bg-[var(--color-sidebar)] border-b border-[var(--color-sidebar-border)] pl-4 pr-4 pt-3 pb-3">
+    <div className="flex min-w-0 items-center gap-6">
+      {/* Rendered inside the global TopBar's left slot (see chat.tsx). The
+          TopBar provides the bar height, background, and bottom border. */}
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
       {instrOpen && <div className="fixed inset-0 z-40" onClick={() => setInstrOpen(false)} />}
 
