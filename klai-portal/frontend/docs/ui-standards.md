@@ -29,7 +29,7 @@ standard shadcn primitives (`button`, `badge`, `card`, `dialog`,
 form controls, `sonner`) sit Klai's own additions (`row-action`, `list`,
 `list-state`, `pagination`, `inline-edit-row`, `inline-row-button`,
 `inline-delete-confirm`, `step-indicator`, `inline-edit`, `multi-select`,
-`query-error-state`, `delete-*`) plus the `use-list-controls` hook that drives
+`query-error-state`, `alert`, `delete-*`) plus the `use-list-controls` hook that drives
 overview search + pagination. The widget (`klai-widget`) and website
 (`klai-website`) are separate systems with their own components — this
 library is portal-only.
@@ -43,6 +43,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `page-header` | Page title, short subtitle/count, and right-aligned page action (`PageHeader`); longer explanatory copy below the header uses `PageIntro` | Yes |
 | `badge` | Inline status labels (secondary/success/warning/destructive/outline) | Yes |
 | `action-tag` | Compact open/closed action-state tag (`ActionTag`, states: `open`, `closed`) | Yes |
+| `alert` | Inline semantic callout (`Alert`, variants: info/success/warning/destructive; sizes: default/sm). Soft tint + auto icon, for wizard/form feedback and inline warnings — not a toast, not a modal | Yes |
 | `input` `select` `textarea` `label` `checkbox` | Form controls | Yes |
 | `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
 | `row-action` | List/table row actions: `RowActionIconButton`, `BorderedRowActionIconButton` (visible bordered hitbox — the default in tables), `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
@@ -57,6 +58,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `inline-edit` | Low-level single-field click-to-edit overlay, for custom row layouts that own their own buttons. Prefer `InlineEditRow` for new rows | Yes |
 | `radio-card-group` | Selectable radio option cards (`RadioCardGroup`) | Yes |
 | `step-indicator` | Wizard step progress (`StepIndicator`) | Yes |
+| `tabs` | Underline tabs (`Tabs`): text + optional icon/count, strong `border-gray-900` active underline. For state/search-param tabs. Router-navigation tab bars (real sub-route links) use `Link` directly with the same look. | Yes |
 | `alert-dialog` | Centered confirm dialog for destructive actions outside rows | Yes |
 | `dialog` | Generic modal | Yes |
 | `dropdown-menu` `popover` `command` | Menus, popovers, command/combobox | Yes |
@@ -66,11 +68,9 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `card` | Framed repeated items / stat blocks | Yes |
 | `query-error-state` | Standard error block for failed queries | Yes |
 | `sheet` | Slide-over. **Forbidden** for admin entity detail (see Detail And Edit) | Restricted |
-| `delete-confirm-button` | Older inline trash→confirm toggle. **Deprecated** — use `inline-delete-confirm`. Migrate on touch. | Deprecated |
 | `delete-kb-modal` `delete-org-modal` | Feature-specific destructive modals (not generic) | Feature |
 
-Tabs are a **pattern, not a component** (see Tabs). They are currently
-hand-rolled in 5 places and are a candidate for extraction.
+Tabs are the owned `tabs` component (see Tabs).
 
 ## Required Workflow
 
@@ -538,9 +538,6 @@ Rules:
   do not restyle.
 - For destructive actions that are NOT in a row (e.g. a whole page or card),
   use `alert-dialog` instead.
-- `delete-confirm-button` is the deprecated predecessor (raw buttons,
-  hardcoded English labels). Do not use it in new code; migrate to
-  `InlineDeleteConfirm` when you touch a screen that still uses it.
 - Never use `window.confirm`.
 
 ## Wizards
@@ -570,35 +567,44 @@ import { StepIndicator } from '@/components/ui/step-indicator'
 
 ## Tabs
 
-Use underline tabs for authenticated app/admin surfaces. Persist the active tab
-in URL search state when the tab affects navigation or when detail pages need
-to return to the same section.
-
-Do not use pill tabs for admin/account/detail surfaces unless the surrounding
-module already does.
-
-Tabs are currently hand-rolled (no shared `tabs` component yet) in:
-`app/account.tsx`, `app/knowledge/$kbSlug/route.tsx`, `admin/platform/index.tsx`,
-`admin/api-keys/$id.tsx`, `admin/widgets/$id.tsx`. The standard markup is an
-underline row with an active `border-b-2`:
+Underline tabs for authenticated app/admin surfaces use the owned `Tabs`
+component (`components/ui/tabs.tsx`). It is the single source for the tab look —
+do not hand-roll a tab row again.
 
 ```tsx
-<div className="flex gap-6 border-b border-gray-200">
-  <button
-    type="button"
-    onClick={() => setTab('details')}
-    className={tab === 'details'
-      ? 'border-b-2 border-gray-900 pb-2 text-sm font-medium text-gray-900'
-      : 'border-b-2 border-transparent pb-2 text-sm text-gray-400 hover:text-gray-900'}
-  >
-    Details
-  </button>
-</div>
+import { Tabs, type TabItem } from '@/components/ui/tabs'
+
+const tabs: TabItem<TabId>[] = [
+  { id: 'details', label: m.account_tab_settings() },
+  { id: 'feedback', label: m.account_tab_feedback(), count: unreadCount },
+]
+
+<Tabs tabs={tabs} value={activeTab} onValueChange={setTab} />
 ```
 
-Because this pattern repeats in 5 places, it is a candidate for extraction
-into a shared `Tabs` component (tracked for the cleanup phase). Until then,
-copy the markup above exactly so the 5 instances stay identical.
+- **Active state is a strong `border-gray-900` underline** — unmistakable
+  against the gray-200 container divider. (The old `border-gray-200` active
+  style was a defect: it blended into the divider.)
+- **Text-only is the default, on-brand look.** `icon` and `count` are
+  optional. Use icons sparingly (detail/settings surfaces); the `count` badge
+  takes an optional `countTone` (`success` default, or `warning`/`destructive`/
+  `info`).
+- `Tabs` is **controlled and presentational** — it owns no state. Wire
+  `value`/`onValueChange` to local state or to URL search state when the tab
+  must survive navigation (the account/api-keys/widgets/platform pattern).
+- Do not use pill tabs for admin/account/detail surfaces.
+- For a tab bar with many tabs that must scroll on small screens, pass
+  `className="overflow-x-auto"` (the platform dashboard pattern).
+
+**Router-navigation tab bars** — where each tab is a real sub-route (different
+pathname), not a search-param toggle — keep using TanStack `<Link>` directly
+with the same underline classes, because they need true `<a>` semantics
+(open-in-new-tab, prefetch). `Tabs` is intentionally router-agnostic and does
+not render links. `app/knowledge/$kbSlug/route.tsx` is the reference for this
+link-tab variant.
+
+The live render of every variant is the `/dev/ui` "Tabs" section — that is the
+canonical rendered reference.
 
 ## Detail And Edit
 
@@ -811,6 +817,7 @@ Consequences for component code:
 | Hover/focus hint | `tooltip` | `RowActionIconButton` wires this automatically via `label`. |
 | Transient feedback after an action | `sonner` (`toast`) | Success/error confirmations; not for validation errors. |
 | A query failed | `query-error-state` | Standard error block with retry. |
+| Inline semantic feedback in a form/wizard/page | `alert` | Soft tinted callout (info/success/warning/destructive) with an auto icon. Not a toast (`sonner`) and not a modal (`dialog`). Use `size="sm"` for compact wizard-step feedback. |
 | Slide-over panel | `sheet` | **Restricted**: never for admin entity detail (see Detail And Edit). |
 
 Compose these instead of building bespoke overlays. If a needed variant is
@@ -837,11 +844,12 @@ These patterns must not be copied:
 - `hover:bg-gray-50` on interactive rows.
 - Raw semantic Tailwind colors for status states.
 - Raw `<button>` icon actions in rows. Use `row-action` components.
-- `delete-confirm-button`. Use `inline-delete-confirm`.
 - Inline `style={{ borderColor }}` to color a border. Use a `border-*` utility.
 - An unlayered `* { border-color }` or `@utility` override. Keep the reset in
   `@layer base` (see Borders And Cascade Layers).
 - Hand-picked icon colors for row actions. Use the action tone system.
 - Hand-rolled search inputs (`Input` + manually placed icon). Use `SearchInput`.
 - Hand-rolled status pills with ad-hoc `/10` tints. Use `Badge` semantic variants.
+- Hand-rolled semantic callouts with raw `amber-*`/`red-*`/`green-*` Tailwind
+  (icon + message in a tinted box). Use `Alert` semantic variants.
 - A delete-confirm overlay on an untinted row. Tint the row while confirming.

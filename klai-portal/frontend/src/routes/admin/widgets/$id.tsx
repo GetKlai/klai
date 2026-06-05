@@ -11,6 +11,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { useWidget } from './-hooks'
@@ -86,7 +87,7 @@ function WidgetDetailPage() {
 
   if (!widget) return null
 
-  const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
+  const tabs: TabItem<TabId>[] = [
     { id: 'details', label: m.admin_shared_tab_general(), icon: Info },
     { id: 'kbs', label: m.admin_shared_wizard_step_kb_access(), icon: Shield },
     { id: 'appearance', label: m.admin_widgets_wizard_step_appearance(), icon: Palette },
@@ -130,30 +131,12 @@ function WidgetDetailPage() {
         </Button>
       </div>
 
-      <div className="overflow-x-auto border-b border-gray-200">
-        <nav className="-mb-px flex gap-6">
-          {tabs.map(({ id: tabId, label, icon: TabIcon }) => {
-            const isActive = tabId === activeTab
-            return (
-              <Button
-                key={tabId}
-                type="button"
-                variant="link"
-                onClick={() => setTab(tabId)}
-                className={[
-                  'h-auto shrink-0 rounded-none px-0 pb-3 text-sm font-medium no-underline border-b-2 transition-colors hover:no-underline',
-                  isActive
-                    ? 'border-gray-200 text-gray-900'
-                    : 'border-transparent text-gray-400 hover:text-gray-900',
-                ].join(' ')}
-              >
-                <TabIcon className="h-4 w-4" />
-                {label}
-              </Button>
-            )
-          })}
-        </nav>
-      </div>
+      <Tabs
+        tabs={tabs}
+        value={activeTab}
+        onValueChange={setTab}
+        className="overflow-x-auto"
+      />
 
       {activeTab === 'details' && <DetailsTab widget={widget} />}
       {activeTab === 'kbs' && <KnowledgeBasesTab widget={widget} />}

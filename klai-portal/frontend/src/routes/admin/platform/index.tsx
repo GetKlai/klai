@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { BookOpen, Download, Plus, RotateCw, Search, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { API_BASE } from '@/lib/api'
 import { fetchMe } from '@/lib/api-me'
 import { useAuth } from '@/lib/auth'
@@ -102,6 +103,19 @@ function PlatformConsole() {
       search: { tab: nextTab === 'users' ? undefined : nextTab },
     })
   }
+
+  const platformTabs: TabItem<PlatformTab>[] = TABS.map((t) => ({
+    id: t.id,
+    label: t.label(),
+    count:
+      t.id === 'feedback'
+        ? newFeedbackCount
+        : t.id === 'chat-errors'
+          ? chatErrorCount
+          : undefined,
+    countTone:
+      t.id === 'feedback' ? 'warning' : t.id === 'chat-errors' ? 'destructive' : undefined,
+  }))
 
   useEffect(() => {
     if ((meQuery.data && !isPlatformAdmin) || meQuery.isError) {
@@ -269,39 +283,12 @@ function PlatformConsole() {
         />
       </div>
 
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex gap-6 overflow-x-auto">
-          {TABS.map((t) => {
-            const active = t.id === tab
-            return (
-              <Button
-                key={t.id}
-                type="button"
-                variant="link"
-                onClick={() => setPlatformTab(t.id)}
-                className={[
-                  'h-auto rounded-none border-b-2 px-0 pb-3 text-sm font-medium no-underline transition-colors hover:no-underline',
-                  active
-                    ? 'border-gray-900 text-gray-900'
-                    : 'border-transparent text-gray-400 hover:text-gray-900',
-                ].join(' ')}
-              >
-                {t.label()}
-                {t.id === 'feedback' && newFeedbackCount > 0 && (
-                  <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-warning)] px-1.5 text-[11px] font-medium leading-5 text-white">
-                    {newFeedbackCount}
-                  </span>
-                )}
-                {t.id === 'chat-errors' && chatErrorCount > 0 && (
-                  <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-destructive)] px-1.5 text-[11px] font-medium leading-5 text-white">
-                    {chatErrorCount}
-                  </span>
-                )}
-              </Button>
-            )
-          })}
-        </nav>
-      </div>
+      <Tabs
+        tabs={platformTabs}
+        value={tab}
+        onValueChange={setPlatformTab}
+        className="overflow-x-auto"
+      />
 
       <div className="flex items-center gap-3">
         <div className="relative flex-1">

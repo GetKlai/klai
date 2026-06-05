@@ -1,7 +1,17 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { ArrowLeft, Plus } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Tooltip } from '@/components/ui/tooltip'
+import { RowActionGroup, BorderedRowActionIconButton } from '@/components/ui/row-action'
+import {
+  DataTable,
+  DataTableHeader,
+  DataTableBody,
+  DataTableRow,
+  DataTableHead,
+  DataTableCell,
+} from '@/components/ui/data-table'
+import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { useMcpServers } from './_api'
 
@@ -11,7 +21,7 @@ export const Route = createFileRoute('/admin/mcps/new')({
 
 function McpsNewPage() {
   const navigate = useNavigate()
-  const { data, isLoading, isError } = useMcpServers()
+  const { data, isLoading, isError, error, refetch } = useMcpServers()
 
   // Managed servers are always enabled and live in the main list - never in the picker.
   const availableServers = data?.servers.filter((s) => !s.enabled && !s.managed) ?? []
@@ -38,61 +48,48 @@ function McpsNewPage() {
       </div>
 
       {isError ? (
-        <p className="py-8 text-sm text-[var(--color-destructive)]">
-          {m.admin_mcps_load_error()}
-        </p>
+        <QueryErrorState
+          error={error instanceof Error ? error : new Error(m.admin_mcps_load_error())}
+          onRetry={() => void refetch()}
+        />
       ) : isLoading ? (
-        <p className="py-8 text-sm text-gray-400">
-          {m.admin_mcps_loading()}
-        </p>
+        <ListLoadingState label={m.admin_mcps_loading()} />
       ) : availableServers.length === 0 ? (
-        <p className="py-8 text-sm text-gray-400">
-          {m.admin_mcps_new_empty()}
-        </p>
+        <ListEmptyState title={m.admin_mcps_new_empty()} />
       ) : (
-        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-48">
-                {m.admin_mcps_col_name()}
-              </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                {m.admin_mcps_col_description()}
-              </th>
-              <th className="py-3 text-right w-24" aria-label={m.admin_mcps_col_actions()} />
-            </tr>
-          </thead>
-          <tbody>
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>{m.admin_mcps_col_name()}</DataTableHead>
+              <DataTableHead>{m.admin_mcps_col_description()}</DataTableHead>
+              <DataTableHead align="right" aria-label={m.admin_mcps_col_actions()} />
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
             {availableServers.map((server) => (
-              <tr key={server.id} className="border-b border-gray-200 last:border-b-0">
-                <td className="py-4 pr-4 align-top">
+              <DataTableRow key={server.id}>
+                <DataTableCell>
                   <span className="font-medium">{server.display_name || server.id}</span>
-                </td>
-                <td className="py-4 pr-4 align-top text-gray-400">
-                  {server.description}
-                </td>
-                <td className="py-4 align-top text-right w-24">
-                  <div className="flex items-start justify-end gap-2 mt-px">
-                    <Tooltip label={m.admin_mcps_add_button()}>
-                      <button
-                        onClick={() =>
-                          navigate({
-                            to: '/admin/mcps/$serverId',
-                            params: { serverId: server.id },
-                          })
-                        }
-                        aria-label={m.admin_mcps_add_button()}
-                        className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </Tooltip>
-                  </div>
-                </td>
-              </tr>
+                </DataTableCell>
+                <DataTableCell className="text-gray-400">{server.description}</DataTableCell>
+                <DataTableCell align="right">
+                  <RowActionGroup>
+                    <BorderedRowActionIconButton
+                      action="add"
+                      label={m.admin_mcps_add_button()}
+                      onClick={() =>
+                        navigate({
+                          to: '/admin/mcps/$serverId',
+                          params: { serverId: server.id },
+                        })
+                      }
+                    />
+                  </RowActionGroup>
+                </DataTableCell>
+              </DataTableRow>
             ))}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
       )}
     </div>
   )

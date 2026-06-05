@@ -3,10 +3,20 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, BookOpen, PlusCircle } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
+import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+import {
+  DataTable,
+  DataTableHeader,
+  DataTableBody,
+  DataTableRow,
+  DataTableHead,
+  DataTableCell,
+} from '@/components/ui/data-table'
+import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
@@ -55,11 +65,6 @@ interface KnowledgeBase {
 
 interface KBsResponse {
   knowledge_bases: KnowledgeBase[]
-}
-
-const GAP_TYPE_CLASSES: Record<string, string> = {
-  hard: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]',
-  soft: 'bg-[var(--color-warning)]/10 text-[var(--color-warning)]',
 }
 
 function GapsPage() {
@@ -175,81 +180,56 @@ function GapsPage() {
 
       {/* Table */}
       {isLoading ? (
-        <div className="flex flex-col gap-2">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-12 rounded-lg bg-[var(--color-secondary)] animate-pulse" />
-          ))}
-        </div>
+        <ListLoadingState label={m.admin_shared_loading()} />
       ) : gaps.length === 0 ? (
-        <Card>
-          <CardContent className="pt-6 pb-6 text-center">
-            <AlertTriangle className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-            <p className="text-sm text-gray-400">
-              {m.gaps_empty_state()}
-            </p>
-          </CardContent>
-        </Card>
+        <ListEmptyState title={m.gaps_empty_state()} />
       ) : (
-        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                {m.gaps_column_query()}
-              </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-24">
-                {m.gaps_column_type()}
-              </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-36">
-                {m.gaps_column_nearest_kb()}
-              </th>
-              <th className="py-3 pr-4 text-right text-xs font-medium text-gray-400 tracking-wide w-20">
-                {m.gaps_column_count()}
-              </th>
-              <th className="py-3 pr-4 text-right text-xs font-medium text-gray-400 tracking-wide w-28">
-                {m.gaps_column_last()}
-              </th>
-              <th className="py-3 text-right w-12" />
-            </tr>
-          </thead>
-          <tbody>
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>{m.gaps_column_query()}</DataTableHead>
+              <DataTableHead>{m.gaps_column_type()}</DataTableHead>
+              <DataTableHead>{m.gaps_column_nearest_kb()}</DataTableHead>
+              <DataTableHead align="right">{m.gaps_column_count()}</DataTableHead>
+              <DataTableHead align="right">{m.gaps_column_last()}</DataTableHead>
+              <DataTableHead align="right" />
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
             {gaps.map((gap) => {
               const rowKey = `${gap.query_text}-${gap.gap_type}`
               return (
-                <tr
-                  key={rowKey}
-                  className="border-b border-gray-200 last:border-b-0"
-                >
-                  <td className="py-4 pr-4 align-top text-gray-900 truncate max-w-xs">
-                    {gap.query_text}
-                  </td>
-                  <td className="py-4 pr-4 align-top w-24">
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${GAP_TYPE_CLASSES[gap.gap_type] ?? ''}`}>
+                <DataTableRow key={rowKey}>
+                  <DataTableCell>{gap.query_text}</DataTableCell>
+                  <DataTableCell>
+                    <Badge variant={gap.gap_type === 'hard' ? 'destructive' : 'warning'}>
                       {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
-                    </span>
-                  </td>
-                  <td className="py-4 pr-4 align-top text-gray-400 w-36">
-                    {gap.nearest_kb_slug ?? '\u2014'}
-                  </td>
-                  <td className="py-4 pr-4 align-top text-right font-medium text-gray-900 tabular-nums w-20">
+                    </Badge>
+                  </DataTableCell>
+                  <DataTableCell className="text-gray-400">
+                    {gap.nearest_kb_slug ?? '—'}
+                  </DataTableCell>
+                  <DataTableCell align="right" className="font-medium tabular-nums">
                     {gap.occurrence_count}
-                  </td>
-                  <td className="py-4 pr-4 align-top text-right text-gray-400 whitespace-nowrap tabular-nums w-28">
+                  </DataTableCell>
+                  <DataTableCell align="right" className="whitespace-nowrap tabular-nums text-gray-400">
                     {new Date(gap.last_occurred).toLocaleDateString()}
-                  </td>
-                  <td className="py-4 align-top text-right w-12">
+                  </DataTableCell>
+                  <DataTableCell align="right">
                     {gap.gap_type === 'soft' && gap.nearest_kb_slug ? (
-                      <button
-                        onClick={() =>
-                          void navigate({
-                            to: '/app/docs/$kbSlug',
-                            params: { kbSlug: gap.nearest_kb_slug! },
-                                                      })
-                        }
-                        aria-label={m.gaps_action_add()}
-                        className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
-                      >
-                        <PlusCircle className="h-4 w-4" />
-                      </button>
+                      <RowActionGroup>
+                        <RowActionIconButton
+                          icon={PlusCircle}
+                          tone="primary"
+                          label={m.gaps_action_add()}
+                          onClick={() =>
+                            void navigate({
+                              to: '/app/docs/$kbSlug',
+                              params: { kbSlug: gap.nearest_kb_slug! },
+                            })
+                          }
+                        />
+                      </RowActionGroup>
                     ) : activePicker === rowKey ? (
                       <Select
                         value=""
@@ -258,7 +238,7 @@ function GapsPage() {
                             void navigate({
                               to: '/app/docs/$kbSlug',
                               params: { kbSlug: e.target.value },
-                                                          })
+                            })
                             setActivePicker(null)
                           }
                         }}
@@ -274,20 +254,21 @@ function GapsPage() {
                         ))}
                       </Select>
                     ) : (
-                      <button
-                        onClick={() => setActivePicker(rowKey)}
-                        aria-label={m.gaps_action_pick_kb()}
-                        className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
-                      >
-                        <BookOpen className="h-4 w-4" />
-                      </button>
+                      <RowActionGroup>
+                        <RowActionIconButton
+                          icon={BookOpen}
+                          tone="primary"
+                          label={m.gaps_action_pick_kb()}
+                          onClick={() => setActivePicker(rowKey)}
+                        />
+                      </RowActionGroup>
                     )}
-                  </td>
-                </tr>
+                  </DataTableCell>
+                </DataTableRow>
               )
             })}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
       )}
     </div>
   )

@@ -32,7 +32,7 @@ const HEALTH_PERCENTAGE_THRESHOLD = 5
 function barColor(pct: number): string {
   return pct >= HEALTH_PERCENTAGE_THRESHOLD
     ? 'bg-[var(--color-success)]'
-    : 'bg-amber-400'
+    : 'bg-[var(--color-warning)]'
 }
 
 export interface CoverageNodeRowProps {
@@ -195,7 +195,7 @@ export function CoverageNodeRow({
           {m.knowledge_taxonomy_coverage_chunks({ count: String(node.chunk_count) })}
         </span>
         {node.gap_count > 0 && (
-          <span className="text-xs text-amber-600">
+          <span className="text-xs text-[var(--color-warning)]">
             {m.knowledge_taxonomy_coverage_gaps({ count: String(node.gap_count) })}
           </span>
         )}

@@ -1,5 +1,13 @@
-import { Loader2 } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DataTable,
+  DataTableHeader,
+  DataTableBody,
+  DataTableRow,
+  DataTableHead,
+  DataTableCell,
+} from '@/components/ui/data-table'
+import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
 import * as m from '@/paraglide/messages'
 import { useOrgKnowledgeBases } from '../-hooks'
 import type { OrgKnowledgeBase } from '../-types'
@@ -21,20 +29,11 @@ export function KbAccessEditor({ value, onChange, disabled = false }: Props) {
   )
 
   if (isLoading) {
-    return (
-      <p className="py-4 text-sm text-gray-400">
-        <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-        {m.admin_shared_loading()}
-      </p>
-    )
+    return <ListLoadingState label={m.admin_shared_loading()} />
   }
 
   if (kbs.length === 0) {
-    return (
-      <p className="py-4 text-sm text-gray-400">
-        {m.admin_shared_kb_empty()}
-      </p>
-    )
+    return <ListEmptyState title={m.admin_shared_kb_empty()} />
   }
 
   function toggle(kbId: number, checked: boolean) {
@@ -46,36 +45,29 @@ export function KbAccessEditor({ value, onChange, disabled = false }: Props) {
   }
 
   return (
-    <table className="w-full text-sm border-t border-b border-gray-200">
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-            {m.admin_shared_kb_name()}
-          </th>
-          <th className="py-3 text-center text-xs font-medium text-gray-400 tracking-wide w-24">
+    <DataTable>
+      <DataTableHeader>
+        <DataTableRow>
+          <DataTableHead>{m.admin_shared_kb_name()}</DataTableHead>
+          <DataTableHead align="center" className="w-24">
             {m.admin_shared_kb_read()}
-          </th>
-        </tr>
-      </thead>
-      <tbody>
+          </DataTableHead>
+        </DataTableRow>
+      </DataTableHeader>
+      <DataTableBody>
         {kbs.map((kb) => (
-          <tr
-            key={kb.id}
-            className="border-b border-gray-200 last:border-b-0"
-          >
-            <td className="py-3 pr-4 align-middle text-gray-900">
-              {kb.name}
-            </td>
-            <td className="py-3 text-center align-middle">
+          <DataTableRow key={kb.id}>
+            <DataTableCell>{kb.name}</DataTableCell>
+            <DataTableCell align="center">
               <Checkbox
                 checked={value.includes(kb.id)}
                 onChange={(e) => toggle(kb.id, e.target.checked)}
                 disabled={disabled}
               />
-            </td>
-          </tr>
+            </DataTableCell>
+          </DataTableRow>
         ))}
-      </tbody>
-    </table>
+      </DataTableBody>
+    </DataTable>
   )
 }
