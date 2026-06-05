@@ -1,9 +1,10 @@
-"""Non-streaming partner chat returns a clean 502 on upstream failure.
+"""Partner chat surfaces upstream failures cleanly.
 
 When LiteLLM is unreachable (e.g. mid-restart during a deploy) or returns an
-error status, the non-streaming path used to let httpx exceptions surface as a
-bare 500 Internal Server Error. These tests lock in the 502 mapping so callers
-can tell an upstream blip apart from a request error.
+error status:
+- non-streaming maps httpx exceptions to a clean 502 (was a bare 500);
+- marker-mode streaming (which buffers before emitting) yields an OpenAI-style
+  SSE error frame + [DONE] instead of a broken/truncated stream.
 """
 
 from contextlib import asynccontextmanager
@@ -13,7 +14,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from app.services.partner_chat import chat_completion_non_streaming
+from app.services.partner_chat import chat_completion_non_streaming, chat_completion_streaming
 
 
 def _settings() -> MagicMock:
@@ -78,3 +79,71 @@ async def test_non_streaming_upstream_status_error_returns_502():
         with pytest.raises(HTTPException) as exc:
             await _call()
     assert exc.value.status_code == 502
+
+
+def _stream_client_raising(exc: Exception):
+    class _Stream:
+        async def __aenter__(self):
+            raise exc
+
+        async def __aexit__(self, *_):
+            return False
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        def stream(self, *_, **__):
+            return _Stream()
+
+    return lambda timeout: _Client()
+
+
+@pytest.mark.asyncio
+async def test_streaming_markers_upstream_connect_error_emits_error_frame():
+    with patch(
+        "app.services.partner_chat.httpx.AsyncClient",
+        _stream_client_raising(httpx.ConnectError("all attempts failed")),
+    ):
+        chunks = [
+            chunk
+            async for chunk in chat_completion_streaming(
+                messages=[{"role": "user", "content": "hi"}],
+                model="klai-primary",
+                temperature=0.7,
+                system_prompt="system",
+                settings=_settings(),
+                org_id=1,
+                citation_output="markers",
+            )
+        ]
+    body = b"".join(chunks).decode()
+    assert '"error"' in body
+    assert "upstream_error" in body
+    assert "data: [DONE]" in body
+
+
+@pytest.mark.asyncio
+async def test_streaming_markers_upstream_status_error_emits_error_frame():
+    request = httpx.Request("POST", "http://litellm:4000/v1/chat/completions")
+    response = httpx.Response(503, request=request)
+    err = httpx.HTTPStatusError("503", request=request, response=response)
+    with patch("app.services.partner_chat.httpx.AsyncClient", _stream_client_raising(err)):
+        chunks = [
+            chunk
+            async for chunk in chat_completion_streaming(
+                messages=[{"role": "user", "content": "hi"}],
+                model="klai-primary",
+                temperature=0.7,
+                system_prompt="system",
+                settings=_settings(),
+                org_id=1,
+                citation_output="markers",
+            )
+        ]
+    body = b"".join(chunks).decode()
+    assert "upstream_error" in body
+    assert "data: [DONE]" in body

@@ -632,24 +632,27 @@ async def _maybe_apply_web_search(
     auth: PartnerAuthContext,
     is_widget_chat: bool,
     system_prompt: str,
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[dict], str | None]:
     """Append live web results to the prompt and return them as evidence chunks.
 
     Opt-in per request (``request.web_search``), gated by the key's
     ``web_search`` permission, and never run for public widget keys. Fail-open:
-    if search returns nothing or errors, the original prompt and an empty chunk
-    list are returned so the answer still goes out, just without web context.
+    if search returns nothing or errors, the original prompt, an empty chunk
+    list and ``None`` are returned so the answer still goes out without web context.
 
-    The returned chunks are passed to the chat completion as a SEPARATE ``web_chunks``
-    tier (not merged with KB chunks). The composer cites them on their own merit
-    and tags them ``origin: "web"``; without this a web-grounded answer with no KB
-    chunks would be stripped to the "no citable sources" refusal.
+    Returns ``(system_prompt, web_chunks, web_query)``. The chunks are passed to
+    the chat completion as a SEPARATE ``web_chunks`` tier (not merged with KB
+    chunks), and ``web_query`` is the concise query they were retrieved for — the
+    composer validates web sources against it (not the KB ``knowledge.query``
+    blob, which would reject relevant web sources). The composer tags web sources
+    ``origin: "web"``; without this tier a web-grounded answer with no KB chunks
+    would be stripped to the "no citable sources" refusal.
     """
     if not request.web_search:
-        return system_prompt, []
+        return system_prompt, [], None
     if is_widget_chat:
         logger.debug("partner_web_search_ignored_widget", org_id=auth.org_id)
-        return system_prompt, []
+        return system_prompt, [], None
 
     require_permission(auth, "web_search")  # raises 403 if the key lacks it
 
@@ -657,7 +660,7 @@ async def _maybe_apply_web_search(
     web_results = await search_web(web_query, settings=settings) if web_query else []
     if not web_results:
         logger.warning("partner_web_search_empty", org_id=auth.org_id, key_id=str(auth.key_id))
-        return system_prompt, []
+        return system_prompt, [], None
 
     logger.info(
         "partner_web_search_used",
@@ -666,7 +669,7 @@ async def _maybe_apply_web_search(
         result_count=len(web_results),
     )
     enriched_prompt = f"{system_prompt}\n{build_web_results_block(web_results)}"
-    return enriched_prompt, web_results_as_chunks(web_results)
+    return enriched_prompt, web_results_as_chunks(web_results), web_query
 
 
 @router.post("/chat/completions")
@@ -765,7 +768,7 @@ async def chat_completions(
     #     tier from the knowledge base: they are passed alongside the KB chunks
     #     (never merged) so the composer keeps KB and web apart, tags each
     #     source with its origin, and only refuses when both tiers are empty.
-    system_prompt, web_chunks = await _maybe_apply_web_search(
+    system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
         auth=auth,
         is_widget_chat=is_widget_chat,
@@ -850,6 +853,7 @@ async def chat_completions(
             citation_source_metadata=citation_source_metadata,
             citation_chunks=chunks,
             web_chunks=web_chunks,
+            web_query=web_query,
             trusted_sources=trusted_sources,
             citation_output=citation_output,
             source_query=knowledge.query if knowledge is not None else None,
@@ -882,6 +886,7 @@ async def chat_completions(
         citation_source_metadata=citation_source_metadata,
         citation_chunks=chunks,
         web_chunks=web_chunks,
+        web_query=web_query,
         trusted_sources=trusted_sources,
         citation_output=citation_output,
         source_query=knowledge.query if knowledge is not None else None,

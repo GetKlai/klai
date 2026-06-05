@@ -295,6 +295,105 @@ def test_compose_refuses_when_no_kb_and_no_web():
     assert sources == []
 
 
+def test_compose_validates_web_against_web_query_not_kb_blob():
+    # HIGH regression: web sources must be validated against the concise web
+    # query, NOT the long KB-retrieval blob (user_query). A tangential web result
+    # that shares blob tokens otherwise dominates query_support_tokens and the
+    # relevant web source gets rejected as query_not_supported -> refusal.
+    from app.services.partner_chat import _compose_backend_managed_answer
+
+    answer = "There is an outage at provider X affecting calls right now."
+    web_chunks = web_results_as_chunks(
+        [
+            {
+                "title": "Provider X outage",
+                "url": "https://status.test/x",
+                "content": "Provider X reports an outage affecting calls right now",
+            },
+            {
+                "title": "Yealink router setup",
+                "url": "https://kb.test/yealink",
+                "content": "How to configure your Yealink router registratie ticket",
+            },
+        ]
+    )
+    blob = "Yealink router registratie ticket model"
+
+    # With the KB blob as the web query_text, the relevant web source is rejected.
+    _c, blob_sources, _d = _compose_backend_managed_answer(answer, [], [], blob, web_chunks, web_query=None)
+    assert blob_sources == []
+
+    # With the concise web query threaded through, it is cited.
+    _c2, web_sources, _d2 = _compose_backend_managed_answer(
+        answer, [], [], blob, web_chunks, web_query="outage provider X affecting calls"
+    )
+    assert [s["url"] for s in web_sources] == ["https://status.test/x"]
+    assert web_sources[0]["origin"] == "web"
+
+
+def test_compose_dedupes_same_url_across_kb_and_web():
+    # If the KB and the web both surface the same URL, emit it once (KB wins).
+    from app.services.partner_chat import _compose_backend_managed_answer
+
+    answer = "Disable SIP-ALG on the router for the Yealink phone."
+    same = "https://help.test/sip-alg"
+    kb_chunks = [
+        {"source_url": same, "title": "SIP-ALG guide", "text": "Disable SIP-ALG on the router for the Yealink phone"}
+    ]
+    web_chunks = web_results_as_chunks(
+        [{"title": "SIP-ALG guide", "url": same, "content": "Disable SIP-ALG on the router for the Yealink phone"}]
+    )
+    _content, sources, _decision = _compose_backend_managed_answer(
+        answer, [], kb_chunks, "yealink sip-alg router", web_chunks, web_query="yealink sip-alg router"
+    )
+    urls = [s["url"] for s in sources]
+    assert urls.count(same) == 1
+    assert next(s for s in sources if s["url"] == same)["origin"] == "kb"
+
+
+@pytest.mark.asyncio
+async def test_maybe_apply_web_search_skips_widget(monkeypatch):
+    import app.api.partner as partner
+
+    search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
+    monkeypatch.setattr(partner, "search_web", search)
+    req = _req(web_search=True, messages=[{"role": "user", "content": "is there an outage?"}])
+    prompt, chunks, web_query = await partner._maybe_apply_web_search(
+        request=req, auth=_auth({"chat": True, "web_search": True}), is_widget_chat=True, system_prompt="sp"
+    )
+    assert (prompt, chunks, web_query) == ("sp", [], None)
+    search.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_apply_web_search_requires_permission(monkeypatch):
+    import app.api.partner as partner
+
+    monkeypatch.setattr(partner, "search_web", AsyncMock(return_value=[]))
+    req = _req(web_search=True, messages=[{"role": "user", "content": "q"}])
+    with pytest.raises(HTTPException) as exc:
+        await partner._maybe_apply_web_search(
+            request=req, auth=_auth({"chat": True}), is_widget_chat=False, system_prompt="sp"
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_maybe_apply_web_search_searches_with_resolved_query(monkeypatch):
+    import app.api.partner as partner
+
+    search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
+    monkeypatch.setattr(partner, "search_web", search)
+    req = _req(web_search=True, web_search_query="my concise query", messages=[{"role": "user", "content": "q"}])
+    prompt, chunks, web_query = await partner._maybe_apply_web_search(
+        request=req, auth=_auth({"chat": True, "web_search": True}), is_widget_chat=False, system_prompt="sp"
+    )
+    assert web_query == "my concise query"
+    assert chunks and chunks[0]["source_url"] == "https://x.test/1"
+    assert search.await_args.args[0] == "my concise query"
+    assert "Untrusted web search results" in prompt
+
+
 def test_web_chunks_not_cited_when_answer_unrelated():
     # The citation firewall still applies: an answer that does not use the web
     # snippet must not pick it up as a source.
