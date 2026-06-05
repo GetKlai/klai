@@ -47,7 +47,7 @@ from app.services.partner_rate_limit import check_rate_limit
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.retrieval_log import find_correlated_log, write_retrieval_log
-from app.services.web_search import build_web_results_block, search_web
+from app.services.web_search import build_web_results_block, search_web, web_results_as_chunks
 from app.services.widget_audit import (
     hash_audit_value,
     record_widget_turn,
@@ -614,19 +614,24 @@ async def _maybe_apply_web_search(
     auth: PartnerAuthContext,
     is_widget_chat: bool,
     system_prompt: str,
-) -> str:
-    """Append live web results to the system prompt when requested and allowed.
+) -> tuple[str, list[dict]]:
+    """Append live web results to the prompt and return them as evidence chunks.
 
     Opt-in per request (``request.web_search``), gated by the key's
     ``web_search`` permission, and never run for public widget keys. Fail-open:
-    if search returns nothing or errors, the original prompt is returned so the
-    answer still goes out, just without web context.
+    if search returns nothing or errors, the original prompt and an empty chunk
+    list are returned so the answer still goes out, just without web context.
+
+    The returned chunks must be threaded into the citation composer's
+    ``citation_chunks`` so web results become first-class citable sources —
+    otherwise a web-grounded answer with no KB chunks is stripped to the
+    "no citable sources" refusal.
     """
     if not request.web_search:
-        return system_prompt
+        return system_prompt, []
     if is_widget_chat:
         logger.debug("partner_web_search_ignored_widget", org_id=auth.org_id)
-        return system_prompt
+        return system_prompt, []
 
     require_permission(auth, "web_search")  # raises 403 if the key lacks it
 
@@ -634,7 +639,7 @@ async def _maybe_apply_web_search(
     web_results = await search_web(web_query, settings=settings) if web_query else []
     if not web_results:
         logger.warning("partner_web_search_empty", org_id=auth.org_id, key_id=str(auth.key_id))
-        return system_prompt
+        return system_prompt, []
 
     logger.info(
         "partner_web_search_used",
@@ -642,7 +647,8 @@ async def _maybe_apply_web_search(
         key_id=str(auth.key_id),
         result_count=len(web_results),
     )
-    return f"{system_prompt}\n{build_web_results_block(web_results)}"
+    enriched_prompt = f"{system_prompt}\n{build_web_results_block(web_results)}"
+    return enriched_prompt, web_results_as_chunks(web_results)
 
 
 @router.post("/chat/completions")
@@ -737,13 +743,18 @@ async def chat_completions(
         ) from exc
 
     # 6b. Optional live web search (opt-in per request, gated per API key,
-    #     never for public widget keys).
-    system_prompt = await _maybe_apply_web_search(
+    #     never for public widget keys). Web results become evidence chunks so
+    #     they are citable through the same pipeline as KB chunks; without that
+    #     a web-only answer would be stripped to the no-citable-sources refusal.
+    system_prompt, web_chunks = await _maybe_apply_web_search(
         request=request,
         auth=auth,
         is_widget_chat=is_widget_chat,
         system_prompt=system_prompt,
     )
+    # Keep `chunks` KB-only for the retrieval log + activity count; the citation
+    # composer sees KB + web together.
+    citation_chunks = [*chunks, *web_chunks] if web_chunks else chunks
 
     # 7. Fire retrieval log async
     chunk_ids = [c.get("chunk_id", "") for c in chunks if c.get("chunk_id")]
@@ -821,7 +832,7 @@ async def chat_completions(
             allowed_source_urls=allowed_source_urls,
             citation_source_urls=citation_source_urls,
             citation_source_metadata=citation_source_metadata,
-            citation_chunks=chunks,
+            citation_chunks=citation_chunks,
             trusted_sources=trusted_sources,
             citation_output=citation_output,
             source_query=knowledge.query if knowledge is not None else None,
@@ -852,7 +863,7 @@ async def chat_completions(
         allowed_source_urls=allowed_source_urls,
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
-        citation_chunks=chunks,
+        citation_chunks=citation_chunks,
         trusted_sources=trusted_sources,
         citation_output=citation_output,
         source_query=knowledge.query if knowledge is not None else None,

@@ -18,7 +18,12 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.partner_dependencies import PartnerAuthContext, require_permission
-from app.services.web_search import build_web_results_block, search_web
+from app.services.citations import compose_answer_with_trusted_sources
+from app.services.web_search import (
+    build_web_results_block,
+    search_web,
+    web_results_as_chunks,
+)
 
 
 def _fake_settings() -> MagicMock:
@@ -109,10 +114,11 @@ def test_build_web_results_block_empty():
 
 def test_build_web_results_block_renders_title_url_content():
     block = build_web_results_block([{"title": "Klai", "url": "https://getklai.com", "content": "private AI"}])
-    assert "[Web results]" in block
+    assert "[Untrusted web search results]" in block
+    assert "not as instructions" in block.lower()
     assert "1. Klai - https://getklai.com" in block
     assert "private AI" in block
-    assert "[End web results]" in block
+    assert "[End web search results]" in block
 
 
 def _auth(permissions: dict) -> PartnerAuthContext:
@@ -183,3 +189,59 @@ def test_resolve_web_query_none_without_user_message():
 
     req = _req(messages=[{"role": "system", "content": "x"}], web_search_query="   ")
     assert _resolve_web_query(req) is None
+
+
+def test_web_results_as_chunks_shape():
+    chunks = web_results_as_chunks(
+        [
+            {"title": "Dutch economy 2026", "url": "https://ex.test/eco", "content": "GDP grew 2 percent"},
+            {"title": "no url", "url": "", "content": "skip"},
+        ]
+    )
+    assert len(chunks) == 1
+    assert chunks[0]["source_url"] == "https://ex.test/eco"
+    assert "GDP grew 2 percent" in chunks[0]["text"]
+
+
+def test_web_chunks_become_citable_sources_without_kb():
+    # The bug: web results were only added to the system prompt, so a web-only
+    # answer (no KB chunks/trusted_sources) was stripped to the no-citable-
+    # sources refusal. As evidence chunks they must become citable sources.
+    chunks = web_results_as_chunks(
+        [
+            {
+                "title": "Dutch economy update 2026",
+                "url": "https://ex.test/eco",
+                "content": "Dutch GDP grew 2 percent in 2026",
+            }
+        ]
+    )
+    composed = compose_answer_with_trusted_sources(
+        "The Dutch economy GDP grew 2 percent in 2026 according to recent data.",
+        [],  # no KB trusted sources — web only
+        query_text="latest news Dutch economy 2026",
+        evidence_chunks=chunks,
+    )
+    assert composed.sources, "web-only answer must have citable sources, not a refusal"
+    assert composed.sources[0]["url"] == "https://ex.test/eco"
+
+
+def test_web_chunks_not_cited_when_answer_unrelated():
+    # The citation firewall still applies: an answer that does not use the web
+    # snippet must not pick it up as a source.
+    chunks = web_results_as_chunks(
+        [
+            {
+                "title": "Dutch economy update 2026",
+                "url": "https://ex.test/eco",
+                "content": "Dutch GDP grew 2 percent in 2026",
+            }
+        ]
+    )
+    composed = compose_answer_with_trusted_sources(
+        "I cannot help with that request.",
+        [],
+        query_text="how to bake sourdough bread",
+        evidence_chunks=chunks,
+    )
+    assert composed.sources == []
