@@ -53,6 +53,7 @@ from app.services.user_memberships import get_user_global_membership_state, get_
 from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 from app.services.zitadel_identity_recovery import (
     ZitadelIdentityRecoveryError,
+    email_hash_for_log,
     recover_existing_zitadel_identity_for_invite,
 )
 
@@ -125,10 +126,10 @@ async def _find_existing_zitadel_user_for_platform_invite(
     existing_user_id = await zitadel.find_user_id_by_email(email)
     if existing_user_id:
         logger.info(
-            "platform_invite_existing_zitadel_user_reused",
-            email=email,
-            target_org_id=org_id,
-            zitadel_user_id=existing_user_id,
+            "platform_invite_existing_zitadel_user_reused email_hash=%s target_org_id=%d zitadel_user_id=%s",
+            email_hash_for_log(email),
+            org_id,
+            existing_user_id,
         )
         return existing_user_id
 
@@ -167,7 +168,7 @@ async def _create_or_reuse_platform_invite_zitadel_user(
                 conflict_exc=exc,
             )
             return existing_user_id, False
-        logger.exception("platform_invite_zitadel_failed", email=body.email)
+        logger.exception("platform_invite_zitadel_failed email_hash=%s", email_hash_for_log(body.email))
         await _emit_audit_safe(
             action="platform_admin.invite_zitadel_invite_failed",
             details={
@@ -179,7 +180,7 @@ async def _create_or_reuse_platform_invite_zitadel_user(
         )
         raise HTTPException(status_code=502, detail=f"Zitadel invite mislukt: {exc}") from exc
     except Exception as exc:
-        logger.exception("platform_invite_zitadel_failed", email=body.email)
+        logger.exception("platform_invite_zitadel_failed email_hash=%s", email_hash_for_log(body.email))
         await _emit_audit_safe(
             action="platform_admin.invite_zitadel_invite_failed",
             details={
