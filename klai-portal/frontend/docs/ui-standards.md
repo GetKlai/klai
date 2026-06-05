@@ -45,7 +45,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
 | `row-action` | List/table row actions: `RowActionIconButton`, `BorderedRowActionIconButton` (visible bordered hitbox — the default in tables), `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
 | `data-table` | Admin table primitives: `DataTable`, `DataTableHeader`, `DataTableBody`, `DataTableRow` (`interactive`/`confirming`), `DataTableHead`, `DataTableCell` (`align`) | Yes |
-| `list` | List primitives: `ListFrame`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
+| `list` | List primitives: `ListFrame`, `ListHeader`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
 | `list-state` | List/table loading and empty states: `ListLoadingState`, `ListEmptyState` | Yes |
 | `inline-row-button` | The single source for small inline-row action pills (`InlineRowButton`): Save/Cancel, Delete/Cancel, Approve/Deny. Tones: success/destructive/neutral | Yes |
 | `inline-edit-row` | Canonical inline edit for a list row (`InlineEditRow`): name + optional description, zero layout shift, owns Save/Cancel | Yes |
@@ -190,6 +190,12 @@ import {
 For a stack of titled rows with a description and trailing actions (not column
 headers), prefer the `list` primitives instead (see List Primitives). Use
 `DataTable` when you have columns with headers and aligned cells.
+
+`ListHeader` is optional. Use it only when a divider list has column-like
+metadata that needs labels. Put it as the first child of `ListFrame`. The
+header and every row must share the same grid template and `px-4` horizontal
+padding, including the trailing action column, so the top/header/row divider
+lines span the full content width. Plain title/description lists stay headerless.
 
 Row actions (edit, delete, sync, ...) use the `row-action` components, never
 raw `<button>` icons. See Row Actions And Action Tones.

@@ -14,6 +14,17 @@ function ListFrame({ className, ...props }: ListFrameProps) {
   )
 }
 
+interface ListHeaderProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+function ListHeader({ className, ...props }: ListHeaderProps) {
+  return (
+    <div
+      className={cn('grid items-center gap-4 px-4 py-3 text-xs font-medium text-gray-400', className)}
+      {...props}
+    />
+  )
+}
+
 interface ListRowProps extends React.HTMLAttributes<HTMLDivElement> {
   asChild?: boolean
   interactive?: boolean
@@ -97,6 +108,7 @@ function ListRowChevron({ className, ...props }: ListRowChevronProps) {
 
 export {
   ListFrame,
+  ListHeader,
   ListRow,
   ListRowIcon,
   ListRowContent,
