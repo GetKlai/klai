@@ -1,9 +1,22 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { Check, X } from 'lucide-react'
+import { PageHeader } from '@/components/ui/page-header'
+import { InlineRowButton } from '@/components/ui/inline-row-button'
+import {
+  DataTable,
+  DataTableHeader,
+  DataTableBody,
+  DataTableRow,
+  DataTableHead,
+  DataTableCell,
+} from '@/components/ui/data-table'
+import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
+import { QueryErrorState } from '@/components/ui/query-error-state'
+import { SearchInput } from '@/components/ui/search-input'
+import { Pagination } from '@/components/ui/pagination'
+import { useListControls } from '@/components/ui/use-list-controls'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { adminLogger } from '@/lib/logger'
@@ -25,7 +38,7 @@ function AdminJoinRequestsPage() {
   const auth = useAuth()
   const queryClient = useQueryClient()
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-join-requests'],
     queryFn: async () => apiFetch<{ requests: JoinRequest[] }>('/api/admin/join-requests'),
     enabled: auth.isAuthenticated,
@@ -50,41 +63,63 @@ function AdminJoinRequestsPage() {
   })
 
   const requests = data?.requests ?? []
+  const controls = useListControls(requests, {
+    pageSize: 10,
+    filter: (req, q) => {
+      const needle = q.trim().toLowerCase()
+      return (
+        (req.display_name ?? '').toLowerCase().includes(needle) ||
+        req.email.toLowerCase().includes(needle)
+      )
+    },
+  })
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{m.admin_join_requests_title()}</h1>
-      </div>
+    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
+      <PageHeader
+        title={m.admin_join_requests_title()}
+        count={!isLoading && !error ? requests.length : undefined}
+      />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{m.admin_join_requests_title()}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <p className="text-sm text-gray-400">...</p>
-          ) : requests.length === 0 ? (
-            <p className="text-sm text-gray-400">{m.admin_join_requests_empty()}</p>
+      {error ? (
+        <QueryErrorState
+          error={error instanceof Error ? error : new Error(String(error))}
+          onRetry={() => void refetch()}
+        />
+      ) : isLoading ? (
+        <ListLoadingState label={m.admin_shared_loading()} />
+      ) : requests.length === 0 ? (
+        <ListEmptyState title={m.admin_join_requests_empty()} />
+      ) : (
+        <>
+          {controls.showSearch && (
+            <div className="max-w-sm">
+              <SearchInput
+                type="search"
+                value={controls.query}
+                onChange={(e) => controls.setQuery(e.target.value)}
+                placeholder={m.admin_users_search_placeholder()}
+                aria-label={m.admin_users_search_placeholder()}
+              />
+            </div>
+          )}
+          {controls.filteredCount === 0 ? (
+            <ListEmptyState title={m.admin_join_requests_empty()} />
           ) : (
-            <table className="w-full text-sm border-t border-b border-gray-200">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                    Name
-                  </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                    Email
-                  </th>
-                  <th className="py-3 text-right w-36" />
-                </tr>
-              </thead>
-              <tbody>
-                {requests.map((req) => (
-                  <tr key={req.id} className="border-b border-gray-200 last:border-b-0">
-                    <td className="py-4 pr-4 align-top">{req.display_name || '-'}</td>
-                    <td className="py-4 pr-4 align-top">{req.email}</td>
-                    <td className="py-4 align-top text-right w-36">
+            <DataTable>
+              <DataTableHeader>
+                <DataTableRow>
+                  <DataTableHead>{m.admin_join_requests_column_name()}</DataTableHead>
+                  <DataTableHead>{m.admin_join_requests_column_email()}</DataTableHead>
+                  <DataTableHead align="right" />
+                </DataTableRow>
+              </DataTableHeader>
+              <DataTableBody>
+                {controls.pageItems.map((req) => (
+                  <DataTableRow key={req.id}>
+                    <DataTableCell>{req.display_name || '-'}</DataTableCell>
+                    <DataTableCell>{req.email}</DataTableCell>
+                    <DataTableCell align="right">
                       <div className="flex items-center justify-end gap-1">
                         <InlineRowButton
                           tone="success"
@@ -100,14 +135,21 @@ function AdminJoinRequestsPage() {
                           <X /> {m.admin_join_requests_deny()}
                         </InlineRowButton>
                       </div>
-                    </td>
-                  </tr>
+                    </DataTableCell>
+                  </DataTableRow>
                 ))}
-              </tbody>
-            </table>
+              </DataTableBody>
+            </DataTable>
           )}
-        </CardContent>
-      </Card>
+          {controls.showPagination && (
+            <Pagination
+              page={controls.page}
+              pageCount={controls.pageCount}
+              onPageChange={controls.setPage}
+            />
+          )}
+        </>
+      )}
     </div>
   )
 }

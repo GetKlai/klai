@@ -39,8 +39,8 @@ describe("PasswordStrengthMeter", () => {
     expect(screen.getByText("Strong, but too short")).toBeTruthy();
     expect(screen.queryByText("Very weak")).toBeNull();
     expect(screen.getByText("Use at least 15 characters.")).toBeTruthy();
-    expect(container.querySelectorAll(".bg-amber-500")).toHaveLength(4);
-    expect(container.querySelectorAll(".bg-emerald-500")).toHaveLength(0);
+    expect(container.querySelectorAll('[class*="bg-[var(--color-warning)]"]')).toHaveLength(4);
+    expect(container.querySelectorAll('[class*="bg-[var(--color-success)]"]')).toHaveLength(0);
   });
 
   it("does not show policy compliance while strength is still estimated", () => {

@@ -1,8 +1,10 @@
 import type { ComponentType } from 'react'
-import { AlertTriangle, FileText, Globe, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { AlertTriangle, FileText, Globe, Loader2 } from 'lucide-react'
 import { SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
+import { DataTableRow, DataTableCell } from '@/components/ui/data-table'
+import { RowActionGroup, BorderedRowActionIconButton } from '@/components/ui/row-action'
 import * as m from '@/paraglide/messages'
 import { SyncStatusBadge } from './-kb-helpers'
 import type { ConnectorSummary } from './-kb-types'
@@ -66,19 +68,19 @@ export function ConnectorRow({
   const isRunning = connector.last_sync_status?.toUpperCase() === 'RUNNING'
 
   return (
-    <tr className="group border-b border-gray-200 last:border-b-0 klai-hover">
-      <td className="py-4 pr-2 align-top w-6">
+    <DataTableRow className="group klai-hover">
+      <DataTableCell className="w-6 px-0 pr-2 align-top">
         <Tooltip className="leading-none mt-px" label={typeLabel}>
           <Icon className="h-4 w-4 text-gray-400" />
         </Tooltip>
-      </td>
-      <td className="py-4 pr-4 align-top">
+      </DataTableCell>
+      <DataTableCell className="align-top">
         <span className="font-medium text-gray-900">{connector.name}</span>
-      </td>
-      <td className="py-4 pr-4 align-top w-28">
+      </DataTableCell>
+      <DataTableCell className="w-28 align-top">
         <span className="text-xs text-gray-400">{typeLabel}</span>
-      </td>
-      <td className="py-4 pr-4 align-top w-32">
+      </DataTableCell>
+      <DataTableCell className="w-32 align-top">
         <SyncStatusBadge
           status={connector.last_sync_status}
           lastSyncAt={connector.last_sync_at}
@@ -128,41 +130,30 @@ export function ConnectorRow({
             Needs reconfiguration
           </button>
         )}
-      </td>
+      </DataTableCell>
       {isOwner && (
-        <td className="py-4 align-top text-right w-28">
-          <div className="flex items-start justify-end gap-2 mt-px">
-            <Tooltip label={isSyncing || isRunning ? m.admin_connectors_syncing() : m.admin_connectors_action_sync()}>
-              <button
-                disabled={isSyncing || isRunning}
-                onClick={() => onSync(connector.id)}
-                aria-label={isSyncing || isRunning ? m.admin_connectors_syncing() : m.admin_connectors_action_sync()}
-                className="inline-flex items-center justify-center text-gray-400 transition-opacity hover:opacity-70 disabled:opacity-40"
-              >
-                {isSyncing || isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              </button>
-            </Tooltip>
-            <Tooltip label={m.admin_connectors_action_edit()}>
-              <button
-                onClick={() => onEdit(connector.id)}
-                aria-label={m.admin_connectors_action_edit()}
-                className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-              >
-                <Pencil className="h-4 w-4" />
-              </button>
-            </Tooltip>
-            <Tooltip label={m.admin_connectors_action_delete()}>
-              <button
-                onClick={() => onDelete(connector.id)}
-                aria-label={m.admin_connectors_action_delete()}
-                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </Tooltip>
-          </div>
-        </td>
+        <DataTableCell align="right" className="w-28 align-top">
+          <RowActionGroup>
+            <BorderedRowActionIconButton
+              action="sync"
+              label={isSyncing || isRunning ? m.admin_connectors_syncing() : m.admin_connectors_action_sync()}
+              disabled={isSyncing || isRunning}
+              spinner={isSyncing || isRunning ? <Loader2 className="animate-spin" /> : undefined}
+              onClick={() => onSync(connector.id)}
+            />
+            <BorderedRowActionIconButton
+              action="edit"
+              label={m.admin_connectors_action_edit()}
+              onClick={() => onEdit(connector.id)}
+            />
+            <BorderedRowActionIconButton
+              action="delete"
+              label={m.admin_connectors_action_delete()}
+              onClick={() => onDelete(connector.id)}
+            />
+          </RowActionGroup>
+        </DataTableCell>
       )}
-    </tr>
+    </DataTableRow>
   )
 }

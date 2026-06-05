@@ -16,7 +16,7 @@ import {
   usePlatformRetryDeleteUser,
   usePlatformSuspend,
 } from '../-hooks'
-import { PlatformMiniStat } from './PlatformShell'
+import { PlatformMiniStat, TD, TH } from './PlatformShell'
 import type {
   PlatformBot,
   PlatformKB,
@@ -33,9 +33,6 @@ const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
 ]
 
-const TH =
-  'py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide whitespace-nowrap'
-const TD = 'py-3.5 pr-4 align-top text-gray-900'
 
 export function OrgSummaryStats({
   org,

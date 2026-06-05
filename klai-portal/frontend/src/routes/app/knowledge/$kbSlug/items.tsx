@@ -2,11 +2,21 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { List, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
-import { DeleteConfirmButton } from '@/components/ui/delete-confirm-button'
+import {
+  DataTable,
+  DataTableHeader,
+  DataTableBody,
+  DataTableRow,
+  DataTableHead,
+  DataTableCell,
+} from '@/components/ui/data-table'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { useKBQuota } from '@/hooks/useKBQuota'
@@ -22,6 +32,7 @@ function ItemsTab() {
   const auth = useAuth()
   const queryClient = useQueryClient()
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const { canAddItem } = useKBQuota(kbSlug)
 
   const { data, isLoading } = useQuery<PersonalItemsResponse>({
@@ -40,20 +51,18 @@ function ItemsTab() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: kbQueryKeys.personalKnowledge(kbSlug) })
     },
-    onSettled: () => setDeletingId(null),
+    onSettled: () => {
+      setDeletingId(null)
+      setConfirmDeleteId(null)
+    },
   })
 
   if (isLoading) {
-    return <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
+    return <ListLoadingState label={m.admin_shared_loading()} />
   }
 
   if (!data?.items?.length) {
-    return (
-      <div className="rounded-lg border border-dashed border-gray-200 p-8 text-center">
-        <List className="mx-auto h-8 w-8 text-gray-400 mb-3" />
-        <p className="text-sm text-gray-400">{m.knowledge_items_empty_state()}</p>
-      </div>
-    )
+    return <ListEmptyState title={m.knowledge_items_empty_state()} />
   }
 
   return (
@@ -81,43 +90,51 @@ function ItemsTab() {
           </Tooltip>
         )}
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 text-left text-xs tracking-wide text-gray-400">
-              <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_title()}</th>
-              <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_type()}</th>
-              <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_saved_at()}</th>
-              <th className="pb-2 font-medium">{m.knowledge_items_column_actions()}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.items.map((item) => (
-              <tr key={item.id} className="border-b border-gray-200 last:border-0">
-                <td className="py-2.5 pr-4 text-gray-900">
-                  {item.path.replace(/\.md$/, '')}
-                </td>
-                <td className="py-2.5 pr-4">
-                  {item.assertion_mode ? (
-                    <Badge variant="secondary">{item.assertion_mode}</Badge>
-                  ) : (
-                    <span className="text-gray-400">-</span>
-                  )}
-                </td>
-                <td className="py-2.5 pr-4 text-gray-400">
-                  {new Date(item.created_at).toLocaleDateString()}
-                </td>
-                <td className="py-2.5">
-                  <DeleteConfirmButton
-                    onConfirm={() => deleteMutation.mutate(item.id)}
-                    isDeleting={deletingId === item.id}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable>
+        <DataTableHeader>
+          <DataTableRow>
+            <DataTableHead>{m.knowledge_items_column_title()}</DataTableHead>
+            <DataTableHead>{m.knowledge_items_column_type()}</DataTableHead>
+            <DataTableHead>{m.knowledge_items_column_saved_at()}</DataTableHead>
+            <DataTableHead align="right">{m.knowledge_items_column_actions()}</DataTableHead>
+          </DataTableRow>
+        </DataTableHeader>
+        <DataTableBody>
+          {data.items.map((item) => (
+            <DataTableRow key={item.id} confirming={confirmDeleteId === item.id}>
+              <DataTableCell>{item.path.replace(/\.md$/, '')}</DataTableCell>
+              <DataTableCell>
+                {item.assertion_mode ? (
+                  <Badge variant="secondary">{item.assertion_mode}</Badge>
+                ) : (
+                  <span className="text-gray-400">-</span>
+                )}
+              </DataTableCell>
+              <DataTableCell className="text-gray-400">
+                {new Date(item.created_at).toLocaleDateString()}
+              </DataTableCell>
+              <DataTableCell align="right">
+                <InlineDeleteConfirm
+                  isConfirming={confirmDeleteId === item.id}
+                  isPending={deletingId === item.id}
+                  label={m.knowledge_items_delete_confirm()}
+                  cancelLabel={m.admin_users_cancel()}
+                  onConfirm={() => deleteMutation.mutate(item.id)}
+                  onCancel={() => setConfirmDeleteId(null)}
+                >
+                  <RowActionGroup>
+                    <BorderedRowActionIconButton
+                      label={m.knowledge_items_delete()}
+                      action="delete"
+                      onClick={() => setConfirmDeleteId(item.id)}
+                    />
+                  </RowActionGroup>
+                </InlineDeleteConfirm>
+              </DataTableCell>
+            </DataTableRow>
+          ))}
+        </DataTableBody>
+      </DataTable>
     </div>
   )
 }

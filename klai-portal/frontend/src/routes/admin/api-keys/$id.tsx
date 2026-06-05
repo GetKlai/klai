@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ArrowLeft, Info, Shield, Settings, RotateCcw, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { useApiKey } from './-hooks'
@@ -61,7 +62,7 @@ function ApiKeyDetailPage() {
 
   if (!apiKey) return null
 
-  const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
+  const tabs: TabItem<TabId>[] = [
     { id: 'details', label: m.admin_shared_tab_general(), icon: Info },
     { id: 'permissions', label: m.admin_api_keys_wizard_step_permissions(), icon: Shield },
     { id: 'kbs', label: m.admin_shared_wizard_step_kb_access(), icon: Shield },
@@ -102,29 +103,7 @@ function ApiKeyDetailPage() {
         </Button>
       </div>
 
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex gap-6">
-          {tabs.map(({ id: tabId, label, icon: TabIcon }) => {
-            const isActive = tabId === activeTab
-            return (
-              <button
-                key={tabId}
-                type="button"
-                onClick={() => setTab(tabId)}
-                className={[
-                  'flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors',
-                  isActive
-                    ? 'border-gray-200 text-gray-900'
-                    : 'border-transparent text-gray-400 hover:text-gray-900',
-                ].join(' ')}
-              >
-                <TabIcon className="h-4 w-4" />
-                {label}
-              </button>
-            )
-          })}
-        </nav>
-      </div>
+      <Tabs tabs={tabs} value={activeTab} onValueChange={setTab} />
 
       {activeTab === 'details' && <DetailsTab apiKey={apiKey} />}
       {activeTab === 'permissions' && <PermissionsTab apiKey={apiKey} />}

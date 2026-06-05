@@ -27,16 +27,16 @@ export function PasswordStrengthMeter({
     : passwordStrengthLabel(level)
   const activeClass =
     isAcceptable && level >= 3
-      ? 'bg-emerald-500'
+      ? 'bg-[var(--color-success)]'
       : level >= 2
-        ? 'bg-amber-500'
+        ? 'bg-[var(--color-warning)]'
         : 'bg-[var(--color-destructive-text)]'
   const strengthTextClass = isTooShort
-    ? 'text-amber-700'
+    ? 'text-[var(--color-warning-text)]'
     : level >= 3
-      ? 'text-emerald-700'
+      ? 'text-[var(--color-success-text)]'
       : level === 2
-        ? 'text-amber-700'
+        ? 'text-[var(--color-warning-text)]'
         : 'text-gray-500'
 
   return (
@@ -61,7 +61,7 @@ export function PasswordStrengthMeter({
           {estimated ? (
             <span className="text-gray-500">{m.signup_password_policy_checking()}</span>
           ) : isAcceptable ? (
-            <span className="text-emerald-700">{m.signup_password_policy_met()}</span>
+            <span className="text-[var(--color-success-text)]">{m.signup_password_policy_met()}</span>
           ) : policy ? (
             <span className="text-right text-gray-500">{passwordPolicyIssueMessage(issues[0], policy)}</span>
           ) : (
