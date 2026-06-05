@@ -57,15 +57,22 @@ RETURN n.name, n.filePath
 
 ## Keeping the Index Fresh
 
-The index is a snapshot. After code changes it becomes stale.
+CodeIndex keeps one shared index for `klai`. In Conductor, that shared index is
+pinned to the main base (`origin/main`), while feature worktrees are treated as
+local overlays. Do not refresh the global index from a feature worktree just
+because the worktree has branch-only files.
 
 | Situation | Command |
 |---|---|
-| After a feature branch | `codeindex update && node scripts/codeindex-enrich.mjs` |
-| Full re-index (force) | `./scripts/codeindex-analyze-and-enrich.sh --force` |
-| Check freshness | `codeindex status` |
+| Diagnose shared main-index health | `scripts/codeindex-health.sh` |
+| Repair stale shared main index | `scripts/codeindex-health.sh --repair` |
+| Disruptive recovery for stuck MCP transports | `scripts/codeindex-health.sh --repair --restart-mcp` |
+| Manual full re-index outside Conductor workflow | `./scripts/codeindex-analyze-and-enrich.sh --force` |
 
-The SessionStart hook warns when the index is behind HEAD.
+If MCP context reports stale but `scripts/codeindex-health.sh` says the shared
+base index is healthy, treat the warning as advisory and verify branch-local
+code via local diffs/source files. This can happen when the registered canonical
+checkout is not currently on main.
 
 ## Hooks (project-local)
 

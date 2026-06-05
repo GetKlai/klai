@@ -23,7 +23,10 @@ description: "Use when the user asks how code works, wants to understand archite
 5. READ codeindex://repo/{name}/process/{name}      → Trace full execution flow
 ```
 
-> If step 2 says "Index is stale" → run `npx codeindex analyze` in terminal.
+> In Conductor worktrees, "Index is stale" can be an overlay/canonical-checkout
+> mismatch. Use `scripts/codeindex-health.sh`; only run
+> `scripts/codeindex-health.sh --repair` when it reports the shared base index
+> is stale. Verify branch-local code with source files/diffs.
 
 ## Checklist
 

@@ -345,7 +345,23 @@ codeindex analyze
 node scripts/codeindex-enrich.mjs
 ```
 
-After code changes, refresh the index:
+For Klai's Conductor workflow, keep the shared index pinned to `origin/main`.
+Feature-worktree changes are an overlay and should be verified with local
+diffs/source files, not by refreshing the global index from that worktree.
+
+Diagnose the shared main-index health:
+
+```bash
+scripts/codeindex-health.sh
+```
+
+If the shared main index is stale, repair it non-disruptively:
+
+```bash
+scripts/codeindex-health.sh --repair
+```
+
+For manual non-Conductor maintenance, refresh the index:
 
 ```bash
 codeindex update && node scripts/codeindex-enrich.mjs
@@ -503,7 +519,7 @@ uvx mcp-grafana --help
 7. **Playwright window opens but immediately closes** — corrupt profile directory or corrupt storage-state file. Fix: nuke the workspace's profile (`rm -rf ~/Library/Caches/ms-playwright/mcp-chrome-*` on macOS — see Section 3 "Starting from scratch") and, if used, the storage-state file. Restart Claude Code.
 8. **Login state visible in one site but missing in another** — only applies to the storage-state seed: it captured cookies from the sites you visited before calling `browser_run_code_unsafe`. With the persistent default this is rarely the right diagnosis; just log into the missing site once and the workspace profile keeps it. If you DO maintain a storage-state seed, re-seed after visiting + logging into every site you need.
 9. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
-10. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
+10. **CodeIndex stale index** — In Conductor, first run `scripts/codeindex-health.sh`. If the shared base index is stale, fix with `scripts/codeindex-health.sh --repair`. If health is clean but MCP context still reports stale, the registered checkout or current worktree differs from the shared main index; treat CodeIndex as advisory and verify branch-local files directly.
 11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
 12. **VictoriaLogs auth missing** — `VICTORIALOGS_BASIC_AUTH_B64` not set in `~/.zshrc`. Symptoms: MCP connects but queries return 401. Fix: get the base64 value from SOPS and export it.
 13. **VictoriaLogs container IP changed** — Tunnel connects but queries fail. Cause: VictoriaLogs container restarted, got a new IP. Fix: `./scripts/victorialogs-tunnel.sh --stop && ./scripts/victorialogs-tunnel.sh` (re-resolves IP).
