@@ -23,7 +23,7 @@ import {
   RowActionGroup,
 } from '@/components/ui/row-action'
 import * as m from '@/paraglide/messages'
-import { mapSourceStatus } from './-sources-helpers'
+import { shouldPollSource } from './-sources-helpers'
 import {
   useSourceDelete,
   useSourceReauth,
@@ -60,7 +60,7 @@ export function SourceRowActions({
   const reauth = useSourceReauth(kbSlug, source)
 
   const isAuthError = source.kind === 'connector' && (source.status ?? '').toLowerCase().includes('auth')
-  const isSyncing = syncMutation.isPending || mapSourceStatus(source) === 'pending'
+  const isSyncing = syncMutation.isPending || shouldPollSource(source)
   const syncDisabled = isSyncing || isAuthError
   const isDeleting = deleteMutation.isPending
 

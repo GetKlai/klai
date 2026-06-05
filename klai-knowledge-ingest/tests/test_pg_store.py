@@ -193,6 +193,58 @@ async def test_soft_delete_stale_connector_artifacts_scrubs_registry_and_links()
     assert "belief_time_end = $6" in final_sql
 
 
+@pytest.mark.asyncio
+async def test_mark_stale_pending_artifacts_failed_requires_no_runnable_job():
+    """The stale-pending janitor must not fail rows that still have enrich work."""
+    conn = _make_conn()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {
+                "artifact_id": "11111111-2222-3333-4444-555555555555",
+                "org_id": "org1",
+                "kb_slug": "oracle",
+                "path": "team.md",
+                "created_at": 1700000000,
+            }
+        ]
+    )
+
+    result = await pg_store.mark_stale_pending_artifacts_failed(
+        conn,
+        cutoff_created_at=1700001800,
+        limit=25,
+    )
+
+    assert result == [
+        {
+            "artifact_id": "11111111-2222-3333-4444-555555555555",
+            "org_id": "org1",
+            "kb_slug": "oracle",
+            "path": "team.md",
+            "created_at": 1700000000,
+        }
+    ]
+    sql = conn.fetch.call_args[0][0]
+    assert "a.index_status = 'pending'" in sql
+    assert "a.belief_time_end = $2" in sql
+    assert "source_connector_id" in sql
+    assert "NOT EXISTS" in sql
+    assert "procrastinate_jobs" in sql
+    assert "pj.status IN ('todo', 'doing')" in sql
+    assert "pj.args->>'artifact_id' = a.id::text" in sql
+    assert "FOR UPDATE SKIP LOCKED" in sql
+    assert "SET index_status = 'failed'" in sql
+    assert conn.fetch.call_args[0][1:] == (
+        1700001800,
+        _SENTINEL,
+        [
+            "knowledge_ingest.enrichment_tasks.enrich_document_interactive",
+            "knowledge_ingest.enrichment_tasks.enrich_document_bulk",
+        ],
+        25,
+    )
+
+
 # -- list_personal_artifacts --------------------------------------------------
 
 

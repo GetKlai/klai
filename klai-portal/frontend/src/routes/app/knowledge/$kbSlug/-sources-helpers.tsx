@@ -57,6 +57,12 @@ function elapsedMinutes(iso: string | null | undefined): number | null {
   return Math.max(0, Math.floor(diff / 60_000))
 }
 
+export function shouldPollSource(source: Source): boolean {
+  if (mapSourceStatus(source) !== 'pending') return false
+  const minutes = elapsedMinutes(source.last_sync_at ?? source.created_at)
+  return minutes === null || minutes < STUCK_THRESHOLD_MINUTES
+}
+
 /**
  * Re-render hook that fires every 30s so elapsed-minute labels stay fresh
  * without the parent having to pass `now` down. One interval per badge

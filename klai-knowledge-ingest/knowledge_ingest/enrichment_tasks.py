@@ -114,6 +114,12 @@ def init_app(connector: Any) -> Any:
 
     register_backfill_login_walls_task(_procrastinate_app)
 
+    from knowledge_ingest.stale_pending_artifact_reaper import (
+        register_stale_pending_artifact_reaper,
+    )
+
+    register_stale_pending_artifact_reaper(_procrastinate_app)
+
     return _procrastinate_app
 
 
@@ -223,21 +229,50 @@ async def _load_and_enrich(artifact_id: str) -> None:
     )
 
 
+class ArtifactIndexStatusUpdateError(RuntimeError):
+    """Raised when a direct-upload artifact cannot leave pending state."""
+
+
+def _has_source_connector(artifact: dict) -> bool:
+    source_connector_id = artifact.get("source_connector_id")
+    if source_connector_id:
+        return True
+    extra = artifact.get("extra")
+    if isinstance(extra, dict):
+        return bool(extra.get("source_connector_id"))
+    return False
+
+
 async def _set_direct_upload_index_status(artifact: dict, status: str) -> None:
     """Finish a direct-upload reindex status so the Sources UI cannot hang."""
     artifact_id = str(artifact.get("artifact_id") or "")
     org_id = str(artifact.get("org_id") or "")
-    if not artifact_id or not org_id:
+    if _has_source_connector(artifact):
         return
+    if not artifact_id or not org_id:
+        raise ArtifactIndexStatusUpdateError("missing artifact_id or org_id for index_status update")
     try:
         async with tenant_scoped_connection(org_id) as conn:
-            await pg_store.set_artifact_index_status(conn, artifact_id, org_id, status)
-    except Exception:
+            updated = await pg_store.set_artifact_index_status(conn, artifact_id, org_id, status)
+    except Exception as exc:
         logger.exception(
             "artifact_index_status_update_failed",
             artifact_id=artifact_id,
             org_id=org_id,
             status=status,
+        )
+        raise ArtifactIndexStatusUpdateError(
+            f"failed to set index_status={status} for artifact {artifact_id}"
+        ) from exc
+    if updated is None:
+        logger.error(
+            "artifact_index_status_update_missing",
+            artifact_id=artifact_id,
+            org_id=org_id,
+            status=status,
+        )
+        raise ArtifactIndexStatusUpdateError(
+            f"artifact {artifact_id} was not updated to index_status={status}"
         )
 
 
@@ -535,7 +570,7 @@ async def _enrich_document(
         qdrant_ms = int((time.monotonic() - t0) * 1000)
 
         await _set_direct_upload_index_status(
-            {"artifact_id": artifact_id, "org_id": org_id},
+            {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
             "synced",
         )
 
@@ -576,7 +611,7 @@ async def _enrich_document(
             total_ms=total_ms,
         )
         await _set_direct_upload_index_status(
-            {"artifact_id": artifact_id, "org_id": org_id},
+            {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
             "failed",
         )
         raise  # Procrastinate retry handles this
@@ -596,6 +631,6 @@ async def _enrich_document(
             total_ms=total_ms,
         )
         await _set_direct_upload_index_status(
-            {"artifact_id": artifact_id, "org_id": org_id},
+            {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
             "failed",
         )

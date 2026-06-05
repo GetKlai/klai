@@ -55,6 +55,17 @@ def _make_mock_conn() -> MagicMock:
     return conn
 
 
+class _AsyncContext:
+    def __init__(self, value):
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # read_artifact_for_enrichment
 # ---------------------------------------------------------------------------
@@ -305,6 +316,65 @@ async def test_load_and_enrich_reindexes_small_truncated_docling_artifact():
 
     mock_enrich.assert_awaited_once()
     mock_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_set_direct_upload_index_status_raises_when_update_returns_none():
+    """A worker may not report succeeded while a direct upload stays pending."""
+    conn = _make_mock_conn()
+    with (
+        patch(
+            "knowledge_ingest.enrichment_tasks.tenant_scoped_connection",
+            return_value=_AsyncContext(conn),
+        ),
+        patch(
+            "knowledge_ingest.enrichment_tasks.pg_store.set_artifact_index_status",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as mock_set_status,
+    ):
+        from knowledge_ingest.enrichment_tasks import (
+            ArtifactIndexStatusUpdateError,
+            _set_direct_upload_index_status,
+        )
+
+        with pytest.raises(ArtifactIndexStatusUpdateError):
+            await _set_direct_upload_index_status(
+                {
+                    "artifact_id": "11111111-2222-3333-4444-555555555555",
+                    "org_id": "org1",
+                    "extra": {"source_type": "docs"},
+                },
+                "synced",
+            )
+
+    mock_set_status.assert_awaited_once_with(
+        conn,
+        "11111111-2222-3333-4444-555555555555",
+        "org1",
+        "synced",
+    )
+
+
+@pytest.mark.asyncio
+async def test_set_direct_upload_index_status_skips_connector_artifacts():
+    """Connector artifacts do not use upload index_status rows."""
+    with patch(
+        "knowledge_ingest.enrichment_tasks.pg_store.set_artifact_index_status",
+        new_callable=AsyncMock,
+    ) as mock_set_status:
+        from knowledge_ingest.enrichment_tasks import _set_direct_upload_index_status
+
+        await _set_direct_upload_index_status(
+            {
+                "artifact_id": "11111111-2222-3333-4444-555555555555",
+                "org_id": "org1",
+                "extra": {"source_connector_id": "conn-1"},
+            },
+            "synced",
+        )
+
+    mock_set_status.assert_not_called()
 
 
 @pytest.mark.asyncio
