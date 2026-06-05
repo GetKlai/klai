@@ -261,38 +261,19 @@ hover layers. Use CSS variables for semantic or themeable states.
 
 ## Detail tabs
 
-Use underline tabs with icons and URL search state on detail/settings pages.
-Do not use pill tabs for authenticated app/admin detail surfaces.
+Use the owned `Tabs` component. The canonical pattern (active underline, icon
+and count rules, router-navigation exception) lives in the **Tabs** section of
+`klai-portal/frontend/docs/ui-standards.md` — this file does not redefine it.
 
 ```tsx
-const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
+import { Tabs, type TabItem } from '@/components/ui/tabs'
+
+const tabs: TabItem<TabId>[] = [
   { id: 'settings', label: m.account_tab_settings(), icon: Settings },
   { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
 ]
 
-<div className="border-b border-gray-200">
-  <nav className="-mb-px flex gap-6">
-    {tabs.map(({ id, label, icon: TabIcon }) => {
-      const isActive = id === activeTab
-      return (
-        <button
-          key={id}
-          type="button"
-          onClick={() => setTab(id)}
-          className={[
-            'flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors',
-            isActive
-              ? 'border-gray-200 text-gray-900'
-              : 'border-transparent text-gray-400 hover:text-gray-900',
-          ].join(' ')}
-        >
-          <TabIcon className="h-4 w-4" />
-          {label}
-        </button>
-      )
-    })}
-  </nav>
-</div>
+<Tabs tabs={tabs} value={activeTab} onValueChange={setTab} />
 ```
 
 Danger tabs are unframed sections:
