@@ -147,7 +147,7 @@ function ConnectorsTab() {
         <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
           <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
           <span className="flex-1">{m.admin_connectors_oauth_success()}</span>
-          <button onClick={() => setShowOAuthBanner(false)} aria-label="Dismiss" className="hover:opacity-70 transition-opacity">
+          <button onClick={() => setShowOAuthBanner(false)} aria-label={m.admin_connectors_dismiss()} className="hover:opacity-70 transition-opacity">
             <X className="h-3 w-3" />
           </button>
         </div>
@@ -156,7 +156,7 @@ function ConnectorsTab() {
         <div className="flex gap-2 items-center rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-3 text-xs text-[var(--color-destructive)]">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           <span className="flex-1">{m.admin_connectors_oauth_failed()}</span>
-          <button onClick={() => setShowOAuthFailedBanner(false)} aria-label="Dismiss" className="hover:opacity-70 transition-opacity">
+          <button onClick={() => setShowOAuthFailedBanner(false)} aria-label={m.admin_connectors_dismiss()} className="hover:opacity-70 transition-opacity">
             <X className="h-3 w-3" />
           </button>
         </div>
@@ -228,22 +228,18 @@ function ConnectorsTab() {
       <AlertDialog open={investigatingConnector !== null} onOpenChange={(open) => { if (!open) setInvestigatingConnector(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Connector needs reconfiguration</AlertDialogTitle>
+            <AlertDialogTitle>{m.admin_connectors_investigate_title()}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-left">
-                <p>
-                  This connector&apos;s last sync failed. The site likely now requires
-                  authentication, or the content selector no longer matches.
-                </p>
+                <p>{m.admin_connectors_investigate_body()}</p>
                 <p className="text-xs text-gray-400">
-                  Re-run the wizard to verify authentication and selector. The wizard
-                  refuses to save until both checks pass - no more silent broken syncs.
+                  {m.admin_connectors_investigate_hint()}
                 </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="!justify-start gap-2 flex-wrap">
-            <AlertDialogCancel>Close</AlertDialogCancel>
+            <AlertDialogCancel>{m.admin_connectors_investigate_close()}</AlertDialogCancel>
             <Button
               type="button"
               size="sm"
@@ -255,7 +251,7 @@ function ConnectorsTab() {
                 setInvestigatingConnector(null)
               }}
             >
-              Edit Authentication
+              {m.admin_connectors_investigate_edit_auth()}
             </Button>
             <Button
               type="button"
@@ -268,7 +264,7 @@ function ConnectorsTab() {
                 setInvestigatingConnector(null)
               }}
             >
-              Edit Selector
+              {m.admin_connectors_investigate_edit_selector()}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
