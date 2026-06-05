@@ -14,8 +14,11 @@
  *     ProposalCard's bug-fixed in v0.2.1.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Pencil, Trash2 } from 'lucide-react'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { InlineRowButton } from '@/components/ui/inline-row-button'
+import { Input } from '@/components/ui/input'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import type { TaxonomyCoverageNode } from '../-kb-types'
 
@@ -95,7 +98,9 @@ export function CoverageNodeRow({
     <div
       className={[
         'group/row w-full text-left rounded-lg border p-3 transition-colors cursor-pointer',
-        isActive
+        isConfirmingDelete
+          ? 'border-gray-200 bg-[var(--color-hover)]'
+          : isActive
           ? 'border-gray-200 bg-black/[0.06]'
           : 'border-gray-200 klai-hover',
       ].join(' ')}
@@ -110,10 +115,10 @@ export function CoverageNodeRow({
       >
         <div className="flex items-center justify-between mb-1.5 gap-2">
           {isEditing ? (
-            <input
+            <Input
               value={editingName}
               onChange={(e) => setEditingName(e.target.value)}
-              className="text-sm font-medium text-gray-900 bg-[var(--color-card)] border border-gray-200 focus:border-gray-200 ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-md py-0.5 px-1.5 flex-1 min-w-0 outline-none"
+              className="h-8 flex-1 text-sm font-medium"
               autoFocus
               onKeyDown={(e) => { if (e.key === 'Escape') onCancelEdit() }}
             />
@@ -123,34 +128,28 @@ export function CoverageNodeRow({
             </span>
           )}
           <div className="flex items-center gap-1.5 shrink-0">
-            {canEdit && !isEditing && !isConfirmingDelete && (
-              <span className="inline-flex items-center gap-0.5">
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onStartEdit() }}
-                  className="flex h-5 w-5 items-center justify-center text-[var(--color-warning)] hover:opacity-70 transition-opacity"
-                  aria-label={m.knowledge_taxonomy_node_rename()}
+            {canEdit && !isEditing && (
+              <div onClick={(e) => e.stopPropagation()}>
+                <InlineDeleteConfirm
+                  isConfirming={isConfirmingDelete}
+                  label={m.knowledge_taxonomy_node_delete_confirm()}
+                  cancelLabel={m.knowledge_taxonomy_node_delete_cancel()}
+                  onConfirm={onConfirmDelete}
+                  onCancel={onCancelDelete}
                 >
-                  <Pencil className="h-3 w-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onStartDelete() }}
-                  className="flex h-5 w-5 items-center justify-center text-[var(--color-destructive)] hover:opacity-70 transition-opacity"
-                  aria-label={m.knowledge_taxonomy_node_delete()}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </span>
-            )}
-            {isConfirmingDelete && (
-              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                <InlineRowButton tone="destructive" onClick={onConfirmDelete}>
-                  {m.knowledge_taxonomy_node_delete()}
-                </InlineRowButton>
-                <InlineRowButton onClick={onCancelDelete}>
-                  {m.knowledge_taxonomy_node_add_cancel()}
-                </InlineRowButton>
+                  <RowActionGroup>
+                    <BorderedRowActionIconButton
+                      label={m.knowledge_taxonomy_node_rename()}
+                      action="rename"
+                      onClick={onStartEdit}
+                    />
+                    <BorderedRowActionIconButton
+                      label={m.knowledge_taxonomy_node_delete()}
+                      action="delete"
+                      onClick={onStartDelete}
+                    />
+                  </RowActionGroup>
+                </InlineDeleteConfirm>
               </div>
             )}
             {isEditing && (
@@ -171,10 +170,10 @@ export function CoverageNodeRow({
           </div>
         </div>
         {isEditing ? (
-          <textarea
+          <Textarea
             value={editingDescription}
             onChange={(e) => setEditingDescription(e.target.value)}
-            className="text-xs text-gray-400 bg-[var(--color-card)] border border-gray-200 focus:border-gray-200 ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-md py-1 px-1.5 mb-1 w-full outline-none resize-none"
+            className="mb-1 resize-none text-xs text-gray-400"
             rows={2}
             placeholder={m.knowledge_taxonomy_node_description_placeholder()}
             onKeyDown={(e) => { if (e.key === 'Escape') onCancelEdit() }}
