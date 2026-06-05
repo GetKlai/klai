@@ -225,6 +225,54 @@ def test_orchestrator_omits_internal_tool_history_for_mistral(monkeypatch):
     assert "internal_tool_content_parts_omitted" in result.meta["reason_codes"]
 
 
+def test_orchestrator_converts_active_tool_result_for_mistral(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Zoek in de knowledge base naar Zurich."},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "tool_call": {"name": "search_knowledge", "args": "{}"},
+                    }
+                ],
+                "tool_calls": [
+                    {"id": "call_1", "function": {"name": "search_knowledge"}}
+                ],
+            },
+            {
+                "role": "tool",
+                "name": "search_knowledge",
+                "tool_call_id": "call_1",
+                "content": "Project Zurich gebruikt testcode ZURICH-CTX-2606.",
+            },
+        ],
+        requested_model="klai-large",
+    )
+
+    provider_messages = [
+        message for message in result.messages if isinstance(message, dict)
+    ]
+    assert [message["role"] for message in provider_messages] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert provider_messages[-1]["content"].startswith(
+        mod.ACTIVE_TOOL_RESULT_PREFIX
+    )
+    assert "ZURICH-CTX-2606" in provider_messages[-1]["content"]
+    assert all("tool_calls" not in message for message in provider_messages)
+    assert result.meta["omitted_tool_messages"] == 1
+    assert result.meta["omitted_tool_content_parts"] == 1
+    assert result.meta["active_tool_results_converted"] == 1
+    assert "active_tool_results_converted" in result.meta["reason_codes"]
+
+
 def test_orchestrator_budget_merges_placeholder_and_drops_orphan_assistant(
     monkeypatch,
 ):

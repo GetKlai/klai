@@ -26,6 +26,7 @@ TOOL_CONTEXT_PLACEHOLDER = (
     "[Earlier internal tool activity omitted from model context. Use the "
     "latest user question and retrieved knowledge-base context instead.]"
 )
+ACTIVE_TOOL_RESULT_PREFIX = "[Klai internal tool result]"
 SYSTEM_BLOCK_SEPARATOR = "\n\n"
 STALE_LIBRECHAT_UPLOAD_PREFIX = "Attached document(s):"
 INTERNAL_TOOL_ROLES = frozenset({"tool", "function"})
@@ -183,6 +184,18 @@ def _assistant_text_without_tool_parts(content: object) -> tuple[str | None, int
     return text, omitted_parts
 
 
+def _tool_result_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    text = _text_from_text_parts(content)
+    if text is None and content is not None:
+        text = str(content)
+    text = (text or "").strip()
+    if not text:
+        return ""
+    name = message.get("name") or message.get("tool_call_id") or "tool"
+    return f"{ACTIVE_TOOL_RESULT_PREFIX} {name}\n{text}"
+
+
 def _last_user_index(messages: list[object]) -> int | None:
     return next(
         (
@@ -223,6 +236,18 @@ class MistralProviderAdapter:
                 meta["omitted_tool_messages"] += 1
                 if "internal_tool_messages_omitted" not in meta["reason_codes"]:
                     meta["reason_codes"].append("internal_tool_messages_omitted")
+                if index > last_user_index:
+                    tool_result_text = _tool_result_text(message)
+                    if tool_result_text:
+                        normalized_messages.append(
+                            {
+                                "role": "user",
+                                "content": tool_result_text,
+                            }
+                        )
+                        meta["active_tool_results_converted"] += 1
+                        if "active_tool_results_converted" not in meta["reason_codes"]:
+                            meta["reason_codes"].append("active_tool_results_converted")
                 continue
 
             next_message = message
@@ -395,6 +420,7 @@ class KlaiContextOrchestrator:
             "stale_attachment_placeholders": 0,
             "omitted_tool_messages": 0,
             "omitted_tool_content_parts": 0,
+            "active_tool_results_converted": 0,
             "omitted_history_messages": 0,
             "kept_history_chars": 0,
             "kept_history_tokens_estimate": 0,
