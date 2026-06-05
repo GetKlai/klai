@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { List, Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
@@ -62,7 +62,7 @@ function ItemsTab() {
   }
 
   if (!data?.items?.length) {
-    return <ListEmptyState title={m.knowledge_items_empty_state()} />
+    return <ListEmptyState icon={List} title={m.knowledge_items_empty_state()} />
   }
 
   return (
