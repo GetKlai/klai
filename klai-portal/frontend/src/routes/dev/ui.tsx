@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { ActionTag } from '@/components/ui/action-tag'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -346,6 +347,13 @@ function UiCatalogPage() {
               Remove item
             </RowActionButton>
           </RowActionGroup>
+        </div>
+      </Section>
+
+      <Section title="Action tags">
+        <div className="flex flex-wrap items-center gap-2">
+          <ActionTag state="open">Open</ActionTag>
+          <ActionTag state="closed">Closed</ActionTag>
         </div>
       </Section>
 

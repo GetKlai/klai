@@ -41,6 +41,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `button` | All buttons (variants: default/secondary/ghost/outline/destructive; sizes: default/sm/icon) | Yes |
 | `page-header` | Page title, description/count, and right-aligned page action (`PageHeader`) | Yes |
 | `badge` | Inline status labels (secondary/success/warning/destructive/outline) | Yes |
+| `action-tag` | Compact open/closed action-state tag (`ActionTag`, states: `open`, `closed`) | Yes |
 | `input` `select` `textarea` `label` `checkbox` | Form controls | Yes |
 | `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
 | `row-action` | List/table row actions: `RowActionIconButton`, `BorderedRowActionIconButton` (visible bordered hitbox — the default in tables), `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
@@ -633,6 +634,11 @@ Structural (non-semantic) variants stay neutral: `secondary` (gray fill),
 `outline`, `default`/`accent` (dark). Do not hand-roll status pills with ad-hoc
 `/10` tints — use `Badge`. (The transcribe `StatusBadge` is the remaining
 hand-rolled one; migrate it to `Badge` on touch.)
+
+Use `ActionTag` for compact open/closed action-state tags, such as a row marker
+that shows an item is currently active/open. `open` keeps the existing green
+outline style; `closed` is neutral gray. Do not recreate these tags with
+one-off `border-green-*` or gray pill classes.
 
 ## Borders And Cascade Layers
 
