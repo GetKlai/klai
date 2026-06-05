@@ -94,7 +94,7 @@ function ApiKeysPage() {
     }),
     columnHelper.display({
       id: 'actions',
-      header: () => '',
+      header: () => m.admin_users_col_actions(),
       cell: ({ row }) => {
         const id = String(row.original.id)
         return (
