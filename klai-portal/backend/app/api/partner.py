@@ -622,10 +622,10 @@ async def _maybe_apply_web_search(
     if search returns nothing or errors, the original prompt and an empty chunk
     list are returned so the answer still goes out, just without web context.
 
-    The returned chunks must be threaded into the citation composer's
-    ``citation_chunks`` so web results become first-class citable sources —
-    otherwise a web-grounded answer with no KB chunks is stripped to the
-    "no citable sources" refusal.
+    The returned chunks are passed to the chat completion as a SEPARATE ``web_chunks``
+    tier (not merged with KB chunks). The composer cites them on their own merit
+    and tags them ``origin: "web"``; without this a web-grounded answer with no KB
+    chunks would be stripped to the "no citable sources" refusal.
     """
     if not request.web_search:
         return system_prompt, []
@@ -743,18 +743,16 @@ async def chat_completions(
         ) from exc
 
     # 6b. Optional live web search (opt-in per request, gated per API key,
-    #     never for public widget keys). Web results become evidence chunks so
-    #     they are citable through the same pipeline as KB chunks; without that
-    #     a web-only answer would be stripped to the no-citable-sources refusal.
+    #     never for public widget keys). Web results are a SEPARATE citation
+    #     tier from the knowledge base: they are passed alongside the KB chunks
+    #     (never merged) so the composer keeps KB and web apart, tags each
+    #     source with its origin, and only refuses when both tiers are empty.
     system_prompt, web_chunks = await _maybe_apply_web_search(
         request=request,
         auth=auth,
         is_widget_chat=is_widget_chat,
         system_prompt=system_prompt,
     )
-    # Keep `chunks` KB-only for the retrieval log + activity count; the citation
-    # composer sees KB + web together.
-    citation_chunks = [*chunks, *web_chunks] if web_chunks else chunks
 
     # 7. Fire retrieval log async
     chunk_ids = [c.get("chunk_id", "") for c in chunks if c.get("chunk_id")]
@@ -832,7 +830,8 @@ async def chat_completions(
             allowed_source_urls=allowed_source_urls,
             citation_source_urls=citation_source_urls,
             citation_source_metadata=citation_source_metadata,
-            citation_chunks=citation_chunks,
+            citation_chunks=chunks,
+            web_chunks=web_chunks,
             trusted_sources=trusted_sources,
             citation_output=citation_output,
             source_query=knowledge.query if knowledge is not None else None,
@@ -863,7 +862,8 @@ async def chat_completions(
         allowed_source_urls=allowed_source_urls,
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
-        citation_chunks=citation_chunks,
+        citation_chunks=chunks,
+        web_chunks=web_chunks,
         trusted_sources=trusted_sources,
         citation_output=citation_output,
         source_query=knowledge.query if knowledge is not None else None,

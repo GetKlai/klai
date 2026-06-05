@@ -1863,7 +1863,7 @@ async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
             content_parts.append(delta["content"])
     assert "".join(content_parts) == "Naam."
     assert (
-        '"sources": [{"label": "1", "title": "Privacy policy", "url": "https://getklai.com/docs/legal/privacy"}]'
+        '"sources": [{"label": "1", "title": "Privacy policy", "url": "https://getklai.com/docs/legal/privacy", "origin": "kb"}]'
     ) in body
     assert '"step": "knowledge_retrieved"' in body
     assert '"step": "sources_attached"' in body
@@ -2196,7 +2196,7 @@ async def test_streaming_widget_mode_keeps_uploaded_document_source_without_url(
         chunks.append(chunk)
 
     body = b"".join(chunks).decode()
-    assert '"sources": [{"label": "1", "title": "CV_Jantine_Doornbos.pdf", "url": ""}]' in body
+    assert '"sources": [{"label": "1", "title": "CV_Jantine_Doornbos.pdf", "url": "", "origin": "kb"}]' in body
     assert "Frank Wolters trekt Data Readiness." in body
     assert "beschikbare kennisbronnen" not in body
     assert body.index('"sources"') < body.index('"content"')
