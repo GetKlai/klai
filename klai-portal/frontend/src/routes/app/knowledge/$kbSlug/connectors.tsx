@@ -5,6 +5,14 @@ import { useState, useEffect } from 'react'
 import { Plus, CheckCircle2, AlertTriangle, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
+  DataTable,
+  DataTableHeader,
+  DataTableBody,
+  DataTableRow,
+  DataTableHead,
+} from '@/components/ui/data-table'
+import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -130,7 +138,7 @@ function ConnectorsTab() {
   })
 
   if (isLoading) {
-    return <p className="py-4 text-sm text-gray-400">{m.admin_connectors_loading()}</p>
+    return <ListLoadingState label={m.admin_connectors_loading()} />
   }
 
   return (
@@ -154,23 +162,17 @@ function ConnectorsTab() {
         </div>
       )}
       {connectors.length > 0 && (
-        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="py-3 pr-2 w-6" />
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                {m.admin_connectors_col_name()}
-              </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-28">
-                {m.admin_connectors_col_type()}
-              </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-32">
-                {m.admin_connectors_col_status()}
-              </th>
-              {isOwner && <th className="py-3 text-right w-28" />}
-            </tr>
-          </thead>
-          <tbody>
+        <DataTable className="table-fixed">
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead className="w-6 px-0 pr-2" />
+              <DataTableHead>{m.admin_connectors_col_name()}</DataTableHead>
+              <DataTableHead className="w-28">{m.admin_connectors_col_type()}</DataTableHead>
+              <DataTableHead className="w-32">{m.admin_connectors_col_status()}</DataTableHead>
+              {isOwner && <DataTableHead align="right" className="w-28" />}
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
             {connectors.map((connector) => (
               <ConnectorRow
                 key={connector.id}
@@ -189,12 +191,12 @@ function ConnectorsTab() {
                 onInvestigate={setInvestigatingConnector}
               />
             ))}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
       )}
 
       {connectors.length === 0 && (
-        <p className="text-sm text-gray-400">{m.knowledge_detail_connectors_empty()}</p>
+        <ListEmptyState title={m.knowledge_detail_connectors_empty()} />
       )}
 
       {isOwner && (
