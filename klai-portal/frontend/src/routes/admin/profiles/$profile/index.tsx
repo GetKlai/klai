@@ -145,7 +145,9 @@ function AdminProfileDetail() {
                 <DataTableHead>{m.admin_users_col_name()}</DataTableHead>
                 <DataTableHead>{m.admin_users_col_email()}</DataTableHead>
                 <DataTableHead className="w-28">{m.admin_users_col_invited()}</DataTableHead>
-                <DataTableHead align="right" className="w-16" aria-label="actions" />
+                <DataTableHead align="right" className="w-16">
+                  {m.admin_users_col_actions()}
+                </DataTableHead>
               </DataTableRow>
             </DataTableHeader>
             <DataTableBody>

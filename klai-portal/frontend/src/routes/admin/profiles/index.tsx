@@ -88,7 +88,7 @@ function AdminProfiles() {
     }),
     columnHelper.display({
       id: 'actions',
-      header: () => '',
+      header: () => m.admin_users_col_actions(),
       cell: ({ row }) => (
         <RowActionGroup>
           <BorderedRowActionIconButton

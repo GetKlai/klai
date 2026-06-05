@@ -50,6 +50,7 @@ export const adminUsersMessages = {
   admin_users_col_name: () => 'Name',
   admin_users_col_email: () => 'Email',
   admin_users_col_invited: () => 'Invited',
+  admin_users_col_actions: () => 'Actions',
   admin_users_cancel: () => 'Cancel',
   admin_users_invite_button: () => 'Invite user',
   admin_users_invite_submit: () => 'Send',
