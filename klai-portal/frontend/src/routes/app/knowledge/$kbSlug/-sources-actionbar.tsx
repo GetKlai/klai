@@ -11,6 +11,7 @@
 import { Link } from '@tanstack/react-router'
 import { Loader2, NotebookPen, Plus, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/page-header'
 import * as m from '@/paraglide/messages'
 import { useSyncAllConnectors } from './-sources-hooks'
 import type { Source } from './-sources-types'
@@ -29,44 +30,48 @@ export function SourcesActionBar({
   showEditorLink,
 }: SourcesActionBarProps) {
   const syncAll = useSyncAllConnectors(kbSlug, connectorSources)
+  const sourceCount =
+    sources.length === 1
+      ? m.kb_count_bron_singular()
+      : m.kb_count_bronnen({ count: String(sources.length) })
+
   return (
-    <div className="flex items-center justify-between gap-4 mb-4">
-      <p className="text-sm text-gray-400">
-        {sources.length === 1
-          ? m.kb_count_bron_singular()
-          : m.kb_count_bronnen({ count: String(sources.length) })}
-      </p>
-      <div className="flex items-center gap-2">
-        {showEditorLink && (
-          <Link to="/app/docs/$kbSlug" params={{ kbSlug }}>
-            <Button variant="ghost" size="sm">
-              <NotebookPen className="h-4 w-4" />
-              {m.kb_sources_action_open_editor()}
+    <PageHeader
+      title={m.kb_tab_sources()}
+      description={sourceCount}
+      actions={
+        <div className="flex items-center gap-2">
+          {showEditorLink && (
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/app/docs/$kbSlug" params={{ kbSlug }}>
+                <NotebookPen className="h-4 w-4" />
+                {m.kb_sources_action_open_editor()}
+              </Link>
             </Button>
-          </Link>
-        )}
-        {connectorSources.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => syncAll.mutate()}
-            disabled={syncAll.isPending}
-          >
-            {syncAll.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {m.kb_sources_action_sync_all()}
+          )}
+          {connectorSources.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => syncAll.mutate()}
+              disabled={syncAll.isPending}
+            >
+              {syncAll.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {m.kb_sources_action_sync_all()}
+            </Button>
+          )}
+          <Button asChild variant="default" size="sm">
+            <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }}>
+              <Plus className="h-4 w-4" />
+              {m.kb_sources_action_add()}
+            </Link>
           </Button>
-        )}
-        <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }}>
-          <Button variant="default" size="sm">
-            <Plus className="h-4 w-4" />
-            {m.kb_sources_action_add()}
-          </Button>
-        </Link>
-      </div>
-    </div>
+        </div>
+      }
+    />
   )
 }

@@ -1881,6 +1881,7 @@
   "kb_sources_content_item_chunks": "{count} chunks",
   "kb_sources_content_overflow_items": "{count} more...",
   "kb_sources_content_overflow_chunks": "{count} more chunks...",
+  "kb_sources_loading": "Loading sources...",
   "kb_sources_list_error": "Could not load sources.",
   "kb_sources_empty_title": "No sources yet",
   "kb_sources_empty_subtitle": "Add files, links or connectors to bring knowledge into this collection.",

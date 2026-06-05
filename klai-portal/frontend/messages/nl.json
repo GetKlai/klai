@@ -1881,6 +1881,7 @@
   "kb_sources_content_item_chunks": "{count} chunks",
   "kb_sources_content_overflow_items": "En nog {count} meer...",
   "kb_sources_content_overflow_chunks": "En nog {count} chunks meer...",
+  "kb_sources_loading": "Bronnen laden...",
   "kb_sources_list_error": "Kon bronnen niet laden.",
   "kb_sources_empty_title": "Nog geen bronnen",
   "kb_sources_empty_subtitle": "Voeg bestanden, links of koppelingen toe om kennis aan deze collectie toe te voegen.",
