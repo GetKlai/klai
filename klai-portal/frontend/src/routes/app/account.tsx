@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bug, Download, Lightbulb, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
+import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -199,7 +200,7 @@ function AccountPage() {
                 {label}
                 {(unread ?? 0) > 0 && (
                   <span
-                    className="ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-medium leading-5 text-white"
+                    className="ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-success)] px-1.5 text-[11px] font-medium leading-5 text-white"
                     aria-label={m.account_feedback_unread()}
                   >
                     {unread}
@@ -430,7 +431,7 @@ function FeedbackUpdateRow({
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              {item.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />}
+              {item.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-success)]" />}
               <h3 className="text-sm font-medium text-gray-900">{title}</h3>
             </div>
             {item.notification_body && (
@@ -438,7 +439,9 @@ function FeedbackUpdateRow({
             )}
             <p className="mt-1 line-clamp-2 text-sm text-gray-500">{item.raw_text}</p>
           </div>
-          <span className={status.className}>{status.label}</span>
+          <Badge variant={status.variant} className="shrink-0">
+            {status.label}
+          </Badge>
         </div>
         <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
           <div className="flex gap-1">
@@ -467,26 +470,25 @@ function FeedbackUpdateRow({
   )
 }
 
-function feedbackStatusLabel(item: AccountFeedbackUpdate): { label: string; className: string } {
+function feedbackStatusLabel(item: AccountFeedbackUpdate): {
+  label: string
+  variant: BadgeProps['variant']
+} {
   const status = item.item_status ?? item.submission_status
-  const baseClass = 'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium'
 
   if (status === 'resolved') {
-    return {
-      label: m.account_feedback_status_fixed(),
-      className: `${baseClass} bg-emerald-50 text-emerald-700`,
-    }
+    return { label: m.account_feedback_status_fixed(), variant: 'success' }
   }
   if (status === 'open') {
-    return { label: m.account_feedback_status_review(), className: `${baseClass} bg-amber-50 text-amber-700` }
+    return { label: m.account_feedback_status_review(), variant: 'warning' }
   }
   if (status === 'dismissed') {
-    return { label: m.account_feedback_status_closed(), className: `${baseClass} bg-gray-100 text-gray-600` }
+    return { label: m.account_feedback_status_closed(), variant: 'secondary' }
   }
   if (status === 'support') {
-    return { label: m.account_feedback_status_support(), className: `${baseClass} bg-purple-50 text-purple-700` }
+    return { label: m.account_feedback_status_support(), variant: 'info' }
   }
-  return { label: m.account_feedback_status_received(), className: `${baseClass} bg-gray-100 text-gray-700` }
+  return { label: m.account_feedback_status_received(), variant: 'secondary' }
 }
 
 function formatFeedbackDate(value: string, locale: 'nl' | 'en') {

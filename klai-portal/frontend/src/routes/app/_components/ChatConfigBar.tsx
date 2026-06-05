@@ -193,7 +193,7 @@ export function ChatConfigBar() {
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] klai-hover text-left"
               >
                 <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${pref.kb_personal_enabled ? 'bg-green-500' : 'bg-gray-200'}`}
+                  className={`h-2 w-2 shrink-0 rounded-full ${pref.kb_personal_enabled ? 'bg-[var(--color-success)]' : 'bg-gray-200'}`}
                 />
                 <span
                   className={pref.kb_personal_enabled ? 'text-gray-900 font-medium' : 'text-gray-400'}
@@ -210,7 +210,7 @@ export function ChatConfigBar() {
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] klai-hover text-left"
                 >
                   <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${currentSlugs.includes(kb.slug) ? 'bg-green-500' : 'bg-gray-200'}`}
+                    className={`h-2 w-2 shrink-0 rounded-full ${currentSlugs.includes(kb.slug) ? 'bg-[var(--color-success)]' : 'bg-gray-200'}`}
                   />
                   <span
                     className={
@@ -359,7 +359,7 @@ export function ChatConfigBar() {
                       className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] klai-hover text-left"
                     >
                       <span
-                        className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-green-500' : 'bg-gray-200'}`}
+                        className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-[var(--color-success)]' : 'bg-gray-200'}`}
                       />
                       <span className={active ? 'text-gray-900 font-medium' : 'text-gray-400'}>
                         {t.name}
