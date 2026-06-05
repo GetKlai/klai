@@ -11,7 +11,7 @@ function DataTable({ className, ...props }: React.TableHTMLAttributes<HTMLTableE
 }
 
 function DataTableHeader({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={className} {...props} />
+  return <thead className={cn('border-b border-gray-200', className)} {...props} />
 }
 
 function DataTableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
