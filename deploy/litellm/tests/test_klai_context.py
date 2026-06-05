@@ -157,3 +157,52 @@ def test_orchestrator_reports_unknown_shapes_without_silent_normalization(monkey
     assert result.messages == [message]
     assert result.meta["unknown_content_shapes"] == 1
     assert result.meta["normalized_text_part_messages"] == 0
+
+
+def test_orchestrator_omits_internal_tool_history_for_mistral(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "system", "content": "Klai instructions."},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Visible answer."},
+                    {
+                        "type": "tool_call",
+                        "tool_call": {"name": "search_knowledge", "args": "{}"},
+                    },
+                ],
+                "tool_calls": [{"id": "call_1", "function": {"name": "search"}}],
+            },
+            {
+                "role": "tool",
+                "name": "search_knowledge",
+                "tool_call_id": "call_1",
+                "content": '{"result": "internal"}',
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "error", "error": "Provider failed"}],
+            },
+            {"role": "user", "content": "Continue."},
+        ],
+        requested_model="klai-large",
+    )
+
+    roles = [message.get("role") for message in result.messages if isinstance(message, dict)]
+    assert roles == ["system", "assistant", "assistant", "user"]
+    assert result.messages[1]["content"] == "Visible answer."
+    assert "tool_calls" not in result.messages[1]
+    assert result.messages[2]["content"] == mod.TOOL_CONTEXT_PLACEHOLDER
+    assert all(
+        not isinstance(message.get("content"), list)
+        for message in result.messages
+        if isinstance(message, dict)
+    )
+    assert result.meta["omitted_tool_messages"] == 1
+    assert result.meta["omitted_tool_content_parts"] == 2
+    assert "internal_tool_messages_omitted" in result.meta["reason_codes"]
+    assert "internal_tool_content_parts_omitted" in result.meta["reason_codes"]

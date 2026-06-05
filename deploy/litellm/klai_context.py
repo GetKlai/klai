@@ -21,7 +21,23 @@ HISTORY_BUDGET_CONTEXT_PLACEHOLDER = (
     "exceeded Klai's provider context budget. Use the latest user question, "
     "recent turns, and retrieved knowledge-base context instead.]"
 )
+TOOL_CONTEXT_PLACEHOLDER = (
+    "[Earlier internal tool activity omitted from model context. Use the "
+    "latest user question and retrieved knowledge-base context instead.]"
+)
 STALE_LIBRECHAT_UPLOAD_PREFIX = "Attached document(s):"
+INTERNAL_TOOL_ROLES = frozenset({"tool", "function"})
+INTERNAL_TOOL_PART_TYPES = frozenset(
+    {
+        "error",
+        "tool_call",
+        "tool_result",
+        "tool",
+        "function_call",
+        "function_result",
+    }
+)
+ASSISTANT_TOOL_KEYS = frozenset({"function_call", "tool_calls"})
 
 
 @dataclass(frozen=True)
@@ -103,6 +119,31 @@ def _text_from_text_parts(content: object) -> str | None:
     return "\n".join(texts)
 
 
+def _assistant_text_without_tool_parts(content: object) -> tuple[str | None, int]:
+    if not isinstance(content, list):
+        return None, 0
+
+    texts: list[str] = []
+    omitted_parts = 0
+    for part in content:
+        if not isinstance(part, dict):
+            return None, 0
+        part_type = part.get("type")
+        if part_type == "text" and isinstance(part.get("text"), str):
+            text = part["text"]
+            if text:
+                texts.append(text)
+        elif part_type in INTERNAL_TOOL_PART_TYPES:
+            omitted_parts += 1
+        else:
+            return None, 0
+
+    if not omitted_parts:
+        return None, 0
+    text = "\n".join(texts).strip() or TOOL_CONTEXT_PLACEHOLDER
+    return text, omitted_parts
+
+
 def _last_user_index(messages: list[object]) -> int | None:
     return next(
         (
@@ -164,6 +205,8 @@ class KlaiContextOrchestrator:
             "normalized_text_part_messages": 0,
             "normalized_user_text_part_messages": 0,
             "stale_attachment_placeholders": 0,
+            "omitted_tool_messages": 0,
+            "omitted_tool_content_parts": 0,
             "omitted_history_messages": 0,
             "kept_history_chars": 0,
             "unknown_message_shapes": 0,
@@ -187,13 +230,45 @@ class KlaiContextOrchestrator:
                 continue
 
             role = message.get("role")
+            if role in INTERNAL_TOOL_ROLES:
+                meta["omitted_tool_messages"] += 1
+                if "internal_tool_messages_omitted" not in meta["reason_codes"]:
+                    meta["reason_codes"].append("internal_tool_messages_omitted")
+                continue
+
             next_message = message
             if normalize_content and role in ("user", "assistant"):
                 text_content = _text_from_text_parts(message.get("content"))
                 if text_content is None:
-                    meta["unknown_content_shapes"] += 1
+                    if role == "assistant":
+                        (
+                            assistant_text,
+                            omitted_tool_parts,
+                        ) = _assistant_text_without_tool_parts(message.get("content"))
+                        if assistant_text is not None:
+                            next_message = {
+                                key: value
+                                for key, value in message.items()
+                                if key not in ASSISTANT_TOOL_KEYS
+                            }
+                            next_message["content"] = assistant_text
+                            meta["normalized_text_part_messages"] += 1
+                            meta["omitted_tool_content_parts"] += omitted_tool_parts
+                            if "internal_tool_content_parts_omitted" not in meta["reason_codes"]:
+                                meta["reason_codes"].append(
+                                    "internal_tool_content_parts_omitted"
+                                )
+                        else:
+                            meta["unknown_content_shapes"] += 1
+                    else:
+                        meta["unknown_content_shapes"] += 1
                 elif text_content != message.get("content"):
-                    next_message = {**message, "content": text_content}
+                    next_message = {
+                        key: value
+                        for key, value in message.items()
+                        if key not in ASSISTANT_TOOL_KEYS
+                    }
+                    next_message["content"] = text_content
                     meta["normalized_text_part_messages"] += 1
                     if role == "user":
                         meta["normalized_user_text_part_messages"] += 1

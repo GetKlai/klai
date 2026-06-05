@@ -283,6 +283,12 @@ RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
 # candidates server-side (reranker_candidates=20) so this only changes
 # how many chunks are forwarded to the LLM, not how many are scored.
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "20"))
+RETRIEVE_HISTORY_MAX_CONTENT_CHARS = int(
+    os.getenv("KNOWLEDGE_RETRIEVE_HISTORY_MAX_CONTENT_CHARS", "7800")
+)
+RETRIEVE_HISTORY_OMISSION_MARKER = (
+    "\n\n[... content omitted from retrieval conversation history ...]\n\n"
+)
 KLAI_GAP_SOFT_THRESHOLD = float(os.getenv("KLAI_GAP_SOFT_THRESHOLD", "0.4"))
 KLAI_GAP_DENSE_THRESHOLD = float(os.getenv("KLAI_GAP_DENSE_THRESHOLD", "0.35"))
 PORTAL_RETRIEVAL_LOG_URL = os.getenv(
@@ -836,17 +842,41 @@ def _build_conversation_history(messages: list[dict]) -> list[dict]:
     The last user message is excluded — it is the current query being retrieved for.
     Used by retrieval-api for coreference resolution ("hij" → "Jan Pietersen").
     """
-    history = [
-        {
-            "role": m["role"],
-            "content": _strip_klai_backend_footer_from_text(m["content"])
-            if m.get("role") == "assistant"
-            else m["content"],
-        }
-        for m in messages[:-1]
-        if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
-    ]
+    history: list[dict] = []
+    for message in messages[:-1]:
+        if message.get("role") not in ("user", "assistant"):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        if message.get("role") == "assistant":
+            content = _strip_klai_backend_footer_from_text(content)
+        history.append(
+            {
+                "role": message["role"],
+                "content": _clip_retrieval_history_content(content),
+            }
+        )
     return history[-6:]
+
+
+def _clip_retrieval_history_content(content: str) -> str:
+    max_chars = RETRIEVE_HISTORY_MAX_CONTENT_CHARS
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content
+
+    marker = RETRIEVE_HISTORY_OMISSION_MARKER
+    if max_chars <= len(marker) + 20:
+        return content[:max_chars]
+
+    remaining = max_chars - len(marker)
+    head_chars = remaining // 2
+    tail_chars = remaining - head_chars
+    return (
+        content[:head_chars].rstrip()
+        + marker
+        + content[-tail_chars:].lstrip()
+    )
 
 
 # SPEC-RAG-QUERY-REWRITE-001: query rewriting for the /retrieve call.
