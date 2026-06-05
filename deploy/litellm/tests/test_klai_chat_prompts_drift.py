@@ -86,6 +86,23 @@ def test_vendored_general_prompt_matches_canonical() -> None:
     )
 
 
+def test_vendored_open_kb_prompt_matches_canonical() -> None:
+    """The Open-with-KB prompt is path-A critical: it is the only foundation
+    that allows general-knowledge fallback while KB scope remains selected.
+    Drift would silently reintroduce KB-only behaviour in production.
+    """
+    vendored = _load("_drift_vendored_open_kb", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_open_kb", _CANONICAL_PATH)
+
+    assert (
+        vendored.OPEN_KB_CHAT_SYSTEM_PROMPT == canonical.OPEN_KB_CHAT_SYSTEM_PROMPT
+    ), (
+        "OPEN_KB_CHAT_SYSTEM_PROMPT drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+
+
 def test_vendored_meta_prompt_matches_canonical() -> None:
     """The ``META_CHAT_SYSTEM_PROMPT`` constant string MUST be byte-identical
     between vendored and canonical copies. The LiteLLM hook (path A) prepends

@@ -51,6 +51,7 @@ from klai_chat_prompts import (
     GENERAL_CHAT_SYSTEM_PROMPT,
     GROUNDED_CHAT_SYSTEM_PROMPT,
     META_CHAT_SYSTEM_PROMPT,
+    OPEN_KB_CHAT_SYSTEM_PROMPT,
     no_citable_sources_message as _no_citable_sources_message,
 )
 from klai_context import (
@@ -361,6 +362,17 @@ _LOW_CONFIDENCE_INJECTION_TEXT = (
     "Sluit af met een vraag om verduidelijking aan de gebruiker als het "
     "materiaal de vraag niet volledig dekt — dat is beter dan een "
     "verzonnen antwoord."
+)
+_LOW_CONFIDENCE_OPEN_CONTEXT_TEXT = (
+    "[Klai retrieval — lage relevantie in Open modus]\n"
+    "Het opgehaalde KB-materiaal heeft een lage relevantie-score voor "
+    "deze vraag. Behandel de chunks als zwakke aanvullende context. "
+    "Je mag algemene kennis gebruiken, maar presenteer die dan expliciet "
+    "als algemene kennis en niet als iets dat uit de kennisbank komt. "
+    "Als de kennisbank de vraag niet dekt, zeg dat kort en geef daarna "
+    "alleen een algemeen antwoord wanneer dat veilig kan zonder specifieke "
+    "organisatiegegevens, prijzen, routes, productnamen of bronclaims te "
+    "verzinnen."
 )
 _LOW_CONFIDENCE_INJECTION_DISABLED = (
     os.getenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", "0") == "1"
@@ -836,6 +848,19 @@ def _sanitize_assistant_history_messages(messages: object) -> object:
         else:
             sanitized.append({**message, "content": stripped_content})
     return sanitized
+
+
+def _active_tool_result_contexts(messages: object) -> list[str]:
+    if not isinstance(messages, list):
+        return []
+    contexts: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "tool":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            contexts.append(content)
+    return contexts
 
 
 def _build_conversation_history(messages: list[dict]) -> list[dict]:
@@ -1649,6 +1674,28 @@ def _compose_libre_chat_prefix(*blocks: str) -> str:
     NOT route through this helper.
     """
     return "\n\n".join(b for b in (GROUNDED_CHAT_SYSTEM_PROMPT, *blocks) if b)
+
+
+def _compose_open_kb_chat_prefix(*blocks: str) -> str:
+    """Compose the system-prompt prefix for Open mode with KB scope."""
+    return "\n\n".join(b for b in (OPEN_KB_CHAT_SYSTEM_PROMPT, *blocks) if b)
+
+
+def _compose_kb_mode_chat_prefix(kb_narrow: bool, *blocks: str) -> str:
+    if kb_narrow:
+        return _compose_libre_chat_prefix(*blocks)
+    return _compose_open_kb_chat_prefix(*blocks)
+
+
+def _strict_no_kb_scope_notice(reason: str) -> str:
+    """Strict-mode notice for branches where retrieval cannot produce KB chunks."""
+    return (
+        "[Klai Knowledge Base — no knowledge base evidence is available for "
+        "this request. The user selected Strict mode, so do not answer from "
+        "general knowledge. Tell the user in their detected language that you "
+        "cannot answer reliably from their knowledge sources for this request "
+        f"(technical reason: {reason}).]\n"
+    )
 
 
 def _normalise_guard_url(url: object) -> str:
@@ -2818,6 +2865,26 @@ class KlaiKnowledgeHook(CustomLogger):
         if input_safety_decision is not None and not input_safety_decision.allowed and _llm_safety_enforces():
             return _llm_safety_short_circuit(data, query=query, decision=input_safety_decision)
 
+        last_tool_context_decision: SafetyDecision | None = None
+        for index, tool_context in enumerate(_active_tool_result_contexts(messages)):
+            tool_context_decision = _check_llm_safety(
+                phase=SafetyPhase.CONTEXT,
+                text=tool_context,
+                query=query,
+                org_id=org_id,
+                user_id=librechat_user_id,
+                metadata=safety_metadata,
+                chunk_id=f"active_tool_result:{index}",
+            )
+            if tool_context_decision is not None and not tool_context_decision.allowed:
+                last_tool_context_decision = tool_context_decision
+        if last_tool_context_decision is not None and _llm_safety_enforces():
+            return _llm_safety_short_circuit(
+                data,
+                query=query,
+                decision=last_tool_context_decision,
+            )
+
         if _is_title_generation_request(messages):
             logger.info(
                 "title_generation_request_detected org_id=%s user_id=%s",
@@ -2861,20 +2928,51 @@ class KlaiKnowledgeHook(CustomLogger):
 
         # Feature gate + KB scope preference (version-based cache, 30s propagation)
         feature = await _get_kb_feature(librechat_user_id, org_id, cache)
+        feature_kb_narrow = bool(feature.get("kb_narrow", False))
         if not feature["enabled"]:
-            # No KB entitlement. Templates still apply. Multilingual foundation
-            # still applies — REQ-10: every LibreChat path is multilingual.
+            # Open/default has no KB in scope, so use GENERAL. Strict preserves
+            # the user's KB-only contract and refuses instead of becoming open.
+            if feature_kb_narrow:
+                _prepend_system_prefix(
+                    messages,
+                    _compose_kb_mode_chat_prefix(
+                        True,
+                        templates_block,
+                        _strict_no_kb_scope_notice("kb-feature-disabled"),
+                    ),
+                )
+                data["messages"] = messages
+                return data
             _prepend_system_prefix(
-                messages, _compose_libre_chat_prefix(templates_block)
+                messages,
+                _compose_general_chat_prefix(
+                    _general_runtime_capabilities_block(data),
+                    templates_block,
+                ),
             )
             data["messages"] = messages
             return data
 
         if not feature["kb_retrieval_enabled"]:
-            # User disabled KB retrieval. Templates still apply. Multilingual
-            # foundation still applies — REQ-10.
+            # Open/default has no chunks for this turn, so use GENERAL. Strict
+            # remains KB-only and refuses because retrieval is disabled.
+            if feature_kb_narrow:
+                _prepend_system_prefix(
+                    messages,
+                    _compose_kb_mode_chat_prefix(
+                        True,
+                        templates_block,
+                        _strict_no_kb_scope_notice("kb-retrieval-disabled"),
+                    ),
+                )
+                data["messages"] = messages
+                return data
             _prepend_system_prefix(
-                messages, _compose_libre_chat_prefix(templates_block)
+                messages,
+                _compose_general_chat_prefix(
+                    _general_runtime_capabilities_block(data),
+                    templates_block,
+                ),
             )
             data["messages"] = messages
             return data
@@ -2903,20 +3001,31 @@ class KlaiKnowledgeHook(CustomLogger):
                 librechat_user_id,
                 org_id,
             )
-            # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English
-            # instruction to the model; the warning the model emits is in the
-            # user's detected language thanks to GROUNDED_CHAT_SYSTEM_PROMPT.
-            kb_unavailable_notice = (
-                "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. Answer using "
-                "your general knowledge. Begin your answer with a warning to "
-                "the user, written in the language you detected from their "
-                "most recent substantive message: tell them you could not "
-                "reach the knowledge base (technical reason: "
-                "identity-resolve-failed), this answer is therefore not "
-                "based on their own documentation, and they should try "
-                "again later.]\n"
+            # The warning the model emits is in the user's detected language
+            # thanks to the mode-specific chat foundation.
+            if feature_kb_narrow:
+                kb_unavailable_notice = (
+                    "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. The user "
+                    "selected Strict mode, so do not answer from general "
+                    "knowledge. Tell the user in their detected language that "
+                    "the knowledge base is temporarily unavailable and you "
+                    "cannot answer reliably from their knowledge sources right "
+                    "now (technical reason: identity-resolve-failed).]\n"
+                )
+            else:
+                kb_unavailable_notice = (
+                    "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. Answer using "
+                    "your general knowledge. Begin your answer with a warning to "
+                    "the user, written in the language you detected from their "
+                    "most recent substantive message: tell them you could not "
+                    "reach the knowledge base (technical reason: "
+                    "identity-resolve-failed), this answer is therefore not "
+                    "based on their own documentation, and they should try "
+                    "again later.]\n"
+                )
+            prefix = _compose_kb_mode_chat_prefix(
+                feature_kb_narrow, templates_block, kb_unavailable_notice
             )
-            prefix = _compose_libre_chat_prefix(templates_block, kb_unavailable_notice)
             _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
             return data
@@ -2936,16 +3045,22 @@ class KlaiKnowledgeHook(CustomLogger):
         # injected — exact opposite of intent.
         kb_personal = feature.get("kb_personal_enabled", True)
         kb_slugs = feature.get("kb_slugs_filter")
-        kb_narrow = feature.get("kb_narrow", False)
+        kb_narrow = feature_kb_narrow
 
-        # User explicitly opted out of every scope → "Algemene AI" mode.
-        # Skip retrieval AND swap KB-grounding instructions for
-        # general-assistant instructions so the model doesn't keep
-        # answering "Dat staat niet in de kennisbank" with no KB present.
-        # Templates may still apply (REQ-TEMPLATES-HOOK-U2 fail-open).
-        # Multilingual foundation still applies — REQ-10 (the language
-        # contract is shared between GROUNDED and GENERAL prompts).
+        # User explicitly opted out of every scope. Open/default becomes
+        # "Algemene AI"; Strict refuses because there is no KB evidence.
         if not kb_personal and kb_slugs == []:
+            if kb_narrow:
+                _prepend_system_prefix(
+                    messages,
+                    _compose_kb_mode_chat_prefix(
+                        True,
+                        templates_block,
+                        _strict_no_kb_scope_notice("kb-scopes-disabled"),
+                    ),
+                )
+                data["messages"] = messages
+                return data
             _prepend_system_prefix(
                 messages,
                 _compose_general_chat_prefix(
@@ -3182,7 +3297,9 @@ class KlaiKnowledgeHook(CustomLogger):
                     "this answer is therefore not based on their own documentation, "
                     "and they should refresh or try again later.]\n"
                 )
-            prefix = _compose_libre_chat_prefix(templates_block, kb_unavailable_notice)
+            prefix = _compose_kb_mode_chat_prefix(
+                kb_narrow, templates_block, kb_unavailable_notice
+            )
             _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
             original_stream = data.get("stream")
@@ -3220,7 +3337,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # Multilingual foundation still applies — REQ-10.
         if result.get("retrieval_bypassed"):
             _prepend_system_prefix(
-                messages, _compose_libre_chat_prefix(templates_block)
+                messages, _compose_kb_mode_chat_prefix(kb_narrow, templates_block)
             )
             data["messages"] = messages
             data.setdefault("metadata", {})["_klai_kb_meta"] = {
@@ -3243,7 +3360,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 len(chunks) if isinstance(chunks, list) else 0,
             )
             _prepend_system_prefix(
-                messages, _compose_libre_chat_prefix(templates_block)
+                messages, _compose_kb_mode_chat_prefix(kb_narrow, templates_block)
             )
             data["messages"] = messages
             original_stream = data.get("stream")
@@ -3410,7 +3527,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 )
             _prepend_system_prefix(
                 messages,
-                _compose_libre_chat_prefix(templates_block, empty_kb_header),
+                _compose_kb_mode_chat_prefix(kb_narrow, templates_block, empty_kb_header),
             )
             data["messages"] = messages
             if has_evidence_pack:
@@ -3580,7 +3697,11 @@ class KlaiKnowledgeHook(CustomLogger):
         # Disabled when KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION=1 (rollback
         # escape hatch — toggle off without redeploying retrieval-api).
         if low_confidence_inject and not _LOW_CONFIDENCE_INJECTION_DISABLED:
-            lines.append(_LOW_CONFIDENCE_INJECTION_TEXT)
+            lines.append(
+                _LOW_CONFIDENCE_INJECTION_TEXT
+                if kb_narrow
+                else _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT
+            )
             # NOTE: warning-level (not info) is deliberate. The litellm
             # container's root logger filters info-level emits from
             # non-uvicorn modules (verified 2026-05-08 via VictoriaLogs:
@@ -3612,7 +3733,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # any more; doing so would duplicate the block in the system
         # prompt, once high (between GROUNDED and the KB header) and
         # once low (right before the chunks).
-        prefix = _compose_libre_chat_prefix(context_block)
+        prefix = _compose_kb_mode_chat_prefix(kb_narrow, context_block)
         _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
         original_stream = data.get("stream")

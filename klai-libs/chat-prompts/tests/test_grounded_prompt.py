@@ -15,6 +15,7 @@ from klai_chat_prompts import (
     GENERAL_CHAT_SYSTEM_PROMPT,
     GROUNDED_CHAT_SYSTEM_PROMPT,
     META_CHAT_SYSTEM_PROMPT,
+    OPEN_KB_CHAT_SYSTEM_PROMPT,
 )
 
 
@@ -196,6 +197,50 @@ def test_general_prompt_carries_anti_hallucination_block():
     # Must explicitly forbid fabricating URLs/domains — that was the
     # exact regression: 'voys.nl' invented out of thin air.
     assert "URL" in text
+
+
+# ─── OPEN_KB_CHAT_SYSTEM_PROMPT regression tests ───────────────────
+
+
+def test_open_kb_prompt_is_non_empty():
+    assert isinstance(OPEN_KB_CHAT_SYSTEM_PROMPT, str)
+    assert len(OPEN_KB_CHAT_SYSTEM_PROMPT) > 200
+
+
+def test_open_kb_prompt_identifies_open_mode():
+    text = OPEN_KB_CHAT_SYSTEM_PROMPT
+    assert "Open mode" in text
+    assert "not KB-only" in text
+    assert "stable general knowledge" in text
+
+
+def test_open_kb_prompt_forbids_kb_only_refusal_as_sole_path():
+    text = OPEN_KB_CHAT_SYSTEM_PROMPT
+    assert "Dat staat niet in de kennisbank" in text
+    assert "whole answer in Open mode" in text
+    assert "unless the user explicitly asks for a KB-only answer" in text
+
+
+def test_open_kb_prompt_carries_live_lookup_guard():
+    text = OPEN_KB_CHAT_SYSTEM_PROMPT
+    assert "do NOT answer from training data" in text
+    assert "provided web results" in text
+    assert "enable Web Search" in text
+    assert "KB does not cover" in text
+
+
+def test_open_kb_prompt_forbids_unsupported_product_and_route_fabrication():
+    text = OPEN_KB_CHAT_SYSTEM_PROMPT
+    assert "implementation routes" in text
+    assert "product names" in text
+    assert "do not fabricate" in text
+
+
+def test_open_kb_prompt_shares_language_preamble_byte_for_byte():
+    preamble_end = GROUNDED_CHAT_SYSTEM_PROMPT.find("\n\nYou are Klai AI")
+    assert preamble_end > 0, "GROUNDED prompt structure changed unexpectedly"
+    grounded_preamble = GROUNDED_CHAT_SYSTEM_PROMPT[:preamble_end]
+    assert OPEN_KB_CHAT_SYSTEM_PROMPT.startswith(grounded_preamble + "\n\n")
 
 
 # ─── GROUNDED anti-confabulation guard ──────────────────────────────
