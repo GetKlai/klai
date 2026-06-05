@@ -347,6 +347,24 @@ class TestKlaiKnowledgeHookLegacy:
         assert sanitized[0] is messages[0]
         assert sanitized[1]["content"][0]["text"] == "Het budget is 100k."
 
+    def test_normalizes_user_text_parts_and_omits_stale_attachments(self, monkeypatch):
+        """LibreChat text-part uploads must be provider-safe on later turns."""
+        mod = _load_hook(monkeypatch)
+        uploaded_doc = "Attached document(s):\n```md\nprivacy document\n```"
+        latest_question = "Wat staat er in de kennisbank over verwerkers?"
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": uploaded_doc}]},
+            {"role": "assistant", "content": "Dat kost te veel tokens."},
+            {"role": "user", "content": [{"type": "text", "text": latest_question}]},
+        ]
+
+        sanitized, normalized = mod._normalize_user_text_part_messages(messages)
+
+        assert normalized == 2
+        assert sanitized[0]["content"] == mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER
+        assert sanitized[1] is messages[1]
+        assert sanitized[2]["content"] == latest_question
+
     @pytest.mark.asyncio
     async def test_retrieve_request_includes_auth_header(self, monkeypatch):
         """V001: retrieve request must include X-Internal-Secret header.
@@ -1518,6 +1536,67 @@ class TestKlaiKnowledgeHookKB010:
             assert "**Agent activiteit**" not in history[1]["content"]
             assistant = next(message for message in data["messages"] if message["role"] == "assistant")
             assert assistant["content"] == "Het budget is 100k."
+
+    @pytest.mark.asyncio
+    async def test_librechat_upload_text_parts_normalized_before_retrieval_and_model(
+        self, monkeypatch, caplog
+    ):
+        """Old prompt-upload parts must not poison later KB-backed turns."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        caplog.set_level("WARNING", logger="klai_knowledge")
+        uploaded_doc = "Attached document(s):\n```md\nprivacy document\n```"
+        latest_question = "Wat zegt de kennisbank over verwerkers?"
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": uploaded_doc}]},
+                {"role": "assistant", "content": "Deze opdracht kost te veel tokens."},
+                {"role": "user", "content": [{"type": "text", "text": latest_question}]},
+            ],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(
+                return_value=_make_resp(
+                    {
+                        "chunks": [
+                            {
+                                "chunk_id": "processors-1",
+                                "title": "Verwerkersovereenkomst",
+                                "text": "De verwerkersovereenkomst beschrijft subverwerkers.",
+                                "source_url": "https://privacy.example/docs/verwerkers",
+                                "score": 0.8,
+                            }
+                        ]
+                    }
+                )
+            )
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+        body = mc.post.call_args.kwargs.get("json") or {}
+        history = body.get("conversation_history") or []
+        assert history[0]["content"] == mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER
+        assert latest_question == body["raw_query"]
+        assert uploaded_doc not in str(data["messages"])
+        assert any(
+            message.get("role") == "user"
+            and message.get("content") == mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER
+            for message in data["messages"]
+            if isinstance(message, dict)
+        )
+        assert any(
+            message.get("role") == "user" and message.get("content") == latest_question
+            for message in data["messages"]
+            if isinstance(message, dict)
+        )
+        assert "librechat_user_text_part_messages_normalized" in caplog.text
 
     @pytest.mark.asyncio
     async def test_gate_bypass_no_injection(self, monkeypatch):
