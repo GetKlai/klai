@@ -47,6 +47,7 @@ from app.services.partner_rate_limit import check_rate_limit
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.retrieval_log import find_correlated_log, write_retrieval_log
+from app.services.web_search import build_web_results_block, search_web
 from app.services.widget_audit import (
     hash_audit_value,
     record_widget_turn,
@@ -102,6 +103,11 @@ class ChatCompletionsRequest(BaseModel):
     knowledge_base_ids: list[int] | None = None
     page_context: PageContext | None = None
     knowledge: KnowledgeOptions | None = None
+    # Opt-in live web search. When true, LiteLLM runs the same SearXNG-backed
+    # web search the chat surfaces use (deploy/litellm config search_tools)
+    # and feeds the results to the model for this turn. Default off so existing
+    # callers are unaffected and search only runs when explicitly requested.
+    web_search: bool = False
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -573,6 +579,55 @@ def _validate_chat_request(request: ChatCompletionsRequest) -> None:
         )
 
 
+async def _maybe_apply_web_search(
+    *,
+    request: ChatCompletionsRequest,
+    auth: PartnerAuthContext,
+    is_widget_chat: bool,
+    knowledge: KnowledgeOptions | None,
+    system_prompt: str,
+) -> str:
+    """Append live web results to the system prompt when requested and allowed.
+
+    Opt-in per request (``request.web_search``), gated by the key's
+    ``web_search`` permission, and never run for public widget keys. Fail-open:
+    if search returns nothing or errors, the original prompt is returned so the
+    answer still goes out, just without web context.
+    """
+    if not request.web_search:
+        return system_prompt
+    if is_widget_chat:
+        logger.debug("partner_web_search_ignored_widget", org_id=auth.org_id)
+        return system_prompt
+
+    require_permission(auth, "web_search")  # raises 403 if the key lacks it
+
+    web_query = (
+        knowledge.query
+        if knowledge is not None and knowledge.query
+        else next(
+            (
+                m.get("content")
+                for m in reversed(request.messages)
+                if m.get("role") == "user" and isinstance(m.get("content"), str)
+            ),
+            None,
+        )
+    )
+    web_results = await search_web(web_query, settings=settings) if web_query else []
+    if not web_results:
+        logger.warning("partner_web_search_empty", org_id=auth.org_id, key_id=str(auth.key_id))
+        return system_prompt
+
+    logger.info(
+        "partner_web_search_used",
+        org_id=auth.org_id,
+        key_id=str(auth.key_id),
+        result_count=len(web_results),
+    )
+    return f"{system_prompt}\n{build_web_results_block(web_results)}"
+
+
 @router.post("/chat/completions")
 async def chat_completions(
     request: ChatCompletionsRequest,
@@ -663,6 +718,16 @@ async def chat_completions(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"error": {"type": "upstream_error", "message": "Retrieval service timeout"}},
         ) from exc
+
+    # 6b. Optional live web search (opt-in per request, gated per API key,
+    #     never for public widget keys).
+    system_prompt = await _maybe_apply_web_search(
+        request=request,
+        auth=auth,
+        is_widget_chat=is_widget_chat,
+        knowledge=knowledge,
+        system_prompt=system_prompt,
+    )
 
     # 7. Fire retrieval log async
     chunk_ids = [c.get("chunk_id", "") for c in chunks if c.get("chunk_id")]

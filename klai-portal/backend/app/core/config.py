@@ -251,6 +251,11 @@ class Settings(BaseSettings):
     vexa_api_key: str = ""
     vexa_webhook_secret: str = ""
 
+    # SearXNG (self-hosted web search, same instance the chat surfaces use).
+    # Default is the internal container address; not a secret, so a plain
+    # default is safe even when the env var is unset.
+    searxng_url: str = "http://searxng:8080"
+
     # LiteLLM (for summarization)
     litellm_base_url: str = "http://litellm:4000"
     extraction_model: str = "klai-fast"
