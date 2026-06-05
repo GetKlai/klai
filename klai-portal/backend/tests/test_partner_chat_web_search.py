@@ -1,14 +1,18 @@
-"""Web search for the Partner API (server-side SearXNG fetch + inject).
+"""Web search for the Partner API (server-side SearXNG fetch + cite).
 
 `web_search: true` makes portal-api query the same SearXNG instance the chat
-surfaces use, then inject the results into the system prompt. This is gated per
-API key (`web_search` permission) and never runs for public widget keys.
+surfaces use, inject the results as an untrusted context block into the system
+prompt, AND feed them to the citation composer as a separate web tier so they
+become citable sources tagged `origin: "web"`. Gated per API key
+(`web_search` permission) and never run for public widget keys.
 
-These tests cover the building blocks:
+These tests cover:
 - search_web: calls SearXNG /search?format=json, parses + bounds results,
-  and is fail-open (returns [] on any error).
-- build_web_results_block: renders results, empty for no results.
-- the permission gate that the handler relies on.
+  fail-open (returns [] on any error).
+- build_web_results_block: untrusted framing; web_results_as_chunks shape.
+- the permission gate and web-query resolution the handler relies on.
+- _compose_backend_managed_answer: KB/web kept as separate origin-tagged
+  tiers, web-only is citable (not refused), both-empty is refused.
 """
 
 from contextlib import asynccontextmanager
@@ -224,6 +228,52 @@ def test_web_chunks_become_citable_sources_without_kb():
     )
     assert composed.sources, "web-only answer must have citable sources, not a refusal"
     assert composed.sources[0]["url"] == "https://ex.test/eco"
+
+
+def test_compose_keeps_kb_and_web_as_separate_tiers():
+    # KB and web are distinct trust tiers: each source is tagged with its origin
+    # and the merged list gets one contiguous label sequence.
+    from app.services.partner_chat import _compose_backend_managed_answer
+
+    answer = "Disable SIP-ALG on the router for the Yealink phone. Dutch GDP grew 2 percent in 2026."
+    kb_chunks = [
+        {
+            "source_url": "https://kb.test/sip",
+            "title": "SIP-ALG guide",
+            "text": "Disable SIP-ALG on the router for the Yealink phone",
+        }
+    ]
+    web_chunks = web_results_as_chunks(
+        [{"title": "Economy 2026", "url": "https://web.test/eco", "content": "Dutch GDP grew 2 percent in 2026"}]
+    )
+    _content, sources, _decision = _compose_backend_managed_answer(
+        answer, [], kb_chunks, "yealink sip-alg dutch economy 2026", web_chunks
+    )
+    origins = {s["url"]: s["origin"] for s in sources}
+    assert origins.get("https://kb.test/sip") == "kb"
+    assert origins.get("https://web.test/eco") == "web"
+    assert [s["label"] for s in sources] == [str(i) for i in range(1, len(sources) + 1)]
+
+
+def test_compose_web_only_not_refused():
+    from app.services.partner_chat import _compose_backend_managed_answer
+
+    answer = "Dutch GDP grew 2 percent in 2026 according to recent data."
+    web_chunks = web_results_as_chunks(
+        [{"title": "Economy 2026", "url": "https://web.test/eco", "content": "Dutch GDP grew 2 percent in 2026"}]
+    )
+    content, sources, _decision = _compose_backend_managed_answer(answer, [], [], "dutch economy 2026", web_chunks)
+    assert sources and all(s["origin"] == "web" for s in sources)
+    assert "2 percent" in content
+
+
+def test_compose_refuses_when_no_kb_and_no_web():
+    from app.services.partner_chat import _compose_backend_managed_answer
+
+    _content, sources, _decision = _compose_backend_managed_answer(
+        "Some ungrounded statement.", [], [], "unrelated query", None
+    )
+    assert sources == []
 
 
 def test_web_chunks_not_cited_when_answer_unrelated():

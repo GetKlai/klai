@@ -1,10 +1,12 @@
 """Server-side web search for the Partner API.
 
-Calls the same self-hosted SearXNG instance the chat surfaces use, takes the
-top results, and turns them into a compact context block that gets appended to
-the chat system prompt. Fail-open by design: if SearXNG is slow or down, we log
-and return no results so the answer still goes out (without web context) rather
-than failing the whole request.
+Calls the same self-hosted SearXNG instance the chat surfaces use and takes the
+top results, used two ways: ``build_web_results_block`` renders an untrusted
+context block appended to the system prompt (grounding), and
+``web_results_as_chunks`` adapts them to evidence chunks so the citation
+composer can cite them as a separate web tier (``origin: "web"``). Fail-open by
+design: if SearXNG is slow or down, we log and return no results so the answer
+still goes out (without web context) rather than failing the whole request.
 """
 
 from __future__ import annotations
@@ -105,9 +107,9 @@ def web_results_as_chunks(results: list[dict[str, str]]) -> list[dict[str, str]]
     """Adapt web results to evidence-chunk dicts for the citation composer.
 
     Klai's partner/widget chat only renders sources that come through the
-    citation pipeline as evidence chunks (KB provenance). Web results must take
-    the same path or a web-grounded answer is stripped to the "no citable
-    sources" refusal. Each chunk carries ``source_url`` + ``text`` so the
+    citation pipeline as evidence chunks. Web results are fed as a SEPARATE
+    web tier (not mixed with KB chunks) so they are cited on their own merit and
+    tagged ``origin: "web"``. Each chunk carries ``source_url`` + ``text`` so the
     composer can build a citable source and match it against the answer.
     """
     chunks: list[dict[str, str]] = []

@@ -1237,18 +1237,52 @@ def _compose_backend_managed_answer(
     trusted_sources: list[dict[str, Any]] | None,
     citation_chunks: list[dict] | None,
     user_query: str,
+    web_chunks: list[dict] | None = None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
+    """Compose the answer with KB and (optionally) web sources as separate tiers.
+
+    KB and web are kept in distinct candidate sets so the private knowledge base
+    and the open web never share a trust tier: each goes through the citation
+    firewall independently, and the merged source list tags every entry with its
+    ``origin`` (``"kb"`` or ``"web"``). The no-citable-sources refusal only fires
+    when BOTH tiers come up empty, so a web-grounded answer is not stripped just
+    because the knowledge base had nothing.
+    """
     composed = compose_answer_with_trusted_sources(
         text,
         trusted_sources or [],
         query_text=user_query,
         evidence_chunks=citation_chunks or [],
     )
-    if not composed.sources:
-        return _no_citable_sources_message(user_query), [], composed.decision
     if not composed.content:
         return _no_citable_sources_message(user_query), [], composed.decision
-    return composed.content, composed.sources, composed.decision
+
+    kb_sources = [{**source, "origin": "kb"} for source in composed.sources]
+    web_sources: list[dict] = []
+    decision = dict(composed.decision)
+    if web_chunks:
+        # Run the same firewall over the cleaned answer with web evidence only,
+        # so web results are selected on their own merit, not against KB chunks.
+        web_composed = compose_answer_with_trusted_sources(
+            composed.content,
+            [],
+            query_text=user_query,
+            evidence_chunks=web_chunks,
+        )
+        web_sources = [{**source, "origin": "web"} for source in web_composed.sources]
+        decision["web"] = web_composed.decision
+
+    sources = _renumber_sources(kb_sources + web_sources)
+    if not sources:
+        return _no_citable_sources_message(user_query), [], decision
+    return composed.content, sources, decision
+
+
+def _renumber_sources(sources: list[dict]) -> list[dict]:
+    """Give a merged KB+web source list a single contiguous label sequence."""
+    for index, source in enumerate(sources, start=1):
+        source["label"] = str(index)
+    return sources
 
 
 async def _chat_completion_streaming_with_composed_citations(
@@ -1261,6 +1295,7 @@ async def _chat_completion_streaming_with_composed_citations(
     user_query: str,
     trusted_sources: list[dict[str, Any]] | None,
     citation_chunks: list[dict] | None,
+    web_chunks: list[dict] | None = None,
     emit_sources: bool = True,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
@@ -1309,6 +1344,7 @@ async def _chat_completion_streaming_with_composed_citations(
         trusted_sources,
         citation_chunks,
         user_query,
+        web_chunks,
     )
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
         logger.warning(
@@ -1334,6 +1370,17 @@ async def _chat_completion_streaming_with_composed_citations(
                     "label": "Kennisbank geraadpleegd",
                     "detail": f"{len(citation_chunks)} passages gevonden",
                     "count": len(citation_chunks),
+                }
+            ]
+        )
+    if web_chunks:
+        yield _sse_activity_delta(
+            [
+                {
+                    "step": "web_searched",
+                    "label": "Web doorzocht",
+                    "detail": f"{len(web_chunks)} resultaten gevonden",
+                    "count": len(web_chunks),
                 }
             ]
         )
@@ -1597,6 +1644,7 @@ async def chat_completion_non_streaming(
     citation_source_urls: dict[int, str] | None = None,
     citation_source_metadata: dict[str, dict[str, str]] | None = None,
     citation_chunks: list[dict] | None = None,
+    web_chunks: list[dict] | None = None,
     trusted_sources: list[dict[str, Any]] | None = None,
     citation_output: CitationOutput = "links",
     source_query: str | None = None,
@@ -1682,6 +1730,7 @@ async def chat_completion_non_streaming(
                     trusted_sources,
                     citation_chunks,
                     user_query_for_safety,
+                    web_chunks,
                 )
                 logger.info(
                     "partner_chat_citation_selection_decision",
@@ -1743,6 +1792,7 @@ async def chat_completion_streaming(
     citation_source_urls: dict[int, str] | None = None,
     citation_source_metadata: dict[str, dict[str, str]] | None = None,
     citation_chunks: list[dict] | None = None,
+    web_chunks: list[dict] | None = None,
     trusted_sources: list[dict[str, Any]] | None = None,
     citation_output: CitationOutput = "links",
     source_query: str | None = None,
@@ -1768,6 +1818,7 @@ async def chat_completion_streaming(
             user_query=user_query,
             trusted_sources=trusted_sources,
             citation_chunks=citation_chunks,
+            web_chunks=web_chunks,
             emit_sources=emit_sources,
         ):
             yield chunk
