@@ -1652,7 +1652,7 @@ class TestKlaiKnowledgeHookProviderContext:
         assert meta["stale_attachment_placeholders"] == 1
 
     @pytest.mark.asyncio
-    async def test_provider_context_keeps_latest_user_exact_under_budget(
+    async def test_provider_context_defers_history_budget_to_router(
         self, monkeypatch
     ):
         mod = _load_hook(
@@ -1684,12 +1684,12 @@ class TestKlaiKnowledgeHookProviderContext:
         provider_text = "\n".join(
             m.get("content", "") for m in provider_messages if isinstance(m.get("content"), str)
         )
-        assert "old user" not in provider_text
-        assert "old assistant" not in provider_text
-        assert mod._HISTORY_BUDGET_CONTEXT_PLACEHOLDER in provider_text
+        assert "old user" in provider_text
+        assert "old assistant" in provider_text
+        assert mod._HISTORY_BUDGET_CONTEXT_PLACEHOLDER not in provider_text
         meta = result["metadata"]["_klai_context_meta"]
-        assert meta["omitted_history_messages"] == 2
-        assert meta["history_budget_chars"] == 40
+        assert meta["history_budget_applied"] is False
+        assert meta["omitted_history_messages"] == 0
 
     @pytest.mark.asyncio
     async def test_provider_context_budget_waits_for_librechat_scope(
@@ -2025,6 +2025,102 @@ class TestTokenRouterKB010:
 
         result = await router.async_pre_call_hook(uak, None, data, "completion")
         assert result["model"] == "klai-primary"
+
+    @pytest.mark.asyncio
+    async def test_router_uses_context_meta_tool_history_after_sanitization(
+        self, monkeypatch
+    ):
+        """Tool roles stripped by klai_knowledge still route to Large."""
+        monkeypatch.setenv("KLAI_CONTEXT_PRIMARY_HISTORY_BUDGET_TOKENS", "5")
+        monkeypatch.setenv("KLAI_CONTEXT_LARGE_HISTORY_BUDGET_TOKENS", "50")
+        litellm_mod = sys.modules["litellm"]
+        litellm_mod.token_counter = MagicMock(return_value=20)
+
+        sys.modules.pop("klai_context", None)
+        sys.modules.pop("custom_router", None)
+        import klai_context
+        import custom_router
+
+        importlib.reload(klai_context)
+        importlib.reload(custom_router)
+
+        router = custom_router.TokenRouter()
+        data = {
+            "model": "klai-primary",
+            "messages": [
+                {"role": "user", "content": "old user"},
+                {"role": "assistant", "content": "old assistant"},
+                {"role": "user", "content": "latest"},
+            ],
+            "metadata": {
+                "_klai_context_meta": {
+                    "omitted_tool_messages": 1,
+                    "omitted_tool_content_parts": 0,
+                }
+            },
+        }
+
+        result = await router.async_pre_call_hook(MagicMock(), None, data, "completion")
+
+        assert result["model"] == "klai-large"
+        router_meta = result["metadata"]["_klai_router_meta"]
+        assert router_meta["requested_model"] == "klai-primary"
+        assert router_meta["final_model"] == "klai-large"
+        assert router_meta["route_reason"] == "tool_history"
+        context_meta = result["metadata"]["_klai_context_meta"]
+        assert context_meta["model_profile"] == "klai-large"
+        assert context_meta["profile_selection_phase"] == "post_router_final_model"
+        assert context_meta["token_budget_applied"] is True
+        assert context_meta["omitted_history_messages"] == 0
+        rendered = "\n".join(
+            message.get("content", "")
+            for message in result["messages"]
+            if isinstance(message, dict)
+        )
+        assert "old user" in rendered
+        assert "old assistant" in rendered
+
+    @pytest.mark.asyncio
+    async def test_router_applies_final_model_token_budget_to_provider_context(
+        self, monkeypatch
+    ):
+        """Explicit final model calls are budgeted by that model profile."""
+        monkeypatch.setenv("KLAI_CONTEXT_LARGE_HISTORY_BUDGET_TOKENS", "10")
+        litellm_mod = sys.modules["litellm"]
+        litellm_mod.token_counter = MagicMock(return_value=20)
+
+        sys.modules.pop("klai_context", None)
+        sys.modules.pop("custom_router", None)
+        import klai_context
+        import custom_router
+
+        importlib.reload(klai_context)
+        importlib.reload(custom_router)
+
+        router = custom_router.TokenRouter()
+        latest = "latest stays exact"
+        data = {"model": "klai-large", "messages": [
+            {"role": "user", "content": "old user"},
+            {"role": "assistant", "content": "old assistant"},
+            {"role": "user", "content": latest},
+        ]}
+
+        result = await router.async_pre_call_hook(MagicMock(), None, data, "completion")
+
+        assert result["model"] == "klai-large"
+        assert result["messages"][-1] == {"role": "user", "content": latest}
+        rendered = "\n".join(
+            message.get("content", "")
+            for message in result["messages"]
+            if isinstance(message, dict)
+        )
+        assert "old user" not in rendered
+        assert "old assistant" not in rendered
+        assert klai_context.HISTORY_BUDGET_CONTEXT_PLACEHOLDER in rendered
+        context_meta = result["metadata"]["_klai_context_meta"]
+        assert context_meta["model_profile"] == "klai-large"
+        assert context_meta["token_budget_applied"] is True
+        assert context_meta["omitted_history_messages"] == 2
 
 
 # ─── KB-014 gap detection tests ──────────────────────────────────────────────
