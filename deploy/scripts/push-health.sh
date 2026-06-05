@@ -51,6 +51,8 @@ MEETING_RUNTIME=$(resolve_container runtime-api)
 MEETING_ADMIN=$(resolve_container admin-api)
 GARAGE=$(resolve_container garage)
 CAL_COM=$(resolve_container cal-com)
+LISTMONK=$(resolve_container listmonk)
+LISTMONK_DB=$(resolve_container listmonk-db)
 VAULTWARDEN=$(resolve_container vaultwarden)
 VICTORIALOGS=$(resolve_container victorialogs)
 VICTORIAMETRICS=$(resolve_container victoriametrics)
@@ -154,6 +156,9 @@ push_healthcheck "$MONGODB"  "${KUMA_TOKEN_MONGODB:-}"  "Conversations Database"
 # PostgreSQL: accounts, meetings, knowledge (shared)
 push_healthcheck "$POSTGRES" "${KUMA_TOKEN_POSTGRES:-}" "Account Database"
 
+# listmonk PostgreSQL: mailing lists, subscribers, campaigns, and templates
+push_healthcheck "$LISTMONK_DB" "${KUMA_TOKEN_LISTMONK_DB:-}" "Mailing Database"
+
 # Redis: LLM request cache + LibreChat session store
 push_healthcheck "$REDIS"    "${KUMA_TOKEN_REDIS:-}"    "AI Request Cache"
 
@@ -216,6 +221,14 @@ push_exec "$PORTAL_API" \
 push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://klai-mailer:8000/health')\"" \
     "${KUMA_TOKEN_MAILER:-}" "Email Service"
+
+# Mailing: listmonk campaign/subscriber UI on mailing.getklai.com. listmonk
+# does not expose an unauthenticated /health endpoint; the internal UI root
+# returning HTTP 200 proves the app process, router, and DB-backed startup are
+# alive. The database is monitored separately above.
+push_exec "$PORTAL_API" \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://listmonk:9000/', timeout=5)\"" \
+    "${KUMA_TOKEN_LISTMONK:-}" "Mailing"
 
 # Meeting service: Vexa V3 stack public entrypoint (api-gateway) — Docker healthcheck
 # Replaces legacy vexa-bot-manager monolith (SPEC-VEXA-001/003).

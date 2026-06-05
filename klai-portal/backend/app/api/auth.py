@@ -1227,6 +1227,21 @@ async def password_set(body: PasswordSetRequest) -> None:
         ) from exc
 
     try:
+        await assert_zitadel_password_policy_compatible()
+    except PasswordPolicyGuardError as exc:
+        _emit_auth_event(
+            "password_set_failed",
+            reason="password_policy_drift",
+            actor_user_id=body.user_id,
+            outcome="503",
+            level="error",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Wachtwoordbeleid is tijdelijk niet beschikbaar. Probeer later opnieuw.",
+        ) from exc
+
+    try:
         flow = await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
         _slog.exception("set_password_with_code_failed", zitadel_status=exc.response.status_code)

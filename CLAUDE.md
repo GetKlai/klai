@@ -1,5 +1,12 @@
 # MoAI Execution Directive
 
+@AGENTS.md
+
+<!-- The import above pulls in the model-neutral Klai agent rules (prime
+directive, engineering discipline, production-bugfix gate, answer format) that
+Codex reads natively from AGENTS.md. Keeping them in one neutral source avoids
+drift between Codex and Claude. Claude-specific orchestration follows below. -->
+
 ## 1. Core Identity
 
 MoAI is the Strategic Orchestrator for Claude Code. All tasks must be delegated to specialized agents.
@@ -575,7 +582,7 @@ For detailed patterns on plugins, sandboxing, headless mode, and version managem
 <!-- codeindex:start -->
 # CodeIndex MCP
 
-This project is indexed by CodeIndex as **klai** (15301 symbols, 19385 relationships, 0 execution flows).
+This project is indexed by CodeIndex as **klai** (16280 symbols, 20581 relationships, 0 execution flows).
 
 ## Rules (MUST follow)
 
@@ -590,7 +597,12 @@ This project is indexed by CodeIndex as **klai** (15301 symbols, 19385 relations
 2. **Match your task to a skill below** and **read that skill file**
 3. **Follow the skill's workflow and checklist**
 
-> If step 1 warns the index is stale, run `codeindex update` in the terminal first.
+> In Conductor worktrees, a stale warning can mean the current worktree or the
+> registered checkout differs from the shared main index. Do **not** run
+> `codeindex update` from a feature worktree. Run `scripts/codeindex-health.sh`;
+> only if it reports the shared base index is stale, run
+> `scripts/codeindex-health.sh --repair`. Treat branch changes as an overlay on
+> the shared graph and verify local diffs/source files directly.
 
 ## Skills
 
@@ -602,5 +614,18 @@ This project is indexed by CodeIndex as **klai** (15301 symbols, 19385 relations
 | Rename / extract / split / refactor | `.claude/skills/codeindex/codeindex-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/codeindex/codeindex-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/codeindex/codeindex-cli/SKILL.md` |
+
+## If CodeIndex tools appear missing
+
+If you don't see CodeIndex tools in your active toolset, they are almost certainly **deferred/lazy-loaded** by the agent harness — **NOT disconnected**. The MCP server is fine.
+
+Use your harness's tool-discovery mechanism once, then continue with the loaded CodeIndex MCP tools:
+
+- **Claude Code**: call `ToolSearch` with `select:mcp__codeindex__query,mcp__codeindex__context,mcp__codeindex__impact,mcp__codeindex__detect_changes,mcp__codeindex__rename,mcp__codeindex__cypher,mcp__codeindex__remember,mcp__codeindex__recall,mcp__codeindex__forget`
+- **Codex / Conductor**: call `tool_search` with the same `select:mcp__codeindex__...` query above
+
+After that the tools are directly callable, usually as `mcp__codeindex__query` / `mcp__codeindex__.query` or plain `query`, depending on the harness. If a `list_repos` tool is not exposed, read the `codeindex://repos` resource instead.
+
+Do **NOT** run `npx codeindex`, `codeindex analyze`, or `codeindex update` as a workaround for "missing MCP" or a stale index. The CLI is for explicit setup/maintenance requests. In Conductor, use `scripts/codeindex-health.sh` to diagnose shared main-index health; if it is healthy, use CodeIndex results as advisory and verify branch-local code against source files.
 
 <!-- codeindex:end -->

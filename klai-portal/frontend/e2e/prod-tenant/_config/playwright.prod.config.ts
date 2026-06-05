@@ -62,6 +62,7 @@ const STORAGE_STATE_ISOLATED = path.resolve(__dirname, 'storageState.json')
 const STORAGE_STATE_VOYS = path.resolve(__dirname, 'storageState.voys.json')
 const STORAGE_STATE = E2E_MODE === 'voys-attached' ? STORAGE_STATE_VOYS : STORAGE_STATE_ISOLATED
 const BROWSER_CHANNEL = process.env.PLAYWRIGHT_BROWSER_CHANNEL
+const RECORD_VIDEO = process.env.PLAYWRIGHT_RECORD_VIDEO === '1'
 const DESKTOP_CHROME = {
   ...devices['Desktop Chrome'],
   ...(BROWSER_CHANNEL ? { channel: BROWSER_CHANNEL } : {}),
@@ -85,7 +86,7 @@ export default defineConfig({
     baseURL: process.env.E2E_BASE_URL ?? 'https://e2e.getklai.com',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    video: RECORD_VIDEO ? 'retain-on-failure' : 'off',
   },
   // In isolated-tenant mode: J01 runs first, captures storage-state.
   // In voys-attached mode: J01 is SKIPPED - user has captured the
