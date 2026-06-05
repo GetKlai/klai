@@ -15,7 +15,11 @@ For any task involving code understanding, debugging, impact analysis, or refact
 2. **Match your task to a skill below** and **read that skill file**
 3. **Follow the skill's workflow and checklist**
 
-> If step 1 warns the index is stale, run `npx codeindex analyze` in the terminal first.
+> In Conductor worktrees, a stale warning can be an overlay/canonical-checkout
+> mismatch rather than a broken shared index. Do **not** run `codeindex analyze`
+> or `codeindex update` from a feature worktree. Run
+> `scripts/codeindex-health.sh`; only if it reports the shared base index is
+> stale, run `scripts/codeindex-health.sh --repair`.
 
 ## Skills
 
