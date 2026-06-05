@@ -67,7 +67,6 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `card` | Framed repeated items / stat blocks | Yes |
 | `query-error-state` | Standard error block for failed queries | Yes |
 | `sheet` | Slide-over. **Forbidden** for admin entity detail (see Detail And Edit) | Restricted |
-| `delete-confirm-button` | Older inline trash→confirm toggle. **Deprecated** — use `inline-delete-confirm`. Migrate on touch. | Deprecated |
 | `delete-kb-modal` `delete-org-modal` | Feature-specific destructive modals (not generic) | Feature |
 
 Tabs are a **pattern, not a component** (see Tabs). They are currently
@@ -539,9 +538,6 @@ Rules:
   do not restyle.
 - For destructive actions that are NOT in a row (e.g. a whole page or card),
   use `alert-dialog` instead.
-- `delete-confirm-button` is the deprecated predecessor (raw buttons,
-  hardcoded English labels). Do not use it in new code; migrate to
-  `InlineDeleteConfirm` when you touch a screen that still uses it.
 - Never use `window.confirm`.
 
 ## Wizards
@@ -839,7 +835,6 @@ These patterns must not be copied:
 - `hover:bg-gray-50` on interactive rows.
 - Raw semantic Tailwind colors for status states.
 - Raw `<button>` icon actions in rows. Use `row-action` components.
-- `delete-confirm-button`. Use `inline-delete-confirm`.
 - Inline `style={{ borderColor }}` to color a border. Use a `border-*` utility.
 - An unlayered `* { border-color }` or `@utility` override. Keep the reset in
   `@layer base` (see Borders And Cascade Layers).
