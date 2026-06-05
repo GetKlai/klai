@@ -2254,12 +2254,18 @@ class TestTokenRouterKB010:
         assert provider_messages[-1]["role"] == "tool"
         assert provider_messages[-1]["tool_call_id"] == "call_1"
         assert "ZURICH-CTX-2606" in provider_messages[-1]["content"]
-        assert provider_messages[1]["tool_calls"][0]["id"] == "call_1"
+        assistant_message = next(
+            message for message in provider_messages if message["role"] == "assistant"
+        )
+        assert assistant_message["tool_calls"][0]["id"] == "call_1"
         assert result["metadata"]["_klai_router_meta"]["provider_context_applied"] is True
         context_meta = result["metadata"]["_klai_context_meta"]
         assert context_meta["model_profile"] == "klai-large"
         assert context_meta["active_tool_results_preserved"] == 1
+        assert context_meta["active_tool_results_normalized"] == 1
+        assert context_meta["tool_data_boundary_added"] == 1
         assert "active_tool_results_preserved" in context_meta["reason_codes"]
+        assert "active_tool_results_normalized" in context_meta["reason_codes"]
 
     @pytest.mark.asyncio
     async def test_knowledge_hook_and_router_preserve_active_tool_meta_once(
@@ -2312,8 +2318,10 @@ class TestTokenRouterKB010:
         ]
         context_meta = result["metadata"]["_klai_context_meta"]
         assert context_meta["active_tool_results_preserved"] == 1
+        assert context_meta["active_tool_results_normalized"] == 1
         assert context_meta["active_tool_calls_preserved"] == 1
         assert context_meta["pre_router_meta"]["active_tool_results_preserved"] == 1
+        assert context_meta["pre_router_meta"]["active_tool_results_normalized"] == 1
 
     @pytest.mark.asyncio
     async def test_router_provider_context_assembly_fails_open(

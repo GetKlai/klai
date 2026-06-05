@@ -116,14 +116,32 @@ def _merge_context_meta(
     for counter in (
         "active_tool_results_converted",
         "active_tool_results_preserved",
+        "active_tool_results_normalized",
         "active_tool_calls_preserved",
         "empty_active_tool_results",
+        "truncated_active_tool_results",
+        "truncated_active_tool_result_chars",
+        "tool_data_boundary_added",
         "trailing_assistant_repaired",
     ):
         merged[counter] = max(
             int(previous.get(counter) or 0),
             int(next_context_meta.get(counter) or 0),
         )
+    trust_counts: dict = {}
+    for source in (
+        previous.get("active_tool_result_trust"),
+        next_context_meta.get("active_tool_result_trust"),
+    ):
+        if not isinstance(source, dict):
+            continue
+        for trust, count in source.items():
+            trust_counts[str(trust)] = max(
+                int(trust_counts.get(str(trust)) or 0),
+                int(count or 0),
+            )
+    if trust_counts:
+        merged["active_tool_result_trust"] = trust_counts
     merged["reason_codes"] = list(
         dict.fromkeys(
             [
@@ -231,7 +249,9 @@ class TokenRouter(CustomLogger):
             logger.info(
                 "klai_router_final_model requested_model=%s final_model=%s "
                 "route_reason=%s model_profile=%s token_budget_applied=%s "
-                "omitted_history_messages=%d omitted_tool_messages=%d",
+                "omitted_history_messages=%d omitted_tool_messages=%d "
+                "active_tool_results_preserved=%d active_tool_results_normalized=%d "
+                "truncated_active_tool_results=%d",
                 requested_model,
                 final_model,
                 route_reason,
@@ -239,6 +259,9 @@ class TokenRouter(CustomLogger):
                 context_result.meta["token_budget_applied"],
                 context_result.meta["omitted_history_messages"],
                 metadata["_klai_context_meta"]["omitted_tool_messages"],
+                metadata["_klai_context_meta"]["active_tool_results_preserved"],
+                metadata["_klai_context_meta"]["active_tool_results_normalized"],
+                metadata["_klai_context_meta"]["truncated_active_tool_results"],
             )
         except Exception as exc:
             metadata["_klai_router_meta"]["provider_context_applied"] = False
