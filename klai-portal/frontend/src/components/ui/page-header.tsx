@@ -23,7 +23,12 @@ function PageHeader({ title, description, actions, className, ...props }: PageHe
         ) : null}
       </div>
       {description ? (
-        <p className="text-sm text-gray-400">{description}</p>
+        // When a primary action sits on the title row, cap the description so
+        // it never runs under the action. ~60% of the header width clears the
+        // right-aligned action with margin to spare. Full width when no action.
+        <p className={cn('text-sm text-gray-400', actions ? 'sm:max-w-[60%]' : undefined)}>
+          {description}
+        </p>
       ) : null}
     </div>
   )
