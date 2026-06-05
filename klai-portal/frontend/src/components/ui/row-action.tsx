@@ -208,7 +208,7 @@ const BorderedRowActionIconButton = React.forwardRef<HTMLButtonElement, RowActio
     <RowActionIconButton
       ref={ref}
       className={cn(
-        'h-7 w-7 border border-current bg-transparent [&_svg]:h-3.5 [&_svg]:w-3.5',
+        'h-8 w-8 border border-gray-200 bg-white shadow-sm hover:border-current hover:bg-[var(--color-hover)] [&_svg]:h-3.5 [&_svg]:w-3.5',
         className,
       )}
       {...props}

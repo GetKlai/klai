@@ -1,5 +1,12 @@
 import { flexRender, type Table } from '@tanstack/react-table'
-import { cn } from '@/lib/utils'
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from '@/components/ui/data-table'
 import type { AdminUser } from '../-users-types'
 
 interface Props {
@@ -9,54 +16,43 @@ interface Props {
 
 export function UsersTable({ table, onRowClick }: Props) {
   return (
-    <table
-      data-help-id="admin-users-table"
-      className="w-full border-y border-gray-200 text-sm"
-    >
-      <thead>
+    <DataTable data-help-id="admin-users-table">
+      <DataTableHeader>
         {table.getHeaderGroups().map((headerGroup) => (
-          <tr key={headerGroup.id} className="border-b border-gray-200">
+          <DataTableRow key={headerGroup.id}>
             {headerGroup.headers.map((header) => {
               const isActionHeader = header.column.id === 'actions'
               return (
-                <th
+                <DataTableHead
                   key={header.id}
-                  className={cn(
-                    'px-3 py-3 text-left text-xs font-medium text-gray-400',
-                    isActionHeader && 'text-right',
-                  )}
+                  align={isActionHeader ? 'right' : 'left'}
                 >
                   {flexRender(header.column.columnDef.header, header.getContext())}
-                </th>
+                </DataTableHead>
               )
             })}
-          </tr>
+          </DataTableRow>
         ))}
-      </thead>
-      <tbody>
+      </DataTableHeader>
+      <DataTableBody>
         {table.getRowModel().rows.map((row) => {
           const clickable = !!onRowClick
           return (
-            <tr
+            <DataTableRow
               key={row.id}
+              interactive={clickable}
               onClick={
                 clickable ? () => onRowClick(row.original) : undefined
-              }
-              className={
-                clickable
-                  ? 'border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover'
-                  : 'border-b border-gray-200 last:border-b-0'
               }
             >
               {row.getVisibleCells().map((cell) => {
                 const isActionCell = cell.column.id === 'actions'
+                const isDateCell = cell.column.id === 'created_at'
                 return (
-                  <td
+                  <DataTableCell
                     key={cell.id}
-                    className={cn(
-                      'px-3 py-4 align-middle text-gray-900',
-                      isActionCell && 'text-right',
-                    )}
+                    align={isActionCell ? 'right' : 'left'}
+                    className={isDateCell ? 'whitespace-nowrap' : undefined}
                     onClick={
                       clickable && isActionCell
                         ? (e) => e.stopPropagation()
@@ -64,13 +60,13 @@ export function UsersTable({ table, onRowClick }: Props) {
                     }
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
+                  </DataTableCell>
                 )
               })}
-            </tr>
+            </DataTableRow>
           )
         })}
-      </tbody>
-    </table>
+      </DataTableBody>
+    </DataTable>
   )
 }
