@@ -1566,6 +1566,69 @@ async def set_artifact_index_status(
     return {"artifact_id": row["artifact_id"], "path": row["path"]}
 
 
+async def mark_stale_pending_artifacts_failed(
+    conn: asyncpg.Connection,
+    *,
+    cutoff_created_at: int,
+    limit: int = 500,
+) -> list[dict]:
+    """Fail direct-upload artifacts that are pending with no live enrich job.
+
+    Cross-org by design: callers must pass a ``cross_org_admin_connection``.
+    The runnable-job guard is what keeps a slow but still-progressing
+    enrichment from being marked failed by the janitor.
+    """
+    rows = await conn.fetch(
+        """
+        WITH stale AS (
+            SELECT a.id
+            FROM knowledge.artifacts a
+            WHERE a.index_status = 'pending'
+              AND a.belief_time_end = $2
+              AND a.created_at < $1
+              AND (a.extra IS NULL OR a.extra::jsonb->>'source_connector_id' IS NULL)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM procrastinate_jobs pj
+                  WHERE pj.task_name = ANY($3::text[])
+                    AND pj.status IN ('todo', 'doing')
+                    AND pj.args->>'artifact_id' = a.id::text
+              )
+            ORDER BY a.created_at ASC
+            LIMIT $4
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE knowledge.artifacts a
+        SET index_status = 'failed'
+        FROM stale
+        WHERE a.id = stale.id
+        RETURNING
+            a.id::text AS artifact_id,
+            a.org_id AS org_id,
+            a.kb_slug AS kb_slug,
+            a.path AS path,
+            a.created_at AS created_at
+        """,
+        cutoff_created_at,
+        _SENTINEL,
+        [
+            "knowledge_ingest.enrichment_tasks.enrich_document_interactive",
+            "knowledge_ingest.enrichment_tasks.enrich_document_bulk",
+        ],
+        limit,
+    )
+    return [
+        {
+            "artifact_id": row["artifact_id"],
+            "org_id": row["org_id"],
+            "kb_slug": row["kb_slug"],
+            "path": row["path"],
+            "created_at": int(row["created_at"]),
+        }
+        for row in rows
+    ]
+
+
 async def update_artifact_display_name(
     conn: asyncpg.Connection,
     artifact_id: str,

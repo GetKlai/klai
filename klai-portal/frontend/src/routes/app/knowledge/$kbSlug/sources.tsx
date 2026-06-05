@@ -19,7 +19,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
 import * as m from '@/paraglide/messages'
-import { editablePageIdForSource, mapSourceStatus } from './-sources-helpers'
+import { editablePageIdForSource, shouldPollSource } from './-sources-helpers'
 import { SourcesActionBar } from './-sources-actionbar'
 import { SourceRow } from './-sources-row'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
@@ -40,7 +40,7 @@ function SourcesTab() {
     // Poll while any connector is syncing so the badge updates without refresh.
     refetchInterval: (query) => {
       const list = query.state.data?.sources ?? []
-      const anyPending = list.some((s) => mapSourceStatus(s) === 'pending')
+      const anyPending = list.some(shouldPollSource)
       return anyPending ? 4000 : false
     },
   })
