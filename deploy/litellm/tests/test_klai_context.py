@@ -225,7 +225,7 @@ def test_orchestrator_omits_internal_tool_history_for_mistral(monkeypatch):
     assert "internal_tool_content_parts_omitted" in result.meta["reason_codes"]
 
 
-def test_orchestrator_converts_active_tool_result_for_mistral(monkeypatch):
+def test_orchestrator_preserves_active_tool_result_for_mistral(monkeypatch):
     mod = _load_context(monkeypatch)
     orchestrator = mod.KlaiContextOrchestrator()
 
@@ -260,17 +260,103 @@ def test_orchestrator_converts_active_tool_result_for_mistral(monkeypatch):
     assert [message["role"] for message in provider_messages] == [
         "user",
         "assistant",
-        "user",
+        "tool",
     ]
-    assert provider_messages[-1]["content"].startswith(
-        mod.ACTIVE_TOOL_RESULT_PREFIX
-    )
+    assert provider_messages[1]["tool_calls"][0]["id"] == "call_1"
+    assert provider_messages[-1]["tool_call_id"] == "call_1"
     assert "ZURICH-CTX-2606" in provider_messages[-1]["content"]
-    assert all("tool_calls" not in message for message in provider_messages)
-    assert result.meta["omitted_tool_messages"] == 1
-    assert result.meta["omitted_tool_content_parts"] == 1
-    assert result.meta["active_tool_results_converted"] == 1
-    assert "active_tool_results_converted" in result.meta["reason_codes"]
+    assert result.meta["omitted_tool_messages"] == 0
+    assert result.meta["active_tool_calls_preserved"] == 1
+    assert result.meta["active_tool_results_preserved"] == 1
+    assert "active_tool_results_preserved" in result.meta["reason_codes"]
+
+
+def test_orchestrator_preserves_multiple_active_tool_results(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search twice."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_1", "function": {"name": "search_knowledge"}},
+                    {"id": "call_2", "function": {"name": "search_knowledge"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "First result."},
+            {"role": "tool", "tool_call_id": "call_2", "content": "Second result."},
+        ],
+        requested_model="klai-large",
+    )
+
+    provider_messages = [
+        message for message in result.messages if isinstance(message, dict)
+    ]
+    assert [message["role"] for message in provider_messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+    ]
+    assert provider_messages[-1]["content"] == "Second result."
+    assert result.meta["active_tool_results_preserved"] == 2
+
+
+def test_orchestrator_keeps_empty_active_tool_result_provider_safe(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search empty."},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call_1", "function": {"name": "search"}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "   "},
+        ],
+        requested_model="klai-large",
+    )
+
+    provider_messages = [
+        message for message in result.messages if isinstance(message, dict)
+    ]
+    assert provider_messages[-1]["role"] == "tool"
+    assert provider_messages[-1]["content"] == mod.ACTIVE_TOOL_EMPTY_RESULT_PLACEHOLDER
+    assert result.meta["empty_active_tool_results"] == 1
+    assert result.meta["trailing_assistant_repaired"] == 0
+
+
+def test_orchestrator_serializes_structured_active_tool_result(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search structured."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "call_1", "function": {"name": "search"}}],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": [{"text": "A"}, {"text": "B"}],
+            },
+        ],
+        requested_model="klai-large",
+    )
+
+    provider_messages = [
+        message for message in result.messages if isinstance(message, dict)
+    ]
+    assert provider_messages[-1]["role"] == "tool"
+    assert provider_messages[-1]["content"] == '[{"text": "A"}, {"text": "B"}]'
 
 
 def test_orchestrator_budget_merges_placeholder_and_drops_orphan_assistant(

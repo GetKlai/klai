@@ -108,4 +108,36 @@ aggregator.aggregateContent({
 assert.equal(aggregator.contentParts[0].text, 'Antwoord. Vervolg zonder metadata.');
 assert.equal(JSON.stringify(aggregator.contentParts[0].sources), JSON.stringify(sources));
 
+const toolAggregator = createContentAggregator();
+toolAggregator.aggregateContent({
+  event: 'on_run_step',
+  data: { id: 'msg-empty', index: 0, stepDetails: { type: 'message_creation' } },
+});
+toolAggregator.aggregateContent({
+  event: 'on_run_step',
+  data: {
+    id: 'tool-step',
+    index: 1,
+    stepDetails: {
+      type: 'tool_calls',
+      tool_calls: [{ id: 'call_1', name: 'search_knowledge', args: '{}' }],
+    },
+  },
+});
+toolAggregator.aggregateContent({
+  event: 'on_run_step',
+  data: { id: 'msg-final', index: 2, stepDetails: { type: 'message_creation' } },
+});
+toolAggregator.aggregateContent({
+  event: 'on_message_delta',
+  data: {
+    id: 'msg-final',
+    delta: { content: { type: 'text', text: 'Final answer after tool.' } },
+  },
+});
+
+assert.equal(toolAggregator.contentParts.length, 2);
+assert.equal(toolAggregator.contentParts[0].type, 'tool_call');
+assert.equal(toolAggregator.contentParts[1].text, 'Final answer after tool.');
+
 console.log('OK: LibreChat stream aggregator preserves Klai source metadata.');

@@ -1722,6 +1722,31 @@ class TestKlaiKnowledgeHookProviderContext:
         assert meta["omitted_history_messages"] == 0
 
     @pytest.mark.asyncio
+    async def test_provider_context_skips_internal_explicit_tool_calling(
+        self, monkeypatch
+    ):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        messages = [
+            {"role": "user", "content": "Use the internal tool."},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call_1", "function": {"name": "lookup"}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "{}"},
+        ]
+        data = {"model": "klai-large", "messages": list(messages)}
+
+        result = await hook.async_pre_call_hook(
+            _make_user_api_key(org_id=None), cache, data, "completion"
+        )
+
+        assert result["messages"] == messages
+        assert "_klai_context_meta" not in result.get("metadata", {})
+
+    @pytest.mark.asyncio
     async def test_provider_context_retrieval_history_uses_assembled_context(
         self, monkeypatch
     ):
@@ -2166,7 +2191,7 @@ class TestTokenRouterKB010:
         assert "_klai_context_meta" not in result["metadata"]
 
     @pytest.mark.asyncio
-    async def test_router_converts_active_tool_result_for_explicit_large(
+    async def test_router_preserves_active_tool_result_for_explicit_large(
         self, monkeypatch
     ):
         """LibreChat agent tool turns can call klai-large directly without user metadata."""
@@ -2226,14 +2251,69 @@ class TestTokenRouterKB010:
             message for message in result["messages"] if isinstance(message, dict)
         ]
         assert result["model"] == "klai-large"
-        assert provider_messages[-1]["role"] == "user"
+        assert provider_messages[-1]["role"] == "tool"
+        assert provider_messages[-1]["tool_call_id"] == "call_1"
         assert "ZURICH-CTX-2606" in provider_messages[-1]["content"]
-        assert all("tool_calls" not in message for message in provider_messages)
+        assert provider_messages[1]["tool_calls"][0]["id"] == "call_1"
         assert result["metadata"]["_klai_router_meta"]["provider_context_applied"] is True
         context_meta = result["metadata"]["_klai_context_meta"]
         assert context_meta["model_profile"] == "klai-large"
-        assert context_meta["active_tool_results_converted"] == 1
-        assert "active_tool_results_converted" in context_meta["reason_codes"]
+        assert context_meta["active_tool_results_preserved"] == 1
+        assert "active_tool_results_preserved" in context_meta["reason_codes"]
+
+    @pytest.mark.asyncio
+    async def test_knowledge_hook_and_router_preserve_active_tool_meta_once(
+        self, monkeypatch
+    ):
+        """Production callback order is knowledge hook first, router second."""
+        litellm_mod = sys.modules["litellm"]
+        litellm_mod.token_counter = MagicMock(return_value=1)
+        klai_knowledge = _load_hook(monkeypatch)
+        sys.modules.pop("custom_router", None)
+        import custom_router
+
+        importlib.reload(custom_router)
+
+        data = {
+            "model": "klai-large",
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Zoek naar ZURICH-CTX-2606."},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {"id": "call_1", "function": {"name": "search_knowledge"}}
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": "Project Zurich gebruikt testcode ZURICH-CTX-2606.",
+                },
+            ],
+        }
+
+        hook = klai_knowledge.KlaiKnowledgeHook()
+        after_hook = await hook.async_pre_call_hook(
+            _make_user_api_key(org_id=None), _make_cache(feature_enabled=True), data, "completion"
+        )
+        result = await custom_router.TokenRouter().async_pre_call_hook(
+            MagicMock(), None, after_hook, "completion"
+        )
+
+        provider_messages = [
+            message for message in result["messages"] if isinstance(message, dict)
+        ]
+        assert [message["role"] for message in provider_messages][-3:] == [
+            "user",
+            "assistant",
+            "tool",
+        ]
+        context_meta = result["metadata"]["_klai_context_meta"]
+        assert context_meta["active_tool_results_preserved"] == 1
+        assert context_meta["active_tool_calls_preserved"] == 1
+        assert context_meta["pre_router_meta"]["active_tool_results_preserved"] == 1
 
     @pytest.mark.asyncio
     async def test_router_provider_context_assembly_fails_open(
