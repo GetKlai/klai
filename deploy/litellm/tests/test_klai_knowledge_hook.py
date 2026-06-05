@@ -1829,6 +1829,17 @@ class TestKlaiKnowledgeHookProviderContext:
         assert meta["omitted_tool_messages"] == 1
         assert meta["omitted_tool_content_parts"] == 1
 
+    def test_retrieval_history_clip_env_is_clamped_below_api_limit(self, monkeypatch):
+        mod = _load_hook(
+            monkeypatch,
+            {"KNOWLEDGE_RETRIEVE_HISTORY_MAX_CONTENT_CHARS": "12000"},
+        )
+
+        clipped = mod._clip_retrieval_history_content("x" * 12000)
+
+        assert len(clipped) == 7900
+        assert len(clipped) < mod.RETRIEVE_HISTORY_API_CONTENT_LIMIT_CHARS
+
     @pytest.mark.asyncio
     async def test_gate_bypass_no_injection(self, monkeypatch):
         """AC-010-11: retrieval_bypassed=True → no KB chunks injected, meta recorded.
@@ -2070,6 +2081,7 @@ class TestTokenRouterKB010:
         context_meta = result["metadata"]["_klai_context_meta"]
         assert context_meta["model_profile"] == "klai-large"
         assert context_meta["profile_selection_phase"] == "post_router_final_model"
+        assert context_meta["omitted_tool_messages"] == 1
         assert context_meta["token_budget_applied"] is True
         assert context_meta["omitted_history_messages"] == 0
         rendered = "\n".join(
@@ -2099,7 +2111,7 @@ class TestTokenRouterKB010:
 
         router = custom_router.TokenRouter()
         latest = "latest stays exact"
-        data = {"model": "klai-large", "messages": [
+        data = {"model": "klai-large", "user": "aabbcc112233445566778899", "messages": [
             {"role": "user", "content": "old user"},
             {"role": "assistant", "content": "old assistant"},
             {"role": "user", "content": latest},
@@ -2121,6 +2133,69 @@ class TestTokenRouterKB010:
         assert context_meta["model_profile"] == "klai-large"
         assert context_meta["token_budget_applied"] is True
         assert context_meta["omitted_history_messages"] == 2
+
+    @pytest.mark.asyncio
+    async def test_router_skips_provider_context_for_internal_explicit_model(
+        self, monkeypatch
+    ):
+        """Internal direct aliases without chat metadata must bypass assembly."""
+        monkeypatch.setenv("KLAI_CONTEXT_LARGE_HISTORY_BUDGET_TOKENS", "10")
+        litellm_mod = sys.modules["litellm"]
+        litellm_mod.token_counter = MagicMock(return_value=20)
+
+        sys.modules.pop("klai_context", None)
+        sys.modules.pop("custom_router", None)
+        import custom_router
+
+        importlib.reload(custom_router)
+
+        router = custom_router.TokenRouter()
+        messages = [
+            {"role": "system", "content": "Internal extraction instructions."},
+            {"role": "user", "content": "few-shot one"},
+            {"role": "assistant", "content": "few-shot answer"},
+            {"role": "user", "content": "classify this"},
+        ]
+        data = {"model": "klai-large", "messages": list(messages)}
+
+        result = await router.async_pre_call_hook(MagicMock(), None, data, "completion")
+
+        assert result["model"] == "klai-large"
+        assert result["messages"] == messages
+        assert result["metadata"]["_klai_router_meta"]["provider_context_applied"] is False
+        assert "_klai_context_meta" not in result["metadata"]
+
+    @pytest.mark.asyncio
+    async def test_router_provider_context_assembly_fails_open(
+        self, monkeypatch
+    ):
+        litellm_mod = sys.modules["litellm"]
+        litellm_mod.token_counter = MagicMock(return_value=1)
+
+        sys.modules.pop("custom_router", None)
+        import custom_router
+
+        importlib.reload(custom_router)
+
+        class BrokenOrchestrator:
+            def assemble(self, *_, **__):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(custom_router, "_KLAI_CONTEXT_ORCHESTRATOR", BrokenOrchestrator())
+        router = custom_router.TokenRouter()
+        messages = [{"role": "user", "content": "hello"}]
+        data = {
+            "model": "klai-primary",
+            "user": "aabbcc112233445566778899",
+            "messages": list(messages),
+        }
+
+        result = await router.async_pre_call_hook(MagicMock(), None, data, "completion")
+
+        assert result["messages"] == messages
+        router_meta = result["metadata"]["_klai_router_meta"]
+        assert router_meta["provider_context_applied"] is False
+        assert router_meta["provider_context_error"] == "RuntimeError"
 
 
 # ─── KB-014 gap detection tests ──────────────────────────────────────────────

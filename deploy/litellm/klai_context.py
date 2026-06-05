@@ -26,6 +26,7 @@ TOOL_CONTEXT_PLACEHOLDER = (
     "[Earlier internal tool activity omitted from model context. Use the "
     "latest user question and retrieved knowledge-base context instead.]"
 )
+SYSTEM_BLOCK_SEPARATOR = "\n\n"
 STALE_LIBRECHAT_UPLOAD_PREFIX = "Attached document(s):"
 INTERNAL_TOOL_ROLES = frozenset({"tool", "function"})
 INTERNAL_TOOL_PART_TYPES = frozenset(
@@ -273,6 +274,29 @@ class MistralProviderAdapter:
         role: object,
         meta: dict[str, Any],
     ) -> dict[str, Any]:
+        if role == "assistant" and any(key in message for key in ASSISTANT_TOOL_KEYS):
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                assistant_text = content
+                omitted_tool_parts = 1
+            else:
+                assistant_text, omitted_tool_parts = _assistant_text_without_tool_parts(
+                    content
+                )
+                if assistant_text is None:
+                    assistant_text = TOOL_CONTEXT_PLACEHOLDER
+                    omitted_tool_parts = 1
+            next_message = {
+                key: value
+                for key, value in message.items()
+                if key not in ASSISTANT_TOOL_KEYS
+            }
+            next_message["content"] = assistant_text
+            meta["omitted_tool_content_parts"] += max(1, omitted_tool_parts)
+            if "internal_tool_content_parts_omitted" not in meta["reason_codes"]:
+                meta["reason_codes"].append("internal_tool_content_parts_omitted")
+            return next_message
+
         text_content = _text_from_text_parts(message.get("content"))
         if text_content is None:
             if role == "assistant":
@@ -310,10 +334,9 @@ class MistralProviderAdapter:
 class KlaiContextOrchestrator:
     """Build the Mistral/retrieval context view for one LiteLLM request.
 
-    In the current LiteLLM callback order this runs before ``custom_router`` on
-    the LibreChat path, so the model profile is based on the requested alias,
-    not the final routed alias. The profile metadata is still useful for direct
-    ``klai-fast``/``klai-large`` calls and for Phase 2 router integration.
+    The knowledge hook uses this before routing for provider-safe normalization
+    only. The custom router calls it again after final model selection so
+    history budgeting can use the actual Mistral-backed model profile.
     """
 
     def __init__(
@@ -375,6 +398,7 @@ class KlaiContextOrchestrator:
             "omitted_history_messages": 0,
             "kept_history_chars": 0,
             "kept_history_tokens_estimate": 0,
+            "repaired_role_sequence_messages": 0,
             "unknown_message_shapes": 0,
             "unknown_content_shapes": 0,
             "reason_codes": [],
@@ -394,6 +418,14 @@ class KlaiContextOrchestrator:
             normalize_content=normalize_content,
             meta=meta,
         )
+        normalized_messages = _repair_mistral_message_sequence(
+            normalized_messages,
+            meta=meta,
+        )
+        normalized_last_user_index = _last_user_index(normalized_messages)
+        if normalized_last_user_index is None:
+            meta["reason_codes"].append("no_user_message_after_sanitization")
+            return ContextAssemblyResult(messages=normalized_messages, meta=meta)
 
         if not apply_history_budget:
             return ContextAssemblyResult(messages=normalized_messages, meta=meta)
@@ -406,7 +438,7 @@ class KlaiContextOrchestrator:
         omitted_history_indexes: set[int] = set()
         history_indexes = [
             index
-            for index in range(0, last_user_index)
+            for index in range(0, normalized_last_user_index)
             if isinstance(normalized_messages[index], dict)
             and normalized_messages[index].get("role") in ("user", "assistant")
         ]
@@ -451,23 +483,146 @@ class KlaiContextOrchestrator:
         meta["kept_history_tokens_estimate"] = kept_tokens
         meta["token_budget_applied"] = use_token_budget
         if not omitted_history_indexes:
-            return ContextAssemblyResult(messages=normalized_messages, meta=meta)
+            return ContextAssemblyResult(
+                messages=_repair_mistral_message_sequence(normalized_messages, meta=meta),
+                meta=meta,
+            )
 
+        omitted_history_indexes = _omit_leading_orphan_assistant_history(
+            normalized_messages,
+            history_indexes,
+            omitted_history_indexes,
+        )
         assembled: list[object] = []
-        placeholder_inserted = False
         for index, message in enumerate(normalized_messages):
             if index in omitted_history_indexes:
-                if not placeholder_inserted:
-                    assembled.append(
-                        {
-                            "role": "system",
-                            "content": HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
-                        }
-                    )
-                    placeholder_inserted = True
                 continue
             assembled.append(message)
+        assembled = _merge_history_placeholder_into_system(assembled)
+        assembled = _repair_mistral_message_sequence(assembled, meta=meta)
 
         meta["omitted_history_messages"] = len(omitted_history_indexes)
         meta["reason_codes"].append("history_budget_exceeded")
         return ContextAssemblyResult(messages=assembled, meta=meta)
+
+
+def _omit_leading_orphan_assistant_history(
+    messages: list[object],
+    history_indexes: list[int],
+    omitted_history_indexes: set[int],
+) -> set[int]:
+    omitted = set(omitted_history_indexes)
+    while True:
+        kept_history_indexes = [index for index in history_indexes if index not in omitted]
+        if not kept_history_indexes:
+            return omitted
+        first_kept = kept_history_indexes[0]
+        message = messages[first_kept]
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            return omitted
+        omitted.add(first_kept)
+
+
+def _merge_history_placeholder_into_system(messages: list[object]) -> list[object]:
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        existing = content if isinstance(content, str) else ""
+        next_message = {
+            **message,
+            "content": (
+                f"{existing.rstrip()}{SYSTEM_BLOCK_SEPARATOR}"
+                f"{HISTORY_BUDGET_CONTEXT_PLACEHOLDER}"
+            ).strip(),
+        }
+        return [*messages[:index], next_message, *messages[index + 1 :]]
+
+    return [
+        {
+            "role": "system",
+            "content": HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
+        },
+        *messages,
+    ]
+
+
+def _repair_mistral_message_sequence(
+    messages: list[object],
+    *,
+    meta: dict[str, Any],
+) -> list[object]:
+    system_contents: list[str] = []
+    conversation: list[object] = []
+    repaired = 0
+
+    for message in messages:
+        if not isinstance(message, dict):
+            conversation.append(message)
+            continue
+        role = message.get("role")
+        if role == "system":
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                system_contents.append(content.strip())
+            repaired += 1 if system_contents[:-1] else 0
+            continue
+        if role not in ("user", "assistant"):
+            repaired += 1
+            continue
+        conversation.append(message)
+
+    repaired_conversation: list[object] = []
+    last_conversation_role: str | None = None
+    index = 0
+    while index < len(conversation):
+        message = conversation[index]
+        if not isinstance(message, dict):
+            repaired_conversation.append(message)
+            index += 1
+            continue
+
+        role = message.get("role")
+        if role == "user":
+            repaired_conversation.append(message)
+            last_conversation_role = "user"
+            index += 1
+            continue
+
+        if role != "assistant":
+            repaired += 1
+            index += 1
+            continue
+
+        run: list[dict[str, Any]] = []
+        while index < len(conversation):
+            candidate = conversation[index]
+            if not isinstance(candidate, dict) or candidate.get("role") != "assistant":
+                break
+            run.append(candidate)
+            index += 1
+
+        if last_conversation_role != "user":
+            repaired += len(run)
+            continue
+
+        if len(run) > 1:
+            repaired += len(run) - 1
+        repaired_conversation.append(run[-1])
+        last_conversation_role = "assistant"
+
+    result: list[object] = []
+    if system_contents:
+        result.append(
+            {
+                "role": "system",
+                "content": SYSTEM_BLOCK_SEPARATOR.join(system_contents),
+            }
+        )
+    result.extend(repaired_conversation)
+
+    if repaired:
+        meta["repaired_role_sequence_messages"] += repaired
+        if "mistral_role_sequence_repaired" not in meta["reason_codes"]:
+            meta["reason_codes"].append("mistral_role_sequence_repaired")
+    return result

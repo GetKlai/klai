@@ -283,8 +283,10 @@ RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
 # candidates server-side (reranker_candidates=20) so this only changes
 # how many chunks are forwarded to the LLM, not how many are scored.
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "20"))
-RETRIEVE_HISTORY_MAX_CONTENT_CHARS = int(
-    os.getenv("KNOWLEDGE_RETRIEVE_HISTORY_MAX_CONTENT_CHARS", "7800")
+RETRIEVE_HISTORY_API_CONTENT_LIMIT_CHARS = 8000
+RETRIEVE_HISTORY_MAX_CONTENT_CHARS = min(
+    int(os.getenv("KNOWLEDGE_RETRIEVE_HISTORY_MAX_CONTENT_CHARS", "7800")),
+    RETRIEVE_HISTORY_API_CONTENT_LIMIT_CHARS - 100,
 )
 RETRIEVE_HISTORY_OMISSION_MARKER = (
     "\n\n[... content omitted from retrieval conversation history ...]\n\n"
