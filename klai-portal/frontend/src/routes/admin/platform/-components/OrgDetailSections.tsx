@@ -4,8 +4,17 @@ import { Loader2, Plus, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from '@/components/ui/data-table'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ListEmptyState } from '@/components/ui/list-state'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import {
@@ -17,7 +26,6 @@ import {
   usePlatformSuspend,
 } from '../-hooks'
 import { StatCard } from '@/components/ui/stat-card'
-import { TD, TH } from './PlatformShell'
 import type {
   PlatformBot,
   PlatformKB,
@@ -178,215 +186,210 @@ export function UsersSection({
       )}
 
       {users.length === 0 ? (
-        <p className="text-sm text-gray-400">{m.platform_no_users()}</p>
+        <ListEmptyState title={m.platform_no_users()} />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full border-b border-t border-gray-200 text-sm">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className={TH}>{m.platform_col_user()}</th>
-                <th className={TH}>{m.platform_col_role()}</th>
-                <th className={TH}>{m.platform_col_status()}</th>
-                <th className={TH}>{m.platform_col_actions()}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => {
-                const busy =
-                  (changeRole.isPending &&
-                    changeRole.variables?.zid === u.zitadel_user_id) ||
-                  (suspend.isPending &&
-                    suspend.variables?.zid === u.zitadel_user_id) ||
-                  (del.isPending && del.variables === u.zitadel_user_id) ||
-                  (retryDelete.isPending &&
-                    retryDelete.variables === u.zitadel_user_id)
-                const deleteFailed = u.deletion_status === 'failed_partial'
-                const failureStep = u.deletion_last_attempted_step
-                return (
-                  <tr
-                    key={u.zitadel_user_id}
-                    className="border-b border-gray-200 last:border-b-0"
-                  >
-                    <td className={TD}>
-                      <span className="font-medium">
-                        {u.display_name || u.email || u.zitadel_user_id}
-                      </span>
-                      {u.email && (
-                        <p className="text-xs text-gray-400">{u.email}</p>
-                      )}
-                    </td>
-                    <td className={TD}>
-                      <Select
-                        value={u.role}
-                        disabled={busy}
-                        onChange={(e) =>
-                          changeRole.mutate(
-                            { zid: u.zitadel_user_id, role: e.target.value },
-                            {
-                              onSuccess: () =>
-                                toast.success(m.platform_role_updated()),
-                              onError: (err) =>
-                                toast.error(
-                                  err instanceof Error
-                                    ? err.message
-                                    : m.admin_shared_error_generic(),
-                                ),
-                            },
-                          )
-                        }
-                        className="max-w-[10rem] text-xs"
-                      >
-                        {ROLE_OPTIONS.map((r) => (
-                          <option key={r.value} value={r.value}>
-                            {r.label}
-                          </option>
-                        ))}
-                      </Select>
-                    </td>
-                    <td className={TD}>
-                      <Badge
-                        variant={
-                          deleteFailed
-                            ? 'outline'
-                            : u.status === 'active'
-                              ? 'success'
-                              : 'outline'
-                        }
-                      >
-                        {deleteFailed
-                          ? m.platform_user_delete_failed_status()
-                          : u.status}
-                      </Badge>
-                      {deleteFailed && failureStep ? (
-                        <p className="mt-1 text-xs text-[var(--color-destructive)]">
-                          {failureStep}
-                        </p>
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>{m.platform_col_user()}</DataTableHead>
+              <DataTableHead>{m.platform_col_role()}</DataTableHead>
+              <DataTableHead>{m.platform_col_status()}</DataTableHead>
+              <DataTableHead>{m.platform_col_actions()}</DataTableHead>
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
+            {users.map((u) => {
+              const busy =
+                (changeRole.isPending &&
+                  changeRole.variables?.zid === u.zitadel_user_id) ||
+                (suspend.isPending &&
+                  suspend.variables?.zid === u.zitadel_user_id) ||
+                (del.isPending && del.variables === u.zitadel_user_id) ||
+                (retryDelete.isPending &&
+                  retryDelete.variables === u.zitadel_user_id)
+              const deleteFailed = u.deletion_status === 'failed_partial'
+              const failureStep = u.deletion_last_attempted_step
+              return (
+                <DataTableRow key={u.zitadel_user_id}>
+                  <DataTableCell>
+                    <span className="font-medium">
+                      {u.display_name || u.email || u.zitadel_user_id}
+                    </span>
+                    {u.email && (
+                      <p className="text-xs text-gray-400">{u.email}</p>
+                    )}
+                  </DataTableCell>
+                  <DataTableCell>
+                    <Select
+                      value={u.role}
+                      disabled={busy}
+                      onChange={(e) =>
+                        changeRole.mutate(
+                          { zid: u.zitadel_user_id, role: e.target.value },
+                          {
+                            onSuccess: () =>
+                              toast.success(m.platform_role_updated()),
+                            onError: (err) =>
+                              toast.error(
+                                err instanceof Error
+                                  ? err.message
+                                  : m.admin_shared_error_generic(),
+                              ),
+                          },
+                        )
+                      }
+                      className="max-w-[10rem] text-xs"
+                    >
+                      {ROLE_OPTIONS.map((r) => (
+                        <option key={r.value} value={r.value}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </DataTableCell>
+                  <DataTableCell>
+                    <Badge
+                      variant={
+                        deleteFailed
+                          ? 'outline'
+                          : u.status === 'active'
+                            ? 'success'
+                            : 'outline'
+                      }
+                    >
+                      {deleteFailed
+                        ? m.platform_user_delete_failed_status()
+                        : u.status}
+                    </Badge>
+                    {deleteFailed && failureStep ? (
+                      <p className="mt-1 text-xs text-[var(--color-destructive)]">
+                        {failureStep}
+                      </p>
+                    ) : null}
+                  </DataTableCell>
+                  <DataTableCell>
+                    <div className="flex items-center gap-3">
+                      {u.status === 'suspended' ? (
+                        <Button
+                          type="button"
+                          variant="link"
+                          disabled={busy}
+                          onClick={() =>
+                            suspend.mutate(
+                              { zid: u.zitadel_user_id, reactivate: true },
+                              {
+                                onSuccess: () =>
+                                  toast.success(m.platform_user_reactivated()),
+                              },
+                            )
+                          }
+                          className="h-auto p-0 text-xs font-medium text-[var(--color-success)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
+                        >
+                          {m.platform_reactivate()}
+                        </Button>
+                      ) : u.status === 'active' ? (
+                        <Button
+                          type="button"
+                          variant="link"
+                          disabled={busy}
+                          onClick={() =>
+                            suspend.mutate(
+                              { zid: u.zitadel_user_id, reactivate: false },
+                              {
+                                onSuccess: () =>
+                                  toast.success(m.platform_user_suspended()),
+                              },
+                            )
+                          }
+                          className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
+                        >
+                          {m.platform_suspend()}
+                        </Button>
                       ) : null}
-                    </td>
-                    <td className={TD}>
-                      <div className="flex items-center gap-3">
-                        {u.status === 'suspended' ? (
+
+                      {confirmDelete === u.zitadel_user_id ? (
+                        <span className="inline-flex items-center gap-2 whitespace-nowrap text-xs">
+                          <span className="text-gray-500">
+                            {m.platform_confirm_short()}
+                          </span>
                           <Button
                             type="button"
                             variant="link"
                             disabled={busy}
                             onClick={() =>
-                              suspend.mutate(
-                                { zid: u.zitadel_user_id, reactivate: true },
-                                {
-                                  onSuccess: () =>
-                                    toast.success(m.platform_user_reactivated()),
+                              del.mutate(u.zitadel_user_id, {
+                                onSuccess: () => {
+                                  toast.success(m.platform_user_deleted())
+                                  setConfirmDelete(null)
                                 },
-                              )
-                            }
-                            className="h-auto p-0 text-xs font-medium text-[var(--color-success)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
-                          >
-                            {m.platform_reactivate()}
-                          </Button>
-                        ) : u.status === 'active' ? (
-                          <Button
-                            type="button"
-                            variant="link"
-                            disabled={busy}
-                            onClick={() =>
-                              suspend.mutate(
-                                { zid: u.zitadel_user_id, reactivate: false },
-                                {
-                                  onSuccess: () =>
-                                    toast.success(m.platform_user_suspended()),
+                                onError: (err) => {
+                                  toast.error(
+                                    err instanceof Error
+                                      ? err.message
+                                      : m.platform_delete_failed(),
+                                  )
+                                  setConfirmDelete(null)
                                 },
-                              )
+                              })
                             }
                             className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
                           >
-                            {m.platform_suspend()}
+                            {busy ? m.platform_busy() : m.platform_yes_delete()}
                           </Button>
-                        ) : null}
-
-                        {confirmDelete === u.zitadel_user_id ? (
-                          <span className="inline-flex items-center gap-2 whitespace-nowrap text-xs">
-                            <span className="text-gray-500">
-                              {m.platform_confirm_short()}
-                            </span>
+                          <Button
+                            type="button"
+                            variant="link"
+                            onClick={() => setConfirmDelete(null)}
+                            className="h-auto p-0 text-xs text-gray-400 no-underline hover:text-gray-900 hover:no-underline"
+                          >
+                            {m.platform_no()}
+                          </Button>
+                        </span>
+                      ) : (
+                        <>
+                          {deleteFailed ? (
                             <Button
                               type="button"
                               variant="link"
                               disabled={busy}
                               onClick={() =>
-                                del.mutate(u.zitadel_user_id, {
-                                  onSuccess: () => {
-                                    toast.success(m.platform_user_deleted())
-                                    setConfirmDelete(null)
-                                  },
-                                  onError: (err) => {
+                                retryDelete.mutate(u.zitadel_user_id, {
+                                  onSuccess: () =>
+                                    toast.success(m.platform_user_deleted()),
+                                  onError: (err) =>
                                     toast.error(
                                       err instanceof Error
                                         ? err.message
                                         : m.platform_delete_failed(),
-                                    )
-                                    setConfirmDelete(null)
-                                  },
+                                    ),
                                 })
                               }
                               className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
                             >
-                              {busy ? m.platform_busy() : m.platform_yes_delete()}
+                              {busy
+                                ? m.platform_busy()
+                                : m.platform_retry_delete()}
                             </Button>
-                            <Button
-                              type="button"
-                              variant="link"
-                              onClick={() => setConfirmDelete(null)}
-                              className="h-auto p-0 text-xs text-gray-400 no-underline hover:text-gray-900 hover:no-underline"
-                            >
-                              {m.platform_no()}
-                            </Button>
-                          </span>
-                        ) : (
-                          <>
-                            {deleteFailed ? (
-                              <Button
-                                type="button"
-                                variant="link"
-                                disabled={busy}
-                                onClick={() =>
-                                  retryDelete.mutate(u.zitadel_user_id, {
-                                    onSuccess: () =>
-                                      toast.success(m.platform_user_deleted()),
-                                    onError: (err) =>
-                                      toast.error(
-                                        err instanceof Error
-                                          ? err.message
-                                          : m.platform_delete_failed(),
-                                      ),
-                                  })
-                                }
-                                className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
-                              >
-                                {busy
-                                  ? m.platform_busy()
-                                  : m.platform_retry_delete()}
-                              </Button>
-                            ) : null}
-                            <Button
-                              type="button"
-                              variant="link"
-                              disabled={busy}
-                              onClick={() => setConfirmDelete(u.zitadel_user_id)}
-                              className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              {m.platform_delete()}
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="link"
+                            disabled={busy}
+                            onClick={() => setConfirmDelete(u.zitadel_user_id)}
+                            className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            {m.platform_delete()}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </DataTableCell>
+                </DataTableRow>
+              )
+            })}
+          </DataTableBody>
+        </DataTable>
       )}
     </section>
   )
@@ -405,42 +408,40 @@ export function BotsSection({
         {m.platform_section_bots({ count: bots.length })}
       </h2>
       {bots.length === 0 ? (
-        <p className="text-sm text-gray-400">{m.platform_no_bots()}</p>
+        <ListEmptyState title={m.platform_no_bots()} />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full border-b border-t border-gray-200 text-sm">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className={TH}>{m.platform_col_bot()}</th>
-                <th className={TH}>{m.platform_col_knowledge_bases()}</th>
-                <th className={TH}>{m.platform_col_created()}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bots.map((b) => (
-                <tr
-                  key={b.id}
-                  onClick={() =>
-                    window.open(
-                      `/bot/${b.widget_id}`,
-                      '_blank',
-                      'noopener,noreferrer',
-                    )
-                  }
-                  className="cursor-pointer border-b border-gray-200 last:border-b-0 klai-hover"
-                >
-                  <td className={TD}>
-                    <span className="font-medium">{b.name}</span>
-                  </td>
-                  <td className={`${TD} tabular-nums`}>{b.kb_count}</td>
-                  <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-                    {fmtDate(b.created_at)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>{m.platform_col_bot()}</DataTableHead>
+              <DataTableHead>{m.platform_col_knowledge_bases()}</DataTableHead>
+              <DataTableHead>{m.platform_col_created()}</DataTableHead>
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
+            {bots.map((b) => (
+              <DataTableRow
+                key={b.id}
+                interactive
+                onClick={() =>
+                  window.open(
+                    `/bot/${b.widget_id}`,
+                    '_blank',
+                    'noopener,noreferrer',
+                  )
+                }
+              >
+                <DataTableCell>
+                  <span className="font-medium">{b.name}</span>
+                </DataTableCell>
+                <DataTableCell className="tabular-nums">{b.kb_count}</DataTableCell>
+                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+                  {fmtDate(b.created_at)}
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+          </DataTableBody>
+        </DataTable>
       )}
     </section>
   )
@@ -461,46 +462,39 @@ export function KnowledgeBasesSection({
         })}
       </h2>
       {knowledgeBases.length === 0 ? (
-        <p className="text-sm text-gray-400">
-          {m.platform_no_knowledge_bases()}
-        </p>
+        <ListEmptyState title={m.platform_no_knowledge_bases()} />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full border-b border-t border-gray-200 text-sm">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className={TH}>{m.platform_col_knowledge_base()}</th>
-                <th className={TH}>{m.platform_col_type()}</th>
-                <th className={TH}>{m.platform_col_visibility()}</th>
-                <th className={TH}>{m.platform_col_created()}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {knowledgeBases.map((kb) => (
-                <tr
-                  key={kb.id}
-                  className="border-b border-gray-200 last:border-b-0"
-                >
-                  <td className={TD}>
-                    <span className="font-medium">{kb.name}</span>
-                    <p className="font-mono text-xs text-gray-400">{kb.slug}</p>
-                  </td>
-                  <td className={TD}>
-                    <Badge variant="outline">
-                      {kb.owner_type === 'org'
-                        ? m.platform_scope_organization()
-                        : m.platform_scope_personal()}
-                    </Badge>
-                  </td>
-                  <td className={TD}>{kb.visibility}</td>
-                  <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-                    {fmtDate(kb.created_at)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>{m.platform_col_knowledge_base()}</DataTableHead>
+              <DataTableHead>{m.platform_col_type()}</DataTableHead>
+              <DataTableHead>{m.platform_col_visibility()}</DataTableHead>
+              <DataTableHead>{m.platform_col_created()}</DataTableHead>
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
+            {knowledgeBases.map((kb) => (
+              <DataTableRow key={kb.id}>
+                <DataTableCell>
+                  <span className="font-medium">{kb.name}</span>
+                  <p className="font-mono text-xs text-gray-400">{kb.slug}</p>
+                </DataTableCell>
+                <DataTableCell>
+                  <Badge variant="outline">
+                    {kb.owner_type === 'org'
+                      ? m.platform_scope_organization()
+                      : m.platform_scope_personal()}
+                  </Badge>
+                </DataTableCell>
+                <DataTableCell>{kb.visibility}</DataTableCell>
+                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+                  {fmtDate(kb.created_at)}
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+          </DataTableBody>
+        </DataTable>
       )}
     </section>
   )
@@ -519,49 +513,44 @@ export function TemplatesSection({
         {m.platform_section_templates({ count: templates.length })}
       </h2>
       {templates.length === 0 ? (
-        <p className="text-sm text-gray-400">{m.platform_no_templates()}</p>
+        <ListEmptyState title={m.platform_no_templates()} />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full border-b border-t border-gray-200 text-sm">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className={TH}>{m.platform_col_template()}</th>
-                <th className={TH}>{m.platform_col_scope()}</th>
-                <th className={TH}>{m.platform_col_created_by()}</th>
-                <th className={TH}>{m.platform_col_created()}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {templates.map((t) => (
-                <tr
-                  key={t.id}
-                  className="border-b border-gray-200 last:border-b-0"
-                >
-                  <td className={TD}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{t.name}</span>
-                      {!t.is_active && (
-                        <Badge variant="outline">{m.platform_inactive()}</Badge>
-                      )}
-                    </div>
-                    <p className="font-mono text-xs text-gray-400">{t.slug}</p>
-                  </td>
-                  <td className={TD}>
-                    <Badge variant={t.scope === 'org' ? 'success' : 'outline'}>
-                      {t.scope === 'org'
-                        ? m.platform_scope_organization()
-                        : m.platform_scope_personal()}
-                    </Badge>
-                  </td>
-                  <td className={TD}>{t.created_by_name ?? t.created_by}</td>
-                  <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
-                    {fmtDate(t.created_at)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>{m.platform_col_template()}</DataTableHead>
+              <DataTableHead>{m.platform_col_scope()}</DataTableHead>
+              <DataTableHead>{m.platform_col_created_by()}</DataTableHead>
+              <DataTableHead>{m.platform_col_created()}</DataTableHead>
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
+            {templates.map((t) => (
+              <DataTableRow key={t.id}>
+                <DataTableCell>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{t.name}</span>
+                    {!t.is_active && (
+                      <Badge variant="outline">{m.platform_inactive()}</Badge>
+                    )}
+                  </div>
+                  <p className="font-mono text-xs text-gray-400">{t.slug}</p>
+                </DataTableCell>
+                <DataTableCell>
+                  <Badge variant={t.scope === 'org' ? 'success' : 'outline'}>
+                    {t.scope === 'org'
+                      ? m.platform_scope_organization()
+                      : m.platform_scope_personal()}
+                  </Badge>
+                </DataTableCell>
+                <DataTableCell>{t.created_by_name ?? t.created_by}</DataTableCell>
+                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+                  {fmtDate(t.created_at)}
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+          </DataTableBody>
+        </DataTable>
       )}
     </section>
   )
