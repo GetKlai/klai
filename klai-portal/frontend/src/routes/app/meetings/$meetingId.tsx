@@ -281,11 +281,13 @@ function MeetingDetailPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
       <div className="mb-6 flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-2">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {meetingTitle}
-          </h1>
-          <StatusBadge status={meeting.status} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="page-title text-[26px] font-display-bold leading-tight text-gray-900">
+              {meetingTitle}
+            </h1>
+            <StatusBadge status={meeting.status} />
+          </div>
         </div>
         <Button
           type="button"
@@ -341,7 +343,7 @@ function MeetingDetailPage() {
 
       {hasTranscript && (
         <div className="space-y-6">
-          <div className="overflow-x-auto border-b border-gray-200">
+          <div className="flex flex-col gap-3 border-b border-gray-200 sm:flex-row sm:items-end sm:justify-between">
             <nav className="-mb-px flex gap-6">
               {tabs.map(({ id: tabId, label }) => {
                 const isActive = tabId === activeTab
@@ -363,67 +365,39 @@ function MeetingDetailPage() {
                 )
               })}
             </nav>
-          </div>
-
-          {summaryError && activeTab === 'summary' && (
-            <Card className="border-[var(--color-destructive)]">
-              <CardContent className="pt-4">
-                <p className="text-sm font-medium text-[var(--color-destructive)]">
-                  {m.app_meetings_summary_error()}
-                </p>
-                <p className="mt-1 text-sm text-gray-400">{summaryError}</p>
-              </CardContent>
-            </Card>
-          )}
-
-          {activeTab === 'summary' && (
-            <section className="space-y-4" aria-label={m.app_meetings_summary_title()}>
-              {meeting.summary_json && (
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button variant="outline" size="sm" onClick={copySummaryText}>
-                    {summaryCopied === 'text' ? (
-                      <>
-                        <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
-                        {m.app_meetings_summary_copy_done()}
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="mr-1.5 h-3.5 w-3.5" />
-                        {m.app_meetings_summary_copy_text()}
-                      </>
-                    )}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={copySummaryMarkdown}>
-                    {summaryCopied === 'markdown' ? (
-                      <>
-                        <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
-                        {m.app_meetings_summary_copy_done()}
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="mr-1.5 h-3.5 w-3.5" />
-                        {m.app_meetings_summary_copy_markdown()}
-                      </>
-                    )}
-                  </Button>
-                  {renderSummarizeButton('outline')}
-                </div>
-              )}
-              {meeting.summary_json ? (
-                <div className="text-sm text-gray-900 space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
-                  <Markdown>{fullSummaryMd}</Markdown>
-                </div>
-              ) : (
-                <div className="flex min-h-32 items-center justify-center">
-                  {renderSummarizeButton('default')}
-                </div>
-              )}
-            </section>
-          )}
-
-          {activeTab === 'transcript' && (
-            <section className="space-y-4" aria-label={m.app_meetings_transcript_title()}>
-              <div className="flex flex-wrap justify-end gap-2">
+            {activeTab === 'summary' && meeting.summary_json && (
+              <div className="flex flex-wrap gap-2 pb-3 sm:justify-end">
+                <Button variant="outline" size="sm" onClick={copySummaryText}>
+                  {summaryCopied === 'text' ? (
+                    <>
+                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                      {m.app_meetings_summary_copy_done()}
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="mr-1.5 h-3.5 w-3.5" />
+                      {m.app_meetings_summary_copy_text()}
+                    </>
+                  )}
+                </Button>
+                <Button variant="outline" size="sm" onClick={copySummaryMarkdown}>
+                  {summaryCopied === 'markdown' ? (
+                    <>
+                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                      {m.app_meetings_summary_copy_done()}
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="mr-1.5 h-3.5 w-3.5" />
+                      {m.app_meetings_summary_copy_markdown()}
+                    </>
+                  )}
+                </Button>
+                {renderSummarizeButton('outline')}
+              </div>
+            )}
+            {activeTab === 'transcript' && (
+              <div className="flex flex-wrap gap-2 pb-3 sm:justify-end">
                 <Button variant="outline" size="sm" onClick={copyTranscript}>
                   {copied ? (
                     <>
@@ -448,6 +422,36 @@ function MeetingDetailPage() {
                   </Button>
                 )}
               </div>
+            )}
+          </div>
+
+          {summaryError && activeTab === 'summary' && (
+            <Card className="border-[var(--color-destructive)]">
+              <CardContent className="pt-4">
+                <p className="text-sm font-medium text-[var(--color-destructive)]">
+                  {m.app_meetings_summary_error()}
+                </p>
+                <p className="mt-1 text-sm text-gray-400">{summaryError}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {activeTab === 'summary' && (
+            <section aria-label={m.app_meetings_summary_title()}>
+              {meeting.summary_json ? (
+                <div className="text-sm text-gray-900 space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
+                  <Markdown>{fullSummaryMd}</Markdown>
+                </div>
+              ) : (
+                <div className="flex min-h-32 items-center justify-center">
+                  {renderSummarizeButton('default')}
+                </div>
+              )}
+            </section>
+          )}
+
+          {activeTab === 'transcript' && (
+            <section aria-label={m.app_meetings_transcript_title()}>
               {meeting.transcript_segments && meeting.transcript_segments.length > 0 ? (
                 <div className="space-y-2 text-sm">
                   {meeting.transcript_segments.map((seg, i) => (
