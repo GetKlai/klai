@@ -239,6 +239,7 @@ services:
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
       - ./litellm/klai_knowledge.py:/app/klai_knowledge.py:ro
+      - ./litellm/klai_context.py:/app/klai_context.py:ro
       - ./litellm/custom_router.py:/app/custom_router.py:ro
       # SPEC-CHAT-GUARDRAILS-001: vendored package copy of klai-libs/llm-safety
       # (kept byte-identical via deploy/litellm/tests/test_klai_llm_safety_drift.py).

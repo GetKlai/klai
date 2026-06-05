@@ -27,6 +27,7 @@ jobs:
         run: |
           rsync -av deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/
           rsync -av --delete klai-libs/citations/klai_citations/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/klai_citations/
+          rsync -av deploy/docker-compose.yml klai@${{ secrets.CORE01_HOST }}:/opt/klai/docker-compose.yml
 
       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — use the canonical
       # compose-up wrapper (already used by caddy, klai-connector,
@@ -54,6 +55,11 @@ jobs:
       # + anti-hallucination); each required a manual
       # `docker compose up -d --force-recreate litellm` to land. See
       # pitfall `bind-mount-content-vs-python-module-cache`.
+      #
+      # Keep docker-compose.yml synced in this workflow too. New LiteLLM
+      # Python modules are bind-mounted explicitly, so a hook-only deploy must
+      # not recreate the container against a stale compose file that does not
+      # expose the new module at /app.
       - name: Recreate LiteLLM container
         run: ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh --force-recreate litellm"
 

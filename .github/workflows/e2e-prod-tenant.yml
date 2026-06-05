@@ -31,6 +31,7 @@ on:
       - 'Build and push klai-connector'
       - 'Build and push scribe-api'
       - 'Build and push caddy-hetzner'
+      - 'Deploy LiteLLM hooks'
       - 'Sync docker-compose.yml + config + smoke-test to core-01'
     types: [completed]
     branches: [main]

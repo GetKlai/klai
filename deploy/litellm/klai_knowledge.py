@@ -53,6 +53,11 @@ from klai_chat_prompts import (
     META_CHAT_SYSTEM_PROMPT,
     no_citable_sources_message as _no_citable_sources_message,
 )
+from klai_context import (
+    HISTORY_BUDGET_CONTEXT_PLACEHOLDER as _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
+    KlaiContextOrchestrator,
+    STALE_ATTACHMENT_CONTEXT_PLACEHOLDER as _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
+)
 from klai_citations import (
     compose_answer_with_trusted_sources,
     evidence_pack_items_as_chunks,
@@ -331,10 +336,7 @@ def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrat
 
 KLAI_KB_CHAT_RENDER_MODE = _resolve_kb_render_mode(os.getenv("KLAI_KB_CHAT_RENDER_MODE"))
 _SENTINEL_URLS = {"undefined", "null", "none", "n/a", "na", "-", "#"}
-_STALE_ATTACHMENT_CONTEXT_PLACEHOLDER = (
-    "[Earlier uploaded document content omitted from model context. Use the "
-    "latest user question and retrieved knowledge-base context instead.]"
-)
+_KLAI_CONTEXT_ORCHESTRATOR = KlaiContextOrchestrator()
 
 # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2 — anti-hallucination injection
 # fired when retrieval-api signals confidence_band ∈ {low, unknown}. Dutch
@@ -826,72 +828,6 @@ def _sanitize_assistant_history_messages(messages: object) -> object:
         else:
             sanitized.append({**message, "content": stripped_content})
     return sanitized
-
-
-def _text_from_text_parts(content: object) -> str | None:
-    """Return a provider-safe string for LibreChat text-part content."""
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return None
-
-    texts: list[str] = []
-    for part in content:
-        if not isinstance(part, dict):
-            return None
-        if part.get("type") != "text" or not isinstance(part.get("text"), str):
-            return None
-        texts.append(part["text"])
-    return "\n".join(texts)
-
-
-def _is_attached_document_text(text: str) -> bool:
-    return text.lstrip().startswith("Attached document(s):")
-
-
-def _normalize_user_text_part_messages(messages: object) -> tuple[object, int]:
-    """Normalize LibreChat text-part user messages before provider calls.
-
-    LibreChat represents uploaded document text as OpenAI-style text parts:
-    ``content=[{"type": "text", "text": "Attached document(s): ..."}]``.
-    Mistral's chat-completions API rejects that shape for this model and
-    expects a string. For the latest user turn we preserve the extracted text.
-    For earlier uploaded-document turns we keep only a marker; otherwise a
-    one-time prompt upload remains in every later request and can dominate or
-    overflow the model context after the same documents were moved into KB.
-    """
-    if not isinstance(messages, list):
-        return messages, 0
-
-    last_user_index = next(
-        (
-            index
-            for index in range(len(messages) - 1, -1, -1)
-            if isinstance(messages[index], dict) and messages[index].get("role") == "user"
-        ),
-        None,
-    )
-    if last_user_index is None:
-        return messages, 0
-
-    normalized = 0
-    sanitized: list[object] = []
-    for index, message in enumerate(messages):
-        if not isinstance(message, dict) or message.get("role") != "user":
-            sanitized.append(message)
-            continue
-
-        text_content = _text_from_text_parts(message.get("content"))
-        if text_content is None or text_content == message.get("content"):
-            sanitized.append(message)
-            continue
-
-        if index != last_user_index and _is_attached_document_text(text_content):
-            sanitized.append({**message, "content": _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER})
-        else:
-            sanitized.append({**message, "content": text_content})
-        normalized += 1
-    return (sanitized, normalized) if normalized else (messages, 0)
 
 
 def _build_conversation_history(messages: list[dict]) -> list[dict]:
@@ -2767,10 +2703,15 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
 
         messages = _sanitize_assistant_history_messages(data.get("messages", []))
-        messages, normalized_user_text_part_messages = _normalize_user_text_part_messages(
-            messages
+        context_result = _KLAI_CONTEXT_ORCHESTRATOR.assemble(
+            messages,
+            requested_model=data.get("model", "klai-primary"),
+            apply_history_budget=False,
         )
+        messages = context_result.messages
+        context_meta = context_result.meta
         data["messages"] = messages
+        data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
         query = _last_user_message(messages)
         if not query or _is_trivial(query):
             return data
@@ -2791,12 +2732,47 @@ class KlaiKnowledgeHook(CustomLogger):
         librechat_user_id = data.get("user", "")
         if not librechat_user_id:
             return data
+
+        budget_context_result = _KLAI_CONTEXT_ORCHESTRATOR.assemble(
+            messages,
+            requested_model=data.get("model", "klai-primary"),
+            normalize_content=False,
+            apply_history_budget=True,
+        )
+        messages = budget_context_result.messages
+        budget_meta = budget_context_result.meta
+        context_meta = {
+            **context_meta,
+            "history_budget_applied": budget_meta["history_budget_applied"],
+            "omitted_history_messages": budget_meta["omitted_history_messages"],
+            "kept_history_chars": budget_meta["kept_history_chars"],
+            "reason_codes": [
+                *context_meta.get("reason_codes", []),
+                *budget_meta.get("reason_codes", []),
+            ],
+        }
+        data["messages"] = messages
+        data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
+
+        normalized_user_text_part_messages = context_meta[
+            "normalized_user_text_part_messages"
+        ]
         if normalized_user_text_part_messages:
             logger.warning(
                 "librechat_user_text_part_messages_normalized org_id=%s user_id=%s normalized=%d",
                 org_id,
                 librechat_user_id,
                 normalized_user_text_part_messages,
+            )
+        if context_meta["omitted_history_messages"]:
+            logger.info(
+                "klai_provider_context_assembled org_id=%s user_id=%s "
+                "history_omitted=%d kept_history_chars=%d history_budget_chars=%d",
+                org_id,
+                librechat_user_id,
+                context_meta["omitted_history_messages"],
+                context_meta["kept_history_chars"],
+                context_meta["history_budget_chars"],
             )
 
         safety_metadata = data.setdefault("metadata", {})
