@@ -10,25 +10,14 @@ import {
 } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { Loader2, Eye, Pencil, Plus, Trash2 } from 'lucide-react'
-
-// Avatar colors: decorative differentiation, not semantic states - raw Tailwind allowed per frontend.md
-const AVATAR_COLORS = [
-  'bg-purple-100 text-purple-700',
-  'bg-blue-100 text-blue-700',
-  'bg-green-100 text-green-700',
-  'bg-amber-100 text-amber-700',
-  'bg-rose-100 text-rose-700',
-]
-
-function avatarColor(uid: string): string {
-  const hash = uid.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
-  return AVATAR_COLORS[hash % AVATAR_COLORS.length]
-}
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+import { Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { apiFetch } from '@/lib/apiFetch'
+import { UserAvatar } from '@/routes/admin/_components/UserAvatar'
 
 export const Route = createFileRoute('/admin/groups/')({
   component: AdminGroups,
@@ -47,13 +36,6 @@ interface OrgUser {
   last_name: string
 }
 
-function userInitials(user: OrgUser): string {
-  if (user.first_name && user.last_name) {
-    return `${user.first_name[0]}${user.last_name[0]}`.toUpperCase()
-  }
-  return user.email.slice(0, 2).toUpperCase()
-}
-
 function MemberAvatars({
   userIds,
   usersMap,
@@ -70,18 +52,25 @@ function MemberAvatars({
     <div className="flex items-center gap-1.5">
       {visible.map((uid) => {
         const user = usersMap.get(uid)
-        const label = user ? userInitials(user) : '??'
-        const title = user
-          ? `${user.first_name} ${user.last_name}`.trim() || user.email
-          : uid
         return (
-          <div
-            key={uid}
-            title={title}
-            className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium ${avatarColor(uid)}`}
-          >
-            {label}
-          </div>
+          user ? (
+            <UserAvatar
+              key={uid}
+              uid={uid}
+              first_name={user.first_name}
+              last_name={user.last_name}
+              email={user.email}
+              size="sm"
+            />
+          ) : (
+            <div
+              key={uid}
+              title={uid}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-muted)] text-xs font-medium text-gray-400"
+            >
+              ??
+            </div>
+          )
         )
       })}
       {extra > 0 && (
@@ -191,39 +180,33 @@ function AdminGroups() {
             onConfirm={() => { deleteMutation.mutate(row.original.id); setConfirmDeleteId(null) }}
             onCancel={() => setConfirmDeleteId(null)}
           >
-            <div className="flex items-start justify-end gap-2 mt-px">
-              <button
+            <RowActionGroup className="mt-px items-start">
+              <RowActionIconButton
+                label={m.admin_groups_delete()}
+                action="delete"
                 onClick={() => setConfirmDeleteId(row.original.id)}
-                aria-label={`Delete ${row.original.name}`}
-                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-              <button
+              />
+              <RowActionIconButton
+                label={m.admin_groups_edit()}
+                action="edit"
                 onClick={() =>
                   navigate({
                     to: '/admin/groups/$groupId/edit',
                     params: { groupId: String(row.original.id) },
                   })
                 }
-                aria-label={`Edit ${row.original.name}`}
-                className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-              >
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button
+              />
+              <RowActionIconButton
+                label={row.original.name}
+                action="view"
                 onClick={() =>
                   navigate({
                     to: '/admin/groups/$groupId',
                     params: { groupId: String(row.original.id) },
                   })
                 }
-                aria-label={row.original.name}
-                className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
-              >
-                <Eye className="h-4 w-4" />
-              </button>
-            </div>
+              />
+            </RowActionGroup>
           </InlineDeleteConfirm>
         )
       },
@@ -257,16 +240,9 @@ function AdminGroups() {
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
       ) : isLoading ? (
-        <p className="py-8 text-sm text-gray-400">
-          <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-          Loading...
-        </p>
+        <ListLoadingState label={m.admin_shared_loading()} />
       ) : groups.length === 0 ? (
-        <div className="py-12 text-center space-y-3">
-          <p className="text-sm text-gray-400">
-            {m.admin_groups_empty()}
-          </p>
-        </div>
+        <ListEmptyState title={m.admin_groups_empty()} />
       ) : (
         <table className="w-full text-sm border-t border-b border-gray-200">
           <thead>
@@ -299,7 +275,9 @@ function AdminGroups() {
                     params: { groupId: String(row.original.id) },
                   })
                 }
-                className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
+                className={`border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover ${
+                  confirmDeleteId === row.original.id ? 'bg-[var(--color-hover)]' : ''
+                }`}
               >
                 {row.getVisibleCells().map((cell) => {
                   const isActionCell = cell.column.id === 'actions'
