@@ -18,7 +18,7 @@ import {
   ListRowTitle,
 } from '@/components/ui/list'
 import { ListLoadingState } from '@/components/ui/list-state'
-import { PageHeader } from '@/components/ui/page-header'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -112,14 +112,14 @@ export function InstructionsPage() {
       />
 
       {/* Korte uitleg boven de lijst — geen kader, gewoon tekst. */}
-      <div className="space-y-3 text-sm text-gray-600">
+      <PageIntro>
         <p>{m.instructions_intro_body()}</p>
         <p>
           <span className="text-gray-500">{m.instructions_intro_examples_heading()}</span>{' '}
           {m.instructions_intro_example_1()} {m.instructions_intro_example_2()}
         </p>
         <p>{m.instructions_intro_invoke()}</p>
-      </div>
+      </PageIntro>
 
       {instructionsQuery.isLoading && (
         <ListFrame aria-busy="true">

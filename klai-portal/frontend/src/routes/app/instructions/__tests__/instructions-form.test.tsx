@@ -53,7 +53,10 @@ describe('InstructionFormPage - design compliance', () => {
     const outer = container.querySelector('.mx-auto.max-w-lg')
     expect(outer).not.toBeNull()
     expect(outer?.className).toContain('px-6')
-    expect(outer?.className).toContain('py-10')
+    // Authenticated page containers use `pt-4 pb-10` (see ui-standards.md
+    // Layout), not the older blanket `py-10`.
+    expect(outer?.className).toContain('pt-4')
+    expect(outer?.className).toContain('pb-10')
   })
 
   it('primary submit button is rounded-full bg-gray-900', () => {

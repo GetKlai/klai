@@ -6,6 +6,7 @@ import {
   Loader2,
   MessageSquare,
   Mic,
+  Plus,
   Settings,
   Sparkles,
 } from 'lucide-react'
@@ -78,6 +79,7 @@ import {
   ListRowTitle,
 } from '@/components/ui/list'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { RadioCardGroup } from '@/components/ui/radio-card-group'
 import {
   BorderedRowActionIconButton,
@@ -269,6 +271,36 @@ function UiCatalogPage() {
       </div>
 
       <div className="divide-y divide-gray-200">
+      <Section title="Page header">
+        <div className="space-y-6">
+          <PageHeader
+            title="Groepen"
+            description="Groepen bepalen welke kennisbanken een team mag gebruiken. Voor profielen ga je naar Profielen."
+            actions={
+              <Button size="sm">
+                <Plus />
+                Groep aanmaken
+              </Button>
+            }
+          />
+          <p className="text-xs text-gray-400">
+            Subtitel is gecapt op <code>sm:max-w-[60%]</code> zodat hij nooit
+            onder de primaire actie doorloopt. Houd de subtitel kort; langere
+            uitleg hoort in een <code>PageIntro</code> hieronder.
+          </p>
+          <PageIntro>
+            <p>
+              Gebruik PageIntro voor de uitlegtekst boven een lijst: platte
+              tekst, geen kader, iets donkerder (<code>text-gray-600</code>) dan
+              de subtitel.
+            </p>
+            <p>
+              <span className="text-gray-500">Bijvoorbeeld:</span> leg uit waar
+              de feature voor dient voordat de gebruiker de lijst ziet.
+            </p>
+          </PageIntro>
+        </div>
+      </Section>
       <Section title="Buttons">
         <div className="flex flex-wrap items-center gap-3">
           <Button>Default</Button>
