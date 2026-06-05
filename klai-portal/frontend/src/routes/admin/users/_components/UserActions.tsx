@@ -9,7 +9,7 @@ import {
   UserX,
 } from 'lucide-react'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -84,7 +84,7 @@ export function UserActions({
     >
       <RowActionGroup>
         {canResendInvite && (
-          <RowActionIconButton
+          <BorderedRowActionIconButton
             label={m.admin_users_resend_invite()}
             action="send"
             disabled={isResending}
@@ -92,7 +92,7 @@ export function UserActions({
             onClick={() => resendInviteMutation.mutate(user)}
           />
         )}
-        <RowActionIconButton
+        <BorderedRowActionIconButton
           label={m.admin_users_edit()}
           action="edit"
           onClick={() =>
@@ -103,7 +103,7 @@ export function UserActions({
           }
         />
         {user.invite_pending ? (
-          <RowActionIconButton
+          <BorderedRowActionIconButton
             label={m.admin_users_delete()}
             action="delete"
             onClick={() => onConfirmDelete(user.zitadel_user_id)}
@@ -111,7 +111,7 @@ export function UserActions({
         ) : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <RowActionIconButton
+              <BorderedRowActionIconButton
                 label={m.admin_users_col_actions()}
                 action="more"
                 tooltip={false}
