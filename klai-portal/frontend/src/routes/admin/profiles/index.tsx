@@ -7,9 +7,9 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table'
-import { Eye } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { QueryErrorState } from '@/components/ui/query-error-state'
+import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
 import { apiFetch } from '@/lib/apiFetch'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 
@@ -81,20 +81,18 @@ function AdminProfiles() {
       id: 'actions',
       header: () => '',
       cell: ({ row }) => (
-        <div className="flex items-start justify-end gap-2 mt-px">
-          <button
+        <RowActionGroup>
+          <RowActionIconButton
+            label={m.admin_profiles_view_members()}
+            action="view"
             onClick={() =>
               navigate({
                 to: '/admin/profiles/$profile',
                 params: { profile: row.original.role },
               })
             }
-            aria-label={row.original.label}
-            className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
-          >
-            <Eye className="h-4 w-4" />
-          </button>
-        </div>
+          />
+        </RowActionGroup>
       ),
     }),
   ]

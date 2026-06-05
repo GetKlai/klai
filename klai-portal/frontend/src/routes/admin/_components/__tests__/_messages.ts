@@ -77,6 +77,7 @@ export const adminProfilesMessages = {
   admin_profiles_back: () => 'Back to profiles',
   admin_profiles_loading: () => 'Loading profiles...',
   admin_profiles_drill_in_empty: () => 'No members in this profile yet.',
+  admin_profiles_view_members: () => 'View members',
   admin_profiles_error_change: () => 'Failed to change profile.',
   admin_profiles_demote_action: () => 'Demote to Personal chat',
   admin_profiles_demote_confirm: ({ name }: { name: string }) =>

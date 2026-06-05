@@ -1794,6 +1794,7 @@
   "admin_profiles_member_count_other": "{count} leden",
   "admin_profiles_back": "Terug naar profielen",
   "admin_profiles_drill_in_empty": "Nog geen leden in dit profiel.",
+  "admin_profiles_view_members": "Leden bekijken",
   "admin_profiles_move_to": "Verplaats naar",
   "admin_profiles_bulk_move_button": "Verplaats {count} naar",
   "admin_profiles_bulk_move_confirm": "{count} verplaatsen naar {target}...",
