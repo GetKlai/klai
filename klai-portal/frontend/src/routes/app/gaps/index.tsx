@@ -182,7 +182,7 @@ function GapsPage() {
       {isLoading ? (
         <ListLoadingState label={m.admin_shared_loading()} />
       ) : gaps.length === 0 ? (
-        <ListEmptyState title={m.gaps_empty_state()} />
+        <ListEmptyState icon={AlertTriangle} title={m.gaps_empty_state()} />
       ) : (
         <DataTable className="table-fixed">
           <DataTableHeader>

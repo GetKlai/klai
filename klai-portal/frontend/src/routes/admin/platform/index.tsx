@@ -24,7 +24,7 @@ import {
   UsersTab,
 } from './-components/PlatformDashboardTabs'
 import { FeedbackTab } from './-components/feedback/FeedbackTab'
-import { PlatformStatCard } from './-components/PlatformShell'
+import { StatCard } from '@/components/ui/stat-card'
 import type { PlatformTab } from './-types'
 
 const VALID_TABS = new Set<PlatformTab>([
@@ -203,7 +203,7 @@ function PlatformConsole() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <PlatformStatCard
+        <StatCard
           label={m.platform_stat_users()}
           value={stats?.total_users}
           sub={
@@ -215,7 +215,7 @@ function PlatformConsole() {
           }
           loading={statsQuery.isLoading}
         />
-        <PlatformStatCard
+        <StatCard
           label={m.platform_stat_organizations()}
           value={stats?.total_orgs}
           sub={
@@ -227,7 +227,7 @@ function PlatformConsole() {
           }
           loading={statsQuery.isLoading}
         />
-        <PlatformStatCard
+        <StatCard
           label={m.platform_stat_bots()}
           value={stats?.total_bots}
           sub={
@@ -235,23 +235,23 @@ function PlatformConsole() {
           }
           loading={statsQuery.isLoading}
         />
-        <PlatformStatCard
+        <StatCard
           label={m.platform_stat_knowledge_bases()}
           value={stats?.total_kbs}
           loading={statsQuery.isLoading}
         />
-        <PlatformStatCard
+        <StatCard
           label={m.platform_stat_templates()}
           value={stats?.total_templates}
           loading={statsQuery.isLoading}
         />
-        <PlatformStatCard
+        <StatCard
           label="MRR"
           value={stats ? `€${(stats.mrr_cents / 100).toFixed(2)}` : undefined}
           sub={stats ? `€${(stats.arr_cents / 100).toFixed(0)} ARR` : undefined}
           loading={statsQuery.isLoading}
         />
-        <PlatformStatCard
+        <StatCard
           label={m.platform_tab_feedback()}
           value={
             stats ? (
@@ -270,10 +270,10 @@ function PlatformConsole() {
           }
           loading={statsQuery.isLoading}
           alert={newFeedbackCount > 0}
-          valueTone={newFeedbackCount > 0 ? 'warning' : 'default'}
+          tone={newFeedbackCount > 0 ? 'warning' : 'default'}
           onClick={() => setPlatformTab('feedback')}
         />
-        <PlatformStatCard
+        <StatCard
           label={m.platform_tab_chat_errors()}
           value={stats?.chat_error_count}
           sub={m.platform_stat_chat_errors_24h()}
