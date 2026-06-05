@@ -111,6 +111,19 @@ def _merge_context_meta(
     merged["omitted_tool_content_parts"] = int(
         previous.get("omitted_tool_content_parts") or 0
     ) + int(next_context_meta.get("omitted_tool_content_parts") or 0)
+    # The knowledge hook and router can both see the same active tool turn.
+    # Keep the observed count without double-counting a single provider request.
+    for counter in (
+        "active_tool_results_converted",
+        "active_tool_results_preserved",
+        "active_tool_calls_preserved",
+        "empty_active_tool_results",
+        "trailing_assistant_repaired",
+    ):
+        merged[counter] = max(
+            int(previous.get(counter) or 0),
+            int(next_context_meta.get(counter) or 0),
+        )
     merged["reason_codes"] = list(
         dict.fromkeys(
             [

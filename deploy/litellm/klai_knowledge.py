@@ -2729,6 +2729,22 @@ def _compose_meta_chat_prefix(*blocks: str) -> str:
     return "\n\n".join(b for b in (META_CHAT_SYSTEM_PROMPT, *blocks) if b)
 
 
+def _should_assemble_provider_context(data: dict[str, Any]) -> bool:
+    """Return whether this request is user-facing chat traffic.
+
+    Internal services can call explicit Klai model aliases for their own
+    provider-native tool loops. Provider normalization belongs to chat traffic
+    only; otherwise the knowledge hook undercuts the router's explicit bypass.
+    """
+    metadata = _request_metadata(data)
+    return bool(
+        data.get("user")
+        or metadata.get("_klai_kb_meta")
+        or metadata.get("_klai_context_meta")
+        or metadata.get("_klai_router_meta")
+    )
+
+
 class KlaiKnowledgeHook(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         if call_type not in ("completion", "acompletion"):
@@ -2736,15 +2752,18 @@ class KlaiKnowledgeHook(CustomLogger):
 
         messages = _sanitize_assistant_history_messages(data.get("messages", []))
         query = _last_user_message(messages)
-        context_result = _KLAI_CONTEXT_ORCHESTRATOR.assemble(
-            messages,
-            requested_model=data.get("model", "klai-primary"),
-            apply_history_budget=False,
-        )
-        messages = context_result.messages
-        context_meta = context_result.meta
         data["messages"] = messages
-        data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
+        context_meta: dict[str, Any] | None = None
+        if _should_assemble_provider_context(data):
+            context_result = _KLAI_CONTEXT_ORCHESTRATOR.assemble(
+                messages,
+                requested_model=data.get("model", "klai-primary"),
+                apply_history_budget=False,
+            )
+            messages = context_result.messages
+            context_meta = context_result.meta
+            data["messages"] = messages
+            data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
         if not query or _is_trivial(query):
             return data
 
@@ -2766,11 +2785,14 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
 
         data["messages"] = messages
-        data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
+        if context_meta is not None:
+            data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
 
-        normalized_user_text_part_messages = context_meta[
-            "normalized_user_text_part_messages"
-        ]
+        normalized_user_text_part_messages = (
+            context_meta["normalized_user_text_part_messages"]
+            if context_meta is not None
+            else 0
+        )
         if normalized_user_text_part_messages:
             logger.warning(
                 "librechat_user_text_part_messages_normalized org_id=%s user_id=%s normalized=%d",

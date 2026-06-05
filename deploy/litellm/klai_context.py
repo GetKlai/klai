@@ -7,6 +7,7 @@ for retrieval/query rewriting, and which metadata explains those choices.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -27,6 +28,14 @@ TOOL_CONTEXT_PLACEHOLDER = (
     "latest user question and retrieved knowledge-base context instead.]"
 )
 ACTIVE_TOOL_RESULT_PREFIX = "[Klai internal tool result]"
+ACTIVE_TOOL_EMPTY_RESULT_PLACEHOLDER = (
+    "[Klai internal tool returned no content. Continue from the latest user request "
+    "and any available retrieved context.]"
+)
+TRAILING_ASSISTANT_REPAIR_PROMPT = (
+    "[Klai context repair] Continue from the latest user request using the "
+    "available conversation and retrieved context."
+)
 SYSTEM_BLOCK_SEPARATOR = "\n\n"
 STALE_LIBRECHAT_UPLOAD_PREFIX = "Attached document(s):"
 INTERNAL_TOOL_ROLES = frozenset({"tool", "function"})
@@ -184,16 +193,41 @@ def _assistant_text_without_tool_parts(content: object) -> tuple[str | None, int
     return text, omitted_parts
 
 
-def _tool_result_text(message: dict[str, Any]) -> str:
-    content = message.get("content")
+def _stringify_tool_content(content: object) -> str:
     text = _text_from_text_parts(content)
-    if text is None and content is not None:
-        text = str(content)
+    if text is not None:
+        return text
+    if content is None:
+        return ""
+    if isinstance(content, (dict, list)):
+        try:
+            return json.dumps(content, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            return str(content)
+    return str(content)
+
+
+def _normalise_active_tool_message(
+    message: dict[str, Any],
+    *,
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    text = _stringify_tool_content(message.get("content"))
     text = (text or "").strip()
     if not text:
-        return ""
-    name = message.get("name") or message.get("tool_call_id") or "tool"
-    return f"{ACTIVE_TOOL_RESULT_PREFIX} {name}\n{text}"
+        text = ACTIVE_TOOL_EMPTY_RESULT_PLACEHOLDER
+        meta["empty_active_tool_results"] += 1
+        if "empty_active_tool_result_placeholder" not in meta["reason_codes"]:
+            meta["reason_codes"].append("empty_active_tool_result_placeholder")
+
+    next_message = {
+        key: value
+        for key, value in message.items()
+        if key in {"role", "tool_call_id", "name", "content"}
+    }
+    next_message["role"] = "tool"
+    next_message["content"] = text
+    return next_message
 
 
 def _last_user_index(messages: list[object]) -> int | None:
@@ -233,21 +267,17 @@ class MistralProviderAdapter:
 
             role = message.get("role")
             if role in INTERNAL_TOOL_ROLES:
+                if index > last_user_index:
+                    normalized_messages.append(
+                        _normalise_active_tool_message(message, meta=meta)
+                    )
+                    meta["active_tool_results_preserved"] += 1
+                    if "active_tool_results_preserved" not in meta["reason_codes"]:
+                        meta["reason_codes"].append("active_tool_results_preserved")
+                    continue
                 meta["omitted_tool_messages"] += 1
                 if "internal_tool_messages_omitted" not in meta["reason_codes"]:
                     meta["reason_codes"].append("internal_tool_messages_omitted")
-                if index > last_user_index:
-                    tool_result_text = _tool_result_text(message)
-                    if tool_result_text:
-                        normalized_messages.append(
-                            {
-                                "role": "user",
-                                "content": tool_result_text,
-                            }
-                        )
-                        meta["active_tool_results_converted"] += 1
-                        if "active_tool_results_converted" not in meta["reason_codes"]:
-                            meta["reason_codes"].append("active_tool_results_converted")
                 continue
 
             next_message = message
@@ -255,6 +285,7 @@ class MistralProviderAdapter:
                 next_message = self._normalize_user_or_assistant_message(
                     message,
                     role=role,
+                    active_tool_turn=index > last_user_index,
                     meta=meta,
                 )
 
@@ -297,9 +328,24 @@ class MistralProviderAdapter:
         message: dict[str, Any],
         *,
         role: object,
+        active_tool_turn: bool,
         meta: dict[str, Any],
     ) -> dict[str, Any]:
         if role == "assistant" and any(key in message for key in ASSISTANT_TOOL_KEYS):
+            if active_tool_turn and isinstance(message.get("tool_calls"), list):
+                next_message = dict(message)
+                text_content = _text_from_text_parts(message.get("content"))
+                if text_content is None:
+                    text_content, omitted_tool_parts = _assistant_text_without_tool_parts(
+                        message.get("content")
+                    )
+                    meta["omitted_tool_content_parts"] += omitted_tool_parts
+                next_message["content"] = text_content or ""
+                meta["active_tool_calls_preserved"] += 1
+                if "active_tool_calls_preserved" not in meta["reason_codes"]:
+                    meta["reason_codes"].append("active_tool_calls_preserved")
+                return next_message
+
             content = message.get("content")
             if isinstance(content, str) and content.strip():
                 assistant_text = content
@@ -421,6 +467,10 @@ class KlaiContextOrchestrator:
             "omitted_tool_messages": 0,
             "omitted_tool_content_parts": 0,
             "active_tool_results_converted": 0,
+            "active_tool_results_preserved": 0,
+            "active_tool_calls_preserved": 0,
+            "empty_active_tool_results": 0,
+            "trailing_assistant_repaired": 0,
             "omitted_history_messages": 0,
             "kept_history_chars": 0,
             "kept_history_tokens_estimate": 0,
@@ -448,6 +498,7 @@ class KlaiContextOrchestrator:
             normalized_messages,
             meta=meta,
         )
+        normalized_messages = _ensure_provider_safe_tail(normalized_messages, meta=meta)
         normalized_last_user_index = _last_user_index(normalized_messages)
         if normalized_last_user_index is None:
             meta["reason_codes"].append("no_user_message_after_sanitization")
@@ -510,7 +561,10 @@ class KlaiContextOrchestrator:
         meta["token_budget_applied"] = use_token_budget
         if not omitted_history_indexes:
             return ContextAssemblyResult(
-                messages=_repair_mistral_message_sequence(normalized_messages, meta=meta),
+                messages=_ensure_provider_safe_tail(
+                    _repair_mistral_message_sequence(normalized_messages, meta=meta),
+                    meta=meta,
+                ),
                 meta=meta,
             )
 
@@ -526,6 +580,7 @@ class KlaiContextOrchestrator:
             assembled.append(message)
         assembled = _merge_history_placeholder_into_system(assembled)
         assembled = _repair_mistral_message_sequence(assembled, meta=meta)
+        assembled = _ensure_provider_safe_tail(assembled, meta=meta)
 
         meta["omitted_history_messages"] = len(omitted_history_indexes)
         meta["reason_codes"].append("history_budget_exceeded")
@@ -593,7 +648,7 @@ def _repair_mistral_message_sequence(
                 system_contents.append(content.strip())
             repaired += 1 if system_contents[:-1] else 0
             continue
-        if role not in ("user", "assistant"):
+        if role not in ("user", "assistant", "tool"):
             repaired += 1
             continue
         conversation.append(message)
@@ -610,9 +665,34 @@ def _repair_mistral_message_sequence(
 
         role = message.get("role")
         if role == "user":
-            repaired_conversation.append(message)
+            run: list[dict[str, Any]] = []
+            while index < len(conversation):
+                candidate = conversation[index]
+                if not isinstance(candidate, dict) or candidate.get("role") != "user":
+                    break
+                run.append(candidate)
+                index += 1
+
+            if len(run) > 1:
+                repaired += len(run) - 1
+            repaired_conversation.append(_merge_same_role_run(run, role="user"))
             last_conversation_role = "user"
-            index += 1
+            continue
+
+        if role == "tool":
+            run = []
+            while index < len(conversation):
+                candidate = conversation[index]
+                if not isinstance(candidate, dict) or candidate.get("role") != "tool":
+                    break
+                run.append(candidate)
+                index += 1
+
+            if last_conversation_role not in ("assistant", "tool"):
+                repaired += len(run)
+                continue
+            repaired_conversation.extend(run)
+            last_conversation_role = "tool"
             continue
 
         if role != "assistant":
@@ -628,7 +708,7 @@ def _repair_mistral_message_sequence(
             run.append(candidate)
             index += 1
 
-        if last_conversation_role != "user":
+        if last_conversation_role not in ("user", "tool"):
             repaired += len(run)
             continue
 
@@ -652,3 +732,41 @@ def _repair_mistral_message_sequence(
         if "mistral_role_sequence_repaired" not in meta["reason_codes"]:
             meta["reason_codes"].append("mistral_role_sequence_repaired")
     return result
+
+
+def _merge_same_role_run(run: list[dict[str, Any]], *, role: str) -> dict[str, Any]:
+    if len(run) == 1:
+        return run[0]
+
+    content_blocks: list[str] = []
+    for message in run:
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            content_blocks.append(content.strip())
+    merged = dict(run[-1])
+    merged["role"] = role
+    merged["content"] = SYSTEM_BLOCK_SEPARATOR.join(content_blocks).strip()
+    return merged
+
+
+def _ensure_provider_safe_tail(
+    messages: list[object],
+    *,
+    meta: dict[str, Any],
+) -> list[object]:
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role in ("user", "tool"):
+            return messages
+        if role == "assistant":
+            next_messages = [
+                *messages,
+                {"role": "user", "content": TRAILING_ASSISTANT_REPAIR_PROMPT},
+            ]
+            meta["trailing_assistant_repaired"] += 1
+            if "trailing_assistant_repaired" not in meta["reason_codes"]:
+                meta["reason_codes"].append("trailing_assistant_repaired")
+            return next_messages
+    return messages

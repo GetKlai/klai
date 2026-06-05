@@ -632,7 +632,25 @@ function createContentAggregator() {
             updateContent(runStep.index, contentPart, true);
         }
     };
-    return { contentParts, aggregateContent, stepMap };
+    const compactContentParts = () => contentParts.filter((part) => {
+        if (!part) {
+            return false;
+        }
+        if (part.type !== _enum.ContentTypes.TEXT) {
+            return true;
+        }
+        const text = typeof part.text === 'string' ? part.text : '';
+        const hasSources = Array.isArray(part.sources) && part.sources.length > 0;
+        const hasToolCallIds = Array.isArray(part.tool_call_ids) && part.tool_call_ids.length > 0;
+        return text.length > 0 || hasSources || hasToolCallIds;
+    });
+    return {
+        get contentParts() {
+            return compactContentParts();
+        },
+        aggregateContent,
+        stepMap,
+    };
 }
 
 exports.ChatModelStreamHandler = ChatModelStreamHandler;
