@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { InlineEdit } from '@/components/ui/inline-edit'
+import { InlineEditRow } from '@/components/ui/inline-edit-row'
 import {
   ListFrame,
   ListHeader,
@@ -20,8 +19,6 @@ import {
 import { SearchInput } from '@/components/ui/search-input'
 import {
   Loader2,
-  Check,
-  X,
   CheckCheck,
   Mic,
   Video,
@@ -71,18 +68,37 @@ function StatusBadge({ status, source }: { status: string; source: Source }) {
   return <Badge variant={c.variant} className={c.className}>{c.label}</Badge>
 }
 
-function MetaText({ item }: { item: UnifiedItem }) {
+function metaParts(item: UnifiedItem) {
+  const parts: string[] = [
+    item.source === 'upload'
+      ? String(m.app_transcribe_source_audio())
+      : String(m.app_transcribe_source_meeting()),
+  ]
+  return parts
+}
+
+function factParts(item: UnifiedItem) {
   const parts: string[] = []
   if (item.text) {
     const count = item.text.trim().split(/\s+/).filter(Boolean).length
     parts.push(m.app_transcribe_meta_word_count({ count: count.toLocaleString(getLocale()) }))
   }
   if (item.duration_seconds != null) parts.push(formatDuration(item.duration_seconds))
-  parts.push(
-    item.source === 'upload'
-      ? m.app_transcribe_source_audio()
-      : m.app_transcribe_source_meeting(),
-  )
+  return parts
+}
+
+function metaTextValue(item: UnifiedItem) {
+  const parts = metaParts(item)
+  if (item.language) parts.unshift(item.language.toUpperCase())
+  return parts.join(' \u00b7 ')
+}
+
+function editDescriptionValue(item: UnifiedItem) {
+  return [metaTextValue(item), factParts(item).join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')
+}
+
+function MetaText({ item }: { item: UnifiedItem }) {
+  const parts = metaParts(item)
 
   return (
     <span className="text-xs text-gray-400">
@@ -104,6 +120,15 @@ function MetaText({ item }: { item: UnifiedItem }) {
   )
 }
 
+function FactText({ item }: { item: UnifiedItem }) {
+  const parts = factParts(item)
+  return (
+    <span className="text-sm text-gray-500">
+      {parts.length > 0 ? parts.join(' \u00b7 ') : '\u2014'}
+    </span>
+  )
+}
+
 function sourceLabel(item: UnifiedItem) {
   return item.source === 'upload'
     ? m.app_transcribe_source_audio()
@@ -111,7 +136,7 @@ function sourceLabel(item: UnifiedItem) {
 }
 
 const transcriptionListGrid =
-  'grid-cols-[2rem_minmax(0,1fr)] lg:grid-cols-[2rem_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.55fr)_224px]'
+  'grid-cols-[2rem_minmax(0,1fr)] lg:grid-cols-[2rem_minmax(0,1fr)_minmax(7rem,0.48fr)_minmax(7rem,0.45fr)_192px]'
 
 interface TranscriptionTableProps {
   allItems: UnifiedItem[]
@@ -159,7 +184,6 @@ export function TranscriptionTable({
   retryingId,
 }: TranscriptionTableProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editName, setEditName] = useState<string>('')
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const wasRenaming = useRef(false)
@@ -168,7 +192,6 @@ export function TranscriptionTable({
   useEffect(() => {
     if (wasRenaming.current && !isRenaming) {
       setEditingId(null)
-      setEditName('')
     }
     wasRenaming.current = isRenaming
   }, [isRenaming])
@@ -176,16 +199,14 @@ export function TranscriptionTable({
   function startEdit(item: UnifiedItem) {
     setConfirmingDeleteId(null)
     setEditingId(item.id)
-    setEditName(item.title ?? '')
   }
 
   function cancelEdit() {
     setEditingId(null)
-    setEditName('')
   }
 
-  function saveEdit(id: string) {
-    onRename(id, editName.trim() || null)
+  function saveEdit(id: string, name: string) {
+    onRename(id, name.trim() || null)
     // Edit closes via useEffect when isRenaming transitions false
   }
 
@@ -248,9 +269,9 @@ export function TranscriptionTable({
           <ListHeader className={`hidden gap-x-3 ${transcriptionListGrid} lg:grid`}>
             <span>{m.app_transcribe_col_source()}</span>
             <span>{m.app_transcribe_col_text()}</span>
+            <span>{m.app_transcribe_col_words()} / {m.app_transcribe_col_duration()}</span>
             <span>{m.app_transcribe_col_date()}</span>
-            <span>{m.app_transcribe_col_duration()}</span>
-            <span className="justify-self-stretch text-right" aria-hidden="true" />
+            <span className="justify-self-stretch text-right">{m.app_transcribe_col_actions()}</span>
           </ListHeader>
 
           {filteredItems.map((item) => {
@@ -287,56 +308,59 @@ export function TranscriptionTable({
                   )}
                 </div>
 
-                <ListRowContent>
-                  <InlineEdit
-                    isEditing={isEditing}
-                    value={editName}
-                    onValueChange={setEditName}
-                    onSave={() => saveEdit(item.id)}
-                    onCancel={cancelEdit}
-                    isSaving={isSaving}
-                    inputClassName="font-medium text-sm"
-                  >
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                      {item.title ? (
-                        <ListRowTitle className={canOpen ? 'group-hover:underline' : undefined}>
-                          {item.title}
-                        </ListRowTitle>
-                      ) : (
-                        <ListRowTitle className="text-gray-400">
-                          {item.meeting_url ?? '\u2014'}
-                        </ListRowTitle>
-                      )}
-                      {item.source === 'upload' && item.has_summary && (
-                        <FileText
-                          className="h-3.5 w-3.5 shrink-0 text-gray-400"
-                          aria-label={m.app_transcribe_has_summary()}
-                        />
-                      )}
-                      {item.status !== 'done' && (
-                        <StatusBadge status={item.status} source={item.source} />
-                      )}
+                {isEditing ? (
+                  <div className="col-start-2 min-w-0 lg:col-span-4">
+                    <InlineEditRow
+                      isEditing
+                      value={item.title ?? ''}
+                      description={editDescriptionValue(item)}
+                      isSaving={isSaving}
+                      saveLabel={m.app_transcribe_edit_save()}
+                      cancelLabel={m.app_transcribe_edit_cancel()}
+                      onSubmit={({ name }) => saveEdit(item.id, name)}
+                      onCancel={cancelEdit}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <ListRowContent>
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                        {item.title ? (
+                          <ListRowTitle className={canOpen ? 'group-hover:underline' : undefined}>
+                            {item.title}
+                          </ListRowTitle>
+                        ) : (
+                          <ListRowTitle className="text-gray-400">
+                            {item.meeting_url ?? '\u2014'}
+                          </ListRowTitle>
+                        )}
+                        {item.source === 'upload' && item.has_summary && (
+                          <FileText
+                            className="h-3.5 w-3.5 shrink-0 text-gray-400"
+                            aria-label={m.app_transcribe_has_summary()}
+                          />
+                        )}
+                        {item.status !== 'done' && (
+                          <StatusBadge status={item.status} source={item.source} />
+                        )}
+                      </div>
+                      <ListRowDescription>
+                        <MetaText item={item} />
+                      </ListRowDescription>
+                    </ListRowContent>
+
+                    <div className="col-start-2 whitespace-nowrap tabular-nums lg:col-start-auto">
+                      <FactText item={item} />
                     </div>
-                  </InlineEdit>
-                  <ListRowDescription>
-                    <MetaText item={item} />
-                  </ListRowDescription>
-                </ListRowContent>
 
-                <div className="col-start-2 whitespace-nowrap text-sm text-gray-900 tabular-nums lg:col-start-auto">
-                  {formatDate(item.created_at)}
-                </div>
+                    <div className="col-start-2 whitespace-nowrap text-sm text-gray-900 tabular-nums lg:col-start-auto">
+                      {formatDate(item.created_at)}
+                    </div>
 
-                <div className="col-start-2 text-sm text-gray-500 lg:col-start-auto">
-                  {item.duration_seconds != null ? formatDuration(item.duration_seconds) : '\u2014'}
-                </div>
-
-                <ListRowActions
-                  className="col-start-2 self-center justify-self-end lg:col-start-auto"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="relative">
-                    <div className={isEditing ? 'opacity-0 pointer-events-none' : undefined}>
+                    <ListRowActions
+                      className="col-start-2 self-center justify-self-end lg:col-start-auto"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <InlineDeleteConfirm
                         isConfirming={isConfirmingDelete}
                         isPending={isDeleting}
@@ -402,25 +426,9 @@ export function TranscriptionTable({
                           />
                         </RowActionGroup>
                       </InlineDeleteConfirm>
-                    </div>
-                    {isEditing && (
-                      <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
-                        <InlineRowButton
-                          tone="success"
-                          disabled={isSaving}
-                          onClick={() => saveEdit(item.id)}
-                        >
-                          {isSaving ? <Loader2 className="animate-spin" /> : <Check />}
-                          {m.app_transcribe_edit_save()}
-                        </InlineRowButton>
-                        <InlineRowButton onClick={cancelEdit}>
-                          <X />
-                          {m.app_transcribe_edit_cancel()}
-                        </InlineRowButton>
-                      </div>
-                    )}
-                  </div>
-                </ListRowActions>
+                    </ListRowActions>
+                  </>
+                )}
               </ListRow>
             )
           })}

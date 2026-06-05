@@ -195,6 +195,7 @@
   "app_transcribe_col_duration": "Duration",
   "app_transcribe_col_date": "Created",
   "app_transcribe_col_source": "Source",
+  "app_transcribe_col_actions": "Actions",
   "app_transcribe_edit_label": "Edit name",
   "app_transcribe_edit_save": "Save",
   "app_transcribe_edit_cancel": "Cancel",
