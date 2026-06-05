@@ -21,6 +21,7 @@ readonly BACKUP_DIR="${BACKUP_DIR:-${BACKUP_ROOT}/${BACKUP_DATE}}"
 readonly COMPOSE_DIR="${COMPOSE_DIR:-/opt/klai}"
 readonly SECRETS_DIR="${SECRETS_DIR:-${COMPOSE_DIR}/secrets}"
 readonly MONGODB_NETWORK="${MONGODB_NETWORK:-klai-net-mongodb}"
+readonly MONGODB_MIN_NOFILE="${MONGODB_MIN_NOFILE:-64000}"
 readonly QDRANT_NETWORK="${QDRANT_NETWORK:-klai-net}"
 readonly TOTAL_STEPS=16
 
@@ -103,6 +104,10 @@ container_restart_count() {
 
 container_started_at() {
   docker inspect -f '{{.State.StartedAt}}' "$1"
+}
+
+container_nofile_limit() {
+  docker exec "$1" sh -lc 'ulimit -n'
 }
 
 container_env_value() {
@@ -196,6 +201,7 @@ backup_mongodb() {
   local before_started_at
   local after_restarts
   local after_started_at
+  local nofile_limit
 
   container="$(ctr mongodb)"
   output="${BACKUP_DIR}/mongodb-all.archive"
@@ -203,6 +209,11 @@ backup_mongodb() {
 
   if ! container_running "${container}"; then
     fail "MongoDB container is not running"
+  fi
+
+  nofile_limit="$(container_nofile_limit "${container}")"
+  if [[ "${nofile_limit}" =~ ^[0-9]+$ && "${nofile_limit}" -lt "${MONGODB_MIN_NOFILE}" ]]; then
+    fail "MongoDB nofile limit is ${nofile_limit}; set compose ulimits.nofile to at least ${MONGODB_MIN_NOFILE}"
   fi
 
   image="$(docker inspect -f '{{.Config.Image}}' "${container}")"
