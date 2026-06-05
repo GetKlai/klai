@@ -14,7 +14,7 @@ import {
   ListRowTitle,
 } from '@/components/ui/list'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
-import { PageHeader } from '@/components/ui/page-header'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import * as m from '@/paraglide/messages'
@@ -40,7 +40,7 @@ function WidgetsPage() {
     <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.admin_widgets_title()}
-        description={m.admin_widgets_subtitle()}
+        description={m.admin_section_widgets_description()}
         actions={
           <Button
             type="button"
@@ -52,6 +52,10 @@ function WidgetsPage() {
           </Button>
         }
       />
+
+      <PageIntro>
+        <p>{m.admin_widgets_subtitle()}</p>
+      </PageIntro>
 
       {error && (
         <QueryErrorState
