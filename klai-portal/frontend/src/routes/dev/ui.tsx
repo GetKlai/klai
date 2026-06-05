@@ -197,7 +197,7 @@ function Section({
   children: ReactNode
 }) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-4 py-10 first:pt-0 last:pb-0">
       <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
       {children}
     </section>
@@ -243,6 +243,7 @@ function UiCatalogPage() {
         </p>
       </div>
 
+      <div className="divide-y divide-gray-200">
       <Section title="Buttons">
         <div className="flex flex-wrap items-center gap-3">
           <Button>Default</Button>
@@ -632,6 +633,7 @@ function UiCatalogPage() {
           </div>
         </div>
       </Section>
+      </div>
     </main>
   )
 }
