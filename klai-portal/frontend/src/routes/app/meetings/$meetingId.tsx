@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson } from 'lucide-react'
@@ -11,7 +11,20 @@ import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
 
+type TabId = 'summary' | 'transcript'
+
+const VALID_TABS = new Set<TabId>(['summary', 'transcript'])
+
+type MeetingSearch = {
+  tab?: TabId
+}
+
 export const Route = createFileRoute('/app/meetings/$meetingId')({
+  validateSearch: (search: Record<string, unknown>): MeetingSearch => ({
+    tab: (VALID_TABS as Set<string>).has(search.tab as string)
+      ? (search.tab as TabId)
+      : undefined,
+  }),
   component: () => (
     <ProductGuard product="scribe">
       <MeetingDetailPage />
@@ -122,6 +135,7 @@ function stripMarkdown(md: string): string {
 
 function MeetingDetailPage() {
   const { meetingId } = Route.useParams()
+  const search = Route.useSearch()
   const auth = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -226,7 +240,43 @@ function MeetingDetailPage() {
 
   const canStop = ['recording', 'joining'].includes(meeting.status)
   const hasTranscript = meeting.status === 'done' && !!(meeting.transcript_text || meeting.transcript_segments?.length)
+  const hasSummary = !!meeting.summary_json
   const meetingTitle = meeting.meeting_title ?? meeting.meeting_url
+  const activeTab: TabId = search.tab ?? 'summary'
+  const tabs: { id: TabId; label: string }[] = [
+    { id: 'summary', label: m.app_meetings_summary_title() },
+    { id: 'transcript', label: m.app_meetings_transcript_title() },
+  ]
+
+  function setTab(tab: TabId) {
+    void navigate({
+      to: '/app/meetings/$meetingId',
+      params: { meetingId },
+      search: { tab },
+    })
+  }
+
+  function renderSummarizeButton(variant: 'default' | 'outline') {
+    return (
+      <Button
+        variant={variant}
+        size="sm"
+        onClick={() => summarizeMutation.mutate(hasSummary)}
+        disabled={summarizeMutation.isPending}
+      >
+        {summarizeMutation.isPending ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            {m.app_meetings_summary_loading()}
+          </>
+        ) : hasSummary ? (
+          m.app_meetings_resummarize_button()
+        ) : (
+          m.app_meetings_summarize_button()
+        )}
+      </Button>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
@@ -290,137 +340,138 @@ function MeetingDetailPage() {
       )}
 
       {hasTranscript && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="text-base font-medium">
-              {m.app_meetings_transcript_title()}
-            </CardTitle>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={copyTranscript}>
-                {copied ? (
-                  <>
-                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
-                    {m.app_meetings_copy_done()}
-                  </>
-                ) : (
-                  <>
-                    <Copy className="mr-1.5 h-3.5 w-3.5" />
-                    {m.app_meetings_copy()}
-                  </>
-                )}
-              </Button>
-              <Button variant="outline" size="sm" onClick={downloadTranscript}>
-                <Download className="mr-1.5 h-3.5 w-3.5" />
-                {m.app_meetings_download()}
-              </Button>
-              {meeting.transcript_segments && meeting.transcript_segments.length > 0 && (
-                <Button variant="outline" size="sm" onClick={downloadRaw}>
-                  <FileJson className="mr-1.5 h-3.5 w-3.5" />
-                  {m.app_meetings_download_raw()}
-                </Button>
+        <div className="space-y-6">
+          <div className="overflow-x-auto border-b border-gray-200">
+            <nav className="-mb-px flex gap-6">
+              {tabs.map(({ id: tabId, label }) => {
+                const isActive = tabId === activeTab
+                return (
+                  <Button
+                    key={tabId}
+                    type="button"
+                    variant="link"
+                    onClick={() => setTab(tabId)}
+                    className={[
+                      'h-auto shrink-0 rounded-none px-0 pb-3 text-sm font-medium no-underline border-b-2 transition-colors hover:no-underline',
+                      isActive
+                        ? 'border-gray-900 text-gray-900'
+                        : 'border-transparent text-gray-400 hover:text-gray-900',
+                    ].join(' ')}
+                  >
+                    {label}
+                  </Button>
+                )
+              })}
+            </nav>
+          </div>
+
+          {summaryError && activeTab === 'summary' && (
+            <Card className="border-[var(--color-destructive)]">
+              <CardContent className="pt-4">
+                <p className="text-sm font-medium text-[var(--color-destructive)]">
+                  {m.app_meetings_summary_error()}
+                </p>
+                <p className="mt-1 text-sm text-gray-400">{summaryError}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {activeTab === 'summary' && (
+            <section className="space-y-4" aria-label={m.app_meetings_summary_title()}>
+              {meeting.summary_json && (
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button variant="outline" size="sm" onClick={copySummaryText}>
+                    {summaryCopied === 'text' ? (
+                      <>
+                        <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                        {m.app_meetings_summary_copy_done()}
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-1.5 h-3.5 w-3.5" />
+                        {m.app_meetings_summary_copy_text()}
+                      </>
+                    )}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={copySummaryMarkdown}>
+                    {summaryCopied === 'markdown' ? (
+                      <>
+                        <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                        {m.app_meetings_summary_copy_done()}
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-1.5 h-3.5 w-3.5" />
+                        {m.app_meetings_summary_copy_markdown()}
+                      </>
+                    )}
+                  </Button>
+                  {renderSummarizeButton('outline')}
+                </div>
               )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {meeting.transcript_segments && meeting.transcript_segments.length > 0 ? (
-              <div className="space-y-2 text-sm">
-                {meeting.transcript_segments.map((seg, i) => (
-                  <div key={i} className="flex gap-3">
-                    <span className="shrink-0 text-xs text-gray-400 tabular-nums mt-0.5 w-14">
-                      [{formatTimestamp(seg.start)}]
-                    </span>
-                    <div>
-                      <span className="font-medium text-gray-900">
-                        {seg.speaker}:{' '}
-                      </span>
-                      <span className="text-gray-900">{seg.text}</span>
-                    </div>
-                  </div>
-                ))}
+              {meeting.summary_json ? (
+                <div className="text-sm text-gray-900 space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
+                  <Markdown>{fullSummaryMd}</Markdown>
+                </div>
+              ) : (
+                <div className="flex min-h-32 items-center justify-center">
+                  {renderSummarizeButton('default')}
+                </div>
+              )}
+            </section>
+          )}
+
+          {activeTab === 'transcript' && (
+            <section className="space-y-4" aria-label={m.app_meetings_transcript_title()}>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={copyTranscript}>
+                  {copied ? (
+                    <>
+                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                      {m.app_meetings_copy_done()}
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="mr-1.5 h-3.5 w-3.5" />
+                      {m.app_meetings_copy()}
+                    </>
+                  )}
+                </Button>
+                <Button variant="outline" size="sm" onClick={downloadTranscript}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  {m.app_meetings_download()}
+                </Button>
+                {meeting.transcript_segments && meeting.transcript_segments.length > 0 && (
+                  <Button variant="outline" size="sm" onClick={downloadRaw}>
+                    <FileJson className="mr-1.5 h-3.5 w-3.5" />
+                    {m.app_meetings_download_raw()}
+                  </Button>
+                )}
               </div>
-            ) : (
-              <p className="text-sm text-gray-400 whitespace-pre-wrap">
-                {meeting.transcript_text}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {hasTranscript && (
-        <div className="flex justify-end">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => summarizeMutation.mutate(!!meeting.summary_json)}
-            disabled={summarizeMutation.isPending}
-          >
-            {summarizeMutation.isPending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {m.app_meetings_summary_loading()}
-              </>
-            ) : meeting.summary_json ? (
-              m.app_meetings_resummarize_button()
-            ) : (
-              m.app_meetings_summarize_button()
-            )}
-          </Button>
+              {meeting.transcript_segments && meeting.transcript_segments.length > 0 ? (
+                <div className="space-y-2 text-sm">
+                  {meeting.transcript_segments.map((seg, i) => (
+                    <div key={i} className="flex gap-3">
+                      <span className="shrink-0 text-xs text-gray-400 tabular-nums mt-0.5 w-14">
+                        [{formatTimestamp(seg.start)}]
+                      </span>
+                      <div>
+                        <span className="font-medium text-gray-900">
+                          {seg.speaker}:{' '}
+                        </span>
+                        <span className="text-gray-900">{seg.text}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 whitespace-pre-wrap">
+                  {meeting.transcript_text}
+                </p>
+              )}
+            </section>
+          )}
         </div>
-      )}
-
-      {summaryError && (
-        <Card className="border-[var(--color-destructive)]">
-          <CardContent className="pt-4">
-            <p className="text-sm font-medium text-[var(--color-destructive)]">
-              {m.app_meetings_summary_error()}
-            </p>
-            <p className="mt-1 text-sm text-gray-400">{summaryError}</p>
-          </CardContent>
-        </Card>
-      )}
-
-      {meeting.summary_json && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="text-base font-medium">
-              {m.app_meetings_summary_title()}
-            </CardTitle>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={copySummaryText}>
-                {summaryCopied === 'text' ? (
-                  <>
-                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
-                    {m.app_meetings_summary_copy_done()}
-                  </>
-                ) : (
-                  <>
-                    <Copy className="mr-1.5 h-3.5 w-3.5" />
-                    {m.app_meetings_summary_copy_text()}
-                  </>
-                )}
-              </Button>
-              <Button variant="outline" size="sm" onClick={copySummaryMarkdown}>
-                {summaryCopied === 'markdown' ? (
-                  <>
-                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
-                    {m.app_meetings_summary_copy_done()}
-                  </>
-                ) : (
-                  <>
-                    <Copy className="mr-1.5 h-3.5 w-3.5" />
-                    {m.app_meetings_summary_copy_markdown()}
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm text-gray-900 space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
-              <Markdown>{fullSummaryMd}</Markdown>
-            </div>
-          </CardContent>
-        </Card>
       )}
 
       {meeting.status === 'done' && !hasTranscript && (
