@@ -585,6 +585,24 @@ function UiCatalogPage() {
               Remove item
             </RowActionButton>
           </RowActionGroup>
+
+          <RowActionGroup className="justify-start">
+            <BorderedRowActionIconButton label="Inhoud tonen" action="expand" />
+            <BorderedRowActionIconButton label="Synchroniseren" action="sync" />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <BorderedRowActionIconButton label="Meer acties" action="more" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem>Openen</DropdownMenuItem>
+                <DropdownMenuItem>Bewerken</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="text-[var(--color-destructive)] focus:text-[var(--color-destructive)]">
+                  Verwijderen
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </RowActionGroup>
         </div>
       </Section>
 
@@ -604,8 +622,8 @@ function UiCatalogPage() {
               <ListRowDescription>Rustige lijst met links padding en compacte acties.</ListRowDescription>
             </ListRowContent>
             <ListRowActions className="self-center justify-self-end">
-              <BorderedRowActionIconButton label="Bewerken" action="edit" />
               <BorderedRowActionIconButton label="Openen" action="open" />
+              <BorderedRowActionIconButton label="Bewerken" action="edit" />
               <BorderedRowActionIconButton label="Verwijderen" action="delete" />
             </ListRowActions>
           </ListRow>
@@ -620,8 +638,19 @@ function UiCatalogPage() {
             </ListRowContent>
             <ListRowActions className="self-center justify-self-end">
               <BorderedRowActionIconButton label="Synchroniseren" action="sync" />
-              <BorderedRowActionIconButton label="Configureren" action="configure" />
-              <BorderedRowActionIconButton label="Meer acties" action="more" />
+              <BorderedRowActionIconButton label="Openen" action="open" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <BorderedRowActionIconButton label="Meer acties" action="more" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem>Configureren</DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-[var(--color-destructive)] focus:text-[var(--color-destructive)]">
+                    Verwijderen
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </ListRowActions>
           </ListRow>
 

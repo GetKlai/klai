@@ -25,6 +25,7 @@ import {
   ListRow,
   ListRowActions,
   ListRowContent,
+  ListRowDescription,
   ListRowIcon,
   ListRowTitle,
 } from '@/components/ui/list'
@@ -80,9 +81,9 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
     <div>
       <ListRow
         confirming={confirmingDelete}
-        className="items-center gap-3 px-4 py-4 klai-hover"
+        className="grid items-center gap-x-3 gap-y-2 px-4 py-4 klai-hover sm:grid-cols-[2rem_minmax(0,1fr)_8rem_6.5rem]"
       >
-        <ListRowIcon>
+        <ListRowIcon className="self-center">
           <SourceIcon source={source} />
         </ListRowIcon>
         <ListRowContent>
@@ -101,20 +102,23 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
               className="min-w-0 w-full text-left"
               aria-expanded={expanded}
             >
-              <div className="flex items-baseline gap-2 min-w-0">
-                <ListRowTitle className="min-w-0 flex-1">{source.name}</ListRowTitle>
-                <span className="text-xs text-gray-400 shrink-0">{meta}</span>
-              </div>
+              <ListRowTitle className="block min-w-0">{source.name}</ListRowTitle>
+              <ListRowDescription>{meta}</ListRowDescription>
             </button>
           </InlineEdit>
         </ListRowContent>
 
-        <StatusBadge source={source} />
+        <div className="justify-self-start whitespace-nowrap sm:justify-self-end">
+          <StatusBadge source={source} />
+        </div>
 
         {/* Actions cell with rename-overlay slot.
             When renaming, SourceRowActions fades out and the Save/Cancel
             buttons sit on top - same width, no layout shift. */}
-        <ListRowActions className="relative self-center" onClick={(e) => e.stopPropagation()}>
+        <ListRowActions
+          className="relative self-center justify-self-end"
+          onClick={(e) => e.stopPropagation()}
+        >
           <SourceRowActions
             source={source}
             kbSlug={kbSlug}

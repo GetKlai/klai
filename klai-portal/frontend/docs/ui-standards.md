@@ -371,6 +371,25 @@ The full action→tone and action→icon maps are the single source of truth in
 `src/components/ui/row-action.tsx` (`rowActionToneByAction`, `rowActionIcons`).
 Add new actions there, not ad hoc per page.
 
+### Row action order and overflow
+
+Order row actions by user intent, left to right:
+
+1. Row toggle or drill-down (`expand`/`collapse`).
+2. Operational refresh/recovery (`sync`, `retry`, `reauth`).
+3. Open/navigate actions (`open`, `external`, docs editor).
+4. Edit actions (`edit`, `rename`, `configure`).
+5. Destructive actions (`delete`, `leave`, `offboard`, `stop`).
+
+Edit actions always come before delete actions. Delete is always the final
+action in a visible row-action group or in an overflow menu.
+
+Show at most three direct controls in a row action cell. If a row has four or
+more actions, keep the highest-frequency two actions visible, then use a
+`more` row action (`DropdownMenu`) for the rest. Preserve the same order inside
+the menu and keep destructive actions last. Do not split old and new action
+patterns side by side in the same row.
+
 ### Bordered action icons
 
 When actions need a visible affordance (outlined icon buttons), the border
