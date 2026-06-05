@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Button } from '@/components/ui/button'
+import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { InlineEdit } from '@/components/ui/inline-edit'
 import { Input } from '@/components/ui/input'
@@ -449,24 +449,18 @@ export function TranscriptionTable({
                       </div>
                       {isEditing && (
                         <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
-                          <Button
-                            size="sm"
-                            className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-success)] text-white hover:opacity-70"
+                          <InlineRowButton
+                            tone="success"
                             disabled={isSaving}
                             onClick={() => saveEdit(item.id)}
                           >
                             {isSaving ? <Loader2 className="animate-spin" /> : <Check />}
                             {m.app_transcribe_edit_save()}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5"
-                            onClick={cancelEdit}
-                          >
+                          </InlineRowButton>
+                          <InlineRowButton onClick={cancelEdit}>
                             <X />
                             {m.app_transcribe_edit_cancel()}
-                          </Button>
+                          </InlineRowButton>
                         </div>
                       )}
                     </div>

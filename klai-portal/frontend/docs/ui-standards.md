@@ -43,8 +43,10 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
 | `row-action` | List/table row actions: `RowActionIconButton`, `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
 | `list` | List primitives: `ListFrame`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
+| `inline-row-button` | The single source for small inline-row action pills (`InlineRowButton`): Save/Cancel, Delete/Cancel, Approve/Deny. Tones: success/destructive/neutral | Yes |
+| `inline-edit-row` | Canonical inline edit for a list row (`InlineEditRow`): name + optional description, zero layout shift, owns Save/Cancel | Yes |
 | `inline-delete-confirm` | Inline destructive confirmation inside a row (no layout shift) | Yes |
-| `inline-edit` | Click-to-edit text in place (with save/cancel) | Yes |
+| `inline-edit` | Low-level single-field click-to-edit overlay, for custom row layouts that own their own buttons. Prefer `InlineEditRow` for new rows | Yes |
 | `radio-card-group` | Selectable radio option cards (`RadioCardGroup`) | Yes |
 | `step-indicator` | Wizard step progress (`StepIndicator`) | Yes |
 | `alert-dialog` | Centered confirm dialog for destructive actions outside rows | Yes |
@@ -243,6 +245,61 @@ description rhythm stays identical to other lists.
 </ListFrame>
 ```
 
+## Inline Edit (rows)
+
+Editing a list row's name (and optionally a description) in place uses
+`InlineEditRow`. It is the canonical pattern, ported from the production
+`CoverageNodeRow` ("Categorieën & Dekking").
+
+```tsx
+import { InlineEditRow } from '@/components/ui/inline-edit-row'
+
+<ListRow confirming={confirmingDelete}>
+  <InlineEditRow
+    isEditing={editingId === row.id}
+    value={row.name}
+    description={row.description}
+    withDescription            // omit for a name-only row
+    saveLabel={m.save()}
+    cancelLabel={m.cancel()}
+    onSubmit={({ name, description }) => saveMutation.mutate({ name, description })}
+    onCancel={() => setEditingId(null)}
+    actions={/* view-mode right cluster: edit/delete icons, InlineDeleteConfirm */}
+  />
+</ListRow>
+```
+
+Why it looks the way it does (do not regress these):
+
+- **Zero layout shift.** Each field keeps its view text in the DOM as an
+  invisible ghost that defines the box height; the `<input>` is painted
+  `absolute inset-0` on top. Toggling edit never changes the row height.
+- **No glyph jump.** The input cancels its own `px-1` with `-ml-1`, so the
+  text starts at the exact same x as the ghost (the rounded field bleeds 4px
+  into the row gutter instead of pushing the text right).
+- **No overlap.** The content block is `flex-1` and the Save/Cancel cluster
+  `shrink-0`; the inputs shrink to make room for the buttons rather than
+  sitting underneath them.
+- **Actions are vertically centred** against the whole (possibly two-line)
+  block via the row's `items-center`.
+- Buffer state is seeded only on the false → true edit transition (a `useRef`
+  guard), so a query refetch cannot wipe typed input mid-edit.
+
+### Inline row buttons (`InlineRowButton`)
+
+Every small inline-row action pill — Save/Cancel, Delete/Cancel, Approve/Deny —
+renders through `InlineRowButton`, the single source of truth for their size
+and tone. Standard: `h-6 text-xs` with `size-3` icons. Tones: `success`
+(green-filled), `destructive` (red-filled), `neutral` (ghost). Never hand-roll
+a `h-6 text-[10px]`/`text-xs` Button pill again — it drifts.
+
+```tsx
+import { InlineRowButton } from '@/components/ui/inline-row-button'
+
+<InlineRowButton tone="success" onClick={save}><Check /> {m.save()}</InlineRowButton>
+<InlineRowButton onClick={cancel}><X /> {m.cancel()}</InlineRowButton>
+```
+
 ## Inline Delete Confirmation
 
 Destructive actions inside a row use `InlineDeleteConfirm` — the canonical
@@ -284,7 +341,8 @@ Rules:
   `bg-[var(--color-hover)]` on the confirming branch (see
   `TranscriptionTable`, `SourceRow`).
 - The confirm button is destructive-filled with the action label; cancel is a
-  ghost `X`. Both come from the component — do not restyle.
+  ghost `X`. Both render through `InlineRowButton` (the shared inline-pill) —
+  do not restyle.
 - For destructive actions that are NOT in a row (e.g. a whole page or card),
   use `alert-dialog` instead.
 - `delete-confirm-button` is the deprecated predecessor (raw buttons,
@@ -382,9 +440,12 @@ Every field needs `Label` plus matching `id`/`htmlFor`.
   `Input` with a hand-placed icon.
 - **`Select`** renders a custom chevron; its right padding is symmetric with
   the left text padding. Do not re-add a native arrow or a second icon.
-- **Inline value edits** (rename in a row) use `InlineEdit` with a green
-  save + ghost cancel control. The amber edit trigger is a bordered action
-  icon (`border border-current`), matching the row-action look.
+- **Inline value edits** in a list row use `InlineEditRow` (see "Inline Edit
+  (rows)" above): it edits a name + optional description with zero layout
+  shift and owns the green Save + ghost Cancel via `InlineRowButton`. The
+  amber edit trigger is a bordered action icon (`border border-current`),
+  matching the row-action look. `InlineEdit` (the low-level single-field
+  overlay) stays available for custom rows that own their own button layout.
 
 ### Selectable cards
 

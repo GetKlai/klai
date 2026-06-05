@@ -1,5 +1,5 @@
 import { Loader2, Trash2, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { InlineRowButton } from '@/components/ui/inline-row-button'
 import type { ReactNode } from 'react'
 
 interface InlineDeleteConfirmProps {
@@ -54,24 +54,14 @@ export function InlineDeleteConfirm({
         // hover bg (gray-50) so it blends with the row's confirming
         // state (see sources-row.tsx ``confirmingDelete`` branch).
         <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap bg-[var(--color-hover)] pl-4">
-          <Button
-            size="sm"
-            className="h-6 text-xs px-2 gap-1 [&_svg]:size-3 bg-[var(--color-destructive)] text-white hover:opacity-70"
-            disabled={isPending}
-            onClick={onConfirm}
-          >
+          <InlineRowButton tone="destructive" disabled={isPending} onClick={onConfirm}>
             {isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
             {label}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 text-xs px-2 gap-1 [&_svg]:size-3"
-            onClick={onCancel}
-          >
+          </InlineRowButton>
+          <InlineRowButton onClick={onCancel}>
             <X />
             {cancelLabel}
-          </Button>
+          </InlineRowButton>
         </div>
       )}
     </div>

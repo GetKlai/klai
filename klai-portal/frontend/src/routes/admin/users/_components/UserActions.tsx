@@ -3,17 +3,13 @@ import type { UseMutationResult } from '@tanstack/react-query'
 import {
   Loader2,
   LogOut,
-  MoreHorizontal,
   Pause,
-  Pencil,
   Play,
-  Send,
   ShieldCheck,
-  Trash2,
   UserX,
 } from 'lucide-react'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { Tooltip } from '@/components/ui/tooltip'
+import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -86,55 +82,40 @@ export function UserActions({
       }}
       onCancel={() => onConfirmDelete(null)}
     >
-      <div className="flex items-start justify-end gap-2 mt-px">
+      <RowActionGroup>
         {canResendInvite && (
-          <Tooltip label={m.admin_users_resend_invite()}>
-            <button
-              disabled={isResending}
-              onClick={() => resendInviteMutation.mutate(user)}
-              aria-label={m.admin_users_resend_invite()}
-              className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 disabled:opacity-40"
-            >
-              {isResending
-                ? <Loader2 className="h-4 w-4 animate-spin" />
-                : <Send className="h-4 w-4" />
-              }
-            </button>
-          </Tooltip>
+          <RowActionIconButton
+            label={m.admin_users_resend_invite()}
+            action="send"
+            disabled={isResending}
+            spinner={isResending ? <Loader2 className="animate-spin" /> : undefined}
+            onClick={() => resendInviteMutation.mutate(user)}
+          />
         )}
-        <Tooltip label={m.admin_users_edit()}>
-          <button
-            onClick={() =>
-              navigate({
-                to: '/admin/users/$userId/edit',
-                params: { userId: user.zitadel_user_id },
-              })
-            }
-            aria-label={m.admin_users_edit()}
-            className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-          >
-            <Pencil className="h-4 w-4" />
-          </button>
-        </Tooltip>
+        <RowActionIconButton
+          label={m.admin_users_edit()}
+          action="edit"
+          onClick={() =>
+            navigate({
+              to: '/admin/users/$userId/edit',
+              params: { userId: user.zitadel_user_id },
+            })
+          }
+        />
         {user.invite_pending ? (
-          <Tooltip label={m.admin_users_delete()}>
-            <button
-              onClick={() => onConfirmDelete(user.zitadel_user_id)}
-              aria-label={m.admin_users_delete()}
-              className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </Tooltip>
+          <RowActionIconButton
+            label={m.admin_users_delete()}
+            action="delete"
+            onClick={() => onConfirmDelete(user.zitadel_user_id)}
+          />
         ) : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button
-                aria-label={m.admin_users_col_actions()}
-                className="inline-flex items-center justify-center rounded text-gray-400 transition-colors klai-hover"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
+              <RowActionIconButton
+                label={m.admin_users_col_actions()}
+                action="more"
+                tooltip={false}
+              />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {!isSelf && (
@@ -207,7 +188,7 @@ export function UserActions({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-      </div>
+      </RowActionGroup>
     </InlineDeleteConfirm>
   )
 }

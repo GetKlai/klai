@@ -6,7 +6,7 @@ import {
 } from '@tanstack/react-table'
 import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { SearchInput } from '@/components/ui/search-input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -169,7 +169,7 @@ function UsersPage() {
 
           {users.length > 0 && (
             <div className="max-w-sm">
-              <Input
+              <SearchInput
                 type="search"
                 placeholder={m.admin_users_search_placeholder()}
                 value={searchQuery}
@@ -227,7 +227,7 @@ function UsersPage() {
               <AlertDialogFooter>
                 <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
                 <AlertDialogAction
-                  className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+                  variant="destructive"
                   onClick={() => {
                     setConfirmingLeave(false)
                     leaveWorkspaceMutation.mutate()
