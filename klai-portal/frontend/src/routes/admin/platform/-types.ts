@@ -204,6 +204,7 @@ export interface PlatformFeedbackNotification {
 export interface PlatformFeedbackResolveResult {
   item: PlatformFeedbackItem
   notifications: PlatformFeedbackNotification[]
+  recipient_count: number
 }
 
 export interface PlatformOrgDetail {

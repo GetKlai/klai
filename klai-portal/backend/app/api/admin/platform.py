@@ -280,6 +280,7 @@ class PlatformFeedbackNotificationOut(BaseModel):
 class PlatformFeedbackResolveOut(BaseModel):
     item: PlatformFeedbackItem
     notifications: list[PlatformFeedbackNotificationOut]
+    recipient_count: int
 
 
 class PlatformKB(BaseModel):
@@ -1403,6 +1404,13 @@ async def platform_feedback_resolve_item(
             )
         except FeedbackItemNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback item not found") from exc
+        recipient_count = len(
+            {
+                (notification.org_id, notification.user_id)
+                for notification in notifications
+                if notification.org_id is not None and notification.user_id is not None
+            }
+        )
         return PlatformFeedbackResolveOut(
             item=_platform_feedback_item(item),
             notifications=[
@@ -1423,6 +1431,7 @@ async def platform_feedback_resolve_item(
                 )
                 for notification in notifications
             ],
+            recipient_count=recipient_count,
         )
 
 

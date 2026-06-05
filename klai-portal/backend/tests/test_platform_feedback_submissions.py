@@ -675,6 +675,89 @@ async def test_platform_feedback_resolve_item_materializes_response_before_sessi
     assert result.item.notification_state == "sent"
     assert len(result.notifications) == 1
     assert result.notifications[0].status == "sent"
+    assert result.recipient_count == 1
+
+
+@pytest.mark.asyncio
+async def test_platform_feedback_resolve_item_counts_unique_recipients_across_channels(monkeypatch):
+    session = _Session([])
+    notification_created_at = datetime(2026, 5, 27, 12, 0, tzinfo=UTC)
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_resolve_item(db, item_id, **kwargs):
+        assert db is session
+        assert item_id == 456
+        assert kwargs == {
+            "resolution_summary": "Dit is opgelost.",
+            "resolved_by": "staff",
+            "channels": ["in_app", "email"],
+            "subject": "Bug opgelost",
+        }
+        return (
+            _SessionBound(
+                session,
+                **_feedback_item(
+                    kind="bug",
+                    status="resolved",
+                    resolution_summary="Dit is opgelost.",
+                    resolved_by="staff",
+                    notification_state="queued",
+                ).__dict__,
+            ),
+            [
+                _SessionBound(
+                    session,
+                    id=789,
+                    item_id=456,
+                    submission_id=123,
+                    org_id=42,
+                    user_id="user-123",
+                    recipient_email=None,
+                    channel="in_app",
+                    status="sent",
+                    subject="Bug opgelost",
+                    body="Dit is opgelost.",
+                    sent_at=notification_created_at,
+                    read_at=None,
+                    created_at=notification_created_at,
+                ),
+                _SessionBound(
+                    session,
+                    id=790,
+                    item_id=456,
+                    submission_id=123,
+                    org_id=42,
+                    user_id="user-123",
+                    recipient_email="user@example.com",
+                    channel="email",
+                    status="queued",
+                    subject="Bug opgelost",
+                    body="Dit is opgelost.",
+                    sent_at=None,
+                    read_at=None,
+                    created_at=notification_created_at,
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "resolve_feedback_item", fake_resolve_item)
+
+    result = await platform.platform_feedback_resolve_item(
+        item_id=456,
+        body=platform.PlatformFeedbackResolveIn(
+            resolution_summary="Dit is opgelost.",
+            channels=["in_app", "email"],
+            subject="Bug opgelost",
+        ),
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert len(result.notifications) == 2
+    assert result.recipient_count == 1
 
 
 @pytest.mark.asyncio
