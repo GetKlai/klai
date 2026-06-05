@@ -82,9 +82,15 @@
   box-sizing: border-box;
 }
 
-* {
-  border-color: var(--color-border);
-  outline-color: var(--color-ring);
+/* Default border/outline color, placed in @layer base so Tailwind's
+   utilities layer (e.g. border-[var(--color-destructive)], border-current)
+   can override it. Unlayered, this rule would win over every utility
+   because unlayered declarations rank after all explicit cascade layers. */
+@layer base {
+  * {
+    border-color: var(--color-border);
+    outline-color: var(--color-ring);
+  }
 }
 
 body {
