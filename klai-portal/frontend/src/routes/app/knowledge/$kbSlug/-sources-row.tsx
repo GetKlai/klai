@@ -21,6 +21,13 @@ import { useState } from 'react'
 import { Check, Loader2, X } from 'lucide-react'
 import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { InlineEdit } from '@/components/ui/inline-edit'
+import {
+  ListRow,
+  ListRowActions,
+  ListRowContent,
+  ListRowIcon,
+  ListRowTitle,
+} from '@/components/ui/list'
 import * as m from '@/paraglide/messages'
 import { SourceContent } from './-sources-content'
 import { SourceRowActions } from './-sources-row-actions'
@@ -71,50 +78,43 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
 
   return (
     <div>
-      <div
-        className={[
-          'group flex items-center gap-2 pr-2 transition-colors',
-          // Keep the row in its hovered state while the delete-confirm
-          // pill is open - otherwise the pill (cream) would float
-          // on a white row and the contrast looks like a bug.
-          confirmingDelete ? 'bg-[var(--color-rl-cream)]' : 'klai-hover',
-        ].join(' ')}
+      <ListRow
+        confirming={confirmingDelete}
+        className="items-center gap-3 px-4 py-4 klai-hover"
       >
-        <div className="flex flex-1 min-w-0 items-center gap-3 px-2 py-3.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
-            <SourceIcon source={source} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <InlineEdit
-              isEditing={isRenaming}
-              value={draftName}
-              onValueChange={setDraftName}
-              onSave={saveRename}
-              onCancel={cancelRename}
-              isSaving={renameMutation.isPending}
-              inputClassName="text-[15px] font-display"
+        <ListRowIcon>
+          <SourceIcon source={source} />
+        </ListRowIcon>
+        <ListRowContent>
+          <InlineEdit
+            isEditing={isRenaming}
+            value={draftName}
+            onValueChange={setDraftName}
+            onSave={saveRename}
+            onCancel={cancelRename}
+            isSaving={renameMutation.isPending}
+            inputClassName="text-[15px] font-display"
+          >
+            <button
+              type="button"
+              onClick={onToggle}
+              className="min-w-0 w-full text-left"
+              aria-expanded={expanded}
             >
-              <button
-                type="button"
-                onClick={onToggle}
-                className="min-w-0 w-full text-left"
-                aria-expanded={expanded}
-              >
-                <div className="flex items-baseline gap-2 min-w-0">
-                  <span className="text-[15px] font-display text-gray-900 truncate min-w-0 flex-1">{source.name}</span>
-                  <span className="text-xs text-gray-400 shrink-0">{meta}</span>
-                </div>
-              </button>
-            </InlineEdit>
-          </div>
-        </div>
+              <div className="flex items-baseline gap-2 min-w-0">
+                <ListRowTitle className="min-w-0 flex-1">{source.name}</ListRowTitle>
+                <span className="text-xs text-gray-400 shrink-0">{meta}</span>
+              </div>
+            </button>
+          </InlineEdit>
+        </ListRowContent>
 
         <StatusBadge source={source} />
 
         {/* Actions cell with rename-overlay slot.
             When renaming, SourceRowActions fades out and the Save/Cancel
             buttons sit on top - same width, no layout shift. */}
-        <div className="relative flex items-center">
+        <ListRowActions className="relative self-center" onClick={(e) => e.stopPropagation()}>
           <SourceRowActions
             source={source}
             kbSlug={kbSlug}
@@ -142,8 +142,8 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
               </InlineRowButton>
             </div>
           )}
-        </div>
-      </div>
+        </ListRowActions>
+      </ListRow>
       {expanded && <SourceContent kbSlug={kbSlug} source={source} />}
     </div>
   )

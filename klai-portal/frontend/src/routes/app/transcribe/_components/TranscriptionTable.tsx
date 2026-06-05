@@ -1,23 +1,28 @@
 import { useState, useEffect, useRef } from 'react'
-import { InlineRowButton } from '@/components/ui/inline-row-button'
+import { Badge } from '@/components/ui/badge'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { InlineEdit } from '@/components/ui/inline-edit'
-import { Input } from '@/components/ui/input'
-import { Tooltip } from '@/components/ui/tooltip'
+import { InlineEditRow } from '@/components/ui/inline-edit-row'
+import {
+  ListFrame,
+  ListHeader,
+  ListRow,
+  ListRowActions,
+  ListRowContent,
+  ListRowDescription,
+  ListRowTitle,
+} from '@/components/ui/list'
+import { ListEmptyState } from '@/components/ui/list-state'
+import {
+  BorderedRowActionIconButton,
+  RowActionGroup,
+} from '@/components/ui/row-action'
+import { SearchInput } from '@/components/ui/search-input'
 import {
   Loader2,
-  Pencil,
-  Check,
-  X,
-  Trash2,
-  Copy,
   CheckCheck,
   Mic,
-  Download,
   Video,
-  Square,
   FileText,
-  RotateCcw,
 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
@@ -51,34 +56,49 @@ function formatDate(dateStr: string): string {
 }
 
 function StatusBadge({ status, source }: { status: string; source: Source }) {
-  const config: Record<string, { label: string; classes: string }> = {
-    pending:    { label: m.app_meetings_status_pending(),    classes: 'bg-[var(--color-rl-accent)]/10 text-[var(--color-rl-accent)]' },
-    joining:    { label: m.app_meetings_status_joining(),    classes: 'bg-[var(--color-rl-accent)]/10 text-[var(--color-rl-accent)] animate-pulse' },
-    recording:  { label: m.app_meetings_status_recording(),  classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)] animate-pulse' },
-    processing: { label: source === 'upload' ? m.app_transcribe_status_processing() : m.app_meetings_status_processing(), classes: 'bg-[var(--color-rl-accent)]/10 text-[var(--color-rl-accent)] animate-pulse' },
-    done:       { label: m.app_meetings_status_done(),       classes: 'bg-[var(--color-success)]/10 text-[var(--color-success)]' },
-    failed:     { label: m.app_transcribe_status_failed(),   classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]' },
+  const config: Record<string, { label: string; variant: 'secondary' | 'success' | 'destructive' | 'info'; className?: string }> = {
+    pending:    { label: m.app_meetings_status_pending(),    variant: 'info' },
+    joining:    { label: m.app_meetings_status_joining(),    variant: 'info', className: 'animate-pulse' },
+    recording:  { label: m.app_meetings_status_recording(),  variant: 'destructive', className: 'animate-pulse' },
+    processing: { label: source === 'upload' ? m.app_transcribe_status_processing() : m.app_meetings_status_processing(), variant: 'info', className: 'animate-pulse' },
+    done:       { label: m.app_meetings_status_done(),       variant: 'success' },
+    failed:     { label: m.app_transcribe_status_failed(),   variant: 'destructive' },
   }
-  const c = config[status] ?? { label: status, classes: 'bg-[var(--color-rl-cream)] text-gray-900' }
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${c.classes}`}>
-      {c.label}
-    </span>
-  )
+  const c = config[status] ?? { label: status, variant: 'secondary' as const }
+  return <Badge variant={c.variant} className={c.className}>{c.label}</Badge>
 }
 
-function MetaText({ item }: { item: UnifiedItem }) {
+function metaParts(item: UnifiedItem) {
+  const parts: string[] = [
+    item.source === 'upload'
+      ? String(m.app_transcribe_source_audio())
+      : String(m.app_transcribe_source_meeting()),
+  ]
+  return parts
+}
+
+function factParts(item: UnifiedItem) {
   const parts: string[] = []
   if (item.text) {
     const count = item.text.trim().split(/\s+/).filter(Boolean).length
     parts.push(m.app_transcribe_meta_word_count({ count: count.toLocaleString(getLocale()) }))
   }
   if (item.duration_seconds != null) parts.push(formatDuration(item.duration_seconds))
-  parts.push(
-    item.source === 'upload'
-      ? m.app_transcribe_source_audio()
-      : m.app_transcribe_source_meeting(),
-  )
+  return parts
+}
+
+function metaTextValue(item: UnifiedItem) {
+  const parts = metaParts(item)
+  if (item.language) parts.unshift(item.language.toUpperCase())
+  return parts.join(' \u00b7 ')
+}
+
+function editDescriptionValue(item: UnifiedItem) {
+  return [metaTextValue(item), factParts(item).join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')
+}
+
+function MetaText({ item }: { item: UnifiedItem }) {
+  const parts = metaParts(item)
 
   return (
     <span className="text-xs text-gray-400">
@@ -99,6 +119,24 @@ function MetaText({ item }: { item: UnifiedItem }) {
     </span>
   )
 }
+
+function FactText({ item }: { item: UnifiedItem }) {
+  const parts = factParts(item)
+  return (
+    <span className="text-sm text-gray-500">
+      {parts.length > 0 ? parts.join(' \u00b7 ') : '\u2014'}
+    </span>
+  )
+}
+
+function sourceLabel(item: UnifiedItem) {
+  return item.source === 'upload'
+    ? m.app_transcribe_source_audio()
+    : m.app_transcribe_source_meeting()
+}
+
+const transcriptionListGrid =
+  'grid-cols-[2rem_minmax(0,1fr)] lg:grid-cols-[2rem_minmax(0,1fr)_minmax(7rem,0.48fr)_minmax(7rem,0.45fr)_192px]'
 
 interface TranscriptionTableProps {
   allItems: UnifiedItem[]
@@ -146,7 +184,6 @@ export function TranscriptionTable({
   retryingId,
 }: TranscriptionTableProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editName, setEditName] = useState<string>('')
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const wasRenaming = useRef(false)
@@ -155,7 +192,6 @@ export function TranscriptionTable({
   useEffect(() => {
     if (wasRenaming.current && !isRenaming) {
       setEditingId(null)
-      setEditName('')
     }
     wasRenaming.current = isRenaming
   }, [isRenaming])
@@ -163,16 +199,14 @@ export function TranscriptionTable({
   function startEdit(item: UnifiedItem) {
     setConfirmingDeleteId(null)
     setEditingId(item.id)
-    setEditName(item.title ?? '')
   }
 
   function cancelEdit() {
     setEditingId(null)
-    setEditName('')
   }
 
-  function saveEdit(id: string) {
-    onRename(id, editName.trim() || null)
+  function saveEdit(id: string, name: string) {
+    onRename(id, name.trim() || null)
     // Edit closes via useEffect when isRenaming transitions false
   }
 
@@ -205,271 +239,200 @@ export function TranscriptionTable({
 
   if (allItems.length === 0) {
     return (
-      <div data-help-id="transcribe-list" className="flex flex-col items-center gap-3 py-16 text-center">
-        <Mic className="h-10 w-10 text-gray-400 opacity-40" />
-        <div className="space-y-1">
-          <p className="font-medium text-gray-900">
-            {m.app_transcribe_empty_heading()}
-          </p>
-          <p className="text-sm text-gray-400">
-            {m.app_transcribe_empty_body()}
-          </p>
-        </div>
-      </div>
+      <ListFrame data-help-id="transcribe-list">
+        <ListEmptyState
+          title={m.app_transcribe_empty_heading()}
+          description={m.app_transcribe_empty_body()}
+        />
+      </ListFrame>
     )
   }
 
   return (
-    <div data-help-id="transcribe-list">
-      <div className="pb-5">
-        <Input
+    <div data-help-id="transcribe-list" className="space-y-5">
+      <div className="max-w-sm">
+        <SearchInput
+          type="search"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder={m.app_transcribe_search_placeholder()}
-          className="h-8 text-sm max-w-xs"
+          aria-label={m.app_transcribe_search_placeholder()}
         />
       </div>
 
       {filteredItems.length === 0 ? (
-        <p className="py-8 text-sm text-gray-400">
-          {m.app_transcribe_search_empty()}
-        </p>
+        <ListFrame>
+          <ListEmptyState title={m.app_transcribe_search_empty()} />
+        </ListFrame>
       ) : (
-        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="py-3 pr-2 w-6" />
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                {m.app_transcribe_col_text()}
-              </th>
-              <th className="py-3 pr-2 text-left text-xs font-medium text-gray-400 tracking-wide w-28">
-                {m.app_transcribe_col_date()}
-              </th>
-              <th className="py-3 text-right text-xs font-medium text-gray-400 tracking-wide w-36" />
-            </tr>
-          </thead>
-          <tbody>
-            {filteredItems.map((item) => {
-              const isEditing = editingId === item.id
-              const isConfirmingDelete = confirmingDeleteId === item.id
-              const isSaving = isRenaming && renamingId === item.id
-              const isDeleting =
-                (isDeletingUpload && deletingUploadId === item.id) ||
-                (isDeletingMeeting && deletingMeetingId === item.id)
-              const isCopied = copiedId === item.id
-              const isActive = item.source === 'meeting' && ACTIVE_MEETING_STATUSES.includes(item.status)
-              const isItemStopping = isStopping && stoppingId === item.id
-              const isFailed = item.source === 'upload' && item.status === 'failed'
-              const isItemRetrying = isRetrying && retryingId === item.id
+        <ListFrame>
+          <ListHeader className={`hidden gap-x-3 ${transcriptionListGrid} lg:grid`}>
+            <span>{m.app_transcribe_col_source()}</span>
+            <span>{m.app_transcribe_col_text()}</span>
+            <span>{m.app_transcribe_col_words()} / {m.app_transcribe_col_duration()}</span>
+            <span>{m.app_transcribe_col_date()}</span>
+            <span className="justify-self-stretch text-right">{m.app_transcribe_col_actions()}</span>
+          </ListHeader>
 
-              return (
-                <tr
-                  key={`${item.source}-${item.id}`}
-                  className={`border-b border-gray-200 last:border-b-0 ${
-                    isConfirmingDelete ? 'bg-[var(--color-hover)]' : ''
-                  }`}
+          {filteredItems.map((item) => {
+            const isEditing = editingId === item.id
+            const isConfirmingDelete = confirmingDeleteId === item.id
+            const isSaving = isRenaming && renamingId === item.id
+            const isDeleting =
+              (isDeletingUpload && deletingUploadId === item.id) ||
+              (isDeletingMeeting && deletingMeetingId === item.id)
+            const isCopied = copiedId === item.id
+            const isActive = item.source === 'meeting' && ACTIVE_MEETING_STATUSES.includes(item.status)
+            const isItemStopping = isStopping && stoppingId === item.id
+            const isFailed = item.source === 'upload' && item.status === 'failed'
+            const isItemRetrying = isRetrying && retryingId === item.id
+            const canOpen = item.status === 'done'
+
+            return (
+              <ListRow
+                key={`${item.source}-${item.id}`}
+                interactive={canOpen && !isEditing}
+                confirming={isConfirmingDelete}
+                onClick={canOpen && !isEditing ? () => onNavigateToDetail(item) : undefined}
+                className={`grid items-center gap-x-3 gap-y-3 px-4 py-4 ${transcriptionListGrid}`}
+              >
+                <div
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400"
+                  aria-label={sourceLabel(item)}
+                  title={sourceLabel(item)}
                 >
-                  {/* Source icon */}
-                  <td className="py-4 pr-2 align-top w-6">
-                    <Tooltip
-                      className="leading-none mt-px"
-                      label={
-                        item.source === 'upload'
-                          ? m.app_transcribe_source_audio()
-                          : m.app_transcribe_source_meeting()
-                      }
-                    >
-                      {item.source === 'upload' ? (
-                        <Mic className="h-4 w-4 text-gray-400" />
-                      ) : (
-                        <Video className="h-4 w-4 text-gray-400" />
-                      )}
-                    </Tooltip>
-                  </td>
+                  {item.source === 'upload' ? (
+                    <Mic className="h-4 w-4" />
+                  ) : (
+                    <Video className="h-4 w-4" />
+                  )}
+                </div>
 
-                  {/* Title + metadata */}
-                  <td className="py-4 pr-4 align-top">
-                    <InlineEdit
-                      isEditing={isEditing}
-                      value={editName}
-                      onValueChange={setEditName}
-                      onSave={() => saveEdit(item.id)}
-                      onCancel={cancelEdit}
+                {isEditing ? (
+                  <div className="col-start-2 min-w-0 lg:col-span-4">
+                    <InlineEditRow
+                      isEditing
+                      value={item.title ?? ''}
+                      description={editDescriptionValue(item)}
                       isSaving={isSaving}
-                      inputClassName="font-medium text-sm"
-                    >
-                      <div>
+                      saveLabel={m.app_transcribe_edit_save()}
+                      cancelLabel={m.app_transcribe_edit_cancel()}
+                      onSubmit={({ name }) => saveEdit(item.id, name)}
+                      onCancel={cancelEdit}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <ListRowContent>
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                         {item.title ? (
-                          item.status === 'done' ? (
-                            <button
-                              type="button"
-                              className="truncate font-medium text-left text-gray-900 hover:underline cursor-pointer"
-                              onClick={() => onNavigateToDetail(item)}
-                            >
-                              {item.title}
-                            </button>
-                          ) : (
-                            <span className="truncate font-medium text-gray-900">
-                              {item.title}
-                            </span>
-                          )
+                          <ListRowTitle className={canOpen ? 'group-hover:underline' : undefined}>
+                            {item.title}
+                          </ListRowTitle>
                         ) : (
-                          <span className="truncate text-gray-400">
+                          <ListRowTitle className="text-gray-400">
                             {item.meeting_url ?? '\u2014'}
-                          </span>
+                          </ListRowTitle>
                         )}
                         {item.source === 'upload' && item.has_summary && (
-                          <Tooltip label={m.app_transcribe_has_summary()}>
-                            <FileText className="inline-block ml-1.5 h-3.5 w-3.5 align-text-bottom text-gray-400" />
-                          </Tooltip>
+                          <FileText
+                            className="h-3.5 w-3.5 shrink-0 text-gray-400"
+                            aria-label={m.app_transcribe_has_summary()}
+                          />
                         )}
                         {item.status !== 'done' && (
-                          <span className="ml-2">
-                            <StatusBadge status={item.status} source={item.source} />
-                          </span>
+                          <StatusBadge status={item.status} source={item.source} />
                         )}
                       </div>
-                    </InlineEdit>
-                    <div className="mt-1">
-                      <MetaText item={item} />
-                    </div>
-                  </td>
+                      <ListRowDescription>
+                        <MetaText item={item} />
+                      </ListRowDescription>
+                    </ListRowContent>
 
-                  {/* Date */}
-                  <td className="py-4 pr-2 align-top text-left whitespace-nowrap w-28">
-                    <span className="text-sm text-gray-900 tabular-nums">
+                    <div className="col-start-2 whitespace-nowrap tabular-nums lg:col-start-auto">
+                      <FactText item={item} />
+                    </div>
+
+                    <div className="col-start-2 whitespace-nowrap text-sm text-gray-900 tabular-nums lg:col-start-auto">
                       {formatDate(item.created_at)}
-                    </span>
-                  </td>
-
-                  {/* Actions */}
-                  <td className="py-4 align-top text-right w-36">
-                    <div className="relative">
-                      <div className={isEditing ? 'opacity-0 pointer-events-none' : undefined}>
-                        <InlineDeleteConfirm
-                          isConfirming={isConfirmingDelete}
-                          isPending={isDeleting}
-                          label={m.app_transcribe_delete_confirm_name({ name: item.title ?? '' })}
-                          cancelLabel={m.app_transcribe_delete_cancel()}
-                          onConfirm={() => handleDelete(item)}
-                          onCancel={() => setConfirmingDeleteId(null)}
-                        >
-                          <div className="flex items-start justify-end gap-2 mt-px">
-                            {/* Rename */}
-                            <Tooltip label={m.app_transcribe_edit_label()}>
-                              <button
-                                onClick={() => startEdit(item)}
-                                aria-label={m.app_transcribe_edit_label()}
-                                className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                            </Tooltip>
-
-                            {/* Active meeting: stop */}
-                            {isActive && (
-                              <Tooltip label={m.app_meetings_stop_button()}>
-                                <button
-                                  onClick={() => onStop(item.id)}
-                                  disabled={isItemStopping}
-                                  aria-label={m.app_meetings_stop_button()}
-                                  className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                                >
-                                  {isItemStopping ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Square className="h-4 w-4" />
-                                  )}
-                                </button>
-                              </Tooltip>
-                            )}
-
-                            {/* Retry failed */}
-                            {isFailed && (
-                              <Tooltip label={m.app_transcribe_retry_button()}>
-                                <button
-                                  onClick={() => onRetry(item.id)}
-                                  disabled={isItemRetrying}
-                                  aria-label={m.app_transcribe_retry_button()}
-                                  className="inline-flex items-center justify-center text-[var(--color-rl-accent)] transition-opacity hover:opacity-70"
-                                >
-                                  {isItemRetrying ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <RotateCcw className="h-4 w-4" />
-                                  )}
-                                </button>
-                              </Tooltip>
-                            )}
-
-                            {/* Copy */}
-                            {item.text && (
-                              <Tooltip label={m.app_transcribe_copy_label()}>
-                                <button
-                                  data-help-id="transcribe-copy"
-                                  onClick={() => void copyText(item)}
-                                  aria-label={m.app_transcribe_copy_label()}
-                                  className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
-                                >
-                                  {isCopied ? (
-                                    <CheckCheck className="h-4 w-4 text-[var(--color-success)]" />
-                                  ) : (
-                                    <Copy className="h-4 w-4" />
-                                  )}
-                                </button>
-                              </Tooltip>
-                            )}
-
-                            {/* Download */}
-                            {item.text && (
-                              <Tooltip label={m.app_transcribe_download_label()}>
-                                <button
-                                  data-help-id="transcribe-download"
-                                  onClick={() => downloadText(item)}
-                                  aria-label={m.app_transcribe_download_label()}
-                                  className="inline-flex items-center justify-center text-[var(--color-success)] transition-opacity hover:opacity-70"
-                                >
-                                  <Download className="h-4 w-4" />
-                                </button>
-                              </Tooltip>
-                            )}
-
-                            {/* Delete */}
-                            <Tooltip label={m.app_transcribe_delete_label()}>
-                              <button
-                                onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
-                                aria-label={m.app_transcribe_delete_label()}
-                                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </Tooltip>
-                          </div>
-                        </InlineDeleteConfirm>
-                      </div>
-                      {isEditing && (
-                        <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
-                          <InlineRowButton
-                            tone="success"
-                            disabled={isSaving}
-                            onClick={() => saveEdit(item.id)}
-                          >
-                            {isSaving ? <Loader2 className="animate-spin" /> : <Check />}
-                            {m.app_transcribe_edit_save()}
-                          </InlineRowButton>
-                          <InlineRowButton onClick={cancelEdit}>
-                            <X />
-                            {m.app_transcribe_edit_cancel()}
-                          </InlineRowButton>
-                        </div>
-                      )}
                     </div>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+
+                    <ListRowActions
+                      className="col-start-2 self-center justify-self-end lg:col-start-auto"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <InlineDeleteConfirm
+                        isConfirming={isConfirmingDelete}
+                        isPending={isDeleting}
+                        label={m.app_transcribe_delete_confirm_name({ name: item.title ?? '' })}
+                        cancelLabel={m.app_transcribe_delete_cancel()}
+                        onConfirm={() => handleDelete(item)}
+                        onCancel={() => setConfirmingDeleteId(null)}
+                      >
+                        <RowActionGroup>
+                          <BorderedRowActionIconButton
+                            label={m.app_transcribe_edit_label()}
+                            action="edit"
+                            onClick={() => startEdit(item)}
+                          />
+
+                          {isActive && (
+                            <BorderedRowActionIconButton
+                              label={m.app_meetings_stop_button()}
+                              action="stop"
+                              disabled={isItemStopping}
+                              spinner={isItemStopping ? <Loader2 className="animate-spin" /> : undefined}
+                              onClick={() => onStop(item.id)}
+                            />
+                          )}
+
+                          {isFailed && (
+                            <BorderedRowActionIconButton
+                              label={m.app_transcribe_retry_button()}
+                              action="retry"
+                              disabled={isItemRetrying}
+                              spinner={isItemRetrying ? <Loader2 className="animate-spin" /> : undefined}
+                              onClick={() => onRetry(item.id)}
+                            />
+                          )}
+
+                          {item.text && (
+                            <BorderedRowActionIconButton
+                              data-help-id="transcribe-copy"
+                              label={m.app_transcribe_copy_label()}
+                              action="copy"
+                              icon={isCopied ? CheckCheck : undefined}
+                              tone={isCopied ? 'success' : undefined}
+                              onClick={() => void copyText(item)}
+                            />
+                          )}
+
+                          {item.text && (
+                            <BorderedRowActionIconButton
+                              data-help-id="transcribe-download"
+                              label={m.app_transcribe_download_label()}
+                              action="download"
+                              onClick={() => downloadText(item)}
+                            />
+                          )}
+
+                          <BorderedRowActionIconButton
+                            label={m.app_transcribe_delete_label()}
+                            action="delete"
+                            onClick={() => {
+                              cancelEdit()
+                              setConfirmingDeleteId(item.id)
+                            }}
+                          />
+                        </RowActionGroup>
+                      </InlineDeleteConfirm>
+                    </ListRowActions>
+                  </>
+                )}
+              </ListRow>
+            )
+          })}
+        </ListFrame>
       )}
     </div>
   )

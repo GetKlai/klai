@@ -226,59 +226,55 @@ function MeetingDetailPage() {
 
   const canStop = ['recording', 'joining'].includes(meeting.status)
   const hasTranscript = meeting.status === 'done' && !!(meeting.transcript_text || meeting.transcript_segments?.length)
+  const meetingTitle = meeting.meeting_title ?? meeting.meeting_url
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => navigate({ to: '/app/transcribe' })}
-        className="mb-6"
-      >
-        <ArrowLeft className="h-4 w-4 mr-2" />
-        {m.app_meetings_back()}
-      </Button>
-
-      <div className="space-y-6">
-      {ACTIVE_STATUSES.includes(meeting.status) ? (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="text-xl font-semibold text-gray-900">
-              {meeting.meeting_title ?? meeting.meeting_url}
-            </CardTitle>
-            <StatusBadge status={meeting.status} />
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-400">
-              {m.app_meetings_active_info()}
-            </p>
-          </CardContent>
-          {canStop && (
-            <CardFooter className="flex justify-end pt-0">
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => stopMutation.mutate()}
-                disabled={stopMutation.isPending}
-              >
-                {stopMutation.isPending ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Square className="mr-2 h-4 w-4" />
-                )}
-                {m.app_meetings_stop_button()}
-              </Button>
-            </CardFooter>
-          )}
-        </Card>
-      ) : (
-        <div className="flex items-start justify-between">
+      <div className="mb-6 flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-2">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {meeting.meeting_title ?? meeting.meeting_url}
+            {meetingTitle}
           </h1>
           <StatusBadge status={meeting.status} />
         </div>
-      )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate({ to: '/app/transcribe' })}
+        >
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          {m.app_meetings_back()}
+        </Button>
+      </div>
+
+      <div className="space-y-6">
+        {ACTIVE_STATUSES.includes(meeting.status) ? (
+          <Card>
+            <CardContent className="pt-4">
+              <p className="text-sm text-gray-400">
+                {m.app_meetings_active_info()}
+              </p>
+            </CardContent>
+            {canStop && (
+              <CardFooter className="flex justify-end pt-0">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => stopMutation.mutate()}
+                  disabled={stopMutation.isPending}
+                >
+                  {stopMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Square className="mr-2 h-4 w-4" />
+                  )}
+                  {m.app_meetings_stop_button()}
+                </Button>
+              </CardFooter>
+            )}
+          </Card>
+        ) : null}
 
       {meeting.status === 'failed' && meeting.error_message && (
         <Card className="border-[var(--color-destructive)]">

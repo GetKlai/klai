@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
+import { ArrowLeft, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -179,10 +181,21 @@ export function InstructionFormPage({
 
   return (
     <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
-      <div className="mb-2">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">{title}</h1>
+      <div className="mb-6 flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="page-title text-[26px] font-display-bold text-gray-900">{title}</h1>
+          <p className="text-sm text-gray-400">{m.instructions_form_subtitle()}</p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => void navigate({ to: backPath })}
+        >
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          {m.instructions_form_cancel()}
+        </Button>
       </div>
-      <p className="text-sm text-gray-400 mb-6">{m.instructions_form_subtitle()}</p>
 
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <div className="space-y-1.5">
@@ -256,21 +269,11 @@ export function InstructionFormPage({
           </p>
         )}
 
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="submit"
-            disabled={isSaving}
-            className="rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-          >
+        <div className="flex items-center pt-2">
+          <Button type="submit" disabled={isSaving}>
+            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {submitLabel}
-          </button>
-          <button
-            type="button"
-            onClick={() => void navigate({ to: backPath })}
-            className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
-          >
-            {m.instructions_form_cancel()}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

@@ -12,11 +12,22 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
-import { Building2, ChevronRight, FolderOpen, Plus, Search, User } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { Building2, FolderOpen, Plus, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
+import { SearchInput } from '@/components/ui/search-input'
+import {
+  ListFrame,
+  ListRow,
+  ListRowChevron,
+  ListRowContent,
+  ListRowDescription,
+  ListRowIcon,
+  ListRowTitle,
+} from '@/components/ui/list'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -133,33 +144,32 @@ function KbRow({
       : m.knowledge_detail_volume_unavailable()
 
   return (
-    <Link
-      to="/app/knowledge/$kbSlug/sources"
-      params={{ kbSlug: kb.slug }}
-      className="group flex items-center gap-3 px-2 py-3.5 klai-hover"
-    >
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
-        <KbIcon ownerType={kb.owner_type} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="text-[15px] font-display text-gray-900 truncate">{kb.name}</span>
-          {isMine && (
-            <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
-              Mijn
-            </Badge>
-          )}
-          <span className="text-xs text-gray-400">
-            {statsLabel}
-          </span>
-        </div>
-        {kb.description && (
-          <p className="text-xs text-gray-400 mt-0.5 truncate">{kb.description}</p>
-        )}
-      </div>
-      {status && <StatusBadge status={status} />}
-      <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
-    </Link>
+    <ListRow asChild interactive className="items-center gap-3 px-4 py-4">
+      <Link
+        to="/app/knowledge/$kbSlug/sources"
+        params={{ kbSlug: kb.slug }}
+      >
+        <ListRowIcon>
+          <KbIcon ownerType={kb.owner_type} />
+        </ListRowIcon>
+        <ListRowContent>
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <ListRowTitle>{kb.name}</ListRowTitle>
+            {isMine && (
+              <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
+                Mijn
+              </Badge>
+            )}
+            <span className="text-xs text-gray-400">
+              {statsLabel}
+            </span>
+          </div>
+          {kb.description && <ListRowDescription>{kb.description}</ListRowDescription>}
+        </ListRowContent>
+        {status && <StatusBadge status={status} />}
+        <ListRowChevron />
+      </Link>
+    </ListRow>
   )
 }
 
@@ -230,83 +240,66 @@ function KnowledgePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
-      {/* Header - title + subtitle stacked, primary action top-right.
-          Matches the dashboard pattern (/app/) and Scribe layout. */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.kb_list_title()}
-          </h1>
-          <p className="text-sm text-gray-400">
-            {kbsLoading ? m.kb_list_subtitle() : countLabel}
-          </p>
-        </div>
-        <Link to="/app/knowledge/new">
-          <Button size="sm">
-            <Plus className="mr-2 h-4 w-4" />
-            {m.kb_list_new_collection()}
+      <PageHeader
+        title={m.kb_list_title()}
+        description={m.kb_list_subtitle()}
+        actions={
+          <Button asChild size="sm">
+            <Link to="/app/knowledge/new">
+              <Plus className="mr-2 h-4 w-4" />
+              {m.kb_list_new_collection()}
+            </Link>
           </Button>
-        </Link>
-      </div>
+        }
+      />
 
-      {/* Korte uitleg — geen kader, gewoon tekst. Zelfde stijl als /app/instructions. */}
-      <div className="space-y-3 text-sm text-gray-600">
+      <PageIntro>
         <p>{m.kb_intro_body()}</p>
         <p>{m.kb_intro_examples()}</p>
         <p>{m.kb_intro_invoke()}</p>
-      </div>
+        {!kbsLoading ? <p className="text-gray-400">{countLabel}</p> : null}
+      </PageIntro>
 
       {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-        <Input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={m.kb_list_search_placeholder()}
-          className="pl-10"
-        />
-      </div>
+      <SearchInput
+        type="search"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={m.kb_list_search_placeholder()}
+        aria-label={m.kb_list_search_placeholder()}
+      />
 
       {/* List */}
       <div>
         {kbsLoading ? (
-          <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-[60px] bg-gray-50 animate-pulse" />
-            ))}
-          </div>
+          <ListFrame>
+            <ListLoadingState label={m.knowledge_page_stat_loading()} />
+          </ListFrame>
         ) : kbsError ? (
           <QueryErrorState error={kbsError} onRetry={refetchKbs} />
         ) : filteredKbs.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-200 py-10 text-center">
-          {search.trim() ? (
-            <p className="text-sm text-gray-400">{m.kb_list_empty_search({ q: search.trim() })}</p>
-          ) : (
-            <>
-              <p className="text-sm font-medium text-gray-900">{m.kb_list_empty_no_collections()}</p>
-              <Link to="/app/knowledge/new" className="inline-block mt-4">
-                <Button variant="default">
-                  <Plus className="h-4 w-4" />
-                  {m.kb_list_empty_cta()}
-                </Button>
-              </Link>
-            </>
-          )}
-        </div>
-      ) : (
-        <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
-          {filteredKbs.map((kb) => (
-            <KbRow
-              key={kb.slug}
-              kb={kb}
-              stats={statsBySlug[kb.slug]}
-              statsState={statsLoading ? 'loading' : statsError ? 'unavailable' : 'ready'}
-              isMine={kb.owner_type === 'user' && !!myUserId && kb.slug === `personal-${myUserId}`}
+          <ListFrame>
+            <ListEmptyState
+              title={
+                search.trim()
+                  ? m.kb_list_empty_search({ q: search.trim() })
+                  : m.kb_list_empty_no_collections()
+              }
             />
-          ))}
-        </div>
-      )}
+          </ListFrame>
+        ) : (
+          <ListFrame>
+            {filteredKbs.map((kb) => (
+              <KbRow
+                key={kb.slug}
+                kb={kb}
+                stats={statsBySlug[kb.slug]}
+                statsState={statsLoading ? 'loading' : statsError ? 'unavailable' : 'ready'}
+                isMine={kb.owner_type === 'user' && !!myUserId && kb.slug === `personal-${myUserId}`}
+              />
+            ))}
+          </ListFrame>
+        )}
       </div>
     </div>
   )

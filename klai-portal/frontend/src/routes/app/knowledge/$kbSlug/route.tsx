@@ -21,6 +21,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { Button } from '@/components/ui/button'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { meetsMinRole } from '@/lib/profiles'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
@@ -188,13 +189,12 @@ function KbLayout() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900 leading-none truncate">
           {kb.name}
         </h1>
-        <Link
-          to="/app/knowledge"
-          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-900 transition-colors shrink-0"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          {m.kb_detail_back()}
-        </Link>
+        <Button asChild variant="ghost" size="sm">
+          <Link to="/app/knowledge">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {m.kb_detail_back()}
+          </Link>
+        </Button>
       </div>
 
       {kb.description && (

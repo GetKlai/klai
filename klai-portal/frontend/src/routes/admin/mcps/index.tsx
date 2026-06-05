@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { PageHeader } from '@/components/ui/page-header'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import {
   DataTable,
   DataTableBody,
@@ -65,6 +65,11 @@ function McpsListPage() {
           </Button>
         }
       />
+
+      <PageIntro>
+        <p>{m.admin_mcps_intro_body()}</p>
+        <p>{m.admin_mcps_intro_runtime()}</p>
+      </PageIntro>
 
       {error ? (
         <QueryErrorState

@@ -9,7 +9,7 @@ import {
   createColumnHelper,
 } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
-import { PageHeader } from '@/components/ui/page-header'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
@@ -241,6 +241,11 @@ function AdminGroups() {
           </Button>
         }
       />
+
+      <PageIntro>
+        <p>{m.admin_groups_intro_body()}</p>
+        <p>{m.admin_groups_intro_profiles()}</p>
+      </PageIntro>
 
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />

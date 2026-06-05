@@ -32,6 +32,9 @@ export const profileLadderMessages = {
 } as const
 
 export const adminUsersMessages = {
+  admin_users_subtitle: () => 'Manage who has access to this workspace.',
+  admin_users_intro_body: () => 'Users get access through a profile.',
+  admin_users_intro_lifecycle: () => 'Groups control knowledge access.',
   admin_users_field_first_name: () => 'First name',
   admin_users_field_last_name: () => 'Last name',
   admin_users_field_email: () => 'Email',
@@ -74,7 +77,9 @@ export const adminUsersMessages = {
 
 export const adminProfilesMessages = {
   admin_profiles_title: () => 'Profiles',
-  admin_profiles_subtitle: () => 'Manage who can do what across the workspace.',
+  admin_profiles_subtitle: () => 'Set what someone can do in Klai.',
+  admin_profiles_intro_body: () => 'Profiles are an ascending ladder.',
+  admin_profiles_intro_access: () => 'Use groups for knowledge-base access.',
   admin_profiles_back: () => 'Back to profiles',
   admin_profiles_loading: () => 'Loading profiles...',
   admin_profiles_drill_in_empty: () => 'No members in this profile yet.',

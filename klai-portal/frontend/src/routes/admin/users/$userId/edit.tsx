@@ -196,17 +196,10 @@ function EditUserPage() {
           <p className="text-sm text-[var(--color-destructive)]">{saveError}</p>
         )}
 
-        <div className="pt-2 flex items-center gap-3">
+        <div className="pt-2 flex items-center">
           <Button type="submit" disabled={saving || !user}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {saving ? m.admin_users_edit_submit_loading() : m.admin_users_edit_submit()}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => void navigate({ to: '/admin/users' })}
-          >
-            {m.admin_users_cancel()}
           </Button>
         </div>
       </form>

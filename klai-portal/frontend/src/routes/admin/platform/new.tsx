@@ -54,17 +54,17 @@ function NewTenantPage() {
 
   return (
     <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-start justify-between gap-3 mb-2">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.platform_new_tenant_title()}
         </h1>
         <Button
           type="button"
-          variant="secondary"
+          variant="ghost"
           size="sm"
           onClick={() => void navigate({ to: '/admin/platform' })}
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_users_cancel()}
         </Button>
       </div>
