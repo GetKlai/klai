@@ -298,17 +298,10 @@ function EditGroupPage() {
             </div>
 
             {/* Save */}
-            <div className="pt-2 flex gap-2">
+            <div className="pt-2 flex">
               <Button type="submit" disabled={saving || !name.trim()}>
                 {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {saving ? m.admin_users_edit_submit_loading() : m.admin_users_edit_submit()}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => navigate({ to: '/admin/groups' })}
-              >
-                {m.admin_users_cancel()}
               </Button>
             </div>
 

@@ -38,16 +38,6 @@ function PlatformOrgDetailPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-6 pt-4 pb-10 space-y-8">
-      <Button
-        type="button"
-        variant="link"
-        onClick={() => void navigate({ to: '/admin/platform' })}
-        className="h-auto justify-start p-0 text-sm font-medium text-gray-500 no-underline hover:text-gray-900 hover:no-underline"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        {m.platform_back_to_platform()}
-      </Button>
-
       {isLoading && (
         <p className="py-8 text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
@@ -64,28 +54,39 @@ function PlatformOrgDetailPage() {
 
       {data && (
         <>
-          <div>
-            <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-              {data.org.name}
-            </h1>
-            <div className="mt-2 flex items-center gap-2 flex-wrap text-sm text-gray-400">
-              <span className="font-mono">{data.org.slug}</span>
-              <span>·</span>
-              <Badge variant="outline">{data.org.plan}</Badge>
-              <Badge
-                variant={
-                  data.org.provisioning_status === 'ready'
-                    ? 'success'
-                    : 'outline'
-                }
-              >
-                {data.org.provisioning_status}
-              </Badge>
-              <span>·</span>
-              <span>
-                {m.platform_created_at({ date: fmtDate(data.org.created_at) })}
-              </span>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+                {data.org.name}
+              </h1>
+              <div className="mt-2 flex items-center gap-2 flex-wrap text-sm text-gray-400">
+                <span className="font-mono">{data.org.slug}</span>
+                <span>·</span>
+                <Badge variant="outline">{data.org.plan}</Badge>
+                <Badge
+                  variant={
+                    data.org.provisioning_status === 'ready'
+                      ? 'success'
+                      : 'outline'
+                  }
+                >
+                  {data.org.provisioning_status}
+                </Badge>
+                <span>·</span>
+                <span>
+                  {m.platform_created_at({ date: fmtDate(data.org.created_at) })}
+                </span>
+              </div>
             </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => void navigate({ to: '/admin/platform' })}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              {m.platform_back_to_platform()}
+            </Button>
           </div>
 
           <OrgSummaryStats
