@@ -3,11 +3,19 @@ import { type ReactNode, useState } from "react"
 import { ChevronRight, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from "@/components/ui/data-table"
+import { ListEmptyState, ListLoadingState } from "@/components/ui/list-state"
 import { Select } from "@/components/ui/select"
 import * as m from "@/paraglide/messages"
 import { usePlatformFeedbackItems, usePlatformFeedbackSubmissions } from "../../-hooks"
 import type { PlatformFeedbackSubmission } from "../../-types"
-import { PlatformTableShell, TD, TH } from "../PlatformShell"
 import {
   feedbackItemKindLabel,
   feedbackItemReporterSummary,
@@ -123,32 +131,34 @@ function InboxPanel({
         </Select>
         </div>
       </div>
-      <PlatformTableShell
-        loading={isLoading}
-        empty={rows.length === 0}
-        emptyText={m.platform_empty_feedback()}
-      >
-        <thead>
-          <tr className="border-b border-gray-200">
-            <th className={TH}>{m.platform_col_type()}</th>
-            <th className={TH}>{m.platform_col_status()}</th>
-            <th className={TH}>{m.platform_col_organization()}</th>
-            <th className={TH}>{m.platform_col_detail()}</th>
-            <th className={TH}>{m.platform_col_time()}</th>
-            <th className={TH}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((item) => (
-            <FeedbackSubmissionRow
-              key={item.id}
-              item={item}
-              fmtDate={fmtDate}
-              onOpen={() => onOpen(item.id)}
-            />
-          ))}
-        </tbody>
-      </PlatformTableShell>
+      {isLoading ? (
+        <ListLoadingState label={m.admin_shared_loading()} />
+      ) : rows.length === 0 ? (
+        <ListEmptyState title={m.platform_empty_feedback()} />
+      ) : (
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>{m.platform_col_type()}</DataTableHead>
+              <DataTableHead>{m.platform_col_status()}</DataTableHead>
+              <DataTableHead>{m.platform_col_organization()}</DataTableHead>
+              <DataTableHead>{m.platform_col_detail()}</DataTableHead>
+              <DataTableHead>{m.platform_col_time()}</DataTableHead>
+              <DataTableHead />
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
+            {rows.map((item) => (
+              <FeedbackSubmissionRow
+                key={item.id}
+                item={item}
+                fmtDate={fmtDate}
+                onOpen={() => onOpen(item.id)}
+              />
+            ))}
+          </DataTableBody>
+        </DataTable>
+      )}
     </>
   )
 }
@@ -163,15 +173,15 @@ function FeedbackSubmissionRow({
   onOpen: () => void
 }) {
   return (
-    <tr
-      className="cursor-pointer border-b border-gray-200 last:border-b-0 klai-hover"
+    <DataTableRow
+      interactive
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter') onOpen()
       }}
     >
-      <td className={TD}>
+      <DataTableCell>
         <div className="flex flex-col items-start gap-2">
           <Badge
             variant={
@@ -188,13 +198,13 @@ function FeedbackSubmissionRow({
             <span className="text-xs text-gray-400">{feedbackSignalLabel(item)}</span>
           )}
         </div>
-      </td>
-      <td className={TD}>
+      </DataTableCell>
+      <DataTableCell>
         <Badge variant={item.status === 'new' ? 'outline' : 'secondary'}>
           {feedbackStatusLabel(item.status)}
         </Badge>
-      </td>
-      <td className={TD}>
+      </DataTableCell>
+      <DataTableCell>
         <span className="font-medium">
           {item.org_name ?? (item.org_id ? `#${item.org_id}` : '-')}
         </span>
@@ -206,19 +216,19 @@ function FeedbackSubmissionRow({
             {feedbackSubmissionReporterLabel(item)}
           </p>
         )}
-      </td>
-      <td className={`${TD} max-w-md`}>
+      </DataTableCell>
+      <DataTableCell className="max-w-md">
         <p className="line-clamp-3 whitespace-pre-wrap text-sm leading-6">
           {item.raw_text ?? '-'}
         </p>
-      </td>
-      <td className={`${TD} whitespace-nowrap tabular-nums text-gray-400`}>
+      </DataTableCell>
+      <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
         {fmtDate(item.created_at)}
-      </td>
-      <td className={`${TD} text-right`}>
+      </DataTableCell>
+      <DataTableCell align="right">
         <ChevronRight className="ml-auto h-4 w-4 text-gray-300" />
-      </td>
-    </tr>
+      </DataTableCell>
+    </DataTableRow>
   )
 }
 
@@ -279,65 +289,67 @@ function OpenItemsPanel({
           {m.platform_feedback_items_refreshing()}
         </p>
       )}
-      <PlatformTableShell
-        loading={items.isLoading}
-        empty={rows.length === 0}
-        emptyText={m.platform_feedback_items_empty()}
-      >
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className={TH}>{m.platform_feedback_col_item()}</th>
-              <th className={TH}>{m.platform_feedback_col_organizations()}</th>
-              <th className={TH}>{m.platform_col_status()}</th>
-              <th className={TH}>{m.platform_col_type()}</th>
-              <th className={TH}>{m.platform_feedback_col_updated()}</th>
-              <th className={TH}></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
+      {items.isLoading ? (
+        <ListLoadingState label={m.admin_shared_loading()} />
+      ) : rows.length === 0 ? (
+        <ListEmptyState title={m.platform_feedback_items_empty()} />
+      ) : (
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>{m.platform_feedback_col_item()}</DataTableHead>
+              <DataTableHead>{m.platform_feedback_col_organizations()}</DataTableHead>
+              <DataTableHead>{m.platform_col_status()}</DataTableHead>
+              <DataTableHead>{m.platform_col_type()}</DataTableHead>
+              <DataTableHead>{m.platform_feedback_col_updated()}</DataTableHead>
+              <DataTableHead />
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
             {rows.map((item) => (
-                <tr
-                  key={item.id}
-                  className="cursor-pointer border-b border-gray-200 last:border-b-0 klai-hover"
-                  tabIndex={0}
-                  onClick={() => onOpenItem(item.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') onOpenItem(item.id)
-                  }}
-                >
-                  <td className={`${TD} max-w-xl`}>
-                    <span className="block truncate font-medium text-gray-900">
-                      {item.title}
-                    </span>
-                    <span className="mt-1 block truncate text-xs text-gray-400">
-                      {item.area}
-                    </span>
-                  </td>
-                  <td className={`${TD} max-w-xs`}>
-                    <span className="block truncate text-sm text-gray-900">
-                      {feedbackItemReporterSummary(item)}
-                    </span>
-                    <span className="mt-1 block text-xs text-gray-400">
-                      {m.platform_feedback_reporter_counts({
-                        orgs: item.org_count,
-                        users: item.user_count,
-                      })}
-                    </span>
-                  </td>
-                  <td className={TD}>
-                    <Badge variant="outline">{feedbackItemStatusLabel(item.status)}</Badge>
-                  </td>
-                  <td className={TD}>{feedbackItemKindLabel(item.kind)}</td>
-                  <td className={`${TD} whitespace-nowrap text-gray-400`}>
-                    {fmtDate(item.updated_at)}
-                  </td>
-                  <td className={`${TD} text-right`}>
-                    <ChevronRight className="ml-auto h-4 w-4 text-gray-300" />
-                  </td>
-                </tr>
-              ))}
-          </tbody>
-      </PlatformTableShell>
+              <DataTableRow
+                key={item.id}
+                interactive
+                tabIndex={0}
+                onClick={() => onOpenItem(item.id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') onOpenItem(item.id)
+                }}
+              >
+                <DataTableCell className="max-w-xl">
+                  <span className="block truncate font-medium text-gray-900">
+                    {item.title}
+                  </span>
+                  <span className="mt-1 block truncate text-xs text-gray-400">
+                    {item.area}
+                  </span>
+                </DataTableCell>
+                <DataTableCell className="max-w-xs">
+                  <span className="block truncate text-sm text-gray-900">
+                    {feedbackItemReporterSummary(item)}
+                  </span>
+                  <span className="mt-1 block text-xs text-gray-400">
+                    {m.platform_feedback_reporter_counts({
+                      orgs: item.org_count,
+                      users: item.user_count,
+                    })}
+                  </span>
+                </DataTableCell>
+                <DataTableCell>
+                  <Badge variant="outline">{feedbackItemStatusLabel(item.status)}</Badge>
+                </DataTableCell>
+                <DataTableCell>{feedbackItemKindLabel(item.kind)}</DataTableCell>
+                <DataTableCell className="whitespace-nowrap text-gray-400">
+                  {fmtDate(item.updated_at)}
+                </DataTableCell>
+                <DataTableCell align="right">
+                  <ChevronRight className="ml-auto h-4 w-4 text-gray-300" />
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+          </DataTableBody>
+        </DataTable>
+      )}
     </>
   )
 }
