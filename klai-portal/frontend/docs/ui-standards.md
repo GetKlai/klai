@@ -29,7 +29,7 @@ standard shadcn primitives (`button`, `badge`, `card`, `dialog`,
 form controls, `sonner`) sit Klai's own additions (`row-action`, `list`,
 `list-state`, `pagination`, `inline-edit-row`, `inline-row-button`,
 `inline-delete-confirm`, `step-indicator`, `inline-edit`, `multi-select`,
-`query-error-state`, `delete-*`) plus the `use-list-controls` hook that drives
+`query-error-state`, `alert`, `delete-*`) plus the `use-list-controls` hook that drives
 overview search + pagination. The widget (`klai-widget`) and website
 (`klai-website`) are separate systems with their own components — this
 library is portal-only.
@@ -43,6 +43,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `page-header` | Page title, short subtitle/count, and right-aligned page action (`PageHeader`); longer explanatory copy below the header uses `PageIntro` | Yes |
 | `badge` | Inline status labels (secondary/success/warning/destructive/outline) | Yes |
 | `action-tag` | Compact open/closed action-state tag (`ActionTag`, states: `open`, `closed`) | Yes |
+| `alert` | Inline semantic callout (`Alert`, variants: info/success/warning/destructive; sizes: default/sm). Soft tint + auto icon, for wizard/form feedback and inline warnings — not a toast, not a modal | Yes |
 | `input` `select` `textarea` `label` `checkbox` | Form controls | Yes |
 | `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
 | `row-action` | List/table row actions: `RowActionIconButton`, `BorderedRowActionIconButton` (visible bordered hitbox — the default in tables), `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
@@ -811,6 +812,7 @@ Consequences for component code:
 | Hover/focus hint | `tooltip` | `RowActionIconButton` wires this automatically via `label`. |
 | Transient feedback after an action | `sonner` (`toast`) | Success/error confirmations; not for validation errors. |
 | A query failed | `query-error-state` | Standard error block with retry. |
+| Inline semantic feedback in a form/wizard/page | `alert` | Soft tinted callout (info/success/warning/destructive) with an auto icon. Not a toast (`sonner`) and not a modal (`dialog`). Use `size="sm"` for compact wizard-step feedback. |
 | Slide-over panel | `sheet` | **Restricted**: never for admin entity detail (see Detail And Edit). |
 
 Compose these instead of building bespoke overlays. If a needed variant is
@@ -844,4 +846,6 @@ These patterns must not be copied:
 - Hand-picked icon colors for row actions. Use the action tone system.
 - Hand-rolled search inputs (`Input` + manually placed icon). Use `SearchInput`.
 - Hand-rolled status pills with ad-hoc `/10` tints. Use `Badge` semantic variants.
+- Hand-rolled semantic callouts with raw `amber-*`/`red-*`/`green-*` Tailwind
+  (icon + message in a tinted box). Use `Alert` semantic variants.
 - A delete-confirm overlay on an untinted row. Tint the row while confirming.
