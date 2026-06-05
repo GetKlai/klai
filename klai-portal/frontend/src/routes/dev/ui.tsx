@@ -80,6 +80,7 @@ import {
 } from '@/components/ui/list'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import { PageHeader, PageIntro } from '@/components/ui/page-header'
+import { Pagination } from '@/components/ui/pagination'
 import { RadioCardGroup } from '@/components/ui/radio-card-group'
 import {
   BorderedRowActionIconButton,
@@ -90,6 +91,7 @@ import {
   type RowActionTone,
 } from '@/components/ui/row-action'
 import { SearchInput } from '@/components/ui/search-input'
+import { useListControls } from '@/components/ui/use-list-controls'
 import { Select } from '@/components/ui/select'
 import { StepIndicator } from '@/components/ui/step-indicator'
 import { Textarea } from '@/components/ui/textarea'
@@ -227,6 +229,31 @@ const multiSelectOptions = [
 const commandItems = ['Kennisbank', 'Chat', 'Connectors', 'Widgets', 'Instellingen']
 const dividerListGrid = 'lg:grid-cols-[minmax(0,1fr)_144px]'
 
+// Sample collection for the "Volledig lijstoverzicht" anatomy section. 14 rows
+// so it crosses the 10-item threshold and the search + pagination chrome shows.
+interface OverviewItem {
+  id: number
+  name: string
+  scope: 'org' | 'personal'
+  description: string
+}
+const overviewItems: OverviewItem[] = [
+  { id: 1, name: 'Klantenservice-toon', scope: 'org', description: 'Vaste toon en duidelijke escalatieregels voor support-antwoorden.' },
+  { id: 2, name: 'Sales follow-up', scope: 'org', description: 'Opent met de afgesproken volgende stap na een demo.' },
+  { id: 3, name: 'Notulen samenvatten', scope: 'personal', description: 'Korte besluitenlijst met actiehouders.' },
+  { id: 4, name: 'Juridische review', scope: 'org', description: 'Markeer risicovolle clausules en stel alternatieven voor.' },
+  { id: 5, name: 'E-mail opschonen', scope: 'personal', description: 'Herschrijf naar bondige, vriendelijke taal.' },
+  { id: 6, name: 'Productupdate', scope: 'org', description: 'Changelog-toon, gericht op de waarde voor de klant.' },
+  { id: 7, name: 'Sollicitatiescreening', scope: 'org', description: 'Toets cv tegen de functievereisten zonder bias.' },
+  { id: 8, name: 'Vertaal NL → EN', scope: 'personal', description: 'Behoud merkterminologie en formele aanspreekvorm.' },
+  { id: 9, name: 'Bugrapport triëren', scope: 'org', description: 'Stel ernst en eerste reproductiestap voor.' },
+  { id: 10, name: 'Blogpost-opzet', scope: 'personal', description: 'Kop, tussenkoppen en een pakkende intro.' },
+  { id: 11, name: 'Onboarding-checklist', scope: 'org', description: 'Stappen voor een nieuwe medewerker in week één.' },
+  { id: 12, name: 'Vergaderagenda', scope: 'personal', description: 'Doel, onderwerpen en tijdsindeling.' },
+  { id: 13, name: 'Social caption', scope: 'org', description: 'Korte, merkconforme caption met één call-to-action.' },
+  { id: 14, name: 'Code review-toon', scope: 'personal', description: 'Constructief, concreet en zonder jargon.' },
+]
+
 function UiCatalogPage() {
   const [confirming, setConfirming] = useState(false)
   const [tableDeleteConfirm, setTableDeleteConfirm] = useState(false)
@@ -250,6 +277,17 @@ function UiCatalogPage() {
   const [subDeleteConfirm, setSubDeleteConfirm] = useState(false)
   const [searchValue, setSearchValue] = useState('')
   const [radioValue, setRadioValue] = useState('personal')
+  const [demoPage, setDemoPage] = useState(5)
+  const overview = useListControls(overviewItems, {
+    pageSize: 10,
+    filter: (item, query) => {
+      const q = query.trim().toLowerCase()
+      return (
+        item.name.toLowerCase().includes(q) ||
+        item.description.toLowerCase().includes(q)
+      )
+    },
+  })
 
   if (!import.meta.env.DEV) {
     return (
@@ -271,10 +309,161 @@ function UiCatalogPage() {
       </div>
 
       <div className="divide-y divide-gray-200">
+      <Section title="Volledig lijstoverzicht">
+        <div className="space-y-6">
+          <p className="text-sm text-gray-500">
+            De volledige anatomie van een lijst-/overzichtspagina, achter
+            elkaar: <strong>PageHeader</strong> (titel + korte subtitel +
+            primaire actie) → <strong>PageIntro</strong> (uitleg) →{' '}
+            <strong>SearchInput</strong> → lijst of tabel →{' '}
+            <strong>Pagination</strong>. Header, subheader en uitleg volgen{' '}
+            <code>/app/instructions</code>; de search volgt{' '}
+            <code>/admin/users</code>.
+          </p>
+
+          {/* Header + subheader + uitleg — exact de /app/instructions copy. */}
+          <PageHeader
+            title="Instructies"
+            count={overviewItems.length}
+            description="Beheer instructies die je in chats kunt aanzetten."
+            actions={
+              <Button size="sm">
+                <Plus className="h-4 w-4" />
+                Nieuwe instructie
+              </Button>
+            }
+          />
+          <PageIntro>
+            <p>
+              Een instructie is een stukje tekst dat je voor een chat aanzet.
+              Klai pakt het op als startpunt, zodat je niet elke keer dezelfde
+              uitleg hoeft te typen.
+            </p>
+            <p>
+              <span className="text-gray-500">Bijvoorbeeld:</span>{' '}
+              klantenservice-antwoorden met een vaste toon en duidelijke
+              escalatieregels, of een sales follow-up na een demo die opent met
+              de afgesproken volgende stap.
+            </p>
+            <p>
+              Aanzetten doe je via de Instructies-knop onderaan de chat. Je kunt
+              er meerdere tegelijk aan hebben staan.
+            </p>
+          </PageIntro>
+
+          {/* Search verschijnt alleen bij meer dan 10 items (useListControls). */}
+          {overview.showSearch && (
+            <div className="max-w-sm">
+              <SearchInput
+                type="search"
+                placeholder="Zoek op naam of omschrijving..."
+                value={overview.query}
+                onChange={(e) => overview.setQuery(e.target.value)}
+                aria-label="Zoek instructies"
+              />
+            </div>
+          )}
+
+          {overview.pageItems.length === 0 ? (
+            <ListFrame>
+              <ListEmptyState
+                title="Geen resultaten"
+                description="Pas je zoekopdracht aan."
+              />
+            </ListFrame>
+          ) : (
+            <ListFrame>
+              {overview.pageItems.map((item) => (
+                <ListRow
+                  key={item.id}
+                  interactive
+                  className="grid items-center gap-4 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto]"
+                >
+                  <ListRowContent>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <ListRowTitle>{item.name}</ListRowTitle>
+                      <Badge variant="secondary">
+                        {item.scope === 'org' ? 'Organisatie' : 'Persoonlijk'}
+                      </Badge>
+                    </div>
+                    <ListRowDescription>{item.description}</ListRowDescription>
+                  </ListRowContent>
+                  <ListRowActions
+                    className="self-center justify-self-end"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <RowActionGroup>
+                      <BorderedRowActionIconButton label="Bewerken" action="edit" />
+                      <BorderedRowActionIconButton label="Verwijderen" action="delete" />
+                    </RowActionGroup>
+                  </ListRowActions>
+                </ListRow>
+              ))}
+            </ListFrame>
+          )}
+
+          {/* Pagination verschijnt alleen als de gefilterde set > 10 is. */}
+          {overview.showPagination && (
+            <Pagination
+              page={overview.page}
+              pageCount={overview.pageCount}
+              onPageChange={overview.setPage}
+            />
+          )}
+
+          {/* Geschreven standaard naast de gerenderde proof hierboven. */}
+          <div className="space-y-4 rounded-xl border border-gray-200 bg-gray-50/50 p-4 text-sm text-gray-600">
+            <div className="space-y-2">
+              <p className="font-medium text-gray-900">Lijst, lijst-met-header of tabel?</p>
+              <ul className="space-y-2">
+                <li>
+                  <span className="font-medium text-gray-900">DividerList (geen header)</span>{' '}
+                  — rij = titel (+ optioneel één regel omschrijving) + acties; de
+                  taak is openen/bewerken. Voor dit soort overzichten (instructies,
+                  navigatie, bronnen). Dit voorbeeld gebruikt deze variant.
+                </li>
+                <li>
+                  <span className="font-medium text-gray-900">DividerList mét <code>ListHeader</code></span>{' '}
+                  — rij draagt twee of meer korte metadata-attributen die je over
+                  rijen scant (rol, type, status, datum), maar het blijft een
+                  beheerscherm dat op mobiel naar een gestapelde kaart degradeert.
+                  Header is <code>hidden … lg:grid</code> en deelt exact dezelfde
+                  grid + <code>px-4</code> als de rijen. Referentie:{' '}
+                  <code>/admin/users</code>.
+                </li>
+                <li>
+                  <span className="font-medium text-gray-900">DataTable</span>{' '}
+                  — dichte tabellaire data waar kolomvergelijking dé taak is en
+                  echte <code>&lt;table&gt;</code>-semantiek telt; geen mobiele
+                  kaart-stack nodig. Zie de aparte sectie "Data table".
+                </li>
+              </ul>
+            </div>
+            <div className="space-y-2">
+              <p className="font-medium text-gray-900">Search + pagination: drempel = 10</p>
+              <ul className="space-y-2">
+                <li>10 items of minder → toon alles, géén search, géén pagination.</li>
+                <li>Meer dan 10 → search boven, 10 per pagina, pagination eronder.</li>
+                <li>
+                  Search filtert de volledige set; pagination verschijnt zodra de
+                  gefilterde set groter is dan 10; search blijft zichtbaar zolang
+                  de ongefilterde set groter is dan 10 (zodat je kunt wissen).
+                </li>
+                <li>
+                  Eén plek regelt dit: <code>useListControls(items, {'{'} pageSize: 10, filter {'}'})</code>{' '}
+                  geeft <code>pageItems</code>, <code>showSearch</code> en{' '}
+                  <code>showPagination</code> terug — geen losse <code>&gt; 10</code>-checks per pagina.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </Section>
       <Section title="Page header">
         <div className="space-y-6">
           <PageHeader
             title="Groepen"
+            count={12}
             description="Groepen bepalen welke kennisbanken een team mag gebruiken. Voor profielen ga je naar Profielen."
             actions={
               <Button size="sm">
@@ -379,13 +568,6 @@ function UiCatalogPage() {
               Remove item
             </RowActionButton>
           </RowActionGroup>
-        </div>
-      </Section>
-
-      <Section title="Action tags">
-        <div className="flex flex-wrap items-center gap-2">
-          <ActionTag state="open">Open</ActionTag>
-          <ActionTag state="closed">Closed</ActionTag>
         </div>
       </Section>
 
@@ -542,6 +724,22 @@ function UiCatalogPage() {
         </div>
       </Section>
 
+      <Section title="Pagination">
+        <div className="space-y-4">
+          <Pagination page={demoPage} pageCount={10} onPageChange={setDemoPage} />
+          <p className="text-xs text-gray-400">
+            Genummerde pagination (standaard): Vorige / klikbare paginanummers
+            met <code>…</code> ellipsis / Volgende. Eerste en laatste pagina
+            altijd zichtbaar, huidige pagina gemarkeerd en niet klikbaar,
+            ellipsis nooit aan begin of eind. Een venster van{' '}
+            <code>siblingCount</code> (standaard 1) rond de huidige pagina; bij
+            7 of minder pagina's worden alle nummers getoond (geen ellipsis).
+            Klik door de pagina's om de ellipsis aan beide kanten te zien
+            verschijnen.
+          </p>
+        </div>
+      </Section>
+
       <Section title="Wizard steps">
         <div className="space-y-4">
           <StepIndicator
@@ -627,12 +825,18 @@ function UiCatalogPage() {
       </Section>
 
       <Section title="Badges">
-        <div className="flex flex-wrap items-center gap-2">
-          {badgeVariants.map((variant) => (
-            <Badge key={variant} variant={variant}>
-              {variant}
-            </Badge>
-          ))}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {badgeVariants.map((variant) => (
+              <Badge key={variant} variant={variant}>
+                {variant}
+              </Badge>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ActionTag state="open">Open</ActionTag>
+            <ActionTag state="closed">Closed</ActionTag>
+          </div>
         </div>
       </Section>
 

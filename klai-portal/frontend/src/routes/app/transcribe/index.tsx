@@ -4,9 +4,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Mic, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ListFrame } from '@/components/ui/list'
-import { ListLoadingState } from '@/components/ui/list-state'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import { PageHeader, PageIntro } from '@/components/ui/page-header'
+import { Pagination } from '@/components/ui/pagination'
 import { QueryErrorState } from '@/components/ui/query-error-state'
+import { SearchInput } from '@/components/ui/search-input'
+import { useListControls } from '@/components/ui/use-list-controls'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -150,16 +153,19 @@ function TranscribePage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['transcriptions'] }),
   })
 
-  const filteredItems = search.trim()
-    ? allItems.filter((item) => {
-        const q = search.toLowerCase()
-        return (
-          item.text?.toLowerCase().includes(q) ||
-          item.title?.toLowerCase().includes(q) ||
-          item.meeting_url?.toLowerCase().includes(q)
-        )
-      })
-    : allItems
+  const controls = useListControls(allItems, {
+    pageSize: 10,
+    query: search,
+    onQueryChange: (value) => void navigate({ search: { search: value || undefined } }),
+    filter: (item, q) => {
+      const s = q.toLowerCase()
+      return Boolean(
+        item.text?.toLowerCase().includes(s) ||
+          item.title?.toLowerCase().includes(s) ||
+          item.meeting_url?.toLowerCase().includes(s),
+      )
+    },
+  })
 
   const totalCount = (transcriptionsData?.total ?? 0) + (meetingsData?.total ?? 0)
 
@@ -167,7 +173,8 @@ function TranscribePage() {
     <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.app_tool_transcribe_title()}
-        description={m.app_tool_transcribe_description()}
+        count={!isLoading && !queryError ? totalCount : undefined}
+        description={m.app_transcribe_subtitle()}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -193,11 +200,6 @@ function TranscribePage() {
       <PageIntro>
         <p>{m.app_transcribe_intro_body()}</p>
         <p>{m.app_transcribe_intro_meetings()}</p>
-        {!isLoading ? (
-          <p className="text-gray-400">
-            {m.app_transcribe_count_total({ count: String(totalCount) })}
-          </p>
-        ) : null}
       </PageIntro>
 
       {hasActiveMeetings && (
@@ -213,29 +215,59 @@ function TranscribePage() {
         </ListFrame>
       ) : queryError ? (
         <QueryErrorState error={queryError instanceof Error ? queryError : new Error(String(queryError))} onRetry={() => { void refetchTranscriptions(); void refetchMeetings() }} />
+      ) : allItems.length === 0 ? (
+        <ListFrame data-help-id="transcribe-list">
+          <ListEmptyState
+            title={m.app_transcribe_empty_heading()}
+            description={m.app_transcribe_empty_body()}
+          />
+        </ListFrame>
       ) : (
-        <TranscriptionTable
-          allItems={allItems}
-          filteredItems={filteredItems}
-          search={search}
-          onSearchChange={(value) => void navigate({ search: { search: value || undefined } })}
-          onNavigateToDetail={handleNavigateToDetail}
-          onRename={(id, name) => renameMutation.mutate({ id, name })}
-          isRenaming={renameMutation.isPending}
-          renamingId={renameMutation.variables?.id}
-          onDeleteUpload={(id) => deleteUploadMutation.mutate(id)}
-          isDeletingUpload={deleteUploadMutation.isPending}
-          deletingUploadId={deleteUploadMutation.variables}
-          onDeleteMeeting={(id) => deleteMeetingMutation.mutate(id)}
-          isDeletingMeeting={deleteMeetingMutation.isPending}
-          deletingMeetingId={deleteMeetingMutation.variables}
-          onStop={(id) => stopMutation.mutate(id)}
-          isStopping={stopMutation.isPending}
-          stoppingId={stopMutation.variables}
-          onRetry={(id) => retryMutation.mutate(id)}
-          isRetrying={retryMutation.isPending}
-          retryingId={retryMutation.variables}
-        />
+        <>
+          {controls.showSearch && (
+            <div className="max-w-sm">
+              <SearchInput
+                type="search"
+                value={controls.query}
+                onChange={(e) => controls.setQuery(e.target.value)}
+                placeholder={m.app_transcribe_search_placeholder()}
+                aria-label={m.app_transcribe_search_placeholder()}
+              />
+            </div>
+          )}
+          {controls.filteredCount === 0 ? (
+            <ListFrame>
+              <ListEmptyState title={m.app_transcribe_search_empty()} />
+            </ListFrame>
+          ) : (
+            <TranscriptionTable
+              items={controls.pageItems}
+              onNavigateToDetail={handleNavigateToDetail}
+              onRename={(id, name) => renameMutation.mutate({ id, name })}
+              isRenaming={renameMutation.isPending}
+              renamingId={renameMutation.variables?.id}
+              onDeleteUpload={(id) => deleteUploadMutation.mutate(id)}
+              isDeletingUpload={deleteUploadMutation.isPending}
+              deletingUploadId={deleteUploadMutation.variables}
+              onDeleteMeeting={(id) => deleteMeetingMutation.mutate(id)}
+              isDeletingMeeting={deleteMeetingMutation.isPending}
+              deletingMeetingId={deleteMeetingMutation.variables}
+              onStop={(id) => stopMutation.mutate(id)}
+              isStopping={stopMutation.isPending}
+              stoppingId={stopMutation.variables}
+              onRetry={(id) => retryMutation.mutate(id)}
+              isRetrying={retryMutation.isPending}
+              retryingId={retryMutation.variables}
+            />
+          )}
+          {controls.showPagination && (
+            <Pagination
+              page={controls.page}
+              pageCount={controls.pageCount}
+              onPageChange={controls.setPage}
+            />
+          )}
+        </>
       )}
     </div>
   )

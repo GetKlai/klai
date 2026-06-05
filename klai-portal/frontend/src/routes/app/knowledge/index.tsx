@@ -9,15 +9,16 @@
  * to the KB detail page where it has room to breathe.
  */
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import { Building2, FolderOpen, Plus, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader, PageIntro } from '@/components/ui/page-header'
+import { Pagination } from '@/components/ui/pagination'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { SearchInput } from '@/components/ui/search-input'
+import { useListControls } from '@/components/ui/use-list-controls'
 import {
   ListFrame,
   ListRow,
@@ -193,7 +194,6 @@ function kbSortRank(kb: KnowledgeBase): 0 | 1 | 2 {
 function KnowledgePage() {
   const auth = useAuth()
   const myUserId = auth.user?.profile?.sub
-  const [search, setSearch] = useState('')
 
   const {
     data: kbsData,
@@ -227,21 +227,21 @@ function KnowledgePage() {
   // ES2019, so within each rank the API order is preserved.
   const sortedKbs = [...allKbs].sort((a, b) => kbSortRank(a) - kbSortRank(b))
 
-  const filteredKbs = search.trim()
-    ? sortedKbs.filter((kb) => {
-        const q = search.toLowerCase()
-        return kb.name.toLowerCase().includes(q) || (kb.description ?? '').toLowerCase().includes(q)
-      })
-    : sortedKbs
+  const controls = useListControls(sortedKbs, {
+    pageSize: 10,
+    filter: (kb, q) => {
+      const s = q.trim().toLowerCase()
+      return kb.name.toLowerCase().includes(s) || (kb.description ?? '').toLowerCase().includes(s)
+    },
+  })
 
   const totalCount = allKbs.length
-  const countLabel =
-    totalCount === 1 ? m.kb_list_count_one() : m.kb_list_count({ count: String(totalCount) })
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
       <PageHeader
         title={m.kb_list_title()}
+        count={!kbsLoading && !kbsError ? totalCount : undefined}
         description={m.kb_list_subtitle()}
         actions={
           <Button asChild size="sm">
@@ -257,17 +257,19 @@ function KnowledgePage() {
         <p>{m.kb_intro_body()}</p>
         <p>{m.kb_intro_examples()}</p>
         <p>{m.kb_intro_invoke()}</p>
-        {!kbsLoading ? <p className="text-gray-400">{countLabel}</p> : null}
       </PageIntro>
 
-      {/* Search */}
-      <SearchInput
-        type="search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder={m.kb_list_search_placeholder()}
-        aria-label={m.kb_list_search_placeholder()}
-      />
+      {controls.showSearch && (
+        <div className="max-w-sm">
+          <SearchInput
+            type="search"
+            value={controls.query}
+            onChange={(e) => controls.setQuery(e.target.value)}
+            placeholder={m.kb_list_search_placeholder()}
+            aria-label={m.kb_list_search_placeholder()}
+          />
+        </div>
+      )}
 
       {/* List */}
       <div>
@@ -277,19 +279,19 @@ function KnowledgePage() {
           </ListFrame>
         ) : kbsError ? (
           <QueryErrorState error={kbsError} onRetry={refetchKbs} />
-        ) : filteredKbs.length === 0 ? (
+        ) : controls.filteredCount === 0 ? (
           <ListFrame>
             <ListEmptyState
               title={
-                search.trim()
-                  ? m.kb_list_empty_search({ q: search.trim() })
+                controls.query.trim()
+                  ? m.kb_list_empty_search({ q: controls.query.trim() })
                   : m.kb_list_empty_no_collections()
               }
             />
           </ListFrame>
         ) : (
           <ListFrame>
-            {filteredKbs.map((kb) => (
+            {controls.pageItems.map((kb) => (
               <KbRow
                 key={kb.slug}
                 kb={kb}
@@ -301,6 +303,14 @@ function KnowledgePage() {
           </ListFrame>
         )}
       </div>
+
+      {controls.showPagination && (
+        <Pagination
+          page={controls.page}
+          pageCount={controls.pageCount}
+          onPageChange={controls.setPage}
+        />
+      )}
     </div>
   )
 }

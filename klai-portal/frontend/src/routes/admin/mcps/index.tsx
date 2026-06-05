@@ -13,6 +13,9 @@ import {
   DataTableRow,
 } from '@/components/ui/data-table'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { Pagination } from '@/components/ui/pagination'
+import { SearchInput } from '@/components/ui/search-input'
+import { useListControls } from '@/components/ui/use-list-controls'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
@@ -53,11 +56,20 @@ function McpsListPage() {
   })
 
   const enabledServers = data?.servers.filter((s) => s.enabled) ?? []
+  const controls = useListControls(enabledServers, {
+    pageSize: 10,
+    filter: (s, q) => {
+      const t = q.trim().toLowerCase()
+      const name = (s.display_name || s.id).toLowerCase()
+      return name.includes(t) || (s.description ?? '').toLowerCase().includes(t)
+    },
+  })
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.admin_mcps_title()}
+        count={!isLoading && !error ? enabledServers.length : undefined}
         description={m.admin_mcps_subtitle()}
         actions={
           <Button size="sm" onClick={() => navigate({ to: '/admin/mcps/new' })}>
@@ -81,18 +93,33 @@ function McpsListPage() {
       ) : enabledServers.length === 0 ? (
         <ListEmptyState title={m.admin_mcps_no_servers()} />
       ) : (
-        <DataTable>
-          <DataTableHeader>
-            <DataTableRow>
-              <DataTableHead className="w-48">{m.admin_mcps_col_name()}</DataTableHead>
-              <DataTableHead>{m.admin_mcps_col_description()}</DataTableHead>
-              <DataTableHead align="right" className="w-28">
-                {m.admin_mcps_col_actions()}
-              </DataTableHead>
-            </DataTableRow>
-          </DataTableHeader>
-          <DataTableBody>
-            {enabledServers.map((server) => {
+        <>
+          {controls.showSearch && (
+            <div className="max-w-sm">
+              <SearchInput
+                type="search"
+                value={controls.query}
+                onChange={(e) => controls.setQuery(e.target.value)}
+                placeholder={m.admin_mcps_search_placeholder()}
+                aria-label={m.admin_mcps_search_placeholder()}
+              />
+            </div>
+          )}
+          {controls.filteredCount === 0 ? (
+            <ListEmptyState title={m.admin_mcps_no_servers()} />
+          ) : (
+            <DataTable>
+              <DataTableHeader>
+                <DataTableRow>
+                  <DataTableHead className="w-48">{m.admin_mcps_col_name()}</DataTableHead>
+                  <DataTableHead>{m.admin_mcps_col_description()}</DataTableHead>
+                  <DataTableHead align="right" className="w-28">
+                    {m.admin_mcps_col_actions()}
+                  </DataTableHead>
+                </DataTableRow>
+              </DataTableHeader>
+              <DataTableBody>
+            {controls.pageItems.map((server) => {
               const displayName = server.display_name || server.id
               const isDeactivating =
                 deactivateMutation.isPending &&
@@ -154,8 +181,17 @@ function McpsListPage() {
                 </DataTableRow>
               )
             })}
-          </DataTableBody>
-        </DataTable>
+              </DataTableBody>
+            </DataTable>
+          )}
+          {controls.showPagination && (
+            <Pagination
+              page={controls.page}
+              pageCount={controls.pageCount}
+              onPageChange={controls.setPage}
+            />
+          )}
+        </>
       )}
     </div>
   )

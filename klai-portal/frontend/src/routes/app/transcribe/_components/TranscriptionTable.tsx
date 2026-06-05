@@ -11,12 +11,10 @@ import {
   ListRowDescription,
   ListRowTitle,
 } from '@/components/ui/list'
-import { ListEmptyState } from '@/components/ui/list-state'
 import {
   BorderedRowActionIconButton,
   RowActionGroup,
 } from '@/components/ui/row-action'
-import { SearchInput } from '@/components/ui/search-input'
 import {
   Loader2,
   CheckCheck,
@@ -139,10 +137,7 @@ const transcriptionListGrid =
   'grid-cols-[2rem_minmax(0,1fr)] lg:grid-cols-[2rem_minmax(0,1fr)_minmax(7rem,0.48fr)_minmax(7rem,0.45fr)_192px]'
 
 interface TranscriptionTableProps {
-  allItems: UnifiedItem[]
-  filteredItems: UnifiedItem[]
-  search: string
-  onSearchChange: (value: string) => void
+  items: UnifiedItem[]
   onNavigateToDetail: (item: UnifiedItem) => void
   onRename: (id: string, name: string | null) => void
   isRenaming: boolean
@@ -162,10 +157,7 @@ interface TranscriptionTableProps {
 }
 
 export function TranscriptionTable({
-  allItems,
-  filteredItems,
-  search,
-  onSearchChange,
+  items,
   onNavigateToDetail,
   onRename,
   isRenaming,
@@ -237,35 +229,8 @@ export function TranscriptionTable({
     }
   }
 
-  if (allItems.length === 0) {
-    return (
-      <ListFrame data-help-id="transcribe-list">
-        <ListEmptyState
-          title={m.app_transcribe_empty_heading()}
-          description={m.app_transcribe_empty_body()}
-        />
-      </ListFrame>
-    )
-  }
-
   return (
-    <div data-help-id="transcribe-list" className="space-y-5">
-      <div className="max-w-sm">
-        <SearchInput
-          type="search"
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder={m.app_transcribe_search_placeholder()}
-          aria-label={m.app_transcribe_search_placeholder()}
-        />
-      </div>
-
-      {filteredItems.length === 0 ? (
-        <ListFrame>
-          <ListEmptyState title={m.app_transcribe_search_empty()} />
-        </ListFrame>
-      ) : (
-        <ListFrame>
+        <ListFrame data-help-id="transcribe-list">
           <ListHeader className={`hidden gap-x-3 ${transcriptionListGrid} lg:grid`}>
             <span>{m.app_transcribe_col_source()}</span>
             <span>{m.app_transcribe_col_text()}</span>
@@ -274,7 +239,7 @@ export function TranscriptionTable({
             <span className="justify-self-stretch text-right">{m.app_transcribe_col_actions()}</span>
           </ListHeader>
 
-          {filteredItems.map((item) => {
+          {items.map((item) => {
             const isEditing = editingId === item.id
             const isConfirmingDelete = confirmingDeleteId === item.id
             const isSaving = isRenaming && renamingId === item.id
@@ -433,7 +398,5 @@ export function TranscriptionTable({
             )
           })}
         </ListFrame>
-      )}
-    </div>
   )
 }
