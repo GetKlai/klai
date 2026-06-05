@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 function DataTable({ className, ...props }: React.TableHTMLAttributes<HTMLTableElement>) {
   return (
     <table
-      className={cn('w-full border-y border-gray-200 text-sm', className)}
+      className={cn('w-full border-collapse border-y border-gray-200 text-sm', className)}
       {...props}
     />
   )

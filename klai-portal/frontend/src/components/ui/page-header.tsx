@@ -11,25 +11,19 @@ interface PageHeaderProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> 
 
 function PageHeader({ title, description, actions, className, ...props }: PageHeaderProps) {
   return (
-    <div
-      className={cn(
-        'grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start',
-        className,
-      )}
-      {...props}
-    >
-      <div className="min-w-0 space-y-1">
+    <div className={cn('space-y-1', className)} {...props}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {title}
         </h1>
-        {description ? (
-          <p className="text-sm text-gray-400">{description}</p>
+        {actions ? (
+          <div className="flex shrink-0 items-center justify-start sm:ml-auto sm:justify-end">
+            {actions}
+          </div>
         ) : null}
       </div>
-      {actions ? (
-        <div className="flex justify-start sm:justify-end sm:pt-1">
-          {actions}
-        </div>
+      {description ? (
+        <p className="text-sm text-gray-400">{description}</p>
       ) : null}
     </div>
   )

@@ -67,6 +67,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import {
   ListFrame,
+  ListHeader,
   ListRow,
   ListRowActions,
   ListRowChevron,
@@ -349,7 +350,12 @@ function UiCatalogPage() {
 
       <Section title="Divider lists">
         <ListFrame>
-          <ListRow interactive>
+          <ListHeader className="hidden grid-cols-[minmax(0,1fr)_auto] gap-x-5 lg:grid">
+            <span>Naam</span>
+            <span className="text-right">Acties</span>
+          </ListHeader>
+
+          <ListRow interactive className="px-4">
             <ListRowContent>
               <div className="flex items-center gap-2">
                 <ListRowTitle className="text-sm font-sans font-medium">Kennisbank bronnen</ListRowTitle>
@@ -364,7 +370,7 @@ function UiCatalogPage() {
             </ListRowActions>
           </ListRow>
 
-          <ListRow interactive>
+          <ListRow interactive className="px-4">
             <ListRowContent>
               <div className="flex items-center gap-2">
                 <ListRowTitle className="text-sm font-sans font-medium">Persoonlijke kennis</ListRowTitle>
@@ -379,7 +385,7 @@ function UiCatalogPage() {
             </ListRowActions>
           </ListRow>
 
-          <ListRow confirming={confirming}>
+          <ListRow confirming={confirming} className="px-4">
             <ListRowContent>
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 shrink-0 text-gray-400" />
