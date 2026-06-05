@@ -258,17 +258,23 @@ def test_orchestrator_preserves_active_tool_result_for_mistral(monkeypatch):
         message for message in result.messages if isinstance(message, dict)
     ]
     assert [message["role"] for message in provider_messages] == [
+        "system",
         "user",
         "assistant",
         "tool",
     ]
-    assert provider_messages[1]["tool_calls"][0]["id"] == "call_1"
+    assert mod.TOOL_DATA_BOUNDARY_PROMPT in provider_messages[0]["content"]
+    assert provider_messages[2]["tool_calls"][0]["id"] == "call_1"
     assert provider_messages[-1]["tool_call_id"] == "call_1"
     assert "ZURICH-CTX-2606" in provider_messages[-1]["content"]
     assert result.meta["omitted_tool_messages"] == 0
     assert result.meta["active_tool_calls_preserved"] == 1
     assert result.meta["active_tool_results_preserved"] == 1
+    assert result.meta["active_tool_results_normalized"] == 1
+    assert result.meta["active_tool_result_trust"] == {"internal_retrieval": 1}
+    assert result.meta["tool_data_boundary_added"] == 1
     assert "active_tool_results_preserved" in result.meta["reason_codes"]
+    assert "active_tool_results_normalized" in result.meta["reason_codes"]
 
 
 def test_orchestrator_preserves_multiple_active_tool_results(monkeypatch):
@@ -296,6 +302,7 @@ def test_orchestrator_preserves_multiple_active_tool_results(monkeypatch):
         message for message in result.messages if isinstance(message, dict)
     ]
     assert [message["role"] for message in provider_messages] == [
+        "system",
         "user",
         "assistant",
         "tool",
@@ -303,6 +310,45 @@ def test_orchestrator_preserves_multiple_active_tool_results(monkeypatch):
     ]
     assert provider_messages[-1]["content"] == "Second result."
     assert result.meta["active_tool_results_preserved"] == 2
+    assert result.meta["active_tool_results_normalized"] == 2
+    assert result.meta["active_tool_result_trust"] == {"unknown_tool": 2}
+
+
+def test_orchestrator_classifies_known_tool_result_trust(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search knowledge and web."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_1", "function": {"name": "search_knowledge"}},
+                    {"id": "call_2", "function": {"name": "web_search"}},
+                ],
+            },
+            {
+                "role": "tool",
+                "name": "search_knowledge_mcp_klai-knowledge",
+                "tool_call_id": "call_1",
+                "content": "KB result.",
+            },
+            {
+                "role": "tool",
+                "name": "web_search",
+                "tool_call_id": "call_2",
+                "content": "Web result.",
+            },
+        ],
+        requested_model="klai-large",
+    )
+
+    assert result.meta["active_tool_result_trust"] == {
+        "internal_retrieval": 1,
+        "external_tool": 1,
+    }
 
 
 def test_orchestrator_keeps_empty_active_tool_result_provider_safe(monkeypatch):
@@ -357,6 +403,63 @@ def test_orchestrator_serializes_structured_active_tool_result(monkeypatch):
     ]
     assert provider_messages[-1]["role"] == "tool"
     assert provider_messages[-1]["content"] == '[{"text": "A"}, {"text": "B"}]'
+
+
+def test_orchestrator_does_not_truncate_active_tool_result_before_router(monkeypatch):
+    mod = _load_context(monkeypatch, {"KLAI_CONTEXT_LARGE_HISTORY_BUDGET_CHARS": "120"})
+    orchestrator = mod.KlaiContextOrchestrator()
+    payload = "x" * 300
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search large payload."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "call_1", "function": {"name": "search"}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": payload},
+        ],
+        requested_model="klai-large",
+        apply_history_budget=False,
+    )
+
+    assert result.messages[-1]["content"] == payload
+    assert result.meta["active_tool_budget_applied"] is False
+    assert result.meta["truncated_active_tool_results"] == 0
+
+
+def test_orchestrator_truncates_active_tool_result_after_router_model_budget(
+    monkeypatch,
+):
+    mod = _load_context(monkeypatch, {"KLAI_CONTEXT_LARGE_HISTORY_BUDGET_CHARS": "160"})
+    orchestrator = mod.KlaiContextOrchestrator()
+    payload = "x" * 300
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search large payload."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "call_1", "function": {"name": "search"}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": payload},
+        ],
+        requested_model="klai-primary",
+        final_model="klai-large",
+    )
+
+    tool_message = result.messages[-1]
+    assert tool_message["role"] == "tool"
+    assert len(tool_message["content"]) <= 160
+    assert mod.ACTIVE_TOOL_RESULT_TRUNCATION_SUFFIX in tool_message["content"]
+    assert result.meta["model_profile"] == "klai-large"
+    assert result.meta["active_tool_budget_applied"] is True
+    assert result.meta["active_tool_result_max_chars"] == 160
+    assert result.meta["truncated_active_tool_results"] == 1
+    assert result.meta["truncated_active_tool_result_chars"] > 0
+    assert "active_tool_result_truncated" in result.meta["reason_codes"]
 
 
 def test_orchestrator_budget_merges_placeholder_and_drops_orphan_assistant(
