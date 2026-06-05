@@ -104,7 +104,7 @@ function AdminJoinRequestsPage() {
             </div>
           )}
           {controls.filteredCount === 0 ? (
-            <ListEmptyState title={m.admin_join_requests_empty()} />
+            <ListEmptyState title={m.admin_join_requests_no_matches()} />
           ) : (
             <DataTable>
               <DataTableHeader>

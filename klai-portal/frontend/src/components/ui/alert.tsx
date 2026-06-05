@@ -14,21 +14,21 @@ import { cn } from '@/lib/utils'
 // across wizard feedback and form warnings.
 //
 // Like Badge, the semantic variants derive from the SAME primary tokens as
-// the row-action tones (var(--color-success|warning|destructive|info)). The
-// surface is kept soft via a 5% tint background + 30% tint border, with the
-// solid token as icon/text color — same hue and meaning as the solid action
-// icons, just softer. Do not hand-roll status callouts with raw amber/red/
-// green Tailwind literals; use this component.
+// the row-action tones. The surface is kept soft via a 5% tint background +
+// 30% tint border; the icon/text use the darker `*-text` token variant
+// (var(--color-success-text) etc.) so labels clear WCAG AA on the light tint.
+// Do not hand-roll status callouts with raw amber/red/green Tailwind literals;
+// use this component.
 const alertVariants = cva('flex gap-2 rounded-lg border', {
   variants: {
     variant: {
-      info: 'border-[var(--color-info)]/30 bg-[var(--color-info)]/5 text-[var(--color-info)]',
+      info: 'border-[var(--color-info)]/30 bg-[var(--color-info)]/5 text-[var(--color-info-text)]',
       success:
-        'border-[var(--color-success)]/30 bg-[var(--color-success)]/5 text-[var(--color-success)]',
+        'border-[var(--color-success)]/30 bg-[var(--color-success)]/5 text-[var(--color-success-text)]',
       warning:
-        'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 text-[var(--color-warning)]',
+        'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 text-[var(--color-warning-text)]',
       destructive:
-        'border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 text-[var(--color-destructive)]',
+        'border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 text-[var(--color-destructive-text)]',
     },
     size: {
       sm: 'p-3 text-xs',

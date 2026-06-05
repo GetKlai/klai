@@ -788,8 +788,9 @@ decide the winner here: unlayered declarations rank after every explicit
 layer, so an unlayered `* { border-color }` would beat every Tailwind utility
 (which live in `@layer utilities`) regardless of class specificity. When this
 rule was unlayered, every colored border utility in the portal
-(`border-[var(--color-destructive)]`, `border-current`, `border-amber-300`,
-...) was silently overridden to the neutral grey — invisible because grey is
+(`border-[var(--color-destructive)]`, `border-current`,
+`border-[var(--color-warning)]`, ...) was silently overridden to the neutral
+grey — invisible because grey is
 close to `gray-200`. Keeping it in `@layer base` lets utilities win, which is
 Tailwind v4's intended preflight behaviour.
 
