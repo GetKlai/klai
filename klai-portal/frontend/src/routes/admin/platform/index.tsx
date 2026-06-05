@@ -133,7 +133,7 @@ function PlatformConsole() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 px-6 py-10">
+    <div className="mx-auto max-w-6xl space-y-8 px-6 pt-6 pb-10">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">

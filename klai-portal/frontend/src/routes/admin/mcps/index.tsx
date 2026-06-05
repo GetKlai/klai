@@ -44,7 +44,7 @@ function McpsListPage() {
   const enabledServers = data?.servers.filter((s) => s.enabled) ?? []
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
+    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">

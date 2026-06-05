@@ -353,7 +353,7 @@ function AddConnectorPage() {
   }
 
   return (
-    <div className="mx-auto max-w-xl px-6 py-10">
+    <div className="mx-auto max-w-xl px-6 pt-6 pb-10">
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
