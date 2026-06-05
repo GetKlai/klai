@@ -350,6 +350,8 @@ class TestKlaiKnowledgeHookLegacy:
     def test_normalizes_user_text_parts_and_omits_stale_attachments(self, monkeypatch):
         """LibreChat text-part uploads must be provider-safe on later turns."""
         mod = _load_hook(monkeypatch)
+        import klai_context
+
         uploaded_doc = "Attached document(s):\n```md\nprivacy document\n```"
         latest_question = "Wat staat er in de kennisbank over verwerkers?"
         messages = [
@@ -358,12 +360,12 @@ class TestKlaiKnowledgeHookLegacy:
             {"role": "user", "content": [{"type": "text", "text": latest_question}]},
         ]
 
-        sanitized, normalized = mod._normalize_user_text_part_messages(messages)
+        result = klai_context.KlaiContextOrchestrator().assemble(messages)
 
-        assert normalized == 2
-        assert sanitized[0]["content"] == mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER
-        assert sanitized[1] is messages[1]
-        assert sanitized[2]["content"] == latest_question
+        assert result.meta["normalized_user_text_part_messages"] == 2
+        assert result.messages[0]["content"] == mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER
+        assert result.messages[1] is messages[1]
+        assert result.messages[2]["content"] == latest_question
 
     @pytest.mark.asyncio
     async def test_retrieve_request_includes_auth_header(self, monkeypatch):
@@ -1597,6 +1599,161 @@ class TestKlaiKnowledgeHookKB010:
             if isinstance(message, dict)
         )
         assert "librechat_user_text_part_messages_normalized" in caplog.text
+
+
+class TestKlaiKnowledgeHookProviderContext:
+    @pytest.mark.asyncio
+    async def test_provider_context_normalizes_stale_librechat_upload_parts(
+        self, monkeypatch
+    ):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        latest = "What does the uploaded policy say about approvals?"
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Attached document(s): policy.pdf\n\nFull extracted text",
+                    }
+                ],
+            },
+            {"role": "assistant", "content": "I can help with that document."},
+            {"role": "user", "content": latest},
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        provider_messages = result["messages"]
+        assert provider_messages[-1] == {"role": "user", "content": latest}
+        assert all(
+            not isinstance(m.get("content"), list)
+            for m in provider_messages
+            if m.get("role") in ("user", "assistant")
+        )
+        provider_text = "\n".join(
+            m.get("content", "") for m in provider_messages if isinstance(m.get("content"), str)
+        )
+        assert "Attached document(s):" not in provider_text
+        assert mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER in provider_text
+        meta = result["metadata"]["_klai_context_meta"]
+        assert meta["normalized_user_text_part_messages"] == 1
+        assert meta["stale_attachment_placeholders"] == 1
+
+    @pytest.mark.asyncio
+    async def test_provider_context_keeps_latest_user_exact_under_budget(
+        self, monkeypatch
+    ):
+        mod = _load_hook(
+            monkeypatch,
+            {"KLAI_CONTEXT_HISTORY_BUDGET_CHARS": "40"},
+        )
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        latest = "Please answer this exact latest question."
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "old user " + ("x" * 80)},
+            {"role": "assistant", "content": "old assistant " + ("y" * 80)},
+            {"role": "user", "content": latest},
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        provider_messages = result["messages"]
+        assert provider_messages[-1] == {"role": "user", "content": latest}
+        provider_text = "\n".join(
+            m.get("content", "") for m in provider_messages if isinstance(m.get("content"), str)
+        )
+        assert "old user" not in provider_text
+        assert "old assistant" not in provider_text
+        assert mod._HISTORY_BUDGET_CONTEXT_PLACEHOLDER in provider_text
+        meta = result["metadata"]["_klai_context_meta"]
+        assert meta["omitted_history_messages"] == 2
+        assert meta["history_budget_chars"] == 40
+
+    @pytest.mark.asyncio
+    async def test_provider_context_budget_waits_for_librechat_scope(
+        self, monkeypatch
+    ):
+        mod = _load_hook(
+            monkeypatch,
+            {"KLAI_CONTEXT_HISTORY_BUDGET_CHARS": "40"},
+        )
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "old user " + ("x" * 80)},
+            {"role": "assistant", "content": "old assistant " + ("y" * 80)},
+            {"role": "user", "content": "Latest question remains."},
+        ]}
+
+        result = await hook.async_pre_call_hook(
+            _make_user_api_key(org_id=None), cache, data, "completion"
+        )
+
+        provider_text = "\n".join(
+            m.get("content", "") for m in result["messages"] if isinstance(m.get("content"), str)
+        )
+        assert "old user" in provider_text
+        assert "old assistant" in provider_text
+        assert mod._HISTORY_BUDGET_CONTEXT_PLACEHOLDER not in provider_text
+        meta = result["metadata"]["_klai_context_meta"]
+        assert meta["history_budget_applied"] is False
+        assert meta["omitted_history_messages"] == 0
+
+    @pytest.mark.asyncio
+    async def test_provider_context_retrieval_history_uses_assembled_context(
+        self, monkeypatch
+    ):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Attached document(s): stale.pdf\nbody"}
+                ],
+            },
+            {"role": "assistant", "content": "Earlier answer."},
+            {"role": "user", "content": "What did we decide after that?"},
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+        body = mc.post.call_args.kwargs.get("json") or {}
+        history_text = "\n".join(
+            turn.get("content", "") for turn in body.get("conversation_history", [])
+        )
+        assert "Attached document(s):" not in history_text
+        assert mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER in history_text
 
     @pytest.mark.asyncio
     async def test_gate_bypass_no_injection(self, monkeypatch):
