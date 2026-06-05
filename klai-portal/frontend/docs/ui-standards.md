@@ -40,9 +40,12 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `button` | All buttons (variants: default/secondary/ghost/outline/destructive; sizes: default/sm/icon) | Yes |
 | `badge` | Inline status labels (secondary/success/warning/destructive/outline) | Yes |
 | `input` `select` `textarea` `label` `checkbox` | Form controls | Yes |
+| `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
 | `row-action` | List/table row actions: `RowActionIconButton`, `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
-| `list` | List primitives: `ListFrame`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon` | Yes |
+| `list` | List primitives: `ListFrame`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
 | `inline-delete-confirm` | Inline destructive confirmation inside a row (no layout shift) | Yes |
+| `inline-edit` | Click-to-edit text in place (with save/cancel) | Yes |
+| `radio-card-group` | Selectable radio option cards (`RadioCardGroup`) | Yes |
 | `step-indicator` | Wizard step progress (`StepIndicator`) | Yes |
 | `alert-dialog` | Centered confirm dialog for destructive actions outside rows | Yes |
 | `dialog` | Generic modal | Yes |
@@ -218,6 +221,28 @@ import {
 - `ListRowActions` is the trailing action cell; put a `RowActionGroup` or
   loose `RowActionIconButton`s inside.
 
+### Navigation list
+
+A list whose rows navigate somewhere (the `/app` tool launcher) is the same
+primitives with the row as a link and a trailing `ListRowChevron` instead of
+actions. Do not hand-roll this — reuse the primitives so the icon/title/
+description rhythm stays identical to other lists.
+
+```tsx
+<ListFrame>
+  <ListRow asChild interactive>
+    <a href={tool.href}>
+      <ListRowIcon><tool.icon className="h-4 w-4" /></ListRowIcon>
+      <ListRowContent>
+        <ListRowTitle>{tool.title}</ListRowTitle>
+        <ListRowDescription>{tool.description}</ListRowDescription>
+      </ListRowContent>
+      <ListRowChevron />
+    </a>
+  </ListRow>
+</ListFrame>
+```
+
 ## Inline Delete Confirmation
 
 Destructive actions inside a row use `InlineDeleteConfirm` — the canonical
@@ -251,6 +276,13 @@ Rules:
 
 - Use this for row-level deletes. It is controlled — you own the
   `confirmDeleteId` / pending state.
+- **Tint the row while confirming.** The confirm overlay paints
+  `bg-[var(--color-hover)]` so it can cover the meta text behind it. The row
+  it sits in MUST get the SAME background while confirming, or a hard seam
+  shows where the overlay meets the untinted row. `ListRow confirming` does
+  this for you; a raw `<tr>`/`<div>` row must add
+  `bg-[var(--color-hover)]` on the confirming branch (see
+  `TranscriptionTable`, `SourceRow`).
 - The confirm button is destructive-filled with the action label; cancel is a
   ghost `X`. Both come from the component — do not restyle.
 - For destructive actions that are NOT in a row (e.g. a whole page or card),
@@ -346,6 +378,31 @@ Every field needs `Label` plus matching `id`/`htmlFor`.
 </div>
 ```
 
+- **Search fields** use `SearchInput` (leading magnifier icon), never a bare
+  `Input` with a hand-placed icon.
+- **`Select`** renders a custom chevron; its right padding is symmetric with
+  the left text padding. Do not re-add a native arrow or a second icon.
+- **Inline value edits** (rename in a row) use `InlineEdit` with a green
+  save + ghost cancel control. The amber edit trigger is a bordered action
+  icon (`border border-current`), matching the row-action look.
+
+### Selectable cards
+
+A single-choice list where each option needs a label + description (role
+picker, plan picker) uses `RadioCardGroup`. The selected card gets a dark
+border + subtle fill (no amber on active states per the v1 spine).
+
+```tsx
+<RadioCardGroup
+  options={options}            // { value, label, description }[]
+  value={value}
+  onChange={setValue}
+  aria-label="Profiel"
+/>
+```
+
+`ProfilePicker` is the role-ladder specialization of this pattern.
+
 ## Cards
 
 Cards are individual repeated items, stats, or genuinely framed blocks. Do not
@@ -406,6 +463,26 @@ Do not use raw Tailwind semantic colors such as `text-green-*`, `text-red-*`,
 
 For row/action coloring, do not pick colors by hand — use the action tone
 system (see Row Actions And Action Tones).
+
+### Semantic badges
+
+Status badges use the `Badge` component with a semantic variant. The semantic
+variants (`info`, `success`, `warning`, `destructive`) derive from the SAME
+primary tokens as the action tones — same hue, same meaning — kept soft via a
+10% tint background with the solid token as text:
+
+```
+success  → bg var(--color-success)/10   text var(--color-success)
+warning  → bg var(--color-warning)/10   text var(--color-warning)
+destructive → bg var(--color-destructive)/10 text var(--color-destructive)
+info     → bg var(--color-info)/10      text var(--color-info)
+```
+
+So a green status badge and a green sync icon are the same green, just softer.
+Structural (non-semantic) variants stay neutral: `secondary` (gray fill),
+`outline`, `default`/`accent` (dark). Do not hand-roll status pills with ad-hoc
+`/10` tints — use `Badge`. (The transcribe `StatusBadge` is the remaining
+hand-rolled one; migrate it to `Badge` on touch.)
 
 ## Borders And Cascade Layers
 
@@ -486,3 +563,6 @@ These patterns must not be copied:
 - An unlayered `* { border-color }` or `@utility` override. Keep the reset in
   `@layer base` (see Borders And Cascade Layers).
 - Hand-picked icon colors for row actions. Use the action tone system.
+- Hand-rolled search inputs (`Input` + manually placed icon). Use `SearchInput`.
+- Hand-rolled status pills with ad-hoc `/10` tints. Use `Badge` semantic variants.
+- A delete-confirm overlay on an untinted row. Tint the row while confirming.
