@@ -222,6 +222,7 @@ const multiSelectOptions = [
   { value: 'widgets', label: 'Widgets' },
 ]
 const commandItems = ['Kennisbank', 'Chat', 'Connectors', 'Widgets', 'Instellingen']
+const dividerListGrid = 'lg:grid-cols-[minmax(0,1fr)_112px]'
 
 function UiCatalogPage() {
   const [confirming, setConfirming] = useState(false)
@@ -350,12 +351,12 @@ function UiCatalogPage() {
 
       <Section title="Divider lists">
         <ListFrame>
-          <ListHeader className="hidden grid-cols-[minmax(0,1fr)_auto] gap-x-5 lg:grid">
+          <ListHeader className={`hidden gap-x-3 ${dividerListGrid} lg:grid`}>
             <span>Naam</span>
             <span className="text-right">Acties</span>
           </ListHeader>
 
-          <ListRow interactive className="px-4">
+          <ListRow interactive className={`grid items-center gap-x-3 px-4 ${dividerListGrid}`}>
             <ListRowContent>
               <div className="flex items-center gap-2">
                 <ListRowTitle className="text-sm font-sans font-medium">Kennisbank bronnen</ListRowTitle>
@@ -363,14 +364,14 @@ function UiCatalogPage() {
               </div>
               <ListRowDescription>Rustige lijst met links padding en compacte acties.</ListRowDescription>
             </ListRowContent>
-            <ListRowActions className="self-center">
+            <ListRowActions className="self-center justify-self-end">
               <BorderedRowActionIconButton label="Bewerken" action="edit" />
               <BorderedRowActionIconButton label="Openen" action="open" />
               <BorderedRowActionIconButton label="Verwijderen" action="delete" />
             </ListRowActions>
           </ListRow>
 
-          <ListRow interactive className="px-4">
+          <ListRow interactive className={`grid items-center gap-x-3 px-4 ${dividerListGrid}`}>
             <ListRowContent>
               <div className="flex items-center gap-2">
                 <ListRowTitle className="text-sm font-sans font-medium">Persoonlijke kennis</ListRowTitle>
@@ -378,14 +379,14 @@ function UiCatalogPage() {
               </div>
               <ListRowDescription>Meta-informatie blijft subtiel en truncatet op een regel.</ListRowDescription>
             </ListRowContent>
-            <ListRowActions className="self-center">
+            <ListRowActions className="self-center justify-self-end">
               <BorderedRowActionIconButton label="Synchroniseren" action="sync" />
               <BorderedRowActionIconButton label="Configureren" action="configure" />
               <BorderedRowActionIconButton label="Meer acties" action="more" />
             </ListRowActions>
           </ListRow>
 
-          <ListRow confirming={confirming} className="px-4">
+          <ListRow confirming={confirming} className={`grid items-center gap-x-3 px-4 ${dividerListGrid}`}>
             <ListRowContent>
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 shrink-0 text-gray-400" />
@@ -393,7 +394,7 @@ function UiCatalogPage() {
               </div>
               <ListRowDescription>De overlay houdt dezelfde action-cell breedte.</ListRowDescription>
             </ListRowContent>
-            <ListRowActions className="self-center">
+            <ListRowActions className="self-center justify-self-end">
               <InlineDeleteConfirm
                 isConfirming={confirming}
                 isPending={false}
