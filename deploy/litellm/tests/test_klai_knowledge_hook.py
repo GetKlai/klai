@@ -2166,6 +2166,76 @@ class TestTokenRouterKB010:
         assert "_klai_context_meta" not in result["metadata"]
 
     @pytest.mark.asyncio
+    async def test_router_converts_active_tool_result_for_explicit_large(
+        self, monkeypatch
+    ):
+        """LibreChat agent tool turns can call klai-large directly without user metadata."""
+        litellm_mod = sys.modules["litellm"]
+        litellm_mod.token_counter = MagicMock(return_value=1)
+
+        sys.modules.pop("klai_context", None)
+        sys.modules.pop("custom_router", None)
+        import custom_router
+
+        importlib.reload(custom_router)
+
+        router = custom_router.TokenRouter()
+        data = {
+            "model": "klai-large",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Zoek in de knowledge base naar ZURICH-CTX-2606.",
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_call",
+                            "tool_call": {
+                                "name": "search_knowledge",
+                                "args": "{}",
+                            },
+                        }
+                    ],
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "function": {"name": "search_knowledge"},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "name": "search_knowledge",
+                    "tool_call_id": "call_1",
+                    "content": "Project Zurich gebruikt testcode ZURICH-CTX-2606.",
+                },
+            ],
+            "metadata": {
+                "_klai_context_meta": {
+                    "omitted_tool_messages": 1,
+                    "omitted_tool_content_parts": 1,
+                }
+            },
+        }
+
+        result = await router.async_pre_call_hook(MagicMock(), None, data, "completion")
+
+        provider_messages = [
+            message for message in result["messages"] if isinstance(message, dict)
+        ]
+        assert result["model"] == "klai-large"
+        assert provider_messages[-1]["role"] == "user"
+        assert "ZURICH-CTX-2606" in provider_messages[-1]["content"]
+        assert all("tool_calls" not in message for message in provider_messages)
+        assert result["metadata"]["_klai_router_meta"]["provider_context_applied"] is True
+        context_meta = result["metadata"]["_klai_context_meta"]
+        assert context_meta["model_profile"] == "klai-large"
+        assert context_meta["active_tool_results_converted"] == 1
+        assert "active_tool_results_converted" in context_meta["reason_codes"]
+
+    @pytest.mark.asyncio
     async def test_router_provider_context_assembly_fails_open(
         self, monkeypatch
     ):

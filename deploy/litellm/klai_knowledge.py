@@ -2735,6 +2735,7 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
 
         messages = _sanitize_assistant_history_messages(data.get("messages", []))
+        query = _last_user_message(messages)
         context_result = _KLAI_CONTEXT_ORCHESTRATOR.assemble(
             messages,
             requested_model=data.get("model", "klai-primary"),
@@ -2744,7 +2745,6 @@ class KlaiKnowledgeHook(CustomLogger):
         context_meta = context_result.meta
         data["messages"] = messages
         data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
-        query = _last_user_message(messages)
         if not query or _is_trivial(query):
             return data
 
