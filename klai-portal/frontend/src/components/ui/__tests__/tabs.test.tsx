@@ -69,4 +69,27 @@ describe('Tabs', () => {
     )
     expect(container.querySelector('svg')).toBeTruthy()
   })
+
+  it('uses roving tabindex and activates on arrow keys', () => {
+    const onValueChange = vi.fn()
+    render(<Tabs tabs={baseTabs} value="details" onValueChange={onValueChange} />)
+    const active = screen.getByRole('tab', { name: 'Details' })
+    expect(active.getAttribute('tabindex')).toBe('0')
+    expect(screen.getByRole('tab', { name: 'Activity' }).getAttribute('tabindex')).toBe('-1')
+    fireEvent.keyDown(active, { key: 'ArrowRight' })
+    expect(onValueChange).toHaveBeenCalledWith('activity')
+    fireEvent.keyDown(active, { key: 'ArrowLeft' })
+    expect(onValueChange).toHaveBeenCalledWith('activity') // wraps to last (also 'activity')
+  })
+
+  it('exposes an accessible label on the count badge via countLabel', () => {
+    render(
+      <Tabs
+        tabs={[{ id: 'a', label: 'A', count: 3, countLabel: '3 unread' }]}
+        value="a"
+        onValueChange={() => {}}
+      />
+    )
+    expect(screen.getByLabelText('3 unread').textContent).toBe('3')
+  })
 })

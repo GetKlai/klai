@@ -184,15 +184,15 @@ function GapsPage() {
       ) : gaps.length === 0 ? (
         <ListEmptyState title={m.gaps_empty_state()} />
       ) : (
-        <DataTable>
+        <DataTable className="table-fixed">
           <DataTableHeader>
             <DataTableRow>
               <DataTableHead>{m.gaps_column_query()}</DataTableHead>
-              <DataTableHead>{m.gaps_column_type()}</DataTableHead>
-              <DataTableHead>{m.gaps_column_nearest_kb()}</DataTableHead>
-              <DataTableHead align="right">{m.gaps_column_count()}</DataTableHead>
-              <DataTableHead align="right">{m.gaps_column_last()}</DataTableHead>
-              <DataTableHead align="right" />
+              <DataTableHead className="w-24">{m.gaps_column_type()}</DataTableHead>
+              <DataTableHead className="w-36">{m.gaps_column_nearest_kb()}</DataTableHead>
+              <DataTableHead align="right" className="w-20">{m.gaps_column_count()}</DataTableHead>
+              <DataTableHead align="right" className="w-28">{m.gaps_column_last()}</DataTableHead>
+              <DataTableHead align="right" className="w-12" />
             </DataTableRow>
           </DataTableHeader>
           <DataTableBody>
@@ -200,7 +200,9 @@ function GapsPage() {
               const rowKey = `${gap.query_text}-${gap.gap_type}`
               return (
                 <DataTableRow key={rowKey}>
-                  <DataTableCell>{gap.query_text}</DataTableCell>
+                  <DataTableCell className="truncate" title={gap.query_text}>
+                    {gap.query_text}
+                  </DataTableCell>
                   <DataTableCell>
                     <Badge variant={gap.gap_type === 'hard' ? 'destructive' : 'warning'}>
                       {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
