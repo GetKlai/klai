@@ -39,6 +39,7 @@ from app.services.citations import (
     compose_answer_with_trusted_sources,
     evidence_pack_items_as_chunks,
     render_evidence_context,
+    source_url_key,
     trusted_sources_from_evidence_pack,
 )
 from app.services.llm_safety_adapter import (
@@ -1232,12 +1233,24 @@ def _sse_activity_delta(activity: list[dict[str, str | int]]) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
+def _sse_error_frame(message: str) -> bytes:
+    """OpenAI-compatible SSE error frame.
+
+    Once a StreamingResponse has started, an upstream failure cannot become an
+    HTTP 502, so the clean contract is an error event on the stream followed by
+    [DONE] — the client sees an explicit error instead of a truncated/broken SSE.
+    """
+    payload = {"error": {"type": "upstream_error", "message": message}}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
 def _compose_backend_managed_answer(
     text: str,
     trusted_sources: list[dict[str, Any]] | None,
     citation_chunks: list[dict] | None,
     user_query: str,
     web_chunks: list[dict] | None = None,
+    web_query: str | None = None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """Compose the answer with KB and (optionally) web sources as separate tiers.
 
@@ -1247,6 +1260,11 @@ def _compose_backend_managed_answer(
     ``origin`` (``"kb"`` or ``"web"``). The no-citable-sources refusal only fires
     when BOTH tiers come up empty, so a web-grounded answer is not stripped just
     because the knowledge base had nothing.
+
+    Web sources are validated against ``web_query`` (the concise query they were
+    actually retrieved for) — NOT ``user_query``, which on the support route is
+    the long KB-retrieval blob and would reject relevant web sources as
+    "query_not_supported".
     """
     composed = compose_answer_with_trusted_sources(
         text,
@@ -1262,14 +1280,21 @@ def _compose_backend_managed_answer(
     decision = dict(composed.decision)
     if web_chunks:
         # Run the same firewall over the cleaned answer with web evidence only,
-        # so web results are selected on their own merit, not against KB chunks.
+        # validated against the web query the results were retrieved for.
         web_composed = compose_answer_with_trusted_sources(
             composed.content,
             [],
-            query_text=user_query,
+            query_text=web_query or user_query,
             evidence_chunks=web_chunks,
         )
-        web_sources = [{**source, "origin": "web"} for source in web_composed.sources]
+        kb_url_keys = {source_url_key(s.get("url")) for s in kb_sources if s.get("url")}
+        web_sources = [
+            {**source, "origin": "web"}
+            for source in web_composed.sources
+            # Drop a web source that duplicates a KB source URL: the knowledge
+            # base is the higher-trust tier, so the KB entry wins.
+            if source_url_key(source.get("url")) not in kb_url_keys
+        ]
         decision["web"] = web_composed.decision
 
     sources = _renumber_sources(kb_sources + web_sources)
@@ -1296,6 +1321,7 @@ async def _chat_completion_streaming_with_composed_citations(
     trusted_sources: list[dict[str, Any]] | None,
     citation_chunks: list[dict] | None,
     web_chunks: list[dict] | None = None,
+    web_query: str | None = None,
     emit_sources: bool = True,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
@@ -1303,41 +1329,62 @@ async def _chat_completion_streaming_with_composed_citations(
     Marker-mode clients receive backend-managed document-level citations. The
     model is explicitly told not to write citation markers, so source selection
     must happen after generation against the final answer text.
+
+    Marker mode buffers the whole upstream response before emitting anything, so
+    an upstream failure (LiteLLM mid-restart / 5xx) happens pre-first-byte and is
+    surfaced as a clean SSE error frame instead of a broken stream.
     """
     raw_text_parts: list[str] = []
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        async with client.stream(
-            "POST",
-            f"{settings.litellm_base_url}/v1/chat/completions",
-            json={
-                "model": model,
-                "messages": augmented_messages,
-                "temperature": temperature,
-                "stream": True,
-            },
-            headers={
-                "Authorization": f"Bearer {settings.litellm_master_key}",
-                **get_trace_headers(),
-            },
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                payload = line[6:].strip()
-                if not payload:
-                    continue
-                if payload == "[DONE]":
-                    break
-                try:
-                    evt: dict[str, Any] = json.loads(payload)
-                except json.JSONDecodeError:
-                    logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
-                    continue
-                delta = (evt.get("choices") or [{}])[0].get("delta") or {}
-                text = delta.get("content")
-                if isinstance(text, str) and text:
-                    raw_text_parts.append(text)
+    chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream(
+                "POST",
+                chat_url,
+                json={
+                    "model": model,
+                    "messages": augmented_messages,
+                    "temperature": temperature,
+                    "stream": True,
+                },
+                headers={
+                    "Authorization": f"Bearer {settings.litellm_master_key}",
+                    **get_trace_headers(),
+                },
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:].strip()
+                    if not payload:
+                        continue
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        evt: dict[str, Any] = json.loads(payload)
+                    except json.JSONDecodeError:
+                        logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
+                        continue
+                    delta = (evt.get("choices") or [{}])[0].get("delta") or {}
+                    text = delta.get("content")
+                    if isinstance(text, str) and text:
+                        raw_text_parts.append(text)
+    except (httpx.ConnectError, httpx.TimeoutException):
+        logger.warning("partner_chat_upstream_unreachable", org_id=org_id, target=chat_url, exc_info=True)
+        yield _sse_error_frame("Chat service unavailable")
+        yield b"data: [DONE]\n\n"
+        return
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "partner_chat_upstream_error",
+            org_id=org_id,
+            status_code=exc.response.status_code,
+            exc_info=True,
+        )
+        yield _sse_error_frame("Chat service error")
+        yield b"data: [DONE]\n\n"
+        return
 
     content, sources, decision = _compose_backend_managed_answer(
         "".join(raw_text_parts),
@@ -1345,6 +1392,7 @@ async def _chat_completion_streaming_with_composed_citations(
         citation_chunks,
         user_query,
         web_chunks,
+        web_query,
     )
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
         logger.warning(
@@ -1645,6 +1693,7 @@ async def chat_completion_non_streaming(
     citation_source_metadata: dict[str, dict[str, str]] | None = None,
     citation_chunks: list[dict] | None = None,
     web_chunks: list[dict] | None = None,
+    web_query: str | None = None,
     trusted_sources: list[dict[str, Any]] | None = None,
     citation_output: CitationOutput = "links",
     source_query: str | None = None,
@@ -1731,6 +1780,7 @@ async def chat_completion_non_streaming(
                     citation_chunks,
                     user_query_for_safety,
                     web_chunks,
+                    web_query,
                 )
                 logger.info(
                     "partner_chat_citation_selection_decision",
@@ -1793,6 +1843,7 @@ async def chat_completion_streaming(
     citation_source_metadata: dict[str, dict[str, str]] | None = None,
     citation_chunks: list[dict] | None = None,
     web_chunks: list[dict] | None = None,
+    web_query: str | None = None,
     trusted_sources: list[dict[str, Any]] | None = None,
     citation_output: CitationOutput = "links",
     source_query: str | None = None,
@@ -1819,6 +1870,7 @@ async def chat_completion_streaming(
             trusted_sources=trusted_sources,
             citation_chunks=citation_chunks,
             web_chunks=web_chunks,
+            web_query=web_query,
             emit_sources=emit_sources,
         ):
             yield chunk
