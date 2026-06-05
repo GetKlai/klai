@@ -73,6 +73,7 @@
   "signup_password_strength_fair": "Could be stronger",
   "signup_password_strength_good": "Good",
   "signup_password_strength_strong": "Strong",
+  "signup_password_strength_too_short": "{strength}, but too short",
   "signup_password_strength_label": "Strength",
   "signup_password_policy_label": "Policy",
   "signup_password_policy_checking": "Checking",

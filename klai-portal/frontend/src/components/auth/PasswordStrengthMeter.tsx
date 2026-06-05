@@ -21,13 +21,23 @@ export function PasswordStrengthMeter({
   if (!show) return null
 
   const level = Math.max(0, Math.min(4, score))
-  const displayLevel = !estimated && issues.includes('too_short') ? 0 : level
+  const isTooShort = !estimated && issues.includes('too_short')
+  const strengthLabel = isTooShort
+    ? m.signup_password_strength_too_short({ strength: passwordStrengthLabel(level) })
+    : passwordStrengthLabel(level)
   const activeClass =
-    displayLevel >= 3
+    isAcceptable && level >= 3
       ? 'bg-emerald-500'
-      : displayLevel === 2
+      : level >= 2
         ? 'bg-amber-500'
         : 'bg-[var(--color-destructive-text)]'
+  const strengthTextClass = isTooShort
+    ? 'text-amber-700'
+    : level >= 3
+      ? 'text-emerald-700'
+      : level === 2
+        ? 'text-amber-700'
+        : 'text-gray-500'
 
   return (
     <div className="space-y-2" aria-live="polite">
@@ -35,15 +45,15 @@ export function PasswordStrengthMeter({
         {[0, 1, 2, 3].map((index) => (
           <div
             key={index}
-            className={`h-1.5 rounded-full ${index <= displayLevel - 1 ? activeClass : 'bg-gray-200'}`}
+            className={`h-1.5 rounded-full ${index <= level - 1 ? activeClass : 'bg-gray-200'}`}
           />
         ))}
       </div>
       <div className="grid gap-1 text-xs sm:grid-cols-2 sm:gap-3">
         <div className="flex min-w-0 items-start justify-between gap-2">
           <span className="shrink-0 text-gray-500">{m.signup_password_strength_label()}</span>
-          <span className={displayLevel >= 3 ? 'text-emerald-700' : displayLevel === 2 ? 'text-amber-700' : 'text-gray-500'}>
-            {passwordStrengthLabel(displayLevel)}
+          <span className={`text-right ${strengthTextClass}`}>
+            {strengthLabel}
           </span>
         </div>
         <div className="flex min-w-0 items-start justify-between gap-2">

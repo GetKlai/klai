@@ -73,6 +73,7 @@
   "signup_password_strength_fair": "Kan sterker",
   "signup_password_strength_good": "Goed",
   "signup_password_strength_strong": "Sterk",
+  "signup_password_strength_too_short": "{strength}, maar te kort",
   "signup_password_strength_label": "Sterkte",
   "signup_password_policy_label": "Beleid",
   "signup_password_policy_checking": "Wordt gecontroleerd",
