@@ -9,9 +9,18 @@ import {
   createColumnHelper,
 } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/page-header'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
-import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from '@/components/ui/data-table'
 import { Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
@@ -180,13 +189,18 @@ function AdminGroups() {
             onConfirm={() => { deleteMutation.mutate(row.original.id); setConfirmDeleteId(null) }}
             onCancel={() => setConfirmDeleteId(null)}
           >
-            <RowActionGroup className="mt-px items-start">
-              <RowActionIconButton
-                label={m.admin_groups_delete()}
-                action="delete"
-                onClick={() => setConfirmDeleteId(row.original.id)}
+            <RowActionGroup>
+              <BorderedRowActionIconButton
+                label={m.admin_groups_view()}
+                action="view"
+                onClick={() =>
+                  navigate({
+                    to: '/admin/groups/$groupId',
+                    params: { groupId: String(row.original.id) },
+                  })
+                }
               />
-              <RowActionIconButton
+              <BorderedRowActionIconButton
                 label={m.admin_groups_edit()}
                 action="edit"
                 onClick={() =>
@@ -196,15 +210,10 @@ function AdminGroups() {
                   })
                 }
               />
-              <RowActionIconButton
-                label={row.original.name}
-                action="view"
-                onClick={() =>
-                  navigate({
-                    to: '/admin/groups/$groupId',
-                    params: { groupId: String(row.original.id) },
-                  })
-                }
+              <BorderedRowActionIconButton
+                label={m.admin_groups_delete()}
+                action="delete"
+                onClick={() => setConfirmDeleteId(row.original.id)}
               />
             </RowActionGroup>
           </InlineDeleteConfirm>
@@ -222,20 +231,16 @@ function AdminGroups() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.admin_groups_title()}
-          </h1>
-          <p className="text-sm text-gray-400">
-            {m.admin_groups_subtitle()}
-          </p>
-        </div>
-        <Button size="sm" onClick={() => void navigate({ to: '/admin/groups/new' })}>
-          <Plus className="h-4 w-4 mr-2" />
-          {m.admin_groups_create()}
-        </Button>
-      </div>
+      <PageHeader
+        title={m.admin_groups_title()}
+        description={m.admin_groups_subtitle()}
+        actions={
+          <Button size="sm" onClick={() => void navigate({ to: '/admin/groups/new' })}>
+            <Plus className="h-4 w-4 mr-2" />
+            {m.admin_groups_create()}
+          </Button>
+        }
+      />
 
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
@@ -244,59 +249,50 @@ function AdminGroups() {
       ) : groups.length === 0 ? (
         <ListEmptyState title={m.admin_groups_empty()} />
       ) : (
-        <table className="w-full text-sm border-t border-b border-gray-200">
-          <thead>
+        <DataTable>
+          <DataTableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <tr
-                key={headerGroup.id}
-                className="border-b border-gray-200"
-              >
+              <DataTableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
-                  <th
+                  <DataTableHead
                     key={header.id}
-                    className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide"
+                    align={header.column.id === 'actions' ? 'right' : 'left'}
                   >
-                    {flexRender(
-                      header.column.columnDef.header,
-                      header.getContext(),
-                    )}
-                  </th>
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                  </DataTableHead>
                 ))}
-              </tr>
+              </DataTableRow>
             ))}
-          </thead>
-          <tbody>
+          </DataTableHeader>
+          <DataTableBody>
             {table.getRowModel().rows.map((row) => (
-              <tr
+              <DataTableRow
                 key={row.id}
+                interactive
+                confirming={confirmDeleteId === row.original.id}
                 onClick={() =>
                   void navigate({
                     to: '/admin/groups/$groupId',
                     params: { groupId: String(row.original.id) },
                   })
                 }
-                className={`border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover ${
-                  confirmDeleteId === row.original.id ? 'bg-[var(--color-hover)]' : ''
-                }`}
               >
                 {row.getVisibleCells().map((cell) => {
                   const isActionCell = cell.column.id === 'actions'
                   return (
-                    <td
+                    <DataTableCell
                       key={cell.id}
-                      className="py-4 pr-4 align-top text-gray-900"
-                      onClick={
-                        isActionCell ? (e) => e.stopPropagation() : undefined
-                      }
+                      align={isActionCell ? 'right' : 'left'}
+                      onClick={isActionCell ? (e) => e.stopPropagation() : undefined}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
+                    </DataTableCell>
                   )
                 })}
-              </tr>
+              </DataTableRow>
             ))}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
       )}
     </div>
   )
