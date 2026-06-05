@@ -48,7 +48,7 @@ function DataTableRow({
 }
 
 interface DataTableHeadProps extends React.ThHTMLAttributes<HTMLTableCellElement> {
-  align?: 'left' | 'right'
+  align?: 'left' | 'center' | 'right'
 }
 
 function DataTableHead({ align = 'left', className, ...props }: DataTableHeadProps) {
@@ -57,6 +57,7 @@ function DataTableHead({ align = 'left', className, ...props }: DataTableHeadPro
       className={cn(
         'px-4 py-3 text-left text-xs font-medium text-gray-400',
         align === 'right' && 'text-right',
+        align === 'center' && 'text-center',
         className,
       )}
       {...props}
@@ -65,7 +66,7 @@ function DataTableHead({ align = 'left', className, ...props }: DataTableHeadPro
 }
 
 interface DataTableCellProps extends React.TdHTMLAttributes<HTMLTableCellElement> {
-  align?: 'left' | 'right'
+  align?: 'left' | 'center' | 'right'
 }
 
 function DataTableCell({ align = 'left', className, ...props }: DataTableCellProps) {
@@ -74,6 +75,7 @@ function DataTableCell({ align = 'left', className, ...props }: DataTableCellPro
       className={cn(
         'px-4 py-4 align-middle text-gray-900',
         align === 'right' && 'text-right',
+        align === 'center' && 'text-center',
         className,
       )}
       {...props}

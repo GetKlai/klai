@@ -1,5 +1,13 @@
-import { Loader2 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import {
+  DataTable,
+  DataTableHeader,
+  DataTableBody,
+  DataTableRow,
+  DataTableHead,
+  DataTableCell,
+} from '@/components/ui/data-table'
+import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
 import { useOrgKnowledgeBases } from '../-hooks'
 import type { AccessLevel, OrgKnowledgeBase } from '../-types'
 
@@ -56,20 +64,11 @@ export function KbAccessEditor({
   )
 
   if (isLoading) {
-    return (
-      <p className="py-4 text-sm text-gray-400">
-        <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-        {m.admin_shared_loading()}
-      </p>
-    )
+    return <ListLoadingState label={m.admin_shared_loading()} />
   }
 
   if (kbs.length === 0) {
-    return (
-      <p className="py-4 text-sm text-gray-400">
-        {m.admin_shared_kb_empty()}
-      </p>
-    )
+    return <ListEmptyState title={m.admin_shared_kb_empty()} />
   }
 
   function handleChange(kbId: number, level: AccessLevel) {
@@ -77,37 +76,30 @@ export function KbAccessEditor({
   }
 
   return (
-    <table className="w-full text-sm border-t border-b border-gray-200">
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-            {m.admin_shared_kb_name()}
-          </th>
-          <th className="py-3 pr-4 text-center text-xs font-medium text-gray-400 tracking-wide w-24">
+    <DataTable>
+      <DataTableHeader>
+        <DataTableRow>
+          <DataTableHead>{m.admin_shared_kb_name()}</DataTableHead>
+          <DataTableHead align="center" className="w-24">
             {m.admin_api_keys_kb_none()}
-          </th>
-          <th className="py-3 pr-4 text-center text-xs font-medium text-gray-400 tracking-wide w-24">
+          </DataTableHead>
+          <DataTableHead align="center" className="w-24">
             {m.admin_shared_kb_read()}
-          </th>
+          </DataTableHead>
           {!hideReadWrite && (
-            <th className="py-3 text-center text-xs font-medium text-gray-400 tracking-wide w-28">
+            <DataTableHead align="center" className="w-28">
               {m.admin_api_keys_kb_read_write()}
-            </th>
+            </DataTableHead>
           )}
-        </tr>
-      </thead>
-      <tbody>
+        </DataTableRow>
+      </DataTableHeader>
+      <DataTableBody>
         {kbs.map((kb) => {
           const currentLevel = getAccessLevel(value, kb.id)
           return (
-            <tr
-              key={kb.id}
-              className="border-b border-gray-200 last:border-b-0"
-            >
-              <td className="py-3 pr-4 align-middle text-gray-900">
-                {kb.name}
-              </td>
-              <td className="py-3 pr-4 text-center align-middle">
+            <DataTableRow key={kb.id}>
+              <DataTableCell>{kb.name}</DataTableCell>
+              <DataTableCell align="center">
                 <input
                   type="radio"
                   name={`kb-access-${kb.id}`}
@@ -116,8 +108,8 @@ export function KbAccessEditor({
                   disabled={disabled}
                   className="accent-[var(--color-accent)]"
                 />
-              </td>
-              <td className="py-3 pr-4 text-center align-middle">
+              </DataTableCell>
+              <DataTableCell align="center">
                 <input
                   type="radio"
                   name={`kb-access-${kb.id}`}
@@ -126,9 +118,9 @@ export function KbAccessEditor({
                   disabled={disabled}
                   className="accent-[var(--color-accent)]"
                 />
-              </td>
+              </DataTableCell>
               {!hideReadWrite && (
-                <td className="py-3 text-center align-middle">
+                <DataTableCell align="center">
                   <input
                     type="radio"
                     name={`kb-access-${kb.id}`}
@@ -142,12 +134,12 @@ export function KbAccessEditor({
                         : undefined
                     }
                   />
-                </td>
+                </DataTableCell>
               )}
-            </tr>
+            </DataTableRow>
           )
         })}
-      </tbody>
-    </table>
+      </DataTableBody>
+    </DataTable>
   )
 }
