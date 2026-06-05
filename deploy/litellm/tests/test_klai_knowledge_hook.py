@@ -1756,6 +1756,80 @@ class TestKlaiKnowledgeHookProviderContext:
         assert mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER in history_text
 
     @pytest.mark.asyncio
+    async def test_provider_context_clips_retrieval_history_and_omits_tool_parts(
+        self, monkeypatch
+    ):
+        mod = _load_hook(
+            monkeypatch,
+            {"KNOWLEDGE_RETRIEVE_HISTORY_MAX_CONTENT_CHARS": "220"},
+        )
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        long_answer = "Intro " + ("x" * 9000) + " outro"
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Earlier KB answer."},
+                    {
+                        "type": "tool_call",
+                        "tool_call": {
+                            "id": "call_1",
+                            "name": "search_knowledge_mcp_klai-knowledge",
+                            "args": '{"query":"Klai"}',
+                            "output": '{"internal":"result"}',
+                        },
+                    },
+                ],
+                "tool_calls": [{"id": "call_1", "function": {"name": "search"}}],
+            },
+            {
+                "role": "tool",
+                "name": "search_knowledge_mcp_klai-knowledge",
+                "tool_call_id": "call_1",
+                "content": '{"internal":"result"}',
+            },
+            {"role": "user", "content": "Maak een uitgebreide handleiding."},
+            {"role": "assistant", "content": long_answer},
+            {
+                "role": "user",
+                "content": "Ga verder met deel twee en gebruik dezelfde brontrouw.",
+            },
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        body = mc.post.call_args.kwargs.get("json") or {}
+        history = body.get("conversation_history") or []
+        assert history
+        assert all(len(turn["content"]) <= 220 for turn in history)
+        assert mod.RETRIEVE_HISTORY_OMISSION_MARKER.strip() in history[-1]["content"]
+        assert "tool_call" not in str(history)
+        assert all(
+            message.get("role") != "tool"
+            for message in result["messages"]
+            if isinstance(message, dict)
+        )
+        assert all(
+            not isinstance(message.get("content"), list)
+            for message in result["messages"]
+            if isinstance(message, dict)
+            and message.get("role") in ("user", "assistant")
+        )
+        meta = result["metadata"]["_klai_context_meta"]
+        assert meta["omitted_tool_messages"] == 1
+        assert meta["omitted_tool_content_parts"] == 1
+
+    @pytest.mark.asyncio
     async def test_gate_bypass_no_injection(self, monkeypatch):
         """AC-010-11: retrieval_bypassed=True → no KB chunks injected, meta recorded.
 
