@@ -161,7 +161,7 @@ function TranscribePage() {
   const totalCount = (transcriptionsData?.total ?? 0) + (meetingsData?.total ?? 0)
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10 space-y-8">
+    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">

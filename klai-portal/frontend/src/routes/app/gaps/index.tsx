@@ -121,7 +121,7 @@ function GapsPage() {
   const gaps = data?.gaps ?? []
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10">
+    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-3">
           <AlertTriangle className="h-7 w-7 text-gray-900" />

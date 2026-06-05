@@ -34,7 +34,7 @@ function PlatformFeedbackSubmissionPage() {
     void navigate({ to: '/admin/platform', search: { tab: 'feedback' } })
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 px-6 pt-6 pb-10">
+    <div className="mx-auto max-w-4xl space-y-8 px-6 pt-4 pb-10">
       {detail.isLoading && (
         <p className="py-8 text-sm text-gray-400">
           <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />

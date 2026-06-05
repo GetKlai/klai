@@ -51,7 +51,7 @@ function IntegrationsPage() {
   const hasNoTokens = !isLoading && activeTokens.length === 0
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10 space-y-6">
+    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
       <div className="space-y-1">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.integrations_heading()}

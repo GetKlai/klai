@@ -30,7 +30,7 @@ function AppHome() {
   const accessibleTools = getAccessibleAppTools(products)
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10 space-y-8">
+    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
       <div className="space-y-1" data-help-id="home-greeting">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {getGreeting(userName)}
