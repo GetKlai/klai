@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { Card, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson } from 'lucide-react'
 import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
@@ -243,7 +244,7 @@ function MeetingDetailPage() {
   const hasSummary = !!meeting.summary_json
   const meetingTitle = meeting.meeting_title ?? meeting.meeting_url
   const activeTab: TabId = search.tab ?? 'summary'
-  const tabs: { id: TabId; label: string }[] = [
+  const tabs: TabItem<TabId>[] = [
     { id: 'summary', label: m.app_meetings_summary_title() },
     { id: 'transcript', label: m.app_meetings_transcript_title() },
   ]
@@ -344,27 +345,12 @@ function MeetingDetailPage() {
       {hasTranscript && (
         <div className="space-y-6">
           <div className="flex flex-col gap-3 border-b border-gray-200 sm:flex-row sm:items-end sm:justify-between">
-            <nav className="-mb-px flex gap-6">
-              {tabs.map(({ id: tabId, label }) => {
-                const isActive = tabId === activeTab
-                return (
-                  <Button
-                    key={tabId}
-                    type="button"
-                    variant="link"
-                    onClick={() => setTab(tabId)}
-                    className={[
-                      'h-auto shrink-0 rounded-none px-0 pb-3 text-sm font-medium no-underline border-b-2 transition-colors hover:no-underline',
-                      isActive
-                        ? 'border-gray-900 text-gray-900'
-                        : 'border-transparent text-gray-400 hover:text-gray-900',
-                    ].join(' ')}
-                  >
-                    {label}
-                  </Button>
-                )
-              })}
-            </nav>
+            <Tabs
+              tabs={tabs}
+              value={activeTab}
+              onValueChange={setTab}
+              className="-mb-px border-b-0"
+            />
             {activeTab === 'summary' && meeting.summary_json && (
               <div className="flex flex-wrap gap-2 pb-3 sm:justify-end">
                 <Button variant="outline" size="sm" onClick={copySummaryText}>

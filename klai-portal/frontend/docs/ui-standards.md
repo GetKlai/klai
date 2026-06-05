@@ -58,6 +58,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `inline-edit` | Low-level single-field click-to-edit overlay, for custom row layouts that own their own buttons. Prefer `InlineEditRow` for new rows | Yes |
 | `radio-card-group` | Selectable radio option cards (`RadioCardGroup`) | Yes |
 | `step-indicator` | Wizard step progress (`StepIndicator`) | Yes |
+| `tabs` | Underline tabs (`Tabs`): text + optional icon/count, strong `border-gray-900` active underline. For state/search-param tabs. Router-navigation tab bars (real sub-route links) use `Link` directly with the same look. | Yes |
 | `alert-dialog` | Centered confirm dialog for destructive actions outside rows | Yes |
 | `dialog` | Generic modal | Yes |
 | `dropdown-menu` `popover` `command` | Menus, popovers, command/combobox | Yes |
@@ -69,8 +70,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `sheet` | Slide-over. **Forbidden** for admin entity detail (see Detail And Edit) | Restricted |
 | `delete-kb-modal` `delete-org-modal` | Feature-specific destructive modals (not generic) | Feature |
 
-Tabs are a **pattern, not a component** (see Tabs). They are currently
-hand-rolled in 5 places and are a candidate for extraction.
+Tabs are the owned `tabs` component (see Tabs).
 
 ## Required Workflow
 
@@ -567,35 +567,44 @@ import { StepIndicator } from '@/components/ui/step-indicator'
 
 ## Tabs
 
-Use underline tabs for authenticated app/admin surfaces. Persist the active tab
-in URL search state when the tab affects navigation or when detail pages need
-to return to the same section.
-
-Do not use pill tabs for admin/account/detail surfaces unless the surrounding
-module already does.
-
-Tabs are currently hand-rolled (no shared `tabs` component yet) in:
-`app/account.tsx`, `app/knowledge/$kbSlug/route.tsx`, `admin/platform/index.tsx`,
-`admin/api-keys/$id.tsx`, `admin/widgets/$id.tsx`. The standard markup is an
-underline row with an active `border-b-2`:
+Underline tabs for authenticated app/admin surfaces use the owned `Tabs`
+component (`components/ui/tabs.tsx`). It is the single source for the tab look —
+do not hand-roll a tab row again.
 
 ```tsx
-<div className="flex gap-6 border-b border-gray-200">
-  <button
-    type="button"
-    onClick={() => setTab('details')}
-    className={tab === 'details'
-      ? 'border-b-2 border-gray-900 pb-2 text-sm font-medium text-gray-900'
-      : 'border-b-2 border-transparent pb-2 text-sm text-gray-400 hover:text-gray-900'}
-  >
-    Details
-  </button>
-</div>
+import { Tabs, type TabItem } from '@/components/ui/tabs'
+
+const tabs: TabItem<TabId>[] = [
+  { id: 'details', label: m.account_tab_settings() },
+  { id: 'feedback', label: m.account_tab_feedback(), count: unreadCount },
+]
+
+<Tabs tabs={tabs} value={activeTab} onValueChange={setTab} />
 ```
 
-Because this pattern repeats in 5 places, it is a candidate for extraction
-into a shared `Tabs` component (tracked for the cleanup phase). Until then,
-copy the markup above exactly so the 5 instances stay identical.
+- **Active state is a strong `border-gray-900` underline** — unmistakable
+  against the gray-200 container divider. (The old `border-gray-200` active
+  style was a defect: it blended into the divider.)
+- **Text-only is the default, on-brand look.** `icon` and `count` are
+  optional. Use icons sparingly (detail/settings surfaces); the `count` badge
+  takes an optional `countTone` (`success` default, or `warning`/`destructive`/
+  `info`).
+- `Tabs` is **controlled and presentational** — it owns no state. Wire
+  `value`/`onValueChange` to local state or to URL search state when the tab
+  must survive navigation (the account/api-keys/widgets/platform pattern).
+- Do not use pill tabs for admin/account/detail surfaces.
+- For a tab bar with many tabs that must scroll on small screens, pass
+  `className="overflow-x-auto"` (the platform dashboard pattern).
+
+**Router-navigation tab bars** — where each tab is a real sub-route (different
+pathname), not a search-param toggle — keep using TanStack `<Link>` directly
+with the same underline classes, because they need true `<a>` semantics
+(open-in-new-tab, prefetch). `Tabs` is intentionally router-agnostic and does
+not render links. `app/knowledge/$kbSlug/route.tsx` is the reference for this
+link-tab variant.
+
+The live render of every variant is the `/dev/ui` "Tabs" section — that is the
+canonical rendered reference.
 
 ## Detail And Edit
 

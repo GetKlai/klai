@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bug, Download, Lightbulb, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { useLocale } from '@/lib/locale'
@@ -156,9 +157,9 @@ function AccountPage() {
   const hasProfileInfo = Boolean(name || email)
   const feedbackUnreadCount = feedbackUpdates?.unread_count ?? 0
 
-  const tabs: { id: TabId; label: string; icon: React.ElementType; unread?: number }[] = [
+  const tabs: TabItem<TabId>[] = [
     { id: 'settings', label: m.account_tab_settings(), icon: Settings },
-    { id: 'feedback', label: m.account_tab_feedback(), icon: MessageSquare, unread: feedbackUnreadCount },
+    { id: 'feedback', label: m.account_tab_feedback(), icon: MessageSquare, count: feedbackUnreadCount },
     { id: 'advanced', label: m.account_tab_advanced(), icon: SlidersHorizontal },
   ]
 
@@ -180,37 +181,7 @@ function AccountPage() {
         </p>
       </div>
 
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex gap-6">
-          {tabs.map(({ id: tabId, label, icon: TabIcon, unread }) => {
-            const isActive = tabId === activeTab
-            return (
-              <button
-                key={tabId}
-                type="button"
-                onClick={() => setTab(tabId)}
-                className={[
-                  'flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors',
-                  isActive
-                    ? 'border-gray-200 text-gray-900'
-                    : 'border-transparent text-gray-400 hover:text-gray-900',
-                ].join(' ')}
-              >
-                <TabIcon className="h-4 w-4" />
-                {label}
-                {(unread ?? 0) > 0 && (
-                  <span
-                    className="ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-success)] px-1.5 text-[11px] font-medium leading-5 text-white"
-                    aria-label={m.account_feedback_unread()}
-                  >
-                    {unread}
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </nav>
-      </div>
+      <Tabs tabs={tabs} value={activeTab} onValueChange={setTab} />
 
       {activeTab === 'settings' && (
         <div className="space-y-6" data-help-id="account-2fa">

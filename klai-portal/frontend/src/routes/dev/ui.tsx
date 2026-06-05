@@ -95,6 +95,7 @@ import { SearchInput } from '@/components/ui/search-input'
 import { useListControls } from '@/components/ui/use-list-controls'
 import { Select } from '@/components/ui/select'
 import { StepIndicator } from '@/components/ui/step-indicator'
+import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 
 export const Route = createFileRoute('/dev/ui')({
@@ -209,7 +210,21 @@ function Section({
 }
 
 const wizardSteps = ['Details', 'Bron', 'Bevestigen']
-const tabItems = ['Details', 'Activiteit', 'Instellingen']
+const tabItems: TabItem[] = [
+  { id: 'Details', label: 'Details' },
+  { id: 'Activiteit', label: 'Activiteit' },
+  { id: 'Instellingen', label: 'Instellingen' },
+]
+const tabItemsWithIcons: TabItem[] = [
+  { id: 'Details', label: 'Details', icon: Settings },
+  { id: 'Activiteit', label: 'Activiteit', icon: MessageSquare },
+  { id: 'Instellingen', label: 'Instellingen', icon: Mic },
+]
+const tabItemsWithCount: TabItem[] = [
+  { id: 'Details', label: 'Details' },
+  { id: 'Activiteit', label: 'Activiteit', count: 3 },
+  { id: 'Instellingen', label: 'Instellingen' },
+]
 const badgeVariants = ['default', 'secondary', 'accent', 'outline', 'info', 'success', 'warning', 'destructive'] as const
 const alertVariants = ['info', 'success', 'warning', 'destructive'] as const
 const navListItems = [
@@ -772,22 +787,18 @@ function UiCatalogPage() {
       </Section>
 
       <Section title="Tabs">
-        <div className="space-y-4">
-          <div className="flex gap-6 border-b border-gray-200">
-            {tabItems.map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                className={
-                  activeTab === tab
-                    ? 'border-b-2 border-gray-900 pb-2 text-sm font-medium text-gray-900'
-                    : 'border-b-2 border-transparent pb-2 text-sm text-gray-400 hover:text-gray-900'
-                }
-              >
-                {tab}
-              </button>
-            ))}
+        <div className="space-y-8">
+          <div className="space-y-2">
+            <p className="text-xs text-gray-400">Standaard — alleen tekst (canon)</p>
+            <Tabs tabs={tabItems} value={activeTab} onValueChange={setActiveTab} />
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs text-gray-400">Met iconen (spaarzaam, voor detail/instellingen)</p>
+            <Tabs tabs={tabItemsWithIcons} value={activeTab} onValueChange={setActiveTab} />
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs text-gray-400">Met count-badge</p>
+            <Tabs tabs={tabItemsWithCount} value={activeTab} onValueChange={setActiveTab} />
           </div>
           <p className="text-sm text-gray-500">Actieve tab: {activeTab}</p>
         </div>
