@@ -22,7 +22,10 @@ description: "Use when the user is debugging a bug, tracing an error, or asking 
 4. codeindex_cypher({query: "MATCH path..."})                 → Custom traces if needed
 ```
 
-> If "Index is stale" → run `npx codeindex analyze` in terminal.
+> In Conductor worktrees, "Index is stale" can be an overlay/canonical-checkout
+> mismatch. Use `scripts/codeindex-health.sh`; only run
+> `scripts/codeindex-health.sh --repair` when it reports the shared base index
+> is stale. Verify branch-local code with source files/diffs.
 
 ## Checklist
 

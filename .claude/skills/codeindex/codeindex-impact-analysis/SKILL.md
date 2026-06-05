@@ -23,7 +23,10 @@ description: "Use when the user wants to know what will break if they change som
 4. Assess risk and report to user
 ```
 
-> If "Index is stale" → run `npx codeindex analyze` in terminal.
+> In Conductor worktrees, "Index is stale" can be an overlay/canonical-checkout
+> mismatch. Use `scripts/codeindex-health.sh`; only run
+> `scripts/codeindex-health.sh --repair` when it reports the shared base index
+> is stale. Verify branch-local code with source files/diffs.
 
 ## Checklist
 

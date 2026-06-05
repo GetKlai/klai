@@ -150,6 +150,17 @@ ensure_base_worktree() {
   git -C "$BASE_WORKTREE" checkout --detach "$BASE_REF" --quiet
 }
 
+cleanup_base_worktree() {
+  if [ ! -d "$BASE_WORKTREE/.git" ] && [ ! -f "$BASE_WORKTREE/.git" ]; then
+    return 0
+  fi
+
+  # codeindex analyze regenerates agent instruction files in the analyzed tree.
+  # The dedicated base worktree is throwaway, so keep it pinned cleanly to main.
+  git -C "$BASE_WORKTREE" reset --hard --quiet
+  git -C "$BASE_WORKTREE" clean -fd --quiet
+}
+
 run_analyze_from_base() {
   local source_dir="$1"
   ensure_base_worktree "$source_dir" || return 1
@@ -159,7 +170,10 @@ run_analyze_from_base() {
   fi
 
   log "Running codeindex analyze from shared base worktree: $BASE_WORKTREE"
-  (cd "$BASE_WORKTREE" && codeindex analyze "$PROJECT_NAME" "$BASE_WORKTREE" --force --no-embeddings)
+  local analyze_rc=0
+  (cd "$BASE_WORKTREE" && codeindex analyze "$PROJECT_NAME" "$BASE_WORKTREE" --force --no-embeddings) || analyze_rc=$?
+  cleanup_base_worktree || return 1
+  return "$analyze_rc"
 }
 
 main() {
@@ -197,6 +211,9 @@ main() {
     case "$base_commit" in
       "$indexed_commit"*|"$indexed_commit")
         log "CodeIndex indexed commit matches $BASE_REF ($(short_sha "$indexed_commit")); treating as healthy."
+        if [ "$REPAIR" -eq 1 ]; then
+          cleanup_base_worktree || exit 1
+        fi
         if [ "$RESTART_MCP" -eq 1 ]; then
           restart_mcp_processes
         fi
