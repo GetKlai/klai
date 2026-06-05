@@ -7,6 +7,59 @@ other document must be updated in the same change.
 This file is portal-only. It does not define website, landing-page, marketing,
 or public web patterns. Keep those in the website-specific design guidance.
 
+## Live Catalog
+
+A running visual reference of these patterns lives at `/dev/ui`
+(`src/routes/dev/ui.tsx`). It renders the owned components with every tone,
+state, and layout this document describes. It is DEV-only (gated on
+`import.meta.env.DEV`) and never ships to production.
+
+Use it as the paired reference to this file: this document is the written
+rule, `/dev/ui` is the rendered proof. When you add or change a shared UI
+component, update both — a new tone, state, or variant must appear in the
+catalog and be described here in the same change.
+
+## Component Library Reference
+
+All shared UI lives in `src/components/ui/`. The base is **shadcn/ui**
+(see `components.json`: style `default`, base color `neutral`, lucide icons,
+CSS variables), themed with Klai tokens from `index.css`. On top of the
+standard shadcn primitives (`button`, `badge`, `card`, `dialog`,
+`alert-dialog`, `dropdown-menu`, `popover`, `command`, `sheet`, `tooltip`,
+form controls, `sonner`) sit Klai's own additions (`row-action`, `list`,
+`inline-delete-confirm`, `step-indicator`, `inline-edit`, `multi-select`,
+`query-error-state`, `delete-*`). The widget (`klai-widget`) and website
+(`klai-website`) are separate systems with their own components — this
+library is portal-only.
+
+Build pages from these; never hand-roll a raw `<button>`, `<input>`,
+`<select>`, list row, or delete confirmation with inline Tailwind.
+
+| Component | Purpose | Canonical? |
+|---|---|---|
+| `button` | All buttons (variants: default/secondary/ghost/outline/destructive; sizes: default/sm/icon) | Yes |
+| `badge` | Inline status labels (secondary/success/warning/destructive/outline) | Yes |
+| `input` `select` `textarea` `label` `checkbox` | Form controls | Yes |
+| `row-action` | List/table row actions: `RowActionIconButton`, `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
+| `list` | List primitives: `ListFrame`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon` | Yes |
+| `inline-delete-confirm` | Inline destructive confirmation inside a row (no layout shift) | Yes |
+| `step-indicator` | Wizard step progress (`StepIndicator`) | Yes |
+| `alert-dialog` | Centered confirm dialog for destructive actions outside rows | Yes |
+| `dialog` | Generic modal | Yes |
+| `dropdown-menu` `popover` `command` | Menus, popovers, command/combobox | Yes |
+| `multi-select` | Multi-value select | Yes |
+| `inline-edit` | Click-to-edit text in place | Yes |
+| `tooltip` | Hover/focus tooltips (used by `row-action`) | Yes |
+| `sonner` | Toasts (`toast()` feedback) | Yes |
+| `card` | Framed repeated items / stat blocks | Yes |
+| `query-error-state` | Standard error block for failed queries | Yes |
+| `sheet` | Slide-over. **Forbidden** for admin entity detail (see Detail And Edit) | Restricted |
+| `delete-confirm-button` | Older inline trash→confirm toggle. **Deprecated** — use `inline-delete-confirm`. Migrate on touch. | Deprecated |
+| `delete-kb-modal` `delete-org-modal` | Feature-specific destructive modals (not generic) | Feature |
+
+Tabs are a **pattern, not a component** (see Tabs). They are currently
+hand-rolled in 5 places and are a candidate for extraction.
+
 ## Required Workflow
 
 Before changing portal UI:
@@ -74,8 +127,163 @@ Use table/list views for admin collections. Rows use `klai-hover`; never use
 </table>
 ```
 
-List actions use familiar icon buttons with tooltips/labels where needed.
-Edit/delete must follow the existing admin action style.
+For new lists, prefer the `list` primitives over a hand-built table when the
+content is a stack of titled rows with a description and trailing actions
+(see List Primitives). Use a real `<table>` only when you need columns with
+headers and aligned cells.
+
+Row actions (edit, delete, sync, ...) use the `row-action` components, never
+raw `<button>` icons. See Row Actions And Action Tones.
+
+## Row Actions And Action Tones
+
+Row-level actions use the owned `row-action` components. They encode a fixed
+action→tone→color mapping so the same action looks identical everywhere.
+
+Components:
+
+- `RowActionIconButton` — icon-only action (the default in lists/tables).
+- `RowActionButton` — icon + text label action.
+- `RowActionGroup` — right-aligned flex container with `gap-1` for a row's
+  actions.
+
+Pass an `action` and the icon, tone, and tooltip default are derived for you:
+
+```tsx
+import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+
+<RowActionGroup>
+  <RowActionIconButton label="Bewerken" action="edit" />
+  <RowActionIconButton label="Synchroniseren" action="sync" />
+  <RowActionIconButton label="Verwijderen" action="delete" />
+</RowActionGroup>
+```
+
+Every `action` maps to one tone; never restyle the icon color by hand. The
+tone is overridable via the `tone` prop only when a specific row genuinely
+needs a different semantic.
+
+| Tone | Color token | Meaning | Example actions |
+|---|---|---|---|
+| `neutral` | `text-gray-400/500` | Utility, navigation, low-risk | rename, configure, open, view, copy, more, cancel |
+| `primary` | `var(--color-primary)` | Primary create / submit / send | add, send |
+| `info` | `var(--color-info-text)` | Information, progress, system context | info |
+| `success` | `var(--color-success)` | Positive status change or recovery | sync, save, reactivate |
+| `warning` | `var(--color-warning)` | Caution / reversible risky action | edit, retry, suspend |
+| `danger` | `var(--color-destructive)` | Destructive or high-impact | delete, stop, leave, offboard |
+
+Note: `edit` is tone `warning` (amber) — editing is a reversible change that
+deserves a caution cue, distinct from neutral navigation.
+
+The full action→tone and action→icon maps are the single source of truth in
+`src/components/ui/row-action.tsx` (`rowActionToneByAction`, `rowActionIcons`).
+Add new actions there, not ad hoc per page.
+
+### Bordered action icons
+
+When actions need a visible affordance (outlined icon buttons), the border
+must match the icon color. Use `border border-current` so the border inherits
+the tone's `currentColor` — never a hardcoded border color and never an inline
+`style`. See Borders And Cascade Layers for why this works.
+
+## List Primitives
+
+`list` provides the standard "stack of rows" surface used across the portal.
+
+```tsx
+import {
+  ListFrame, ListRow, ListRowContent, ListRowTitle,
+  ListRowDescription, ListRowActions,
+} from '@/components/ui/list'
+
+<ListFrame>
+  <ListRow interactive>
+    <ListRowContent>
+      <ListRowTitle>Kennisbank bronnen</ListRowTitle>
+      <ListRowDescription>Rustige lijst met compacte acties.</ListRowDescription>
+    </ListRowContent>
+    <ListRowActions className="self-center">
+      <RowActionIconButton label="Bewerken" action="edit" />
+      <RowActionIconButton label="Verwijderen" action="delete" />
+    </ListRowActions>
+  </ListRow>
+</ListFrame>
+```
+
+- `ListFrame` draws the `divide-y` separators and top/bottom border.
+- `ListRow interactive` adds `klai-hover` + pointer; `confirming` tints the
+  row while a destructive confirm is open.
+- `ListRowTitle` truncates on one line; `ListRowDescription` is the muted
+  secondary line.
+- `ListRowActions` is the trailing action cell; put a `RowActionGroup` or
+  loose `RowActionIconButton`s inside.
+
+## Inline Delete Confirmation
+
+Destructive actions inside a row use `InlineDeleteConfirm` — the canonical
+inline confirm. It keeps the original actions in the DOM as an invisible
+ghost spacer and overlays the confirm/cancel controls absolutely, so the row
+never shifts width when confirming.
+
+```tsx
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+
+<InlineDeleteConfirm
+  isConfirming={confirmDeleteId === row.id}
+  isPending={deleteMutation.isPending}
+  label={m.source_delete_confirm({ name: row.name })}
+  cancelLabel={m.cancel()}
+  onConfirm={() => deleteMutation.mutate(row.id)}
+  onCancel={() => setConfirmDeleteId(null)}
+>
+  <RowActionGroup>
+    <RowActionIconButton label="Bewerken" action="edit" />
+    <RowActionIconButton
+      label="Verwijderen"
+      action="delete"
+      onClick={() => setConfirmDeleteId(row.id)}
+    />
+  </RowActionGroup>
+</InlineDeleteConfirm>
+```
+
+Rules:
+
+- Use this for row-level deletes. It is controlled — you own the
+  `confirmDeleteId` / pending state.
+- The confirm button is destructive-filled with the action label; cancel is a
+  ghost `X`. Both come from the component — do not restyle.
+- For destructive actions that are NOT in a row (e.g. a whole page or card),
+  use `alert-dialog` instead.
+- `delete-confirm-button` is the deprecated predecessor (raw buttons,
+  hardcoded English labels). Do not use it in new code; migrate to
+  `InlineDeleteConfirm` when you touch a screen that still uses it.
+- Never use `window.confirm`.
+
+## Wizards
+
+Multi-step flows (create knowledge base, add connector, new API key, new
+widget) use `StepIndicator` for progress.
+
+```tsx
+import { StepIndicator } from '@/components/ui/step-indicator'
+
+<StepIndicator
+  steps={[
+    { label: 'Details' },
+    { label: 'Bron', onClick: () => setStep(1) },
+    { label: 'Bevestigen' },
+  ]}
+  currentIndex={step}
+/>
+```
+
+- Active step: solid `gray-900` pill with its number.
+- Completed step: light pill with a check; clickable to jump back only when
+  `onClick` is provided.
+- Future step: muted pill, not clickable.
+- Wizard steps containing a `type="password"` / secret field must be wrapped
+  in a `<form>` with `onSubmit` advancing the step (browser autofill).
 
 ## Tabs
 
@@ -85,6 +293,29 @@ to return to the same section.
 
 Do not use pill tabs for admin/account/detail surfaces unless the surrounding
 module already does.
+
+Tabs are currently hand-rolled (no shared `tabs` component yet) in:
+`app/account.tsx`, `app/knowledge/$kbSlug/route.tsx`, `admin/platform/index.tsx`,
+`admin/api-keys/$id.tsx`, `admin/widgets/$id.tsx`. The standard markup is an
+underline row with an active `border-b-2`:
+
+```tsx
+<div className="flex gap-6 border-b border-gray-200">
+  <button
+    type="button"
+    onClick={() => setTab('details')}
+    className={tab === 'details'
+      ? 'border-b-2 border-gray-900 pb-2 text-sm font-medium text-gray-900'
+      : 'border-b-2 border-transparent pb-2 text-sm text-gray-400 hover:text-gray-900'}
+  >
+    Details
+  </button>
+</div>
+```
+
+Because this pattern repeats in 5 places, it is a candidate for extraction
+into a shared `Tabs` component (tracked for the cleanup phase). Until then,
+copy the markup above exactly so the 5 instances stay identical.
 
 ## Detail And Edit
 
@@ -173,6 +404,62 @@ Use:
 Do not use raw Tailwind semantic colors such as `text-green-*`, `text-red-*`,
 `bg-amber-*`, or `hover:bg-gray-50` in new portal UI.
 
+For row/action coloring, do not pick colors by hand — use the action tone
+system (see Row Actions And Action Tones).
+
+## Borders And Cascade Layers
+
+`index.css` sets a default border color for every element so a bare `border`
+utility renders in the neutral border color:
+
+```css
+@layer base {
+  * {
+    border-color: var(--color-border);
+    outline-color: var(--color-ring);
+  }
+}
+```
+
+This rule MUST stay inside `@layer base`. CSS cascade layers, not specificity,
+decide the winner here: unlayered declarations rank after every explicit
+layer, so an unlayered `* { border-color }` would beat every Tailwind utility
+(which live in `@layer utilities`) regardless of class specificity. When this
+rule was unlayered, every colored border utility in the portal
+(`border-[var(--color-destructive)]`, `border-current`, `border-amber-300`,
+...) was silently overridden to the neutral grey — invisible because grey is
+close to `gray-200`. Keeping it in `@layer base` lets utilities win, which is
+Tailwind v4's intended preflight behaviour.
+
+Consequences for component code:
+
+- A colored border is just a utility: `border border-[var(--color-destructive)]`
+  or, to match the current text color, `border border-current`.
+- Never fix a border color with an inline `style={{ borderColor }}` — that
+  only "works" because inline styles sit outside layers entirely. It is a
+  workaround, not the pattern.
+- Never add a second unlayered `* { border-color }` or an `@utility` override
+  to "win" — fix the layer, not the specificity.
+
+## Overlays, Menus And Feedback
+
+| Need | Component | Notes |
+|---|---|---|
+| Confirm a destructive action outside a row | `alert-dialog` | Centered, focus-trapped. Row-level deletes use `inline-delete-confirm` instead. |
+| Generic modal (form, detail that is genuinely modal) | `dialog` | Not for admin entity detail — those are separate routes. |
+| Action menu on a trigger | `dropdown-menu` | Use for "more actions" overflow. |
+| Floating content on a trigger | `popover` | Non-menu floating panels. |
+| Searchable list / combobox | `command` | Command palette and filterable pickers. |
+| Multi-value selection | `multi-select` | |
+| Edit a value in place | `inline-edit` | Click-to-edit text, commits on blur/enter. |
+| Hover/focus hint | `tooltip` | `RowActionIconButton` wires this automatically via `label`. |
+| Transient feedback after an action | `sonner` (`toast`) | Success/error confirmations; not for validation errors. |
+| A query failed | `query-error-state` | Standard error block with retry. |
+| Slide-over panel | `sheet` | **Restricted**: never for admin entity detail (see Detail And Edit). |
+
+Compose these instead of building bespoke overlays. If a needed variant is
+missing, add it to the owned component, not to a page.
+
 ## Copy And I18n
 
 All user-visible strings go through Paraglide messages:
@@ -193,3 +480,9 @@ These patterns must not be copied:
 - `window.confirm`.
 - `hover:bg-gray-50` on interactive rows.
 - Raw semantic Tailwind colors for status states.
+- Raw `<button>` icon actions in rows. Use `row-action` components.
+- `delete-confirm-button`. Use `inline-delete-confirm`.
+- Inline `style={{ borderColor }}` to color a border. Use a `border-*` utility.
+- An unlayered `* { border-color }` or `@utility` override. Keep the reset in
+  `@layer base` (see Borders And Cascade Layers).
+- Hand-picked icon colors for row actions. Use the action tone system.
