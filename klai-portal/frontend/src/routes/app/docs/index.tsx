@@ -5,7 +5,7 @@ import { BookMarked, Globe, Lock } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
 import { QueryErrorState } from '@/components/ui/query-error-state'
-import { PageHeader } from '@/components/ui/page-header'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import {
   ListFrame,
   ListRow,
@@ -60,8 +60,14 @@ function DocsPage() {
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
       <PageHeader
         title={m.docs_kbs_title()}
-        description={!isLoading ? countLabel : undefined}
+        description={m.docs_kbs_subtitle()}
       />
+
+      <PageIntro>
+        <p>{m.docs_intro_body()}</p>
+        <p>{m.docs_intro_publish()}</p>
+        {!isLoading ? <p className="text-gray-400">{countLabel}</p> : null}
+      </PageIntro>
 
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
