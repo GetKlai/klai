@@ -187,6 +187,7 @@ def test_orchestrator_omits_internal_tool_history_for_mistral(monkeypatch):
     result = orchestrator.assemble(
         [
             {"role": "system", "content": "Klai instructions."},
+            {"role": "user", "content": "Search the KB."},
             {
                 "role": "assistant",
                 "content": [
@@ -204,26 +205,99 @@ def test_orchestrator_omits_internal_tool_history_for_mistral(monkeypatch):
                 "tool_call_id": "call_1",
                 "content": '{"result": "internal"}',
             },
-            {
-                "role": "assistant",
-                "content": [{"type": "error", "error": "Provider failed"}],
-            },
             {"role": "user", "content": "Continue."},
         ],
         requested_model="klai-large",
     )
 
     roles = [message.get("role") for message in result.messages if isinstance(message, dict)]
-    assert roles == ["system", "assistant", "assistant", "user"]
-    assert result.messages[1]["content"] == "Visible answer."
-    assert "tool_calls" not in result.messages[1]
-    assert result.messages[2]["content"] == mod.TOOL_CONTEXT_PLACEHOLDER
+    assert roles == ["system", "user", "assistant", "user"]
+    assert result.messages[2]["content"] == "Visible answer."
+    assert "tool_calls" not in result.messages[2]
     assert all(
         not isinstance(message.get("content"), list)
         for message in result.messages
         if isinstance(message, dict)
     )
     assert result.meta["omitted_tool_messages"] == 1
-    assert result.meta["omitted_tool_content_parts"] == 2
+    assert result.meta["omitted_tool_content_parts"] == 1
     assert "internal_tool_messages_omitted" in result.meta["reason_codes"]
     assert "internal_tool_content_parts_omitted" in result.meta["reason_codes"]
+
+
+def test_orchestrator_budget_merges_placeholder_and_drops_orphan_assistant(
+    monkeypatch,
+):
+    mod = _load_context(monkeypatch, {"KLAI_CONTEXT_HISTORY_BUDGET_CHARS": "40"})
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "system", "content": "Grounded KB instructions."},
+            {"role": "user", "content": "old user " + ("x" * 80)},
+            {"role": "assistant", "content": "recent orphan assistant"},
+            {"role": "user", "content": "latest"},
+        ],
+        requested_model="klai-primary",
+    )
+
+    roles = [message["role"] for message in result.messages if isinstance(message, dict)]
+    assert roles == ["system", "user"]
+    assert result.messages[0]["content"].startswith("Grounded KB instructions.")
+    assert mod.HISTORY_BUDGET_CONTEXT_PLACEHOLDER in result.messages[0]["content"]
+    rendered = "\n".join(
+        message.get("content", "")
+        for message in result.messages
+        if isinstance(message, dict)
+    )
+    assert "old user" not in rendered
+    assert "recent orphan assistant" not in rendered
+    assert result.meta["omitted_history_messages"] == 2
+
+
+def test_orchestrator_strips_top_level_tool_calls_for_mistral(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search first."},
+            {
+                "role": "assistant",
+                "content": "I need a tool.",
+                "tool_calls": [{"id": "call_1", "function": {"name": "search"}}],
+            },
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call_2", "function": {"name": "search"}}],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "{}",
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_2",
+                "content": "{}",
+            },
+            {"role": "assistant", "content": "The answer is in the source."},
+            {"role": "user", "content": "Continue."},
+        ],
+        requested_model="klai-large",
+    )
+
+    provider_messages = [
+        message for message in result.messages if isinstance(message, dict)
+    ]
+    assert [message["role"] for message in provider_messages] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert provider_messages[1]["content"] == "The answer is in the source."
+    assert all("tool_calls" not in message for message in provider_messages)
+    assert result.meta["omitted_tool_messages"] == 2
+    assert result.meta["omitted_tool_content_parts"] == 2
+    assert result.meta["repaired_role_sequence_messages"] == 2

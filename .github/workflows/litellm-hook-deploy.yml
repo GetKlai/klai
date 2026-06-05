@@ -66,4 +66,4 @@ jobs:
       - name: Smoke LiteLLM hook imports
         run: |
           ssh klai@${{ secrets.CORE01_HOST }} \
-            "docker exec klai-core-litellm-1 python -c 'import klai_knowledge, klai_citations; print(\"litellm hook imports ok\")'"
+            "docker exec klai-core-litellm-1 python -c 'import klai_knowledge, custom_router, klai_context, klai_citations; print(\"litellm hook imports ok\")'"
