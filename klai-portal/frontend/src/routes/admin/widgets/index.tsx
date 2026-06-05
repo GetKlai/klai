@@ -1,26 +1,32 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import {
-  Plus,
-  MessageSquare,
-} from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+import {
+  ListFrame,
+  ListHeader,
+  ListRow,
+  ListRowActions,
+  ListRowContent,
+  ListRowDescription,
+  ListRowTitle,
+} from '@/components/ui/list'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { PageHeader } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
-import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import * as m from '@/paraglide/messages'
 import { useWidgets, useDeleteWidget } from './-hooks'
 import type { WidgetResponse } from './-types'
 
-// Matches the canonical admin-list pattern used by /app/instructions:
-// divider-rows, no leading icon, name + optional badge inline, optional
-// description below, action icons right-aligned with gray-400 idle and
-// semantic-colour hover. Same paddings, same dividers, same hover.
-
 export const Route = createFileRoute('/admin/widgets/')({
   component: WidgetsPage,
 })
+
+const widgetsListGrid =
+  'md:grid-cols-[minmax(240px,1fr)_minmax(120px,0.4fr)_112px]'
 
 function WidgetsPage() {
   const navigate = useNavigate()
@@ -31,23 +37,21 @@ function WidgetsPage() {
   const widgets: WidgetResponse[] = Array.isArray(data) ? data : []
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
-      <div className="flex items-center justify-between mb-2">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          {m.admin_widgets_title()}
-        </h1>
-        <Button
-          type="button"
-          onClick={() => void navigate({ to: '/admin/widgets/new' })}
-          size="sm"
-        >
-          <Plus className="h-4 w-4" />
-          {m.admin_widgets_create()}
-        </Button>
-      </div>
-      <p className="text-sm text-gray-400 mb-6 max-w-2xl">
-        {m.admin_widgets_subtitle()}
-      </p>
+    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
+      <PageHeader
+        title={m.admin_widgets_title()}
+        description={m.admin_widgets_subtitle()}
+        actions={
+          <Button
+            type="button"
+            onClick={() => void navigate({ to: '/admin/widgets/new' })}
+            size="sm"
+          >
+            <Plus className="h-4 w-4" />
+            {m.admin_widgets_create()}
+          </Button>
+        }
+      />
 
       {error && (
         <QueryErrorState
@@ -57,36 +61,24 @@ function WidgetsPage() {
       )}
 
       {isLoading && !error && (
-        <div className="space-y-3" aria-busy="true">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-14 rounded-lg bg-gray-50 animate-pulse" />
-          ))}
-        </div>
+        <ListLoadingState label={m.admin_widgets_loading()} />
       )}
 
       {!isLoading && !error && widgets.length === 0 && (
-        <div className="rounded-lg border border-dashed border-gray-200 py-16 text-center">
-          <MessageSquare className="h-10 w-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-base font-medium text-gray-900">
-            {m.admin_widgets_empty()}
-          </p>
-          <p className="text-sm text-gray-400 mt-1 max-w-md mx-auto">
-            {m.admin_widgets_empty_description()}
-          </p>
-          <Button
-            type="button"
-            onClick={() => void navigate({ to: '/admin/widgets/new' })}
-            size="sm"
-            className="mt-4"
-          >
-            <Plus className="h-4 w-4" />
-            {m.admin_widgets_create()}
-          </Button>
-        </div>
+        <ListEmptyState
+          title={m.admin_widgets_empty()}
+          description={m.admin_widgets_empty_description()}
+        />
       )}
 
       {!isLoading && !error && widgets.length > 0 && (
-        <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
+        <ListFrame data-help-id="admin-widgets-table">
+          <ListHeader className={`hidden gap-x-3 ${widgetsListGrid} md:grid`}>
+            <span>{m.admin_widgets_col_name()}</span>
+            <span>{m.admin_widgets_col_kb_access()}</span>
+            <span className="text-right">{m.admin_widgets_col_actions()}</span>
+          </ListHeader>
+
           {widgets.map((w) => {
             const isConfirming = confirmDeleteId === String(w.id)
             const goToDetail = () =>
@@ -96,10 +88,12 @@ function WidgetsPage() {
               })
 
             return (
-              <div
+              <ListRow
                 key={w.id}
                 role="button"
                 tabIndex={0}
+                interactive
+                confirming={isConfirming}
                 onClick={goToDetail}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -107,77 +101,70 @@ function WidgetsPage() {
                     goToDetail()
                   }
                 }}
-                className="flex items-start gap-4 py-3.5 px-2 cursor-pointer klai-hover"
+                className={`grid items-center gap-x-3 gap-y-3 px-4 py-4 ${widgetsListGrid}`}
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-gray-900 truncate">
-                      {w.name}
-                    </span>
-                    <Badge variant="secondary">
-                      {w.kb_access_count === 1
-                        ? '1 kennisbank'
-                        : `${w.kb_access_count} kennisbanken`}
-                    </Badge>
-                  </div>
+                <ListRowContent>
+                  <ListRowTitle>{w.name}</ListRowTitle>
                   {w.description && (
-                    <p className="mt-1 text-sm text-gray-400 truncate">
-                      {w.description}
-                    </p>
+                    <ListRowDescription>{w.description}</ListRowDescription>
                   )}
+                </ListRowContent>
+
+                <div>
+                  <Badge variant="secondary">
+                    {w.kb_access_count === 1
+                      ? m.admin_widgets_kb_access_one()
+                      : m.admin_widgets_kb_access_many({ count: w.kb_access_count })}
+                  </Badge>
                 </div>
 
-                <div onClick={(e) => e.stopPropagation()}>
-                <InlineDeleteConfirm
-                  isConfirming={isConfirming}
-                  isPending={deleteMutation.isPending && isConfirming}
-                  label={m.admin_widgets_delete_confirm({ name: w.name })}
-                  cancelLabel={m.admin_users_cancel()}
-                  onConfirm={() => {
-                    deleteMutation.mutate(String(w.id))
-                    setConfirmDeleteId(null)
-                  }}
-                  onCancel={() => setConfirmDeleteId(null)}
+                <ListRowActions
+                  className="self-center justify-self-end"
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  <RowActionGroup>
-                    <RowActionIconButton
-                      type="button"
-                      onClick={() =>
-                        window.open(
-                          `/bot/${w.widget_id}`,
-                          '_blank',
-                          'noopener,noreferrer',
-                        )
-                      }
-                      aria-label={`Open ${w.name}`}
-                      label="Open bot in nieuw tabblad"
-                      action="open"
-                      tone="neutral"
-                    />
-                    <RowActionIconButton
-                      type="button"
-                      onClick={goToDetail}
-                      aria-label={`Bewerk ${w.name}`}
-                      label="Bewerken"
-                      action="edit"
-                      tone="neutral"
-                    />
-                    <RowActionIconButton
-                      type="button"
-                      onClick={() => setConfirmDeleteId(String(w.id))}
-                      aria-label={`Verwijder ${w.name}`}
-                      label="Verwijderen"
-                      action="delete"
-                      tone="neutral"
-                      className="text-gray-400 hover:text-[var(--color-destructive)]"
-                    />
-                  </RowActionGroup>
-                </InlineDeleteConfirm>
-                </div>
-              </div>
+                  <InlineDeleteConfirm
+                    isConfirming={isConfirming}
+                    isPending={deleteMutation.isPending && isConfirming}
+                    label={m.admin_widgets_delete_confirm({ name: w.name })}
+                    cancelLabel={m.admin_users_cancel()}
+                    onConfirm={() => {
+                      deleteMutation.mutate(String(w.id))
+                      setConfirmDeleteId(null)
+                    }}
+                    onCancel={() => setConfirmDeleteId(null)}
+                  >
+                    <RowActionGroup>
+                      <BorderedRowActionIconButton
+                        type="button"
+                        onClick={() =>
+                          window.open(
+                            `/bot/${w.widget_id}`,
+                            '_blank',
+                            'noopener,noreferrer',
+                          )
+                        }
+                        label={m.admin_widgets_action_open()}
+                        action="open"
+                      />
+                      <BorderedRowActionIconButton
+                        type="button"
+                        onClick={goToDetail}
+                        label={m.admin_widgets_action_edit()}
+                        action="edit"
+                      />
+                      <BorderedRowActionIconButton
+                        type="button"
+                        onClick={() => setConfirmDeleteId(String(w.id))}
+                        label={m.admin_widgets_delete_button()}
+                        action="delete"
+                      />
+                    </RowActionGroup>
+                  </InlineDeleteConfirm>
+                </ListRowActions>
+              </ListRow>
             )
           })}
-        </div>
+        </ListFrame>
       )}
     </div>
   )
