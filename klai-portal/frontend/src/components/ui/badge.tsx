@@ -6,10 +6,12 @@ import { cn } from '@/lib/utils'
 // - rounded-full (same as buttons)
 // - default/accent use neutral gray (polish-1 decides amber reintroduction)
 // - Semantic states derive from the SAME primary tokens as the row-action
-//   tones (var(--color-success|warning|destructive|info)), kept soft via a
-//   10% tint background — same hue and meaning as the solid action icons,
-//   just softer. This is the single source of the semantic badge palette;
-//   do not hand-roll status pills with ad-hoc /10 tints.
+//   tones, kept soft via a 10% tint background — same hue and meaning as the
+//   solid action icons, just softer. The TEXT uses the darker `*-text` token
+//   variant (var(--color-success-text) etc.) so small-size labels clear WCAG
+//   AA on the light tint; the solid token alone (~2.5:1) would fail.
+//   This is the single source of the semantic badge palette; do not hand-roll
+//   status pills with ad-hoc /10 tints.
 const badgeVariants = cva(
   'inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-xs font-medium transition-colors',
   {
@@ -24,13 +26,13 @@ const badgeVariants = cva(
         outline:
           'border-gray-200 text-gray-700',
         success:
-          'border-transparent bg-[var(--color-success)]/10 text-[var(--color-success)]',
+          'border-transparent bg-[var(--color-success)]/10 text-[var(--color-success-text)]',
         warning:
-          'border-transparent bg-[var(--color-warning)]/10 text-[var(--color-warning)]',
+          'border-transparent bg-[var(--color-warning)]/10 text-[var(--color-warning-text)]',
         destructive:
-          'border-transparent bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]',
+          'border-transparent bg-[var(--color-destructive)]/10 text-[var(--color-destructive-text)]',
         info:
-          'border-transparent bg-[var(--color-info)]/10 text-[var(--color-info)]',
+          'border-transparent bg-[var(--color-info)]/10 text-[var(--color-info-text)]',
       },
     },
     defaultVariants: {
