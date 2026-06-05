@@ -2,14 +2,12 @@ import { createFileRoute } from '@tanstack/react-router'
 import type { ComponentProps, ReactNode } from 'react'
 import { useState } from 'react'
 import {
-  Check,
   FileText,
   Loader2,
   MessageSquare,
   Mic,
   Settings,
   Sparkles,
-  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -53,7 +51,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { InlineEdit } from '@/components/ui/inline-edit'
+import { InlineEditRow } from '@/components/ui/inline-edit-row'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MultiSelect } from '@/components/ui/multi-select'
@@ -239,8 +237,20 @@ function UiCatalogPage() {
   const [wizardStep, setWizardStep] = useState(1)
   const [activeTab, setActiveTab] = useState('Details')
   const [multiValue, setMultiValue] = useState<string[]>(['kb'])
-  const [inlineEditing, setInlineEditing] = useState(false)
-  const [inlineValue, setInlineValue] = useState('Klai component')
+  // Inline edit catalog: a "component" row (name only) and a "subtest" row
+  // (name + description), each with its own edit + delete-confirm state.
+  const [compEditing, setCompEditing] = useState(false)
+  const [compName, setCompName] = useState('Klai component')
+  const [compDescription, setCompDescription] = useState(
+    'Bewerk de naam of verwijder — alles inline, geen overlap.',
+  )
+  const [compDeleteConfirm, setCompDeleteConfirm] = useState(false)
+  const [subEditing, setSubEditing] = useState(false)
+  const [subName, setSubName] = useState('Toon van de afzender')
+  const [subDescription, setSubDescription] = useState(
+    'Controleert of het antwoord de juiste tone of voice aanhoudt.',
+  )
+  const [subDeleteConfirm, setSubDeleteConfirm] = useState(false)
   const [searchValue, setSearchValue] = useState('')
   const [radioValue, setRadioValue] = useState('personal')
 
@@ -406,8 +416,13 @@ function UiCatalogPage() {
 
       <Section title="Navigation list">
         <ListFrame>
-          {navListItems.map((item) => (
-            <ListRow key={item.title} asChild interactive>
+          {navListItems.map((item, index) => (
+            <ListRow
+              key={item.title}
+              asChild
+              interactive
+              className={index === 0 ? 'bg-[var(--color-active)]' : undefined}
+            >
               <a href="#">
                 <ListRowIcon>
                   <item.icon className="h-4 w-4" />
@@ -653,46 +668,112 @@ function UiCatalogPage() {
         />
       </Section>
 
-      <Section title="Inline edit">
-        <div className="flex items-center gap-3">
-          <InlineEdit
-            isEditing={inlineEditing}
-            value={inlineValue}
-            onValueChange={setInlineValue}
-            onSave={() => setInlineEditing(false)}
-            onCancel={() => setInlineEditing(false)}
-            inputClassName="text-sm font-medium"
-          >
-            <span className="text-sm font-medium text-gray-900">{inlineValue}</span>
-          </InlineEdit>
-          {inlineEditing ? (
-            <div className="flex items-center gap-1 whitespace-nowrap">
-              <Button
-                size="sm"
-                className="h-6 gap-1 px-2 text-[10px] [&_svg]:size-2.5 bg-[var(--color-success)] text-white hover:opacity-70"
-                onClick={() => setInlineEditing(false)}
-              >
-                <Check />
-                Opslaan
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 gap-1 px-2 text-[10px] [&_svg]:size-2.5"
-                onClick={() => setInlineEditing(false)}
-              >
-                <X />
-                Annuleren
-              </Button>
-            </div>
-          ) : (
-            <BorderedRowActionIconButton
-              label="Naam bewerken"
-              action="edit"
-              onClick={() => setInlineEditing(true)}
+      <Section title="Inline edit and delete">
+        {/* Canonical inline edit: the InlineEditRow primitive puts the input
+            (flex-1) and Save/Cancel (shrink-0) in the same flex row, so they
+            can never overlap regardless of how narrow the action cluster is.
+            Two cases: a "component" row (name only) and a "subtest" row
+            (name + description). Ported from the production CoverageNodeRow
+            ("Categorieën & Dekking"). */}
+        <ListFrame>
+          {/* Component: edit the name, or delete — all inline, rounded fields. */}
+          <ListRow confirming={compDeleteConfirm}>
+            <InlineEditRow
+              isEditing={compEditing}
+              value={compName}
+              description={compDescription}
+              withDescription
+              namePlaceholder="Componentnaam"
+              descriptionPlaceholder="Korte omschrijving van het component"
+              saveLabel="Opslaan"
+              cancelLabel="Annuleren"
+              onSubmit={({ name, description }) => {
+                setCompName(name)
+                setCompDescription(description)
+                setCompEditing(false)
+              }}
+              onCancel={() => setCompEditing(false)}
+              actions={
+                <InlineDeleteConfirm
+                  isConfirming={compDeleteConfirm}
+                  isPending={false}
+                  label="Verwijderen"
+                  cancelLabel="Annuleren"
+                  onConfirm={() => setCompDeleteConfirm(false)}
+                  onCancel={() => setCompDeleteConfirm(false)}
+                >
+                  <RowActionGroup>
+                    <BorderedRowActionIconButton
+                      label="Bewerken"
+                      action="edit"
+                      onClick={() => {
+                        setCompDeleteConfirm(false)
+                        setCompEditing(true)
+                      }}
+                    />
+                    <BorderedRowActionIconButton
+                      label="Verwijderen"
+                      action="delete"
+                      onClick={() => {
+                        setCompEditing(false)
+                        setCompDeleteConfirm(true)
+                      }}
+                    />
+                  </RowActionGroup>
+                </InlineDeleteConfirm>
+              }
             />
-          )}
-        </div>
+          </ListRow>
+
+          {/* Subtest: edit the name AND the description (the second field). */}
+          <ListRow confirming={subDeleteConfirm}>
+            <InlineEditRow
+              isEditing={subEditing}
+              value={subName}
+              description={subDescription}
+              withDescription
+              namePlaceholder="Naam van de subtest"
+              descriptionPlaceholder="Wat controleert deze subtest?"
+              saveLabel="Opslaan"
+              cancelLabel="Annuleren"
+              onSubmit={({ name, description }) => {
+                setSubName(name)
+                setSubDescription(description)
+                setSubEditing(false)
+              }}
+              onCancel={() => setSubEditing(false)}
+              actions={
+                <InlineDeleteConfirm
+                  isConfirming={subDeleteConfirm}
+                  isPending={false}
+                  label="Verwijderen"
+                  cancelLabel="Annuleren"
+                  onConfirm={() => setSubDeleteConfirm(false)}
+                  onCancel={() => setSubDeleteConfirm(false)}
+                >
+                  <RowActionGroup>
+                    <BorderedRowActionIconButton
+                      label="Bewerken"
+                      action="edit"
+                      onClick={() => {
+                        setSubDeleteConfirm(false)
+                        setSubEditing(true)
+                      }}
+                    />
+                    <BorderedRowActionIconButton
+                      label="Verwijderen"
+                      action="delete"
+                      onClick={() => {
+                        setSubEditing(false)
+                        setSubDeleteConfirm(true)
+                      }}
+                    />
+                  </RowActionGroup>
+                </InlineDeleteConfirm>
+              }
+            />
+          </ListRow>
+        </ListFrame>
       </Section>
 
       <Section title="Feedback">
