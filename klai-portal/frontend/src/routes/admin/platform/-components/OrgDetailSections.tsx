@@ -16,7 +16,8 @@ import {
   usePlatformRetryDeleteUser,
   usePlatformSuspend,
 } from '../-hooks'
-import { PlatformMiniStat, TD, TH } from './PlatformShell'
+import { StatCard } from '@/components/ui/stat-card'
+import { TD, TH } from './PlatformShell'
 import type {
   PlatformBot,
   PlatformKB,
@@ -43,18 +44,18 @@ export function OrgSummaryStats({
 }) {
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-6">
-      <PlatformMiniStat label={m.platform_stat_users()} value={org.user_count} />
-      <PlatformMiniStat label={m.platform_stat_bots()} value={org.bot_count} />
-      <PlatformMiniStat
+      <StatCard size="sm" label={m.platform_stat_users()} value={org.user_count} />
+      <StatCard size="sm" label={m.platform_stat_bots()} value={org.bot_count} />
+      <StatCard size="sm"
         label={m.platform_stat_knowledge_bases()}
         value={org.kb_count}
       />
-      <PlatformMiniStat
+      <StatCard size="sm"
         label={m.platform_stat_templates()}
         value={templateCount}
       />
-      <PlatformMiniStat label={m.platform_col_seats()} value={org.seats} />
-      <PlatformMiniStat
+      <StatCard size="sm" label={m.platform_col_seats()} value={org.seats} />
+      <StatCard size="sm"
         label={m.platform_col_billing_status()}
         value={org.billing_status}
       />

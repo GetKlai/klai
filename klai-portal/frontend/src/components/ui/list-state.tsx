@@ -1,4 +1,4 @@
-import type { HTMLAttributes, ReactNode } from 'react'
+import type { ElementType, HTMLAttributes, ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -39,13 +39,16 @@ function ListLoadingState({ label, className, ...props }: ListLoadingStateProps)
 // Omit the native HTML `title` attribute (string) so we can redefine it as a
 // ReactNode heading without a TS2430 "incorrectly extends" collision.
 interface ListEmptyStateProps extends Omit<ListStateProps, 'title'> {
+  /** Optional illustrative icon shown above the title (muted, decorative). */
+  icon?: ElementType
   title: ReactNode
   description?: ReactNode
 }
 
-function ListEmptyState({ title, description, className, ...props }: ListEmptyStateProps) {
+function ListEmptyState({ icon: Icon, title, description, className, ...props }: ListEmptyStateProps) {
   return (
     <ListState className={className} {...props}>
+      {Icon && <Icon className="mb-3 h-8 w-8 text-gray-400" aria-hidden="true" />}
       <p>{title}</p>
       {description && (
         <p className="mt-1 max-w-sm text-xs text-[var(--color-muted-foreground)]">

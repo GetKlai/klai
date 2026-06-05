@@ -94,6 +94,7 @@ import {
 import { SearchInput } from '@/components/ui/search-input'
 import { useListControls } from '@/components/ui/use-list-controls'
 import { Select } from '@/components/ui/select'
+import { StatCard } from '@/components/ui/stat-card'
 import { StepIndicator } from '@/components/ui/step-indicator'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
@@ -734,6 +735,7 @@ function UiCatalogPage() {
           </div>
           <div className="border-y border-gray-200">
             <ListEmptyState
+              icon={FileText}
               title="Geen resultaten"
               description="Gebruik deze rustige lege staat voor lijst- en tabeloverzichten."
             />
@@ -869,6 +871,23 @@ function UiCatalogPage() {
                 Compacte variant (<code>size="sm"</code>): {variant}.
               </Alert>
             ))}
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Stat cards">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <StatCard label="Gebruikers" value={1284} sub="+38 deze maand" />
+            <StatCard label="MRR" value="€4.210" sub="€50.520 ARR" />
+            <StatCard label="Open feedback" value={3} tone="warning" alert sub="12 totaal" onClick={() => {}} />
+            <StatCard label="Chat-fouten" value={0} tone="destructive" />
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <StatCard size="sm" label="Bots" value={7} />
+            <StatCard size="sm" label="Seats" value={25} />
+            <StatCard size="sm" label="Kennisbanken" value={9} />
+            <StatCard size="sm" label="Laden" value={undefined} loading />
           </div>
         </div>
       </Section>
