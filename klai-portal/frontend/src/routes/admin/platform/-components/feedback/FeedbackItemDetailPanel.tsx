@@ -192,7 +192,7 @@ function FeedbackItemDetailForm({
           setResolutionSummary(result.item.resolution_summary ?? '')
           setResolveNotice(
             m.platform_feedback_update_created({
-              count: String(result.notifications.length),
+              count: String(result.recipient_count),
             }),
           )
           setResolveError(null)
