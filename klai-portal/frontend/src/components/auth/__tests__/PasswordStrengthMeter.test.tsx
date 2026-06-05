@@ -19,6 +19,26 @@ vi.mock("@/paraglide/messages", () => ({
 }));
 
 describe("PasswordStrengthMeter", () => {
+  it("does not show a strong password while the minimum length policy fails", () => {
+    render(
+      <PasswordStrengthMeter
+        score={4}
+        issues={["too_short"]}
+        show
+        isAcceptable={false}
+        estimated={false}
+        policy={{
+          min_length: 15,
+          min_score: 3,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Very weak")).toBeTruthy();
+    expect(screen.queryByText("Strong")).toBeNull();
+    expect(screen.getByText("Use at least 15 characters.")).toBeTruthy();
+  });
+
   it("does not show policy compliance while strength is still estimated", () => {
     render(
       <PasswordStrengthMeter
