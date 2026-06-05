@@ -6,13 +6,26 @@ import {
   createColumnHelper,
 } from '@tanstack/react-table'
 import { useState } from 'react'
-import { Plus, Loader2, Eye, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/page-header'
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from '@/components/ui/data-table'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+import {
+  BorderedRowActionIconButton,
+  RowActionGroup,
+} from '@/components/ui/row-action'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
-import { datetime } from '@/paraglide/registry'
+import { datetime, plural } from '@/paraglide/registry'
 import { useApiKeys, useDeleteApiKey } from './-hooks'
 import type { ApiKeyResponse } from './-types'
 
@@ -21,7 +34,7 @@ export const Route = createFileRoute('/admin/api-keys/')({
 })
 
 function formatRelativeTime(isoString: string | null): string {
-  if (!isoString) return '\u2014'
+  if (!isoString) return '—'
   return datetime(getLocale(), isoString, {
     day: 'numeric',
     month: 'short',
@@ -29,6 +42,12 @@ function formatRelativeTime(isoString: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function apiKeyCountLabel(count: number): string {
+  return plural(getLocale(), count) === 'one'
+    ? m.admin_api_keys_count_one()
+    : m.admin_api_keys_count_other({ count: String(count) })
 }
 
 const columnHelper = createColumnHelper<ApiKeyResponse>()
@@ -41,27 +60,20 @@ function ApiKeysPage() {
 
   const apiKeys = Array.isArray(data) ? data : []
 
+  const openKey = (id: ApiKeyResponse['id']) =>
+    void navigate({ to: '/admin/api-keys/$id', params: { id: String(id) } })
+
   const columns = [
     columnHelper.accessor('name', {
       header: () => m.admin_api_keys_col_name(),
       cell: (info) => (
-        <button
-          onClick={() =>
-            navigate({
-              to: '/admin/api-keys/$id',
-              params: { id: String(info.row.original.id) },
-            })
-          }
-          className="font-medium text-gray-900 hover:text-gray-900 transition-colors text-left"
-        >
-          {info.getValue()}
-        </button>
+        <span className="font-medium text-gray-900">{info.getValue()}</span>
       ),
     }),
     columnHelper.accessor('key_prefix', {
       header: () => m.admin_api_keys_col_key_prefix(),
       cell: (info) => (
-        <code className="text-xs font-mono text-gray-400">
+        <code className="font-mono text-xs text-gray-400">
           {info.getValue()}...
         </code>
       ),
@@ -69,13 +81,13 @@ function ApiKeysPage() {
     columnHelper.accessor('kb_access_count', {
       header: () => m.admin_api_keys_col_kb_access(),
       cell: (info) => (
-        <span className="text-sm tabular-nums">{info.getValue()}</span>
+        <span className="tabular-nums text-gray-900">{info.getValue()}</span>
       ),
     }),
     columnHelper.accessor('last_used_at', {
       header: () => m.admin_api_keys_col_last_used(),
       cell: (info) => (
-        <span className="text-sm text-gray-400 whitespace-nowrap tabular-nums">
+        <span className="whitespace-nowrap tabular-nums text-gray-400">
           {formatRelativeTime(info.getValue())}
         </span>
       ),
@@ -84,47 +96,38 @@ function ApiKeysPage() {
       id: 'actions',
       header: () => '',
       cell: ({ row }) => {
-        const isConfirming = confirmDeleteId === String(row.original.id)
+        const id = String(row.original.id)
         return (
           <InlineDeleteConfirm
-            isConfirming={isConfirming}
+            isConfirming={confirmDeleteId === id}
             isPending={deleteMutation.isPending}
             label={m.admin_api_keys_delete_confirm({ name: row.original.name })}
             cancelLabel={m.admin_users_cancel()}
             onConfirm={() => {
-              deleteMutation.mutate(String(row.original.id))
+              deleteMutation.mutate(id)
               setConfirmDeleteId(null)
             }}
             onCancel={() => setConfirmDeleteId(null)}
           >
-            <div className="flex items-start justify-end gap-2 mt-px">
-              <button
-                onClick={() => setConfirmDeleteId(String(row.original.id))}
-                aria-label={`Delete ${row.original.name}`}
-                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() =>
-                  navigate({
-                    to: '/admin/api-keys/$id',
-                    params: { id: String(row.original.id) },
-                  })
-                }
-                aria-label={row.original.name}
-                className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
-              >
-                <Eye className="h-4 w-4" />
-              </button>
-            </div>
+            <RowActionGroup>
+              <BorderedRowActionIconButton
+                label={m.admin_api_keys_view()}
+                action="view"
+                onClick={() => openKey(row.original.id)}
+              />
+              <BorderedRowActionIconButton
+                label={m.admin_api_keys_delete()}
+                action="delete"
+                onClick={() => setConfirmDeleteId(id)}
+              />
+            </RowActionGroup>
           </InlineDeleteConfirm>
         )
       },
     }),
   ]
 
-  // eslint-disable-next-line react-hooks/incompatible-library
+  // eslint-disable-next-line react-hooks/incompatible-library -- useReactTable returns functions that React Compiler cannot memoize safely; this is expected TanStack Table behaviour
   const table = useReactTable({
     data: apiKeys,
     columns,
@@ -133,18 +136,20 @@ function ApiKeysPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
-      <div className="flex items-start justify-between">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          {m.admin_api_keys_title()}
-        </h1>
-        <Button
-          size="sm"
-          onClick={() => void navigate({ to: '/admin/api-keys/new' })}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          {m.admin_api_keys_create()}
-        </Button>
-      </div>
+      <PageHeader
+        title={m.admin_api_keys_title()}
+        description={
+          !isLoading && !error ? apiKeyCountLabel(apiKeys.length) : undefined
+        }
+        actions={
+          <Button
+            size="sm"
+            onClick={() => void navigate({ to: '/admin/api-keys/new' })}
+          >
+            {m.admin_api_keys_create()}
+          </Button>
+        }
+      />
 
       {error ? (
         <QueryErrorState
@@ -152,71 +157,57 @@ function ApiKeysPage() {
           onRetry={() => void refetch()}
         />
       ) : isLoading ? (
-        <p className="py-8 text-sm text-gray-400">
-          <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-          {m.admin_api_keys_loading()}
-        </p>
+        <ListLoadingState label={m.admin_api_keys_loading()} />
       ) : apiKeys.length === 0 ? (
-        <div className="py-12 text-center space-y-3">
-          <p className="text-sm font-medium text-gray-900">
-            {m.admin_api_keys_empty()}
-          </p>
-          <p className="text-sm text-gray-400">
-            {m.admin_api_keys_empty_description()}
-          </p>
-        </div>
+        <ListEmptyState
+          title={m.admin_api_keys_empty()}
+          description={m.admin_api_keys_empty_description()}
+        />
       ) : (
-        <table className="w-full text-sm border-t border-b border-gray-200">
-          <thead>
+        <DataTable>
+          <DataTableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <tr
-                key={headerGroup.id}
-                className="border-b border-gray-200"
-              >
+              <DataTableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
-                  <th
+                  <DataTableHead
                     key={header.id}
-                    className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide"
+                    align={header.column.id === 'actions' ? 'right' : 'left'}
                   >
                     {flexRender(
                       header.column.columnDef.header,
                       header.getContext(),
                     )}
-                  </th>
+                  </DataTableHead>
                 ))}
-              </tr>
+              </DataTableRow>
             ))}
-          </thead>
-          <tbody>
+          </DataTableHeader>
+          <DataTableBody>
             {table.getRowModel().rows.map((row) => (
-              <tr
+              <DataTableRow
                 key={row.id}
-                onClick={() =>
-                  void navigate({
-                    to: '/admin/api-keys/$id',
-                    params: { id: String(row.original.id) },
-                  })
-                }
-                className="border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover"
+                interactive
+                confirming={confirmDeleteId === String(row.original.id)}
+                onClick={() => openKey(row.original.id)}
               >
                 {row.getVisibleCells().map((cell) => {
                   const isActionCell = cell.column.id === 'actions'
                   return (
-                    <td
+                    <DataTableCell
                       key={cell.id}
-                      className="py-4 pr-4 align-top text-gray-900"
+                      align={isActionCell ? 'right' : 'left'}
                       onClick={
                         isActionCell ? (e) => e.stopPropagation() : undefined
                       }
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
+                    </DataTableCell>
                   )
                 })}
-              </tr>
+              </DataTableRow>
             ))}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
       )}
     </div>
   )
