@@ -7,12 +7,54 @@ import {
   Settings,
   Sparkles,
 } from 'lucide-react'
+import { toast } from 'sonner'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+import { InlineEdit } from '@/components/ui/inline-edit'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { MultiSelect } from '@/components/ui/multi-select'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import {
   ListFrame,
   ListRow,
@@ -29,6 +71,7 @@ import {
   type RowActionTone,
 } from '@/components/ui/row-action'
 import { Select } from '@/components/ui/select'
+import { StepIndicator } from '@/components/ui/step-indicator'
 import { Textarea } from '@/components/ui/textarea'
 
 export const Route = createFileRoute('/dev/ui')({
@@ -161,9 +204,25 @@ function Section({
   )
 }
 
+const wizardSteps = ['Details', 'Bron', 'Bevestigen']
+const tabItems = ['Details', 'Activiteit', 'Instellingen']
+const badgeVariants = ['default', 'secondary', 'accent', 'outline', 'success', 'warning', 'destructive'] as const
+const multiSelectOptions = [
+  { value: 'kb', label: 'Kennisbank' },
+  { value: 'chat', label: 'Chat' },
+  { value: 'connectors', label: 'Connectors' },
+  { value: 'widgets', label: 'Widgets' },
+]
+const commandItems = ['Kennisbank', 'Chat', 'Connectors', 'Widgets', 'Instellingen']
+
 function UiCatalogPage() {
   const [confirming, setConfirming] = useState(false)
   const [checked, setChecked] = useState(true)
+  const [wizardStep, setWizardStep] = useState(1)
+  const [activeTab, setActiveTab] = useState('Details')
+  const [multiValue, setMultiValue] = useState<string[]>(['kb'])
+  const [inlineEditing, setInlineEditing] = useState(false)
+  const [inlineValue, setInlineValue] = useState('Klai component')
 
   if (!import.meta.env.DEV) {
     return (
@@ -353,6 +412,57 @@ function UiCatalogPage() {
         </table>
       </Section>
 
+      <Section title="Wizard steps">
+        <div className="space-y-4">
+          <StepIndicator
+            steps={wizardSteps.map((label, i) => ({
+              label,
+              onClick: i < wizardStep ? () => setWizardStep(i) : undefined,
+            }))}
+            currentIndex={wizardStep}
+          />
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={wizardStep === 0}
+              onClick={() => setWizardStep((s) => Math.max(0, s - 1))}
+            >
+              Vorige
+            </Button>
+            <Button
+              size="sm"
+              disabled={wizardStep === wizardSteps.length - 1}
+              onClick={() => setWizardStep((s) => Math.min(wizardSteps.length - 1, s + 1))}
+            >
+              Volgende
+            </Button>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Tabs">
+        <div className="space-y-4">
+          <div className="flex gap-6 border-b border-gray-200">
+            {tabItems.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                className={
+                  activeTab === tab
+                    ? 'border-b-2 border-gray-900 pb-2 text-sm font-medium text-gray-900'
+                    : 'border-b-2 border-transparent pb-2 text-sm text-gray-400 hover:text-gray-900'
+                }
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+          <p className="text-sm text-gray-500">Actieve tab: {activeTab}</p>
+        </div>
+      </Section>
+
       <Section title="Form controls">
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
@@ -374,6 +484,152 @@ function UiCatalogPage() {
             <Checkbox checked={checked} onChange={(event) => setChecked(event.currentTarget.checked)} />
             Subtiele kleur voor herkenning
           </label>
+        </div>
+      </Section>
+
+      <Section title="Badges">
+        <div className="flex flex-wrap items-center gap-2">
+          {badgeVariants.map((variant) => (
+            <Badge key={variant} variant={variant}>
+              {variant}
+            </Badge>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Cards">
+        <Card className="max-w-sm">
+          <CardHeader>
+            <CardTitle>Kennisbank</CardTitle>
+            <CardDescription>Rustig omkaderd blok voor herhaalde items of stats.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-500">12 bronnen, laatst gesynct 2 uur geleden.</p>
+          </CardContent>
+          <CardFooter>
+            <Button variant="secondary" size="sm">Openen</Button>
+          </CardFooter>
+        </Card>
+      </Section>
+
+      <Section title="Overlays and menus">
+        <div className="flex flex-wrap items-center gap-3">
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="secondary">Dialog</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Voorbeeld dialog</DialogTitle>
+                <DialogDescription>Generieke modal voor een formulier of detail.</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button>Opslaan</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive">Alert dialog</Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Item verwijderen?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Bevestiging voor een destructieve actie buiten een rij.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Annuleren</AlertDialogCancel>
+                <AlertDialogAction>Verwijderen</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">Dropdown menu</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuLabel>Acties</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem>Bewerken</DropdownMenuItem>
+              <DropdownMenuItem>Dupliceren</DropdownMenuItem>
+              <DropdownMenuItem className="text-[var(--color-destructive)]">Verwijderen</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost">Popover</Button>
+            </PopoverTrigger>
+            <PopoverContent>
+              <p className="text-sm text-gray-500">Zwevend paneel op een trigger.</p>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </Section>
+
+      <Section title="Selection inputs">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label>Multi-select</Label>
+            <MultiSelect options={multiSelectOptions} value={multiValue} onChange={setMultiValue} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Command</Label>
+            <Command className="rounded-md border border-gray-200">
+              <CommandInput placeholder="Zoeken..." />
+              <CommandList>
+                <CommandEmpty>Geen resultaten.</CommandEmpty>
+                <CommandGroup>
+                  {commandItems.map((item) => (
+                    <CommandItem key={item}>{item}</CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Inline edit">
+        <div className="flex items-center gap-3">
+          <InlineEdit
+            isEditing={inlineEditing}
+            value={inlineValue}
+            onValueChange={setInlineValue}
+            onSave={() => setInlineEditing(false)}
+            onCancel={() => setInlineEditing(false)}
+            inputClassName="text-sm font-medium"
+          >
+            <span className="text-sm font-medium text-gray-900">{inlineValue}</span>
+          </InlineEdit>
+          <RowActionIconButton
+            label="Naam bewerken"
+            action="edit"
+            onClick={() => setInlineEditing((v) => !v)}
+          />
+        </div>
+      </Section>
+
+      <Section title="Feedback">
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={() => toast.success('Opgeslagen')}>
+              Toast success
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => toast.error('Er ging iets mis')}>
+              Toast error
+            </Button>
+          </div>
+          <div className="rounded-md border border-gray-200">
+            <QueryErrorState
+              error={new Error('Kon de lijst niet laden.')}
+              onRetry={() => toast('Opnieuw proberen...')}
+            />
+          </div>
         </div>
       </Section>
     </main>

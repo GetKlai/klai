@@ -28,9 +28,10 @@ interface InlineDeleteConfirmProps {
  *     onConfirm={() => deleteMutation.mutate(row.id)}
  *     onCancel={() => setConfirmDeleteId(null)}
  *   >
- *     <div className="flex items-center justify-end gap-1">
- *       <button onClick={() => setConfirmDeleteId(row.id)}><Trash2 /></button>
- *     </div>
+ *     <RowActionGroup>
+ *       <RowActionIconButton label="Verwijderen" action="delete"
+ *         onClick={() => setConfirmDeleteId(row.id)} />
+ *     </RowActionGroup>
  *   </InlineDeleteConfirm>
  */
 export function InlineDeleteConfirm({
