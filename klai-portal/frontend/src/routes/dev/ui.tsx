@@ -2,10 +2,14 @@ import { createFileRoute } from '@tanstack/react-router'
 import type { ComponentProps, ReactNode } from 'react'
 import { useState } from 'react'
 import {
+  Check,
   FileText,
   Loader2,
+  MessageSquare,
+  Mic,
   Settings,
   Sparkles,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -59,10 +63,13 @@ import {
   ListFrame,
   ListRow,
   ListRowActions,
+  ListRowChevron,
   ListRowContent,
   ListRowDescription,
+  ListRowIcon,
   ListRowTitle,
 } from '@/components/ui/list'
+import { RadioCardGroup } from '@/components/ui/radio-card-group'
 import {
   RowActionButton,
   RowActionGroup,
@@ -70,6 +77,7 @@ import {
   type RowActionKind,
   type RowActionTone,
 } from '@/components/ui/row-action'
+import { SearchInput } from '@/components/ui/search-input'
 import { Select } from '@/components/ui/select'
 import { StepIndicator } from '@/components/ui/step-indicator'
 import { Textarea } from '@/components/ui/textarea'
@@ -206,7 +214,17 @@ function Section({
 
 const wizardSteps = ['Details', 'Bron', 'Bevestigen']
 const tabItems = ['Details', 'Activiteit', 'Instellingen']
-const badgeVariants = ['default', 'secondary', 'accent', 'outline', 'success', 'warning', 'destructive'] as const
+const badgeVariants = ['default', 'secondary', 'accent', 'outline', 'info', 'success', 'warning', 'destructive'] as const
+const navListItems = [
+  { icon: MessageSquare, title: 'Chat', description: 'Privé AI-gesprekken op Europese servers' },
+  { icon: Settings, title: 'Instructies', description: 'Beheer instructies die je in chats kunt aanzetten.' },
+  { icon: Mic, title: 'Scribe', description: 'Audio, video en vergaderingen omzetten naar tekst' },
+]
+const radioCardOptions = [
+  { value: 'personal', label: 'Persoonlijke chat', description: 'Privé-kennis: upload documenten en chat met je eigen kennisbank.' },
+  { value: 'company', label: 'Bedrijfschat', description: 'Alles van Persoonlijke chat, plus toegang tot bedrijfskennis.' },
+  { value: 'manager', label: 'Kennisbeheerder', description: 'Beheer connectoren en bedrijfskennisbanken.' },
+]
 const multiSelectOptions = [
   { value: 'kb', label: 'Kennisbank' },
   { value: 'chat', label: 'Chat' },
@@ -223,6 +241,8 @@ function UiCatalogPage() {
   const [multiValue, setMultiValue] = useState<string[]>(['kb'])
   const [inlineEditing, setInlineEditing] = useState(false)
   const [inlineValue, setInlineValue] = useState('Klai component')
+  const [searchValue, setSearchValue] = useState('')
+  const [radioValue, setRadioValue] = useState('personal')
 
   if (!import.meta.env.DEV) {
     return (
@@ -384,6 +404,25 @@ function UiCatalogPage() {
         </ListFrame>
       </Section>
 
+      <Section title="Navigation list">
+        <ListFrame>
+          {navListItems.map((item) => (
+            <ListRow key={item.title} asChild interactive>
+              <a href="#">
+                <ListRowIcon>
+                  <item.icon className="h-4 w-4" />
+                </ListRowIcon>
+                <ListRowContent>
+                  <ListRowTitle>{item.title}</ListRowTitle>
+                  <ListRowDescription>{item.description}</ListRowDescription>
+                </ListRowContent>
+                <ListRowChevron />
+              </a>
+            </ListRow>
+          ))}
+        </ListFrame>
+      </Section>
+
       <Section title="Table spacing">
         <table className="w-full border-y border-gray-200 text-sm">
           <thead>
@@ -476,6 +515,15 @@ function UiCatalogPage() {
               <option value="list">List</option>
               <option value="table">Table</option>
             </Select>
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="catalog-search">Zoeken</Label>
+            <SearchInput
+              id="catalog-search"
+              value={searchValue}
+              onChange={(e) => setSearchValue(e.target.value)}
+              placeholder="Zoek kennisbanken..."
+            />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="catalog-description">Beschrijving</Label>
@@ -595,6 +643,16 @@ function UiCatalogPage() {
         </div>
       </Section>
 
+      <Section title="Radio cards">
+        <RadioCardGroup
+          options={radioCardOptions}
+          value={radioValue}
+          onChange={setRadioValue}
+          aria-label="Profiel"
+          className="max-w-md"
+        />
+      </Section>
+
       <Section title="Inline edit">
         <div className="flex items-center gap-3">
           <InlineEdit
@@ -607,11 +665,33 @@ function UiCatalogPage() {
           >
             <span className="text-sm font-medium text-gray-900">{inlineValue}</span>
           </InlineEdit>
-          <RowActionIconButton
-            label="Naam bewerken"
-            action="edit"
-            onClick={() => setInlineEditing((v) => !v)}
-          />
+          {inlineEditing ? (
+            <div className="flex items-center gap-1 whitespace-nowrap">
+              <Button
+                size="sm"
+                className="h-6 gap-1 px-2 text-[10px] [&_svg]:size-2.5 bg-[var(--color-success)] text-white hover:opacity-70"
+                onClick={() => setInlineEditing(false)}
+              >
+                <Check />
+                Opslaan
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 gap-1 px-2 text-[10px] [&_svg]:size-2.5"
+                onClick={() => setInlineEditing(false)}
+              >
+                <X />
+                Annuleren
+              </Button>
+            </div>
+          ) : (
+            <BorderedRowActionIconButton
+              label="Naam bewerken"
+              action="edit"
+              onClick={() => setInlineEditing(true)}
+            />
+          )}
         </div>
       </Section>
 
