@@ -138,7 +138,7 @@ function BorderedRowActionIconButton({
       action={action}
       tone={tone}
       className={[
-        'h-7 w-7 border [border-color:currentColor] bg-transparent [&_svg]:h-3.5 [&_svg]:w-3.5',
+        'h-7 w-7 border border-current bg-transparent [&_svg]:h-3.5 [&_svg]:w-3.5',
         className,
       ].filter(Boolean).join(' ')}
       {...props}

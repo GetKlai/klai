@@ -33,7 +33,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 
 const rowActionToneByAction = {
   add: 'primary',
-  edit: 'neutral',
+  edit: 'warning',
   rename: 'neutral',
   configure: 'neutral',
   open: 'neutral',
