@@ -42,16 +42,16 @@ class ZitadelPasswordComplexityPolicy:
     def from_api_response(cls, payload: dict[str, Any]) -> ZitadelPasswordComplexityPolicy:
         policy_payload = payload.get("policy")
         policy = cast(dict[str, Any], policy_payload) if isinstance(policy_payload, dict) else payload
-        required = ("minLength", "hasUppercase", "hasLowercase", "hasNumber", "hasSymbol")
+        required = ("minLength",)
         missing = [key for key in required if key not in policy]
         if missing:
             raise ValueError(f"Zitadel password policy response missing keys: {missing}")
         return cls(
             min_length=_require_int(policy, "minLength"),
-            has_uppercase=_require_bool(policy, "hasUppercase"),
-            has_lowercase=_require_bool(policy, "hasLowercase"),
-            has_number=_require_bool(policy, "hasNumber"),
-            has_symbol=_require_bool(policy, "hasSymbol"),
+            has_uppercase=_optional_bool(policy, "hasUppercase"),
+            has_lowercase=_optional_bool(policy, "hasLowercase"),
+            has_number=_optional_bool(policy, "hasNumber"),
+            has_symbol=_optional_bool(policy, "hasSymbol"),
         )
 
 
@@ -102,6 +102,12 @@ def _require_bool(policy: dict[str, Any], key: str) -> bool:
     if not isinstance(value, bool):
         raise TypeError(f"Zitadel password policy key {key} must be boolean")
     return value
+
+
+def _optional_bool(policy: dict[str, Any], key: str) -> bool:
+    if key not in policy:
+        return False
+    return _require_bool(policy, key)
 
 
 def _require_int(policy: dict[str, Any], key: str) -> int:

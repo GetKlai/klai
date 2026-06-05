@@ -82,10 +82,23 @@ def test_zitadel_policy_response_parsing() -> None:
     )
 
 
+def test_zitadel_policy_response_omitted_composition_flags_are_false() -> None:
+    parsed = ZitadelPasswordComplexityPolicy.from_api_response(
+        {
+            "policy": {
+                "minLength": "15",
+                "isDefault": True,
+            }
+        }
+    )
+
+    assert parsed == _remote(min_length=15)
+
+
 @pytest.mark.parametrize(
     "payload",
     [
-        {"policy": {"minLength": "8", "hasUppercase": True, "hasLowercase": True, "hasNumber": True}},
+        {"policy": {"hasUppercase": True, "hasLowercase": True, "hasNumber": True}},
         {
             "policy": {
                 "minLength": True,
