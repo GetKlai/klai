@@ -1,12 +1,8 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { useAuth } from '@/lib/auth'
-import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, UserCircle, type LucideIcon } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { STORAGE_KEYS } from '@/lib/storage'
-import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 
 export interface NavItem {
@@ -23,23 +19,10 @@ interface SidebarProps {
   navItems: NavItem[]
 }
 
-interface AccountFeedbackUpdatesResponse {
-  unread_count: number
-}
-
 export function Sidebar({ navItems }: SidebarProps) {
-  const auth = useAuth()
   const location = useLocation()
-  const { user } = useCurrentUser()
-  const { data: feedbackUpdates } = useQuery({
-    queryKey: ['account-feedback-updates'],
-    queryFn: () => apiFetch<AccountFeedbackUpdatesResponse>('/api/app/account/feedback-updates'),
-    enabled: auth.isAuthenticated,
-  })
 
   const inAdmin = location.pathname.startsWith('/admin')
-  const isAdmin = inAdmin || user?.isAdmin === true
-  const feedbackUnreadCount = feedbackUpdates?.unread_count ?? 0
 
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.sidebarCollapsed) === 'true'
@@ -51,21 +34,12 @@ export function Sidebar({ navItems }: SidebarProps) {
     localStorage.setItem(STORAGE_KEYS.sidebarCollapsed, String(next))
   }
 
-  function renderBadge(
-    count: number | undefined,
-    label: string,
-    tone: 'destructive' | 'success' = 'destructive',
-  ) {
+  function renderBadge(count: number | undefined, label: string) {
     if (!count || count <= 0) return null
-    const toneClass =
-      tone === 'success'
-        ? 'bg-[var(--color-success)]'
-        : 'bg-[var(--color-destructive)]'
     return (
       <span
         className={cn(
-          'ml-auto inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium leading-5 text-white',
-          toneClass,
+          'ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-destructive)] px-1.5 text-[11px] font-medium leading-5 text-white',
           collapsed && 'absolute translate-x-3 -translate-y-2 px-1 min-w-4 leading-4 text-[10px]'
         )}
         aria-label={label}
@@ -84,9 +58,10 @@ export function Sidebar({ navItems }: SidebarProps) {
         collapsed ? 'w-14' : 'w-60'
       )}
     >
-      {/* Logo + toggle - h-[66px] centers content at 33px → logo top-edge at 24px */}
+      {/* Logo + toggle - h-16 + bottom border lines the logo up exactly with
+          the global TopBar so the two rails read as one continuous header. */}
       <div className={cn(
-        'flex h-[66px] items-center',
+        'flex h-16 shrink-0 items-center border-b border-[var(--color-sidebar-border)]',
         collapsed ? 'justify-center' : 'justify-between px-6'
       )}>
         {!collapsed && (
@@ -179,75 +154,6 @@ export function Sidebar({ navItems }: SidebarProps) {
           ))}
         </ul>
       </nav>
-
-      {/* Admin/App switcher */}
-      {isAdmin && (
-        <div className="border-t border-[var(--color-sidebar-border)] py-3">
-          <Link
-            to={inAdmin ? '/app' : '/admin'}
-            title={collapsed ? (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()) : undefined}
-            className={cn(
-              'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-              'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
-              collapsed ? 'justify-center' : 'gap-3 px-3'
-            )}
-          >
-            {inAdmin
-              ? <LayoutGrid size={18} strokeWidth={1.5} />
-              : <Shield size={18} strokeWidth={1.5} />
-            }
-            {!collapsed && (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin())}
-          </Link>
-        </div>
-      )}
-
-      {/* User + logout */}
-      <div className="border-t border-[var(--color-sidebar-border)] pt-2 pb-4">
-        {auth.user && !collapsed && (
-          <div className="mb-2 px-6 py-2">
-            <p className="truncate text-xs font-medium text-[var(--color-sidebar-foreground)]">
-              {auth.user.profile.name ?? auth.user.profile.preferred_username}
-            </p>
-            <p className="truncate text-xs text-[var(--color-sidebar-muted-foreground)]">
-              {auth.user.profile.email}
-            </p>
-          </div>
-        )}
-        <Link
-          to="/app/account"
-          title={collapsed ? m.sidebar_account() : undefined}
-          className={cn(
-            'relative flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-            'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
-            collapsed ? 'justify-center' : 'gap-3 px-3'
-          )}
-          activeProps={{
-            className: 'bg-[var(--color-hover)] text-[var(--color-sidebar-accent-foreground)]',
-          }}
-        >
-          <UserCircle size={18} strokeWidth={1.5} />
-          {!collapsed && m.sidebar_account()}
-          {renderBadge(feedbackUnreadCount, m.account_feedback_unread(), 'success')}
-        </Link>
-        <button
-          onClick={() => {
-            // BFF logout via signoutRedirect → removeUser does the full flow:
-            // revoke server-side session, clear cookies, navigate to Zitadel
-            // end_session. No sendBeacon needed - legacy /api/auth/logout
-            // only clears a cookie the BFF doesn't use and fails CSRF.
-            void auth.signoutRedirect()
-          }}
-          title={collapsed ? m.sidebar_logout() : undefined}
-          className={cn(
-            'flex w-full items-center rounded-md py-2 mx-3 text-sm transition-colors',
-            'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
-            collapsed ? 'justify-center' : 'gap-3 px-3'
-          )}
-        >
-          <LogOut size={18} strokeWidth={1.5} />
-          {!collapsed && m.sidebar_logout()}
-        </button>
-      </div>
     </aside>
   )
 }
