@@ -133,3 +133,53 @@ def test_web_search_permission_gate():
     assert exc.value.status_code == 403
     # Key with the permission passes.
     require_permission(_auth({"chat": True, "web_search": True}), "web_search")
+
+
+def _req(**kwargs):
+    from app.api.partner import ChatCompletionsRequest
+
+    kwargs.setdefault("messages", [{"role": "user", "content": "hi"}])
+    return ChatCompletionsRequest(**kwargs)
+
+
+def test_resolve_web_query_prefers_explicit_query():
+    from app.api.partner import _resolve_web_query
+
+    req = _req(
+        messages=[{"role": "user", "content": "the natural question"}],
+        web_search_query="  Yealink T54W no registration  ",
+    )
+    assert _resolve_web_query(req) == "Yealink T54W no registration"
+
+
+def test_resolve_web_query_falls_back_to_last_user_message():
+    from app.api.partner import _resolve_web_query
+
+    req = _req(
+        messages=[
+            {"role": "system", "content": "context blob"},
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "an answer"},
+            {"role": "user", "content": "  is there an outage right now?  "},
+        ]
+    )
+    assert _resolve_web_query(req) == "is there an outage right now?"
+
+
+def test_resolve_web_query_ignores_knowledge_blob():
+    # knowledge.query is a KB-retrieval blob, not a web query: it must NOT be
+    # used as the web search query (it returns nothing from a keyword engine).
+    from app.api.partner import _resolve_web_query
+
+    req = _req(
+        messages=[{"role": "system", "content": "x"}],
+        knowledge={"enabled": True, "query": "Search focus: a very long labelled blob"},
+    )
+    assert _resolve_web_query(req) is None
+
+
+def test_resolve_web_query_none_without_user_message():
+    from app.api.partner import _resolve_web_query
+
+    req = _req(messages=[{"role": "system", "content": "x"}], web_search_query="   ")
+    assert _resolve_web_query(req) is None
