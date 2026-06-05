@@ -741,6 +741,7 @@
   "knowledge_items_column_saved_at": "Opgeslagen op",
   "knowledge_items_column_actions": "Acties",
   "knowledge_items_empty_state": "Nog geen opgeslagen items. Gebruik de AI-assistent om persoonlijke kennis op te slaan.",
+  "knowledge_items_delete": "Verwijderen",
   "knowledge_items_delete_confirm": "Dit item verwijderen?",
   "knowledge_items_add_button": "Item toevoegen",
   "knowledge_add_source_title": "Toevoegen aan kennisbank",
