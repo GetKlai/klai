@@ -37,7 +37,7 @@ function PlatformOrgDetailPage() {
   const { data, isLoading, error, refetch } = usePlatformOrgDetail(orgId)
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10 space-y-8">
+    <div className="mx-auto max-w-5xl px-6 pt-6 pb-10 space-y-8">
       <Button
         type="button"
         variant="link"

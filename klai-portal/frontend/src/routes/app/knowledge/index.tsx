@@ -229,7 +229,7 @@ function KnowledgePage() {
     totalCount === 1 ? m.kb_list_count_one() : m.kb_list_count({ count: String(totalCount) })
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10 space-y-8">
+    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10 space-y-8">
       {/* Header - title + subtitle stacked, primary action top-right.
           Matches the dashboard pattern (/app/) and Scribe layout. */}
       <div className="flex items-start justify-between gap-4">

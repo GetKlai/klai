@@ -15,7 +15,7 @@ function AdminSettingsPage() {
   const { data: settings, isLoading, error } = useAdminSettings()
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-settings-general">
+    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10 space-y-6" data-help-id="admin-settings-general">
       <div className="space-y-1">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_settings_heading()}

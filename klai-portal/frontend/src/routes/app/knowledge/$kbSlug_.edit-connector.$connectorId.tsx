@@ -587,7 +587,7 @@ function EditConnectorPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 py-10">
+    <div className="mx-auto max-w-lg px-6 pt-6 pb-10">
       <div className="flex items-start justify-between mb-6">
         <div className="space-y-1.5">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">

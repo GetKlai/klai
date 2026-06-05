@@ -256,14 +256,14 @@ function UiCatalogPage() {
 
   if (!import.meta.env.DEV) {
     return (
-      <div className="mx-auto max-w-3xl px-6 py-10">
+      <div className="mx-auto max-w-3xl px-6 pt-6 pb-10">
         <p className="text-sm text-gray-400">UI catalog is alleen lokaal beschikbaar.</p>
       </div>
     )
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10 space-y-10">
+    <main className="mx-auto max-w-3xl px-6 pt-6 pb-10 space-y-10">
       <div className="space-y-1">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           UI catalog

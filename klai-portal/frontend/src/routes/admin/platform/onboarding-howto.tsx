@@ -79,7 +79,7 @@ function OnboardingHowtoPage() {
   ]
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
+    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10">
       <div className="mb-2 flex items-center justify-between">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.platform_onboarding_title()}

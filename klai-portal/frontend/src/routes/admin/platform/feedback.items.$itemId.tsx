@@ -26,7 +26,7 @@ function PlatformFeedbackItemPage() {
     void navigate({ to: '/admin/platform', search: { tab: 'feedback' } })
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
+    <div className="mx-auto max-w-4xl space-y-8 px-6 pt-6 pb-10">
       <FeedbackItemDetailPanel
         itemId={Number.isFinite(id) ? id : -1}
         fmtDate={fmtDate}

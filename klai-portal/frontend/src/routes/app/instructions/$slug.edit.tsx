@@ -49,7 +49,7 @@ function EditInstructionRoute() {
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-lg px-6 py-10">
+      <div className="mx-auto max-w-lg px-6 pt-6 pb-10">
         <p className="text-sm text-gray-400">{m.instructions_form_loading()}</p>
       </div>
     )
@@ -57,7 +57,7 @@ function EditInstructionRoute() {
 
   if (isError || !data) {
     return (
-      <div className="mx-auto max-w-lg px-6 py-10">
+      <div className="mx-auto max-w-lg px-6 pt-6 pb-10">
         <QueryErrorState error={error ?? new Error('Unknown error')} onRetry={() => void refetch()} />
       </div>
     )

@@ -118,7 +118,7 @@ function InviteUserPage() {
   const msgs = m as unknown as Record<string, (() => string) | undefined>
 
   return (
-    <div className="mx-auto max-w-lg px-6 py-10">
+    <div className="mx-auto max-w-lg px-6 pt-6 pb-10">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_users_invite_button()}

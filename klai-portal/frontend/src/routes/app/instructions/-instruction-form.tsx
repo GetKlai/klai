@@ -178,7 +178,7 @@ export function InstructionFormPage({
   const title = mode === 'new' ? m.instructions_form_new_title() : m.instructions_form_edit_title()
 
   return (
-    <div className="mx-auto max-w-lg px-6 py-10">
+    <div className="mx-auto max-w-lg px-6 pt-6 pb-10">
       <div className="mb-2">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">{title}</h1>
       </div>
