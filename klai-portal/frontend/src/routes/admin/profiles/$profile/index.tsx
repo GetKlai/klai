@@ -4,8 +4,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
-import { ArrowLeft, Loader2, UserPlus } from 'lucide-react'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from '@/components/ui/data-table'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { ArrowLeft, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
@@ -125,105 +134,81 @@ function AdminProfileDetail() {
         </div>
 
         {isLoading ? (
-          <p className="text-sm text-gray-400">
-            <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-            {m.admin_profiles_loading()}
-          </p>
+          <ListLoadingState label={m.admin_profiles_loading()} />
         ) : members.length === 0 ? (
-          <p className="text-sm text-gray-400 py-4 text-center">
-            {m.admin_profiles_drill_in_empty()}
-          </p>
+          <ListEmptyState title={m.admin_profiles_drill_in_empty()} />
         ) : (
-          <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-12">
-                    {/* avatar */}
-                  </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                    {m.admin_users_col_name()}
-                  </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                    {m.admin_users_col_email()}
-                  </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-28">
-                    {m.admin_users_col_invited()}
-                  </th>
-                  <th className="py-3 text-right text-xs font-medium text-gray-400 tracking-wide w-16">
-                    {/* Actions */}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {members.map((user) => {
-                  const isDemoting =
-                    removeMemberMutation.isPending &&
-                    removeMemberMutation.variables === user.zitadel_user_id
-                  const isConfirming = confirmDemoteId === user.zitadel_user_id
-                  const isSelf = user.zitadel_user_id === currentUser?.user_id
-                  // Demoting to "personal" is a no-op when already "personal".
-                  const alreadyPersonal = profileRole === 'personal'
-                  const demoteDisabled = isSelf || alreadyPersonal
-                  const demoteTooltip = isSelf
-                    ? m.admin_profiles_demote_self_blocked()
-                    : m.admin_profiles_demote_action()
+          <DataTable className="table-fixed">
+            <DataTableHeader>
+              <DataTableRow>
+                <DataTableHead className="w-12" aria-label="avatar" />
+                <DataTableHead>{m.admin_users_col_name()}</DataTableHead>
+                <DataTableHead>{m.admin_users_col_email()}</DataTableHead>
+                <DataTableHead className="w-28">{m.admin_users_col_invited()}</DataTableHead>
+                <DataTableHead align="right" className="w-16" aria-label="actions" />
+              </DataTableRow>
+            </DataTableHeader>
+            <DataTableBody>
+              {members.map((user) => {
+                const isDemoting =
+                  removeMemberMutation.isPending &&
+                  removeMemberMutation.variables === user.zitadel_user_id
+                const isConfirming = confirmDemoteId === user.zitadel_user_id
+                const isSelf = user.zitadel_user_id === currentUser?.user_id
+                // Demoting to "personal" is a no-op when already "personal".
+                const alreadyPersonal = profileRole === 'personal'
+                const demoteDisabled = isSelf || alreadyPersonal
+                const demoteTooltip = isSelf
+                  ? m.admin_profiles_demote_self_blocked()
+                  : m.admin_profiles_demote_action()
 
-                  return (
-                    <tr
-                      key={user.zitadel_user_id}
-                      className={`border-b border-gray-200 last:border-b-0 ${
-                        isConfirming ? 'bg-[var(--color-hover)]' : ''
-                      }`}
-                    >
-                      <td className="py-4 pr-4 align-top w-12">
-                        <UserAvatar
-                          uid={user.zitadel_user_id}
-                          first_name={user.first_name}
-                          last_name={user.last_name}
-                          email={user.email}
-                          size="sm"
-                        />
-                      </td>
-                      <td className="py-4 pr-4 align-top text-gray-900">
-                        {displayName(user)}
-                      </td>
-                      <td className="py-4 pr-4 align-top text-gray-400">
-                        {user.email}
-                      </td>
-                      <td className="py-4 pr-4 align-top text-gray-900 whitespace-nowrap tabular-nums w-28">
-                        {formatDate(user.created_at)}
-                      </td>
-                      <td className="py-4 align-top text-right w-16">
-                        {alreadyPersonal ? (
-                          // No demote target on the lowest rung.
-                          <span className="text-xs text-gray-400">-</span>
-                        ) : (
-                          <InlineDeleteConfirm
-                            isConfirming={isConfirming}
-                            isPending={isDemoting}
-                            label={m.admin_profiles_demote_confirm({ name: displayName(user) })}
-                            cancelLabel={m.admin_users_cancel()}
-                            onConfirm={() => removeMemberMutation.mutate(user.zitadel_user_id)}
-                            onCancel={() => setConfirmDemoteId(null)}
-                          >
-                            <RowActionGroup>
-                              <RowActionIconButton
-                                label={demoteTooltip}
-                                action="delete"
-                                disabled={demoteDisabled}
-                                onClick={() => {
-                                  if (!demoteDisabled) setConfirmDemoteId(user.zitadel_user_id)
-                                }}
-                              />
-                            </RowActionGroup>
-                          </InlineDeleteConfirm>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                return (
+                  <DataTableRow key={user.zitadel_user_id} confirming={isConfirming}>
+                    <DataTableCell className="w-12">
+                      <UserAvatar
+                        uid={user.zitadel_user_id}
+                        first_name={user.first_name}
+                        last_name={user.last_name}
+                        email={user.email}
+                        size="sm"
+                      />
+                    </DataTableCell>
+                    <DataTableCell>{displayName(user)}</DataTableCell>
+                    <DataTableCell className="text-gray-400">{user.email}</DataTableCell>
+                    <DataTableCell className="w-28 whitespace-nowrap tabular-nums">
+                      {formatDate(user.created_at)}
+                    </DataTableCell>
+                    <DataTableCell align="right" className="w-16">
+                      {alreadyPersonal ? (
+                        // No demote target on the lowest rung.
+                        <span className="text-xs text-gray-400">-</span>
+                      ) : (
+                        <InlineDeleteConfirm
+                          isConfirming={isConfirming}
+                          isPending={isDemoting}
+                          label={m.admin_profiles_demote_confirm({ name: displayName(user) })}
+                          cancelLabel={m.admin_users_cancel()}
+                          onConfirm={() => removeMemberMutation.mutate(user.zitadel_user_id)}
+                          onCancel={() => setConfirmDemoteId(null)}
+                        >
+                          <RowActionGroup>
+                            <BorderedRowActionIconButton
+                              label={demoteTooltip}
+                              action="delete"
+                              disabled={demoteDisabled}
+                              onClick={() => {
+                                if (!demoteDisabled) setConfirmDemoteId(user.zitadel_user_id)
+                              }}
+                            />
+                          </RowActionGroup>
+                        </InlineDeleteConfirm>
+                      )}
+                    </DataTableCell>
+                  </DataTableRow>
+                )
+              })}
+            </DataTableBody>
+          </DataTable>
         )}
       </section>
     </div>
