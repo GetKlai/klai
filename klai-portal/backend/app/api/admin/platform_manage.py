@@ -51,6 +51,10 @@ from app.services.provisioning import provision_tenant
 from app.services.user_deletion_orchestrator import delete_user_with_state_machine
 from app.services.user_memberships import get_user_global_membership_state, get_user_membership_summary
 from app.services.zitadel import _sync_zitadel_role_grant, zitadel
+from app.services.zitadel_identity_recovery import (
+    ZitadelIdentityRecoveryError,
+    recover_existing_zitadel_identity_for_invite,
+)
 
 
 def _slugify(name: str) -> str:
@@ -188,6 +192,58 @@ async def _create_or_reuse_platform_invite_zitadel_user(
         raise HTTPException(status_code=502, detail=f"Zitadel invite mislukt: {exc}") from exc
 
 
+async def _load_platform_invite_membership_status(*, org_id: int, zitadel_user_id: str) -> str | None:
+    async with tenant_scoped_session(org_id) as db:
+        existing_membership = (
+            await db.execute(
+                select(PortalUser).where(
+                    PortalUser.zitadel_user_id == zitadel_user_id,
+                    PortalUser.org_id == org_id,
+                )
+            )
+        ).scalar_one_or_none()
+        return cast(str | None, getattr(existing_membership, "status", None))
+
+
+async def _recover_platform_invite_identity_before_grant(
+    *,
+    org_id: int,
+    body: PlatformInviteRequest,
+    zitadel_user_id: str,
+) -> tuple[str, bool, bool]:
+    existing_membership_status = await _load_platform_invite_membership_status(
+        org_id=org_id,
+        zitadel_user_id=zitadel_user_id,
+    )
+    if existing_membership_status is not None and existing_membership_status != "offboarded":
+        raise HTTPException(status_code=409, detail="Deze gebruiker is al lid van deze tenant.")
+    if existing_membership_status == "offboarded":
+        return zitadel_user_id, False, False
+
+    try:
+        recovery = await recover_existing_zitadel_identity_for_invite(
+            zitadel_user_id=zitadel_user_id,
+            email=body.email,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            preferred_language=body.preferred_language,
+            org_id=org_id,
+            zitadel_client=zitadel,
+        )
+    except ZitadelIdentityRecoveryError as exc:
+        logger.exception(
+            "platform_invite_existing_identity_recovery_failed",
+            zitadel_user_id=zitadel_user_id,
+            target_org_id=org_id,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Gebruiker kon niet opnieuw worden geactiveerd. Probeer het opnieuw.",
+        ) from exc
+
+    return recovery.user_id, recovery.created_new_user, recovery.reactivated_existing_user
+
+
 async def _grant_platform_invite_role_or_rollback(
     *,
     role: PortalRole,
@@ -287,6 +343,20 @@ async def _rollback_zitadel_user(zitadel_user_id: str) -> None:
         await zitadel.remove_user(
             org_id=settings_zitadel_portal_org_id(),
             zitadel_user_id=zitadel_user_id,
+        )
+
+
+async def _restore_reactivated_platform_invite_identity(
+    *,
+    zitadel_user_id: str,
+    reactivated_zitadel_user: bool,
+) -> None:
+    if not reactivated_zitadel_user:
+        return
+    with suppress(Exception):
+        await zitadel.deactivate_user(
+            user_id=zitadel_user_id,
+            org_id=settings.zitadel_portal_org_id,
         )
 
 
@@ -700,19 +770,39 @@ async def platform_invite(
         perms=perms,
     )
 
+    reactivated_existing_zitadel_user = False
+    if not zitadel_user_created:
+        (
+            zitadel_user_id,
+            zitadel_user_created,
+            reactivated_existing_zitadel_user,
+        ) = await _recover_platform_invite_identity_before_grant(
+            org_id=org_id,
+            body=body,
+            zitadel_user_id=zitadel_user_id,
+        )
+
     # 2. Admin-only Zitadel grant.
-    await _grant_platform_invite_role_or_rollback(
-        role=body.role,
-        email=body.email,
-        org_id=org_id,
-        zitadel_user_id=zitadel_user_id,
-        zitadel_user_created=zitadel_user_created,
-        perms=perms,
-    )
+    try:
+        await _grant_platform_invite_role_or_rollback(
+            role=body.role,
+            email=body.email,
+            org_id=org_id,
+            zitadel_user_id=zitadel_user_id,
+            zitadel_user_created=zitadel_user_created,
+            perms=perms,
+        )
+    except Exception:
+        await _restore_reactivated_platform_invite_identity(
+            zitadel_user_id=zitadel_user_id,
+            reactivated_zitadel_user=reactivated_existing_zitadel_user,
+        )
+        raise
 
     # 3. portal_user row + personal KB in the TARGET tenant context.
     reactivated_offboarded = False
     reactivated_old_role: str | None = None
+    reactivated_zitadel_user = reactivated_existing_zitadel_user
     try:
         async with tenant_scoped_session(org_id) as db:
             existing_membership = (
@@ -748,21 +838,30 @@ async def platform_invite(
                     zitadel_user_id=zitadel_user_id,
                     org_id=settings.zitadel_portal_org_id,
                 )
+                reactivated_zitadel_user = True
             await db.commit()
     except HTTPException:
         if zitadel_user_created:
             await _rollback_zitadel_user(zitadel_user_id)
         raise
+    except ZitadelIdentityRecoveryError as exc:
+        logger.exception("platform_invite_existing_identity_recovery_failed", zitadel_user_id=zitadel_user_id)
+        await _restore_reactivated_platform_invite_identity(
+            zitadel_user_id=zitadel_user_id,
+            reactivated_zitadel_user=reactivated_zitadel_user,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Gebruiker kon niet opnieuw worden geactiveerd. Probeer het opnieuw.",
+        ) from exc
     except Exception:
         logger.exception("platform_invite_db_failed", zitadel_user_id=zitadel_user_id)
         if zitadel_user_created:
             await _rollback_zitadel_user(zitadel_user_id)
-        if reactivated_offboarded:
-            with suppress(Exception):
-                await zitadel.deactivate_user(
-                    user_id=zitadel_user_id,
-                    org_id=settings.zitadel_portal_org_id,
-                )
+        await _restore_reactivated_platform_invite_identity(
+            zitadel_user_id=zitadel_user_id,
+            reactivated_zitadel_user=reactivated_zitadel_user,
+        )
         raise
 
     if not zitadel_user_created and reactivated_offboarded:

@@ -31,6 +31,18 @@ vi.mock('@/lib/auth', () => ({
   readCsrfCookie: () => 'csrf-token',
 }))
 
+vi.mock('@/lib/password-policy', () => ({
+  loadSignupPasswordPolicy: () =>
+    Promise.resolve({
+      min_length: 14,
+      min_score: 3,
+      require_uppercase: true,
+      require_lowercase: true,
+      require_number: true,
+      require_symbol: true,
+    }),
+}))
+
 vi.mock('@/paraglide/messages', () => ({
   error_connection: () => 'Connection error',
   set_back: () => 'Back to login',
@@ -38,7 +50,6 @@ vi.mock('@/paraglide/messages', () => ({
   set_done_continue: () => 'Log in',
   set_done_heading: () => 'Password set',
   set_error_invalid_link: () => 'This link has expired or is invalid. Request a new link or ask your admin to resend the invitation.',
-  set_error_min_length: () => 'Password must be at least 12 characters and contain one symbol',
   set_error_mismatch: () => 'Passwords do not match',
   set_error_server: () => 'Failed to set password',
   set_field_confirm: () => 'Confirm password',
@@ -53,12 +64,14 @@ vi.mock('@/paraglide/messages', () => ({
   set_invalid_link_request_new: () => 'Request a new reset link',
   set_submit: () => 'Save',
   set_submit_loading: () => 'Saving...',
-  set_subheading: () => 'Enter your new password.',
+  set_subheading: ({ minLength }: { minLength: string }) => `Use at least ${minLength} characters.`,
+  set_subheading_loading: () => 'Password policy is loading.',
   signup_password_missing_lowercase: () => 'Add at least one lowercase letter.',
   signup_password_missing_number: () => 'Add at least one number.',
   signup_password_missing_symbol: () => 'Add at least one symbol.',
   signup_password_missing_uppercase: () => 'Add at least one uppercase letter.',
   signup_password_policy_label: () => 'Policy',
+  signup_password_policy_checking: () => 'Checking',
   signup_password_policy_met: () => 'Meets policy',
   signup_password_ready: () => 'Ready',
   signup_password_strength_fair: () => 'Could be stronger',
@@ -67,7 +80,7 @@ vi.mock('@/paraglide/messages', () => ({
   signup_password_strength_strong: () => 'Strong',
   signup_password_strength_very_weak: () => 'Very weak',
   signup_password_strength_weak: () => 'Weak',
-  signup_password_too_short: () => 'Use at least 12 characters.',
+  signup_password_too_short: ({ minLength }: { minLength: string }) => `Use at least ${minLength} characters.`,
   signup_password_too_weak: () => 'Choose a less predictable password.',
 }))
 
@@ -161,7 +174,14 @@ describe('PasswordSetPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    expect(await screen.findByText('Add at least one number.')).toBeTruthy()
+    await waitFor(() => expect(screen.getAllByText('Add at least one number.').length).toBeGreaterThan(0))
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('renders the password-set subheading from the loaded password policy', async () => {
+    renderPasswordSetPage()
+
+    expect(screen.getByText('Password policy is loading.')).toBeTruthy()
+    expect(await screen.findByText('Use at least 14 characters.')).toBeTruthy()
   })
 })

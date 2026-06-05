@@ -37,6 +37,7 @@ class TestSignupFiresKlaiVerifyMail:
         mock_db = AsyncMock()
         mock_db.add = MagicMock()
         with (
+            patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
             patch("app.api.signup.zitadel") as mz,
             patch("app.api.signup.provision_tenant"),
@@ -76,6 +77,7 @@ class TestSignupFiresKlaiVerifyMail:
         )
 
         with (
+            patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
             patch("app.api.signup.zitadel") as mz,
         ):

@@ -116,12 +116,11 @@ def test_zitadel_composition_policy_is_enforced_before_signup(password: str, exp
     assert expected in str(exc_info.value)
 
 
-def test_zxcvbn_unavailable_falls_back_to_local_zitadel_policy() -> None:
-    """REQ-22.4: if zxcvbn is unavailable, local composition gates still run."""
+def test_zxcvbn_unavailable_fails_loud() -> None:
+    """REQ-22.4: if zxcvbn is unavailable, backend validation must not silently weaken."""
     from app.core import password_policy
+    from app.core.password_policy import PasswordPolicyConfigurationError, validate_password_strength
 
-    with patch.object(password_policy, "_ZXCVBN_AVAILABLE", False):
-        # zxcvbn is skipped, but the local Zitadel-compatible composition
-        # gates still apply.
-        body = SignupRequest(**_payload("Correct horse battery staple 2026!"))
-    assert body.password == "Correct horse battery staple 2026!"
+    with patch.object(password_policy, "_zxcvbn", None):
+        with pytest.raises(PasswordPolicyConfigurationError):
+            validate_password_strength("Correct horse battery staple 2026!")

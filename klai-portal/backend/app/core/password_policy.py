@@ -10,12 +10,11 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable
+from dataclasses import asdict, dataclass
 
 logger = logging.getLogger(__name__)
 
-MIN_PASSWORD_LENGTH = 12
-ZXCVBN_MIN_SCORE = 3
-PASSWORD_TOO_SHORT_MSG = "Wachtwoord moet minimaal 12 tekens bevatten"
+PASSWORD_TOO_SHORT_MSG = "Wachtwoord moet minimaal {min_length} tekens bevatten"
 PASSWORD_MISSING_UPPERCASE_MSG = "Wachtwoord moet minimaal één hoofdletter bevatten"
 PASSWORD_MISSING_LOWERCASE_MSG = "Wachtwoord moet minimaal één kleine letter bevatten"
 PASSWORD_MISSING_NUMBER_MSG = "Wachtwoord moet minimaal één cijfer bevatten"
@@ -25,45 +24,86 @@ ZITADEL_PASSWORD_POLICY_MSG = (
     "Wachtwoord voldoet niet aan het wachtwoordbeleid. Kies een langer of minder voorspelbaar wachtwoord."
 )
 
+
+class PasswordPolicyConfigurationError(RuntimeError):
+    """Raised when the deployed password-policy runtime is incomplete."""
+
+
 try:
     from zxcvbn import zxcvbn as _zxcvbn
+except ImportError as exc:
+    logger.exception("zxcvbn_unavailable")
+    raise PasswordPolicyConfigurationError("zxcvbn is required for password validation") from exc
 
-    _ZXCVBN_AVAILABLE = True
-except ImportError:
-    _zxcvbn = None  # type: ignore[assignment]
-    _ZXCVBN_AVAILABLE = False
-    logger.exception("zxcvbn_unavailable_falling_back_to_length_check")
+
+@dataclass(frozen=True)
+class PasswordPolicy:
+    """Single backend source of truth for Klai onboarding passwords."""
+
+    min_length: int
+    min_score: int
+    require_uppercase: bool
+    require_lowercase: bool
+    require_number: bool
+    require_symbol: bool
+
+    def public_dict(self) -> dict[str, int | bool]:
+        return asdict(self)
+
+
+SIGNUP_PASSWORD_POLICY = PasswordPolicy(
+    min_length=12,
+    min_score=3,
+    require_uppercase=True,
+    require_lowercase=True,
+    require_number=True,
+    require_symbol=True,
+)
+
+# Backwards-compatible aliases for tests/imports. The policy object above is
+# the source of truth used by validation and the public endpoint.
+MIN_PASSWORD_LENGTH = SIGNUP_PASSWORD_POLICY.min_length
+ZXCVBN_MIN_SCORE = SIGNUP_PASSWORD_POLICY.min_score
 
 
 class PasswordPolicyError(ValueError):
     """Raised when a password does not meet Klai's onboarding policy."""
 
 
-def validate_password_strength(password: str, *, user_inputs: Iterable[str] = ()) -> None:
-    """Raise when ``password`` does not satisfy Klai/Zitadel onboarding policy."""
-    if len(password) < MIN_PASSWORD_LENGTH:
-        raise PasswordPolicyError(PASSWORD_TOO_SHORT_MSG)
+def get_password_policy() -> PasswordPolicy:
+    return SIGNUP_PASSWORD_POLICY
 
-    if not any(char.isupper() for char in password):
+
+def validate_password_strength(
+    password: str,
+    *,
+    user_inputs: Iterable[str] = (),
+    policy: PasswordPolicy = SIGNUP_PASSWORD_POLICY,
+) -> None:
+    """Raise when ``password`` does not satisfy Klai/Zitadel onboarding policy."""
+    if len(password) < policy.min_length:
+        raise PasswordPolicyError(PASSWORD_TOO_SHORT_MSG.format(min_length=policy.min_length))
+
+    if policy.require_uppercase and not any(char.isupper() for char in password):
         raise PasswordPolicyError(PASSWORD_MISSING_UPPERCASE_MSG)
 
-    if not any(char.islower() for char in password):
+    if policy.require_lowercase and not any(char.islower() for char in password):
         raise PasswordPolicyError(PASSWORD_MISSING_LOWERCASE_MSG)
 
-    if not any(char.isdigit() for char in password):
+    if policy.require_number and not any(char.isdigit() for char in password):
         raise PasswordPolicyError(PASSWORD_MISSING_NUMBER_MSG)
 
-    if not any(not char.isalnum() and not char.isspace() for char in password):
+    if policy.require_symbol and not any(not char.isalnum() and not char.isspace() for char in password):
         raise PasswordPolicyError(PASSWORD_MISSING_SYMBOL_MSG)
 
-    if not _ZXCVBN_AVAILABLE or _zxcvbn is None:
-        return
+    if _zxcvbn is None:
+        raise PasswordPolicyConfigurationError("zxcvbn is required for password validation")
 
     result = _zxcvbn(
         password,
         user_inputs=[value for value in user_inputs if value],
     )
-    if int(result.get("score", 0)) < ZXCVBN_MIN_SCORE:
+    if int(result.get("score", 0)) < policy.min_score:
         raise PasswordPolicyError(PASSWORD_TOO_WEAK_MSG)
 
 

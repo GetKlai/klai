@@ -71,6 +71,7 @@ from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
 from app.services.domain_validation import primary_domain_for_email_domain
 from app.services.events import emit_event
+from app.services.password_policy_guard import PasswordPolicyGuardError, assert_zitadel_password_policy_compatible
 from app.services.pending_session import PendingSessionService
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip_subnet
@@ -1178,6 +1179,21 @@ async def password_set(body: PasswordSetRequest) -> None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
+        ) from exc
+
+    try:
+        await assert_zitadel_password_policy_compatible()
+    except PasswordPolicyGuardError as exc:
+        _emit_auth_event(
+            "password_set_failed",
+            reason="password_policy_drift",
+            actor_user_id=body.user_id,
+            outcome="503",
+            level="error",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Wachtwoordbeleid is tijdelijk niet beschikbaar. Probeer later opnieuw.",
         ) from exc
 
     try:

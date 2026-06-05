@@ -45,6 +45,7 @@ from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
 from app.services.domain_validation import is_free_email_provider, primary_domain_for_email_domain
 from app.services.events import emit_event
+from app.services.password_policy_guard import PasswordPolicyGuardError, assert_zitadel_password_policy_compatible
 from app.services.provisioning import provision_tenant
 from app.services.request_ip import resolve_caller_ip_subnet
 from app.services.signup_email_rl import check_signup_email_rate_limit
@@ -95,9 +96,9 @@ class SignupRequest(BaseModel):
         password derived from the user's own PII (e.g. "Voys2026Klai" for
         company "Voys") scores low against itself.
 
-        REQ-22.4: if zxcvbn is unavailable (import failed at module load —
-        misconfigured deployment), fall back to the local composition gates and
-        rely on the module-load error log to surface the degradation.
+        REQ-22.4: if zxcvbn is unavailable (misconfigured deployment), the
+        password policy module fails loud instead of silently weakening server
+        validation.
         """
         validate_password_strength(
             self.password,
@@ -157,6 +158,16 @@ async def _sync_signup_to_mailing(
     )
 
 
+async def _assert_signup_password_policy_ready() -> None:
+    try:
+        await assert_zitadel_password_policy_compatible()
+    except PasswordPolicyGuardError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Wachtwoordbeleid is tijdelijk niet beschikbaar. Probeer later opnieuw.",
+        ) from exc
+
+
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
 async def signup(
     body: SignupRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)
@@ -193,6 +204,8 @@ async def signup(
                 "wilt deelnemen."
             ),
         )
+
+    await _assert_signup_password_policy_ready()
 
     # SPEC-SEC-HYGIENE-001 REQ-19.5: rate-limit only attempts that can reach
     # Zitadel. Rejected free-email attempts should not poison a later valid

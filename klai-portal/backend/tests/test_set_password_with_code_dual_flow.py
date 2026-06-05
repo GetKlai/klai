@@ -20,6 +20,7 @@ def _client_with_mocked_http():
 
     client = ZitadelClient.__new__(ZitadelClient)
     client._http = MagicMock()
+    client._http.get = AsyncMock()
     client._http.patch = AsyncMock()
     return client
 
@@ -38,6 +39,17 @@ def _resp(status: int, json_body: dict | None = None) -> MagicMock:
 
     r.raise_for_status = MagicMock(side_effect=_raise)
     return r
+
+
+@pytest.mark.asyncio
+async def test_get_password_complexity_policy_uses_admin_api() -> None:
+    client = _client_with_mocked_http()
+    client._http.get = AsyncMock(return_value=_resp(200, {"policy": {"minLength": "8"}}))
+
+    result = await client.get_password_complexity_policy()
+
+    assert result == {"policy": {"minLength": "8"}}
+    client._http.get.assert_awaited_once_with("/admin/v1/policies/password/complexity")
 
 
 @pytest.mark.asyncio
