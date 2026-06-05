@@ -40,6 +40,7 @@ function WidgetsPage() {
     <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.admin_widgets_title()}
+        count={!isLoading && !error ? widgets.length : undefined}
         description={m.admin_section_widgets_description()}
         actions={
           <Button
