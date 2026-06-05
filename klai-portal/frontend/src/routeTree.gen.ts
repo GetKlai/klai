@@ -31,6 +31,7 @@ import { Route as Setup2faRouteImport } from './routes/setup/2fa'
 import { Route as PasswordSetRouteImport } from './routes/password/set'
 import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
 import { Route as JoinRequestSentRouteImport } from './routes/join-request/sent'
+import { Route as DevUiRouteImport } from './routes/dev/ui'
 import { Route as BotWidgetIdRouteImport } from './routes/bot/$widgetId'
 import { Route as AppScribeRouteImport } from './routes/app/scribe'
 import { Route as AppIntegrationsRouteImport } from './routes/app/integrations'
@@ -219,6 +220,11 @@ const JoinRequestSentRoute = JoinRequestSentRouteImport.update({
   id: '/sent',
   path: '/sent',
   getParentRoute: () => JoinRequestRoute,
+} as any)
+const DevUiRoute = DevUiRouteImport.update({
+  id: '/dev/ui',
+  path: '/dev/ui',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const BotWidgetIdRoute = BotWidgetIdRouteImport.update({
   id: '/bot/$widgetId',
@@ -662,6 +668,7 @@ export interface FileRoutesByFullPath {
   '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/bot/$widgetId': typeof BotWidgetIdRoute
+  '/dev/ui': typeof DevUiRoute
   '/join-request/sent': typeof JoinRequestSentRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
@@ -761,6 +768,7 @@ export interface FileRoutesByTo {
   '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/bot/$widgetId': typeof BotWidgetIdRoute
+  '/dev/ui': typeof DevUiRoute
   '/join-request/sent': typeof JoinRequestSentRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
@@ -862,6 +870,7 @@ export interface FileRoutesById {
   '/app/integrations': typeof AppIntegrationsRoute
   '/app/scribe': typeof AppScribeRoute
   '/bot/$widgetId': typeof BotWidgetIdRoute
+  '/dev/ui': typeof DevUiRoute
   '/join-request/sent': typeof JoinRequestSentRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
@@ -966,6 +975,7 @@ export interface FileRouteTypes {
     | '/app/integrations'
     | '/app/scribe'
     | '/bot/$widgetId'
+    | '/dev/ui'
     | '/join-request/sent'
     | '/password/forgot'
     | '/password/set'
@@ -1065,6 +1075,7 @@ export interface FileRouteTypes {
     | '/app/integrations'
     | '/app/scribe'
     | '/bot/$widgetId'
+    | '/dev/ui'
     | '/join-request/sent'
     | '/password/forgot'
     | '/password/set'
@@ -1165,6 +1176,7 @@ export interface FileRouteTypes {
     | '/app/integrations'
     | '/app/scribe'
     | '/bot/$widgetId'
+    | '/dev/ui'
     | '/join-request/sent'
     | '/password/forgot'
     | '/password/set'
@@ -1257,6 +1269,7 @@ export interface RootRouteChildren {
   VerifyRoute: typeof VerifyRoute
   WidgetTestRoute: typeof WidgetTestRoute
   BotWidgetIdRoute: typeof BotWidgetIdRoute
+  DevUiRoute: typeof DevUiRoute
   PasswordForgotRoute: typeof PasswordForgotRoute
   PasswordSetRoute: typeof PasswordSetRoute
   Setup2faRoute: typeof Setup2faRoute
@@ -1418,6 +1431,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/join-request/sent'
       preLoaderRoute: typeof JoinRequestSentRouteImport
       parentRoute: typeof JoinRequestRoute
+    }
+    '/dev/ui': {
+      id: '/dev/ui'
+      path: '/dev/ui'
+      fullPath: '/dev/ui'
+      preLoaderRoute: typeof DevUiRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/bot/$widgetId': {
       id: '/bot/$widgetId'
@@ -2228,6 +2248,7 @@ const rootRouteChildren: RootRouteChildren = {
   VerifyRoute: VerifyRoute,
   WidgetTestRoute: WidgetTestRoute,
   BotWidgetIdRoute: BotWidgetIdRoute,
+  DevUiRoute: DevUiRoute,
   PasswordForgotRoute: PasswordForgotRoute,
   PasswordSetRoute: PasswordSetRoute,
   Setup2faRoute: Setup2faRoute,
