@@ -1,11 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import {
-  useReactTable,
-  getCoreRowModel,
-  createColumnHelper,
-} from '@tanstack/react-table'
 import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/page-header'
 import { SearchInput } from '@/components/ui/search-input'
 import {
   AlertDialog,
@@ -32,20 +28,15 @@ import {
 } from './-users-hooks'
 import {
   filterUsers,
-  formatDate,
   userCountLabel,
   userDisplayName,
 } from './-users-helpers'
-import type { AdminUser } from './-users-types'
-import { AccountTypeBadge, ProfileBadge, StatusBadge } from './_components/UserBadges'
 import { UserActions } from './_components/UserActions'
 import { UsersTable } from './_components/UsersTable'
 
 export const Route = createFileRoute('/admin/users/')({
   component: UsersPage,
 })
-
-const columnHelper = createColumnHelper<AdminUser>()
 
 function UsersPage() {
   const navigate = useNavigate()
@@ -74,87 +65,25 @@ function UsersPage() {
     leaveWorkspaceError: leaveWorkspaceMutation.error,
   })
 
-  // SPEC-PORTAL-ADMIN-UI-001 REQ-1: columns Name | Email | Profile | Status | Last active | Actions.
-  // "Last active" still renders from created_at (Invited date); backend has no last_active_at field.
-  const columns = [
-    columnHelper.accessor((row) => `${row.first_name} ${row.last_name}`, {
-      id: 'name',
-      header: () => m.admin_users_col_name(),
-      cell: (info) => info.getValue(),
-    }),
-    columnHelper.accessor('email', {
-      header: () => m.admin_users_col_email(),
-      cell: (info) => info.getValue(),
-    }),
-    columnHelper.accessor('role', {
-      header: () => m.admin_users_field_profile(),
-      cell: (info) => (
-        <ProfileBadge role={info.getValue()} pending={info.row.original.invite_pending} />
-      ),
-    }),
-    columnHelper.accessor('seat_type', {
-      header: () => m.admin_users_col_account_type(),
-      cell: (info) => <AccountTypeBadge seat={info.getValue()} />,
-    }),
-    columnHelper.accessor('status', {
-      header: () => m.admin_users_col_status(),
-      cell: (info) => <StatusBadge status={info.getValue()} />,
-    }),
-    columnHelper.accessor('created_at', {
-      header: () => m.admin_users_col_invited(),
-      cell: (info) => formatDate(info.getValue()),
-    }),
-    columnHelper.display({
-      id: 'actions',
-      header: () => m.admin_users_col_actions(),
-      cell: ({ row }) => (
-        <UserActions
-          user={row.original}
-          currentUserId={currentUserId}
-          confirmingDeleteId={confirmingDeleteId}
-          resendInviteMutation={resendInviteMutation}
-          deleteMutation={deleteMutation}
-          changeProfileMutation={changeProfileMutation}
-          suspendMutation={suspendMutation}
-          reactivateMutation={reactivateMutation}
-          onConfirmDelete={setConfirmingDeleteId}
-          onConfirmOffboard={setConfirmingOffboardId}
-          onConfirmLeave={() => setConfirmingLeave(true)}
-        />
-      ),
-    }),
-  ]
-
-  // eslint-disable-next-line react-hooks/incompatible-library -- useReactTable returns functions that React Compiler cannot memoize safely; this is expected TanStack Table behaviour
-  const table = useReactTable({
-    data: filteredUsers,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  })
-
   const offboardTarget = confirmingOffboardId
     ? users.find((user) => user.zitadel_user_id === confirmingOffboardId)
     : undefined
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.admin_users_heading()}
-          </h1>
-          <p className="text-sm text-gray-400">
-            {!usersQuery.isLoading && !usersQuery.error && userCountLabel(users.length)}
-          </p>
-        </div>
-        <Button
-          size="sm"
-          data-help-id="admin-users-invite"
-          onClick={() => navigate({ to: '/admin/users/invite' })}
-        >
-          {m.admin_users_invite_button()}
-        </Button>
-      </div>
+    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
+      <PageHeader
+        title={m.admin_users_heading()}
+        description={!usersQuery.isLoading && !usersQuery.error ? userCountLabel(users.length) : undefined}
+        actions={
+          <Button
+            size="sm"
+            data-help-id="admin-users-invite"
+            onClick={() => navigate({ to: '/admin/users/invite' })}
+          >
+            {m.admin_users_invite_button()}
+          </Button>
+        }
+      />
 
       {usersQuery.error ? (
         <QueryErrorState
@@ -189,13 +118,28 @@ function UsersPage() {
             </p>
           ) : (
             <UsersTable
-              table={table}
+              users={filteredUsers}
               onRowClick={(user) =>
                 void navigate({
                   to: '/admin/users/$userId/edit',
                   params: { userId: user.zitadel_user_id },
                 })
               }
+              renderActions={(user) => (
+                <UserActions
+                  user={user}
+                  currentUserId={currentUserId}
+                  confirmingDeleteId={confirmingDeleteId}
+                  resendInviteMutation={resendInviteMutation}
+                  deleteMutation={deleteMutation}
+                  changeProfileMutation={changeProfileMutation}
+                  suspendMutation={suspendMutation}
+                  reactivateMutation={reactivateMutation}
+                  onConfirmDelete={setConfirmingDeleteId}
+                  onConfirmOffboard={setConfirmingOffboardId}
+                  onConfirmLeave={() => setConfirmingLeave(true)}
+                />
+              )}
             />
           )}
 

@@ -87,6 +87,7 @@ export function UserActions({
           <BorderedRowActionIconButton
             label={m.admin_users_resend_invite()}
             action="send"
+            tone="neutral"
             disabled={isResending}
             spinner={isResending ? <Loader2 className="animate-spin" /> : undefined}
             onClick={() => resendInviteMutation.mutate(user)}
