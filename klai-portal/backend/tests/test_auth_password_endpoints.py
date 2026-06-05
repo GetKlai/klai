@@ -35,6 +35,45 @@ from app.services.password_policy_guard import PasswordPolicyGuardError
 _STRONG_PASSWORD = "Correct horse battery staple 2026!"
 
 
+def _zitadel_user_response(
+    *,
+    email: str = "mark@voys.nl",
+    first_name: str = "Mark",
+    last_name: str = "Vletter",
+) -> dict:
+    return {
+        "user": {
+            "preferredLoginName": email,
+            "human": {
+                "profile": {
+                    "firstName": first_name,
+                    "lastName": last_name,
+                },
+                "email": {
+                    "email": email,
+                    "isEmailVerified": True,
+                },
+            },
+        }
+    }
+
+
+def _mock_password_set_user_context(
+    respx_zitadel: respx.MockRouter,
+    *,
+    user_id: str = "uid-1",
+    email: str = "mark@voys.nl",
+    first_name: str = "Mark",
+    last_name: str = "Vletter",
+) -> respx.Route:
+    return respx_zitadel.get(f"/management/v1/users/{user_id}").mock(
+        return_value=httpx.Response(
+            200,
+            json=_zitadel_user_response(email=email, first_name=first_name, last_name=last_name),
+        )
+    )
+
+
 @pytest.fixture(autouse=True)
 def _password_policy_guard_ok(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     guard = AsyncMock()
@@ -159,6 +198,7 @@ async def test_password_reset_send_reset_5xx(respx_zitadel: respx.MockRouter) ->
 @pytest.mark.asyncio
 async def test_password_set_happy(respx_zitadel: respx.MockRouter) -> None:
     """REQ-3.4: password_set happy path returns 204 and emits audit."""
+    _mock_password_set_user_context(respx_zitadel)
     respx_zitadel.route().mock(return_value=httpx.Response(200, json={}))
 
     body = PasswordSetRequest(user_id="uid-1", code="123456", new_password=_STRONG_PASSWORD)
@@ -201,7 +241,12 @@ async def test_password_set_rejects_weak_password_before_consuming_invite_code(
     respx_zitadel: respx.MockRouter,
 ) -> None:
     """Weak passwords must fail before invite_code/verify consumes the one-time link."""
-    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="Password1234!")
+    user_context_route = _mock_password_set_user_context(respx_zitadel)
+    invite_verify_route = respx_zitadel.post("/v2/users/uid-1/invite_code/verify").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    password_patch_route = respx_zitadel.patch("/v2/users/uid-1").mock(return_value=httpx.Response(200, json={}))
+    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="PasswordPassword2026")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         with pytest.raises(HTTPException) as exc:
@@ -209,7 +254,9 @@ async def test_password_set_rejects_weak_password_before_consuming_invite_code(
 
     assert exc.value.status_code == 400
     assert "Wachtwoord is te zwak" in exc.value.detail
-    assert len(respx_zitadel.calls) == 0
+    assert user_context_route.called
+    assert not invite_verify_route.called
+    assert not password_patch_route.called
     audit_log.assert_not_called()
     events = _capture_events(captured, "password_set_failed")
     assert len(events) == 1
@@ -218,19 +265,31 @@ async def test_password_set_rejects_weak_password_before_consuming_invite_code(
 
 
 @pytest.mark.asyncio
-async def test_password_set_rejects_missing_symbol_before_consuming_invite_code(
+async def test_password_set_rejects_user_context_password_before_consuming_invite_code(
     respx_zitadel: respx.MockRouter,
 ) -> None:
-    """Passwords that ZITADEL would reject for missing a symbol must fail before invite-code verify."""
-    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="Correct horse battery staple 2026")
+    """Invite/reset password checks use the Zitadel user's email/name context."""
+    _mock_password_set_user_context(
+        respx_zitadel,
+        email="mark@voys.nl",
+        first_name="Mark",
+        last_name="Vletter",
+    )
+    invite_verify_route = respx_zitadel.post("/v2/users/uid-1/invite_code/verify").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    password_patch_route = respx_zitadel.patch("/v2/users/uid-1").mock(return_value=httpx.Response(200, json={}))
+
+    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="mark@voys.nlmark")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         with pytest.raises(HTTPException) as exc:
             await password_set(body=body)
 
     assert exc.value.status_code == 400
-    assert "symbool" in exc.value.detail
-    assert len(respx_zitadel.calls) == 0
+    assert "Wachtwoord is te zwak" in exc.value.detail
+    assert not invite_verify_route.called
+    assert not password_patch_route.called
     audit_log.assert_not_called()
     events = _capture_events(captured, "password_set_failed")
     assert len(events) == 1
@@ -239,33 +298,23 @@ async def test_password_set_rejects_missing_symbol_before_consuming_invite_code(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("password", "expected"),
-    [
-        ("correct horse battery staple 2026!", "hoofdletter"),
-        ("Correct horse battery staple!", "cijfer"),
-    ],
-)
-async def test_password_set_rejects_zitadel_composition_failures_before_consuming_invite_code(
+async def test_password_set_accepts_modern_passphrase_without_legacy_composition_rules(
     respx_zitadel: respx.MockRouter,
-    password: str,
-    expected: str,
 ) -> None:
-    """Composition failures must fail locally before invite-code verify consumes the link."""
-    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password=password)
+    """Length + zxcvbn strength is sufficient; no uppercase/number/symbol rule."""
+    _mock_password_set_user_context(respx_zitadel)
+    respx_zitadel.post("/v2/users/uid-1/invite_code/verify").mock(return_value=httpx.Response(200, json={}))
+    respx_zitadel.patch("/v2/users/uid-1").mock(return_value=httpx.Response(200, json={}))
+
+    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="violet meadow lantern orbit")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
-        with pytest.raises(HTTPException) as exc:
-            await password_set(body=body)
+        await password_set(body=body)
 
-    assert exc.value.status_code == 400
-    assert expected in exc.value.detail
-    assert len(respx_zitadel.calls) == 0
-    audit_log.assert_not_called()
+    assert len(respx_zitadel.calls) == 3
+    audit_log.assert_called_once()
     events = _capture_events(captured, "password_set_failed")
-    assert len(events) == 1
-    assert events[0]["reason"] == "weak_password"
-    assert events[0]["outcome"] == "400"
+    assert events == []
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +324,7 @@ async def test_password_set_rejects_zitadel_composition_failures_before_consumin
 
 @pytest.mark.asyncio
 async def test_password_set_expired_link(respx_zitadel: respx.MockRouter) -> None:
+    _mock_password_set_user_context(respx_zitadel)
     respx_zitadel.route().mock(return_value=httpx.Response(410, json={"error": "code expired"}))
 
     body = PasswordSetRequest(user_id="uid-1", code="000000", new_password=_STRONG_PASSWORD)
@@ -302,6 +352,7 @@ async def test_password_set_expired_link(respx_zitadel: respx.MockRouter) -> Non
 
 @pytest.mark.asyncio
 async def test_password_set_invalid_code(respx_zitadel: respx.MockRouter) -> None:
+    _mock_password_set_user_context(respx_zitadel)
     respx_zitadel.route().mock(return_value=httpx.Response(400, json={"error": "bad code"}))
 
     body = PasswordSetRequest(user_id="uid-1", code="wrong0", new_password=_STRONG_PASSWORD)
@@ -322,6 +373,7 @@ async def test_password_set_invalid_code(respx_zitadel: respx.MockRouter) -> Non
 @pytest.mark.asyncio
 async def test_password_set_maps_zitadel_password_policy_400(respx_zitadel: respx.MockRouter) -> None:
     """If Zitadel policy drifts beyond local checks, return a password-policy error, not invalid-link copy."""
+    _mock_password_set_user_context(respx_zitadel)
     respx_zitadel.post("/v2/users/uid-1/invite_code/verify").mock(return_value=httpx.Response(200, json={}))
     respx_zitadel.patch("/v2/users/uid-1").mock(
         return_value=httpx.Response(400, json={"message": "password violates password complexity policy"})
@@ -349,6 +401,7 @@ async def test_password_set_maps_zitadel_password_policy_400(respx_zitadel: resp
 
 @pytest.mark.asyncio
 async def test_password_set_zitadel_5xx(respx_zitadel: respx.MockRouter) -> None:
+    _mock_password_set_user_context(respx_zitadel)
     respx_zitadel.route().mock(return_value=httpx.Response(502, json={"error": "bad gw"}))
 
     body = PasswordSetRequest(user_id="uid-1", code="123456", new_password=_STRONG_PASSWORD)

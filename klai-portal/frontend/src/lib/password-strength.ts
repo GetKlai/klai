@@ -2,10 +2,6 @@ import type { SignupPasswordPolicy } from '@/lib/password-policy'
 
 export type SignupPasswordIssue =
   | 'too_short'
-  | 'missing_uppercase'
-  | 'missing_lowercase'
-  | 'missing_number'
-  | 'missing_symbol'
   | 'too_predictable'
 
 export interface SignupPasswordStrength {
@@ -38,38 +34,10 @@ async function loadZxcvbn() {
   return zxcvbnLoader
 }
 
-export function hasSignupPasswordSymbol(password: string) {
-  return Array.from(password).some((char) => /[^\p{L}\p{N}\s]/u.test(char))
-}
-
-export function hasSignupPasswordUppercase(password: string) {
-  return Array.from(password).some((char) => /\p{Lu}/u.test(char))
-}
-
-export function hasSignupPasswordLowercase(password: string) {
-  return Array.from(password).some((char) => /\p{Ll}/u.test(char))
-}
-
-export function hasSignupPasswordNumber(password: string) {
-  return Array.from(password).some((char) => /\p{N}/u.test(char))
-}
-
 export function basicSignupPasswordIssues(password: string, policy: SignupPasswordPolicy) {
   const issues: SignupPasswordIssue[] = []
   if (Array.from(password).length < policy.min_length) {
     issues.push('too_short')
-  }
-  if (policy.require_uppercase && !hasSignupPasswordUppercase(password)) {
-    issues.push('missing_uppercase')
-  }
-  if (policy.require_lowercase && !hasSignupPasswordLowercase(password)) {
-    issues.push('missing_lowercase')
-  }
-  if (policy.require_number && !hasSignupPasswordNumber(password)) {
-    issues.push('missing_number')
-  }
-  if (policy.require_symbol && !hasSignupPasswordSymbol(password)) {
-    issues.push('missing_symbol')
   }
   return issues
 }

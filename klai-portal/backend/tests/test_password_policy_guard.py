@@ -18,10 +18,10 @@ from app.services.password_policy_guard import (
 def _remote(**overrides: object) -> ZitadelPasswordComplexityPolicy:
     values = {
         "min_length": 8,
-        "has_uppercase": True,
-        "has_lowercase": True,
-        "has_number": True,
-        "has_symbol": True,
+        "has_uppercase": False,
+        "has_lowercase": False,
+        "has_number": False,
+        "has_symbol": False,
     }
     values.update(overrides)
     return ZitadelPasswordComplexityPolicy(**values)
@@ -31,32 +31,33 @@ def test_local_policy_may_be_stricter_than_zitadel() -> None:
     assert compare_password_policies(get_password_policy(), _remote(min_length=8)) == []
 
 
+def test_klai_password_policy_business_values() -> None:
+    policy = get_password_policy()
+
+    assert policy.min_length == 15
+    assert policy.min_score == 3
+
+
 def test_local_policy_must_not_be_weaker_than_zitadel_min_length() -> None:
     weaker = PasswordPolicy(
         min_length=8,
         min_score=3,
-        require_uppercase=True,
-        require_lowercase=True,
-        require_number=True,
-        require_symbol=True,
     )
 
     assert compare_password_policies(weaker, _remote(min_length=12)) == ["local min_length 8 < Zitadel minLength 12"]
 
 
-def test_local_policy_must_include_zitadel_composition_requirements() -> None:
-    weaker = PasswordPolicy(
-        min_length=12,
-        min_score=3,
-        require_uppercase=True,
-        require_lowercase=True,
-        require_number=True,
-        require_symbol=False,
-    )
-
-    assert compare_password_policies(weaker, _remote(has_symbol=True)) == [
-        "Zitadel requires symbol but local policy does not"
-    ]
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ("has_uppercase", "Zitadel must not require uppercase"),
+        ("has_lowercase", "Zitadel must not require lowercase"),
+        ("has_number", "Zitadel must not require number"),
+        ("has_symbol", "Zitadel must not require symbol"),
+    ],
+)
+def test_zitadel_must_not_enforce_legacy_composition_requirements(field: str, expected: str) -> None:
+    assert compare_password_policies(get_password_policy(), _remote(**{field: True})) == [expected]
 
 
 def test_zitadel_policy_response_parsing() -> None:
@@ -72,13 +73,32 @@ def test_zitadel_policy_response_parsing() -> None:
         }
     )
 
-    assert parsed == _remote(min_length=8)
+    assert parsed == _remote(
+        min_length=8,
+        has_uppercase=True,
+        has_lowercase=True,
+        has_number=True,
+        has_symbol=True,
+    )
+
+
+def test_zitadel_policy_response_omitted_composition_flags_are_false() -> None:
+    parsed = ZitadelPasswordComplexityPolicy.from_api_response(
+        {
+            "policy": {
+                "minLength": "15",
+                "isDefault": True,
+            }
+        }
+    )
+
+    assert parsed == _remote(min_length=15)
 
 
 @pytest.mark.parametrize(
     "payload",
     [
-        {"policy": {"minLength": "8", "hasUppercase": True, "hasLowercase": True, "hasNumber": True}},
+        {"policy": {"hasUppercase": True, "hasLowercase": True, "hasNumber": True}},
         {
             "policy": {
                 "minLength": True,
@@ -111,10 +131,10 @@ async def test_guard_raises_on_policy_drift(monkeypatch: pytest.MonkeyPatch) -> 
             return_value={
                 "policy": {
                     "minLength": "16",
-                    "hasUppercase": True,
-                    "hasLowercase": True,
-                    "hasNumber": True,
-                    "hasSymbol": True,
+                    "hasUppercase": False,
+                    "hasLowercase": False,
+                    "hasNumber": False,
+                    "hasSymbol": False,
                 }
             }
         )
@@ -128,8 +148,11 @@ async def test_guard_raises_on_policy_drift(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.asyncio
 async def test_password_policy_endpoint_returns_backend_policy() -> None:
     response = await password_policy()
+    payload = response.model_dump()
 
-    assert response.model_dump() == get_password_policy().public_dict()
+    assert payload == get_password_policy().public_dict()
+    assert payload == {"min_length": 15, "min_score": 3}
+    assert set(payload) == {"min_length", "min_score"}
 
 
 def test_startup_wires_password_policy_guard_after_pat_validation() -> None:
