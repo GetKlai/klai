@@ -279,7 +279,9 @@ jobs:
     # app.services.password_policy_guard. Without this, a Zitadel drift would
     # be discovered first by the new portal-api container and could crashloop
     # production. Keep this read-only: policy changes are still an explicit
-    # operator/runbook action.
+    # operator/runbook action. The admin PAT deliberately comes from the same
+    # core-01 env file used by production instead of a duplicate GitHub secret;
+    # a missing/out-of-sync repository secret must not decide deploy safety.
     needs: quality
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -294,9 +296,44 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Load Zitadel admin PAT from core-01
+        env:
+          CORE01_HOST: ${{ secrets.CORE01_HOST }}
+          CORE01_DEPLOY_KEY: ${{ secrets.CORE01_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$CORE01_DEPLOY_KEY" > ~/.ssh/core01_deploy_key
+          chmod 600 ~/.ssh/core01_deploy_key
+          ssh-keyscan -H "$CORE01_HOST" >> ~/.ssh/known_hosts
+
+          PAT="$(
+            ssh -i ~/.ssh/core01_deploy_key \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              "klai@${CORE01_HOST}" \
+              "sudo sed -n 's/^ZITADEL_ADMIN_PAT=//p' /opt/klai/.env | tail -n 1"
+          )"
+          PAT="${PAT%\"}"
+          PAT="${PAT#\"}"
+          PAT="${PAT%\'}"
+          PAT="${PAT#\'}"
+
+          if [ -z "$PAT" ]; then
+            echo "::error::ZITADEL_ADMIN_PAT is missing from /opt/klai/.env on core-01"
+            exit 1
+          fi
+
+          echo "::add-mask::$PAT"
+          {
+            echo "ZITADEL_ADMIN_PAT<<EOF"
+            printf '%s\n' "$PAT"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Verify production Zitadel password policy
         env:
-          ZITADEL_ADMIN_PAT: ${{ secrets.ZITADEL_ADMIN_PAT }}
           ZITADEL_BASE_URL: https://auth.getklai.com
         run: uv run --with httpx python scripts/update_zitadel_password_policy.py
 
