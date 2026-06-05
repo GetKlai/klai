@@ -51,22 +51,17 @@ function DocsPage() {
   const accessibleKbs = kbs.filter((kb) => kb.is_accessible)
   const lockedKbs = kbs.filter((kb) => !kb.is_accessible)
 
-  const countLabel =
-    accessibleKbs.length === 1
-      ? m.docs_kbs_count_one()
-      : m.docs_kbs_count({ count: String(accessibleKbs.length) })
-
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
       <PageHeader
         title={m.docs_kbs_title()}
+        count={!isLoading && !error ? accessibleKbs.length : undefined}
         description={m.docs_kbs_subtitle()}
       />
 
       <PageIntro>
         <p>{m.docs_intro_body()}</p>
         <p>{m.docs_intro_publish()}</p>
-        {!isLoading ? <p className="text-gray-400">{countLabel}</p> : null}
       </PageIntro>
 
       {error ? (
