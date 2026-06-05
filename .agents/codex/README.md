@@ -20,6 +20,19 @@ from Claude so no agent makes a false assumption.
   Those are Claude-only. Use Codex's own task/plan model; do not treat MoAI
   command syntax or the Agent catalog as required workflow.
 
+## Reasoning effort
+
+Default is `medium` (set in `~/.codex/config.toml`). Re-evaluate the level
+before escalating — escalate for genuine uncertainty, not by default:
+
+- `none` / `low` — titles, branch names, small docs, known-file copy edits.
+- `medium` — normal Codex work: scoped bugfixes, PR comments, small
+  backend/frontend tasks.
+- `high` — architecture, security, migrations, multi-file refactors, unclear
+  production bugs, schema changes, live deploys.
+- `xhigh` — only when "we don't know where the truth is": large system design,
+  cross-service root-cause, security-critical review.
+
 ## What Codex shares with Claude
 
 - The same MCP servers (`serena`, `context7`, `playwright`, `codeindex`,
