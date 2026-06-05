@@ -58,7 +58,8 @@
   --color-sidebar:                    #f5f4ef;
   --color-sidebar-foreground:         #191918;
   --color-sidebar-border:             #e3e2d8;
-  --color-hover:                      #f3f2e7;
+  --color-hover:                      #ffffff;
+  --color-active:                     #ffffff;
   --color-sidebar-accent:             var(--color-hover);
   --color-sidebar-accent-foreground:  #191918;
   --color-sidebar-muted-foreground:   #19191866;
