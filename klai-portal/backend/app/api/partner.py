@@ -103,11 +103,18 @@ class ChatCompletionsRequest(BaseModel):
     knowledge_base_ids: list[int] | None = None
     page_context: PageContext | None = None
     knowledge: KnowledgeOptions | None = None
-    # Opt-in live web search. When true, LiteLLM runs the same SearXNG-backed
-    # web search the chat surfaces use (deploy/litellm config search_tools)
-    # and feeds the results to the model for this turn. Default off so existing
-    # callers are unaffected and search only runs when explicitly requested.
+    # Opt-in live web search. When true, portal-api queries the same self-hosted
+    # SearXNG instance the chat surfaces use, then injects the top results into
+    # the system prompt for this turn. Default off so existing callers are
+    # unaffected and search only runs when explicitly requested. Gated per key
+    # by the ``web_search`` permission; never runs for public widget keys.
     web_search: bool = False
+    # Optional explicit query for the web search. Integrations should pass a
+    # concise, natural-language query here (e.g. the ticket subject) — it makes
+    # a far better keyword query than ``knowledge.query``, which is tuned for KB
+    # embedding retrieval and is often a long labelled blob that returns nothing
+    # from a keyword engine. Falls back to the last user message when omitted.
+    web_search_query: str | None = None
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -579,12 +586,33 @@ def _validate_chat_request(request: ChatCompletionsRequest) -> None:
         )
 
 
+def _resolve_web_query(request: ChatCompletionsRequest) -> str | None:
+    """Pick the query to send to the web search.
+
+    Deliberately does NOT use ``knowledge.query``: that field is tuned for KB
+    embedding retrieval and is often a long labelled blob (ticket fields, recent
+    comments, …) that a keyword engine like SearXNG returns nothing for. Order:
+
+    1. ``web_search_query`` — explicit, concise query from the integration.
+    2. the last user message — the natural-language question being asked.
+    """
+    explicit = (request.web_search_query or "").strip()
+    if explicit:
+        return explicit
+    for message in reversed(request.messages):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+    return None
+
+
 async def _maybe_apply_web_search(
     *,
     request: ChatCompletionsRequest,
     auth: PartnerAuthContext,
     is_widget_chat: bool,
-    knowledge: KnowledgeOptions | None,
     system_prompt: str,
 ) -> str:
     """Append live web results to the system prompt when requested and allowed.
@@ -602,18 +630,7 @@ async def _maybe_apply_web_search(
 
     require_permission(auth, "web_search")  # raises 403 if the key lacks it
 
-    web_query = (
-        knowledge.query
-        if knowledge is not None and knowledge.query
-        else next(
-            (
-                m.get("content")
-                for m in reversed(request.messages)
-                if m.get("role") == "user" and isinstance(m.get("content"), str)
-            ),
-            None,
-        )
-    )
+    web_query = _resolve_web_query(request)
     web_results = await search_web(web_query, settings=settings) if web_query else []
     if not web_results:
         logger.warning("partner_web_search_empty", org_id=auth.org_id, key_id=str(auth.key_id))
@@ -725,7 +742,6 @@ async def chat_completions(
         request=request,
         auth=auth,
         is_widget_chat=is_widget_chat,
-        knowledge=knowledge,
         system_prompt=system_prompt,
     )
 
