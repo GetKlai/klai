@@ -27,8 +27,9 @@ CSS variables), themed with Klai tokens from `index.css`. On top of the
 standard shadcn primitives (`button`, `badge`, `card`, `dialog`,
 `alert-dialog`, `dropdown-menu`, `popover`, `command`, `sheet`, `tooltip`,
 form controls, `sonner`) sit Klai's own additions (`row-action`, `list`,
-`inline-delete-confirm`, `step-indicator`, `inline-edit`, `multi-select`,
-`query-error-state`, `delete-*`). The widget (`klai-widget`) and website
+`list-state`, `inline-edit-row`, `inline-row-button`, `inline-delete-confirm`,
+`step-indicator`, `inline-edit`, `multi-select`, `query-error-state`,
+`delete-*`). The widget (`klai-widget`) and website
 (`klai-website`) are separate systems with their own components — this
 library is portal-only.
 
@@ -43,6 +44,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
 | `row-action` | List/table row actions: `RowActionIconButton`, `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
 | `list` | List primitives: `ListFrame`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
+| `list-state` | List/table loading and empty states: `ListLoadingState`, `ListEmptyState` | Yes |
 | `inline-row-button` | The single source for small inline-row action pills (`InlineRowButton`): Save/Cancel, Delete/Cancel, Approve/Deny. Tones: success/destructive/neutral | Yes |
 | `inline-edit-row` | Canonical inline edit for a list row (`InlineEditRow`): name + optional description, zero layout shift, owns Save/Cancel | Yes |
 | `inline-delete-confirm` | Inline destructive confirmation inside a row (no layout shift) | Yes |
@@ -53,7 +55,6 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `dialog` | Generic modal | Yes |
 | `dropdown-menu` `popover` `command` | Menus, popovers, command/combobox | Yes |
 | `multi-select` | Multi-value select | Yes |
-| `inline-edit` | Click-to-edit text in place | Yes |
 | `tooltip` | Hover/focus tooltips (used by `row-action`) | Yes |
 | `sonner` | Toasts (`toast()` feedback) | Yes |
 | `card` | Framed repeated items / stat blocks | Yes |
@@ -88,13 +89,15 @@ Reference screens:
 
 | Page type | Container |
 |---|---|
-| List / overview | `mx-auto max-w-3xl px-6 py-10` |
-| Form / create | `mx-auto max-w-lg px-6 py-10` |
-| Admin detail with tabs | `mx-auto max-w-4xl px-6 py-10 space-y-8` |
-| Platform overview | `mx-auto max-w-6xl px-6 py-10 space-y-8` |
+| List / overview | `mx-auto max-w-3xl px-6 pt-6 pb-10` |
+| Form / create | `mx-auto max-w-lg px-6 pt-6 pb-10` |
+| Admin detail with tabs | `mx-auto max-w-4xl px-6 pt-6 pb-10 space-y-8` |
+| Platform overview | `mx-auto max-w-6xl px-6 pt-6 pb-10 space-y-8` |
 
 Do not use unscoped `p-6` for normal pages. Pages are centered unless the
-existing parent surface is intentionally full-width.
+existing parent surface is intentionally full-width. Authenticated page
+containers use `pt-6 pb-10` so page headings sit in visual rhythm with the
+sidebar navigation; full-width tool surfaces such as chat own their own layout.
 
 ## Headers And Back Actions
 
@@ -139,6 +142,24 @@ headers and aligned cells.
 
 Row actions (edit, delete, sync, ...) use the `row-action` components, never
 raw `<button>` icons. See Row Actions And Action Tones.
+
+Loading and empty states for list/table collections use `list-state`, not
+loose `<p className="py-8 text-sm text-gray-400">...` snippets:
+
+```tsx
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+
+{isLoading ? (
+  <ListLoadingState label={m.admin_shared_loading()} />
+) : rows.length === 0 ? (
+  <ListEmptyState title={m.some_empty()} />
+) : (
+  <table>...</table>
+)}
+```
+
+Failed queries use `QueryErrorState` with an explicit retry action where
+available.
 
 ## Row Actions And Action Tones
 
@@ -589,7 +610,7 @@ Consequences for component code:
 | Floating content on a trigger | `popover` | Non-menu floating panels. |
 | Searchable list / combobox | `command` | Command palette and filterable pickers. |
 | Multi-value selection | `multi-select` | |
-| Edit a value in place | `inline-edit` | Click-to-edit text, commits on blur/enter. |
+| Edit a row's name/description in place | `inline-edit-row` | Canonical: zero shift, owns Save/Cancel. `inline-edit` is the low-level single-field overlay for custom rows. |
 | Hover/focus hint | `tooltip` | `RowActionIconButton` wires this automatically via `label`. |
 | Transient feedback after an action | `sonner` (`toast`) | Success/error confirmations; not for validation errors. |
 | A query failed | `query-error-state` | Standard error block with retry. |
