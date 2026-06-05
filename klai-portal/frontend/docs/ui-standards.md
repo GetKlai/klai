@@ -66,6 +66,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `tooltip` | Hover/focus tooltips (used by `row-action`) | Yes |
 | `sonner` | Toasts (`toast()` feedback) | Yes |
 | `card` | Framed repeated items / stat blocks | Yes |
+| `stat-card` | Metric tile (`StatCard`): uppercase label + large tabular value + optional sub. Sizes default/sm, `tone` (default/warning/destructive), `alert` frame, optional `onClick` to navigate | Yes |
 | `query-error-state` | Standard error block for failed queries | Yes |
 | `sheet` | Slide-over. **Forbidden** for admin entity detail (see Detail And Edit) | Restricted |
 | `delete-kb-modal` `delete-org-modal` | Feature-specific destructive modals (not generic) | Feature |
@@ -669,9 +670,13 @@ Cards are individual repeated items, stats, or genuinely framed blocks. Do not
 wrap ordinary detail sections inside decorative cards. Cards use `rounded-xl`
 and `border-gray-200`.
 
-Platform stat cards may be clickable when they navigate to the matching tab.
-Operational alert cards use semantic warning/destructive tokens and must show
-what needs action as the primary value.
+Metric/stat tiles use the owned `StatCard` component (`components/ui/stat-card.tsx`)
+— do not hand-roll a label+value card. It carries an uppercase label, a large
+`tabular-nums` value, an optional sub-line, a `size` (default dashboard tile /
+`sm` compact inline stat), a `tone` for warning/destructive metrics, an `alert`
+frame for items needing action, a `loading` spinner, and an optional `onClick`
+that turns the card into a button (clickable stat cards navigate to the matching
+tab). Operational alert cards must show what needs action as the primary value.
 
 ## Chat Disclosure Rows
 
