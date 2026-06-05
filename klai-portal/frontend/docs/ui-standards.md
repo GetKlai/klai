@@ -89,10 +89,10 @@ Reference screens:
 
 | Page type | Container |
 |---|---|
-| List / overview | `mx-auto max-w-3xl px-6 pt-6 pb-10` |
-| Form / create | `mx-auto max-w-lg px-6 pt-6 pb-10` |
-| Admin detail with tabs | `mx-auto max-w-4xl px-6 pt-6 pb-10 space-y-8` |
-| Platform overview | `mx-auto max-w-6xl px-6 pt-6 pb-10 space-y-8` |
+| List / overview | `mx-auto max-w-3xl px-6 pt-4 pb-10` |
+| Form / create | `mx-auto max-w-lg px-6 pt-4 pb-10` |
+| Admin detail with tabs | `mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-8` |
+| Platform overview | `mx-auto max-w-6xl px-6 pt-4 pb-10 space-y-8` |
 
 Do not use unscoped `p-6` for normal pages. Pages are centered unless the
 existing parent surface is intentionally full-width. Authenticated page

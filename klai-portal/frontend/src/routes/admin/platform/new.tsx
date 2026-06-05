@@ -53,7 +53,7 @@ function NewTenantPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-6 pb-10">
+    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
       <div className="flex items-center justify-between mb-2">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.platform_new_tenant_title()}

@@ -83,7 +83,7 @@ function AdminProfileDetail() {
   })
 
   return (
-    <div className="mx-auto max-w-2xl px-6 pt-6 pb-10 space-y-6">
+    <div className="mx-auto max-w-2xl px-6 pt-4 pb-10 space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">

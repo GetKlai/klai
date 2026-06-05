@@ -50,7 +50,7 @@ function AddSourcePage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-6 pb-10">
+    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
       {/* Page header */}
       <div className="flex items-center justify-between mb-2">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
