@@ -1,10 +1,21 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { PageHeader } from '@/components/ui/page-header'
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from '@/components/ui/data-table'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { Tooltip } from '@/components/ui/tooltip'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
@@ -17,7 +28,7 @@ export const Route = createFileRoute('/admin/mcps/')({
 function McpsListPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { data, isLoading, isError } = useMcpServers()
+  const { data, isLoading, error, refetch } = useMcpServers()
 
   const [confirmingDeactivateId, setConfirmingDeactivateId] = useState<string | null>(null)
 
@@ -45,131 +56,101 @@ function McpsListPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.admin_mcps_title()}
-          </h1>
-          <p className="text-sm text-gray-400">
-            {m.admin_mcps_subtitle()}
-          </p>
-        </div>
-        <Button size="sm" onClick={() => navigate({ to: '/admin/mcps/new' })}>
-          {m.admin_mcps_add_button()}
-        </Button>
-      </div>
+      <PageHeader
+        title={m.admin_mcps_title()}
+        description={m.admin_mcps_subtitle()}
+        actions={
+          <Button size="sm" onClick={() => navigate({ to: '/admin/mcps/new' })}>
+            {m.admin_mcps_add_button()}
+          </Button>
+        }
+      />
 
-      {isError ? (
-        <p className="py-8 text-sm text-[var(--color-destructive)]">
-          {m.admin_mcps_load_error()}
-        </p>
+      {error ? (
+        <QueryErrorState
+          error={error instanceof Error ? error : new Error(String(error))}
+          onRetry={() => void refetch()}
+        />
       ) : isLoading ? (
-        <p className="py-8 text-sm text-gray-400">
-          {m.admin_mcps_loading()}
-        </p>
+        <ListLoadingState label={m.admin_mcps_loading()} />
       ) : enabledServers.length === 0 ? (
-        <p className="py-8 text-sm text-gray-400">
-          {m.admin_mcps_no_servers()}
-        </p>
+        <ListEmptyState title={m.admin_mcps_no_servers()} />
       ) : (
-        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide w-48">
-                {m.admin_mcps_col_name()}
-              </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide">
-                {m.admin_mcps_col_description()}
-              </th>
-              <th className="py-3 text-right w-28" aria-label={m.admin_mcps_col_actions()} />
-            </tr>
-          </thead>
-          <tbody>
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead className="w-48">{m.admin_mcps_col_name()}</DataTableHead>
+              <DataTableHead>{m.admin_mcps_col_description()}</DataTableHead>
+              <DataTableHead align="right" className="w-28">
+                {m.admin_mcps_col_actions()}
+              </DataTableHead>
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
             {enabledServers.map((server) => {
               const displayName = server.display_name || server.id
               const isDeactivating =
                 deactivateMutation.isPending &&
                 deactivateMutation.variables?.id === server.id
+              const isConfirming = confirmingDeactivateId === server.id
+              const openEdit = () =>
+                navigate({
+                  to: '/admin/mcps/$serverId',
+                  params: { serverId: server.id },
+                })
 
               return (
-                <tr
+                <DataTableRow
                   key={server.id}
-                  onClick={
-                    server.managed
-                      ? undefined
-                      : () =>
-                          void navigate({
-                            to: '/admin/mcps/$serverId',
-                            params: { serverId: server.id },
-                          })
-                  }
-                  className={
-                    server.managed
-                      ? 'border-b border-gray-200 last:border-b-0'
-                      : 'border-b border-gray-200 last:border-b-0 cursor-pointer klai-hover'
-                  }
+                  interactive={!server.managed}
+                  confirming={isConfirming}
+                  onClick={server.managed ? undefined : () => void openEdit()}
                 >
-                  <td className="py-4 pr-4 align-top">
+                  <DataTableCell>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{displayName}</span>
                       {server.managed && (
-                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-400">
-                          {m.admin_mcps_builtin()}
-                        </span>
+                        <Badge variant="secondary">{m.admin_mcps_builtin()}</Badge>
                       )}
                     </div>
-                  </td>
-                  <td className="py-4 pr-4 align-top text-gray-400">
+                  </DataTableCell>
+                  <DataTableCell className="text-gray-400">
                     {server.description}
-                  </td>
-                  <td
-                    className="py-4 align-top text-right w-28"
-                    onClick={(e) => e.stopPropagation()}
+                  </DataTableCell>
+                  <DataTableCell
+                    align="right"
+                    className="w-28"
+                    onClick={server.managed ? undefined : (e) => e.stopPropagation()}
                   >
-                    {server.managed ? (
-                      <div className="flex items-start justify-end gap-2 mt-px" />
-                    ) : (
+                    {server.managed ? null : (
                       <InlineDeleteConfirm
-                        isConfirming={confirmingDeactivateId === server.id}
+                        isConfirming={isConfirming}
                         isPending={isDeactivating}
                         label={m.admin_mcps_deactivate_confirm({ name: displayName })}
                         cancelLabel={m.admin_mcps_cancel()}
                         onConfirm={() => deactivateMutation.mutate(server)}
                         onCancel={() => setConfirmingDeactivateId(null)}
                       >
-                        <div className="flex items-start justify-end gap-2 mt-px">
-                          <Tooltip label={m.admin_mcps_edit()}>
-                            <button
-                              onClick={() =>
-                                navigate({
-                                  to: '/admin/mcps/$serverId',
-                                  params: { serverId: server.id },
-                                })
-                              }
-                              aria-label={m.admin_mcps_edit()}
-                              className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                          </Tooltip>
-                          <Tooltip label={m.admin_mcps_deactivate()}>
-                            <button
-                              onClick={() => setConfirmingDeactivateId(server.id)}
-                              aria-label={m.admin_mcps_deactivate()}
-                              className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </Tooltip>
-                        </div>
+                        <RowActionGroup>
+                          <BorderedRowActionIconButton
+                            label={m.admin_mcps_edit()}
+                            action="edit"
+                            onClick={() => openEdit()}
+                          />
+                          <BorderedRowActionIconButton
+                            label={m.admin_mcps_deactivate()}
+                            action="delete"
+                            onClick={() => setConfirmingDeactivateId(server.id)}
+                          />
+                        </RowActionGroup>
                       </InlineDeleteConfirm>
                     )}
-                  </td>
-                </tr>
+                  </DataTableCell>
+                </DataTableRow>
               )
             })}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
       )}
     </div>
   )
