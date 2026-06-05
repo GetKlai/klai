@@ -195,6 +195,25 @@ def test_resolve_web_query_none_without_user_message():
     assert _resolve_web_query(req) is None
 
 
+def test_resolve_web_query_handles_multimodal_content():
+    # OpenAI-style content arrays must not silently drop the user's question.
+    from app.api.partner import _resolve_web_query
+
+    req = _req(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Is there an outage"},
+                    {"type": "image_url", "image_url": {"url": "https://x.test/a.png"}},
+                    {"type": "text", "text": "right now?"},
+                ],
+            }
+        ]
+    )
+    assert _resolve_web_query(req) == "Is there an outage right now?"
+
+
 def test_web_results_as_chunks_shape():
     chunks = web_results_as_chunks(
         [

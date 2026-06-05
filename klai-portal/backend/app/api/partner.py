@@ -586,6 +586,24 @@ def _validate_chat_request(request: ChatCompletionsRequest) -> None:
         )
 
 
+def _message_text(content: object) -> str:
+    """Extract plain text from a message ``content`` that may be a string or an
+    OpenAI-style list of parts (``[{"type": "text", "text": "…"}, …]``)."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = [
+            part["text"].strip()
+            for part in content
+            if isinstance(part, dict)
+            and part.get("type") == "text"
+            and isinstance(part.get("text"), str)
+            and part["text"].strip()
+        ]
+        return " ".join(parts).strip()
+    return ""
+
+
 def _resolve_web_query(request: ChatCompletionsRequest) -> str | None:
     """Pick the query to send to the web search.
 
@@ -594,7 +612,8 @@ def _resolve_web_query(request: ChatCompletionsRequest) -> str | None:
     comments, …) that a keyword engine like SearXNG returns nothing for. Order:
 
     1. ``web_search_query`` — explicit, concise query from the integration.
-    2. the last user message — the natural-language question being asked.
+    2. the last user message — the natural-language question being asked
+       (handles multimodal content arrays, not just plain strings).
     """
     explicit = (request.web_search_query or "").strip()
     if explicit:
@@ -602,9 +621,8 @@ def _resolve_web_query(request: ChatCompletionsRequest) -> str | None:
     for message in reversed(request.messages):
         if message.get("role") != "user":
             continue
-        content = message.get("content")
-        if isinstance(content, str) and content.strip():
-            return content.strip()
+        if text := _message_text(message.get("content")):
+            return text
     return None
 
 
