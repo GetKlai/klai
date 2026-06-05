@@ -121,7 +121,7 @@ export function ChatConfigBar() {
   const activeNames = useMemo(() => {
     const names: string[] = []
     if (!pref) return names
-    if (pref.kb_personal_enabled) names.push('Persoonlijk')
+    if (pref.kb_personal_enabled) names.push(m.chatbar_personal())
     for (const kb of allKbs) {
       if (currentSlugs.includes(kb.slug)) names.push(kb.name)
     }
@@ -160,7 +160,7 @@ export function ChatConfigBar() {
 
       {/* Chat met: (knowledge collections) */}
       <div className="flex items-center gap-2 min-w-0">
-        <span className="text-[13px] text-gray-400 whitespace-nowrap">Chat met:</span>
+        <span className="text-[13px] text-gray-400 whitespace-nowrap">{m.chatbar_chat_with()}</span>
 
         <div className="relative z-50 min-w-0">
           <button
@@ -198,7 +198,7 @@ export function ChatConfigBar() {
                 <span
                   className={pref.kb_personal_enabled ? 'text-gray-900 font-medium' : 'text-gray-400'}
                 >
-                  Persoonlijk
+                  {m.chatbar_personal()}
                 </span>
               </button>
               {/* Org KBs */}
