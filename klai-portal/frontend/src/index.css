@@ -11,16 +11,11 @@
   /* Klai brand colors - warm ivory palette */
   --color-rl-bg:           #fffef2;
   --color-rl-dark:         #191918;
-  --color-rl-dark-60:      #19191899;
-  --color-rl-dark-30:      #1919184d;
-  --color-rl-dark-10:      #1919181a;
   --color-rl-accent:       #fcaa2d;
   --color-rl-accent-dark:  #a36404;
   --color-rl-accent-hover: #e89a1f;
   --color-rl-cream:        #f3f2e7;
   --color-rl-border:       #e3e2d8;
-  --color-rl-border-light: #d1d0c666;
-  --color-rl-muted:        #bab9b0;
 
   /* shadcn/ui semantic tokens mapped to Klai brand */
   --color-background:           #faf9f6;
