@@ -1561,6 +1561,7 @@
   "admin_join_requests_deny": "Deny",
   "admin_join_requests_column_name": "Name",
   "admin_join_requests_column_email": "Email",
+  "admin_join_requests_no_matches": "No matching join requests.",
   "select_workspace_heading": "Select workspace",
   "select_workspace_body": "Your account is linked to multiple workspaces. Select which one to open.",
   "select_workspace_continue": "Continue",

@@ -159,7 +159,13 @@ function AccountPage() {
 
   const tabs: TabItem<TabId>[] = [
     { id: 'settings', label: m.account_tab_settings(), icon: Settings },
-    { id: 'feedback', label: m.account_tab_feedback(), icon: MessageSquare, count: feedbackUnreadCount },
+    {
+      id: 'feedback',
+      label: m.account_tab_feedback(),
+      icon: MessageSquare,
+      count: feedbackUnreadCount,
+      countLabel: m.account_feedback_unread(),
+    },
     { id: 'advanced', label: m.account_tab_advanced(), icon: SlidersHorizontal },
   ]
 

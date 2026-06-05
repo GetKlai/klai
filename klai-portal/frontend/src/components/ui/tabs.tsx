@@ -19,6 +19,8 @@ export interface TabItem<T extends string = string> {
   count?: number
   /** Tone of the count badge. Defaults to `success`. */
   countTone?: TabCountTone
+  /** Accessible label for the count badge (e.g. "3 unread"). */
+  countLabel?: string
 }
 
 interface TabsProps<T extends string> extends Omit<React.HTMLAttributes<HTMLDivElement>, 'onChange'> {
@@ -38,20 +40,57 @@ interface TabsProps<T extends string> extends Omit<React.HTMLAttributes<HTMLDivE
  * The active tab gets a near-black underline (`border-gray-900`) so the
  * active state is unmistakable against the gray-200 container divider. Icons
  * and counts are optional; text-only is the default, on-brand look.
+ *
+ * Implements the WAI-ARIA tablist keyboard pattern: roving tabindex (only the
+ * active tab is in the tab order) with Arrow/Home/End moving focus and
+ * activating the focused tab (selection follows focus).
  */
 function Tabs<T extends string>({ tabs, value, onValueChange, className, ...props }: TabsProps<T>) {
+  const tabRefs = React.useRef<(HTMLButtonElement | null)[]>([])
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
+    const last = tabs.length - 1
+    let next: number
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        next = index === last ? 0 : index + 1
+        break
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        next = index === 0 ? last : index - 1
+        break
+      case 'Home':
+        next = 0
+        break
+      case 'End':
+        next = last
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    onValueChange(tabs[next].id)
+    tabRefs.current[next]?.focus()
+  }
+
   return (
     <div role="tablist" className={cn('flex gap-6 border-b border-gray-200', className)} {...props}>
-      {tabs.map((tab) => {
+      {tabs.map((tab, index) => {
         const isActive = tab.id === value
         const Icon = tab.icon
         return (
           <button
             key={tab.id}
+            ref={(el) => {
+              tabRefs.current[index] = el
+            }}
             type="button"
             role="tab"
             aria-selected={isActive}
+            tabIndex={isActive ? 0 : -1}
             onClick={() => onValueChange(tab.id)}
+            onKeyDown={(e) => handleKeyDown(e, index)}
             className={cn(
               'flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 pb-2 text-sm font-medium transition-colors',
               isActive
@@ -63,6 +102,7 @@ function Tabs<T extends string>({ tabs, value, onValueChange, className, ...prop
             {tab.label}
             {typeof tab.count === 'number' && tab.count > 0 && (
               <span
+                aria-label={tab.countLabel}
                 className={cn(
                   'ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium leading-5 text-white',
                   tabCountToneClass[tab.countTone ?? 'success'],

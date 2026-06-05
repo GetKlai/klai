@@ -16,7 +16,7 @@ describe('Alert', () => {
     const alert = container.querySelector('[role="alert"]')!
     expect(alert.className).toContain('bg-[var(--color-warning)]/5')
     expect(alert.className).toContain('border-[var(--color-warning)]/30')
-    expect(alert.className).toContain('text-[var(--color-warning)]')
+    expect(alert.className).toContain('text-[var(--color-warning-text)]')
   })
 
   it('renders the variant default icon (an svg) by default', () => {

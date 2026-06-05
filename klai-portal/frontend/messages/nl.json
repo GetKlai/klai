@@ -1561,6 +1561,7 @@
   "admin_join_requests_deny": "Afwijzen",
   "admin_join_requests_column_name": "Naam",
   "admin_join_requests_column_email": "E-mailadres",
+  "admin_join_requests_no_matches": "Geen overeenkomende toegangsverzoeken.",
   "select_workspace_heading": "Werkruimte selecteren",
   "select_workspace_body": "Je account is gekoppeld aan meerdere werkruimtes. Selecteer welke je wilt openen.",
   "select_workspace_continue": "Doorgaan",
