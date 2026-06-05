@@ -95,7 +95,7 @@ function WidgetDetailPage() {
     ...(showInternalIntegrations
       ? [{ id: 'integrations' as const, label: m.admin_widgets_integrations_tab(), icon: Plug }]
       : []),
-    { id: 'activity', label: 'Activiteit', icon: Activity },
+    { id: 'activity', label: m.admin_widgets_tab_activity(), icon: Activity },
     { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
   ]
 
