@@ -1,4 +1,5 @@
 import { flexRender, type Table } from '@tanstack/react-table'
+import { cn } from '@/lib/utils'
 import type { AdminUser } from '../-users-types'
 
 interface Props {
@@ -10,19 +11,25 @@ export function UsersTable({ table, onRowClick }: Props) {
   return (
     <table
       data-help-id="admin-users-table"
-      className="w-full text-sm border-t border-b border-gray-200"
+      className="w-full border-y border-gray-200 text-sm"
     >
       <thead>
         {table.getHeaderGroups().map((headerGroup) => (
           <tr key={headerGroup.id} className="border-b border-gray-200">
-            {headerGroup.headers.map((header) => (
-              <th
-                key={header.id}
-                className="py-3 pr-4 text-left text-xs font-medium text-gray-400 tracking-wide"
-              >
-                {flexRender(header.column.columnDef.header, header.getContext())}
-              </th>
-            ))}
+            {headerGroup.headers.map((header) => {
+              const isActionHeader = header.column.id === 'actions'
+              return (
+                <th
+                  key={header.id}
+                  className={cn(
+                    'px-3 py-3 text-left text-xs font-medium text-gray-400',
+                    isActionHeader && 'text-right',
+                  )}
+                >
+                  {flexRender(header.column.columnDef.header, header.getContext())}
+                </th>
+              )
+            })}
           </tr>
         ))}
       </thead>
@@ -46,7 +53,10 @@ export function UsersTable({ table, onRowClick }: Props) {
                 return (
                   <td
                     key={cell.id}
-                    className="py-4 pr-4 align-top text-gray-900"
+                    className={cn(
+                      'px-3 py-4 align-middle text-gray-900',
+                      isActionCell && 'text-right',
+                    )}
                     onClick={
                       clickable && isActionCell
                         ? (e) => e.stopPropagation()

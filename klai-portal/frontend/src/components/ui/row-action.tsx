@@ -203,6 +203,20 @@ const RowActionIconButton = React.forwardRef<HTMLButtonElement, RowActionIconBut
 )
 RowActionIconButton.displayName = 'RowActionIconButton'
 
+const BorderedRowActionIconButton = React.forwardRef<HTMLButtonElement, RowActionIconButtonProps>(
+  ({ className, ...props }, ref) => (
+    <RowActionIconButton
+      ref={ref}
+      className={cn(
+        'h-7 w-7 border border-current bg-transparent [&_svg]:h-3.5 [&_svg]:w-3.5',
+        className,
+      )}
+      {...props}
+    />
+  ),
+)
+BorderedRowActionIconButton.displayName = 'BorderedRowActionIconButton'
+
 export interface RowActionButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof rowActionButtonVariants> {
@@ -257,6 +271,7 @@ function RowActionGroup({ className, ...props }: RowActionGroupProps) {
 }
 
 export {
+  BorderedRowActionIconButton,
   RowActionButton,
   RowActionGroup,
   RowActionIconButton,
