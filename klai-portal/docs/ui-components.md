@@ -192,6 +192,40 @@ This offset is font-specific. If the base font changes, re-measure by asking the
 
 ---
 
+## Alert
+
+`components/ui/alert.tsx`
+
+Inline semantic callout — the standardized version of the "icon + message in a
+soft tinted rounded box" pattern. Use it for wizard/form feedback and inline
+warnings. It is **not** a toast (`sonner`) and **not** a modal (`dialog`).
+
+```tsx
+import { Alert } from '@/components/ui/alert'
+
+<Alert variant="warning">
+  <span>{m.app_meetings_teams_warning()}</span>
+</Alert>
+
+// Compact, for dense wizard-step feedback
+<Alert variant="success" size="sm">
+  <span>Selector matches real article content.</span>
+</Alert>
+```
+
+- `variant`: `info` | `success` | `warning` | `destructive`. Derives from the
+  same primary tokens as the row-action tones / `Badge` (soft `/5` tint
+  background, `/30` tint border, solid token icon + text).
+- `size`: `default` (text-sm, `h-4` icon) or `sm` (text-xs, `h-3.5` icon).
+- The leading icon is automatic per variant. Override with `icon={SomeIcon}`,
+  or hide it with `icon={null}`.
+- Renders `role="alert"`.
+
+Do not hand-roll callouts with raw `amber-*`/`red-*`/`green-*` Tailwind — use
+this component so every semantic callout shares one hue, tint, and icon system.
+
+---
+
 ## Color tokens
 
 Use Tailwind grayscale literals for prose, borders, subtle backgrounds, and

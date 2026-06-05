@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertTriangle, Loader2, ArrowLeft, Info, X } from 'lucide-react'
+import { Alert } from '@/components/ui/alert'
+import { Loader2, ArrowLeft, Info, X } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
@@ -156,10 +157,9 @@ function StartMeetingPage() {
         </div>
 
         {isTeams && (
-          <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <Alert variant="warning">
             <span>{m.app_meetings_teams_warning()}</span>
-          </div>
+          </Alert>
         )}
 
         <div className="space-y-2">

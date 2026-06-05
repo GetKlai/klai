@@ -12,7 +12,7 @@
 // Both are tested directly via __tests__/wizard-feedback.test.tsx (no
 // router/query-client setup required).
 
-import { AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Alert } from '@/components/ui/alert'
 import type { AuthProbeResult, PreviewClassification } from './-connector-types'
 
 /**
@@ -22,10 +22,9 @@ import type { AuthProbeResult, PreviewClassification } from './-connector-types'
 export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
   if (result.classification === 'auth_ok') {
     return (
-      <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
-        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+      <Alert variant="success" size="sm">
         <span>You&apos;re in. Continue to Selector.</span>
-      </div>
+      </Alert>
     )
   }
   const reasons = result.match_reasons.length > 0
@@ -49,10 +48,9 @@ export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
       message = `Authentication check failed.${reasons}`
   }
   return (
-    <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+    <Alert variant="warning" size="sm">
       <span>{message}</span>
-    </div>
+    </Alert>
   )
 }
 
@@ -73,10 +71,9 @@ export function PreviewClassificationFeedback({
 }) {
   if (classification === 'success') {
     return (
-      <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
-        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+      <Alert variant="success" size="sm">
         <span>Selector matches real article content. You can save the connector.</span>
-      </div>
+      </Alert>
     )
   }
   let message: string
@@ -103,10 +100,9 @@ export function PreviewClassificationFeedback({
   }
   return (
     <div className="space-y-2">
-      <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+      <Alert variant="warning" size="sm">
         <span>{message}</span>
-      </div>
+      </Alert>
       {classification === 'unknown' && onRetry && (
         <button
           type="button"

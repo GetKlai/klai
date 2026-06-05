@@ -23,6 +23,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { ActionTag } from '@/components/ui/action-tag'
+import { Alert } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -210,6 +211,7 @@ function Section({
 const wizardSteps = ['Details', 'Bron', 'Bevestigen']
 const tabItems = ['Details', 'Activiteit', 'Instellingen']
 const badgeVariants = ['default', 'secondary', 'accent', 'outline', 'info', 'success', 'warning', 'destructive'] as const
+const alertVariants = ['info', 'success', 'warning', 'destructive'] as const
 const navListItems = [
   { icon: MessageSquare, title: 'Chat', description: 'Privé AI-gesprekken op Europese servers' },
   { icon: Settings, title: 'Instructies', description: 'Beheer instructies die je in chats kunt aanzetten.' },
@@ -836,6 +838,26 @@ function UiCatalogPage() {
           <div className="flex flex-wrap items-center gap-2">
             <ActionTag state="open">Open</ActionTag>
             <ActionTag state="closed">Closed</ActionTag>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Alerts">
+        <div className="max-w-xl space-y-4">
+          <div className="space-y-2">
+            {alertVariants.map((variant) => (
+              <Alert key={variant} variant={variant}>
+                <span className="font-medium capitalize">{variant}</span> — inline
+                semantic callout met automatisch icoon en zachte tint.
+              </Alert>
+            ))}
+          </div>
+          <div className="space-y-2">
+            {alertVariants.map((variant) => (
+              <Alert key={variant} variant={variant} size="sm">
+                Compacte variant (<code>size="sm"</code>): {variant}.
+              </Alert>
+            ))}
           </div>
         </div>
       </Section>
