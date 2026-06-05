@@ -109,9 +109,14 @@ export function InlineEditRow({
   }
 
   // Amber rounded affordance via `ring` (not `border`) so it adds no box
-  // width — the overlay stays exactly the size of its ghost text.
+  // width. The input's own padding (`px-1`) would otherwise push its text 4px
+  // right of the unpadded ghost — a glyph jump on every edit toggle. We cancel
+  // it with a matching negative margin (`-mx-1`), so the rounded field bleeds
+  // 4px into the row gutter while its text starts at the EXACT same x as the
+  // ghost. Net horizontal glyph shift on edit: 0px. Vertical is already 0
+  // because the ghost defines the box height and line-height matches.
   const overlayInput = cn(
-    'absolute inset-0 w-full rounded-md px-1',
+    'absolute inset-0 -ml-1 rounded-md px-1',
     'bg-[var(--color-card)] text-[var(--color-foreground)]',
     'border-0 outline-none ring-1 ring-[var(--color-accent)]',
     'disabled:opacity-50',
@@ -120,7 +125,7 @@ export function InlineEditRow({
   const showDescriptionField = withDescription || Boolean(description)
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
+    <div className="flex min-w-0 flex-1 items-center gap-3">
       <div className="min-w-0 flex-1">
         {/* Name field — ghost holds height, input overlays exactly. */}
         <div className="relative">
@@ -184,7 +189,7 @@ export function InlineEditRow({
               size="sm"
               disabled={isSaving || !name.trim()}
               onClick={submit}
-              className="h-6 gap-1 px-2 text-[10px] [&_svg]:size-2.5 bg-[var(--color-success)] text-white hover:opacity-70"
+              className="h-6 gap-1 px-2 text-xs [&_svg]:size-3 bg-[var(--color-success)] text-white hover:opacity-70"
             >
               {isSaving ? <Loader2 className="animate-spin" /> : <Check />}
               {saveLabel}
@@ -194,7 +199,7 @@ export function InlineEditRow({
               size="sm"
               variant="ghost"
               onClick={onCancel}
-              className="h-6 gap-1 px-2 text-[10px] [&_svg]:size-2.5"
+              className="h-6 gap-1 px-2 text-xs [&_svg]:size-3"
             >
               <X />
               {cancelLabel}

@@ -56,7 +56,7 @@ export function InlineDeleteConfirm({
         <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap bg-[var(--color-hover)] pl-4">
           <Button
             size="sm"
-            className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
+            className="h-6 text-xs px-2 gap-1 [&_svg]:size-3 bg-[var(--color-destructive)] text-white hover:opacity-70"
             disabled={isPending}
             onClick={onConfirm}
           >
@@ -66,7 +66,7 @@ export function InlineDeleteConfirm({
           <Button
             size="sm"
             variant="ghost"
-            className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5"
+            className="h-6 text-xs px-2 gap-1 [&_svg]:size-3"
             onClick={onCancel}
           >
             <X />
