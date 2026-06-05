@@ -18,6 +18,13 @@ from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
 
+ZITADEL_COMPOSITION_REQUIREMENTS: dict[str, bool] = {
+    "uppercase": False,
+    "lowercase": False,
+    "number": False,
+    "symbol": False,
+}
+
 
 class PasswordPolicyGuardError(RuntimeError):
     """Raised when Klai cannot prove password policy compatibility."""
@@ -61,14 +68,14 @@ def compare_password_policies(
     errors: list[str] = []
     if local.min_length < zitadel_policy.min_length:
         errors.append(f"local min_length {local.min_length} < Zitadel minLength {zitadel_policy.min_length}")
-    if zitadel_policy.has_uppercase and not local.require_uppercase:
-        errors.append("Zitadel requires uppercase but local policy does not")
-    if zitadel_policy.has_lowercase and not local.require_lowercase:
-        errors.append("Zitadel requires lowercase but local policy does not")
-    if zitadel_policy.has_number and not local.require_number:
-        errors.append("Zitadel requires number but local policy does not")
-    if zitadel_policy.has_symbol and not local.require_symbol:
-        errors.append("Zitadel requires symbol but local policy does not")
+    if zitadel_policy.has_uppercase != ZITADEL_COMPOSITION_REQUIREMENTS["uppercase"]:
+        errors.append("Zitadel must not require uppercase")
+    if zitadel_policy.has_lowercase != ZITADEL_COMPOSITION_REQUIREMENTS["lowercase"]:
+        errors.append("Zitadel must not require lowercase")
+    if zitadel_policy.has_number != ZITADEL_COMPOSITION_REQUIREMENTS["number"]:
+        errors.append("Zitadel must not require number")
+    if zitadel_policy.has_symbol != ZITADEL_COMPOSITION_REQUIREMENTS["symbol"]:
+        errors.append("Zitadel must not require symbol")
     return errors
 
 
