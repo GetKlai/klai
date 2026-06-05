@@ -2,6 +2,7 @@ import { createFileRoute, Outlet } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare, Skull, ShieldCheck, Globe2, type LucideIcon } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { TopBar, TopBarSlotProvider } from '@/components/layout/TopBar'
 import { KlaiAssistantLauncher } from '@/features/klai-assistant/KlaiAssistantLauncher'
 import * as m from '@/paraglide/messages'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
@@ -120,9 +121,14 @@ function AdminLayout() {
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">
       <Sidebar navItems={adminNav} />
-      <main className="flex-1 overflow-y-auto">
-        <Outlet />
-      </main>
+      <TopBarSlotProvider>
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <TopBar />
+          <main className="flex-1 overflow-y-auto">
+            <Outlet />
+          </main>
+        </div>
+      </TopBarSlotProvider>
       <KlaiAssistantLauncher />
     </div>
   )
