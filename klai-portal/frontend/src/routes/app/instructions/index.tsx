@@ -1,13 +1,26 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Pencil, Plus, Sliders, Trash2 } from 'lucide-react'
+import { Plus, Sliders } from 'lucide-react'
 
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { ActionTag } from '@/components/ui/action-tag'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+import {
+  ListFrame,
+  ListRow,
+  ListRowActions,
+  ListRowContent,
+  ListRowDescription,
+  ListRowTitle,
+} from '@/components/ui/list'
+import { ListLoadingState } from '@/components/ui/list-state'
+import { PageHeader } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
 
@@ -82,26 +95,24 @@ export function InstructionsPage() {
     : m.instructions_list_create_personal_button()
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
-      <div className="flex items-center justify-between mb-2">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-          {m.instructions_page_title()}
-        </h1>
-        <div className="flex items-center gap-3">
-          <button
+    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
+      <PageHeader
+        title={m.instructions_page_title()}
+        description={m.instructions_page_subtitle()}
+        actions={
+          <Button
             type="button"
+            size="sm"
             onClick={() => void navigate({ to: '/app/instructions/new' })}
-            className="flex items-center gap-1.5 rounded-full bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
           >
             <Plus className="h-4 w-4" />
             {createLabel}
-          </button>
-        </div>
-      </div>
-      <p className="text-sm text-gray-400 mb-6">{m.instructions_page_subtitle()}</p>
+          </Button>
+        }
+      />
 
       {/* Korte uitleg boven de lijst — geen kader, gewoon tekst. */}
-      <div className="mb-8 space-y-3 text-sm text-gray-600">
+      <div className="space-y-3 text-sm text-gray-600">
         <p>{m.instructions_intro_body()}</p>
         <p>
           <span className="text-gray-500">{m.instructions_intro_examples_heading()}</span>{' '}
@@ -111,11 +122,9 @@ export function InstructionsPage() {
       </div>
 
       {instructionsQuery.isLoading && (
-        <div className="space-y-3" aria-busy="true">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-14 rounded-lg bg-gray-50 animate-pulse" />
-          ))}
-        </div>
+        <ListFrame aria-busy="true">
+          <ListLoadingState label={m.instructions_list_loading()} />
+        </ListFrame>
       )}
 
       {instructionsQuery.isError && (
@@ -129,19 +138,20 @@ export function InstructionsPage() {
           <p className="text-sm text-gray-400 mt-1 max-w-md mx-auto">
             {m.instructions_empty_description()}
           </p>
-          <button
+          <Button
             type="button"
             onClick={() => void navigate({ to: '/app/instructions/new' })}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+            size="sm"
+            className="mt-4"
           >
             <Plus className="h-4 w-4" />
             {m.instructions_empty_cta()}
-          </button>
+          </Button>
         </div>
       )}
 
       {instructionsQuery.data && instructionsQuery.data.length > 0 && (
-        <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
+        <ListFrame>
           {instructionsQuery.data.map((t) => {
             const mutateAllowed = canMutate(t)
             const isConfirming = confirmingDeleteId === t.id
@@ -154,10 +164,11 @@ export function InstructionsPage() {
                 params: { slug: t.slug },
               })
             return (
-              <div
+              <ListRow
                 key={t.id}
                 role="button"
                 tabIndex={0}
+                interactive
                 onClick={openDetail}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -165,28 +176,31 @@ export function InstructionsPage() {
                     openDetail()
                   }
                 }}
-                className="flex items-start gap-4 py-3.5 px-2 cursor-pointer klai-hover"
+                className="grid items-center gap-4 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto]"
               >
-                <div className="flex-1 min-w-0">
+                <ListRowContent>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-gray-900 truncate">{t.name}</span>
+                    <ListRowTitle>{t.name}</ListRowTitle>
                     <Badge variant="secondary">
                       {t.scope === 'org'
                         ? m.instructions_list_scope_org()
                         : m.instructions_list_scope_personal()}
                     </Badge>
                     {active && (
-                      <Badge variant="outline" className="border-green-500 text-green-700">
+                      <ActionTag state="open">
                         {m.instructions_list_active_label()}
-                      </Badge>
+                      </ActionTag>
                     )}
                   </div>
                   {t.description && (
-                    <p className="mt-1 text-sm text-gray-400 truncate">{t.description}</p>
+                    <ListRowDescription>{t.description}</ListRowDescription>
                   )}
-                </div>
+                </ListRowContent>
 
-                <div onClick={(e) => e.stopPropagation()}>
+                <ListRowActions
+                  className="self-center justify-self-end"
+                  onClick={(e) => e.stopPropagation()}
+                >
                 <InlineDeleteConfirm
                   isConfirming={isConfirming}
                   isPending={isPending}
@@ -195,37 +209,30 @@ export function InstructionsPage() {
                   onConfirm={() => deleteMutation.mutate(t.slug)}
                   onCancel={() => setConfirmingDeleteId(null)}
                 >
-                  <div className="flex items-center justify-end gap-1">
-                    <button
-                      type="button"
+                  <RowActionGroup>
+                    <BorderedRowActionIconButton
                       onClick={() => void navigate({ to: '/app/instructions/$slug/edit', params: { slug: t.slug } })}
-                      aria-label={m.instructions_list_edit_label()}
-                      title={m.instructions_list_edit_label()}
-                      className="p-2 rounded-md text-gray-400 hover:text-gray-900 klai-hover"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
+                      label={m.instructions_list_edit_label()}
+                      action="edit"
+                    />
+                    <BorderedRowActionIconButton
                       disabled={!mutateAllowed}
                       onClick={() => setConfirmingDeleteId(t.id)}
-                      aria-label={m.instructions_list_delete_label()}
                       title={
                         mutateAllowed
                           ? m.instructions_list_delete_label()
                           : m.instructions_form_scope_org_disabled_tooltip()
                       }
-                      className="p-2 rounded-md text-gray-400 hover:text-[var(--color-destructive)] klai-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
+                      label={m.instructions_list_delete_label()}
+                      action="delete"
+                    />
+                  </RowActionGroup>
                 </InlineDeleteConfirm>
-                </div>
-              </div>
+                </ListRowActions>
+              </ListRow>
             )
           })}
-        </div>
+        </ListFrame>
       )}
     </div>
   )
