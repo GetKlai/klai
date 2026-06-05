@@ -9,11 +9,12 @@
  * Components live in `_components`/`-sources-*` files; this file only
  * owns data fetching + layout assembly.
  */
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { Plus, Zap } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { ListFrame } from '@/components/ui/list'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
@@ -32,7 +33,7 @@ function SourcesTab() {
   const { kbSlug } = Route.useParams()
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const { data, isLoading, isError } = useQuery<SourcesResponse>({
+  const { data, isLoading, error, refetch } = useQuery<SourcesResponse>({
     queryKey: kbQueryKeys.sources(kbSlug),
     queryFn: () => apiFetch<SourcesResponse>(`/api/app/knowledge-bases/${kbSlug}/sources`),
     retry: false,
@@ -96,7 +97,7 @@ function SourcesTab() {
   }, [pageIndex])
 
   return (
-    <div>
+    <div className="space-y-6">
       <SourcesActionBar
         kbSlug={kbSlug}
         sources={sources}
@@ -105,31 +106,23 @@ function SourcesTab() {
       />
 
       {isLoading ? (
-        <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-[60px] bg-gray-50 animate-pulse" />
-          ))}
-        </div>
-      ) : isError ? (
-        <div className="border-t border-b border-gray-200 py-10 text-center text-sm text-[var(--color-destructive)]">
-          {m.kb_sources_list_error()}
-        </div>
+        <ListFrame>
+          <ListLoadingState label={m.kb_sources_loading()} />
+        </ListFrame>
+      ) : error ? (
+        <QueryErrorState
+          error={error instanceof Error ? error : new Error(m.kb_sources_list_error())}
+          onRetry={() => void refetch()}
+        />
       ) : sources.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-200 py-12 text-center">
-          <Zap className="h-8 w-8 text-gray-300 mx-auto mb-3" />
-          <p className="text-sm font-medium text-gray-900">{m.kb_sources_empty_title()}</p>
-          <p className="text-xs text-gray-400 mt-1 max-w-sm mx-auto">
-            {m.kb_sources_empty_subtitle()}
-          </p>
-          <Link to="/app/knowledge/$kbSlug/add-source" params={{ kbSlug }} className="inline-block mt-4">
-            <Button variant="default">
-              <Plus className="h-4 w-4" />
-              {m.kb_sources_empty_cta()}
-            </Button>
-          </Link>
-        </div>
+        <ListFrame>
+          <ListEmptyState
+            title={m.kb_sources_empty_title()}
+            description={m.kb_sources_empty_subtitle()}
+          />
+        </ListFrame>
       ) : (
-        <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
+        <ListFrame>
           {sources.map((source) => {
             const editablePageId = editablePageIdForSource(source, slugToPageId)
             return (
@@ -145,7 +138,7 @@ function SourcesTab() {
               />
             )
           })}
-        </div>
+        </ListFrame>
       )}
     </div>
   )

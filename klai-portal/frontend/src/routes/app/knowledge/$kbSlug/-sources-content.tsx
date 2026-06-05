@@ -35,13 +35,13 @@ function ConnectorContent({ data }: { data: ContentResponse }) {
   const items = data.items ?? []
   if (items.length === 0) {
     return (
-      <div className="pl-[44px] pr-2 pb-3 text-xs text-gray-400">
+      <div className="pl-[60px] pr-4 pb-3 text-xs text-gray-400">
         {m.kb_sources_content_empty_connector()}
       </div>
     )
   }
   return (
-    <div className="pl-[44px] pr-2 pb-3 space-y-1">
+    <div className="pl-[60px] pr-4 pb-3 space-y-1">
       {items.map((item) => (
         <div key={item.id} className="flex items-center gap-2 text-xs py-1.5">
           <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />
@@ -65,7 +65,7 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
   if (chunks.length === 0) {
     if (source.source_url) {
       return (
-        <div className="pl-[44px] pr-2 pb-3 flex items-center gap-2 text-xs">
+        <div className="pl-[60px] pr-4 pb-3 flex items-center gap-2 text-xs">
           <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />
           <span className="text-gray-700 truncate">{source.source_url}</span>
           <span className="text-gray-400 shrink-0">{m.kb_sources_content_url_badge()}</span>
@@ -79,13 +79,13 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
     // Don't claim "no chunks indexed" in the indexed-Gesynct case - that
     // contradicts the badge. Speak to the preview gap instead.
     return (
-      <div className="pl-[44px] pr-2 pb-3 text-xs text-gray-400">
+      <div className="pl-[60px] pr-4 pb-3 text-xs text-gray-400">
         {m.kb_sources_content_no_preview()}
       </div>
     )
   }
   return (
-    <div className="pl-[44px] pr-2 pb-3 space-y-2">
+    <div className="pl-[60px] pr-4 pb-3 space-y-2">
       {chunks.map((chunk) => (
         <div key={chunk.id} className="text-xs py-1.5">
           <div className="flex items-center gap-2 text-gray-400 mb-0.5">
@@ -110,7 +110,7 @@ export function SourceContent({ kbSlug, source }: DrillDownProps) {
 
   if (isLoading) {
     return (
-      <div className="pl-[44px] pr-2 pb-3 flex items-center gap-2 text-xs text-gray-400">
+      <div className="pl-[60px] pr-4 pb-3 flex items-center gap-2 text-xs text-gray-400">
         <Loader2 className="h-3 w-3 animate-spin" />
         {m.kb_sources_content_loading()}
       </div>
@@ -119,7 +119,7 @@ export function SourceContent({ kbSlug, source }: DrillDownProps) {
 
   if (isError || !data) {
     return (
-      <div className="pl-[44px] pr-2 pb-3 text-xs text-[var(--color-destructive)]">
+      <div className="pl-[60px] pr-4 pb-3 text-xs text-[var(--color-destructive)]">
         {m.kb_sources_content_error()}
       </div>
     )
