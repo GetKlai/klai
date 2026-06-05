@@ -39,6 +39,12 @@ uv run python scripts/update_zitadel_password_policy.py --apply
 uv run python scripts/update_zitadel_password_policy.py
 ```
 
+The `portal-api` production workflow runs the same script before building a
+new image for `main`. That CI gate reads `ZITADEL_ADMIN_PAT` from
+`/opt/klai/.env` on `core-01` over the deployment SSH path, then masks it in
+Actions. Keep that server env in sync via infra/SOPS; do not create a second
+repository secret as the source of truth for this gate.
+
 After the portal deploy, verify the public contract:
 
 ```bash
