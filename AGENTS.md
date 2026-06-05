@@ -30,6 +30,15 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
   shims, not the DB security model.)
 - **minimal changes** — Only what was asked. No drive-by refactors, reformatting,
   or "improvements" to untouched files.
+- **clean over clever, no parallel old+new** — Remove the code your change
+  replaces in the SAME change: no dead fields, no commented-out blocks, no old
+  and new flow living side by side. Clean solutions over defensive clutter. (This
+  is about removing what you replaced — not editing untouched files; it composes
+  with "minimal changes", it does not contradict it.)
+- **scale the answer to the problem** — Lead with the simplest solution that
+  works (the 5-minute fix if one exists); escalate to a bigger design only when
+  the problem demands it. No SPEC for something that affects 1–5 people. State
+  explicitly what you deliberately did NOT do.
 - **verify-changes-landed** — Before reporting done: `git diff --stat` (right
   files?), service health/logs (running new code?), and a Playwright
   click-through for any UI change (real user flow works?).
