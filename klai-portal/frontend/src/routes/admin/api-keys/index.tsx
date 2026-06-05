@@ -25,7 +25,7 @@ import {
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
-import { datetime, plural } from '@/paraglide/registry'
+import { datetime } from '@/paraglide/registry'
 import { useApiKeys, useDeleteApiKey } from './-hooks'
 import type { ApiKeyResponse } from './-types'
 
@@ -42,12 +42,6 @@ function formatRelativeTime(isoString: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-function apiKeyCountLabel(count: number): string {
-  return plural(getLocale(), count) === 'one'
-    ? m.admin_api_keys_count_one()
-    : m.admin_api_keys_count_other({ count: String(count) })
 }
 
 const columnHelper = createColumnHelper<ApiKeyResponse>()
@@ -138,9 +132,7 @@ function ApiKeysPage() {
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
       <PageHeader
         title={m.admin_api_keys_title()}
-        description={
-          !isLoading && !error ? apiKeyCountLabel(apiKeys.length) : undefined
-        }
+        description={m.admin_api_keys_subtitle()}
         actions={
           <Button
             size="sm"
