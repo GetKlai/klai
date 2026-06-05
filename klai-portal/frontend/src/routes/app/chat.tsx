@@ -8,6 +8,7 @@ import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { chatKbLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 
+import { TopBarLeft } from '@/components/layout/TopBar'
 import { ChatConfigBar } from './_components/ChatConfigBar'
 
 // Threshold: 25 days (conservative - LibreChat refresh tokens are 30d)
@@ -194,9 +195,14 @@ function ChatPage() {
   const showError = phase === 'error' || phase === 'stuck'
 
   return (
-    <div className="flex h-full w-full flex-col" data-help-id="chat-page">
-      <ChatConfigBar />
-      <div className="relative flex-1">
+    <div className="h-full w-full" data-help-id="chat-page">
+      {/* Chat config controls live in the global TopBar's left slot, so the
+          bar is one continuous header (logo · config · account) instead of a
+          separate sub-bar above the iframe. */}
+      <TopBarLeft>
+        <ChatConfigBar />
+      </TopBarLeft>
+      <div className="relative h-full w-full">
         {/* Loading overlay */}
         {showOverlay && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-secondary)]">

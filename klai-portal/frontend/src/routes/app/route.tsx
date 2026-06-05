@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { TopBar, TopBarSlotProvider } from '@/components/layout/TopBar'
 import { KlaiAssistantLauncher } from '@/features/klai-assistant/KlaiAssistantLauncher'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 import { getAccessibleAppTools } from './-app-tools'
@@ -29,9 +30,14 @@ function AppLayout() {
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">
       <Sidebar navItems={appNav} />
-      <main className="flex-1 overflow-y-auto">
-        <Outlet />
-      </main>
+      <TopBarSlotProvider>
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <TopBar />
+          <main className="flex-1 overflow-y-auto">
+            <Outlet />
+          </main>
+        </div>
+      </TopBarSlotProvider>
       <KlaiAssistantLauncher />
     </div>
   )
