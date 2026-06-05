@@ -2,15 +2,13 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import {
   Plus,
-  Pencil,
-  ExternalLink,
-  Trash2,
   MessageSquare,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
+import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
 import * as m from '@/paraglide/messages'
 import { useWidgets, useDeleteWidget } from './-hooks'
 import type { WidgetResponse } from './-types'
@@ -141,8 +139,8 @@ function WidgetsPage() {
                   }}
                   onCancel={() => setConfirmDeleteId(null)}
                 >
-                  <div className="flex items-center justify-end gap-1">
-                    <Button
+                  <RowActionGroup>
+                    <RowActionIconButton
                       type="button"
                       onClick={() =>
                         window.open(
@@ -152,36 +150,28 @@ function WidgetsPage() {
                         )
                       }
                       aria-label={`Open ${w.name}`}
-                      title="Open bot in nieuw tabblad"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                    </Button>
-                    <Button
+                      label="Open bot in nieuw tabblad"
+                      action="open"
+                      tone="neutral"
+                    />
+                    <RowActionIconButton
                       type="button"
                       onClick={goToDetail}
                       aria-label={`Bewerk ${w.name}`}
-                      title="Bewerken"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-900"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
+                      label="Bewerken"
+                      action="edit"
+                      tone="neutral"
+                    />
+                    <RowActionIconButton
                       type="button"
                       onClick={() => setConfirmDeleteId(String(w.id))}
                       aria-label={`Verwijder ${w.name}`}
-                      title="Verwijderen"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 rounded-md text-gray-400 hover:text-[var(--color-destructive)]"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+                      label="Verwijderen"
+                      action="delete"
+                      tone="neutral"
+                      className="text-gray-400 hover:text-[var(--color-destructive)]"
+                    />
+                  </RowActionGroup>
                 </InlineDeleteConfirm>
                 </div>
               </div>
