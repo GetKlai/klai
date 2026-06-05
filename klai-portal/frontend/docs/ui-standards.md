@@ -661,8 +661,7 @@ info     → bg var(--color-info)/10      text var(--color-info)
 So a green status badge and a green sync icon are the same green, just softer.
 Structural (non-semantic) variants stay neutral: `secondary` (gray fill),
 `outline`, `default`/`accent` (dark). Do not hand-roll status pills with ad-hoc
-`/10` tints — use `Badge`. (The transcribe `StatusBadge` is the remaining
-hand-rolled one; migrate it to `Badge` on touch.)
+`/10` tints — use `Badge`.
 
 Use `ActionTag` for compact open/closed action-state tags, such as a row marker
 that shows an item is currently active/open. `open` keeps the existing green
