@@ -1901,6 +1901,7 @@
   "kb_sources_row_edit_connector_tooltip": "Bewerk koppeling",
   "kb_sources_row_rename_tooltip": "Naam aanpassen",
   "kb_sources_row_open_in_editor": "Bewerken in editor",
+  "kb_sources_row_more_actions": "Meer acties",
   "kb_sources_row_show_content": "Inhoud tonen",
   "kb_sources_row_hide_content": "Inhoud verbergen",
   "kb_sources_content_loading": "Inhoud laden...",

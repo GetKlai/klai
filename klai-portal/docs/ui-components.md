@@ -259,6 +259,19 @@ hover layers. Use CSS variables for semantic or themeable states.
 
 ---
 
+## Row actions
+
+`components/ui/row-action.tsx`
+
+Use `RowActionGroup` with `RowActionIconButton` or
+`BorderedRowActionIconButton` for list/table row controls. The canonical action
+order and overflow rule lives in `klai-portal/frontend/docs/ui-standards.md`:
+toggle/refresh/open/edit/delete, edit always before delete, and rows with four
+or more actions move lower-frequency actions under a `more` dropdown while
+keeping delete last.
+
+---
+
 ## Detail tabs
 
 Use the owned `Tabs` component. The canonical pattern (active underline, icon

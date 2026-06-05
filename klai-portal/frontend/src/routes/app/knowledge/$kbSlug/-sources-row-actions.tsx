@@ -1,25 +1,31 @@
 /**
  * Action cluster for one Sources-tab row.
  *
- * Owns: reauth · sync · delete · connector-edit · upload-rename ·
- * docs-editor · drill-down chevron. Mutations live in `-sources-hooks.ts`.
+ * Owns: drill-down toggle · sync · reauth · docs-editor · connector-edit ·
+ * upload-rename · delete. Mutations live in `-sources-hooks.ts`.
  *
- * Layout: a single horizontal flex row. When the parent indicates that
- * the row is in rename mode (`isRenaming=true`), the entire cluster
- * fades out + becomes non-interactive so the Save/Cancel overlay can
- * occupy the same width without layout shift. The actual Save/Cancel
- * controls live in `-sources-row.tsx` because they share state with
- * the `<InlineEdit>` overlay.
+ * Layout: a fixed direct action cluster (toggle, sync, more). Lower-frequency
+ * actions move into the more menu once the row has more than three controls.
+ * When the parent indicates rename mode (`isRenaming=true`), the entire
+ * cluster fades out + becomes non-interactive so the Save/Cancel overlay can
+ * occupy the same width without layout shift. The actual Save/Cancel controls
+ * live in `-sources-row.tsx` because they share state with `<InlineEdit>`.
  *
  * Visible icon affordances use the shared bordered row-action shell so
  * sources match admin divider-list actions.
  */
 import { useNavigate } from '@tanstack/react-router'
-import { Loader2, NotebookPen } from 'lucide-react'
+import { Link as LinkIcon, Loader2, NotebookPen, Pencil, Settings, Trash2 } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import {
   BorderedRowActionIconButton,
-  RowActionButton,
   RowActionGroup,
 } from '@/components/ui/row-action'
 import * as m from '@/paraglide/messages'
@@ -71,86 +77,94 @@ export function SourceRowActions({
       : m.kb_sources_row_sync_tooltip()
 
   return (
-    <RowActionGroup className={isRenaming ? 'opacity-0 pointer-events-none' : undefined}>
-      {/* Reauth is the only non-icon-only action - it carries a label so
-          the affordance is unambiguous when an auth_error appears. */}
-      {isAuthError && (
-        <RowActionButton
-          label={m.kb_sources_row_reauth_tooltip()}
-          action="reauth"
-          tone="neutral"
-          disabled={reauth.pending}
-          spinner={reauth.pending ? <Loader2 className="animate-spin" /> : undefined}
-          onClick={() => void reauth.start()}
-        >
-          {m.kb_sources_row_reauth_label()}
-        </RowActionButton>
-      )}
-
-      <BorderedRowActionIconButton
-        label={syncTooltip}
-        action="sync"
-        onClick={() => { if (!syncDisabled) syncMutation.mutate() }}
-        disabled={syncDisabled}
-        spinner={isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
-      />
-
-      <InlineDeleteConfirm
-        isConfirming={confirmingDelete}
-        isPending={isDeleting}
-        label={m.kb_sources_row_delete_confirm({ name: source.name })}
-        cancelLabel={m.kb_sources_row_cancel()}
-        onConfirm={() => { deleteMutation.mutate(); onSetConfirmingDelete(false) }}
-        onCancel={() => onSetConfirmingDelete(false)}
-      >
+    <InlineDeleteConfirm
+      isConfirming={confirmingDelete}
+      isPending={isDeleting}
+      label={m.kb_sources_row_delete_confirm({ name: source.name })}
+      cancelLabel={m.kb_sources_row_cancel()}
+      onConfirm={() => { deleteMutation.mutate(); onSetConfirmingDelete(false) }}
+      onCancel={() => onSetConfirmingDelete(false)}
+    >
+      <RowActionGroup className={isRenaming ? 'opacity-0 pointer-events-none' : undefined}>
         <BorderedRowActionIconButton
-          label={m.kb_sources_row_delete_tooltip()}
-          action="delete"
-          onClick={() => onSetConfirmingDelete(true)}
-          disabled={isDeleting}
+          label={expanded ? m.kb_sources_row_hide_content() : m.kb_sources_row_show_content()}
+          action={expanded ? 'collapse' : 'expand'}
+          onClick={onToggle}
         />
-      </InlineDeleteConfirm>
 
-      {source.kind === 'connector' && (
         <BorderedRowActionIconButton
-          label={m.kb_sources_row_edit_connector_tooltip()}
-          action="configure"
-          onClick={() =>
-            void navigate({
-              to: '/app/knowledge/$kbSlug/edit-connector/$connectorId',
-              params: { kbSlug, connectorId: source.id },
-            })
-          }
+          label={syncTooltip}
+          action="sync"
+          onClick={() => { if (!syncDisabled) syncMutation.mutate() }}
+          disabled={syncDisabled}
+          spinner={isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
         />
-      )}
 
-      {source.kind === 'upload' && (
-        <BorderedRowActionIconButton
-          label={m.kb_sources_row_rename_tooltip()}
-          action="rename"
-          onClick={onStartRename}
-        />
-      )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <BorderedRowActionIconButton
+              label={m.kb_sources_row_more_actions()}
+              action="more"
+            />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-44">
+            {isAuthError && (
+              <DropdownMenuItem
+                disabled={reauth.pending}
+                onSelect={() => void reauth.start()}
+              >
+                {reauth.pending ? <Loader2 className="animate-spin" /> : <LinkIcon />}
+                {m.kb_sources_row_reauth_label()}
+              </DropdownMenuItem>
+            )}
 
-      {editablePageId !== null && (
-        <BorderedRowActionIconButton
-          label={m.kb_sources_row_open_in_editor()}
-          action="open"
-          icon={NotebookPen}
-          onClick={() =>
-            void navigate({
-              to: '/app/docs/$kbSlug/$pageId',
-              params: { kbSlug, pageId: editablePageId },
-            })
-          }
-        />
-      )}
+            {editablePageId !== null && (
+              <DropdownMenuItem
+                onSelect={() =>
+                  void navigate({
+                    to: '/app/docs/$kbSlug/$pageId',
+                    params: { kbSlug, pageId: editablePageId },
+                  })
+                }
+              >
+                <NotebookPen />
+                {m.kb_sources_row_open_in_editor()}
+              </DropdownMenuItem>
+            )}
 
-      <BorderedRowActionIconButton
-        label={expanded ? m.kb_sources_row_hide_content() : m.kb_sources_row_show_content()}
-        action={expanded ? 'collapse' : 'expand'}
-        onClick={onToggle}
-      />
-    </RowActionGroup>
+            {source.kind === 'connector' && (
+              <DropdownMenuItem
+                onSelect={() =>
+                  void navigate({
+                    to: '/app/knowledge/$kbSlug/edit-connector/$connectorId',
+                    params: { kbSlug, connectorId: source.id },
+                  })
+                }
+              >
+                <Settings />
+                {m.kb_sources_row_edit_connector_tooltip()}
+              </DropdownMenuItem>
+            )}
+
+            {source.kind === 'upload' && (
+              <DropdownMenuItem onSelect={onStartRename}>
+                <Pencil />
+                {m.kb_sources_row_rename_tooltip()}
+              </DropdownMenuItem>
+            )}
+
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={isDeleting}
+              onSelect={() => onSetConfirmingDelete(true)}
+              className="text-[var(--color-destructive)] focus:text-[var(--color-destructive)]"
+            >
+              <Trash2 />
+              {m.kb_sources_row_delete_tooltip()}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </RowActionGroup>
+    </InlineDeleteConfirm>
   )
 }
