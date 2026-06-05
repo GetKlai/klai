@@ -34,17 +34,17 @@ def _payload(password: str, **overrides: str) -> dict[str, str]:
 def test_short_password_rejected_with_length_error() -> None:
     """REQ-22.2: minimum-length gate fires first; zxcvbn never sees it."""
     with pytest.raises(ValidationError) as exc_info:
-        SignupRequest(**_payload("Short1!"))  # 7 chars
+        SignupRequest(**_payload("short phrase"))  # 12 chars
     msg = str(exc_info.value)
-    assert "minimaal 12 tekens" in msg or "minimaal 12" in msg
+    assert "minimaal 15 tekens" in msg or "minimaal 15" in msg
 
 
 @pytest.mark.parametrize(
     "weak_password",
     [
-        "Password1234!",  # zxcvbn score 1
-        "Qwerty123456!",  # keyboard walk, score 1
-        "Welcome12345!",  # common word + numeric suffix, score 2
+        "PasswordPassword2026",  # zxcvbn score 1
+        "QwertyQwertyQwerty",  # keyboard walk, score 0
+        "WelcomeWelcome2026",  # common word + numeric suffix, score 2
     ],
 )
 def test_weak_password_rejected_by_zxcvbn(weak_password: str) -> None:
@@ -84,7 +84,7 @@ def test_user_context_password_can_be_rejected_by_zxcvbn() -> None:
     with pytest.raises(ValidationError) as exc_info:
         SignupRequest(
             **_payload(
-                "Qwerty123456!",
+                "QwertyQwertyQwerty",
                 first_name="Mark",
                 last_name="Vletter",
                 email="mark@voys.nl",
@@ -96,24 +96,14 @@ def test_user_context_password_can_be_rejected_by_zxcvbn() -> None:
 
 def test_strong_passphrase_accepted() -> None:
     """REQ-22.1 positive: a high-entropy passphrase passes."""
-    body = SignupRequest(**_payload("Correct horse battery staple 2026!"))
-    assert body.password == "Correct horse battery staple 2026!"
+    body = SignupRequest(**_payload("violet meadow lantern orbit"))
+    assert body.password == "violet meadow lantern orbit"
 
 
-@pytest.mark.parametrize(
-    ("password", "expected"),
-    [
-        ("correct horse battery staple 2026!", "hoofdletter"),
-        ("CORRECT HORSE BATTERY STAPLE 2026!", "kleine letter"),
-        ("Correct horse battery staple!", "cijfer"),
-        ("Correct horse battery staple 2026", "symbool"),
-    ],
-)
-def test_zitadel_composition_policy_is_enforced_before_signup(password: str, expected: str) -> None:
-    """Mirror Zitadel's composition policy before creating any org/user."""
-    with pytest.raises(ValidationError) as exc_info:
-        SignupRequest(**_payload(password))
-    assert expected in str(exc_info.value)
+def test_modern_policy_does_not_require_character_classes() -> None:
+    """Modern policy is length + zxcvbn strength, not legacy composition."""
+    body = SignupRequest(**_payload("violet meadow lantern orbit"))
+    assert body.password == "violet meadow lantern orbit"
 
 
 def test_zxcvbn_unavailable_fails_loud() -> None:
@@ -123,4 +113,4 @@ def test_zxcvbn_unavailable_fails_loud() -> None:
 
     with patch.object(password_policy, "_zxcvbn", None):
         with pytest.raises(PasswordPolicyConfigurationError):
-            validate_password_strength("Correct horse battery staple 2026!")
+            validate_password_strength("violet meadow lantern orbit")

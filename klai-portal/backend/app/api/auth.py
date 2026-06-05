@@ -1167,7 +1167,52 @@ async def password_set(body: PasswordSetRequest) -> None:
     ``/authorize``) — tracked as a follow-up.
     """
     try:
-        validate_password_strength(body.new_password)
+        await assert_zitadel_password_policy_compatible()
+    except PasswordPolicyGuardError as exc:
+        _emit_auth_event(
+            "password_set_failed",
+            reason="password_policy_drift",
+            actor_user_id=body.user_id,
+            outcome="503",
+            level="error",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Wachtwoordbeleid is tijdelijk niet beschikbaar. Probeer later opnieuw.",
+        ) from exc
+
+    try:
+        password_user_inputs = await _password_set_user_inputs(body.user_id)
+    except httpx.HTTPStatusError as exc:
+        _slog.exception("password_set_user_context_failed", zitadel_status=exc.response.status_code)
+        if exc.response.status_code in (400, 404, 410):
+            _emit_auth_event(
+                "password_set_failed",
+                reason="invalid_user",
+                zitadel_status=exc.response.status_code,
+                actor_user_id=body.user_id,
+                outcome="400",
+                level="warning",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This link has expired or is invalid. Request a new link or ask your admin to resend the invitation.",
+            ) from exc
+        _emit_auth_event(
+            "password_set_failed",
+            reason="user_context_unavailable",
+            zitadel_status=exc.response.status_code,
+            actor_user_id=body.user_id,
+            outcome="502",
+            level="error",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to set password, please try again later",
+        ) from exc
+
+    try:
+        validate_password_strength(body.new_password, user_inputs=password_user_inputs)
     except PasswordPolicyError as exc:
         _emit_auth_event(
             "password_set_failed",
@@ -1609,6 +1654,47 @@ class VerifyEmailRequest(BaseModel):
     user_id: str
     code: str
     org_id: str
+
+
+def _optional_str(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _user_inputs_from_zitadel_response(user_response: dict[str, Any]) -> list[str]:
+    user = user_response.get("user")
+    if not isinstance(user, dict):
+        return []
+    human = user.get("human")
+    if not isinstance(human, dict):
+        return []
+    profile = human.get("profile")
+    profile = profile if isinstance(profile, dict) else {}
+    email_obj = human.get("email")
+    email_obj = email_obj if isinstance(email_obj, dict) else {}
+
+    values = [
+        email_obj.get("email"),
+        user.get("preferredLoginName"),
+        profile.get("firstName"),
+        profile.get("lastName"),
+    ]
+    seen: set[str] = set()
+    inputs: list[str] = []
+    for value in values:
+        text = _optional_str(value)
+        if text is None:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        inputs.append(text)
+    return inputs
+
+
+async def _password_set_user_inputs(user_id: str) -> list[str]:
+    user_response = await zitadel.get_user_by_id(user_id)
+    return _user_inputs_from_zitadel_response(user_response)
 
 
 async def _is_email_already_verified(user_id: str) -> bool:

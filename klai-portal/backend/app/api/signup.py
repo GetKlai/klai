@@ -88,7 +88,7 @@ class SignupRequest(BaseModel):
     def password_strength(self) -> "SignupRequest":
         """SPEC-SEC-HYGIENE-001 REQ-22: length floor + zxcvbn score floor.
 
-        REQ-22.2: minimum length of 12 characters is the FIRST gate (fast
+        REQ-22.2: minimum length is the FIRST gate (fast
         path; zxcvbn is only invoked if length passes).
 
         REQ-22.1, REQ-22.3: zxcvbn is invoked with the user's email,

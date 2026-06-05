@@ -18,6 +18,13 @@ from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
 
+ZITADEL_COMPOSITION_REQUIREMENTS: dict[str, bool] = {
+    "uppercase": False,
+    "lowercase": False,
+    "number": False,
+    "symbol": False,
+}
+
 
 class PasswordPolicyGuardError(RuntimeError):
     """Raised when Klai cannot prove password policy compatibility."""
@@ -35,16 +42,16 @@ class ZitadelPasswordComplexityPolicy:
     def from_api_response(cls, payload: dict[str, Any]) -> ZitadelPasswordComplexityPolicy:
         policy_payload = payload.get("policy")
         policy = cast(dict[str, Any], policy_payload) if isinstance(policy_payload, dict) else payload
-        required = ("minLength", "hasUppercase", "hasLowercase", "hasNumber", "hasSymbol")
+        required = ("minLength",)
         missing = [key for key in required if key not in policy]
         if missing:
             raise ValueError(f"Zitadel password policy response missing keys: {missing}")
         return cls(
             min_length=_require_int(policy, "minLength"),
-            has_uppercase=_require_bool(policy, "hasUppercase"),
-            has_lowercase=_require_bool(policy, "hasLowercase"),
-            has_number=_require_bool(policy, "hasNumber"),
-            has_symbol=_require_bool(policy, "hasSymbol"),
+            has_uppercase=_optional_bool(policy, "hasUppercase"),
+            has_lowercase=_optional_bool(policy, "hasLowercase"),
+            has_number=_optional_bool(policy, "hasNumber"),
+            has_symbol=_optional_bool(policy, "hasSymbol"),
         )
 
 
@@ -61,14 +68,14 @@ def compare_password_policies(
     errors: list[str] = []
     if local.min_length < zitadel_policy.min_length:
         errors.append(f"local min_length {local.min_length} < Zitadel minLength {zitadel_policy.min_length}")
-    if zitadel_policy.has_uppercase and not local.require_uppercase:
-        errors.append("Zitadel requires uppercase but local policy does not")
-    if zitadel_policy.has_lowercase and not local.require_lowercase:
-        errors.append("Zitadel requires lowercase but local policy does not")
-    if zitadel_policy.has_number and not local.require_number:
-        errors.append("Zitadel requires number but local policy does not")
-    if zitadel_policy.has_symbol and not local.require_symbol:
-        errors.append("Zitadel requires symbol but local policy does not")
+    if zitadel_policy.has_uppercase != ZITADEL_COMPOSITION_REQUIREMENTS["uppercase"]:
+        errors.append("Zitadel must not require uppercase")
+    if zitadel_policy.has_lowercase != ZITADEL_COMPOSITION_REQUIREMENTS["lowercase"]:
+        errors.append("Zitadel must not require lowercase")
+    if zitadel_policy.has_number != ZITADEL_COMPOSITION_REQUIREMENTS["number"]:
+        errors.append("Zitadel must not require number")
+    if zitadel_policy.has_symbol != ZITADEL_COMPOSITION_REQUIREMENTS["symbol"]:
+        errors.append("Zitadel must not require symbol")
     return errors
 
 
@@ -95,6 +102,12 @@ def _require_bool(policy: dict[str, Any], key: str) -> bool:
     if not isinstance(value, bool):
         raise TypeError(f"Zitadel password policy key {key} must be boolean")
     return value
+
+
+def _optional_bool(policy: dict[str, Any], key: str) -> bool:
+    if key not in policy:
+        return False
+    return _require_bool(policy, key)
 
 
 def _require_int(policy: dict[str, Any], key: str) -> int:

@@ -15,10 +15,6 @@ from dataclasses import asdict, dataclass
 logger = logging.getLogger(__name__)
 
 PASSWORD_TOO_SHORT_MSG = "Wachtwoord moet minimaal {min_length} tekens bevatten"
-PASSWORD_MISSING_UPPERCASE_MSG = "Wachtwoord moet minimaal één hoofdletter bevatten"
-PASSWORD_MISSING_LOWERCASE_MSG = "Wachtwoord moet minimaal één kleine letter bevatten"
-PASSWORD_MISSING_NUMBER_MSG = "Wachtwoord moet minimaal één cijfer bevatten"
-PASSWORD_MISSING_SYMBOL_MSG = "Wachtwoord moet minimaal één symbool bevatten"
 PASSWORD_TOO_WEAK_MSG = "Wachtwoord is te zwak. Kies een langer of minder voorspelbaar wachtwoord."
 ZITADEL_PASSWORD_POLICY_MSG = (
     "Wachtwoord voldoet niet aan het wachtwoordbeleid. Kies een langer of minder voorspelbaar wachtwoord."
@@ -42,22 +38,14 @@ class PasswordPolicy:
 
     min_length: int
     min_score: int
-    require_uppercase: bool
-    require_lowercase: bool
-    require_number: bool
-    require_symbol: bool
 
     def public_dict(self) -> dict[str, int | bool]:
         return asdict(self)
 
 
 SIGNUP_PASSWORD_POLICY = PasswordPolicy(
-    min_length=12,
+    min_length=15,
     min_score=3,
-    require_uppercase=True,
-    require_lowercase=True,
-    require_number=True,
-    require_symbol=True,
 )
 
 # Backwards-compatible aliases for tests/imports. The policy object above is
@@ -80,21 +68,9 @@ def validate_password_strength(
     user_inputs: Iterable[str] = (),
     policy: PasswordPolicy = SIGNUP_PASSWORD_POLICY,
 ) -> None:
-    """Raise when ``password`` does not satisfy Klai/Zitadel onboarding policy."""
+    """Raise when ``password`` does not satisfy Klai's onboarding policy."""
     if len(password) < policy.min_length:
         raise PasswordPolicyError(PASSWORD_TOO_SHORT_MSG.format(min_length=policy.min_length))
-
-    if policy.require_uppercase and not any(char.isupper() for char in password):
-        raise PasswordPolicyError(PASSWORD_MISSING_UPPERCASE_MSG)
-
-    if policy.require_lowercase and not any(char.islower() for char in password):
-        raise PasswordPolicyError(PASSWORD_MISSING_LOWERCASE_MSG)
-
-    if policy.require_number and not any(char.isdigit() for char in password):
-        raise PasswordPolicyError(PASSWORD_MISSING_NUMBER_MSG)
-
-    if policy.require_symbol and not any(not char.isalnum() and not char.isspace() for char in password):
-        raise PasswordPolicyError(PASSWORD_MISSING_SYMBOL_MSG)
 
     if _zxcvbn is None:
         raise PasswordPolicyConfigurationError("zxcvbn is required for password validation")
