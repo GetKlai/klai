@@ -1,15 +1,22 @@
 import * as m from '@/paraglide/messages'
 import { passwordPolicyIssueMessage, passwordStrengthLabel } from '@/lib/password-policy-copy'
+import type { SignupPasswordPolicy } from '@/lib/password-policy'
 import type { SignupPasswordIssue } from '@/lib/password-strength'
 
 export function PasswordStrengthMeter({
   score,
   issues,
   show,
+  isAcceptable,
+  estimated,
+  policy,
 }: {
   score: number
   issues: SignupPasswordIssue[]
   show: boolean
+  isAcceptable: boolean
+  estimated: boolean
+  policy: SignupPasswordPolicy | null
 }) {
   if (!show) return null
 
@@ -40,10 +47,14 @@ export function PasswordStrengthMeter({
         </div>
         <div className="flex min-w-0 items-start justify-between gap-2">
           <span className="shrink-0 text-gray-500">{m.signup_password_policy_label()}</span>
-          {issues.length === 0 ? (
+          {estimated ? (
+            <span className="text-gray-500">{m.signup_password_policy_checking()}</span>
+          ) : isAcceptable ? (
             <span className="text-emerald-700">{m.signup_password_policy_met()}</span>
+          ) : policy ? (
+            <span className="text-right text-gray-500">{passwordPolicyIssueMessage(issues[0], policy)}</span>
           ) : (
-            <span className="text-right text-gray-500">{passwordPolicyIssueMessage(issues[0])}</span>
+            <span className="text-gray-500">{m.signup_password_policy_checking()}</span>
           )}
         </div>
       </div>

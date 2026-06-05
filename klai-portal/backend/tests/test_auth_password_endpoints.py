@@ -13,6 +13,8 @@ Zitadel HTTP mocked via respx against the real ``ZitadelClient`` (REQ-5.7).
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 import respx
@@ -28,8 +30,17 @@ from app.api.auth import (
     password_set,
     verify_email,
 )
+from app.services.password_policy_guard import PasswordPolicyGuardError
 
 _STRONG_PASSWORD = "Correct horse battery staple 2026!"
+
+
+@pytest.fixture(autouse=True)
+def _password_policy_guard_ok(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    guard = AsyncMock()
+    monkeypatch.setattr("app.api.auth.assert_zitadel_password_policy_compatible", guard)
+    return guard
+
 
 # ---------------------------------------------------------------------------
 # Scenario P1 — password_reset known email → 204 + audit (REQ-3.1)
@@ -161,6 +172,28 @@ async def test_password_set_happy(respx_zitadel: respx.MockRouter) -> None:
     assert call_kwargs["actor"] == "uid-1"
     assert call_kwargs["details"]["reason"] == "set"
     assert _capture_events(captured, "password_set_failed") == []
+
+
+@pytest.mark.asyncio
+async def test_password_set_policy_guard_blocks_before_consuming_code(
+    respx_zitadel: respx.MockRouter,
+    _password_policy_guard_ok: AsyncMock,
+) -> None:
+    _password_policy_guard_ok.side_effect = PasswordPolicyGuardError("drift")
+
+    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password=_STRONG_PASSWORD)
+
+    with capture_logs() as captured, _audit_log_patch() as audit_log:
+        with pytest.raises(HTTPException) as exc:
+            await password_set(body=body)
+
+    assert exc.value.status_code == 503
+    assert len(respx_zitadel.calls) == 0
+    audit_log.assert_not_called()
+    events = _capture_events(captured, "password_set_failed")
+    assert len(events) == 1
+    assert events[0]["reason"] == "password_policy_drift"
+    assert events[0]["outcome"] == "503"
 
 
 @pytest.mark.asyncio

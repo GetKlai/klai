@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from app.api import me, orgs, signup
+from app.api import auth_password_policy, me, orgs, signup
 from app.api.admin import router as admin_router
 from app.api.admin_api_keys import router as admin_api_keys_router
 from app.api.admin_widgets import router as admin_widgets_router
@@ -50,6 +50,7 @@ from app.middleware.tenant_host import KlaiTenantHostMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
 from app.services.kb_upload_poller import run_poll_loop as run_kb_upload_poll_loop
+from app.services.password_policy_guard import assert_zitadel_password_policy_compatible
 from app.services.recording_cleanup import recording_cleanup_loop
 from app.services.telemetry_purge import telemetry_purge_loop
 from app.services.vexa import vexa
@@ -214,6 +215,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         logger.info("Zitadel PAT validated successfully")
 
+        await assert_zitadel_password_policy_compatible()
+        logger.info("Zitadel password policy compatibility checked")
+
     from app.core.database import (
         assert_partner_api_keys_rls_ready,
         assert_portal_users_rls_ready,
@@ -350,6 +354,7 @@ app.add_middleware(
 from app.api.auth_bff import router as auth_bff_router  # noqa: E402
 
 app.include_router(signup.router)
+app.include_router(auth_password_policy.router)
 app.include_router(me.router)
 app.include_router(orgs.router)
 app.include_router(me_mcp_tokens_router)

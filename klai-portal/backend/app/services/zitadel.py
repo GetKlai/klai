@@ -58,6 +58,12 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_password_complexity_policy(self) -> dict:
+        """Return the IAM password complexity policy from Zitadel Admin API."""
+        resp = await self._http.get("/admin/v1/policies/password/complexity")
+        resp.raise_for_status()
+        return resp.json()
+
     async def delete_org(self, org_id: str) -> None:
         """Delete a Zitadel organisation and cascade-delete all its users + grants.
 

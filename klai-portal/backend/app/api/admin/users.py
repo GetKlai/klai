@@ -43,6 +43,10 @@ from app.services.kb_offboarding import (
 from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.user_memberships import get_user_membership_summary
 from app.services.zitadel import _sync_zitadel_role_grant, zitadel
+from app.services.zitadel_identity_recovery import (
+    ZitadelIdentityRecoveryError,
+    recover_existing_zitadel_identity_for_invite,
+)
 
 logger = logging.getLogger(__name__)
 # Structured-event logger for VictoriaLogs queryability — follows the
@@ -82,6 +86,8 @@ router = APIRouter()
 class ExistingInviteIdentity:
     user_id: str
     membership: PortalUser | None = None
+    created_new_zitadel_user: bool = False
+    reactivated_zitadel_user: bool = False
 
 
 CleanupInviteUser = Callable[[str], Awaitable[None]]
@@ -220,13 +226,42 @@ async def _reuse_existing_zitadel_user_for_invite(
         )
         return ExistingInviteIdentity(user_id=existing_user_id, membership=membership)
 
+    try:
+        recovery = await recover_existing_zitadel_identity_for_invite(
+            zitadel_user_id=existing_user_id,
+            email=str(body.email),
+            first_name=body.first_name,
+            last_name=body.last_name,
+            preferred_language=body.preferred_language,
+            org_id=org.id,
+            zitadel_client=zitadel,
+        )
+    except ZitadelIdentityRecoveryError as recovery_exc:
+        _slog.exception(
+            "invite_existing_zitadel_identity_recovery_failed",
+            email=body.email,
+            org_id=org.id,
+            zitadel_user_id=existing_user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Uitnodiging kon niet worden verwerkt. Probeer het opnieuw.",
+        ) from recovery_exc
+
     _slog.info(
         "invite_existing_zitadel_user_reused",
         email=body.email,
         org_id=org.id,
-        zitadel_user_id=existing_user_id,
+        zitadel_user_id=recovery.user_id,
+        original_zitadel_user_id=existing_user_id,
+        created_new_zitadel_user=recovery.created_new_user,
+        reactivated_zitadel_user=recovery.reactivated_existing_user,
     )
-    return ExistingInviteIdentity(user_id=existing_user_id)
+    return ExistingInviteIdentity(
+        user_id=recovery.user_id,
+        created_new_zitadel_user=recovery.created_new_user,
+        reactivated_zitadel_user=recovery.reactivated_existing_user,
+    )
 
 
 def _invite_failure_detail(failure_step: str) -> str:
@@ -267,13 +302,14 @@ async def _persist_invited_user_and_send_code(
     zitadel_user_id: str,
     user_row: PortalUser,
     reactivated_membership: PortalUser | None,
+    reactivated_existing_zitadel_user: bool,
     invite_url_template: str,
     cleanup_zitadel_user: CleanupInviteUser,
 ) -> None:
     from app.services.default_knowledge_bases import create_default_personal_kb
 
     failure_step = "portal_db"
-    reactivated_zitadel_user = False
+    reactivated_zitadel_user = reactivated_existing_zitadel_user
     try:
         if reactivated_membership is None:
             db.add(user_row)
@@ -446,6 +482,7 @@ async def invite_user(
 
     zitadel_user_created = False
     reactivated_membership: PortalUser | None = None
+    reactivated_existing_zitadel_user = False
     try:
         user_data = await zitadel.invite_user(
             org_id=settings.zitadel_portal_org_id,
@@ -472,6 +509,8 @@ async def invite_user(
         )
         zitadel_user_id = existing_identity.user_id
         reactivated_membership = existing_identity.membership
+        zitadel_user_created = existing_identity.created_new_zitadel_user
+        reactivated_existing_zitadel_user = existing_identity.reactivated_zitadel_user
     except Exception as exc:
         logger.exception("User invite failed for %s: %s", body.email, exc)
         raise HTTPException(
@@ -506,12 +545,22 @@ async def invite_user(
     # authorization. v0.1 hardcoded role="org:owner" for every invite — the
     # finding #10 time-bomb. v0.5.0 keeps the admin grant as before and
     # explicitly skips the Zitadel call for non-admins.
-    await _grant_invited_user_role(
-        body=body,
-        org=org,
-        zitadel_user_id=zitadel_user_id,
-        cleanup_zitadel_user=_cleanup_zitadel_user,
-    )
+    try:
+        await _grant_invited_user_role(
+            body=body,
+            org=org,
+            zitadel_user_id=zitadel_user_id,
+            cleanup_zitadel_user=_cleanup_zitadel_user,
+        )
+    except Exception:
+        await _restore_reactivated_zitadel_user_if_needed(
+            reactivated_zitadel_user=reactivated_existing_zitadel_user,
+            zitadel_user_id=zitadel_user_id,
+            email=str(body.email),
+            org_id=org.id,
+            failure_step="zitadel_grant",
+        )
+        raise
 
     # SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0: account-type is DERIVED
     # from role server-side. The Phase 2 ``body.seat_type`` override
@@ -568,6 +617,7 @@ async def invite_user(
         zitadel_user_id=zitadel_user_id,
         user_row=user_row,
         reactivated_membership=reactivated_membership,
+        reactivated_existing_zitadel_user=reactivated_existing_zitadel_user,
         invite_url_template=invite_url_template,
         cleanup_zitadel_user=_cleanup_zitadel_user,
     )

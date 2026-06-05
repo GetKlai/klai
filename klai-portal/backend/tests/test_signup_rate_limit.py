@@ -159,6 +159,7 @@ async def test_endpoint_returns_429_when_rate_limited() -> None:
     fake_zitadel.create_org = AsyncMock()  # tracked
 
     with (
+        patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
         patch(
             "app.api.signup.check_signup_email_rate_limit",
             AsyncMock(return_value=False),
@@ -173,6 +174,41 @@ async def test_endpoint_returns_429_when_rate_limited() -> None:
     assert exc_info.value.status_code == 429
     assert "Too many signup attempts" in str(exc_info.value.detail)
     assert exc_info.value.detail.endswith("try again.")  # type: ignore[union-attr]
+    fake_zitadel.create_org.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_password_policy_guard_blocks_before_rate_limit_and_zitadel() -> None:
+    """Signup policy drift should fail before rate-limit counters or Zitadel quota are touched."""
+    from fastapi import HTTPException
+
+    from app.api.signup import SignupRequest, signup
+    from app.services.password_policy_guard import PasswordPolicyGuardError
+
+    body = SignupRequest(
+        first_name="Eve",
+        last_name="User",
+        email="real-user@example.com",
+        password="Correct horse battery staple 2026!",
+        company_name="ACME",
+    )
+
+    guard = AsyncMock(side_effect=PasswordPolicyGuardError("drift"))
+    rate_limit = AsyncMock(return_value=True)
+    fake_zitadel = AsyncMock()
+    fake_zitadel.create_org = AsyncMock()
+
+    with (
+        patch("app.api.signup.assert_zitadel_password_policy_compatible", guard),
+        patch("app.api.signup.check_signup_email_rate_limit", rate_limit),
+        patch("app.api.signup.zitadel", fake_zitadel),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await signup(body=body, background_tasks=AsyncMock(), db=AsyncMock())
+
+    assert exc_info.value.status_code == 503
+    guard.assert_awaited_once()
+    rate_limit.assert_not_awaited()
     fake_zitadel.create_org.assert_not_called()
 
 
@@ -220,6 +256,7 @@ async def test_invited_signup_bypasses_email_rate_limit() -> None:
     fake_zitadel.create_org = AsyncMock(side_effect=RuntimeError("downstream-stub"))
 
     with (
+        patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
         patch("app.api.signup.check_signup_email_rate_limit", rate_limit),
         patch(
             "app.api.signup.verify_invite_token",
@@ -258,6 +295,7 @@ async def test_endpoint_passes_rate_limit_then_proceeds() -> None:
     fake_zitadel.create_org = AsyncMock(side_effect=RuntimeError("downstream-stub"))
 
     with (
+        patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
         patch(
             "app.api.signup.check_signup_email_rate_limit",
             AsyncMock(return_value=True),
