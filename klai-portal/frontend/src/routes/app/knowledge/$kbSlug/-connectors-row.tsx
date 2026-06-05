@@ -127,7 +127,7 @@ export function ConnectorRow({
             className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 px-2 py-1 text-xs font-medium text-[var(--color-destructive)] hover:bg-[var(--color-destructive)]/10 transition-colors"
           >
             <AlertTriangle className="h-3 w-3" />
-            Needs reconfiguration
+            {m.admin_connectors_needs_reconfiguration()}
           </button>
         )}
       </DataTableCell>
