@@ -139,16 +139,55 @@ async def test_reset_flow_4xx_invalid_code() -> None:
 
 @pytest.mark.asyncio
 async def test_invite_flow_password_step_5xx() -> None:
-    """invite_code/verify 200 -> update-user password 502 -> propagate 502."""
+    """invite_code/verify 200 -> password 502 reissues invite before propagating."""
     client = _client_with_mocked_http()
     client._http.post = AsyncMock(
         side_effect=[
             _resp(200, {"details": {"sequence": "11"}}),
+            _resp(200, {"details": {"sequence": "12"}}),
         ]
     )
     client._http.patch = AsyncMock(return_value=_resp(502, {"error": "bad gw"}))
 
     with pytest.raises(httpx.HTTPStatusError) as exc:
-        await client.set_password_with_code("uid-1", "INVITE", "NewSecret123!")
+        await client.set_password_with_code(
+            "uid-1",
+            "INVITE",
+            "NewSecret123!",
+            invite_retry_url_template="https://my.getklai.com/password/set?userID={{.UserID}}&code={{.Code}}",
+        )
     assert exc.value.response.status_code == 502
     client._http.patch.assert_awaited_once()
+    assert client._http.post.await_count == 2
+    reissue = client._http.post.await_args_list[1]
+    assert reissue.args[0] == "/v2/users/uid-1/invite_code"
+    assert reissue.kwargs["json"] == {
+        "sendCode": {
+            "urlTemplate": "https://my.getklai.com/password/set?userID={{.UserID}}&code={{.Code}}",
+            "applicationName": "Klai",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_invite_flow_password_step_5xx_preserves_original_error_when_reissue_fails() -> None:
+    """Invite reissue is best-effort; the caller still sees the original PATCH failure."""
+    client = _client_with_mocked_http()
+    client._http.post = AsyncMock(
+        side_effect=[
+            _resp(200, {"details": {"sequence": "11"}}),
+            _resp(503, {"error": "invite unavailable"}),
+        ]
+    )
+    client._http.patch = AsyncMock(return_value=_resp(502, {"error": "bad gw"}))
+
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        await client.set_password_with_code(
+            "uid-1",
+            "INVITE",
+            "NewSecret123!",
+            invite_retry_url_template="https://my.getklai.com/password/set?userID={{.UserID}}&code={{.Code}}",
+        )
+
+    assert exc.value.response.status_code == 502
+    assert client._http.post.await_count == 2

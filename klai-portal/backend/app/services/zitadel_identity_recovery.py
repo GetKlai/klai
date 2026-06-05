@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 import structlog
@@ -25,6 +26,10 @@ class InviteIdentityRecoveryResult:
     user_id: str
     created_new_user: bool = False
     reactivated_existing_user: bool = False
+
+
+def email_hash_for_log(email: str) -> str:
+    return hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
 
 
 def _extract_zitadel_user_state(user_response: dict) -> str:
@@ -93,7 +98,7 @@ async def recover_existing_zitadel_identity_for_invite(
             "invite_dangling_zitadel_user_recreated",
             old_zitadel_user_id=zitadel_user_id,
             new_zitadel_user_id=new_user_id,
-            email=email,
+            email_hash=email_hash_for_log(email),
             org_id=org_id,
             previous_state=state,
         )
@@ -103,7 +108,7 @@ async def recover_existing_zitadel_identity_for_invite(
         _slog.error(
             "invite_existing_zitadel_user_initial_state_blocked",
             zitadel_user_id=zitadel_user_id,
-            email=email,
+            email_hash=email_hash_for_log(email),
             org_id=org_id,
             memberships=membership_summary.total_count,
         )
@@ -122,7 +127,7 @@ async def recover_existing_zitadel_identity_for_invite(
     _slog.info(
         "invite_existing_zitadel_user_unlocked",
         zitadel_user_id=zitadel_user_id,
-        email=email,
+        email_hash=email_hash_for_log(email),
         org_id=org_id,
         previous_state=state,
     )

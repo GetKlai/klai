@@ -53,14 +53,41 @@ Expected response:
 
 ## Rollback
 
-If the portal deploy must be rolled back, roll back the portal image first. If
-Zitadel also needs to be restored to the previous production policy, set:
+Rolling the portal image back across this change is not a plain app rollback.
+Older portal builds validated shorter passwords locally. If those builds run
+while Zitadel still requires `minLength: 15`, a user can submit a password that
+old Klai accepts, have the one-time invite code consumed, and then be rejected
+by Zitadel. That recreates the original stuck-invite failure mode.
 
-- `minLength`: `8`
+If you must roll back to a pre-modern-policy portal image, first set Zitadel to
+a policy that is no stricter than the rollback image validates locally. For the
+pre-2026-06-05 production portal that means:
+
+- `minLength`: `12` or lower
 - `hasUppercase`: `true`
 - `hasLowercase`: `true`
 - `hasNumber`: `true`
 - `hasSymbol`: `true`
 
-Do not leave a new portal image running against the old Zitadel policy: the
-startup guard will reject that configuration.
+Then verify the old portal's public contract after rollback:
+
+```bash
+curl -fsS https://my.getklai.com/api/auth/password-policy
+```
+
+Never run:
+
+- a new portal image against old stricter composition policy; the startup guard
+  rejects this and the portal API can crashloop by design.
+- an old portal image against the new `minLength: 15` Zitadel policy; that can
+  consume invite links before Zitadel rejects the password.
+
+Before any rollback, verify the current policy compatibility so the operator
+knows which side of the deploy/rollback boundary they are on:
+
+```bash
+cd klai-portal/backend
+export ZITADEL_ADMIN_PAT=...
+export ZITADEL_BASE_URL=https://auth.getklai.com
+uv run python scripts/update_zitadel_password_policy.py
+```
