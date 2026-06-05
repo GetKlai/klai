@@ -4761,6 +4761,275 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert final["choices"][0]["delta"] == {"content": ""}
 
 
+# ─── 2026-06-05: Open mode is open-with-KB-fallback ─────────────────────────
+
+
+class TestKlaiKnowledgeHookOpenMode:
+    def _system_msg(self, result: dict) -> str:
+        msgs = [m for m in result["messages"] if m["role"] == "system"]
+        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
+        return msgs[0]["content"]
+
+    def _assert_open_kb_foundation(self, sys_content: str) -> None:
+        assert "knowledge assistant in Open mode" in sys_content
+        assert "Open mode is not KB-only" in sys_content
+        assert "Don't guess. Don't fill the gap with general knowledge." not in sys_content
+
+    def _assert_general_foundation(self, sys_content: str) -> None:
+        assert "general-purpose assistant" in sys_content
+        assert "Do NOT add [n] citations" in sys_content
+        assert "Don't guess. Don't fill the gap with general knowledge." not in sys_content
+
+    def _assert_strict_no_kb_refusal(self, sys_content: str, reason: str) -> None:
+        assert "You are Klai AI, a knowledge assistant" in sys_content
+        assert "The user selected Strict mode" in sys_content
+        assert "do not answer from general knowledge" in sys_content
+        assert reason in sys_content
+        assert "general-purpose assistant" not in sys_content
+
+    @pytest.fixture
+    def _kb_chunks(self) -> list[dict]:
+        return [
+            {
+                "text": "Klai verwerkt klantvragen via opgehaalde kennisbankfragmenten.",
+                "scope": "org",
+                "metadata": {"title": "Klai privacy"},
+                "source_url": "https://docs.klai.example/privacy",
+                "chunk_id": "open-hit-1",
+                "reranker_score": 0.88,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_open_with_kb_hits_uses_open_kb_foundation(self, monkeypatch, _kb_chunks):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Hoe werkt privacy in Klai?"}],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": _kb_chunks, "retrieval_bypassed": False, "confidence_band": "high"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        self._assert_open_kb_foundation(sys_content)
+        assert "Klai Knowledge Base — use this as supplementary context" in sys_content
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["kb_narrow"] is False
+        assert meta["chunks_injected"] == 1
+        assert meta["citable_sources_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_open_retrieval_bypassed_uses_open_foundation(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat is een goede aanpak?"}],
+        }
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": True})
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        self._assert_open_kb_foundation(self._system_msg(result))
+        assert result["metadata"]["_klai_kb_meta"]["gate_bypassed"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_entitlement_uses_general_prompt_not_grounded(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=False)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+        }
+
+        result = await hook.async_pre_call_hook(
+            _make_user_api_key(), cache, data, "completion"
+        )
+
+        self._assert_general_foundation(self._system_msg(result))
+
+    @pytest.mark.asyncio
+    async def test_strict_no_entitlement_refuses_instead_of_becoming_open(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"enabled": False, "kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+        }
+
+        result = await hook.async_pre_call_hook(
+            _make_user_api_key(), cache, data, "completion"
+        )
+
+        self._assert_strict_no_kb_refusal(self._system_msg(result), "kb-feature-disabled")
+
+    @pytest.mark.asyncio
+    async def test_kb_retrieval_disabled_uses_general_prompt_not_grounded(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_retrieval_enabled": False})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+        }
+
+        with _patch_http(monkeypatch, retrieval_resp=_make_resp({})) as mock_client:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        self._assert_general_foundation(self._system_msg(result))
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_strict_retrieval_disabled_refuses_without_retrieving(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_retrieval_enabled": False, "kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+        }
+
+        with _patch_http(monkeypatch, retrieval_resp=_make_resp({})) as mock_client:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        self._assert_strict_no_kb_refusal(self._system_msg(result), "kb-retrieval-disabled")
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_strict_all_scopes_disabled_refuses_without_retrieving(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "kb_narrow": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+            }
+        )
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+        }
+
+        with _patch_http(monkeypatch, retrieval_resp=_make_resp({})) as mock_client:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        self._assert_strict_no_kb_refusal(self._system_msg(result), "kb-scopes-disabled")
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_open_zero_chunks_after_kb_use_allows_general_follow_up(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat zegt de kennisbank over privacy?"},
+                {
+                    "role": "assistant",
+                    "content": "De kennisbank noemt bewaartermijnen.\n\n**Bronnen**\n- Privacybeleid",
+                },
+                {"role": "user", "content": "Maak nu een algemene implementatiehandleiding."},
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False, "confidence_band": "low"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        self._assert_open_kb_foundation(sys_content)
+        assert "Klai Knowledge Base — zero results" in sys_content
+        assert "may answer from your general knowledge" in sys_content.lower()
+        assert "do not answer from general knowledge" not in sys_content.lower()
+        assert result["metadata"]["_klai_kb_meta"]["no_citable_sources"] is False
+
+    @pytest.mark.asyncio
+    async def test_open_low_confidence_injection_stays_open(self, monkeypatch, _kb_chunks):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": _kb_chunks, "retrieval_bypassed": False, "confidence_band": "low"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "lage relevantie in Open modus" in sys_content
+        assert "Je mag algemene kennis gebruiken" in sys_content
+        assert "Citeer alleen wat letterlijk in de chunks staat" not in sys_content
+        self._assert_open_kb_foundation(sys_content)
+
+    @pytest.mark.asyncio
+    async def test_strict_low_confidence_injection_remains_strict(
+        self, monkeypatch, _kb_chunks
+    ):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": _kb_chunks, "retrieval_bypassed": False, "confidence_band": "low"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "Klai retrieval — lage relevantie" in sys_content
+        assert "Citeer alleen wat letterlijk in de chunks staat" in sys_content
+        assert "lage relevantie in Open modus" not in sys_content
+        assert "answer strictly using only the sources below" in sys_content
+
+
 # ─── 2026-05-27: Open/Strict mode zero-chunks behaviour ─────────────────────
 #
 # Bug discovered when Jantine pointed at the ChatConfigBar Modus toggle and
