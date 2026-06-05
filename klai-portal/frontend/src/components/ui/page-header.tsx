@@ -34,4 +34,14 @@ function PageHeader({ title, description, actions, className, ...props }: PageHe
   )
 }
 
-export { PageHeader }
+// Longer explanatory copy that belongs below the PageHeader, not in the short
+// `description` subtitle. Plain text, no card. Use this when a list/overview
+// page needs to explain the feature before the list (the /app/instructions
+// pattern). Keep the PageHeader `description` to a short subtitle and move the
+// real explanation here. Body text is `text-gray-600` (more readable than the
+// gray-400 subtitle); paragraphs are separated with `space-y-3`.
+function PageIntro({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn('space-y-3 text-sm text-gray-600', className)} {...props} />
+}
+
+export { PageHeader, PageIntro }

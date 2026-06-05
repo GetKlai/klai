@@ -39,7 +39,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | Component | Purpose | Canonical? |
 |---|---|---|
 | `button` | All buttons (variants: default/secondary/ghost/outline/destructive; sizes: default/sm/icon) | Yes |
-| `page-header` | Page title, description/count, and right-aligned page action (`PageHeader`) | Yes |
+| `page-header` | Page title, short subtitle/count, and right-aligned page action (`PageHeader`); longer explanatory copy below the header uses `PageIntro` | Yes |
 | `badge` | Inline status labels (secondary/success/warning/destructive/outline) | Yes |
 | `action-tag` | Compact open/closed action-state tag (`ActionTag`, states: `open`, `closed`) | Yes |
 | `input` `select` `textarea` `label` `checkbox` | Form controls | Yes |
@@ -110,11 +110,11 @@ of that content width, not the viewport, and sits on the title row so the
 primary page action reads as part of the page heading.
 
 ```tsx
-import { PageHeader } from '@/components/ui/page-header'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 
 <PageHeader
   title={title}
-  description={countLabel}
+  description={shortSubtitle}   // short — a count or one-line subtitle
   actions={
     <Button size="sm" onClick={onCreate}>
       {createLabel}
@@ -127,6 +127,34 @@ Do not hand-roll page headers with local `flex justify-between` unless the
 page has a genuinely custom layout. If the action appears visually detached
 from the title or from the right edge of the list/table, use `PageHeader` and
 adjust the page container width instead of adding local offsets.
+
+### Description length and `PageIntro`
+
+The `description` is a SHORT subtitle: a count or a single line. It sits below
+the title and is muted (`text-gray-400`). When a primary action is present,
+`PageHeader` caps it at `sm:max-w-[60%]` of the header width so the subtitle
+never runs under the right-aligned action — keep it short and this cap is
+never reached.
+
+When a list/overview page needs to actually explain the feature before the
+list, do NOT stretch the subtitle. Put the explanation in a `PageIntro` block
+below the header — plain text, no card, slightly more readable
+(`text-gray-600`) than the subtitle, with `space-y-3` between paragraphs. This
+is the `/app/instructions` pattern: title + short subtitle + action, then an
+intro body.
+
+```tsx
+<PageHeader title={title} description={shortSubtitle} actions={action} />
+
+<PageIntro>
+  <p>{introBody}</p>
+  <p>{introExamplesOrInvocation}</p>
+</PageIntro>
+```
+
+`PageIntro` is **optional** — only add it when the page genuinely needs more
+than a one-line subtitle. Pages with a self-explanatory list (e.g. groups,
+users) use only the short subtitle.
 
 ## Back Actions
 
@@ -603,7 +631,8 @@ Rules:
 Use:
 
 - `text-gray-900` for primary text.
-- `text-gray-400` for muted descriptions/metadata.
+- `text-gray-600` for explanatory body copy below a header (`PageIntro`).
+- `text-gray-400` for muted descriptions/metadata (the `PageHeader` subtitle).
 - `border-gray-200` for borders.
 - `klai-hover` for interactive hover states.
 - `var(--color-success)`, `var(--color-warning)`, `var(--color-destructive)`
