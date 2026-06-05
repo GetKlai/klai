@@ -6,6 +6,15 @@ import { Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  ListFrame,
+  ListRow,
+  ListRowActions,
+  ListRowContent,
+  ListRowTitle,
+} from '@/components/ui/list'
+import { PageHeader } from '@/components/ui/page-header'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -88,6 +97,8 @@ function SettingsTab() {
 
   return (
     <div className="space-y-6">
+      <PageHeader title={m.kb_tab_settings()} />
+
       {/* General settings */}
       <div className="space-y-2">
         <h2 className="text-sm font-semibold text-gray-900">
@@ -118,13 +129,13 @@ function SettingsTab() {
 
           <div className="space-y-1.5">
             <Label htmlFor="kb-description">{m.knowledge_settings_description_label()}</Label>
-            <textarea
+            <Textarea
               id="kb-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               disabled={!isOwner}
               rows={3}
-              className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+              className="resize-none"
             />
           </div>
 
@@ -163,7 +174,7 @@ function SettingsTab() {
           )}
           {!isOwner && (
             <p className="text-xs text-gray-400 pt-2">
-              Alleen de eigenaar of een admin kan deze velden wijzigen.
+              {m.knowledge_settings_readonly_notice()}
             </p>
           )}
         </form>
@@ -172,17 +183,21 @@ function SettingsTab() {
       {/* Members */}
       {members && members.users.length > 0 && (
         <div className="space-y-2 border-t border-gray-200 pt-6">
-          <h2 className="text-sm font-semibold text-gray-900">Leden</h2>
-          <div className="border-t border-b border-gray-200 divide-y divide-gray-200">
+          <h2 className="text-sm font-semibold text-gray-900">
+            {m.knowledge_settings_members_heading()}
+          </h2>
+          <ListFrame>
             {members.users.map((u) => (
-              <div key={u.user_id} className="flex items-center justify-between gap-3 py-2.5 px-2">
-                <span className="text-sm text-gray-900 truncate">
-                  {u.email || u.user_id}
-                </span>
-                <span className="text-xs text-gray-400 capitalize shrink-0">{u.role}</span>
-              </div>
+              <ListRow key={u.user_id} className="items-center px-4 py-3">
+                <ListRowContent>
+                  <ListRowTitle>{u.email || u.user_id}</ListRowTitle>
+                </ListRowContent>
+                <ListRowActions>
+                  <span className="text-xs text-gray-400 capitalize shrink-0">{u.role}</span>
+                </ListRowActions>
+              </ListRow>
             ))}
-          </div>
+          </ListFrame>
         </div>
       )}
 

@@ -13,6 +13,7 @@
  */
 import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import type { TaxonomyCoverage } from '../-kb-types'
 import { CoverageNodeRow } from './CoverageNodeRow'
@@ -79,17 +80,18 @@ export function CoverageWidget({
         ) : (
           onSuggest && total >= SUGGEST_MIN_CHUNKS && (
             <div className="space-y-1.5">
-              <button
+              <Button
                 type="button"
+                size="sm"
                 onClick={onSuggest}
                 disabled={isSuggesting}
-                className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-gray-900 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                className="h-7 rounded-full px-2.5 text-xs"
               >
                 {isSuggesting
                   ? <><Loader2 className="h-3 w-3 animate-spin" />{m.knowledge_taxonomy_suggest_generating()}</>
                   : <><Sparkles className="h-3 w-3" />{m.knowledge_taxonomy_suggest_categories()}</>
                 }
-              </button>
+              </Button>
               {isSuggesting && (
                 <p className="text-xs text-gray-400">
                   {m.knowledge_taxonomy_suggest_loading_hint()}
@@ -160,36 +162,39 @@ export function CoverageWidget({
               ) : (
                 <>
                   {showMissingCategorizeInUntagged && (
-                    <button
+                    <Button
                       type="button"
+                      size="sm"
                       onClick={() => {
                         if (!isMissingActionBusy) onCategorizeMissing?.()
                       }}
                       disabled={isMissingActionBusy}
-                      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-gray-900 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                      className="h-6 rounded-full px-1.5 text-xs"
                     >
                       {isCategorizingMissing
                         ? <Loader2 className="h-3 w-3 animate-spin" />
                         : <Sparkles className="h-3 w-3" />
                       }
                       {m.knowledge_taxonomy_retag()}
-                    </button>
+                    </Button>
                   )}
                   {showAiSuggestInUntagged && (
-                    <button
+                    <Button
                       type="button"
+                      size="sm"
+                      variant="outline"
                       onClick={() => {
                         if (!isSuggesting) onSuggest?.()
                       }}
                       disabled={isSuggesting}
-                      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium border border-gray-200 bg-white text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50"
+                      className="h-6 rounded-full px-1.5 text-xs"
                     >
                       {isSuggesting
                         ? <Loader2 className="h-3 w-3 animate-spin" />
                         : <Sparkles className="h-3 w-3" />
                       }
                       {m.knowledge_taxonomy_suggest_new_categories()}
-                    </button>
+                    </Button>
                   )}
                 </>
               )}

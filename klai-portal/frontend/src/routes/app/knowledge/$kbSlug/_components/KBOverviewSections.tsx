@@ -59,9 +59,11 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
               <span className="text-sm text-gray-900">{docsLabel}</span>
             </div>
             {kb.gitea_repo_slug && (
-              <Link to="/app/docs/$kbSlug" params={{ kbSlug: kb.slug }} >
-                <Button variant="outline" size="sm">{m.knowledge_detail_view_in_docs()}</Button>
-              </Link>
+              <Button asChild variant="outline" size="sm">
+                <Link to="/app/docs/$kbSlug" params={{ kbSlug: kb.slug }}>
+                  {m.knowledge_detail_view_in_docs()}
+                </Link>
+              </Button>
             )}
           </div>
         )}

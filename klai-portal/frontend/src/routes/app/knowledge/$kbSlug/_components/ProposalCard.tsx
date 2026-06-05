@@ -16,6 +16,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import type { TaxonomyProposal } from '../-kb-types'
 
@@ -132,12 +133,12 @@ export function ProposalCard({
                   className="h-7 text-sm font-medium"
                   autoFocus
                 />
-                <textarea
+                <Textarea
                   value={editingDescription}
                   onChange={(e) => setEditingDescription(e.target.value)}
                   placeholder={m.knowledge_taxonomy_proposals_edit_description_placeholder()}
                   rows={2}
-                  className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-900 resize-y"
+                  className="resize-y text-xs"
                 />
                 <div className="flex items-center gap-2">
                   <Button
