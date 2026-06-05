@@ -33,11 +33,32 @@ def test_orchestrator_exposes_mistral_model_profile_metadata(monkeypatch):
     assert meta["orchestrator"] == "klai_context"
     assert meta["provider"] == "mistral"
     assert meta["requested_model"] == "klai-large"
-    assert meta["profile_selection_phase"] == "pre_router_litellm_callback"
+    assert meta["final_model"] == "klai-large"
+    assert meta["profile_selection_phase"] == "requested_model"
     assert meta["model_profile"] == "klai-large"
     assert meta["upstream_model"] == "mistral-large-2512"
+    assert meta["token_counter_model"] == "mistral/mistral-large-2512"
     assert meta["history_budget_chars"] == 2000
+    assert meta["history_budget_tokens"] == 12000
     assert meta["output_reserve_chars"] == 48000
+    assert meta["output_reserve_tokens"] == 12000
+
+
+def test_orchestrator_uses_final_model_profile_after_router(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [{"role": "user", "content": "Hallo"}],
+        requested_model="klai-primary",
+        final_model="klai-large",
+    )
+
+    assert result.meta["requested_model"] == "klai-primary"
+    assert result.meta["final_model"] == "klai-large"
+    assert result.meta["profile_selection_phase"] == "post_router_final_model"
+    assert result.meta["model_profile"] == "klai-large"
+    assert result.meta["history_budget_chars"] == 2000
 
 
 def test_orchestrator_normalizes_text_parts_and_omits_stale_upload(monkeypatch):

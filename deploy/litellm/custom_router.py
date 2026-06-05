@@ -28,6 +28,8 @@ tool call results), so the two signals are distinct with no overlap.
 import re
 from litellm.integrations.custom_logger import CustomLogger
 import litellm
+from klai_context import KlaiContextOrchestrator
+import logging
 
 # URL count in a single message that indicates scraped web content
 MIN_SEARCH_URLS = 3
@@ -40,6 +42,11 @@ SEARCH_TOKEN_THRESHOLD = 3000
 USER_MESSAGE_THRESHOLD = 300
 
 _URL_RE = re.compile(r"https?://\S+")
+logger = logging.getLogger("custom_router")
+KLAI_CHAT_MODELS = frozenset(
+    {"klai-primary", "klai-fast", "klai-large", "klai-medium"}
+)
+_KLAI_CONTEXT_ORCHESTRATOR = KlaiContextOrchestrator()
 
 
 def _has_tool_calls(messages: list) -> bool:
@@ -65,54 +72,114 @@ def _looks_like_search(messages: list) -> bool:
     return False
 
 
+def _context_meta_has_tool_history(metadata: dict) -> bool:
+    context_meta = metadata.get("_klai_context_meta")
+    if not isinstance(context_meta, dict):
+        return False
+    return bool(
+        context_meta.get("omitted_tool_messages")
+        or context_meta.get("omitted_tool_content_parts")
+    )
+
+
 class TokenRouter(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
-        if data.get("model") != "klai-primary":
+        if call_type not in ("completion", "acompletion"):
+            return data
+
+        requested_model = data.get("model")
+        if requested_model not in KLAI_CHAT_MODELS:
             return data
 
         messages = data.get("messages") or []
         if not messages:
             return data
 
+        metadata = data.setdefault("metadata", {})
+        final_model = requested_model
+        route_reason = "explicit_model"
+        last_user_tokens: int | None = None
+        total_tokens: int | None = None
         try:
-            # Agentic/MCP flow: tool call history → mistral-large
-            if _has_tool_calls(messages):
-                data["model"] = "klai-large"
-                return data
+            if requested_model == "klai-primary":
+                # Agentic/MCP flow: tool call history → mistral-large. The
+                # knowledge hook may already have stripped provider-unsafe tool
+                # roles, so also honor its retained context metadata.
+                if _has_tool_calls(messages) or _context_meta_has_tool_history(metadata):
+                    final_model = "klai-large"
+                    route_reason = "tool_history"
+                else:
+                    # Long user message → complex analytical request → klai-large.
+                    # Only the last user message is counted so KB chunks injected by
+                    # klai_knowledge_hook (role=system/assistant) don't trigger this.
+                    last_user = next(
+                        (m for m in reversed(messages) if m.get("role") == "user"), None
+                    )
+                    if last_user:
+                        last_user_tokens = litellm.token_counter(
+                            model="mistral/mistral-small-latest",
+                            messages=[last_user],
+                        )
+                    if last_user_tokens and last_user_tokens > USER_MESSAGE_THRESHOLD:
+                        final_model = "klai-large"
+                        route_reason = "long_user_message"
+                    elif _looks_like_search(messages):
+                        final_model = "klai-fast"
+                        route_reason = "web_search_content"
+                    elif metadata.get("_klai_kb_meta"):
+                        final_model = requested_model
+                        route_reason = "kb_context"
+                    else:
+                        # Safety net: very long context without tool calls → klai-fast
+                        total_tokens = litellm.token_counter(
+                            model="mistral/mistral-small-latest",
+                            messages=messages,
+                        )
+                        if total_tokens > SEARCH_TOKEN_THRESHOLD:
+                            final_model = "klai-fast"
+                            route_reason = "long_context_safety_net"
+                        else:
+                            route_reason = "default"
+        except Exception:
+            final_model = requested_model
+            route_reason = "routing_error"
 
-            # Long user message → complex analytical request → mistral-large.
-            # Only the last user message is counted so KB chunks injected by
-            # klai_knowledge_hook (role=system/assistant) don't trigger this.
-            last_user = next(
-                (m for m in reversed(messages) if m.get("role") == "user"), None
+        data["model"] = final_model
+        metadata["_klai_router_meta"] = {
+            "requested_model": requested_model,
+            "final_model": final_model,
+            "route_reason": route_reason,
+            "last_user_tokens": last_user_tokens,
+            "total_tokens": total_tokens,
+            "provider_context_phase": "post_router",
+        }
+
+        context_result = _KLAI_CONTEXT_ORCHESTRATOR.assemble(
+            data.get("messages"),
+            requested_model=requested_model,
+            final_model=final_model,
+            token_counter=litellm.token_counter,
+        )
+        data["messages"] = context_result.messages
+        previous_context_meta = metadata.get("_klai_context_meta") or {}
+        metadata["_klai_context_meta"] = {
+            **previous_context_meta,
+            **context_result.meta,
+            "pre_router_meta": previous_context_meta,
+        }
+        try:
+            logger.info(
+                "klai_router_final_model requested_model=%s final_model=%s "
+                "route_reason=%s model_profile=%s token_budget_applied=%s "
+                "omitted_history_messages=%d omitted_tool_messages=%d",
+                requested_model,
+                final_model,
+                route_reason,
+                context_result.meta["model_profile"],
+                context_result.meta["token_budget_applied"],
+                context_result.meta["omitted_history_messages"],
+                context_result.meta["omitted_tool_messages"],
             )
-            if last_user:
-                user_tokens = litellm.token_counter(
-                    model="mistral/mistral-small-latest",
-                    messages=[last_user],
-                )
-                if user_tokens > USER_MESSAGE_THRESHOLD:
-                    data["model"] = "klai-large"
-                    return data
-
-            # Web search: scraped content → klai-fast
-            if _looks_like_search(messages):
-                data["model"] = "klai-fast"
-                return data
-
-            # KB-context present → never downgrade regardless of token count.
-            # KB chunks are compact and pre-ranked; the safety-net is for scraped
-            # web content, not knowledge base context.
-            if data.get("metadata", {}).get("_klai_kb_meta"):
-                return data
-
-            # Safety net: very long context without tool calls → klai-fast
-            token_count = litellm.token_counter(
-                model="mistral/mistral-small-latest",
-                messages=messages,
-            )
-            if token_count > SEARCH_TOKEN_THRESHOLD:
-                data["model"] = "klai-fast"
         except Exception:
             pass
 
