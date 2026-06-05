@@ -294,6 +294,8 @@ async def test_invite_user_reuses_existing_global_zitadel_user() -> None:
     ):
         mock_zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
         mock_zitadel.find_user_id_by_email = AsyncMock(return_value="existing-user")
+        mock_zitadel.get_user_by_id = AsyncMock(return_value={"user": {"state": "USER_STATE_ACTIVE"}})
+        mock_zitadel.unlock_user = AsyncMock()
         mock_zitadel.send_invite_code = AsyncMock()
         mock_zitadel.remove_user = AsyncMock()
         mock_zitadel.grant_user_role = AsyncMock()
@@ -305,6 +307,7 @@ async def test_invite_user_reuses_existing_global_zitadel_user() -> None:
         "existing-user",
         url_template=ANY,
     )
+    mock_zitadel.unlock_user.assert_not_awaited()
     mock_zitadel.remove_user.assert_not_awaited()
     assert response.user_id == "existing-user"
     assert response.message == "Gebruiker existing@example.com toegevoegd aan deze workspace."
@@ -352,6 +355,8 @@ async def test_invite_user_reused_global_user_mail_failure_does_not_delete_ident
     ):
         mock_zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
         mock_zitadel.find_user_id_by_email = AsyncMock(return_value="existing-user")
+        mock_zitadel.get_user_by_id = AsyncMock(return_value={"user": {"state": "USER_STATE_ACTIVE"}})
+        mock_zitadel.unlock_user = AsyncMock()
         mock_zitadel.send_invite_code = AsyncMock(side_effect=RuntimeError("mailer down"))
         mock_zitadel.remove_user = AsyncMock()
         mock_zitadel.grant_user_role = AsyncMock()
@@ -360,8 +365,227 @@ async def test_invite_user_reused_global_user_mail_failure_does_not_delete_ident
             await invite_user(body=body, perms=perms, db=mock_db)
 
     assert exc_info.value.status_code == 502
+    mock_zitadel.unlock_user.assert_not_awaited()
     mock_zitadel.remove_user.assert_not_awaited()
     mock_db.rollback.assert_awaited_once()
+    mock_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invite_user_recreates_dangling_global_identity_without_membership() -> None:
+    """Legacy dangling Zitadel identities must be replaced before re-invite."""
+    from app.api.admin.users import InviteRequest, invite_user
+    from app.core.config import settings
+    from app.models.portal import PortalUser
+    from app.services.user_memberships import UserMembershipSummary
+
+    org = MagicMock()
+    org.id = 101
+    org.plan = "knowledge"
+
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none.return_value = None
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[locked_org_result, membership_result])
+
+    added_users: list[PortalUser] = []
+
+    def _record_add(row):
+        if isinstance(row, PortalUser):
+            added_users.append(row)
+
+    mock_db.add = MagicMock(side_effect=_record_add)
+
+    body = InviteRequest(
+        email="dangling@example.com",
+        first_name="Dangling",
+        last_name="User",
+        role="company",
+        preferred_language="nl",
+    )
+    perms = make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge")
+
+    call_order: list[str] = []
+
+    async def _record_remove(*_args, **_kwargs):
+        call_order.append("remove")
+
+    async def _record_send_invite(*_args, **_kwargs):
+        call_order.append("send_invite")
+
+    async def _record_commit(*_args, **_kwargs):
+        call_order.append("commit")
+
+    mock_db.commit = AsyncMock(side_effect=_record_commit)
+
+    with (
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.default_knowledge_bases.create_default_personal_kb",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.zitadel_identity_recovery.get_user_membership_summary",
+            new=AsyncMock(
+                return_value=UserMembershipSummary(total_count=0, remaining_count=0, is_platform_admin=False)
+            ),
+        ),
+    ):
+        mock_zitadel.invite_user = AsyncMock(side_effect=[_http_error(409), {"userId": "fresh-user"}])
+        mock_zitadel.find_user_id_by_email = AsyncMock(return_value="dangling-user")
+        mock_zitadel.get_user_by_id = AsyncMock(return_value={"user": {"state": "USER_STATE_INITIAL"}})
+        mock_zitadel.unlock_user = AsyncMock()
+        mock_zitadel.send_invite_code = AsyncMock(side_effect=_record_send_invite)
+        mock_zitadel.remove_user = AsyncMock(side_effect=_record_remove)
+        mock_zitadel.grant_user_role = AsyncMock()
+
+        response = await invite_user(body=body, perms=perms, db=mock_db)
+
+    assert response.user_id == "fresh-user"
+    assert response.message == "Uitnodiging verstuurd naar dangling@example.com."
+    assert [user.zitadel_user_id for user in added_users] == ["fresh-user"]
+    assert call_order == ["remove", "send_invite", "commit"]
+    mock_zitadel.remove_user.assert_awaited_once_with(
+        org_id=settings.zitadel_portal_org_id,
+        zitadel_user_id="dangling-user",
+    )
+    mock_zitadel.invite_user.assert_any_await(
+        org_id=settings.zitadel_portal_org_id,
+        email="dangling@example.com",
+        first_name="Dangling",
+        last_name="User",
+        preferred_language="nl",
+    )
+    mock_zitadel.unlock_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invite_user_initial_global_identity_with_membership_fails_loudly() -> None:
+    """INITIAL identities with other memberships cannot be safely reused or deleted."""
+    from fastapi import HTTPException
+
+    from app.api.admin.users import InviteRequest, invite_user
+    from app.services.user_memberships import UserMembershipSummary
+
+    org = MagicMock()
+    org.id = 101
+    org.plan = "knowledge"
+
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none.return_value = None
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[locked_org_result, membership_result])
+    mock_db.add = MagicMock()
+
+    body = InviteRequest(
+        email="stuck@example.com",
+        first_name="Stuck",
+        last_name="User",
+        role="company",
+        preferred_language="nl",
+    )
+
+    with (
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.zitadel_identity_recovery.get_user_membership_summary",
+            new=AsyncMock(
+                return_value=UserMembershipSummary(total_count=1, remaining_count=1, is_platform_admin=False)
+            ),
+        ),
+    ):
+        mock_zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
+        mock_zitadel.find_user_id_by_email = AsyncMock(return_value="stuck-user")
+        mock_zitadel.get_user_by_id = AsyncMock(return_value={"user": {"state": "USER_STATE_INITIAL"}})
+        mock_zitadel.unlock_user = AsyncMock()
+        mock_zitadel.send_invite_code = AsyncMock()
+        mock_zitadel.remove_user = AsyncMock()
+        mock_zitadel.grant_user_role = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await invite_user(
+                body=body,
+                perms=make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge"),
+                db=mock_db,
+            )
+
+    assert exc_info.value.status_code == 502
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_not_awaited()
+    mock_zitadel.unlock_user.assert_not_awaited()
+    mock_zitadel.remove_user.assert_not_awaited()
+    mock_zitadel.send_invite_code.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invite_user_restores_unlocked_existing_identity_when_grant_fails() -> None:
+    from fastapi import HTTPException
+
+    from app.api.admin.users import InviteRequest, invite_user
+    from app.core.config import settings
+    from app.services.user_memberships import UserMembershipSummary
+
+    org = MagicMock()
+    org.id = 101
+    org.plan = "knowledge"
+
+    locked_org_result = MagicMock()
+    locked_org_result.scalar_one.return_value = org
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none.return_value = None
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[locked_org_result, membership_result])
+    mock_db.add = MagicMock()
+
+    body = InviteRequest(
+        email="locked-admin@example.com",
+        first_name="Locked",
+        last_name="Admin",
+        role="admin",
+        preferred_language="nl",
+    )
+
+    with (
+        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch(
+            "app.services.zitadel_identity_recovery.get_user_membership_summary",
+            new=AsyncMock(
+                return_value=UserMembershipSummary(total_count=1, remaining_count=1, is_platform_admin=False)
+            ),
+        ),
+    ):
+        mock_zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
+        mock_zitadel.find_user_id_by_email = AsyncMock(return_value="locked-admin")
+        mock_zitadel.get_user_by_id = AsyncMock(return_value={"user": {"state": "USER_STATE_INACTIVE"}})
+        mock_zitadel.unlock_user = AsyncMock()
+        mock_zitadel.grant_user_role = AsyncMock(side_effect=RuntimeError("grant down"))
+        mock_zitadel.deactivate_user = AsyncMock()
+        mock_zitadel.remove_user = AsyncMock()
+        mock_zitadel.send_invite_code = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await invite_user(
+                body=body,
+                perms=make_perms(role="admin", user_id="admin-1", org_id=101, plan="knowledge"),
+                db=mock_db,
+            )
+
+    assert exc_info.value.status_code == 502
+    mock_zitadel.unlock_user.assert_awaited_once_with(
+        zitadel_user_id="locked-admin",
+        org_id=settings.zitadel_portal_org_id,
+    )
+    mock_zitadel.deactivate_user.assert_awaited_once_with("locked-admin", settings.zitadel_portal_org_id)
+    mock_zitadel.remove_user.assert_not_awaited()
+    mock_zitadel.send_invite_code.assert_not_awaited()
+    mock_db.add.assert_not_called()
     mock_db.commit.assert_not_awaited()
 
 

@@ -13,6 +13,7 @@ import {
   type SignupPasswordStrength,
 } from '@/lib/password-strength'
 import { passwordPolicyIssueMessage } from '@/lib/password-policy-copy'
+import { loadSignupPasswordPolicy, type SignupPasswordPolicy } from '@/lib/password-policy'
 
 type SearchParams = {
   userID?: string
@@ -41,32 +42,57 @@ function PasswordSetPage() {
   const [invalidLink, setInvalidLink] = useState(false)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+  const [passwordPolicy, setPasswordPolicy] = useState<SignupPasswordPolicy | null>(null)
   const [passwordStrength, setPasswordStrength] = useState<SignupPasswordStrength>(() =>
-    estimateSignupPasswordStrength(''),
+    estimateSignupPasswordStrength('', null),
   )
 
   useEffect(() => {
     let cancelled = false
-    setPasswordStrength(estimateSignupPasswordStrength(password))
-    if (!password) return
+    void loadSignupPasswordPolicy()
+      .then((policy) => {
+        if (!cancelled) setPasswordPolicy(policy)
+      })
+      .catch(() => {
+        if (!cancelled) setPasswordPolicy(null)
+      })
 
-    void evaluateSignupPassword(password, []).then((result) => {
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setPasswordStrength(estimateSignupPasswordStrength(password, passwordPolicy))
+    if (!password || !passwordPolicy) return
+
+    void evaluateSignupPassword(password, [], passwordPolicy).then((result) => {
       if (!cancelled) setPasswordStrength(result)
     })
 
     return () => {
       cancelled = true
     }
-  }, [password])
+  }, [password, passwordPolicy])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
 
-    const latestPasswordStrength = await evaluateSignupPassword(password, [])
+    let policy: SignupPasswordPolicy
+    try {
+      policy = await loadSignupPasswordPolicy({ force: true })
+      setPasswordPolicy(policy)
+    } catch {
+      setError(m.error_connection())
+      return
+    }
+
+    const latestPasswordStrength = await evaluateSignupPassword(password, [], policy)
     setPasswordStrength(latestPasswordStrength)
     if (!latestPasswordStrength.isAcceptable) {
-      setError(passwordPolicyIssueMessage(latestPasswordStrength.issues[0]))
+      setError(passwordPolicyIssueMessage(latestPasswordStrength.issues[0], policy))
       return
     }
     if (password !== confirm) {
@@ -175,7 +201,9 @@ function PasswordSetPage() {
               {m.set_heading()}
             </h2>
             <p className="text-sm text-gray-400">
-              {m.set_subheading()}
+              {passwordPolicy
+                ? m.set_subheading({ minLength: String(passwordPolicy.min_length) })
+                : m.set_subheading_loading()}
             </p>
           </div>
 
@@ -198,6 +226,9 @@ function PasswordSetPage() {
                 score={passwordStrength.score}
                 issues={passwordStrength.issues}
                 show={password.length > 0}
+                isAcceptable={passwordStrength.isAcceptable}
+                estimated={passwordStrength.estimated}
+                policy={passwordPolicy}
               />
             </div>
 

@@ -13,6 +13,7 @@ import {
   type SignupPasswordStrength,
 } from '@/lib/password-strength'
 import { passwordPolicyIssueMessage } from '@/lib/password-policy-copy'
+import { loadSignupPasswordPolicy, type SignupPasswordPolicy } from '@/lib/password-policy'
 
 export const Route = createFileRoute('/$locale/signup/')({
   component: SignupPage,
@@ -55,27 +56,43 @@ function SignupPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+  const [passwordPolicy, setPasswordPolicy] = useState<SignupPasswordPolicy | null>(null)
   const passwordInputs = useMemo(
     () => [form.email, form.first_name, form.last_name, form.company_name, 'Klai'],
     [form.company_name, form.email, form.first_name, form.last_name],
   )
   const [passwordStrength, setPasswordStrength] = useState<SignupPasswordStrength>(() =>
-    estimateSignupPasswordStrength(''),
+    estimateSignupPasswordStrength('', null),
   )
 
   useEffect(() => {
     let cancelled = false
-    setPasswordStrength(estimateSignupPasswordStrength(form.password))
-    if (!form.password) return
+    void loadSignupPasswordPolicy()
+      .then((policy) => {
+        if (!cancelled) setPasswordPolicy(policy)
+      })
+      .catch(() => {
+        if (!cancelled) setPasswordPolicy(null)
+      })
 
-    void evaluateSignupPassword(form.password, passwordInputs).then((result) => {
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setPasswordStrength(estimateSignupPasswordStrength(form.password, passwordPolicy))
+    if (!form.password || !passwordPolicy) return
+
+    void evaluateSignupPassword(form.password, passwordInputs, passwordPolicy).then((result) => {
       if (!cancelled) setPasswordStrength(result)
     })
 
     return () => {
       cancelled = true
     }
-  }, [form.password, passwordInputs])
+  }, [form.password, passwordInputs, passwordPolicy])
 
   async function handleSocialSignup(idpId: string) {
     setError(null)
@@ -107,10 +124,19 @@ function SignupPage() {
     e.preventDefault()
     setError(null)
 
-    const latestPasswordStrength = await evaluateSignupPassword(form.password, passwordInputs)
+    let policy: SignupPasswordPolicy
+    try {
+      policy = await loadSignupPasswordPolicy({ force: true })
+      setPasswordPolicy(policy)
+    } catch {
+      setError(m.signup_error_connection())
+      return
+    }
+
+    const latestPasswordStrength = await evaluateSignupPassword(form.password, passwordInputs, policy)
     setPasswordStrength(latestPasswordStrength)
     if (!latestPasswordStrength.isAcceptable) {
-      setError(passwordPolicyIssueMessage(latestPasswordStrength.issues[0]))
+      setError(passwordPolicyIssueMessage(latestPasswordStrength.issues[0], policy))
       return
     }
 
@@ -281,13 +307,20 @@ function SignupPage() {
           type="password"
           value={form.password}
           onChange={(v) => setForm((f) => ({ ...f, password: v }))}
-          hint={m.signup_field_password_hint()}
+          hint={
+            passwordPolicy
+              ? m.signup_field_password_hint({ minLength: String(passwordPolicy.min_length) })
+              : m.signup_field_password_hint_loading()
+          }
           required
         />
         <PasswordStrengthMeter
           score={passwordStrength.score}
           issues={passwordStrength.issues}
           show={form.password.length > 0}
+          isAcceptable={passwordStrength.isAcceptable}
+          estimated={passwordStrength.estimated}
+          policy={passwordPolicy}
         />
 
         {error && (

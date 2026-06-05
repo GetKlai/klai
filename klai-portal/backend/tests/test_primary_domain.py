@@ -54,6 +54,7 @@ class TestPrimaryDomainSetAtSignup:
         mock_db.add = MagicMock()
         body = SignupRequest(**_BASE)
         with (
+            patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
             patch("app.api.signup.zitadel") as mz,
             patch("app.api.signup.provision_tenant"),
@@ -82,6 +83,7 @@ class TestPrimaryDomainSetAtSignup:
         mock_db.add = MagicMock()
         body = SignupRequest(**_BASE)
         with (
+            patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
             patch("app.api.signup.zitadel") as mz,
             patch("app.api.signup.provision_tenant"),
@@ -105,6 +107,7 @@ class TestPrimaryDomainSetAtSignup:
         mock_db.add = MagicMock()
         body = SignupRequest(**{**_BASE, "email": "founder@BEDRIJF.NL"})
         with (
+            patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
             patch("app.api.signup.zitadel") as mz,
             patch("app.api.signup.provision_tenant"),
@@ -128,6 +131,7 @@ class TestPrimaryDomainSetAtSignup:
         mock_db.add = MagicMock()
         body = SignupRequest(**{**_BASE, "email": "user@gmail.com", "invite_token": "valid-token"})
         with (
+            patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
             patch(
                 "app.api.signup.verify_invite_token",
@@ -212,6 +216,7 @@ class TestFreeEmailSignupRejected:
         mock_db.add = MagicMock()
         body = SignupRequest(**_BASE)
         with (
+            patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
             patch("app.api.signup.zitadel") as mz,
             patch("app.api.signup.provision_tenant"),

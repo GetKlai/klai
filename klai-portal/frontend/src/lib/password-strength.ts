@@ -1,5 +1,4 @@
-export const SIGNUP_PASSWORD_MIN_LENGTH = 12
-export const SIGNUP_PASSWORD_MIN_SCORE = 3
+import type { SignupPasswordPolicy } from '@/lib/password-policy'
 
 export type SignupPasswordIssue =
   | 'too_short'
@@ -55,29 +54,40 @@ export function hasSignupPasswordNumber(password: string) {
   return Array.from(password).some((char) => /\p{N}/u.test(char))
 }
 
-export function basicSignupPasswordIssues(password: string) {
+export function basicSignupPasswordIssues(password: string, policy: SignupPasswordPolicy) {
   const issues: SignupPasswordIssue[] = []
-  if (password.length < SIGNUP_PASSWORD_MIN_LENGTH) {
+  if (Array.from(password).length < policy.min_length) {
     issues.push('too_short')
   }
-  if (!hasSignupPasswordUppercase(password)) {
+  if (policy.require_uppercase && !hasSignupPasswordUppercase(password)) {
     issues.push('missing_uppercase')
   }
-  if (!hasSignupPasswordLowercase(password)) {
+  if (policy.require_lowercase && !hasSignupPasswordLowercase(password)) {
     issues.push('missing_lowercase')
   }
-  if (!hasSignupPasswordNumber(password)) {
+  if (policy.require_number && !hasSignupPasswordNumber(password)) {
     issues.push('missing_number')
   }
-  if (!hasSignupPasswordSymbol(password)) {
+  if (policy.require_symbol && !hasSignupPasswordSymbol(password)) {
     issues.push('missing_symbol')
   }
   return issues
 }
 
-export function estimateSignupPasswordStrength(password: string): SignupPasswordStrength {
-  const issues = basicSignupPasswordIssues(password)
-  const score = issues.length === 0 ? 2 : 0
+export function estimateSignupPasswordStrength(
+  password: string,
+  policy: SignupPasswordPolicy | null,
+): SignupPasswordStrength {
+  if (!policy) {
+    return {
+      score: 0,
+      issues: [],
+      isAcceptable: false,
+      estimated: true,
+    }
+  }
+  const issues = basicSignupPasswordIssues(password, policy)
+  const score = issues.length === 0 ? Math.max(0, Math.min(2, policy.min_score - 1)) : 0
   return {
     score,
     issues,
@@ -89,13 +99,14 @@ export function estimateSignupPasswordStrength(password: string): SignupPassword
 export async function evaluateSignupPassword(
   password: string,
   userInputs: Array<string | null | undefined>,
+  policy: SignupPasswordPolicy,
 ): Promise<SignupPasswordStrength> {
   const context = userInputs.map((value) => value?.trim()).filter((value): value is string => Boolean(value))
-  const issues = basicSignupPasswordIssues(password)
+  const issues = basicSignupPasswordIssues(password, policy)
   const check = await loadZxcvbn()
   const result = check(password, context)
   const rawScore = Number(result.score)
-  if (password.length > 0 && rawScore < SIGNUP_PASSWORD_MIN_SCORE) {
+  if (password.length > 0 && rawScore < policy.min_score) {
     issues.push('too_predictable')
   }
   return {

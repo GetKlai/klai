@@ -301,6 +301,8 @@ async def test_platform_invite_reuses_existing_global_identity() -> None:
     ):
         zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
         zitadel.find_user_id_by_email = AsyncMock(return_value="existing-user")
+        zitadel.get_user_by_id = AsyncMock(return_value={"user": {"state": "USER_STATE_ACTIVE"}})
+        zitadel.unlock_user = AsyncMock()
         zitadel.grant_user_role = AsyncMock()
         zitadel.send_invite_code = AsyncMock()
         zitadel.remove_user = AsyncMock()
@@ -317,10 +319,200 @@ async def test_platform_invite_reuses_existing_global_identity() -> None:
         )
 
     zitadel.find_user_id_by_email.assert_awaited_once_with("existing@example.com")
+    zitadel.unlock_user.assert_not_awaited()
     zitadel.remove_user.assert_not_awaited()
     db.add.assert_called_once()
     db.commit.assert_awaited_once()
     assert response.user_id == "existing-user"
+
+
+@pytest.mark.asyncio
+async def test_platform_invite_recreates_dangling_global_identity_without_membership() -> None:
+    from app.api.admin.platform_manage import PlatformInviteRequest, platform_invite
+    from app.core.config import settings
+    from app.services.user_memberships import UserMembershipSummary
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=membership_result)
+    org = _org()
+    call_order: list[str] = []
+
+    async def _record_remove(*_args, **_kwargs):
+        call_order.append("remove")
+
+    async def _record_send_invite(*_args, **_kwargs):
+        call_order.append("send_invite")
+
+    async def _record_commit(*_args, **_kwargs):
+        call_order.append("commit")
+
+    db.commit = AsyncMock(side_effect=_record_commit)
+
+    with (
+        patch("app.api.admin.platform_manage._load_org_or_404", new=AsyncMock(return_value=org)),
+        patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(db)),
+        patch("app.api.admin.platform_manage.create_default_personal_kb", new=AsyncMock()),
+        patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
+        patch(
+            "app.services.zitadel_identity_recovery.get_user_membership_summary",
+            new=AsyncMock(
+                return_value=UserMembershipSummary(total_count=0, remaining_count=0, is_platform_admin=False)
+            ),
+        ),
+        patch("app.api.admin.platform_manage.zitadel") as zitadel,
+    ):
+        zitadel.invite_user = AsyncMock(side_effect=[_http_error(409), {"userId": "fresh-platform-user"}])
+        zitadel.find_user_id_by_email = AsyncMock(return_value="dangling-user")
+        zitadel.get_user_by_id = AsyncMock(return_value={"user": {"state": "USER_STATE_INITIAL"}})
+        zitadel.unlock_user = AsyncMock()
+        zitadel.grant_user_role = AsyncMock()
+        zitadel.send_invite_code = AsyncMock(side_effect=_record_send_invite)
+        zitadel.remove_user = AsyncMock(side_effect=_record_remove)
+
+        response = await platform_invite(
+            org_id=42,
+            body=PlatformInviteRequest(
+                email="dangling@example.com",
+                first_name="Dangling",
+                last_name="User",
+                role="company",
+            ),
+            perms=_platform_perms(),
+        )
+
+    assert response.user_id == "fresh-platform-user"
+    assert call_order == ["remove", "commit", "send_invite"]
+    zitadel.remove_user.assert_awaited_once_with(
+        org_id=settings.zitadel_portal_org_id,
+        zitadel_user_id="dangling-user",
+    )
+    zitadel.invite_user.assert_any_await(
+        org_id=settings.zitadel_portal_org_id,
+        email="dangling@example.com",
+        first_name="Dangling",
+        last_name="User",
+        preferred_language="nl",
+    )
+    zitadel.unlock_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_platform_invite_recreated_identity_gets_admin_grant() -> None:
+    from app.api.admin.platform_manage import PlatformInviteRequest, platform_invite
+    from app.core.config import settings
+    from app.services.user_memberships import UserMembershipSummary
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=membership_result)
+    org = _org()
+
+    with (
+        patch("app.api.admin.platform_manage._load_org_or_404", new=AsyncMock(return_value=org)),
+        patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(db)),
+        patch("app.api.admin.platform_manage.create_default_personal_kb", new=AsyncMock()),
+        patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
+        patch(
+            "app.services.zitadel_identity_recovery.get_user_membership_summary",
+            new=AsyncMock(
+                return_value=UserMembershipSummary(total_count=0, remaining_count=0, is_platform_admin=False)
+            ),
+        ),
+        patch("app.api.admin.platform_manage.zitadel") as zitadel,
+    ):
+        zitadel.invite_user = AsyncMock(side_effect=[_http_error(409), {"userId": "fresh-admin-user"}])
+        zitadel.find_user_id_by_email = AsyncMock(return_value="stale-admin-user")
+        zitadel.get_user_by_id = AsyncMock(return_value={"user": {"state": "USER_STATE_INITIAL"}})
+        zitadel.remove_user = AsyncMock()
+        zitadel.unlock_user = AsyncMock()
+        zitadel.grant_user_role = AsyncMock()
+        zitadel.send_invite_code = AsyncMock()
+
+        response = await platform_invite(
+            org_id=42,
+            body=PlatformInviteRequest(
+                email="admin-dangling@example.com",
+                first_name="Admin",
+                last_name="Dangling",
+                role="admin",
+            ),
+            perms=_platform_perms(),
+        )
+
+    assert response.user_id == "fresh-admin-user"
+    zitadel.grant_user_role.assert_awaited_once_with(
+        org_id=settings.zitadel_portal_org_id,
+        user_id="fresh-admin-user",
+        role="org:owner",
+    )
+
+
+@pytest.mark.asyncio
+async def test_platform_invite_restores_unlocked_existing_identity_when_grant_fails() -> None:
+    from fastapi import HTTPException
+
+    from app.api.admin.platform_manage import PlatformInviteRequest, platform_invite
+    from app.core.config import settings
+    from app.services.user_memberships import UserMembershipSummary
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=membership_result)
+    org = _org()
+
+    with (
+        patch("app.api.admin.platform_manage._load_org_or_404", new=AsyncMock(return_value=org)),
+        patch("app.api.admin.platform_manage.tenant_scoped_session", return_value=AsyncContext(db)),
+        patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
+        patch(
+            "app.services.zitadel_identity_recovery.get_user_membership_summary",
+            new=AsyncMock(
+                return_value=UserMembershipSummary(total_count=1, remaining_count=1, is_platform_admin=False)
+            ),
+        ),
+        patch("app.api.admin.platform_manage.zitadel") as zitadel,
+    ):
+        zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
+        zitadel.find_user_id_by_email = AsyncMock(return_value="locked-platform-admin")
+        zitadel.get_user_by_id = AsyncMock(return_value={"user": {"state": "USER_STATE_INACTIVE"}})
+        zitadel.unlock_user = AsyncMock()
+        zitadel.grant_user_role = AsyncMock(side_effect=RuntimeError("grant down"))
+        zitadel.deactivate_user = AsyncMock()
+        zitadel.remove_user = AsyncMock()
+        zitadel.send_invite_code = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await platform_invite(
+                org_id=42,
+                body=PlatformInviteRequest(
+                    email="locked-platform-admin@example.com",
+                    first_name="Locked",
+                    last_name="Platform",
+                    role="admin",
+                ),
+                perms=_platform_perms(),
+            )
+
+    assert exc_info.value.status_code == 502
+    zitadel.unlock_user.assert_awaited_once_with(
+        zitadel_user_id="locked-platform-admin",
+        org_id=settings.zitadel_portal_org_id,
+    )
+    zitadel.deactivate_user.assert_awaited_once_with(
+        user_id="locked-platform-admin",
+        org_id=settings.zitadel_portal_org_id,
+    )
+    zitadel.remove_user.assert_not_awaited()
+    zitadel.send_invite_code.assert_not_awaited()
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
