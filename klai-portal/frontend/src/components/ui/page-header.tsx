@@ -1,7 +1,9 @@
 import type { HTMLAttributes, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
-interface PageHeaderProps extends HTMLAttributes<HTMLDivElement> {
+// Omit the native HTML `title` attribute (string) so we can redefine it as a
+// ReactNode heading without a TS2430 "incorrectly extends" collision.
+interface PageHeaderProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
   title: ReactNode
   description?: ReactNode
   actions?: ReactNode
