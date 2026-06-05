@@ -26,6 +26,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 import structlog
+from fastapi import HTTPException, status
 from klai_chat_prompts import (
     GROUNDED_CHAT_SYSTEM_PROMPT,
 )
@@ -1610,23 +1611,51 @@ async def chat_completion_non_streaming(
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
 
     litellm_url = settings.litellm_base_url
+    chat_url = f"{litellm_url}/v1/chat/completions"
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            f"{litellm_url}/v1/chat/completions",
-            json={
-                "model": model,
-                "messages": augmented_messages,
-                "temperature": temperature,
-                "stream": False,
-            },
-            headers={
-                "Authorization": f"Bearer {settings.litellm_master_key}",
-                **get_trace_headers(),
-            },
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                chat_url,
+                json={
+                    "model": model,
+                    "messages": augmented_messages,
+                    "temperature": temperature,
+                    "stream": False,
+                },
+                headers={
+                    "Authorization": f"Bearer {settings.litellm_master_key}",
+                    **get_trace_headers(),
+                },
+            )
+            resp.raise_for_status()
+            body = resp.json()
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        # Upstream unreachable or slow (e.g. LiteLLM mid-restart during a
+        # deploy). Return a clean 502 instead of a bare 500 so callers can tell
+        # it apart from a request error and retry. ConnectError has no
+        # .response, so log the target URL per the python error-handling rules.
+        logger.warning(
+            "partner_chat_upstream_unreachable",
+            org_id=org_id,
+            target=chat_url,
+            exc_info=True,
         )
-        resp.raise_for_status()
-        body = resp.json()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": {"type": "upstream_error", "message": "Chat service unavailable"}},
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "partner_chat_upstream_error",
+            org_id=org_id,
+            status_code=exc.response.status_code,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": {"type": "upstream_error", "message": "Chat service error"}},
+        ) from exc
 
     allowed_source_urls = allowed_source_urls or set()
     citation_source_urls = citation_source_urls or {}
