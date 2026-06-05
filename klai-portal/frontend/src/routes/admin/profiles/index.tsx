@@ -9,6 +9,7 @@ import {
 } from '@tanstack/react-table'
 import * as m from '@/paraglide/messages'
 import { QueryErrorState } from '@/components/ui/query-error-state'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import {
   DataTable,
@@ -115,16 +116,15 @@ function AdminProfiles() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.admin_profiles_title()}
-          </h1>
-          <p className="text-sm text-gray-400">
-            {m.admin_profiles_subtitle()}
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title={m.admin_profiles_title()}
+        description={m.admin_profiles_subtitle()}
+      />
+
+      <PageIntro>
+        <p>{m.admin_profiles_intro_body()}</p>
+        <p>{m.admin_profiles_intro_access()}</p>
+      </PageIntro>
 
       {error ? (
         <QueryErrorState

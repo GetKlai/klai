@@ -12,11 +12,12 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
-import { Building2, ChevronRight, FolderOpen, Plus, Search, User } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { Building2, ChevronRight, FolderOpen, Plus, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
+import { SearchInput } from '@/components/ui/search-input'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -230,43 +231,34 @@ function KnowledgePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
-      {/* Header - title + subtitle stacked, primary action top-right.
-          Matches the dashboard pattern (/app/) and Scribe layout. */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.kb_list_title()}
-          </h1>
-          <p className="text-sm text-gray-400">
-            {kbsLoading ? m.kb_list_subtitle() : countLabel}
-          </p>
-        </div>
-        <Link to="/app/knowledge/new">
-          <Button size="sm">
-            <Plus className="mr-2 h-4 w-4" />
-            {m.kb_list_new_collection()}
+      <PageHeader
+        title={m.kb_list_title()}
+        description={m.kb_list_subtitle()}
+        actions={
+          <Button asChild size="sm">
+            <Link to="/app/knowledge/new">
+              <Plus className="mr-2 h-4 w-4" />
+              {m.kb_list_new_collection()}
+            </Link>
           </Button>
-        </Link>
-      </div>
+        }
+      />
 
-      {/* Korte uitleg — geen kader, gewoon tekst. Zelfde stijl als /app/instructions. */}
-      <div className="space-y-3 text-sm text-gray-600">
+      <PageIntro>
         <p>{m.kb_intro_body()}</p>
         <p>{m.kb_intro_examples()}</p>
         <p>{m.kb_intro_invoke()}</p>
-      </div>
+        {!kbsLoading ? <p className="text-gray-400">{countLabel}</p> : null}
+      </PageIntro>
 
       {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-        <Input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={m.kb_list_search_placeholder()}
-          className="pl-10"
-        />
-      </div>
+      <SearchInput
+        type="search"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={m.kb_list_search_placeholder()}
+        aria-label={m.kb_list_search_placeholder()}
+      />
 
       {/* List */}
       <div>

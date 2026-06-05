@@ -3,6 +3,9 @@ import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Mic, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ListFrame } from '@/components/ui/list'
+import { ListLoadingState } from '@/components/ui/list-state'
+import { PageHeader, PageIntro } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
@@ -161,35 +164,41 @@ function TranscribePage() {
   const totalCount = (transcriptionsData?.total ?? 0) + (meetingsData?.total ?? 0)
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
-            {m.app_tool_transcribe_title()}
-          </h1>
-          <p className="text-sm text-gray-400">
-            {!isLoading && m.app_transcribe_count_total({ count: String(totalCount) })}
+    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
+      <PageHeader
+        title={m.app_tool_transcribe_title()}
+        description={m.app_tool_transcribe_description()}
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void navigate({ to: '/app/meetings/start' })}
+            >
+              <Video className="mr-2 h-4 w-4" />
+              {m.app_transcribe_new_meeting()}
+            </Button>
+            <Button
+              size="sm"
+              data-help-id="transcribe-add"
+              onClick={() => void navigate({ to: '/app/transcribe/add' })}
+            >
+              <Mic className="mr-2 h-4 w-4" />
+              {m.app_transcribe_new_audio()}
+            </Button>
+          </div>
+        }
+      />
+
+      <PageIntro>
+        <p>{m.app_transcribe_intro_body()}</p>
+        <p>{m.app_transcribe_intro_meetings()}</p>
+        {!isLoading ? (
+          <p className="text-gray-400">
+            {m.app_transcribe_count_total({ count: String(totalCount) })}
           </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void navigate({ to: '/app/meetings/start' })}
-          >
-            <Video className="mr-2 h-4 w-4" />
-            {m.app_transcribe_new_meeting()}
-          </Button>
-          <Button
-            size="sm"
-            data-help-id="transcribe-add"
-            onClick={() => void navigate({ to: '/app/transcribe/add' })}
-          >
-            <Mic className="mr-2 h-4 w-4" />
-            {m.app_transcribe_new_audio()}
-          </Button>
-        </div>
-      </div>
+        ) : null}
+      </PageIntro>
 
       {hasActiveMeetings && (
         <div className="flex items-center gap-2 text-sm text-gray-400">
@@ -199,9 +208,9 @@ function TranscribePage() {
       )}
 
       {isLoading ? (
-        <div className="flex justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
-        </div>
+        <ListFrame>
+          <ListLoadingState label={m.app_transcribe_processing()} />
+        </ListFrame>
       ) : queryError ? (
         <QueryErrorState error={queryError instanceof Error ? queryError : new Error(String(queryError))} onRetry={() => { void refetchTranscriptions(); void refetchMeetings() }} />
       ) : (
