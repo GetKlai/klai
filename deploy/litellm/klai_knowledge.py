@@ -2763,24 +2763,6 @@ class KlaiKnowledgeHook(CustomLogger):
         if not librechat_user_id:
             return data
 
-        budget_context_result = _KLAI_CONTEXT_ORCHESTRATOR.assemble(
-            messages,
-            requested_model=data.get("model", "klai-primary"),
-            normalize_content=False,
-            apply_history_budget=True,
-        )
-        messages = budget_context_result.messages
-        budget_meta = budget_context_result.meta
-        context_meta = {
-            **context_meta,
-            "history_budget_applied": budget_meta["history_budget_applied"],
-            "omitted_history_messages": budget_meta["omitted_history_messages"],
-            "kept_history_chars": budget_meta["kept_history_chars"],
-            "reason_codes": [
-                *context_meta.get("reason_codes", []),
-                *budget_meta.get("reason_codes", []),
-            ],
-        }
         data["messages"] = messages
         data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
 
@@ -2794,17 +2776,6 @@ class KlaiKnowledgeHook(CustomLogger):
                 librechat_user_id,
                 normalized_user_text_part_messages,
             )
-        if context_meta["omitted_history_messages"]:
-            logger.info(
-                "klai_provider_context_assembled org_id=%s user_id=%s "
-                "history_omitted=%d kept_history_chars=%d history_budget_chars=%d",
-                org_id,
-                librechat_user_id,
-                context_meta["omitted_history_messages"],
-                context_meta["kept_history_chars"],
-                context_meta["history_budget_chars"],
-            )
-
         safety_metadata = data.setdefault("metadata", {})
         # Input safety scans ONLY the latest user turn — never the assistant's
         # prior answers and never the full history. Rescanning the whole
