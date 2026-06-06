@@ -1,4 +1,3 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import * as m from '@/paraglide/messages'
 import type { OrgSettings } from '../-settings-hooks'
 
@@ -14,14 +13,16 @@ export function OrganizationSettingsSection({
   error,
 }: OrganizationSettingsSectionProps) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{m.admin_settings_org_title()}</CardTitle>
-        <CardDescription>
+    <section className="space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-base font-display-bold text-gray-900">
+          {m.admin_settings_org_title()}
+        </h2>
+        <p className="text-sm text-gray-400">
           {m.admin_settings_org_description()}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
+        </p>
+      </div>
+      <div>
         {isLoading ? (
           <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
         ) : error ? (
@@ -46,7 +47,7 @@ export function OrganizationSettingsSection({
             </div>
           </dl>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }

@@ -44,7 +44,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `badge` | Inline status labels (secondary/success/warning/destructive/outline) | Yes |
 | `action-tag` | Compact open/closed action-state tag (`ActionTag`, states: `open`, `closed`) | Yes |
 | `alert` | Inline semantic callout (`Alert`, variants: info/success/warning/destructive; sizes: default/sm). Soft tint + auto icon, for wizard/form feedback and inline warnings — not a toast, not a modal | Yes |
-| `input` `select` `textarea` `label` `checkbox` | Form controls | Yes |
+| `input` `select` `textarea` `label` `checkbox` `switch` | Form controls | Yes |
 | `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
 | `row-action` | List/table row actions: `RowActionIconButton`, `BorderedRowActionIconButton` (visible bordered hitbox — the default in tables), `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
 | `data-table` | Admin table primitives: `DataTable`, `DataTableHeader`, `DataTableBody`, `DataTableRow` (`interactive`/`confirming`), `DataTableHead`, `DataTableCell` (`align`) | Yes |
@@ -696,6 +696,22 @@ Metric/stat tiles use the owned `StatCard` component (`components/ui/stat-card.t
 frame for items needing action, a `loading` spinner, and an optional `onClick`
 that turns the card into a button (clickable stat cards navigate to the matching
 tab). Operational alert cards must show what needs action as the primary value.
+
+## Form Controls
+
+Use `components/ui/` controls for every form field and pair fields with
+`Label`. For `Select`, width constraints belong on `containerClassName`, not
+`className`, because the component owns a wrapper for the custom chevron.
+
+```tsx
+<Select id="settings-language" containerClassName="max-w-xs">
+  <option value="nl">Nederlands</option>
+</Select>
+```
+
+Use `Switch` for binary on/off settings. The switch itself only stages the
+state when the setting has a save action; persist through the paired save
+button so external mutations do not happen merely by toggling the control.
 
 ## Chat Disclosure Rows
 

@@ -121,7 +121,7 @@ export function DetailsTab({ widget }: Props) {
                 id="widget-template"
                 value={templateSlug}
                 onChange={(e) => fillFromTemplate(e.target.value)}
-                className="max-w-md"
+                containerClassName="max-w-md"
               >
                 <option value="">{m.admin_widgets_widget_template_none()}</option>
                 {templatesQuery.data.map((t) => (

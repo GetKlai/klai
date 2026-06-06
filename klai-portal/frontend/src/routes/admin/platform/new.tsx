@@ -124,7 +124,7 @@ function NewTenantPage() {
             id="owner-language"
             value={language}
             onChange={(e) => setLanguage(e.target.value as 'nl' | 'en')}
-            className="max-w-xs"
+            containerClassName="max-w-xs"
           >
             <option value="nl">{m.platform_language_nl()}</option>
             <option value="en">{m.platform_language_en()}</option>

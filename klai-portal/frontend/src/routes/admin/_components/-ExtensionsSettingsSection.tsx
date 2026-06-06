@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { extensionDescription, extensionLabel } from '@/lib/extensions-i18n'
 import * as m from '@/paraglide/messages'
@@ -47,16 +46,18 @@ export function ExtensionsSettingsSection() {
   const isPlatformAdmin = me?.is_platform_admin ?? false
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{m.admin_settings_extensions_title()}</CardTitle>
-        <CardDescription>
+    <section className="space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-base font-display-bold text-gray-900">
+          {m.admin_settings_extensions_title()}
+        </h2>
+        <p className="text-sm text-gray-400">
           {isPlatformAdmin
             ? m.admin_settings_extensions_description_platform()
             : m.admin_settings_extensions_description_tenant()}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+        </p>
+      </div>
+      <div className="space-y-4">
         {extensionsLoading ? (
           <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
         ) : extensionsError ? (
@@ -124,7 +125,7 @@ export function ExtensionsSettingsSection() {
             )}
           </>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }

@@ -96,7 +96,7 @@ function AddTranscribePage() {
               id="language"
               value={language}
               onChange={(event) => setLanguage(event.target.value)}
-              className="max-w-xs"
+              containerClassName="max-w-xs"
             >
               <option value="">{m.app_transcribe_language_auto()}</option>
               <option value="nl">{m.app_transcribe_language_nl()}</option>
