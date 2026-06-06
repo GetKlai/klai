@@ -59,9 +59,7 @@ export function KbAccessEditor({
   hideReadWrite = false,
 }: KbAccessEditorProps) {
   const { data: kbsData, isLoading } = useOrgKnowledgeBases()
-  const kbs: OrgKnowledgeBase[] = (kbsData?.knowledge_bases ?? []).filter(
-    (kb) => kb.owner_type === 'org',
-  )
+  const kbs: OrgKnowledgeBase[] = kbsData?.knowledge_bases ?? []
 
   if (isLoading) {
     return <ListLoadingState label={m.admin_shared_loading()} />

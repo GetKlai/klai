@@ -138,7 +138,44 @@ async def _get_key_or_404(key_id: str, org_id: int, db: AsyncSession) -> Partner
     return key
 
 
-async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[PortalKnowledgeBase]:
+def _personal_kbs_not_owned_by_user(kbs: list[PortalKnowledgeBase], user_id: str) -> list[int]:
+    return [
+        kb.id
+        for kb in kbs
+        if kb.owner_type == "user" and kb.owner_user_id != user_id
+    ]
+
+
+def _has_personal_kb(kbs: list[PortalKnowledgeBase]) -> bool:
+    return any(kb.owner_type == "user" for kb in kbs)
+
+
+def _kb_access_response_entry(
+    access: PartnerApiKeyKbAccess,
+    kb: PortalKnowledgeBase,
+    viewer_user_id: str,
+) -> dict:
+    if kb.owner_type == "user" and kb.owner_user_id != viewer_user_id:
+        return {
+            "kb_id": access.kb_id,
+            "kb_name": "Personal knowledge base",
+            "kb_slug": None,
+            "access_level": access.access_level,
+        }
+    return {
+        "kb_id": access.kb_id,
+        "kb_name": kb.name,
+        "kb_slug": kb.slug,
+        "access_level": access.access_level,
+    }
+
+
+async def _validate_kb_ids(
+    kb_ids: list[int],
+    org_id: int,
+    user_id: str,
+    db: AsyncSession,
+) -> list[PortalKnowledgeBase]:
     if not kb_ids:
         return []
     result = await db.execute(
@@ -154,6 +191,12 @@ async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> 
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail=f"Knowledge base IDs not found in your organisation: {sorted(missing)}",
+        )
+    other_personal = _personal_kbs_not_owned_by_user(list(found_kbs), user_id)
+    if other_personal:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"Personal knowledge base IDs are not owned by the caller: {sorted(other_personal)}",
         )
     return list(found_kbs)
 
@@ -186,7 +229,7 @@ async def create_api_key(
 ) -> CreateApiKeyResponse:
     """Create a new partner API key."""
     kb_ids = [entry.kb_id for entry in body.kb_access]
-    await _validate_kb_ids(kb_ids, perms.org_id, db)
+    await _validate_kb_ids(kb_ids, perms.org_id, perms.user_id, db)
 
     # Validate: knowledge_append requires at least one read_write KB
     if body.permissions.get("knowledge_append"):
@@ -299,15 +342,7 @@ async def get_api_key_detail(
         .join(PortalKnowledgeBase, PartnerApiKeyKbAccess.kb_id == PortalKnowledgeBase.id)
         .where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
     )
-    kb_access_list = [
-        {
-            "kb_id": access.kb_id,
-            "kb_name": kb.name,
-            "kb_slug": kb.slug,
-            "access_level": access.access_level,
-        }
-        for access, kb in kb_result
-    ]
+    kb_access_list = [_kb_access_response_entry(access, kb, perms.user_id) for access, kb in kb_result]
     rotated_from_key_id = getattr(key, "rotated_from_key_id", None)
     rotated_to_key_id = getattr(key, "rotated_to_key_id", None)
     rotation_started_at = getattr(key, "rotation_started_at", None)
@@ -358,6 +393,12 @@ async def rotate_api_key(
         select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == source_key.id)
     )
     kb_rows = list(kb_result.scalars().all())
+    cloned_kbs = await _validate_kb_ids([row.kb_id for row in kb_rows], perms.org_id, perms.user_id, db)
+    if _has_personal_kb(cloned_kbs) and source_key.created_by != perms.user_id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Personal knowledge base access can only be rotated by the API key creator",
+        )
 
     now = datetime.now(UTC)
     plaintext_key, key_hash = generate_partner_key()
@@ -452,7 +493,12 @@ async def update_api_key(
 
     if body.kb_access is not None:
         kb_ids = [entry.kb_id for entry in body.kb_access]
-        await _validate_kb_ids(kb_ids, perms.org_id, db)
+        selected_kbs = await _validate_kb_ids(kb_ids, perms.org_id, perms.user_id, db)
+        if _has_personal_kb(selected_kbs) and key.created_by != perms.user_id:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="Personal knowledge base access can only be added to API keys created by the caller",
+            )
 
         await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
         for entry in body.kb_access:

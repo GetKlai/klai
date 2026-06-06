@@ -8,10 +8,12 @@ Tests the full endpoint flow with mocked auth + DB. Verifies that:
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from conftest import make_perms
+from fastapi import HTTPException
 from helpers import FakeResult, setup_db
 
 
@@ -132,6 +134,77 @@ async def test_delete_api_key_calls_db_delete():
 
 
 @pytest.mark.asyncio
+async def test_get_api_key_detail_redacts_other_users_personal_kb_metadata():
+    """Detail may preserve access rows without leaking another user's personal KB name/slug."""
+    from app.api.admin_api_keys import get_api_key_detail
+
+    key = FakeKeyRow(id="key-1", created_by="user-2")
+    access = FakeKbAccessRow(partner_api_key_id="key-1", kb_id=123, access_level="read")
+    other_personal_kb = SimpleNamespace(
+        id=123,
+        name="Jelle private notes",
+        slug="personal-user-2",
+        owner_type="user",
+        owner_user_id="user-2",
+    )
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([key]),  # SELECT key
+            FakeResult([(access, other_personal_kb)]),  # SELECT access + KB
+        ],
+    )
+
+    result = await get_api_key_detail(
+        key_id="key-1",
+        perms=make_perms(role="admin", user_id="user-1", org_id=1),
+        db=db,
+    )
+
+    assert result.kb_access == [
+        {
+            "kb_id": 123,
+            "kb_name": "Personal knowledge base",
+            "kb_slug": None,
+            "access_level": "read",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_api_key_rejects_personal_kb_on_key_created_by_other_user():
+    """A caller's personal KB cannot be attached to another user's API key."""
+    from app.api.admin_api_keys import KbAccessEntry, UpdateApiKeyRequest, update_api_key
+
+    key = FakeKeyRow(id="key-1", created_by="user-2")
+    own_personal_kb = SimpleNamespace(id=123, owner_type="user", owner_user_id="user-1")
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([key]),  # SELECT key
+            FakeResult([own_personal_kb]),  # validate selected KB ownership
+            FakeResult(),  # would delete old access if validation failed open
+        ],
+    )
+    body = UpdateApiKeyRequest(kb_access=[KbAccessEntry(kb_id=123, access_level="read")])
+
+    with pytest.raises(HTTPException) as exc:
+        await update_api_key(
+            key_id="key-1",
+            body=body,
+            perms=make_perms(role="admin", user_id="user-1", org_id=1),
+            db=db,
+        )
+
+    assert exc.value.status_code == 400
+    assert "created by the caller" in exc.value.detail
+    assert db.execute.await_count == 2
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_rotate_api_key_clones_permissions_and_kb_access():
     """POST /api/admin/api-keys/{id}/rotate creates a replacement key."""
     from app.api.admin_api_keys import rotate_api_key
@@ -144,6 +217,7 @@ async def test_rotate_api_key_clones_permissions_and_kb_access():
         rate_limit_rpm=120,
     )
     kb_access = FakeKbAccessRow(partner_api_key_id="key-old", kb_id=123, access_level="read_write")
+    org_kb = SimpleNamespace(id=123, owner_type="org", owner_user_id=None)
     db = AsyncMock()
     db.add = MagicMock()
     rotated_to_seen_at_flush: list[str | None] = []
@@ -162,6 +236,7 @@ async def test_rotate_api_key_clones_permissions_and_kb_access():
         [
             FakeResult([source_key]),  # SELECT source key
             FakeResult([kb_access]),  # SELECT source KB access rows
+            FakeResult([org_kb]),  # validate cloned KB access ownership
         ],
     )
 
@@ -183,3 +258,35 @@ async def test_rotate_api_key_clones_permissions_and_kb_access():
     assert rotated_to_seen_at_flush == [None, result.id]
     db.commit.assert_awaited_once()
     assert db.add.call_count == 2  # new key row + cloned KB access row
+
+
+@pytest.mark.asyncio
+async def test_rotate_api_key_rejects_other_users_personal_kb_access():
+    """Rotation must not mint a new plaintext key for another user's personal KB."""
+    from app.api.admin_api_keys import rotate_api_key
+
+    source_key = FakeKeyRow(id="key-old", created_by="user-2")
+    kb_access = FakeKbAccessRow(partner_api_key_id="key-old", kb_id=123, access_level="read")
+    other_personal_kb = SimpleNamespace(id=123, owner_type="user", owner_user_id="user-2")
+    db = AsyncMock()
+    db.add = MagicMock()
+    setup_db(
+        db,
+        [
+            FakeResult([source_key]),  # SELECT source key
+            FakeResult([kb_access]),  # SELECT source KB access rows
+            FakeResult([other_personal_kb]),  # validate cloned KB access ownership
+        ],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await rotate_api_key(
+            key_id="key-old",
+            perms=make_perms(role="admin", user_id="user-1", org_id=1),
+            db=db,
+        )
+
+    assert exc.value.status_code == 400
+    assert "not owned by the caller" in exc.value.detail
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()

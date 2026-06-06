@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db, set_tenant, tenant_scoped_session
 from app.core.permissions import assert_platform_unlocked
+from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
@@ -266,23 +267,29 @@ async def get_partner_key(
     if not verify_partner_key(token, key_row.key_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
-    # Step 5: Load KB access entries
-    kb_result = await db.execute(
-        select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key_row.id)
-    )
-    kb_rows = kb_result.scalars().all()
-    kb_access = {row.kb_id: row.access_level for row in kb_rows}
-
-    # Step 6: Resolve org_id -> zitadel_org_id and set tenant for downstream ORM queries
+    # Step 5: Resolve org_id -> zitadel_org_id and set tenant for downstream ORM queries.
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == key_row.org_id))
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
     await set_tenant(db, org.id)
 
-    # Step 6b: Platform-feature gate — partner_api must be unlocked for this org.
+    # Step 5b: Platform-feature gate — partner_api must be unlocked for this org.
     # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C.
     assert_platform_unlocked(org, "partner_api")
+
+    # Step 6: Load KB access entries after tenant context is set. Legacy rows
+    # pointing at another user's personal KB are filtered out at auth time.
+    kb_result = await db.execute(
+        select(PartnerApiKeyKbAccess, PortalKnowledgeBase)
+        .join(PortalKnowledgeBase, PartnerApiKeyKbAccess.kb_id == PortalKnowledgeBase.id)
+        .where(
+            PartnerApiKeyKbAccess.partner_api_key_id == key_row.id,
+            PortalKnowledgeBase.org_id == key_row.org_id,
+            (PortalKnowledgeBase.owner_type == "org") | (PortalKnowledgeBase.owner_user_id == key_row.created_by),
+        )
+    )
+    kb_access = {row.kb_id: row.access_level for row, _kb in kb_result}
 
     # Step 7: Check rate limit
     redis_pool = await get_redis_pool()
