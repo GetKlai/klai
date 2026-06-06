@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label'
 import { ListEmptyState } from '@/components/ui/list-state'
 import {
   BorderedRowActionIconButton,
+  RowActionButton,
   RowActionGroup,
 } from '@/components/ui/row-action'
 import { Select } from '@/components/ui/select'
@@ -141,9 +142,16 @@ export function TenantFeaturesSection({
             {m.admin_settings_extensions_description_platform()}
           </p>
         </div>
-        <Button
+        <RowActionButton
           type="button"
-          size="sm"
+          action="save"
+          label={m.admin_settings_save()}
+          tooltip={false}
+          spinner={
+            updateUnlocks.isPending
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : undefined
+          }
           onClick={saveFeatures}
           disabled={
             updateUnlocks.isPending ||
@@ -152,15 +160,12 @@ export function TenantFeaturesSection({
             !dirty
           }
         >
-          {updateUnlocks.isPending && (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          )}
           {savedFeatures
             ? m.admin_settings_saved()
             : updateUnlocks.isPending
               ? m.admin_settings_saving()
               : m.admin_settings_save()}
-        </Button>
+        </RowActionButton>
       </div>
 
       {unlocks.isLoading ? (
