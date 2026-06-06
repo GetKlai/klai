@@ -72,6 +72,7 @@ _ALLOWED_MODELS = {"klai-primary", "klai-fast"}
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _HUBSPOT_HANDOFF_DEV_TENANT_SLUG = "getklai"
 _HUBSPOT_HANDOFF_DEV_ORIGIN = "https://getklai.getklai.com"
+_MAX_WEB_SEARCH_QUERY_CHARS = 512
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +115,7 @@ class ChatCompletionsRequest(BaseModel):
     # a far better keyword query than ``knowledge.query``, which is tuned for KB
     # embedding retrieval and is often a long labelled blob that returns nothing
     # from a keyword engine. Falls back to the last user message when omitted.
-    web_search_query: str | None = None
+    web_search_query: str | None = Field(default=None, max_length=_MAX_WEB_SEARCH_QUERY_CHARS)
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -604,6 +605,13 @@ def _message_text(content: object) -> str:
     return ""
 
 
+def _clean_web_query(value: str | None) -> str | None:
+    cleaned = re.sub(r"\s+", " ", value or "").strip()
+    if not cleaned:
+        return None
+    return cleaned[:_MAX_WEB_SEARCH_QUERY_CHARS]
+
+
 def _resolve_web_query(request: ChatCompletionsRequest) -> str | None:
     """Pick the query to send to the web search.
 
@@ -615,13 +623,13 @@ def _resolve_web_query(request: ChatCompletionsRequest) -> str | None:
     2. the last user message — the natural-language question being asked
        (handles multimodal content arrays, not just plain strings).
     """
-    explicit = (request.web_search_query or "").strip()
+    explicit = _clean_web_query(request.web_search_query)
     if explicit:
         return explicit
     for message in reversed(request.messages):
         if message.get("role") != "user":
             continue
-        if text := _message_text(message.get("content")):
+        if text := _clean_web_query(_message_text(message.get("content"))):
             return text
     return None
 

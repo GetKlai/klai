@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.api.partner_dependencies import PartnerAuthContext, require_permission
 from app.services.citations import compose_answer_with_trusted_sources
@@ -160,6 +161,20 @@ def test_resolve_web_query_prefers_explicit_query():
         web_search_query="  Yealink T54W no registration  ",
     )
     assert _resolve_web_query(req) == "Yealink T54W no registration"
+
+
+def test_web_search_query_rejects_oversized_explicit_query():
+    long_query = "x" * 513
+    with pytest.raises(ValidationError):
+        _req(web_search_query=long_query)
+
+
+def test_resolve_web_query_bounds_derived_user_message():
+    from app.api.partner import _MAX_WEB_SEARCH_QUERY_CHARS, _resolve_web_query
+
+    req = _req(messages=[{"role": "user", "content": "x" * (_MAX_WEB_SEARCH_QUERY_CHARS + 100)}])
+    query = _resolve_web_query(req)
+    assert query == "x" * _MAX_WEB_SEARCH_QUERY_CHARS
 
 
 def test_resolve_web_query_falls_back_to_last_user_message():
@@ -392,6 +407,84 @@ async def test_maybe_apply_web_search_searches_with_resolved_query(monkeypatch):
     assert chunks and chunks[0]["source_url"] == "https://x.test/1"
     assert search.await_args.args[0] == "my concise query"
     assert "Untrusted web search results" in prompt
+
+
+@pytest.mark.asyncio
+async def test_chat_handler_web_search_requires_partner_permission(monkeypatch):
+    import app.api.partner as partner
+
+    monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=[]))
+    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [])))
+    search = AsyncMock(return_value=[])
+    monkeypatch.setattr(partner, "search_web", search)
+    req = _req(web_search=True, stream=False, messages=[{"role": "user", "content": "q"}])
+
+    with pytest.raises(HTTPException) as exc:
+        await partner.chat_completions(
+            request=req,
+            http_request=MagicMock(headers={}, client=MagicMock(host="127.0.0.1")),
+            auth=_auth({"chat": True}),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 403
+    search.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_handler_web_search_never_runs_for_widget_key(monkeypatch):
+    import app.api.partner as partner
+
+    monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=[]))
+    monkeypatch.setattr(partner, "_widget_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [])))
+    search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
+    chat = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "search_web", search)
+    monkeypatch.setattr(partner, "chat_completion_non_streaming", chat)
+    req = _req(web_search=True, stream=False, messages=[{"role": "user", "content": "q"}])
+    auth = _auth({"chat": True, "web_search": True})
+    auth.key_id = "wgt_test_widget"
+    db = AsyncMock()
+    widget_uuid_result = MagicMock()
+    widget_uuid_result.scalar_one_or_none = MagicMock(return_value=None)
+    db.execute = AsyncMock(return_value=widget_uuid_result)
+
+    await partner.chat_completions(
+        request=req,
+        http_request=MagicMock(headers={}, client=MagicMock(host="127.0.0.1")),
+        auth=auth,
+        db=db,
+    )
+
+    search.assert_not_awaited()
+    chat.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_handler_web_search_allowed_for_partner_key(monkeypatch):
+    import app.api.partner as partner
+
+    monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=[]))
+    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [])))
+    search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
+    chat = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "search_web", search)
+    monkeypatch.setattr(partner, "chat_completion_non_streaming", chat)
+    req = _req(web_search=True, stream=False, web_search_query="concise", messages=[{"role": "user", "content": "q"}])
+
+    await partner.chat_completions(
+        request=req,
+        http_request=MagicMock(headers={}, client=MagicMock(host="127.0.0.1")),
+        auth=_auth({"chat": True, "web_search": True}),
+        db=AsyncMock(),
+    )
+
+    search.assert_awaited_once()
+    assert search.await_args.args[0] == "concise"
+    assert chat.await_args.kwargs["web_query"] == "concise"
+    assert chat.await_args.kwargs["web_chunks"][0]["source_url"] == "https://x.test/1"
 
 
 def test_web_chunks_not_cited_when_answer_unrelated():
