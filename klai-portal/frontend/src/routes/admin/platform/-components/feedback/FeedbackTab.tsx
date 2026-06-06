@@ -104,31 +104,33 @@ function InboxPanel({
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         {toggle}
-        <div className="flex flex-wrap items-center gap-2">
-        <Select
-          value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value)}
-          className="h-9 w-48"
-          aria-label={m.platform_feedback_filter_status()}
-        >
-          <option value="">{m.platform_feedback_filter_all_statuses()}</option>
-          <option value="new">{m.platform_feedback_status_new()}</option>
-          <option value="open">{m.platform_feedback_status_open()}</option>
-          <option value="resolved">{m.platform_feedback_status_resolved()}</option>
-          <option value="support">{m.platform_feedback_status_support()}</option>
-          <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
-        </Select>
-        <Select
-          value={kindFilter}
-          onChange={(event) => setKindFilter(event.target.value)}
-          className="h-9 w-48"
-          aria-label={m.platform_feedback_filter_type()}
-        >
-          <option value="">{m.platform_feedback_filter_all_types()}</option>
-          <option value="feedback">{m.platform_feedback_kind_feedback()}</option>
-          <option value="problem">{m.platform_feedback_kind_problem()}</option>
-          <option value="question">{m.platform_feedback_kind_question()}</option>
-        </Select>
+        <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-2">
+          <Select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="h-9"
+            containerClassName="sm:w-48"
+            aria-label={m.platform_feedback_filter_status()}
+          >
+            <option value="">{m.platform_feedback_filter_all_statuses()}</option>
+            <option value="new">{m.platform_feedback_status_new()}</option>
+            <option value="open">{m.platform_feedback_status_open()}</option>
+            <option value="resolved">{m.platform_feedback_status_resolved()}</option>
+            <option value="support">{m.platform_feedback_status_support()}</option>
+            <option value="dismissed">{m.platform_feedback_status_dismissed()}</option>
+          </Select>
+          <Select
+            value={kindFilter}
+            onChange={(event) => setKindFilter(event.target.value)}
+            className="h-9"
+            containerClassName="sm:w-48"
+            aria-label={m.platform_feedback_filter_type()}
+          >
+            <option value="">{m.platform_feedback_filter_all_types()}</option>
+            <option value="feedback">{m.platform_feedback_kind_feedback()}</option>
+            <option value="problem">{m.platform_feedback_kind_problem()}</option>
+            <option value="question">{m.platform_feedback_kind_question()}</option>
+          </Select>
         </div>
       </div>
       {isLoading ? (

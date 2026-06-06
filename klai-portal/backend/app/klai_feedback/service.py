@@ -401,6 +401,7 @@ async def link_feedback_submission_to_item(
     submission_id: int,
     item_id: int,
     link_type: str,
+    reopen_item: bool = False,
 ) -> tuple[FeedbackSubmission, FeedbackItem]:
     submission = await get_feedback_submission(db, submission_id)
     item = await get_feedback_item(db, item_id)
@@ -429,6 +430,13 @@ async def link_feedback_submission_to_item(
         existing.confidence = 100
 
     submission.status = "open"
+    if reopen_item and item.status in {"resolved", "dismissed"}:
+        item.status = "open"
+        item.shipped_at = None
+        item.resolved_at = None
+        item.resolved_by = None
+        item.resolution_summary = None
+        item.notification_state = "not_needed"
     await db.flush()
     await refresh_feedback_item_counts(db, item_id)
     await db.commit()

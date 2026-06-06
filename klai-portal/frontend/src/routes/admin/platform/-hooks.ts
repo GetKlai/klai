@@ -484,6 +484,7 @@ export function usePlatformFeedbackLinkItem() {
       submissionId: number
       item_id: number
       link_type?: string
+      reopen_item?: boolean
     }) =>
       apiFetch<PlatformFeedbackActionResult>(
         `/api/admin/platform/feedback/submissions/${vars.submissionId}/links`,
@@ -492,6 +493,7 @@ export function usePlatformFeedbackLinkItem() {
           body: JSON.stringify({
             item_id: vars.item_id,
             link_type: vars.link_type || 'evidence',
+            reopen_item: vars.reopen_item ?? false,
           }),
         },
       ),

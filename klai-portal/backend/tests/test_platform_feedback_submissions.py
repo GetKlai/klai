@@ -23,6 +23,9 @@ class _Result:
     def first(self):
         return self._rows[0] if self._rows else None
 
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
     def __iter__(self):
         return iter(self._rows)
 
@@ -37,6 +40,7 @@ class _Session:
         self.closed = False
         self.flushed = False
         self.refreshed = []
+        self.added = []
 
     async def __aenter__(self):
         return self
@@ -61,6 +65,9 @@ class _Session:
 
     async def refresh(self, obj):
         self.refreshed.append(obj)
+
+    def add(self, obj):
+        self.added.append(obj)
 
     async def delete(self, _obj):
         return None
@@ -434,6 +441,96 @@ async def test_platform_feedback_create_item_links_submission(monkeypatch):
 
     assert result.status == "open"
     assert result.item_id == 456
+
+
+@pytest.mark.asyncio
+async def test_platform_feedback_link_item_can_reopen_closed_item(monkeypatch):
+    session = _Session([])
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_link_item(db, **kwargs):
+        assert db is session
+        assert kwargs == {
+            "submission_id": 123,
+            "item_id": 456,
+            "link_type": "bug_repro",
+            "reopen_item": True,
+        }
+        return (
+            _SessionBound(session, id=123, status="open"),
+            _SessionBound(session, id=456),
+        )
+
+    monkeypatch.setattr(platform, "_audit", fake_audit)
+    monkeypatch.setattr(platform, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform, "link_feedback_submission_to_item", fake_link_item)
+
+    result = await platform.platform_feedback_link_item(
+        submission_id=123,
+        body=platform.PlatformFeedbackLinkItemIn(
+            item_id=456,
+            link_type="bug_repro",
+            reopen_item=True,
+        ),
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert result.status == "open"
+    assert result.item_id == 456
+
+
+@pytest.mark.asyncio
+async def test_link_feedback_submission_to_item_reopens_closed_item_when_requested(monkeypatch):
+    session = _Session([])
+    submission = SimpleNamespace(id=123, status="new")
+    item = _feedback_item(
+        status="resolved",
+        shipped_at=datetime(2026, 6, 5, 10, 0, tzinfo=UTC),
+        resolution_summary="Fixed earlier.",
+        resolved_at=datetime(2026, 6, 5, 10, 0, tzinfo=UTC),
+        resolved_by="staff",
+        notification_state="sent",
+    )
+
+    async def fake_get_submission(db, submission_id):
+        assert db is session
+        assert submission_id == 123
+        return submission
+
+    async def fake_get_item(db, item_id):
+        assert db is session
+        assert item_id == 456
+        return item
+
+    async def fake_refresh_counts(db, item_id):
+        assert db is session
+        assert item_id == 456
+
+    monkeypatch.setattr(feedback_service, "get_feedback_submission", fake_get_submission)
+    monkeypatch.setattr(feedback_service, "get_feedback_item", fake_get_item)
+    monkeypatch.setattr(feedback_service, "refresh_feedback_item_counts", fake_refresh_counts)
+
+    result_submission, result_item = await feedback_service.link_feedback_submission_to_item(
+        session,
+        submission_id=123,
+        item_id=456,
+        link_type="bug_repro",
+        reopen_item=True,
+    )
+
+    assert result_submission is submission
+    assert result_item is item
+    assert submission.status == "open"
+    assert item.status == "open"
+    assert item.shipped_at is None
+    assert item.resolution_summary is None
+    assert item.resolved_at is None
+    assert item.resolved_by is None
+    assert item.notification_state == "not_needed"
+    assert session.flushed is True
+    assert len(session.added) == 1
 
 
 @pytest.mark.asyncio

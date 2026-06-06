@@ -17,6 +17,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -105,6 +106,7 @@ export function FeedbackSubmissionDetailPanel({
   const [mode, setMode] = useState<TriageMode>('menu')
   const [search, setSearch] = useState('')
   const [draftStatus, setDraftStatus] = useState(item.status)
+  const [reopenLinkedItems, setReopenLinkedItems] = useState<Record<number, boolean>>({})
   const [confirmDismissOpen, setConfirmDismissOpen] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
@@ -131,9 +133,9 @@ export function FeedbackSubmissionDetailPanel({
       onClose()
     }
   }
-  const linkToItem = (itemId: number) =>
+  const linkToItem = (itemId: number, reopenItem = false) =>
     linkItem.mutate(
-      { submissionId: item.id, item_id: itemId, link_type: linkType },
+      { submissionId: item.id, item_id: itemId, link_type: linkType, reopen_item: reopenItem },
       { onSuccess: (res) => openItem(res.item_id) },
     )
   const createProductItem = () =>
@@ -309,6 +311,7 @@ export function FeedbackSubmissionDetailPanel({
       ? (matches.data ?? []).map((existing) => ({
           id: existing.id,
           title: existing.title,
+          status: existing.status,
           meta: [existing.kind, existing.status, existing.area].filter(Boolean).join(' · '),
           suggested: false,
         }))
@@ -317,6 +320,7 @@ export function FeedbackSubmissionDetailPanel({
             {
               id: candidate.item_id,
               title: candidate.title ?? `#${candidate.item_id}`,
+              status: candidate.status,
               meta: [candidate.kind, candidate.status, candidate.area]
                 .filter(Boolean)
                 .join(' · '),
@@ -352,30 +356,48 @@ export function FeedbackSubmissionDetailPanel({
 
           {rows.length > 0 && (
             <div className="divide-y divide-gray-200 border-y border-gray-200">
-              {rows.map((row) => (
-                <div key={row.id} className="flex items-center justify-between gap-3 py-3">
-                  <div className="min-w-0">
-                    {row.suggested && (
-                      <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--color-rl-accent-dark)]">
-                        <Sparkles className="h-3 w-3" />
-                        {m.platform_feedback_klai_suggestion()}
-                      </span>
-                    )}
-                    <p className="truncate text-sm font-medium text-gray-900">{row.title}</p>
-                    {row.meta && <p className="truncate text-xs text-gray-400">{row.meta}</p>}
+              {rows.map((row) => {
+                const isClosedItem = row.status === 'resolved' || row.status === 'dismissed'
+                const shouldReopen = isClosedItem ? (reopenLinkedItems[row.id] ?? true) : false
+                return (
+                  <div key={row.id} className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      {row.suggested && (
+                        <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--color-rl-accent-dark)]">
+                          <Sparkles className="h-3 w-3" />
+                          {m.platform_feedback_klai_suggestion()}
+                        </span>
+                      )}
+                      <p className="truncate text-sm font-medium text-gray-900">{row.title}</p>
+                      {row.meta && <p className="truncate text-xs text-gray-400">{row.meta}</p>}
+                      {isClosedItem && (
+                        <div className="mt-2">
+                          <Checkbox
+                            checked={shouldReopen}
+                            onChange={(event) =>
+                              setReopenLinkedItems((current) => ({
+                                ...current,
+                                [row.id]: event.currentTarget.checked,
+                              }))
+                            }
+                            label={m.platform_feedback_reopen_linked_item()}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => linkToItem(row.id, shouldReopen)}
+                    >
+                      <Link2 className="h-4 w-4" />
+                      {m.platform_feedback_link()}
+                    </Button>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => linkToItem(row.id)}
-                  >
-                    <Link2 className="h-4 w-4" />
-                    {m.platform_feedback_link()}
-                  </Button>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
 

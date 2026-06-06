@@ -104,24 +104,28 @@ function PlatformOrgDetailPage() {
       label: m.platform_tab_users(),
       icon: Users,
       count: data.users.length,
+      countTone: 'neutral',
     },
     {
       id: 'bots',
       label: m.platform_tab_bots(),
       icon: Bot,
       count: data.bots.length,
+      countTone: 'neutral',
     },
     {
       id: 'knowledge-bases',
       label: m.platform_tab_knowledge_bases(),
       icon: BookOpen,
       count: data.knowledge_bases.length,
+      countTone: 'neutral',
     },
     {
       id: 'templates',
       label: m.platform_tab_templates(),
       icon: FileText,
       count: data.templates.length,
+      countTone: 'neutral',
     },
     {
       id: 'danger',

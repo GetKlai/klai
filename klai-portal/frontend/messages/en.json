@@ -2344,6 +2344,7 @@
   "platform_feedback_search_placeholder": "Title or topic",
   "platform_feedback_ai_matches_help": "AI already found possible matches above. Use search only if you want to link another item.",
   "platform_feedback_link": "Link",
+  "platform_feedback_reopen_linked_item": "Reopen this item when linking",
   "platform_feedback_no_existing_item": "No existing open item found.",
   "platform_feedback_create_new_title": "Create new item",
   "platform_feedback_title_placeholder": "Title",
