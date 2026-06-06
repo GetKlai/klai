@@ -44,6 +44,9 @@ const VALID_TABS = new Set<PlatformTab>([
 
 type PlatformSearch = {
   tab?: PlatformTab
+  messageUserId?: string
+  messageOrgId?: string
+  messageRecipient?: string
 }
 
 export const Route = createFileRoute('/admin/platform/')({
@@ -51,6 +54,9 @@ export const Route = createFileRoute('/admin/platform/')({
     tab: (VALID_TABS as Set<string>).has(search.tab as string)
       ? (search.tab as PlatformTab)
       : undefined,
+    messageUserId: typeof search.messageUserId === 'string' ? search.messageUserId : undefined,
+    messageOrgId: typeof search.messageOrgId === 'string' ? search.messageOrgId : undefined,
+    messageRecipient: typeof search.messageRecipient === 'string' ? search.messageRecipient : undefined,
   }),
   component: PlatformConsole,
 })
@@ -96,6 +102,15 @@ function PlatformConsole() {
   const statsQuery = usePlatformStats(isPlatformAdmin)
   const stats = statsQuery.data
   const tab = routeSearch.tab ?? 'users'
+  const composeOrgId = Number(routeSearch.messageOrgId)
+  const composeTarget =
+    routeSearch.messageUserId && Number.isFinite(composeOrgId)
+      ? {
+          userId: routeSearch.messageUserId,
+          orgId: composeOrgId,
+          recipient: routeSearch.messageRecipient ?? routeSearch.messageUserId,
+        }
+      : null
   const newFeedbackCount = stats?.new_feedback_count ?? 0
   const chatErrorCount = stats?.chat_error_count ?? 0
   const extensionDownloadUrl = `${API_BASE}/api/app/shield/extension.zip`
@@ -104,6 +119,14 @@ function PlatformConsole() {
     void navigate({
       to: '/admin/platform',
       search: { tab: nextTab === 'users' ? undefined : nextTab },
+    })
+  }
+
+  function clearComposeTarget() {
+    void navigate({
+      to: '/admin/platform',
+      search: { tab: 'messages' },
+      replace: true,
     })
   }
 
@@ -318,7 +341,14 @@ function PlatformConsole() {
       {tab === 'organizations' && (
         <OrgsTab search={search} fmtDate={fmtDate} />
       )}
-      {tab === 'messages' && <MessagesTab search={search} fmtDate={fmtDate} />}
+      {tab === 'messages' && (
+        <MessagesTab
+          search={search}
+          fmtDate={fmtDate}
+          composeTarget={composeTarget}
+          onClearComposeTarget={clearComposeTarget}
+        />
+      )}
       {tab === 'subscriptions' && <SubsTab search={search} />}
       {tab === 'knowledge-bases' && <KbTab search={search} fmtDate={fmtDate} />}
       {tab === 'templates' && (
