@@ -254,11 +254,12 @@ function OpenItemsPanel({
     <>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
         {toggle}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-2">
           <Select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
-            className="h-9 w-48"
+            className="h-9"
+            containerClassName="sm:w-48"
             aria-label={m.platform_feedback_filter_status()}
           >
             <option value="active">{m.platform_feedback_filter_active()}</option>
@@ -270,7 +271,8 @@ function OpenItemsPanel({
           <Select
             value={kindFilter}
             onChange={(event) => setKindFilter(event.target.value)}
-            className="h-9 w-48"
+            className="h-9"
+            containerClassName="sm:w-48"
             aria-label={m.platform_feedback_filter_type()}
           >
             <option value="all">{m.platform_feedback_filter_all_types()}</option>
