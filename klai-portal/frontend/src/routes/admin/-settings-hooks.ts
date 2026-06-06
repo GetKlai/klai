@@ -80,34 +80,29 @@ function patchSettings(
 }
 
 export function useDefaultLanguageMutation(onSaved: () => void) {
-  return useMutation({
-    mutationFn: (lang: OrgSettings['default_language']) => patchSettings({ default_language: lang }),
-    onSuccess: (_data, lang) => {
-      adminLogger.info('Default language changed', { language: lang })
-      onSaved()
-    },
-  })
-}
-
-export function useMfaPolicyMutation(onSaved: () => void) {
-  return useMutation({
-    mutationFn: (policy: OrgSettings['mfa_policy']) => patchSettings({ mfa_policy: policy }),
-    onSuccess: (_data, policy) => {
-      adminLogger.info('MFA policy changed', { policy })
-      onSaved()
-    },
-  })
-}
-
-export function useAutoAcceptSameDomainMutation(onSaved?: () => void) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (value: boolean) => patchSettings({ auto_accept_same_domain: value }),
-    onSuccess: (data, value) => {
-      adminLogger.info('Auto-accept same domain changed', { auto_accept_same_domain: value })
+    mutationFn: (lang: OrgSettings['default_language']) => patchSettings({ default_language: lang }),
+    onSuccess: (data, lang) => {
+      adminLogger.info('Default language changed', { language: lang })
       queryClient.setQueryData(adminSettingsQueryKey, data)
-      onSaved?.()
+      onSaved()
+    },
+  })
+}
+
+export function useSecuritySettingsMutation(onSaved: () => void) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (
+      payload: Pick<OrgSettings, 'mfa_policy' | 'auto_accept_same_domain'>,
+    ) => patchSettings(payload),
+    onSuccess: (data, payload) => {
+      adminLogger.info('Security settings changed', payload)
+      queryClient.setQueryData(adminSettingsQueryKey, data)
+      onSaved()
     },
   })
 }

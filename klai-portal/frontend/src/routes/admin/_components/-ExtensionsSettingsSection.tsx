@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { extensionDescription, extensionLabel } from '@/lib/extensions-i18n'
@@ -45,6 +45,15 @@ export function ExtensionsSettingsSection() {
       [...stagedExtensions].some((key) => !savedEnabled.has(key)))
   const isPlatformAdmin = me?.is_platform_admin ?? false
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!extensions) return
+    extensionsMutation.mutate({
+      org_slug: extensions.org_slug,
+      enabled_features: [...stagedExtensions].sort(),
+    })
+  }
+
   return (
     <section className="space-y-4">
       <div className="space-y-1">
@@ -57,7 +66,7 @@ export function ExtensionsSettingsSection() {
             : m.admin_settings_extensions_description_tenant()}
         </p>
       </div>
-      <div className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4">
         {extensionsLoading ? (
           <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
         ) : extensionsError ? (
@@ -108,12 +117,7 @@ export function ExtensionsSettingsSection() {
             )}
             {isPlatformAdmin && (
               <Button
-                onClick={() =>
-                  extensionsMutation.mutate({
-                    org_slug: extensions.org_slug,
-                    enabled_features: [...stagedExtensions].sort(),
-                  })
-                }
+                type="submit"
                 disabled={extensionsMutation.isPending || savedExtensions || !extensionsDirty}
               >
                 {savedExtensions
@@ -125,7 +129,7 @@ export function ExtensionsSettingsSection() {
             )}
           </>
         )}
-      </div>
+      </form>
     </section>
   )
 }

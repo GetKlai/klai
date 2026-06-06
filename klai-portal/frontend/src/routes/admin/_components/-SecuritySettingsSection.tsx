@@ -1,12 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import * as m from '@/paraglide/messages'
 import {
-  useAutoAcceptSameDomainMutation,
-  useMfaPolicyMutation,
+  useSecuritySettingsMutation,
   type OrgSettings,
 } from '../-settings-hooks'
 
@@ -22,16 +21,11 @@ export function SecuritySettingsSection({
   error,
 }: SecuritySettingsSectionProps) {
   const [selectedMfa, setSelectedMfa] = useState<OrgSettings['mfa_policy']>('optional')
-  const [savedMfa, setSavedMfa] = useState(false)
   const [autoAcceptSameDomain, setAutoAcceptSameDomain] = useState(false)
-  const [savedAutoAccept, setSavedAutoAccept] = useState(false)
-  const mfaMutation = useMfaPolicyMutation(() => {
-    setSavedMfa(true)
-    setTimeout(() => setSavedMfa(false), 2500)
-  })
-  const autoAcceptMutation = useAutoAcceptSameDomainMutation(() => {
-    setSavedAutoAccept(true)
-    setTimeout(() => setSavedAutoAccept(false), 2500)
+  const [savedSecurity, setSavedSecurity] = useState(false)
+  const securityMutation = useSecuritySettingsMutation(() => {
+    setSavedSecurity(true)
+    setTimeout(() => setSavedSecurity(false), 2500)
   })
 
   useEffect(() => {
@@ -41,8 +35,18 @@ export function SecuritySettingsSection({
     }
   }, [settings])
 
-  const autoAcceptDirty =
-    settings != null && autoAcceptSameDomain !== settings.auto_accept_same_domain
+  const securityDirty =
+    settings != null &&
+    (selectedMfa !== settings.mfa_policy ||
+      autoAcceptSameDomain !== settings.auto_accept_same_domain)
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    securityMutation.mutate({
+      mfa_policy: selectedMfa,
+      auto_accept_same_domain: autoAcceptSameDomain,
+    })
+  }
 
   return (
     <section className="space-y-6">
@@ -54,95 +58,72 @@ export function SecuritySettingsSection({
           {m.admin_settings_security_description()}
         </p>
       </div>
-      <div className="space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-6">
         {isLoading ? (
           <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
         ) : error ? (
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : (
           <>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <Label htmlFor="settings-mfa">
-                  {m.admin_settings_mfa_label()}
-                </Label>
-                <Select
-                  id="settings-mfa"
-                  value={selectedMfa}
-                  onChange={(e) => setSelectedMfa(e.target.value as OrgSettings['mfa_policy'])}
-                  containerClassName="max-w-xs"
-                >
-                  <option value="optional">{m.admin_settings_mfa_optional()}</option>
-                  <option value="recommended">{m.admin_settings_mfa_recommended()}</option>
-                  <option value="required">{m.admin_settings_mfa_required()}</option>
-                </Select>
-                <p className="text-xs text-gray-400">
-                  {selectedMfa === 'optional' && m.admin_settings_mfa_optional_hint()}
-                  {selectedMfa === 'recommended' && m.admin_settings_mfa_recommended_hint()}
-                  {selectedMfa === 'required' && m.admin_settings_mfa_required_hint()}
-                </p>
-              </div>
-              <Button
-                className="w-fit"
-                onClick={() => mfaMutation.mutate(selectedMfa)}
-                disabled={
-                  mfaMutation.isPending ||
-                  savedMfa ||
-                  selectedMfa === settings?.mfa_policy
-                }
+            <div className="space-y-1.5">
+              <Label htmlFor="settings-mfa">
+                {m.admin_settings_mfa_label()}
+              </Label>
+              <Select
+                id="settings-mfa"
+                value={selectedMfa}
+                onChange={(e) => setSelectedMfa(e.target.value as OrgSettings['mfa_policy'])}
+                containerClassName="max-w-xs"
               >
-                {savedMfa
+                <option value="optional">{m.admin_settings_mfa_optional()}</option>
+                <option value="recommended">{m.admin_settings_mfa_recommended()}</option>
+                <option value="required">{m.admin_settings_mfa_required()}</option>
+              </Select>
+              <p className="text-xs text-gray-400">
+                {selectedMfa === 'optional' && m.admin_settings_mfa_optional_hint()}
+                {selectedMfa === 'recommended' && m.admin_settings_mfa_recommended_hint()}
+                {selectedMfa === 'required' && m.admin_settings_mfa_required_hint()}
+              </p>
+            </div>
+
+            {settings?.primary_domain && (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <Label htmlFor="settings-auto-accept" className="cursor-pointer">
+                    {m.admin_settings_auto_accept_label({ domain: settings.primary_domain })}
+                  </Label>
+                  <p className="text-xs text-gray-400">
+                    {autoAcceptSameDomain
+                      ? m.admin_settings_auto_accept_hint_on()
+                      : m.admin_settings_auto_accept_hint_off()}
+                  </p>
+                </div>
+                <Switch
+                  id="settings-auto-accept"
+                  checked={autoAcceptSameDomain}
+                  disabled={securityMutation.isPending}
+                  onCheckedChange={setAutoAcceptSameDomain}
+                />
+              </div>
+            )}
+            {securityMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
+            )}
+            <div className="pt-2">
+              <Button
+                type="submit"
+                disabled={securityMutation.isPending || savedSecurity || !securityDirty}
+              >
+                {savedSecurity
                   ? m.admin_settings_saved()
-                  : mfaMutation.isPending
+                  : securityMutation.isPending
                     ? m.admin_settings_saving()
                     : m.admin_settings_save()}
               </Button>
             </div>
-            {mfaMutation.error && (
-              <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
-            )}
-
-            {settings?.primary_domain && (
-              <div className="border-t border-gray-200 pt-5 space-y-3">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <Label htmlFor="settings-auto-accept" className="cursor-pointer">
-                      {m.admin_settings_auto_accept_label({ domain: settings.primary_domain })}
-                    </Label>
-                    <p className="text-xs text-gray-400">
-                      {autoAcceptSameDomain
-                        ? m.admin_settings_auto_accept_hint_on()
-                        : m.admin_settings_auto_accept_hint_off()}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      id="settings-auto-accept"
-                      checked={autoAcceptSameDomain}
-                      disabled={autoAcceptMutation.isPending}
-                      onCheckedChange={setAutoAcceptSameDomain}
-                    />
-                    <Button
-                      className="w-fit"
-                      onClick={() => autoAcceptMutation.mutate(autoAcceptSameDomain)}
-                      disabled={autoAcceptMutation.isPending || savedAutoAccept || !autoAcceptDirty}
-                    >
-                      {savedAutoAccept
-                        ? m.admin_settings_saved()
-                        : autoAcceptMutation.isPending
-                          ? m.admin_settings_saving()
-                          : m.admin_settings_save()}
-                    </Button>
-                  </div>
-                </div>
-                {autoAcceptMutation.error && (
-                  <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
-                )}
-              </div>
-            )}
           </>
         )}
-      </div>
+      </form>
     </section>
   )
 }
