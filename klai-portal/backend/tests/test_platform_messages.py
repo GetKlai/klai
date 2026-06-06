@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.admin import platform_messages
 from app.core import database as db_module
@@ -24,6 +25,10 @@ class _Session:
 
     async def commit(self):
         self.commits += 1
+        return None
+
+    async def scalar(self, *_args, **_kwargs):
+        # _resolve_admin_display_name() does a scalar lookup; tests don't care.
         return None
 
 
@@ -304,9 +309,90 @@ async def test_platform_message_thread_reply_uses_thread_org(monkeypatch):
         "sender_type": "platform_admin",
         "sender_user_id": "staff",
         "body": "Dank voor je reactie.",
+        "sender_display_name": None,
     }
     assert result.thread.id == 99
     assert session.commits == 1
+
+
+class _EditSession:
+    def __init__(self, message):
+        self.message = message
+        self.commits = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return None
+
+    async def execute(self, _query):
+        message = self.message
+
+        class _Res:
+            def scalar_one_or_none(self):
+                return message
+
+        return _Res()
+
+    async def commit(self):
+        self.commits += 1
+
+
+@pytest.mark.asyncio
+async def test_platform_message_edit_updates_own_message(monkeypatch):
+    now = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    message = SimpleNamespace(
+        id=5,
+        sender_type="platform_admin",
+        sender_user_id="staff",
+        sender_display_name="Mark",
+        body="oud",
+        created_at=now,
+    )
+    session = _EditSession(message)
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    async def fake_detail(db, thread_id):
+        assert db is session
+        return _detail(thread_id)
+
+    monkeypatch.setattr(platform_messages, "_audit", fake_audit)
+    monkeypatch.setattr(platform_messages, "cross_org_session", lambda: session)
+    monkeypatch.setattr(platform_messages, "_load_thread_detail", fake_detail)
+
+    result = await platform_messages.platform_message_edit(
+        99,
+        5,
+        platform_messages.PlatformMessageReplyIn(body="nieuw"),
+        perms=SimpleNamespace(org_id=1, user_id="staff"),
+    )
+
+    assert message.body == "nieuw"
+    assert session.commits == 1
+    assert result.thread.id == 99
+
+
+@pytest.mark.asyncio
+async def test_platform_message_edit_404_when_not_own(monkeypatch):
+    session = _EditSession(None)
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(platform_messages, "_audit", fake_audit)
+    monkeypatch.setattr(platform_messages, "cross_org_session", lambda: session)
+
+    with pytest.raises(HTTPException) as exc:
+        await platform_messages.platform_message_edit(
+            99,
+            5,
+            platform_messages.PlatformMessageReplyIn(body="nieuw"),
+            perms=SimpleNamespace(org_id=1, user_id="staff"),
+        )
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio

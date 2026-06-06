@@ -85,6 +85,7 @@ interface AccountPlatformMessage {
   id: number
   sender_type: string
   sender_user_id?: string | null
+  sender_display_name?: string | null
   body: string
   created_at: string
 }
@@ -424,7 +425,10 @@ function AccountMessagesPanel({
     const entries: ConversationEntry[] = (detail?.messages ?? []).map((message) => ({
       id: message.id,
       side: message.sender_type === 'user' ? 'me' : 'them',
-      author: message.sender_type === 'user' ? m.account_messages_you() : m.account_messages_platform_admin(),
+      author:
+        message.sender_type === 'user'
+          ? m.account_messages_you()
+          : message.sender_display_name || m.account_messages_platform_admin(),
       body: message.body,
       at: message.created_at,
       editable: message.sender_type === 'user',
@@ -675,7 +679,10 @@ function buildFeedbackEntries(
       entries.push({
         id: message.id,
         side: message.sender_type === 'user' ? 'me' : 'them',
-        author: message.sender_type === 'user' ? m.account_messages_you() : m.account_messages_platform_admin(),
+        author:
+          message.sender_type === 'user'
+            ? m.account_messages_you()
+            : message.sender_display_name || m.account_messages_platform_admin(),
         body: message.body,
         at: message.created_at,
         editable: message.sender_type === 'user',

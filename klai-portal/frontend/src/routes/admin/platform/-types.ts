@@ -240,6 +240,7 @@ export interface PlatformMessage {
   id: number
   sender_type: string
   sender_user_id: string | null
+  sender_display_name: string | null
   body: string
   created_at: string
 }

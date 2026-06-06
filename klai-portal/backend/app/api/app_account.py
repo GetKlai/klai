@@ -163,6 +163,7 @@ class AccountPlatformMessageOut(BaseModel):
     id: int
     sender_type: str
     sender_user_id: str | None = None
+    sender_display_name: str | None = None
     body: str
     created_at: datetime
 
@@ -572,6 +573,7 @@ async def _load_account_message_thread_detail(
                 id=message.id,
                 sender_type=message.sender_type,
                 sender_user_id=message.sender_user_id,
+                sender_display_name=message.sender_display_name,
                 body=message.body,
                 created_at=message.created_at,
             )
