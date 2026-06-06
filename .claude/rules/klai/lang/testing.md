@@ -26,10 +26,41 @@ workspace profile is untouched.
 3. Interact via `ref` from snapshot, never CSS selectors: `browser_click({ target: 'e66', element: '...' })`
 4. Close browser when done (see rule above)
 
+## [HARD] Route Klai E2E requests to the right environment
+Klai has two different browser-test realities. They are not interchangeable.
+
+| User wording | Environment | Command / first action |
+|---|---|---|
+| "test end-to-end", "test e2e", "test in de e2e/testomgeving" | isolated e2e tenant, bot user, synthetic but full stack | `cd klai-portal/frontend && set -a; source .env.local; set +a; npm run test:e2e:prod` |
+| "test in Voys", "test in voice", "test met echte gebruiker", "real user" | Voys production tenant, captured Google SSO session, real user data | `cd klai-portal/frontend && npm run e2e:verify-voys-session` then `npm run test:e2e:prod:voys` |
+
+When browser/auth context is involved, interpret "voice" as **Voys** unless the
+user explicitly talks about audio, speech, or brand voice.
+
+Rules:
+- Do not satisfy an e2e/testomgeving request by testing Voys. The e2e tenant
+  exists to prove the deployable stack with the bot user and cleanup-safe
+  artifacts.
+- Do not satisfy a Voys/voice request by testing `e2e.getklai.com`. Voys is the
+  real-user environment and may reveal issues the bot tenant cannot simulate.
+- If isolated e2e credentials fail (401, missing `E2E_TOTP_SECRET`, stale
+  password), report that as a blocker. Do not silently fall back to Voys.
+- If Voys storage-state is missing or `/api/me` is not 200, run
+  `npm run e2e:capture-session` only when the user can complete Google SSO in
+  the opened browser. Do not claim Voys testing worked without
+  `npm run e2e:verify-voys-session` passing.
+- Voys tests touch real production data. Only create/delete artifacts with the
+  e2e prefix used by the suite; never click Log out in that session.
+
 ## Playwright session management
 - Default profile: `~/Library/Caches/ms-playwright/mcp-chrome-{workspace-hash}` (macOS;
   analogous paths on Linux/Windows). Each Conductor workspace gets its own hash,
   so parallel sessions across workspaces don't collide.
+- In this repo the Playwright MCP launcher preloads
+  `klai-portal/frontend/e2e/prod-tenant/_config/storageState.voys.json` when it
+  exists. That file is the source of truth for Voys/real-user MCP sessions.
+  Override with `KLAI_PLAYWRIGHT_STORAGE_STATE=none|global|voys|/absolute/path`
+  only when you are intentionally changing the session source.
 - Login state persists across Claude Code restarts within a workspace — no periodic
   storage-state refresh needed (that was the pre-2026-05-13 `--isolated` pattern).
 - `Browser is already in use` happens only when two MCP clients touch the SAME

@@ -17,7 +17,8 @@
     "test:e2e:dev": "playwright test",
     "test:e2e:prod": "playwright test -c e2e/prod-tenant/_config/playwright.prod.config.ts",
     "test:e2e:prod:voys": "cross-env E2E_MODE=voys-attached E2E_BASE_URL=https://voys.getklai.com playwright test -c e2e/prod-tenant/_config/playwright.prod.config.ts",
-    "e2e:capture-session": "tsx e2e/prod-tenant/_lib/capture-voys-session.ts"
+    "e2e:capture-session": "tsx e2e/prod-tenant/_lib/capture-voys-session.ts",
+    "e2e:verify-voys-session": "tsx e2e/prod-tenant/_lib/verify-voys-session.ts"
   },
   "dependencies": {
     "@blocknote/core": "^0.51.2",

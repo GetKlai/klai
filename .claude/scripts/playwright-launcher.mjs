@@ -30,13 +30,25 @@
  *   - Disposable verification where you don't want to pollute the
  *     workspace's persistent profile.
  *
- * Storage-state file (`~/.claude/mcp-storageState.json`):
- *   When present, the launcher passes `--storage-state` so a fresh
- *   profile (or an isolated session) is preloaded with cookies +
- *   localStorage from the seed file. With the persistent default this
- *   is now mostly redundant — the profile auto-saves login on first
- *   use — but it's harmless and useful as a first-boot preload for
- *   brand-new workspaces.
+ * Storage-state files:
+ *   For Klai workspaces the launcher first looks for the repo-local
+ *   Voys attached-session state at
+ *   `klai-portal/frontend/e2e/prod-tenant/_config/storageState.voys.json`.
+ *   When present, Playwright MCP starts with the real Voys user state.
+ *   This makes "test in Voys" / "test in voice" requests reliable across
+ *   fresh MCP sessions.
+ *
+ *   Fallback remains the generic `~/.claude/mcp-storageState.json`.
+ *
+ *   Override with `KLAI_PLAYWRIGHT_STORAGE_STATE`:
+ *     - `voys`: require the repo-local Voys state
+ *     - `global`: use `~/.claude/mcp-storageState.json`
+ *     - `none`: pass no storage-state
+ *     - absolute path: use that exact file
+ *
+ *   Important: isolated e2e tenant tests do NOT rely on MCP storage-state;
+ *   they run through `npm run test:e2e:prod` and log in with the bot user.
+ *   Voys-attached tests use `npm run test:e2e:prod:voys`.
  *
  *   To (re)seed: open a Playwright MCP session, browser_navigate to a
  *   login URL, log in by hand, then call `browser_run_code_unsafe`:
@@ -73,11 +85,20 @@
  */
 import { spawn } from 'child_process';
 import { homedir, platform } from 'os';
-import { join } from 'path';
+import { isAbsolute, join, resolve } from 'path';
 import { existsSync } from 'fs';
 
 const isWin = platform() === 'win32';
-const STATE_FILE = join(homedir(), '.claude', 'mcp-storageState.json');
+const GLOBAL_STATE_FILE = join(homedir(), '.claude', 'mcp-storageState.json');
+const VOYS_STATE_FILE = resolve(
+  process.cwd(),
+  'klai-portal',
+  'frontend',
+  'e2e',
+  'prod-tenant',
+  '_config',
+  'storageState.voys.json',
+);
 
 // Default: persistent profile (login state survives between sessions).
 // Opt-in `--isolated` via PLAYWRIGHT_ISOLATED=1 for the explicit
@@ -95,16 +116,36 @@ if (isolated) {
   args.push('--isolated');
 }
 
-if (existsSync(STATE_FILE)) {
-  args.push('--storage-state', STATE_FILE);
+function selectStorageState() {
+  const requested = process.env.KLAI_PLAYWRIGHT_STORAGE_STATE;
+  if (requested === 'none') return null;
+  if (requested === 'voys') return VOYS_STATE_FILE;
+  if (requested === 'global') return GLOBAL_STATE_FILE;
+  if (requested && isAbsolute(requested)) return requested;
+  if (existsSync(VOYS_STATE_FILE)) return VOYS_STATE_FILE;
+  if (existsSync(GLOBAL_STATE_FILE)) return GLOBAL_STATE_FILE;
+  return null;
+}
+
+const stateFile = selectStorageState();
+if (stateFile && existsSync(stateFile)) {
+  args.push('--storage-state', stateFile);
+  process.stderr.write(`playwright-launcher: using storage-state ${stateFile}\n`);
+} else if (stateFile) {
+  process.stderr.write(
+    `playwright-launcher: requested storage-state ${stateFile} not found; starting without it.\n`
+  );
+  if (process.env.KLAI_PLAYWRIGHT_STORAGE_STATE) {
+    process.exit(1);
+  }
 } else if (isolated) {
   process.stderr.write(
-    `playwright-launcher: ${STATE_FILE} not found and PLAYWRIGHT_ISOLATED=1.\n` +
+    `playwright-launcher: no storage-state found and PLAYWRIGHT_ISOLATED=1.\n` +
     `Isolated browser starts logged-out. To seed the file from inside a\n` +
     `running MCP session: open a login URL via browser_navigate, log in by\n` +
     `hand, then have the AI call browser_run_code_unsafe with a snippet\n` +
-    `that runs page.context().storageState({path: STATE_FILE}). Restart\n` +
-    `Claude Code afterwards so the launcher picks up the file.\n`
+    `that runs page.context().storageState({path}). Restart Claude Code\n` +
+    `afterwards so the launcher picks up the file.\n`
   );
 }
 
