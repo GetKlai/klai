@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { BorderedRowActionIconButton } from '@/components/ui/row-action'
 import { Textarea } from '@/components/ui/textarea'
+import { ApiError } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { usePlatformCreateMessageThread } from '../-hooks'
 import type { PlatformUser } from '../-types'
@@ -69,23 +70,28 @@ export function PlatformMessageComposerPanel({
           setBody('')
           onCancel()
         },
-        onError: (error) =>
-          toast.error(error instanceof Error ? error.message : m.admin_shared_error_generic()),
+        onError: (error) => {
+          if (error instanceof ApiError && error.status === 404) {
+            toast.error(m.platform_messages_send_unavailable())
+            return
+          }
+          toast.error(error instanceof Error ? error.message : m.admin_shared_error_generic())
+        },
       },
     )
   }
 
   return (
-    <section className="space-y-4 border-b border-gray-200 pb-6">
-      <div>
-        <h2 className="text-base font-display-bold text-gray-900">
+    <section className="max-w-3xl rounded-lg border border-gray-200 bg-white p-4">
+      <div className="mb-4">
+        <h2 className="text-sm font-display-bold text-gray-900">
           {m.platform_messages_compose_title()}
         </h2>
         <p className="mt-1 text-sm text-gray-400">
           {m.platform_messages_compose_description({ recipient: target.recipient })}
         </p>
       </div>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)_auto] lg:items-end">
+      <div className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor={`platform-message-subject-${target.userId}`}>
             {m.platform_messages_subject()}
@@ -98,19 +104,17 @@ export function PlatformMessageComposerPanel({
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor={`platform-message-body-${target.userId}`}>
-            {m.platform_messages_body()}
-          </Label>
+          <Label htmlFor={`platform-message-body-${target.userId}`}>{m.platform_messages_body()}</Label>
           <Textarea
             id={`platform-message-body-${target.userId}`}
             value={body}
             onChange={(event) => setBody(event.target.value)}
-            rows={3}
+            rows={4}
             maxLength={4000}
           />
         </div>
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel}>
+          <Button type="button" variant="secondary" onClick={onCancel}>
             {m.admin_users_cancel()}
           </Button>
           <Button type="button" disabled={!canSubmit || createThread.isPending} onClick={submit}>

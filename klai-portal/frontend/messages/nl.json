@@ -2133,6 +2133,7 @@
   "platform_messages_body": "Bericht",
   "platform_messages_send": "Versturen",
   "platform_messages_sent": "Bericht verstuurd",
+  "platform_messages_send_unavailable": "Berichten versturen is nog niet beschikbaar. Wacht tot de backend-deploy klaar is en probeer opnieuw.",
   "platform_messages_empty": "Geen berichten gevonden.",
   "platform_messages_thread": "Gesprek",
   "platform_messages_recipients": "Ontvangers",
