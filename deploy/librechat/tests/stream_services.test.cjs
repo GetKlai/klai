@@ -31,7 +31,7 @@ assert.match(getklaiStreamServicesPatch, /const CLEANUP_ON_COMPLETE = false;/);
 assert.match(getklaiStreamServicesPatch, /cleanupOnComplete: CLEANUP_ON_COMPLETE,/);
 assert.match(
   manifest,
-  /patches\/createStreamServices\.ts\|\/app\/packages\/api\/src\/stream\/createStreamServices\.ts\|1455df2b1671a60be4fa484c867f896cd67b7a6a729224ef4bc7622af704698c\|/,
+  /patches\/createStreamServices\.ts\|\/app\/packages\/api\/src\/stream\/createStreamServices\.ts\|ac039dc98dca672b024e87ea92a4ffb0ed3287b3db8e7e59a46f4ba8fa89ffb3\|/,
 );
 assert.match(
   getklaiManifest,

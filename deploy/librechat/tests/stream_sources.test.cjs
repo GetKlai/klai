@@ -23,6 +23,8 @@ const sandbox = {
           TOOL_CALL: 'tool_call',
           AGENT_UPDATE: 'agent_update',
           IMAGE_URL: 'image_url',
+          ERROR: 'error',
+          SUMMARY: 'summary',
         },
         GraphEvents: {
           ON_RUN_STEP: 'on_run_step',
@@ -44,6 +46,7 @@ const sandbox = {
         ToolCallTypes: {
           TOOL_CALL: 'tool_call',
         },
+        LOCAL_CODING_BUNDLE_NAMES: [],
       };
     }
     if (id === './tools/handlers.cjs') {
@@ -55,6 +58,24 @@ const sandbox = {
       id === '@langchain/core/messages'
     ) {
       return {};
+    }
+    if (id === './utils/truncation.cjs') {
+      return {};
+    }
+    if (id === './utils/events.cjs') {
+      return { emitAgentLog() {} };
+    }
+    if (id === 'uuid') {
+      return {};
+    }
+    if (id === './tools/eagerEventExecution.cjs') {
+      return {};
+    }
+    if (id === './tools/streamedToolCallSeals.cjs') {
+      return {};
+    }
+    if (id === './tools/toolOutputReferences.cjs') {
+      return { TOOL_OUTPUT_REF_PATTERN: /\{\{tool_output:[^}]+\}\}/ };
     }
     throw new Error(`Unexpected require: ${id}`);
   },
@@ -188,8 +209,9 @@ toolAggregator.aggregateContent({
   },
 });
 
-assert.equal(toolAggregator.contentParts.length, 2);
-assert.equal(toolAggregator.contentParts[0].type, 'tool_call');
-assert.equal(toolAggregator.contentParts[1].text, 'Final answer after tool.');
+assert.equal(toolAggregator.contentParts.length, 3);
+assert.equal(toolAggregator.contentParts[0], undefined);
+assert.equal(toolAggregator.contentParts[1].type, 'tool_call');
+assert.equal(toolAggregator.contentParts[2].text, 'Final answer after tool.');
 
 console.log('OK: LibreChat stream aggregator preserves Klai source metadata.');

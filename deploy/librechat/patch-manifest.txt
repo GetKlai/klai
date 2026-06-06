@@ -6,8 +6,8 @@
 # The drift check compares each patched upstream file in LIBRECHAT_IMAGE
 # against expected_upstream_sha256. If the upstream file changes, the patch
 # must be reviewed against the new LibreChat image before deployment.
-patches/format.cjs|/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs|cf56ae86938a1ffd2db8da5b8322a1536acfcb007ddecdc13059d200427ee590|Preserve Klai message formatting behavior in LibreChat agent output.
-patches/share.js|/app/api/server/routes/share.js|0efa16cc2b6812b1543c4875fb6db76d2f9fccd0e0049582b29989a71bc0b0a4|Allow public shares and sanitize placeholder links/images before serving shared messages.
-patches/stream.cjs|/app/node_modules/@librechat/agents/dist/cjs/stream.cjs|38baa938c9e97c71b7162cc7bf5c3757744802aac3b14d103e071dd8b5df8876|Preserve Klai streaming behavior in LibreChat agent responses.
-patches/search.cjs|/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs|bd29bafe754d714c4804bf5262d7b45c186dcb4ca2eebc7ee80c8de5c7d4cbae|Preserve Klai web-search behavior in LibreChat agent tooling.
-patches/createStreamServices.ts|/app/packages/api/src/stream/createStreamServices.ts|1455df2b1671a60be4fa484c867f896cd67b7a6a729224ef4bc7622af704698c|Keep completed generation jobs briefly so fast LiteLLM safety refusals can be delivered to late SSE subscribers.
+patches/format.cjs|/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs|b4b7c624171f1ff981392d2e1af069d3e2dfb887f07ad50d095f00a3ac09d940|Preserve Klai sparse message guards on LibreChat v0.8.6.
+patches/share.js|/app/api/server/routes/share.js|d977e2c6a421039aba2e2601b4bba03ee72c33d7c3f0b9e19a92ac020e8ebfec|Allow public shares and sanitize placeholder links/images on LibreChat v0.8.6.
+patches/stream.cjs|/app/node_modules/@librechat/agents/dist/cjs/stream.cjs|d650fef2f112decd4afb7dc78909d38e51fd9272f9b6648d75c60c404263926b|Preserve Klai source streaming and sparse aggregation guards on LibreChat v0.8.6.
+patches/search.cjs|/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs|2af47461849d5b5a8c834fa361e759b54163cf7f03cad16fa0c4f5e0cc0de52d|Preserve Klai web-search behavior on LibreChat v0.8.6.
+patches/createStreamServices.ts|/app/packages/api/src/stream/createStreamServices.ts|ac039dc98dca672b024e87ea92a4ffb0ed3287b3db8e7e59a46f4ba8fa89ffb3|Keep completed generation jobs briefly for LibreChat v0.8.6.

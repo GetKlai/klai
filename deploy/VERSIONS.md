@@ -45,7 +45,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 |---|---|---|
 | `litellm` | `ghcr.io/berriai/litellm:v1.87.1` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). Re-assess monthly; LiteLLM ships stable tags frequently. |
 | `ollama` | `ollama/ollama:0.30.6` | CPU fallback for LLM inference. |
-| `librechat-getklai` | `ghcr.io/danny-avila/librechat:v0.8.6` | GetKlai canary chat UI. Provisioning-managed tenant LibreChat containers remain on the `LIBRECHAT_IMAGE` default until the canary is proven. Mounted canary patches live under `deploy/librechat/getklai/patches/` and are checked against `deploy/librechat/getklai/patch-manifest.txt`; tenant patches remain under `deploy/librechat/patches/`. |
+| `librechat` | `ghcr.io/danny-avila/librechat:v0.8.6` | LibreChat UI for all tenants. Compose-managed `librechat-getklai` and provisioning-managed tenant containers are pinned to the same image. Mounted v0.8.6 patches live under `deploy/librechat/patches/`; getklai keeps an identical canary copy under `deploy/librechat/getklai/patches/` until the separate compose service is folded back into provisioning. |
 
 ### Document + search
 
