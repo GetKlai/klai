@@ -340,6 +340,9 @@ services:
       CUSTOM_FOOTER: ""
       # LibreChat expects this env var name, but the value must be a
       # getklai-scoped Meili API key, not MEILI_MASTER_KEY.
+      # This compose override wins over ./librechat/getklai/.env; keep
+      # GETKLAI_MEILI_API_KEY in /opt/klai/.env synced when rotating the
+      # getklai tenant key.
       MEILI_MASTER_KEY: "${GETKLAI_MEILI_API_KEY:?set a Meili key scoped to getklai_messages,getklai_convos}"
       MEILI_MESSAGES_INDEX: getklai_messages
       MEILI_CONVOS_INDEX: getklai_convos
