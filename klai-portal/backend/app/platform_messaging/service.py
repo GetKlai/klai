@@ -134,7 +134,7 @@ async def add_platform_message_reply(
     thread.status = "open"
     thread.last_message_at = now
     db.add(message)
-    await db.commit()
+    await db.flush()
     return message
 
 
@@ -158,7 +158,7 @@ async def mark_platform_message_thread_read(
         raise PlatformMessageThreadNotFoundError()
     read_at = datetime.now(UTC)
     participant.last_read_at = read_at
-    await db.commit()
+    await db.flush()
     return read_at
 
 

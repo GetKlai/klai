@@ -275,6 +275,80 @@ async def assert_partner_api_keys_rls_ready() -> None:
             )
 
 
+async def assert_platform_messages_rls_ready() -> None:
+    """Fail-loud at startup if platform in-app messaging RLS is incomplete.
+
+    Platform messaging deliberately has asymmetric write rules: platform admins
+    create threads/replies through ``app.cross_org_admin=true``; tenant users
+    can only read participant-owned threads and insert replies as themselves
+    via ``klai.changed_by_user_id``. If the post-deploy RLS SQL is skipped or
+    partially applied, the UI turns those policy failures into hard 500s. Catch
+    the missing table/policy/FORCE-RLS state before accepting traffic.
+    """
+    tables = (
+        "platform_message_threads",
+        "platform_message_participants",
+        "platform_messages",
+    )
+    required_policies = {
+        "platform_message_threads": {
+            "platform_message_threads_select",
+            "platform_message_threads_insert",
+            "platform_message_threads_update",
+            "platform_message_threads_delete",
+        },
+        "platform_message_participants": {
+            "platform_message_participants_select",
+            "platform_message_participants_insert",
+            "platform_message_participants_update",
+            "platform_message_participants_delete",
+        },
+        "platform_messages": {
+            "platform_messages_select",
+            "platform_messages_insert",
+            "platform_messages_update",
+            "platform_messages_delete",
+        },
+    }
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity, "
+                "array_agg(p.polname ORDER BY p.polname) FILTER (WHERE p.polname IS NOT NULL) AS policies "
+                "FROM pg_class c "
+                "LEFT JOIN pg_policy p ON p.polrelid = c.oid "
+                "WHERE c.relname = ANY(:tables) AND c.relkind = 'r' "
+                "GROUP BY c.relname, c.relrowsecurity, c.relforcerowsecurity"
+            ),
+            {"tables": list(tables)},
+        )
+        rows = {row.relname: row for row in result.fetchall()}
+
+    for table in tables:
+        row = rows.get(table)
+        if row is None:
+            raise RuntimeError(
+                f"Startup RLS check: table '{table}' not found. "
+                "Apply the platform messaging migration and post-deploy RLS SQL."
+            )
+        if not row.relrowsecurity:
+            raise RuntimeError(
+                f"Startup RLS check: '{table}' has ENABLE ROW LEVEL SECURITY = FALSE. "
+                "Run post_deploy_m1n2o3p4q5r6_platform_message_threads_rls.sql and restart portal-api."
+            )
+        if not row.relforcerowsecurity:
+            raise RuntimeError(
+                f"Startup RLS check: '{table}' has FORCE ROW LEVEL SECURITY = FALSE. "
+                "Run post_deploy_m1n2o3p4q5r6_platform_message_threads_rls.sql and restart portal-api."
+            )
+        missing = required_policies[table] - set(row.policies or [])
+        if missing:
+            raise RuntimeError(
+                f"Startup RLS check: '{table}' is missing platform messaging policies: {sorted(missing)}. "
+                "Run post_deploy_m1n2o3p4q5r6_platform_message_threads_rls.sql and restart portal-api."
+            )
+
+
 @contextlib.asynccontextmanager
 async def tenant_scoped_session(org_id: int) -> AsyncIterator[AsyncSession]:
     """Yield an RLS-aware session for background tasks and fire-and-forget writes.

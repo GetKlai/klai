@@ -326,7 +326,9 @@ async def platform_message_thread_reply(
                 sender_user_id=perms.user_id,
                 body=body.body,
             )
-            return await _load_thread_detail(db, thread_id)
+            detail = await _load_thread_detail(db, thread_id)
+            await db.commit()
+            return detail
         except PlatformMessageThreadNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Message thread not found") from exc
 
@@ -344,5 +346,6 @@ async def platform_message_thread_status(
         except PlatformMessageThreadNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Message thread not found") from exc
         thread.status = body.status
+        detail = await _load_thread_detail(db, thread_id)
         await db.commit()
-        return await _load_thread_detail(db, thread_id)
+        return detail

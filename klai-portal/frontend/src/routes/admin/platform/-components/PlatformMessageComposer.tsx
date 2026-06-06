@@ -25,7 +25,7 @@ export function PlatformMessageComposer({ user }: { user: PlatformUser }) {
   return (
     <BorderedRowActionIconButton
       label={m.platform_messages_send_action()}
-      action="send"
+      action="message"
       onClick={(event) => {
         event.stopPropagation()
         void navigate({
