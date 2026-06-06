@@ -106,7 +106,7 @@ async def create_platform_message_thread(
             created_at=now,
         )
     )
-    await db.commit()
+    await db.flush()
     return thread
 
 

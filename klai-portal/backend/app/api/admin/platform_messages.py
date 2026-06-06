@@ -104,6 +104,7 @@ def _latest_body_subquery():
         .where(PlatformMessage.thread_id == PlatformMessageThread.id)
         .order_by(PlatformMessage.created_at.desc(), PlatformMessage.id.desc())
         .limit(1)
+        .correlate(PlatformMessageThread)
         .scalar_subquery()
     )
 
@@ -114,6 +115,7 @@ def _latest_sender_type_subquery():
         .where(PlatformMessage.thread_id == PlatformMessageThread.id)
         .order_by(PlatformMessage.created_at.desc(), PlatformMessage.id.desc())
         .limit(1)
+        .correlate(PlatformMessageThread)
         .scalar_subquery()
     )
 
@@ -125,6 +127,7 @@ def _latest_user_message_at_subquery():
             PlatformMessage.thread_id == PlatformMessageThread.id,
             PlatformMessage.sender_type == "user",
         )
+        .correlate(PlatformMessageThread)
         .scalar_subquery()
     )
 
@@ -133,6 +136,7 @@ def _recipient_count_subquery():
     return (
         select(func.count(PlatformMessageParticipant.user_id))
         .where(PlatformMessageParticipant.thread_id == PlatformMessageThread.id)
+        .correlate(PlatformMessageThread)
         .scalar_subquery()
     )
 
@@ -297,7 +301,9 @@ async def platform_message_thread_create(
                 feedback_submission_id=body.feedback_submission_id,
                 feedback_item_id=body.feedback_item_id,
             )
-            return await _load_thread_detail(db, thread.id)
+            detail = await _load_thread_detail(db, thread.id)
+            await db.commit()
+            return detail
         except PlatformMessageRecipientError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
