@@ -18,7 +18,6 @@ The custom_router uses this to prevent model downgrade for KB-enriched requests.
 
 import asyncio
 import base64
-import copy
 import json
 import logging
 import os
@@ -77,6 +76,16 @@ from klai_kb_context_prompt import (
 from klai_kb_urls import (
     chunk_source_url as _chunk_source_url,
     normalise_guard_url as _normalise_guard_url,
+)
+from klai_litellm_response import (
+    get_choice_finish_reason as _get_choice_finish_reason,
+    get_choice_message as _get_choice_message,
+    get_message_content as _get_message_content,
+    get_response_choices as _get_response_choices,
+    set_message_content as _set_message_content,
+    set_message_field as _set_message_field,
+    split_stream_footer_from_stop_item as _split_stream_footer_from_stop_item,
+    stream_item_has_finish_reason as _stream_item_has_finish_reason,
 )
 from klai_kb_render_policy import (
     KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING as _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING,
@@ -1774,82 +1783,6 @@ def _chunk_title(chunk: dict[str, Any]) -> str:
     if isinstance(title, str) and title.strip():
         return title.strip()
     return "Source"
-
-
-def _get_choice_message(choice: object, key: str) -> object:
-    if isinstance(choice, dict):
-        return choice.get(key)
-    return getattr(choice, key, None)
-
-
-def _get_message_content(message: object) -> object:
-    if isinstance(message, dict):
-        return message.get("content")
-    return getattr(message, "content", None)
-
-
-def _get_choice_finish_reason(choice: object) -> object:
-    if isinstance(choice, dict):
-        return choice.get("finish_reason")
-    return getattr(choice, "finish_reason", None)
-
-
-def _set_choice_finish_reason(choice: object, value: object) -> None:
-    if isinstance(choice, dict):
-        choice["finish_reason"] = value
-    else:
-        setattr(choice, "finish_reason", value)
-
-
-def _set_message_content(message: object, content: object) -> None:
-    if isinstance(message, dict):
-        message["content"] = content
-    else:
-        setattr(message, "content", content)
-
-
-def _set_message_field(message: object, key: str, value: object) -> None:
-    if isinstance(message, dict):
-        message[key] = value
-    else:
-        setattr(message, key, value)
-
-
-def _delete_message_field(message: object, key: str) -> None:
-    if isinstance(message, dict):
-        message.pop(key, None)
-    elif hasattr(message, key):
-        delattr(message, key)
-
-
-def _get_response_choices(response: object) -> object:
-    if isinstance(response, dict):
-        return response.get("choices") or []
-    return getattr(response, "choices", []) or []
-
-
-def _stream_item_has_finish_reason(item: object) -> bool:
-    return any(
-        bool(_get_choice_finish_reason(choice)) for choice in _get_response_choices(item)
-    )
-
-
-def _split_stream_footer_from_stop_item(item: object) -> object:
-    """Return a non-final copy carrying content/sources, leaving item as pure stop.
-
-    Some streaming clients ignore `delta.content` on the same chunk that
-    carries `finish_reason`. LibreChat source footers therefore need their own
-    non-final delta, followed by the original stop chunk.
-    """
-    footer_item = copy.deepcopy(item)
-    for choice in _get_response_choices(footer_item):
-        _set_choice_finish_reason(choice, None)
-    for choice in _get_response_choices(item):
-        delta = _get_choice_message(choice, "delta")
-        if delta is not None:
-            _set_message_content(delta, "")
-            _delete_message_field(delta, "sources")
-    return footer_item
 
 
 def _split_if_rendered_stop_item(
