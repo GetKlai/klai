@@ -2133,6 +2133,7 @@
   "platform_messages_body": "Message",
   "platform_messages_send": "Send",
   "platform_messages_sent": "Message sent",
+  "platform_messages_send_unavailable": "Sending messages is not available yet. Wait for the backend deploy to finish, then try again.",
   "platform_messages_empty": "No messages found.",
   "platform_messages_thread": "Conversation",
   "platform_messages_recipients": "Recipients",

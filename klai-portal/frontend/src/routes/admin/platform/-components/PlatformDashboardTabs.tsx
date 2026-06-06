@@ -374,7 +374,7 @@ export function MessagesTab({
       {isLoading ? (
         <ListLoadingState label={m.admin_shared_loading()} />
       ) : rows.length === 0 ? (
-        <ListEmptyState title={m.platform_messages_empty()} />
+        composeTarget ? null : <ListEmptyState title={m.platform_messages_empty()} />
       ) : (
         <DataTable>
           <DataTableHeader>

@@ -149,7 +149,7 @@ beforeEach(() => {
       _vars: unknown,
       options?: { onSuccess?: (result: PlatformFeedbackActionResult) => void },
     ) => {
-      options?.onSuccess?.({ submission_id: 99, status: 'open', item_id: 12 })
+      options?.onSuccess?.({ ok: true, submission_id: 99, status: 'open', item_id: 12 })
     },
   )
 })
