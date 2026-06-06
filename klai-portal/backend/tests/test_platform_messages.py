@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -143,3 +144,18 @@ async def test_platform_message_thread_reply_uses_thread_org(monkeypatch):
         "body": "Dank voor je reactie.",
     }
     assert result.thread.id == 99
+
+
+def test_platform_message_post_deploy_grants_portal_api():
+    sql = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "post_deploy_m1n2o3p4q5r6_platform_message_threads_rls.sql"
+    ).read_text()
+
+    assert "GRANT SELECT, INSERT, UPDATE, DELETE ON platform_message_threads TO portal_api" in sql
+    assert "GRANT SELECT, INSERT, UPDATE, DELETE ON platform_message_participants TO portal_api" in sql
+    assert "GRANT SELECT, INSERT, UPDATE, DELETE ON platform_messages TO portal_api" in sql
+    assert "GRANT USAGE, SELECT ON SEQUENCE platform_message_threads_id_seq TO portal_api" in sql
+    assert "GRANT USAGE, SELECT ON SEQUENCE platform_messages_id_seq TO portal_api" in sql

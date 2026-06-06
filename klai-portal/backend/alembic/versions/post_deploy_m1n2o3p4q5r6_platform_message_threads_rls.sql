@@ -1,5 +1,11 @@
 BEGIN;
 
+GRANT SELECT, INSERT, UPDATE, DELETE ON platform_message_threads TO portal_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON platform_message_participants TO portal_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON platform_messages TO portal_api;
+GRANT USAGE, SELECT ON SEQUENCE platform_message_threads_id_seq TO portal_api;
+GRANT USAGE, SELECT ON SEQUENCE platform_messages_id_seq TO portal_api;
+
 ALTER TABLE platform_message_threads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform_message_threads FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform_message_participants ENABLE ROW LEVEL SECURITY;
