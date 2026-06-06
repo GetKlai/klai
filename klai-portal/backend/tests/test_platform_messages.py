@@ -10,6 +10,9 @@ from app.api.admin import platform_messages
 class _Session:
     closed = False
 
+    def __init__(self):
+        self.commits = 0
+
     async def __aenter__(self):
         return self
 
@@ -18,6 +21,7 @@ class _Session:
         return None
 
     async def commit(self):
+        self.commits += 1
         return None
 
 
@@ -78,6 +82,7 @@ async def test_platform_message_thread_create_uses_platform_admin_context(monkey
     async def fake_detail(db, thread_id):
         assert db is session
         assert thread_id == 99
+        assert session.commits == 0
         return _detail(thread_id)
 
     monkeypatch.setattr(platform_messages, "_audit", fake_audit)
@@ -101,7 +106,23 @@ async def test_platform_message_thread_create_uses_platform_admin_context(monkey
     assert calls["kwargs"]["user_ids"] == ["user-123"]
     assert calls["kwargs"]["created_by"] == "staff"
     assert result.thread.id == 99
+    assert session.commits == 1
     assert session.closed is True
+
+
+def test_platform_message_thread_search_query_compiles_with_recipient_join():
+    query = platform_messages._thread_select().outerjoin(
+        platform_messages.PlatformMessageParticipant,
+        platform_messages.PlatformMessageParticipant.thread_id
+        == platform_messages.PlatformMessageThread.id,
+    ).where(
+        platform_messages.PlatformMessageParticipant.recipient_display_name.ilike("%jelle%")
+    )
+
+    compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
+
+    assert "platform_message_participants" in compiled
+    assert "SELECT count(platform_message_participants.user_id)" in compiled
 
 
 @pytest.mark.asyncio
