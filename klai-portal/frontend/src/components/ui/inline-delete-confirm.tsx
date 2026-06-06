@@ -29,7 +29,7 @@ interface InlineDeleteConfirmProps {
  *     onCancel={() => setConfirmDeleteId(null)}
  *   >
  *     <RowActionGroup>
- *       <RowActionIconButton label="Verwijderen" action="delete"
+ *       <BorderedRowActionIconButton label="Verwijderen" action="delete"
  *         onClick={() => setConfirmDeleteId(row.id)} />
  *     </RowActionGroup>
  *   </InlineDeleteConfirm>

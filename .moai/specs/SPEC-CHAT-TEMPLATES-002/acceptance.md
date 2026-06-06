@@ -48,7 +48,7 @@ All scenarios use the Given/When/Then format. A feature is only considered deliv
 - Template name in bold `text-gray-900`
 - Truncated description in `text-gray-400`
 - Scope badge showing "Organisatie" (using `templates_list_scope_org`)
-- Edit button (Pencil icon, `h-4 w-4`)
+- Edit control rendered as the catalog `BorderedRowActionIconButton` (`action="edit"`)
 - Delete control (visible, enabled — admin privilege)
 **And** the list container SHALL use `divide-y divide-gray-200 border-t border-b border-gray-200`
 **And** NO card-wrapper classes (`bg-white rounded-lg shadow-sm`) SHALL be present on rows

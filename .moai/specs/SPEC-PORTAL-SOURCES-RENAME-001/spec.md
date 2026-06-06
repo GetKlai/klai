@@ -77,9 +77,9 @@ that contradict portal-wide standards:
   `Naam aanpassen`, `Bewerken in editor`, etc. The portal CLAUDE.md says
   "all UI strings via Paraglide" — not followed in `bronnen.tsx`,
   `-bronnen-helpers.tsx`, `-bronnen-types.ts`.
-- **Same pencil icon, three different behaviours.** Connector pencil →
-  navigate to `/edit-connector/$connectorId`. Upload pencil → inline rename.
-  Docs-editor pencil → navigate to `/docs/$kbSlug/$pageId`. One icon, three
+- **Same edit glyph, three different behaviours.** Connector edit action →
+  navigate to `/edit-connector/$connectorId`. Upload edit action → inline rename.
+  Docs-editor edit action → navigate to `/docs/$kbSlug/$pageId`. One glyph, three
   contracts — exactly the affordance ambiguity the user reported in the
   original review.
 
@@ -107,7 +107,7 @@ directly and re-introducing the stale-list bug. We need a lint rule.
   `'bron-content'` → `'source-content'`.
 - Replace inline rename with `<InlineEdit>` from `components/ui/inline-edit`.
 - Migrate all NL strings in the renamed files to Paraglide (NL + EN).
-- Disambiguate pencil icon: pencil = rename-inline (upload only). Connector
+- Disambiguate edit affordances: upload edit = rename-inline only. Connector
   edit → text link "Bewerken" + `Settings` icon. Docs-editor link →
   `NotebookPen` icon (lucide-react).
 - Add ESLint `no-restricted-syntax` rule blocking direct queryKey array
@@ -191,7 +191,7 @@ plus an internal pydantic-field rename.
   `klai/no-direct-kb-querykey` shall report an error pointing them at
   `kbQueryKeys.sources(slug)`.
 - **REQ-5**: When a user with a contributor or owner role clicks the
-  pencil icon on an upload-row, the system shall open an inline rename
+  edit affordance on an upload-row, the system shall open an inline rename
   using the canonical `<InlineEdit>` component, NOT a hand-rolled input.
 - **REQ-6**: When a user with a contributor or owner role clicks the
   edit affordance on a connector-row, the system shall navigate to

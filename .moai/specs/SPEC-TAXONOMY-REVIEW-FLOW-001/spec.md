@@ -224,7 +224,7 @@ Combinatie van #1, #5, #6 maakt de feature **operator-onbruikbaar**:
 #### Issue 5 — Edit before approve
 
 15. **AC-15 (Ubiquitous)** — A proposal-row in the unified review-list shall
-    include an Edit button (pencil icon) next to Approve and Reject.
+    include a bordered catalog edit row action next to Approve and Reject.
 
 16. **AC-16 (Event-driven)** — When the operator clicks Edit, the row expands
     inline to show editable name and description fields, with "Save & Approve"

@@ -46,7 +46,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `alert` | Inline semantic callout (`Alert`, variants: info/success/warning/destructive; sizes: default/sm). Soft tint + auto icon, for wizard/form feedback and inline warnings — not a toast, not a modal | Yes |
 | `input` `select` `textarea` `label` `checkbox` `switch` | Form controls | Yes |
 | `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
-| `row-action` | List/table row actions: `RowActionIconButton`, `BorderedRowActionIconButton` (visible bordered hitbox — the default in tables), `RowActionButton`, `RowActionGroup` + the action→tone system | Yes |
+| `row-action` | List/table row actions: `BorderedRowActionIconButton` (visible bordered hitbox — the default for row icon actions), `RowActionButton`, `RowActionGroup` + the action→tone system. `RowActionIconButton` is the low-level unbordered base, not the list/table default. | Yes |
 | `data-table` | Admin table primitives: `DataTable`, `DataTableHeader`, `DataTableBody`, `DataTableRow` (`interactive`/`confirming`), `DataTableHead`, `DataTableCell` (`align`) | Yes |
 | `list` | List primitives: `ListFrame`, `ListHeader`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
 | `list-state` | List/table loading and empty states: `ListLoadingState`, `ListEmptyState` | Yes |
@@ -335,7 +335,10 @@ action→tone→color mapping so the same action looks identical everywhere.
 
 Components:
 
-- `RowActionIconButton` — icon-only action (the default in lists/tables).
+- `BorderedRowActionIconButton` — icon-only action with a visible `1px`
+  `border-current` hitbox (the default in lists/tables).
+- `RowActionIconButton` — low-level unbordered icon action, used only where the
+  catalog explicitly calls for no visible bordered hitbox.
 - `RowActionButton` — icon + text label action.
 - `RowActionGroup` — right-aligned flex container with `gap-1` for a row's
   actions.
@@ -343,12 +346,12 @@ Components:
 Pass an `action` and the icon, tone, and tooltip default are derived for you:
 
 ```tsx
-import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+import { RowActionGroup, BorderedRowActionIconButton } from '@/components/ui/row-action'
 
 <RowActionGroup>
-  <RowActionIconButton label="Bewerken" action="edit" />
-  <RowActionIconButton label="Synchroniseren" action="sync" />
-  <RowActionIconButton label="Verwijderen" action="delete" />
+  <BorderedRowActionIconButton label="Bewerken" action="edit" />
+  <BorderedRowActionIconButton label="Synchroniseren" action="sync" />
+  <BorderedRowActionIconButton label="Verwijderen" action="delete" />
 </RowActionGroup>
 ```
 
@@ -393,10 +396,10 @@ patterns side by side in the same row.
 
 ### Bordered action icons
 
-When actions need a visible affordance (outlined icon buttons), the border
-must match the icon color. Use `border border-current` so the border inherits
-the tone's `currentColor` — never a hardcoded border color and never an inline
-`style`. See Borders And Cascade Layers for why this works.
+Visible list/table row icon actions use `BorderedRowActionIconButton`. The
+border must match the icon color: use `border border-current` so the border
+inherits the tone's `currentColor` — never a hardcoded border color and never
+an inline `style`. See Borders And Cascade Layers for why this works.
 
 ## List Primitives
 
@@ -407,6 +410,7 @@ import {
   ListFrame, ListRow, ListRowContent, ListRowTitle,
   ListRowDescription, ListRowActions,
 } from '@/components/ui/list'
+import { BorderedRowActionIconButton } from '@/components/ui/row-action'
 
 <ListFrame>
   <ListRow interactive>
@@ -415,8 +419,8 @@ import {
       <ListRowDescription>Rustige lijst met compacte acties.</ListRowDescription>
     </ListRowContent>
     <ListRowActions className="self-center">
-      <RowActionIconButton label="Bewerken" action="edit" />
-      <RowActionIconButton label="Verwijderen" action="delete" />
+      <BorderedRowActionIconButton label="Bewerken" action="edit" />
+      <BorderedRowActionIconButton label="Verwijderen" action="delete" />
     </ListRowActions>
   </ListRow>
 </ListFrame>
@@ -428,7 +432,7 @@ import {
 - `ListRowTitle` truncates on one line; `ListRowDescription` is the muted
   secondary line.
 - `ListRowActions` is the trailing action cell; put a `RowActionGroup` or
-  loose `RowActionIconButton`s inside.
+  loose `BorderedRowActionIconButton`s inside.
 - For admin collection rows where the first cell needs a primary label plus
   secondary metadata (for example user name + email), use `ListFrame`/`ListRow`
   with a responsive grid inside the row. `UsersTable`
@@ -522,6 +526,7 @@ never shifts width when confirming.
 
 ```tsx
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 
 <InlineDeleteConfirm
   isConfirming={confirmDeleteId === row.id}
@@ -532,8 +537,8 @@ import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
   onCancel={() => setConfirmDeleteId(null)}
 >
   <RowActionGroup>
-    <RowActionIconButton label="Bewerken" action="edit" />
-    <RowActionIconButton
+    <BorderedRowActionIconButton label="Bewerken" action="edit" />
+    <BorderedRowActionIconButton
       label="Verwijderen"
       action="delete"
       onClick={() => setConfirmDeleteId(row.id)}
@@ -861,7 +866,7 @@ Consequences for component code:
 | Searchable list / combobox | `command` | Command palette and filterable pickers. |
 | Multi-value selection | `multi-select` | |
 | Edit a row's name/description in place | `inline-edit-row` | Canonical: zero shift, owns Save/Cancel. `inline-edit` is the low-level single-field overlay for custom rows. |
-| Hover/focus hint | `tooltip` | `RowActionIconButton` wires this automatically via `label`. |
+| Hover/focus hint | `tooltip` | `BorderedRowActionIconButton` wires this automatically via `label`. |
 | Transient feedback after an action | `sonner` (`toast`) | Success/error confirmations; not for validation errors. |
 | A query failed | `query-error-state` | Standard error block with retry. |
 | Inline semantic feedback in a form/wizard/page | `alert` | Soft tinted callout (info/success/warning/destructive) with an auto icon. Not a toast (`sonner`) and not a modal (`dialog`). Use `size="sm"` for compact wizard-step feedback. |

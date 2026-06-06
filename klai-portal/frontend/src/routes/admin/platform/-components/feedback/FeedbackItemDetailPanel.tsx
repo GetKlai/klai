@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { StepIndicator, type StepItem } from "@/components/ui/step-indicator"
 import { Textarea } from "@/components/ui/textarea"
-import { RowActionGroup, RowActionIconButton } from "@/components/ui/row-action"
+import { BorderedRowActionIconButton, RowActionGroup } from "@/components/ui/row-action"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -274,12 +274,12 @@ function FeedbackItemDetailForm({
             </Badge>
             {!isEditing && (
               <RowActionGroup className="ml-1">
-                <RowActionIconButton
+                <BorderedRowActionIconButton
                   action="edit"
                   label={m.platform_feedback_edit_item_title()}
                   onClick={() => setIsEditing(true)}
                 />
-                <RowActionIconButton
+                <BorderedRowActionIconButton
                   action="delete"
                   label={m.platform_feedback_delete_item()}
                   onClick={() => setConfirmDeleteOpen(true)}
