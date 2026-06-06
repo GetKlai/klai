@@ -19,6 +19,7 @@ import {
   usePlatformBots,
   usePlatformChatErrors,
   usePlatformKnowledgeBases,
+  usePlatformMarkMessageThreadRead,
   usePlatformMessageThread,
   usePlatformMessageThreads,
   usePlatformOrgs,
@@ -352,7 +353,14 @@ export function MessagesTab({
   const selectedThread = usePlatformMessageThread(selectedThreadId)
   const reply = usePlatformReplyMessageThread()
   const updateStatus = usePlatformUpdateMessageThreadStatus()
+  const markRead = usePlatformMarkMessageThreadRead()
   const [replyBody, setReplyBody] = useState('')
+
+  function openThread(thread: { id: number; unread_for_admin: boolean }) {
+    setSelectedThreadId(thread.id)
+    setReplyBody('')
+    if (thread.unread_for_admin) markRead.mutate(thread.id)
+  }
 
   function sendReply() {
     if (!selectedThreadId || replyBody.trim().length === 0) return
@@ -456,7 +464,7 @@ export function MessagesTab({
               <DataTableRow
                 key={thread.id}
                 interactive
-                onClick={() => setSelectedThreadId(thread.id)}
+                onClick={() => openThread(thread)}
               >
                 <DataTableCell>
                   <div className="flex items-center gap-2">
