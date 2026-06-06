@@ -1,13 +1,14 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AccountMenu } from './AccountMenu'
+import { ProductUpdatesPopover } from './ProductUpdatesPopover'
 
 // Global application top bar. Rendered once by each authenticated layout
 // (app + admin) above the routed <Outlet>. It is a full-width band that lines
 // up with the sidebar logo header (same h-16 height + bottom border) so the
 // two rails read as one continuous header.
 //
-// Layout: [page-injected left slot]  ...........  [account avatar menu (right)]
+// Layout: [page-injected left slot]  ...........  [topbar actions (right)]
 //
 // Pages inject their own contextual controls into the left slot via <TopBarLeft>
 // (chat puts its config controls there). Pages with no controls leave it empty,
@@ -37,7 +38,10 @@ export function TopBar() {
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-[var(--color-sidebar-border)] bg-[var(--color-sidebar)] px-4">
       <div ref={setNode} className="flex min-w-0 flex-1 items-center" />
-      <AccountMenu />
+      <div className="flex shrink-0 items-center gap-2">
+        <ProductUpdatesPopover />
+        <AccountMenu />
+      </div>
     </header>
   )
 }

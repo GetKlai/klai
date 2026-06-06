@@ -18,6 +18,7 @@ from app.api.app_chat import router as app_chat_router
 from app.api.app_gaps import router as app_gaps_router
 from app.api.app_knowledge_bases import router as app_knowledge_bases_router
 from app.api.app_knowledge_sources import router as app_knowledge_sources_router
+from app.api.app_product_updates import router as app_product_updates_router
 from app.api.app_templates import router as app_templates_router
 from app.api.auth import _get_sso_fernet
 from app.api.auth import router as auth_router
@@ -222,6 +223,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         assert_partner_api_keys_rls_ready,
         assert_platform_messages_rls_ready,
         assert_portal_users_rls_ready,
+        assert_product_updates_rls_ready,
         engine,
     )
     from app.core.rls_guard import install_rls_guard
@@ -240,6 +242,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await assert_platform_messages_rls_ready()
     logger.info("platform messaging RLS policies checked: ENABLE+FORCE and required policies present")
+
+    await assert_product_updates_rls_ready()
+    logger.info("product updates RLS policies checked: ENABLE+FORCE and required policies present")
 
     await assert_portal_users_rls_ready()
     logger.info("portal_users RLS policy checked: IS NULL branch present")
@@ -389,6 +394,7 @@ app.include_router(app_assistant_router)
 app.include_router(app_chat_router)
 app.include_router(app_knowledge_bases_router)
 app.include_router(app_knowledge_sources_router)
+app.include_router(app_product_updates_router)
 app.include_router(app_templates_router)
 app.include_router(app_gaps_router)
 app.include_router(connectors_router)
