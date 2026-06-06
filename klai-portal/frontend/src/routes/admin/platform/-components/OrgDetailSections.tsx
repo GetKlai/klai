@@ -19,7 +19,6 @@ import { Label } from '@/components/ui/label'
 import { ListEmptyState } from '@/components/ui/list-state'
 import {
   BorderedRowActionIconButton,
-  RowActionButton,
   RowActionGroup,
 } from '@/components/ui/row-action'
 import { Select } from '@/components/ui/select'
@@ -117,7 +116,9 @@ export function TenantFeaturesSection({
     })
   }
 
-  function saveFeatures() {
+  function handleFeatureSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
     updateUnlocks.mutate([...stagedFeatures].sort(), {
       onSuccess: () => {
         setSavedFeatures(true)
@@ -132,85 +133,87 @@ export function TenantFeaturesSection({
   }
 
   return (
-    <section>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
-            {m.admin_settings_extensions_title()}
-          </h2>
-          <p className="mt-1 text-sm text-gray-500">
-            {m.admin_settings_extensions_description_platform()}
-          </p>
-        </div>
-        <RowActionButton
-          type="button"
-          action="save"
-          label={m.admin_settings_save()}
-          tooltip={false}
-          spinner={
-            updateUnlocks.isPending
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : undefined
-          }
-          onClick={saveFeatures}
-          disabled={
-            updateUnlocks.isPending ||
-            unlocks.isLoading ||
-            savedFeatures ||
-            !dirty
-          }
-        >
-          {savedFeatures
-            ? m.admin_settings_saved()
-            : updateUnlocks.isPending
-              ? m.admin_settings_saving()
-              : m.admin_settings_save()}
-        </RowActionButton>
+    <section className="space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-base font-display-bold text-gray-900">
+          {m.admin_settings_extensions_title()}
+        </h2>
+        <p className="text-sm text-gray-400">
+          {m.admin_settings_extensions_description_platform()}
+        </p>
       </div>
 
-      {unlocks.isLoading ? (
-        <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
-      ) : unlocks.error ? (
-        <p className="text-sm text-[var(--color-destructive)]">
-          {m.admin_settings_error_fetch()}
-        </p>
-      ) : unlocks.data?.features.length ? (
-        <ul className="divide-y divide-gray-200 border-t border-b border-gray-200">
-          {unlocks.data.features.map((feature) => {
-            const staged = stagedFeatures.has(feature.key)
-            return (
-              <li
-                key={feature.key}
-                className="flex items-center justify-between gap-4 px-2 py-3"
+      <form onSubmit={handleFeatureSubmit} className="space-y-4">
+        {unlocks.isLoading ? (
+          <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+        ) : unlocks.error ? (
+          <p className="text-sm text-[var(--color-destructive)]">
+            {m.admin_settings_error_fetch()}
+          </p>
+        ) : unlocks.data?.features.length ? (
+          <>
+            <ul className="divide-y divide-gray-200 border-t border-b border-gray-200">
+              {unlocks.data.features.map((feature) => {
+                const staged = stagedFeatures.has(feature.key)
+                return (
+                  <li
+                    key={feature.key}
+                    className="flex items-center justify-between gap-4 px-2 py-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[15px] font-display text-gray-900">
+                        {extensionLabel(feature.key)}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {extensionDescription(feature.key)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <Badge variant={staged ? 'success' : 'outline'}>
+                        {staged
+                          ? m.admin_settings_extensions_status_on()
+                          : m.admin_settings_extensions_status_off()}
+                      </Badge>
+                      <Checkbox
+                        checked={staged}
+                        onChange={(e) => stageFeature(feature.key, e.target.checked)}
+                        disabled={updateUnlocks.isPending}
+                        label=""
+                      />
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+            {updateUnlocks.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {m.admin_settings_error_save()}
+              </p>
+            )}
+            <div className="pt-2">
+              <Button
+                type="submit"
+                disabled={
+                  updateUnlocks.isPending ||
+                  savedFeatures ||
+                  !dirty
+                }
               >
-                <div className="min-w-0 flex-1">
-                  <p className="text-[15px] font-display text-gray-900">
-                    {extensionLabel(feature.key)}
-                  </p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {extensionDescription(feature.key)}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <Badge variant={staged ? 'success' : 'outline'}>
-                    {staged
-                      ? m.admin_settings_extensions_status_on()
-                      : m.admin_settings_extensions_status_off()}
-                  </Badge>
-                  <Checkbox
-                    checked={staged}
-                    onChange={(e) => stageFeature(feature.key, e.target.checked)}
-                    disabled={updateUnlocks.isPending}
-                    label=""
-                  />
-                </div>
-              </li>
-            )
-          })}
-        </ul>
-      ) : (
-        <ListEmptyState title={m.platform_tenant_features_empty()} />
-      )}
+                {updateUnlocks.isPending && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                {savedFeatures
+                  ? m.admin_settings_saved()
+                  : updateUnlocks.isPending
+                    ? m.admin_settings_saving()
+                    : m.admin_settings_save()}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <ListEmptyState title={m.platform_tenant_features_empty()} />
+        )}
+      </form>
     </section>
   )
 }
