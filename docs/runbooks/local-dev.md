@@ -153,7 +153,7 @@ git clone https://github.com/GetKlai/klai.git && cd klai
 # 2. Eerste setup: kopieert env files, installeert dependencies
 make setup
 
-# 3. Vul frontend/.env.local in:
+# 3. Vul frontend/.env.development.local in:
 #    VITE_OIDC_AUTHORITY=https://auth.getklai.com
 #    VITE_OIDC_CLIENT_ID=<oidc-client-id>
 
@@ -170,7 +170,7 @@ Als je aan de backend werkt met echte Zitadel authenticatie. Lees eerst ondersta
 ```bash
 make setup                       # auto-generate keys, copy env, install deps
 # Vul backend/.env aan — zie "Configuratie · Stap 2" hieronder voor de volledige lijst.
-# Vul frontend/.env.local — zie "Configuratie · Stap 3".
+# Vul frontend/.env.development.local — zie "Configuratie · Stap 3".
 # Voeg ZITADEL-redirect-URIs toe op je dev-machine — zie "Zitadel configuratie".
 make dev-up                      # Docker services
 make migrate                     # Database migraties
@@ -282,9 +282,11 @@ MCP_OAUTH_RESOURCE_URL=http://localhost:8010
 
 > **Var-naam mismatch in `.env.example`:** Een eerdere versie van de template noemde `ZITADEL_PORTAL_APP_ID` — die var wordt nergens door de backend gelezen. De pydantic-settings field heet `zitadel_portal_client_id` → env-var `ZITADEL_PORTAL_CLIENT_ID`. Negeer een legacy `ZITADEL_PORTAL_APP_ID=` regel als je 'm tegenkomt.
 
-### Stap 3: Frontend (klai-portal/frontend/.env.local)
+### Stap 3: Frontend (klai-portal/frontend/.env.development.local)
 
-`make setup` kopieert `.env.local.example`. Voor **Mode C (standalone)** is de default goed. Voor **Mode B (productie Zitadel)**, vervang met:
+`make setup` kopieert `.env.local.example` naar `.env.development.local`.
+Voor **Mode C (standalone)** is de default goed. Voor **Mode B (productie
+Zitadel)**, vervang met:
 
 ```bash
 VITE_AUTH_DEV_MODE=false
@@ -295,7 +297,12 @@ VITE_API_PROXY_TARGET=http://localhost:8010
 
 > **Let op:** `VITE_OIDC_CLIENT_ID` is de **OIDC Client ID** van de "Klai Portal BFF" app (huidige BFF-pattern sinds SPEC-AUTH-008). Die waarde leeft NIET in dit runbook — haal 'm uit prod via `ssh core-01 'grep ZITADEL_PORTAL_CLIENT_ID /opt/klai/.env'`. Verwar 'm niet met de Zitadel App ID (intern identifier, niet de waarde die de browser gebruikt). Een oudere versie van dit runbook gebruikte een pre-BFF client_id — die heeft de signin-knop allang vervangen.
 
-> **Vite herstart vereist bij env-wijzigingen:** In tegenstelling tot de backend pikt Vite `.env.local` wijzigingen pas op na een volledige herstart (`Ctrl+C` → `npm run dev`). Hot reload werkt niet voor env vars.
+> **Vite herstart vereist bij env-wijzigingen:** In tegenstelling tot de backend pikt Vite `.env.development.local` wijzigingen pas op na een volledige herstart (`Ctrl+C` → `npm run dev`). Hot reload werkt niet voor env vars.
+
+> **E2E credentials:** `klai-portal/frontend/.env.local` kan productie-E2E
+> credentials bevatten. Gebruik dat bestand niet als lokale Vite-dev config.
+> Run voor browserchecks altijd eerst
+> `scripts/local-dev-status.sh --mode local --strict`.
 
 ---
 
@@ -447,7 +454,9 @@ Het script is idempotent — herhaalde runs zetten dezelfde state.
 | `make dev-status` | Toon status van Docker services |
 | `make dev-logs` | Volg logs van alle Docker services |
 | `make backend` | Start FastAPI backend met hot reload (:8010) |
-| `make frontend` | Start Vite dev server (:5174) |
+| `make frontend` | Start Vite dev server (:5174, of `$CONDUCTOR_PORT` in Conductor) |
+| `make local-dev-status` | Toon/valideer lokale standalone browser-test setup |
+| `make e2e-prod-status` | Toon/valideer productie-E2E setup |
 | `make migrate` | Draai Alembic database migraties |
 | `make postdeploy` | Apply post-deploy SQL files (RLS policies + helper functies, klai-superuser) |
 | `make seed` | Seed demo-data (dev org + users) in lokale DB |
@@ -456,7 +465,12 @@ Het script is idempotent — herhaalde runs zetten dezelfde state.
 
 > **Compose project name = working directory naam.** Docker Compose leidt de project name af van `pwd` als geen `COMPOSE_PROJECT_NAME` is gezet. Containers krijgen daardoor namen als `<dir>-postgres-1`, `<dir>-redis-1`, etc. In de canonical `klai/` checkout zijn dat `klai-postgres-1`; in een Conductor workspace `brisbane/` zijn dat `brisbane-postgres-1`. Voorbeelden in dit runbook (zoals seed-SQL) gebruiken `klai-*` — vervang dat met `$(docker ps --format '{{.Names}}' | grep postgres-1)` als je in een ander-dir-naam checkout zit.
 
-> **Parallelle Conductor workspaces**: omdat de compose project name dir-gebaseerd is, krijg je per workspace een eigen container-set. Twee workspaces tegelijk `make dev-up` doen werkt — geen naam-conflicten — maar wel poort-conflicten op 5174/8010/5434/etc. Stop de containers in workspace A vóór je `make dev-up` doet in workspace B, of edit `docker-compose.dev.yml` om andere host-ports te bindeneren.
+> **Parallelle Conductor workspaces**: `make frontend` gebruikt
+> `$CONDUCTOR_PORT` als frontend-port wanneer Conductor die zet; `make backend`
+> gebruikt dan `$CONDUCTOR_PORT+1`. Docker Compose services gebruiken nog vaste
+> host-poorten uit `docker-compose.dev.yml` (5434/6379/7700/etc.). Stop de
+> containers in workspace A vóór je `make dev-up` doet in workspace B, of maak
+> de compose host-poorten workspace-specifiek.
 
 ---
 
@@ -541,10 +555,10 @@ curl -s -H "Authorization: Bearer $ZITADEL_PAT" \
 
 **Symptoom:** Na Zitadel login kom je uit op `getklai.getklai.com` in plaats van `localhost:5174`.
 
-**Oorzaak 1:** Vite is niet herstart na `.env.local` wijziging — de oude config is nog actief.
+**Oorzaak 1:** Vite is niet herstart na `.env.development.local` wijziging — de oude config is nog actief.
 **Oorzaak 2:** `VITE_AUTH_DEV_MODE=true` staat nog aan — zet deze uit voor echte OIDC.
 
-**Fix:** Zorg dat `.env.local` er zo uitziet en herstart Vite:
+**Fix:** Zorg dat `.env.development.local` er zo uitziet en herstart Vite:
 ```bash
 # VITE_AUTH_DEV_MODE=true    ← uitgecommentarieerd
 VITE_OIDC_AUTHORITY=https://auth.getklai.com
@@ -666,7 +680,7 @@ powershell -Command "Stop-Process -Id 12345 -Force"
 
 # Als dat niet werkt — start op een andere port
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8011
-# Update VITE_API_BASE_URL in frontend/.env.local mee
+# Update VITE_API_PROXY_TARGET in frontend/.env.development.local mee
 ```
 
 ### Alles resetten (nucleaire optie)
@@ -706,7 +720,7 @@ Controleer na het opstarten of de volledige login flow werkt:
 
 Als de redirect mislukt, controleer:
 - Draait de frontend? (`make frontend`)
-- Is `VITE_OIDC_CLIENT_ID` correct ingevuld in `klai-portal/frontend/.env.local`?
+- Is `VITE_OIDC_CLIENT_ID` correct ingevuld in `klai-portal/frontend/.env.development.local`?
 - Staat Dev Mode aan op de Zitadel app? (zie "Redirect URIs en Dev Mode" hierboven)
 
 ---
@@ -728,7 +742,8 @@ Als de redirect mislukt, controleer:
 
 - [.env.dev.example](../../.env.dev.example) — Docker services environment template
 - [klai-portal/backend/.env.example](../../klai-portal/backend/.env.example) — Backend environment template
-- [klai-portal/frontend/.env.local.example](../../klai-portal/frontend/.env.local.example) — Frontend environment template
+- [klai-portal/frontend/.env.local.example](../../klai-portal/frontend/.env.local.example) — Frontend development environment template (copy to `.env.development.local`)
+- [agent-browser-testing.md](agent-browser-testing.md) — Agent/browser/E2E preflight contract
 - [docker-compose.dev.yml](../../docker-compose.dev.yml) — Docker Compose configuratie
 - [dev/postgres-init.sql](../../dev/postgres-init.sql) — Postgres init script (creëert klai DB + litellm DB + portal_api/grafana_reader rollen)
 
