@@ -263,12 +263,13 @@ hover layers. Use CSS variables for semantic or themeable states.
 
 `components/ui/row-action.tsx`
 
-Use `RowActionGroup` with `RowActionIconButton` or
-`BorderedRowActionIconButton` for list/table row controls. The canonical action
-order and overflow rule lives in `klai-portal/frontend/docs/ui-standards.md`:
-toggle/refresh/open/edit/delete, edit always before delete, and rows with four
-or more actions move lower-frequency actions under a `more` dropdown while
-keeping delete last.
+Use `RowActionGroup` with `BorderedRowActionIconButton` for list/table row
+controls. Its `1px` `border-current` hitbox is the visible affordance and must
+match the icon color. `RowActionIconButton` is the low-level unbordered base,
+not the list/table default. The canonical action order and overflow rule lives
+in `klai-portal/frontend/docs/ui-standards.md`: toggle/refresh/open/edit/delete,
+edit always before delete, and rows with four or more actions move
+lower-frequency actions under a `more` dropdown while keeping delete last.
 
 ---
 

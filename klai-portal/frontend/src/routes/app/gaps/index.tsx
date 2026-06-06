@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
-import { RowActionGroup, RowActionIconButton } from '@/components/ui/row-action'
+import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import {
   DataTable,
   DataTableHeader,
@@ -220,7 +220,7 @@ function GapsPage() {
                   <DataTableCell align="right">
                     {gap.gap_type === 'soft' && gap.nearest_kb_slug ? (
                       <RowActionGroup>
-                        <RowActionIconButton
+                        <BorderedRowActionIconButton
                           icon={PlusCircle}
                           tone="primary"
                           label={m.gaps_action_add()}
@@ -257,7 +257,7 @@ function GapsPage() {
                       </Select>
                     ) : (
                       <RowActionGroup>
-                        <RowActionIconButton
+                        <BorderedRowActionIconButton
                           icon={BookOpen}
                           tone="primary"
                           label={m.gaps_action_pick_kb()}
