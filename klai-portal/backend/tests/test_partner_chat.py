@@ -223,6 +223,73 @@ async def test_retrieval_timeout_returns_502():
 
 
 @pytest.mark.asyncio
+async def test_retrieval_http_status_error_returns_502():
+    """Retrieval-api HTTP error -> 502 Bad Gateway, not an internal 500."""
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
+    upstream_request = httpx.Request("POST", "http://retrieval-api/retrieve")
+    upstream_response = httpx.Response(503, request=upstream_request)
+    upstream_error = httpx.HTTPStatusError(
+        "retrieval-api returned 503",
+        request=upstream_request,
+        response=upstream_response,
+    )
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hello"}],
+        model="klai-primary",
+        stream=False,
+    )
+
+    with (
+        patch("app.api.partner.retrieve_context", side_effect=upstream_error),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await chat_completions(
+            request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
+        )
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == {
+        "error": {"type": "upstream_error", "message": "Retrieval service error"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_retrieval_request_error_returns_502():
+    """Retrieval-api network/request error -> 502 Bad Gateway."""
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
+    upstream_request = httpx.Request("POST", "http://retrieval-api/retrieve")
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hello"}],
+        model="klai-primary",
+        stream=False,
+    )
+
+    with (
+        patch(
+            "app.api.partner.retrieve_context",
+            side_effect=httpx.ConnectError("connection failed", request=upstream_request),
+        ),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await chat_completions(
+            request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
+        )
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == {
+        "error": {"type": "upstream_error", "message": "Retrieval service unavailable"}
+    }
+
+
+@pytest.mark.asyncio
 async def test_happy_path_non_streaming():
     """Non-streaming: returns OpenAI-shaped JSON with choices."""
     from app.api.partner import ChatCompletionsRequest, chat_completions

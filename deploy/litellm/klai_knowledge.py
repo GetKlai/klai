@@ -2145,7 +2145,7 @@ def _render_kb_citation_content(
             decision["no_citable_reason"] = "strict_refusal_no_supported_sources"
             return strict_refusal, [], True, decision
         fallback_sources = _trusted_sources_visible_fallback(trusted_sources)
-        if fallback_sources:
+        if kb_narrow and fallback_sources:
             decision["fallback"] = "document_level_trusted_sources"
             decision["no_citable_reason"] = "selector_rejected_all_sources_fallback"
             return composed.content or text, fallback_sources, False, decision
