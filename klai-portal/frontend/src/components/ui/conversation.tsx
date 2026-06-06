@@ -214,6 +214,60 @@ export function ConversationTimeline({
   )
 }
 
+/** Inline message editor that auto-grows to its content so the timeline does
+ *  not jump when a (possibly long) bubble is swapped for the textarea. */
+function MessageEditor({
+  value,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  value: string
+  onChange: (value: string) => void
+  onSave: () => void
+  onCancel: () => void
+}) {
+  const ref = React.useRef<HTMLTextAreaElement | null>(null)
+  React.useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [value])
+  return (
+    <div className="w-full max-w-[82%] self-end">
+      <Textarea
+        ref={ref}
+        value={value}
+        rows={1}
+        maxLength={4000}
+        autoFocus
+        className="max-h-[60vh] resize-none overflow-y-auto"
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            event.preventDefault()
+            onSave()
+          } else if (event.key === 'Escape') {
+            event.preventDefault()
+            onCancel()
+          }
+        }}
+      />
+      <div className="mt-1 flex justify-end gap-2">
+        <InlineRowButton tone="success" onClick={onSave}>
+          <Check />
+          {m.admin_shared_save()}
+        </InlineRowButton>
+        <InlineRowButton onClick={onCancel}>
+          <X />
+          {m.admin_users_cancel()}
+        </InlineRowButton>
+      </div>
+    </div>
+  )
+}
+
 function MessageGroupView({
   group,
   locale,
@@ -245,34 +299,13 @@ function MessageGroupView({
         const showEdit = canEdit && isMe && message.editable
         if (editingId === message.id) {
           return (
-            <div key={message.id} className="w-full max-w-[82%] self-end">
-              <Textarea
-                value={editDraft}
-                rows={2}
-                maxLength={4000}
-                autoFocus
-                onChange={(event) => onEditDraftChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                    event.preventDefault()
-                    onSaveEdit(message.id)
-                  } else if (event.key === 'Escape') {
-                    event.preventDefault()
-                    onCancelEdit()
-                  }
-                }}
-              />
-              <div className="mt-1 flex justify-end gap-2">
-                <InlineRowButton tone="success" onClick={() => onSaveEdit(message.id)}>
-                  <Check />
-                  {m.admin_shared_save()}
-                </InlineRowButton>
-                <InlineRowButton onClick={onCancelEdit}>
-                  <X />
-                  {m.admin_users_cancel()}
-                </InlineRowButton>
-              </div>
-            </div>
+            <MessageEditor
+              key={message.id}
+              value={editDraft}
+              onChange={onEditDraftChange}
+              onSave={() => onSaveEdit(message.id)}
+              onCancel={onCancelEdit}
+            />
           )
         }
         return (
