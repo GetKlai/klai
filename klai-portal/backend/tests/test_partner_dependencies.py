@@ -152,7 +152,9 @@ async def test_valid_key_returns_auth_context():
             FakeResult([FakeKeyRow()]),  # key lookup
             FakeResult([FakeOrg()]),  # org lookup
             FakeResult(),  # set_tenant
-            FakeResult([(FakeKbAccessRow(), SimpleNamespace(id=10, owner_type="org", owner_user_id=None))]),  # kb_access
+            FakeResult(
+                [(FakeKbAccessRow(), SimpleNamespace(id=10, owner_type="org", owner_user_id=None))]
+            ),  # kb_access
             FakeResult(),  # set_tenant + any further calls
         ],
     )

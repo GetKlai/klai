@@ -139,11 +139,7 @@ async def _get_key_or_404(key_id: str, org_id: int, db: AsyncSession) -> Partner
 
 
 def _personal_kbs_not_owned_by_user(kbs: list[PortalKnowledgeBase], user_id: str) -> list[int]:
-    return [
-        kb.id
-        for kb in kbs
-        if kb.owner_type == "user" and kb.owner_user_id != user_id
-    ]
+    return [kb.id for kb in kbs if kb.owner_type == "user" and kb.owner_user_id != user_id]
 
 
 def _has_personal_kb(kbs: list[PortalKnowledgeBase]) -> bool:

@@ -444,22 +444,26 @@ async def reply_to_feedback_update(
     subject = subject_text[:256] or "Feedback follow-up"
     async with cross_org_session() as message_db:
         existing_thread = (
-            await message_db.execute(
-                select(PlatformMessageThread)
-                .join(
-                    PlatformMessageParticipant,
-                    PlatformMessageParticipant.thread_id == PlatformMessageThread.id,
+            (
+                await message_db.execute(
+                    select(PlatformMessageThread)
+                    .join(
+                        PlatformMessageParticipant,
+                        PlatformMessageParticipant.thread_id == PlatformMessageThread.id,
+                    )
+                    .where(
+                        PlatformMessageThread.org_id == perms.org_id,
+                        PlatformMessageThread.feedback_submission_id == submission_id,
+                        PlatformMessageParticipant.org_id == perms.org_id,
+                        PlatformMessageParticipant.user_id == perms.user_id,
+                    )
+                    .order_by(PlatformMessageThread.last_message_at.desc(), PlatformMessageThread.id.desc())
+                    .limit(1)
                 )
-                .where(
-                    PlatformMessageThread.org_id == perms.org_id,
-                    PlatformMessageThread.feedback_submission_id == submission_id,
-                    PlatformMessageParticipant.org_id == perms.org_id,
-                    PlatformMessageParticipant.user_id == perms.user_id,
-                )
-                .order_by(PlatformMessageThread.last_message_at.desc(), PlatformMessageThread.id.desc())
-                .limit(1)
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing_thread is None:
             now = datetime.now(UTC)
             existing_thread = PlatformMessageThread(
