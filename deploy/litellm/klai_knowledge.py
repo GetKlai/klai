@@ -764,6 +764,109 @@ def _has_user_provided_content_context(messages: list[dict], query: object) -> b
     return False
 
 
+_KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES = frozenset({
+    "zero_chunks",
+    "chunks_present",
+})
+
+
+@dataclass(frozen=True)
+class KbAnswerPolicy:
+    """Single source of truth for prompt/post-call answer policy flags."""
+
+    state: str
+    kb_narrow: bool
+    user_provided_content_context: bool
+    low_confidence_inject: bool = False
+
+    @property
+    def mode(self) -> str:
+        return "strict" if self.kb_narrow else "open"
+
+    @property
+    def allow_uncited_user_content(self) -> bool:
+        return self.user_provided_content_context
+
+    @property
+    def suppress_kb_citations(self) -> bool:
+        return (
+            self.user_provided_content_context
+            and self.low_confidence_inject
+            and self.state in _KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES
+        )
+
+    def metadata(self) -> dict[str, bool | str]:
+        return {
+            "answer_policy_state": self.state,
+            "answer_policy_mode": self.mode,
+            "user_provided_content_context": self.user_provided_content_context,
+            "low_confidence_inject": self.low_confidence_inject,
+            "allow_uncited_user_content": self.allow_uncited_user_content,
+            "suppress_kb_citations": self.suppress_kb_citations,
+        }
+
+    def to_kb_meta(
+        self,
+        *,
+        org_id: object,
+        user_id: object,
+        retrieval_ms: int,
+        user_query: object = None,
+        chunks_injected: int = 0,
+        chunk_ids: list | None = None,
+        allowed_source_urls: list | None = None,
+        allowed_image_urls: list | None = None,
+        citation_source_urls: dict | None = None,
+        citation_chunks: list | None = None,
+        trusted_sources: list | None = None,
+        evidence_pack: dict | None = None,
+        citable_sources_count: int = 0,
+        confidence_band: object = None,
+        no_citable_sources: bool = False,
+        no_citable_reason: object = None,
+        no_citable_message: object = None,
+        original_stream: object = None,
+        render_mode: object = None,
+        gate_bypassed: bool = False,
+        retrieval_failure: bool = False,
+    ) -> dict[str, Any]:
+        """Build the COMPLETE ``_klai_kb_meta`` dict for any branch.
+
+        Single source of truth for the metadata contract shape: every
+        pre-call return branch builds its ``_klai_kb_meta`` through this one
+        method, so the ~27-key shape can never drift between branches (the
+        old code hand-copied the dict 5×, and a fix had to touch all 5). The
+        policy-derived keys come from ``self`` / ``metadata()``; everything
+        else is a per-branch input with a safe default, so a branch only
+        passes what it actually knows.
+        """
+        return {
+            "org_id": org_id,
+            "user_id": user_id,
+            "user_query": user_query,
+            "kb_narrow": self.kb_narrow,
+            "chunks_injected": chunks_injected,
+            "chunk_ids": chunk_ids if chunk_ids is not None else [],
+            "allowed_source_urls": allowed_source_urls if allowed_source_urls is not None else [],
+            "allowed_image_urls": allowed_image_urls if allowed_image_urls is not None else [],
+            "citation_source_urls": citation_source_urls if citation_source_urls is not None else {},
+            "citation_chunks": citation_chunks if citation_chunks is not None else [],
+            "trusted_sources": trusted_sources if trusted_sources is not None else [],
+            "evidence_pack": evidence_pack,
+            "citable_sources_count": citable_sources_count,
+            "confidence_band": confidence_band,
+            "no_citable_sources": no_citable_sources,
+            "no_citable_reason": no_citable_reason,
+            "no_citable_message": no_citable_message,
+            "original_stream": original_stream,
+            "render_mode": render_mode,
+            "retrieval_ms": retrieval_ms,
+            "gate_bypassed": gate_bypassed,
+            "retrieval_failure": retrieval_failure,
+            **self.metadata(),
+        }
+
+
 def _llm_safety_enabled() -> bool:
     return LLM_SAFETY_LITELLM_MODE not in {"", "off", "disabled", "0", "false"}
 
@@ -3465,33 +3568,23 @@ class KlaiKnowledgeHook(CustomLogger):
             render_strategy = _select_kb_render_strategy(original_stream)
             if kb_narrow and render_strategy.force_non_streaming:
                 data["stream"] = False
-            data.setdefault("metadata", {})["_klai_kb_meta"] = {
-                "org_id": org_id,
-                "user_id": user_id,
-                "user_query": query,
-                "kb_narrow": kb_narrow,
-                "chunks_injected": 0,
-                "chunk_ids": [],
-                "allowed_source_urls": [],
-                "allowed_image_urls": [],
-                "citation_source_urls": {},
-                "citation_chunks": [],
-                "trusted_sources": [],
-                "evidence_pack": None,
-                "citable_sources_count": 0,
-                "no_citable_sources": bool(kb_narrow),
-                "no_citable_reason": "retrieval_failure" if kb_narrow else None,
-                "no_citable_message": _strict_kb_unavailable_message(query) if kb_narrow else None,
-                "original_stream": original_stream,
-                "render_mode": render_strategy.mode,
-                "retrieval_ms": int((time.monotonic() - t0) * 1000),
-                "gate_bypassed": False,
-                "retrieval_failure": retrieval_failure,
-                "user_provided_content_context": user_provided_content_context,
-                "low_confidence_inject": False,
-                "allow_uncited_user_content": user_provided_content_context,
-                "suppress_kb_citations": False,
-            }
+            answer_policy = KbAnswerPolicy(
+                state="retrieval_failure",
+                kb_narrow=kb_narrow,
+                user_provided_content_context=user_provided_content_context,
+            )
+            data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
+                org_id=org_id,
+                user_id=user_id,
+                user_query=query,
+                retrieval_ms=int((time.monotonic() - t0) * 1000),
+                no_citable_sources=bool(kb_narrow),
+                no_citable_reason="retrieval_failure" if kb_narrow else None,
+                no_citable_message=_strict_kb_unavailable_message(query) if kb_narrow else None,
+                original_stream=original_stream,
+                render_mode=render_strategy.mode,
+                retrieval_failure=retrieval_failure,
+            )
             return data
 
         retrieval_ms = int((time.monotonic() - t0) * 1000)
@@ -3503,17 +3596,17 @@ class KlaiKnowledgeHook(CustomLogger):
                 messages, _compose_kb_mode_chat_prefix(kb_narrow, templates_block)
             )
             data["messages"] = messages
-            data.setdefault("metadata", {})["_klai_kb_meta"] = {
-                "org_id": org_id,
-                "user_id": user_id,
-                "chunks_injected": 0,
-                "retrieval_ms": retrieval_ms,
-                "gate_bypassed": True,
-                "user_provided_content_context": user_provided_content_context,
-                "low_confidence_inject": False,
-                "allow_uncited_user_content": user_provided_content_context,
-                "suppress_kb_citations": False,
-            }
+            answer_policy = KbAnswerPolicy(
+                state="gate_bypassed",
+                kb_narrow=kb_narrow,
+                user_provided_content_context=user_provided_content_context,
+            )
+            data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
+                org_id=org_id,
+                user_id=user_id,
+                retrieval_ms=retrieval_ms,
+                gate_bypassed=True,
+            )
             return data
 
         chunks = result.get("chunks", [])
@@ -3534,32 +3627,22 @@ class KlaiKnowledgeHook(CustomLogger):
             render_strategy = _select_kb_render_strategy(original_stream)
             if render_strategy.force_non_streaming:
                 data["stream"] = False
-            data.setdefault("metadata", {})["_klai_kb_meta"] = {
-                "org_id": org_id,
-                "user_id": user_id,
-                "user_query": query,
-                "kb_narrow": kb_narrow,
-                "chunks_injected": 0,
-                "chunk_ids": [],
-                "allowed_source_urls": [],
-                "allowed_image_urls": [],
-                "citation_source_urls": {},
-                "citation_chunks": [],
-                "trusted_sources": [],
-                "evidence_pack": None,
-                "citable_sources_count": 0,
-                "confidence_band": result.get("confidence_band"),
-                "no_citable_sources": True,
-                "no_citable_reason": "missing_evidence_pack",
-                "original_stream": original_stream,
-                "render_mode": render_strategy.mode,
-                "retrieval_ms": retrieval_ms,
-                "gate_bypassed": False,
-                "user_provided_content_context": user_provided_content_context,
-                "low_confidence_inject": False,
-                "allow_uncited_user_content": user_provided_content_context,
-                "suppress_kb_citations": False,
-            }
+            answer_policy = KbAnswerPolicy(
+                state="missing_evidence_pack",
+                kb_narrow=kb_narrow,
+                user_provided_content_context=user_provided_content_context,
+            )
+            data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
+                org_id=org_id,
+                user_id=user_id,
+                user_query=query,
+                retrieval_ms=retrieval_ms,
+                confidence_band=result.get("confidence_band"),
+                no_citable_sources=True,
+                no_citable_reason="missing_evidence_pack",
+                original_stream=original_stream,
+                render_mode=render_strategy.mode,
+            )
             return data
         evidence_chunks = evidence_pack_items_as_chunks(evidence_pack)
         trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
@@ -3706,20 +3789,19 @@ class KlaiKnowledgeHook(CustomLogger):
                 render_strategy = _select_kb_render_strategy(original_stream)
                 if render_strategy.force_non_streaming:
                     data["stream"] = False
-                data.setdefault("metadata", {})["_klai_kb_meta"] = {
-                    "org_id": org_id,
-                    "user_id": user_id,
-                    "user_query": query,
-                    "kb_narrow": kb_narrow,
-                    "chunks_injected": 0,
-                    "chunk_ids": [],
-                    "allowed_source_urls": [],
-                    "allowed_image_urls": [],
-                    "citation_source_urls": {},
-                    "citation_chunks": [],
-                    "trusted_sources": [],
-                    "evidence_pack": evidence_pack,
-                    "citable_sources_count": 0,
+                answer_policy = KbAnswerPolicy(
+                    state="zero_chunks",
+                    kb_narrow=kb_narrow,
+                    user_provided_content_context=user_provided_content_context,
+                    low_confidence_inject=low_confidence_inject,
+                )
+                data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
+                    org_id=org_id,
+                    user_id=user_id,
+                    user_query=query,
+                    retrieval_ms=retrieval_ms,
+                    evidence_pack=evidence_pack if isinstance(evidence_pack, dict) else None,
+                    confidence_band=confidence_band,
                     # Strict mode (kb_narrow=True) MUST refuse deterministically
                     # when there are no citable sources; trusting the model's
                     # system-prompt instruction to refuse risks a hallucinated
@@ -3733,21 +3815,15 @@ class KlaiKnowledgeHook(CustomLogger):
                     # guard ``not trusted_sources and not force_no_citable and
                     # not citation_chunks`` short-circuits and the streamed
                     # tokens reach the client unchanged.
-                    "no_citable_sources": bool(kb_narrow),
-                    "no_citable_reason": evidence_pack.get("no_citable_reason")
-                    if isinstance(evidence_pack, dict)
-                    else None,
-                    "original_stream": original_stream,
-                    "render_mode": render_strategy.mode,
-                    "retrieval_ms": retrieval_ms,
-                    "gate_bypassed": False,
-                    "user_provided_content_context": user_provided_content_context,
-                    "low_confidence_inject": low_confidence_inject,
-                    "allow_uncited_user_content": user_provided_content_context,
-                    "suppress_kb_citations": (
-                        user_provided_content_context and low_confidence_inject
+                    no_citable_sources=bool(kb_narrow),
+                    no_citable_reason=(
+                        evidence_pack.get("no_citable_reason")
+                        if isinstance(evidence_pack, dict)
+                        else None
                     ),
-                }
+                    original_stream=original_stream,
+                    render_mode=render_strategy.mode,
+                )
             return data
 
         # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English instructions
@@ -3921,36 +3997,34 @@ class KlaiKnowledgeHook(CustomLogger):
         render_strategy = _select_kb_render_strategy(original_stream)
         if render_strategy.force_non_streaming:
             data["stream"] = False
+        answer_policy = KbAnswerPolicy(
+            state="chunks_present",
+            kb_narrow=kb_narrow,
+            user_provided_content_context=user_provided_content_context,
+            low_confidence_inject=low_confidence_inject,
+        )
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
         # Stored in data["metadata"] so it is never forwarded to the LLM provider.
-        data.setdefault("metadata", {})["_klai_kb_meta"] = {
-            "org_id": org_id,
-            "user_id": user_id,
-            "user_query": query,
-            "kb_narrow": kb_narrow,
-            "chunks_injected": len(context_chunks),
-            "chunk_ids": [c.get("chunk_id") for c in context_chunks if c.get("chunk_id")],
-            "allowed_source_urls": sorted(allowed_source_urls),
-            "allowed_image_urls": sorted(allowed_image_urls),
-            "citation_source_urls": {
+        data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
+            org_id=org_id,
+            user_id=user_id,
+            user_query=query,
+            retrieval_ms=retrieval_ms,
+            chunks_injected=len(context_chunks),
+            chunk_ids=[c.get("chunk_id") for c in context_chunks if c.get("chunk_id")],
+            allowed_source_urls=sorted(allowed_source_urls),
+            allowed_image_urls=sorted(allowed_image_urls),
+            citation_source_urls={
                 str(index): url for index, url in citation_source_urls.items()
             },
-            "citation_chunks": context_chunks,
-            "trusted_sources": trusted_sources,
-            "evidence_pack": evidence_pack if isinstance(evidence_pack, dict) else None,
-            "citable_sources_count": len(trusted_sources),
-            "confidence_band": confidence_band,
-            "original_stream": original_stream,
-            "render_mode": render_strategy.mode,
-            "retrieval_ms": retrieval_ms,
-            "gate_bypassed": False,
-            "user_provided_content_context": user_provided_content_context,
-            "low_confidence_inject": low_confidence_inject,
-            "allow_uncited_user_content": user_provided_content_context,
-            "suppress_kb_citations": (
-                user_provided_content_context and low_confidence_inject
-            ),
-        }
+            citation_chunks=context_chunks,
+            trusted_sources=trusted_sources,
+            evidence_pack=evidence_pack if isinstance(evidence_pack, dict) else None,
+            citable_sources_count=len(trusted_sources),
+            confidence_band=confidence_band,
+            original_stream=original_stream,
+            render_mode=render_strategy.mode,
+        )
         return data
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
