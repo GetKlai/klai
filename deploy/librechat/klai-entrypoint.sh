@@ -1,5 +1,5 @@
 #!/bin/sh
-# Klai LibreChat entrypoint wrapper — apply client polish for every tenant.
+# Klai LibreChat entrypoint wrapper — force light theme for every tenant.
 #
 # LibreChat has NO server-side config to force a default/locked theme
 # (enhancement danny-avila/LibreChat#5389 is still open as of v0.8.5). The
@@ -37,18 +37,16 @@
 
 set -e
 
-INDEX=${KLAI_LIBRECHAT_INDEX:-/app/client/dist/index.html}
+INDEX=/app/client/dist/index.html
 LIGHT_MARKER=klai-force-light
 KB_DISCLOSURE_MARKER=klai-kb-disclosure-v7
-FOOTER_MARKER=klai-hide-librechat-footer-v1
 
 if [ -f "$INDEX" ]; then
-  node - "$INDEX" "$LIGHT_MARKER" "$KB_DISCLOSURE_MARKER" "$FOOTER_MARKER" <<'NODE' || echo "[klai-entrypoint] client polish inject failed (non-fatal), booting anyway"
+  node - "$INDEX" "$LIGHT_MARKER" "$KB_DISCLOSURE_MARKER" <<'NODE' || echo "[klai-entrypoint] client polish inject failed (non-fatal), booting anyway"
 const { readFileSync, writeFileSync } = require('fs');
 const target = process.argv[2];
 const lightMarker = process.argv[3];
 const disclosureMarker = process.argv[4];
-const footerMarker = process.argv[5];
 let html = readFileSync(target, 'utf8');
 if (!html.includes(disclosureMarker)) {
   html = html
@@ -63,10 +61,6 @@ if (idx === -1) {
 const injections = [];
 if (!html.includes(lightMarker)) {
   injections.push("<script>/*klai-force-light*/try{localStorage.setItem('color-theme','light');}catch(e){}</script>");
-}
-if (!html.includes(footerMarker)) {
-  injections.push(`<script id="klai-hide-librechat-footer-script">/*klai-hide-librechat-footer-v1*/
-(()=>{const tagline=/LibreChat\\s+v[\\w.-]+\\s*-\\s*Every AI for Everyone\\.?/i;const isBrandLink=a=>{const href=a?.getAttribute?.("href")||"";return /(^|\\.)librechat\\.ai\\/?$/i.test(href.replace(/^https?:\\/\\//i,"").replace(/^www\\./i,"").split(/[?#]/)[0])};const hide=node=>{if(!(node instanceof HTMLElement))return;const text=(node.textContent||"").replace(/\\s+/g," ").trim();if(!tagline.test(text))return;const link=[...node.querySelectorAll("a")].find(isBrandLink);if(!link)return;const target=node.closest("footer,[role='contentinfo']")||node;target.dataset.klaiLibrechatFooterHidden="1";target.style.display="none"};const scan=root=>{if(!(root instanceof HTMLElement))return;hide(root);for(const el of root.querySelectorAll("footer,[role='contentinfo'],div,p,span"))hide(el)};let pending=false;const run=()=>{pending=false;scan(document.body)};const schedule=()=>{if(pending)return;pending=true;(window.queueMicrotask||((fn)=>Promise.resolve().then(fn)))(run)};new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true,characterData:true});document.readyState==="loading"?document.addEventListener("DOMContentLoaded",schedule):schedule();})();</script>`);
 }
 if (!html.includes(disclosureMarker)) {
   injections.push(`<style id="klai-kb-disclosure-style">/*klai-kb-disclosure-v7*/
