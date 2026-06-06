@@ -1,45 +1,49 @@
 #!/usr/bin/env python3
-"""Create Klai product updates through the platform-admin API.
+"""Create Klai product updates from a trusted operator environment.
 
 Authoring contract:
 1. Write English title/body from the finished work.
 2. Apply `.claude/rules/gtm/klai-brand-voice.md`.
 3. Apply `.claude/rules/gtm/klai-humanizer.md`.
-4. Publish through the platform-admin API. Do not write product updates directly
-   to the database and do not ship content updates as migrations.
+4. Run this script only from trusted infra or an equivalent operator shell with
+   production backend database access. Do not expose product update publishing
+   as a portal/API endpoint and do not ship content updates as migrations.
 
-The backend endpoint enforces `require_platform_admin()`. This script may use a
-platform-admin bearer token or an existing platform-admin browser session cookie;
-both still go through the same admin gate.
+This script writes through the backend ORM/service layer and uses
+`cross_org_session()` because product updates are global announcements, not
+tenant-owned rows. Infra access is the admin boundary.
 
 Single update:
-    python scripts/create_product_update.py \
-      --api-url https://my.getklai.com \
-      --cookie "$KLAI_ADMIN_COOKIE" \
-      --title "Feedback updates are easier to follow" \
-      --body "You can now see what happened with a report directly from your account menu." \
-      --created-at 2026-06-06T12:00:00Z \
+    python scripts/create_product_update.py \\
+      --title "Feedback updates are easier to follow" \\
+      --body "You can now see what happened with a report directly from your account menu." \\
+      --created-at 2026-06-06T12:00:00Z \\
       --commit abc1234
 
 Batch:
-    python scripts/create_product_update.py \
-      --api-url https://my.getklai.com \
-      --cookie "$KLAI_ADMIN_COOKIE" \
+    python scripts/create_product_update.py \\
       --json product-updates.json
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
-import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from app.core.database import cross_org_session  # noqa: E402
+from app.product_updates.schemas import product_update_out  # noqa: E402
+from app.product_updates.service import ProductUpdateValidationError, create_product_update  # noqa: E402
 
 
 def _commits_from_git(rev_range: str) -> list[str]:
@@ -53,27 +57,6 @@ def _commits_from_git(rev_range: str) -> list[str]:
         capture_output=True,
     )
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
-
-
-def _load_cookie(args: argparse.Namespace) -> str | None:
-    if args.cookie_file:
-        return Path(args.cookie_file).read_text(encoding="utf-8").strip()
-    return args.cookie
-
-
-def _headers(args: argparse.Namespace) -> dict[str, str]:
-    headers: dict[str, str] = {}
-    if args.token:
-        headers["Authorization"] = f"Bearer {args.token}"
-    cookie = _load_cookie(args)
-    if cookie:
-        headers["Cookie"] = cookie
-    if not headers:
-        raise RuntimeError(
-            "A platform-admin auth context is required. Set --token, --cookie, --cookie-file, "
-            "KLAI_ADMIN_TOKEN or KLAI_ADMIN_COOKIE."
-        )
-    return headers
 
 
 def _normalize_update(raw: dict[str, Any]) -> dict[str, Any]:
@@ -121,32 +104,37 @@ def _single_update_payload(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
-def _publish_updates(args: argparse.Namespace, updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    url = args.api_url.rstrip("/") + "/api/admin/platform/product-updates"
-    headers = _headers(args)
+def _parse_created_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    return datetime.fromisoformat(normalized)
+
+
+async def _publish_updates(updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    with httpx.Client(timeout=15.0) as client:
+    async with cross_org_session() as db:
         for payload in updates:
-            response = client.post(url, headers=headers, json=payload)
-            if response.status_code >= 400:
-                title = payload.get("title", "<untitled>")
-                raise RuntimeError(
-                    f"Product update create failed for {title!r} ({response.status_code}): {response.text}"
-                )
-            results.append(response.json())
+            update = await create_product_update(
+                db,
+                title=payload["title"],
+                body=payload["body"],
+                commit_shas=payload.get("commit_shas", []),
+                created_at=_parse_created_at(payload.get("created_at")),
+                dedupe_key=payload.get("dedupe_key"),
+                published_via="operator_script",
+            )
+            results.append(product_update_out(update, read_at=None).model_dump(mode="json"))
+        await db.commit()
     return results
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--api-url", default=os.environ.get("KLAI_PORTAL_API_URL", "http://localhost:8010"))
-    parser.add_argument("--token", default=os.environ.get("KLAI_ADMIN_TOKEN"))
-    parser.add_argument("--cookie", default=os.environ.get("KLAI_ADMIN_COOKIE"))
-    parser.add_argument("--cookie-file", help="File containing a raw Cookie header for a platform-admin session")
     parser.add_argument("--title")
     parser.add_argument("--body")
     parser.add_argument("--created-at", help="Release/display timestamp, e.g. 2026-06-06T12:00:00Z")
-    parser.add_argument("--dedupe-key", help="Stable idempotency key. Generated by the backend when omitted.")
+    parser.add_argument("--dedupe-key", help="Stable idempotency key. Generated by the service when omitted.")
     parser.add_argument("--commit", dest="commits", action="append", default=[])
     parser.add_argument("--from-git", help="Git rev range to collect commit SHAs from, e.g. origin/main..HEAD")
     parser.add_argument("--json", help="Publish a batch from a JSON file")
@@ -158,8 +146,8 @@ def main() -> int:
         if args.dry_run:
             sys.stdout.write(json.dumps(updates, indent=2, ensure_ascii=False) + "\n")
             return 0
-        results = _publish_updates(args, updates)
-    except (KeyError, RuntimeError, ValueError, httpx.HTTPError) as exc:
+        results = asyncio.run(_publish_updates(updates))
+    except (KeyError, RuntimeError, TypeError, ValueError, ProductUpdateValidationError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 1
     sys.stdout.write(json.dumps(results[0] if len(results) == 1 else results, indent=2, ensure_ascii=False) + "\n")
