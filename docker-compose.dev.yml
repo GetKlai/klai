@@ -52,7 +52,7 @@ services:
       retries: 5
 
   meilisearch:
-    image: getmeili/meilisearch:v1.42.1
+    image: getmeili/meilisearch:v1.45.2
     restart: unless-stopped
     ports:
       - "127.0.0.1:7700:7700"
@@ -60,6 +60,7 @@ services:
       - klai-dev-meilisearch:/meili_data
     environment:
       MEILI_ENV: development
+      MEILI_DB_PATH: /meili_data
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-klai-dev-meili-key}
       MEILI_NO_ANALYTICS: "true"
     healthcheck:

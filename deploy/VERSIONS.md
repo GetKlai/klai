@@ -51,7 +51,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 
 | Service | Image | Rationale |
 |---|---|---|
-| `meilisearch` | `getmeili/meilisearch:v1.42.1` | Search index for LibreChat conversations. **Data migration required on minor bumps** — breaking v1.40 → v1.42 schema change. Pin explicitly to control migration timing. |
+| `meilisearch` | `getmeili/meilisearch:v1.45.2` | Search index for LibreChat conversations. **Data migration required on minor bumps** — v1.42.1 refused to boot directly on v1.45.2 and required dump/import. Pin explicitly and keep `MEILI_DB_PATH=/meili_data`; v1.45.2 otherwise starts on `./data.ms` and ignores the mounted volume. |
 | `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.16.1` | Document parsing (PDF, DOCX → structured). |
 | `searxng` | `searxng/searxng:2026.4.17-e8299a4c3` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
 | `gitea` | `gitea/gitea:1.26.0` | Self-hosted git for klai-docs. |
@@ -94,7 +94,7 @@ Uses the same versions as production core-01 to catch version-related issues loc
 | `postgres` | `pgvector/pgvector:pg18` | Same as prod. |
 | `redis` | `redis:8-alpine` | Aligned with prod (was `redis:alpine`). |
 | `mongodb` | `mongo:8.2.7` | Same as prod. |
-| `meilisearch` | `getmeili/meilisearch:v1.42.1` | Aligned with prod (was v1.13 — multi-major skew). |
+| `meilisearch` | `getmeili/meilisearch:v1.45.2` | Aligned with prod; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
 | `litellm` | `ghcr.io/berriai/litellm:main-stable` | Same rolling tag as prod. |
 
 ---

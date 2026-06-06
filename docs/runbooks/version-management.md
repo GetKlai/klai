@@ -309,7 +309,9 @@ A model refactor added `last_sync_documents_ok: int | None` without a default. T
 
 Meilisearch v1.40 → v1.42 data format is incompatible. `:latest` silently rolled from 1.40 to 1.42 on pull, then the container crash-looped with "Your database version (1.40.0) is incompatible with your current engine version (1.42.1)."
 
-**Lesson:** assume every stateful container's minor bump requires a migration check. `VERSIONS.md` flags these explicitly. In dev we wiped the volume; in prod we follow [Meilisearch's dump/migrate/restore procedure](https://www.meilisearch.com/docs/learn/update_and_migration/updating).
+The same class of issue appeared on 2026-06-06 for v1.42.1 → v1.45.2: direct boot refused the old database and the safe path was dump/import. v1.45.2 also needed explicit `MEILI_DB_PATH=/meili_data`; otherwise the container started healthy on `./data.ms` while ignoring the mounted volume.
+
+**Lesson:** assume every stateful container's minor bump requires a migration check. `VERSIONS.md` flags these explicitly. In dev we wiped the volume; in prod we follow [Meilisearch's dump/migrate/restore procedure](https://www.meilisearch.com/docs/learn/update_and_migration/updating). Do not rely on LibreChat startup sync to rebuild shared Meilisearch indexes for all tenants; upstream cleanup is not safe for the current silo-per-tenant Mongo topology.
 
 ### 7.6 CI didn't actually run pytest
 

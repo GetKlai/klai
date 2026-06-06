@@ -179,12 +179,13 @@ services:
 
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
-    image: getmeili/meilisearch:v1.42.1
+    image: getmeili/meilisearch:v1.45.2
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
     environment:
       MEILI_ENV: production
+      MEILI_DB_PATH: /meili_data
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       MEILI_NO_ANALYTICS: "true"
     networks:

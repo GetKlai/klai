@@ -108,9 +108,9 @@ mounts:
     kind: named
     host: meilisearch-data
     container_path: /meili_data
-    image: getmeili/meilisearch:v1.42.1
+    image: getmeili/meilisearch:v1.45.2
     category: data
-    data_path_source: upstream docs (default data dir)
+    data_path_source: compose MEILI_DB_PATH=/meili_data
     pii: true
     backup: snapshot
     backup_method: snapshot-api
