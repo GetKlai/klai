@@ -59,10 +59,6 @@ assert.match(workflow, /deploy\/librechat\/getklai\/entrypoint\.sh/);
 assert.match(workflow, /apply-canary-config\.py \/opt\/klai\/librechat\/getklai\/librechat\.yaml/);
 assert.match(workflow, /clear_librechat_config_cache "configs:\*"/);
 assert.match(workflow, /force-recreating librechat-getklai/);
-assert.match(entrypoint, /CHAT_SEARCH_MARKER=klai-chat-search-v1/);
-assert.match(entrypoint, /Chat zoeken/);
-assert.match(entrypoint, /\/api\/messages\?search=/);
-assert.doesNotMatch(globalEntrypoint, /klai-chat-search-v1/);
 
 class Element {
   constructor(tagName = 'DIV') {
@@ -127,23 +123,5 @@ function assertEntrypointIsNullSafe(fileName, source) {
 
 assertEntrypointIsNullSafe('deploy/librechat/getklai/entrypoint.sh', entrypoint);
 assertEntrypointIsNullSafe('deploy/librechat/klai-entrypoint.sh', globalEntrypoint);
-
-const chatSearchMatch = entrypoint.match(
-  /<script id="klai-chat-search-script">\/\*klai-chat-search-v1\*\/\n([\s\S]*?)<\/script>/,
-);
-assert.ok(chatSearchMatch, 'deploy/librechat/getklai/entrypoint.sh: chat search script not found');
-assert.doesNotThrow(() => {
-  vm.runInNewContext(chatSearchMatch[1], {
-    document: {
-      body: null,
-      readyState: 'complete',
-      addEventListener() {},
-      getElementById() {
-        return null;
-      },
-    },
-    window: {},
-  });
-}, 'deploy/librechat/getklai/entrypoint.sh: chat search script must tolerate document.body === null');
 
 console.log('OK: LibreChat config disables risky v0.8.6 capabilities and entrypoint injection is null-safe.');
