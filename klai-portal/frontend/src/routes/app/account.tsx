@@ -389,6 +389,19 @@ function AccountMessagesPanel({
     onError: () => toast.error(m.account_messages_error()),
   })
 
+  const editMutation = useMutation({
+    mutationFn: (vars: { threadId: number; messageId: number; body: string }) =>
+      apiFetch(`/api/app/account/messages/${vars.threadId}/messages/${vars.messageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ body: vars.body }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
+    },
+    onError: () => toast.error(m.account_messages_error()),
+  })
+
   function openThread(thread: AccountPlatformMessageThread) {
     setSelectedThreadId(thread.id)
     setReplyBody('')
@@ -414,6 +427,7 @@ function AccountMessagesPanel({
       author: message.sender_type === 'user' ? m.account_messages_you() : m.account_messages_platform_admin(),
       body: message.body,
       at: message.created_at,
+      editable: message.sender_type === 'user',
     }))
 
     return (
@@ -433,6 +447,9 @@ function AccountMessagesPanel({
         isReplying={replyMutation.isPending}
         replyPlaceholder={m.account_messages_reply_placeholder()}
         sendLabel={m.account_messages_send()}
+        onEditMessage={(id, body) =>
+          editMutation.mutate({ threadId: selectedThreadId, messageId: Number(id), body })
+        }
         onBack={back}
       />
     )
@@ -536,6 +553,16 @@ function FeedbackUpdatesPanel({
     onError: () => toast.error(m.account_feedback_error()),
   })
 
+  const editMutation = useMutation({
+    mutationFn: (vars: { threadId: number; messageId: number; body: string }) =>
+      apiFetch(`/api/app/account/messages/${vars.threadId}/messages/${vars.messageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ body: vars.body }),
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] }),
+    onError: () => toast.error(m.account_feedback_error()),
+  })
+
   function openItem(item: AccountFeedbackUpdate) {
     setSelectedSubmissionId(item.submission_id)
     setReplyBody('')
@@ -572,6 +599,12 @@ function FeedbackUpdatesPanel({
         isReplying={replyMutation.isPending}
         replyPlaceholder={m.account_feedback_reply_placeholder()}
         sendLabel={m.account_feedback_send()}
+        onEditMessage={
+          selectedThreadId !== null
+            ? (id, body) =>
+                editMutation.mutate({ threadId: selectedThreadId, messageId: Number(id), body })
+            : undefined
+        }
         onBack={back}
       />
     )
@@ -645,6 +678,7 @@ function buildFeedbackEntries(
         author: message.sender_type === 'user' ? m.account_messages_you() : m.account_messages_platform_admin(),
         body: message.body,
         at: message.created_at,
+        editable: message.sender_type === 'user',
       })
     }
   }
@@ -677,6 +711,7 @@ function ConversationDetail({
   isReplying,
   replyPlaceholder,
   sendLabel,
+  onEditMessage,
   onBack,
 }: {
   title: string
@@ -691,6 +726,7 @@ function ConversationDetail({
   isReplying: boolean
   replyPlaceholder: string
   sendLabel: string
+  onEditMessage?: (id: string | number, body: string) => void
   onBack: () => void
 }) {
   return (
@@ -707,6 +743,7 @@ function ConversationDetail({
       isSending={isReplying}
       placeholder={replyPlaceholder}
       sendLabel={sendLabel}
+      onEditMessage={onEditMessage}
       onBack={onBack}
     />
   )
