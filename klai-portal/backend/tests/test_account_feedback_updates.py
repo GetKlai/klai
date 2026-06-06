@@ -145,6 +145,19 @@ async def test_account_platform_messages_returns_only_current_user_threads():
 
 
 @pytest.mark.asyncio
+async def test_account_platform_messages_returns_empty_when_user_has_no_threads():
+    session = _Session([])
+
+    result = await app_account.get_platform_messages(
+        perms=SimpleNamespace(org_id=42, user_id="user-123"),
+        db=session,
+    )
+
+    assert result.unread_count == 0
+    assert result.items == []
+
+
+@pytest.mark.asyncio
 async def test_account_platform_messages_can_mark_thread_read():
     participant = SimpleNamespace(last_read_at=None)
     session = _Session([participant])
