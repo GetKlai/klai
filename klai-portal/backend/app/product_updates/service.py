@@ -64,7 +64,7 @@ async def create_product_update(
     created_at: datetime | None = None,
     created_by_user_id: str | None = None,
     dedupe_key: str | None = None,
-    published_via: str = "admin_api",
+    published_via: str = "operator_script",
 ) -> ProductUpdate:
     normalized_commit_shas = normalize_commit_shas(commit_shas)
     normalized_dedupe_key = normalize_dedupe_key(dedupe_key) or generated_dedupe_key(

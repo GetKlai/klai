@@ -4,27 +4,27 @@ Product updates are the short "What's new" items shown behind the megaphone in t
 
 ## Security contract
 
-Publish through the platform-admin API only:
+Publish with the operator script only:
 
 ```text
-POST /api/admin/platform/product-updates
+klai-portal/backend/scripts/create_product_update.py
 ```
 
-That endpoint is guarded by `require_platform_admin()`. A normal admin, tenant user, script with database access, or migration must not bypass it.
+The script must run from trusted infra or an equivalent operator shell with production backend database access. There is no portal/API publish endpoint. Infra access is the admin boundary.
 
 Do not publish product updates by:
 
-- writing rows directly into `product_updates`
+- adding a portal/admin HTTP endpoint
 - adding Alembic data migrations for content
-- using an internal service secret
-- adding a second publish endpoint with weaker auth
+- using browser cookies, bearer tokens, or E2E login state
+- hand-writing SQL rows outside the backend service
 
 The product update row stores:
 
 - `created_at`: release/display date shown to users
 - `published_at`: server-side publish time
-- `created_by_user_id`: platform admin who published it
-- `published_via`: publish path, currently `admin_api`
+- `created_by_user_id`: null for operator-script publishes
+- `published_via`: publish path, currently `operator_script`
 - `dedupe_key`: idempotency key, so retrying a publish does not create duplicates
 - `commit_shas`: related commits for internal provenance
 
@@ -46,12 +46,10 @@ Use the customer filter:
 
 ## Publish one update
 
-Run from `klai-portal/backend`:
+Run from `klai-portal/backend` in the trusted operator environment:
 
 ```bash
 uv run python scripts/create_product_update.py \
-  --api-url https://my.getklai.com \
-  --cookie "$KLAI_ADMIN_COOKIE" \
   --title "Sources are clearer in chat" \
   --body "Knowledge answers now keep their sources visible in more chat paths. Klai also cleans old source footers before the next answer, so long conversations no longer collect duplicate source blocks." \
   --created-at 2026-06-06T12:00:00Z \
@@ -59,10 +57,6 @@ uv run python scripts/create_product_update.py \
   --commit 08e1e1f0 \
   --commit b9fad488
 ```
-
-`KLAI_ADMIN_COOKIE` must be a raw cookie header from a logged-in platform-admin portal session. Treat it like a session secret. Do not commit it, paste it into issue comments, or store it in repo files.
-
-A platform-admin bearer can be used instead with `--token "$KLAI_ADMIN_TOKEN"` when that is the active operator auth method.
 
 ## Publish a batch
 
@@ -80,19 +74,17 @@ Create a local JSON file outside git or under `.context/`:
 ]
 ```
 
-Then publish:
+Then publish from `klai-portal/backend`:
 
 ```bash
 uv run python scripts/create_product_update.py \
-  --api-url https://my.getklai.com \
-  --cookie "$KLAI_ADMIN_COOKIE" \
-  --json .context/product-updates.json
+  --json ../../.context/product-updates.json
 ```
 
 Preview without publishing:
 
 ```bash
-uv run python scripts/create_product_update.py --json .context/product-updates.json --dry-run
+uv run python scripts/create_product_update.py --json ../../.context/product-updates.json --dry-run
 ```
 
 ## Verify
@@ -105,4 +97,4 @@ After publishing:
 4. Open the update and confirm the body text is correct.
 5. Mark it read and refresh. The unread indicator should clear.
 
-If the megaphone shows "No product updates yet", the API returned zero rows. Do not add a migration. Check that the publish command succeeded against the intended `--api-url` and that the authenticated user was a platform admin.
+If the megaphone shows "No product updates yet", the API returned zero rows. Do not add a migration. Check that the operator script ran in the intended environment and committed successfully.

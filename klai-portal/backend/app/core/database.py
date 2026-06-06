@@ -469,6 +469,9 @@ async def cross_org_session() -> AsyncIterator[AsyncSession]:
         cancel signal.
       - `connector_credentials` KEK rotation: operator-initiated full sweep
         of `portal_orgs.connector_dek_enc` re-encryption.
+      - `scripts/create_product_update.py`: @MX:REASON product updates are
+        global portal announcements, not tenant-owned rows. Publishing is an
+        operator action run from trusted infra, not a customer/admin request.
       - `recording_cleanup_loop`: SELECT stale meetings across all orgs
         (but the UPDATE that flips recording_deleted MUST use
         `tenant_scoped_session(meeting.org_id)` — already enforced).

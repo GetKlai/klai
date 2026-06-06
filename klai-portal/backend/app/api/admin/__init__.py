@@ -50,7 +50,6 @@ from .join_requests import router as join_requests_router  # noqa: E402
 from .platform import router as platform_router  # noqa: E402
 from .platform_manage import router as platform_manage_router  # noqa: E402
 from .platform_messages import router as platform_messages_router  # noqa: E402
-from .platform_product_updates import router as platform_product_updates_router  # noqa: E402
 from .platform_unlocks import router as platform_unlocks_router  # noqa: E402
 from .products import router as products_router  # noqa: E402
 from .retry_provisioning import router as retry_provisioning_router  # noqa: E402
@@ -69,7 +68,6 @@ router.include_router(extensions_router)
 router.include_router(billing_router)
 router.include_router(platform_router)
 router.include_router(platform_messages_router)
-router.include_router(platform_product_updates_router)
 router.include_router(platform_manage_router)
 
 __all__ = [

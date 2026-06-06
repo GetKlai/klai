@@ -4,9 +4,9 @@ from types import SimpleNamespace
 import pytest
 
 from app.api import app_product_updates
-from app.api.admin import platform_product_updates
 from app.models.product_updates import ProductUpdate, ProductUpdateRead
 from app.product_updates import service
+from scripts import create_product_update as create_product_update_script
 
 
 class _Result:
@@ -197,27 +197,30 @@ async def test_app_product_updates_can_mark_all_unread_updates_read():
 
 
 @pytest.mark.asyncio
-async def test_platform_admin_can_create_product_update(monkeypatch):
+async def test_operator_script_creates_product_update(monkeypatch):
     session = _CreateSession()
-    monkeypatch.setattr(platform_product_updates, "cross_org_session", lambda: session)
+    monkeypatch.setattr(create_product_update_script, "cross_org_session", lambda: session)
     released_at = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
 
-    result = await platform_product_updates.create_product_update_endpoint(
-        platform_product_updates.ProductUpdateCreateIn(
-            title="Feedback updates are easier to follow",
-            body="You can now see what happened with a report directly from your account menu.",
-            commit_shas=["ABC1234", "abc1234"],
-            created_at=released_at,
-            dedupe_key="release:feedback",
-        ),
-        _perms=SimpleNamespace(user_id="admin", org_id=1),
+    results = await create_product_update_script._publish_updates(
+        [
+            {
+                "title": "Feedback updates are easier to follow",
+                "body": "You can now see what happened with a report directly from your account menu.",
+                "commit_shas": ["ABC1234", "abc1234"],
+                "created_at": released_at.isoformat(),
+                "dedupe_key": "release:feedback",
+            }
+        ]
     )
+    result = results[0]
 
-    assert result.id == 123
-    assert result.commit_shas == ["abc1234"]
-    assert result.created_at == released_at
-    assert result.created_by_user_id == "admin"
-    assert result.dedupe_key == "release:feedback"
+    assert result["id"] == 123
+    assert result["commit_shas"] == ["abc1234"]
+    assert result["created_at"] == "2026-06-06T12:00:00Z"
+    assert result["created_by_user_id"] is None
+    assert result["published_via"] == "operator_script"
+    assert result["dedupe_key"] == "release:feedback"
     assert session.commits == 1
 
 
@@ -229,8 +232,7 @@ async def test_create_product_update_is_idempotent_by_dedupe_key():
         body="Already published.",
         commit_shas=["abc1234"],
         dedupe_key="release:existing",
-        created_by_user_id="admin",
-        published_via="admin_api",
+        published_via="operator_script",
     )
     existing.created_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
     existing.published_at = datetime(2026, 6, 6, 10, 1, tzinfo=UTC)
