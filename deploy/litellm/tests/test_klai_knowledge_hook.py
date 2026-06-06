@@ -3463,7 +3463,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
     def test_streaming_footer_prefix_cut_tolerates_whitespace(self, monkeypatch):
         """Final source footer must not replay streamed answer text."""
-        mod = _load_hook(monkeypatch)
+        _load_hook(monkeypatch)
+        from klai_kb_citation_render import remove_already_streamed_prefix
 
         final_text = (
             "TL;DR: Voor de Omgevingsdienst Groningen zijn de verantwoordelijkheden.\n"
@@ -3478,7 +3479,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             "- Trekker: Frank Wolters\n"
         )
 
-        assert mod._remove_already_streamed_prefix(final_text, emitted_text) == (
+        assert remove_already_streamed_prefix(final_text, emitted_text) == (
             "\n\n**Bronnen**\n- Verantwoordelijkheden per bouwblok.pdf"
         )
 
