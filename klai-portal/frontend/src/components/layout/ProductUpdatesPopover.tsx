@@ -84,9 +84,9 @@ export function ProductUpdatesPopover() {
               ? m.product_updates_label_unread({ count: String(unreadCount) })
               : m.product_updates_label()
           }
-          className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 outline-none transition-colors hover:bg-[var(--color-secondary)] hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-[var(--color-rl-accent)]"
+          className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 bg-white text-gray-600 outline-none transition-colors hover:bg-[var(--color-secondary)] hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-[var(--color-rl-accent)]"
         >
-          <Megaphone className="h-4 w-4" strokeWidth={1.75} />
+          <Megaphone className="h-[18px] w-[18px]" strokeWidth={1.75} />
           {unreadCount > 0 && (
             <span
               aria-hidden="true"
