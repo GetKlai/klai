@@ -292,7 +292,7 @@ function NewWidgetPage() {
                       id="widget-template"
                       value={form.template_slug}
                       onChange={(e) => fillFromTemplate(e.target.value)}
-                      className="max-w-md"
+                      containerClassName="max-w-md"
                     >
                       <option value="">
                         {m.admin_widgets_widget_template_none()}

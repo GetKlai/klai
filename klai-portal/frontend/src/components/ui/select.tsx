@@ -2,7 +2,9 @@ import * as React from 'react'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {}
+export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+  containerClassName?: string
+}
 
 // Portal v1 spine (SPEC-PORTAL-REDESIGN-002):
 // - rounded-lg (was rounded-md)
@@ -13,9 +15,9 @@ export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElemen
 // padding is symmetric with the left text padding (both 0.75rem / px-3),
 // instead of the browser-default arrow inset which reads as misaligned.
 const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className, children, ...props }, ref) => {
+  ({ className, containerClassName, children, ...props }, ref) => {
     return (
-      <div className="relative w-full">
+      <div className={cn('relative w-full', containerClassName)}>
         <select
           ref={ref}
           className={cn(

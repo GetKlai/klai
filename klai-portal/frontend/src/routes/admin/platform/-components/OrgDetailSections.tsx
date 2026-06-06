@@ -249,7 +249,8 @@ export function UsersSection({
                           },
                         )
                       }
-                      className="max-w-[10rem] text-xs"
+                      className="text-xs"
+                      containerClassName="max-w-[10rem]"
                     >
                       {ROLE_OPTIONS.map((r) => (
                         <option key={r.value} value={r.value}>

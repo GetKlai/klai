@@ -226,7 +226,7 @@ function AccountPage() {
                   id="account-language"
                   value={selectedLang}
                   onChange={(e) => setSelectedLang(e.target.value as 'nl' | 'en')}
-                  className="max-w-xs"
+                  containerClassName="max-w-xs"
                 >
                   <option value="nl">{m.account_language_nl()}</option>
                   <option value="en">{m.account_language_en()}</option>

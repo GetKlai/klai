@@ -142,7 +142,7 @@ export function SaveToKnowledgeModal({
                 id="save-mode"
                 value={assertionMode}
                 onChange={(e) => setAssertionMode(e.target.value as AssertionMode)}
-                className="max-w-full"
+                containerClassName="max-w-full"
               >
                 <option value="factual">{m.knowledge_save_mode_factual()}</option>
                 <option value="procedural">{m.knowledge_save_mode_procedural()}</option>

@@ -96,6 +96,7 @@ import { useListControls } from '@/components/ui/use-list-controls'
 import { Select } from '@/components/ui/select'
 import { StatCard } from '@/components/ui/stat-card'
 import { StepIndicator } from '@/components/ui/step-indicator'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -276,6 +277,7 @@ function UiCatalogPage() {
   const [confirming, setConfirming] = useState(false)
   const [tableDeleteConfirm, setTableDeleteConfirm] = useState(false)
   const [checked, setChecked] = useState(true)
+  const [switchChecked, setSwitchChecked] = useState(false)
   const [wizardStep, setWizardStep] = useState(1)
   const [activeTab, setActiveTab] = useState('Details')
   const [multiValue, setMultiValue] = useState<string[]>(['kb'])
@@ -843,7 +845,7 @@ function UiCatalogPage() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="catalog-type">Type</Label>
-            <Select id="catalog-type" defaultValue="list">
+            <Select id="catalog-type" defaultValue="list" containerClassName="max-w-xs">
               <option value="list">List</option>
               <option value="table">Table</option>
             </Select>
@@ -865,6 +867,16 @@ function UiCatalogPage() {
             <Checkbox checked={checked} onChange={(event) => setChecked(event.currentTarget.checked)} />
             Subtiele kleur voor herkenning
           </label>
+          <div className="flex items-center justify-between gap-4 sm:col-span-2">
+            <Label htmlFor="catalog-switch" className="cursor-pointer">
+              Automatisch accepteren
+            </Label>
+            <Switch
+              id="catalog-switch"
+              checked={switchChecked}
+              onCheckedChange={setSwitchChecked}
+            />
+          </div>
         </div>
       </Section>
 

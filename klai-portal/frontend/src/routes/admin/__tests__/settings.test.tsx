@@ -4,12 +4,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 const navigate = vi.fn()
+let routeSearch: { tab?: string } = {}
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigate,
   createFileRoute: () => (cfg: unknown) => ({
     ...(cfg as object),
-    useSearch: () => ({ tab: undefined }),
+    useSearch: () => routeSearch,
   }),
 }))
 
@@ -47,6 +48,19 @@ vi.mock('@/paraglide/messages', () => {
     admin_settings_saved: () => 'Saved',
     admin_settings_error_fetch: () => 'Could not fetch settings',
     admin_settings_error_save: () => 'Save failed',
+    admin_settings_security_title: () => 'Security',
+    admin_settings_security_description: () => 'Configure access and security.',
+    admin_settings_mfa_label: () => 'Two-factor authentication',
+    admin_settings_mfa_optional: () => 'Optional',
+    admin_settings_mfa_recommended: () => 'Recommended',
+    admin_settings_mfa_required: () => 'Required',
+    admin_settings_mfa_optional_hint: () => 'Users can set up 2FA, but it is not required.',
+    admin_settings_mfa_recommended_hint: () => 'Users are asked to set up 2FA but can skip it.',
+    admin_settings_mfa_required_hint: () => 'Users must set up 2FA before they can use the app.',
+    admin_settings_auto_accept_label: ({ domain }: { domain: string }) =>
+      `Automatically accept users with @${domain}`,
+    admin_settings_auto_accept_hint_on: () => 'Users from your domain join immediately.',
+    admin_settings_auto_accept_hint_off: () => 'Users from your domain must request access.',
     admin_users_loading: () => 'Loading...',
   }
   return messages
@@ -67,6 +81,7 @@ function Wrapper({ children }: { children: ReactNode }) {
 beforeEach(() => {
   navigate.mockReset()
   apiFetchMock.mockReset()
+  routeSearch = {}
 })
 
 describe('AdminSettings page', () => {
@@ -102,6 +117,47 @@ describe('AdminSettings page', () => {
     expect(navigate).toHaveBeenCalledWith({
       to: '/admin/settings',
       search: { tab: 'security' },
+    })
+  })
+
+  it('stages auto-accept changes until save is clicked', async () => {
+    routeSearch = { tab: 'security' }
+    apiFetchMock.mockResolvedValue({
+      name: 'Klai',
+      default_language: 'nl',
+      mfa_policy: 'optional',
+      auto_accept_same_domain: false,
+      primary_domain: 'getklai.com',
+      telemetry_level: 'shadow',
+    })
+
+    const Cfg = RouteCfg as unknown as { component: () => JSX.Element }
+    render(
+      <Wrapper>
+        <Cfg.component />
+      </Wrapper>,
+    )
+
+    const autoAccept = await screen.findByRole('switch', {
+      name: 'Automatically accept users with @getklai.com',
+    })
+    fireEvent.click(autoAccept)
+
+    expect(
+      apiFetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH'),
+    ).toBe(false)
+
+    const saveButton = screen
+      .getAllByRole('button', { name: 'Save' })
+      .find((button) => !button.hasAttribute('disabled'))
+    expect(saveButton).toBeTruthy()
+    fireEvent.click(saveButton!)
+
+    await waitFor(() => {
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/admin/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ auto_accept_same_domain: true }),
+      })
     })
   })
 })

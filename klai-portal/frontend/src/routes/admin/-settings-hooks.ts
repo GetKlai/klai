@@ -99,7 +99,7 @@ export function useMfaPolicyMutation(onSaved: () => void) {
   })
 }
 
-export function useAutoAcceptSameDomainMutation() {
+export function useAutoAcceptSameDomainMutation(onSaved?: () => void) {
   const queryClient = useQueryClient()
 
   return useMutation({
@@ -107,6 +107,7 @@ export function useAutoAcceptSameDomainMutation() {
     onSuccess: (data, value) => {
       adminLogger.info('Auto-accept same domain changed', { auto_accept_same_domain: value })
       queryClient.setQueryData(adminSettingsQueryKey, data)
+      onSaved?.()
     },
   })
 }

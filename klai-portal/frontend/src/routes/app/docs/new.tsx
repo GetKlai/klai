@@ -83,7 +83,7 @@ function NewKBPage() {
                 id="kb-visibility"
                 value={visibility}
                 onChange={(e) => setVisibility(e.target.value as 'private' | 'public')}
-                className="max-w-xs"
+                containerClassName="max-w-xs"
               >
                 <option value="private">{m.docs_kb_visibility_private()}</option>
                 <option value="public">{m.docs_kb_visibility_public()}</option>

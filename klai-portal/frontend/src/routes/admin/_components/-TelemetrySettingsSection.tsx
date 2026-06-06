@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
@@ -35,14 +34,16 @@ export function TelemetrySettingsSection({
   }, [settings?.telemetry_level])
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{m.admin_settings_telemetry_title()}</CardTitle>
-        <CardDescription>
+    <section className="space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-base font-display-bold text-gray-900">
+          {m.admin_settings_telemetry_title()}
+        </h2>
+        <p className="text-sm text-gray-400">
           {m.admin_settings_telemetry_description()}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+        </p>
+      </div>
+      <div className="space-y-4">
         {isLoading ? (
           <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
         ) : error ? (
@@ -68,7 +69,7 @@ export function TelemetrySettingsSection({
                   id="settings-telemetry-level"
                   value={selectedTelemetry}
                   onChange={(e) => setSelectedTelemetry(e.target.value as TelemetryLevel)}
-                  className="max-w-xs"
+                  containerClassName="max-w-xs"
                 >
                   <option value="off">{m.admin_settings_telemetry_off_name()}</option>
                   <option value="shadow">{m.admin_settings_telemetry_shadow_name()}</option>
@@ -106,7 +107,7 @@ export function TelemetrySettingsSection({
             </p>
           </>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }

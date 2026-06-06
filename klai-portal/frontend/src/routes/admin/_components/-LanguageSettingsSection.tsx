@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
@@ -31,14 +30,16 @@ export function LanguageSettingsSection({
   }, [settings])
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{m.admin_settings_language_title()}</CardTitle>
-        <CardDescription>
+    <section className="space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-base font-display-bold text-gray-900">
+          {m.admin_settings_language_title()}
+        </h2>
+        <p className="text-sm text-gray-400">
           {m.admin_settings_language_description()}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+        </p>
+      </div>
+      <div className="space-y-4">
         {isLoading ? (
           <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
         ) : error ? (
@@ -54,7 +55,7 @@ export function LanguageSettingsSection({
                   id="settings-language"
                   value={selectedLang}
                   onChange={(e) => setSelectedLang(e.target.value as OrgSettings['default_language'])}
-                  className="max-w-xs"
+                  containerClassName="max-w-xs"
                 >
                   <option value="nl">{m.admin_settings_language_nl()}</option>
                   <option value="en">{m.admin_settings_language_en()}</option>
@@ -81,7 +82,7 @@ export function LanguageSettingsSection({
             )}
           </>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }
