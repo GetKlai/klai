@@ -11,10 +11,11 @@ SPEC-KB-015 REQ-KB-015-01/02/03:
 import importlib
 import sys
 import types
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests.klai_module_reset import reset_klai_kb_modules
 
 
 @pytest.fixture(autouse=True)
@@ -27,8 +28,10 @@ def _mock_litellm():
     class CustomLogger:
         async def async_pre_call_hook(self, *args, **kwargs):
             pass
+
         async def async_post_call_success_hook(self, *args, **kwargs):
             pass
+
         async def async_post_call_failure_hook(self, *args, **kwargs):
             pass
 
@@ -42,9 +45,13 @@ def _mock_litellm():
 
     yield
 
-    for mod_name in ["litellm", "litellm.integrations", "litellm.integrations.custom_logger"]:
+    for mod_name in [
+        "litellm",
+        "litellm.integrations",
+        "litellm.integrations.custom_logger",
+    ]:
         sys.modules.pop(mod_name, None)
-    sys.modules.pop("klai_knowledge", None)
+    reset_klai_kb_modules()
 
 
 def _load_hook(monkeypatch, extra_env=None):
@@ -59,8 +66,9 @@ def _load_hook(monkeypatch, extra_env=None):
     for k, v in env.items():
         monkeypatch.setenv(k, v)
 
-    sys.modules.pop("klai_knowledge", None)
+    reset_klai_kb_modules()
     import klai_knowledge
+
     importlib.reload(klai_knowledge)
     return klai_knowledge
 

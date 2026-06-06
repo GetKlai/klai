@@ -20,6 +20,7 @@ from klai_chat_prompts import (
     GROUNDED_CHAT_SYSTEM_PROMPT,
     META_CHAT_SYSTEM_PROMPT,
     OPEN_KB_CHAT_SYSTEM_PROMPT,
+    no_citable_sources_message,
 )
 from klai_context import (
     HISTORY_BUDGET_CONTEXT_PLACEHOLDER as _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
@@ -34,34 +35,42 @@ KB_ANSWER_POLICY_STATES = (
     "zero_chunks",
     "chunks_present",
 )
-KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES = frozenset({
-    "zero_chunks",
-    "chunks_present",
-})
+KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES = frozenset(
+    {
+        "zero_chunks",
+        "chunks_present",
+    }
+)
 
-USER_ATTACHMENT_PART_TYPES = frozenset({
-    "file",
-    "image",
-    "image_url",
-    "input_file",
-    "input_image",
-})
-USER_PROVIDED_CONTENT_QUERY_RE = re.compile(
+USER_ATTACHMENT_PART_TYPES = frozenset(
+    {
+        "file",
+        "image",
+        "image_url",
+        "input_file",
+        "input_image",
+    }
+)
+USER_ATTACHMENT_REFERENCE_QUERY_RE = re.compile(
     r"\b(afbeelding|bijlage|foto|geupload(?:e|de)?|image|pasted|plak(?:te)?|"
     r"screenshot|upload(?:ed)?)\b"
     r"|"
     r"\b(deze|dit|onderstaande|bovenstaande|meegegeven|geplakte)\s+"
-    r"(bestand|document|file|tekst)\b"
-    r"|"
+    r"(bestand|document|file|tekst)\b",
+    re.IGNORECASE,
+)
+USER_VISIBLE_CONVERSATION_QUERY_RE = re.compile(
     r"\b(wat\s+(zei|schreef)\s+ik|wat\s+staat\s+(hierboven|daarboven)|"
     r"(vorige|eerdere)\s+(bericht|vraag)|dit\s+gesprek|deze\s+"
     r"(chat|conversatie)|chatgeschiedenis|conversation\s+history)\b",
     re.IGNORECASE,
 )
-OMITTED_USER_CONTENT_PLACEHOLDERS = frozenset({
-    _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
-    _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
-})
+OMITTED_USER_CONTENT_PLACEHOLDERS = frozenset(
+    {
+        _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
+        _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
+    }
+)
 
 # A user-provided attachment is the user's OWN input, not a knowledge-base
 # source. It must always be usable standalone content, in every mode and on
@@ -90,18 +99,7 @@ USER_PROVIDED_CONTENT_SCOPE = (
 )
 
 
-def has_user_provided_content_context(messages: list[dict], query: object) -> bool:
-    """Return whether the current turn can be answered from user-owned content.
-
-    Ordinary chat text is intentionally not enough: treating every latest user
-    message as "user-provided content" would make Strict+zero-results pass
-    through general-knowledge answers. We only unlock the post-call exception
-    for concrete attachment/file/image shapes or queries that explicitly ask
-    about pasted/attached content.
-    """
-    if isinstance(query, str) and USER_PROVIDED_CONTENT_QUERY_RE.search(query):
-        return True
-
+def _has_user_attachment_context(messages: list[dict]) -> bool:
     for msg in messages:
         if not isinstance(msg, dict) or msg.get("role") != "user":
             continue
@@ -127,6 +125,29 @@ def has_user_provided_content_context(messages: list[dict], query: object) -> bo
                 and part["text"].lstrip().startswith(_STALE_LIBRECHAT_UPLOAD_PREFIX)
             ):
                 return True
+    return False
+
+
+def has_user_provided_content_context(messages: list[dict], query: object) -> bool:
+    """Return whether the current turn can be answered from user-owned content.
+
+    Ordinary chat text is intentionally not enough: treating every latest user
+    message as "user-provided content" would make Strict+zero-results pass
+    through general-knowledge answers. Attachment words in the query are also
+    not enough by themselves: a Strict zero-results question that merely says
+    "screenshot" must still refuse unless an actual attachment/upload is
+    present. Explicit visible-conversation questions are allowed because the
+    conversation is always available.
+    """
+    if _has_user_attachment_context(messages):
+        return True
+
+    if isinstance(query, str) and USER_VISIBLE_CONVERSATION_QUERY_RE.search(query):
+        return True
+
+    if isinstance(query, str) and USER_ATTACHMENT_REFERENCE_QUERY_RE.search(query):
+        return False
+
     return False
 
 
@@ -198,9 +219,15 @@ class KbAnswerPolicy:
             "kb_narrow": self.kb_narrow,
             "chunks_injected": chunks_injected,
             "chunk_ids": chunk_ids if chunk_ids is not None else [],
-            "allowed_source_urls": allowed_source_urls if allowed_source_urls is not None else [],
-            "allowed_image_urls": allowed_image_urls if allowed_image_urls is not None else [],
-            "citation_source_urls": citation_source_urls if citation_source_urls is not None else {},
+            "allowed_source_urls": allowed_source_urls
+            if allowed_source_urls is not None
+            else [],
+            "allowed_image_urls": allowed_image_urls
+            if allowed_image_urls is not None
+            else [],
+            "citation_source_urls": citation_source_urls
+            if citation_source_urls is not None
+            else {},
             "citation_chunks": citation_chunks if citation_chunks is not None else [],
             "trusted_sources": trusted_sources if trusted_sources is not None else [],
             "evidence_pack": evidence_pack,
@@ -305,6 +332,20 @@ def kb_retrieval_failure_notice(kb_narrow: bool, retrieval_failure: object) -> s
         f"reach the knowledge base (technical reason: {retrieval_failure}), "
         "this answer is therefore not based on their own documentation, "
         "and they should refresh or try again later.]\n"
+    )
+
+
+def strict_kb_unavailable_message(user_query: object) -> str:
+    """Strict-mode deterministic answer when KB retrieval has no citable evidence."""
+    baseline = no_citable_sources_message(user_query)
+    if baseline.startswith("Ik "):
+        return (
+            "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
+            "betrouwbaar beantwoorden op basis van je kennisbronnen."
+        )
+    return (
+        "The knowledge base is temporarily unavailable, so I cannot answer this "
+        "reliably from your knowledge sources."
     )
 
 

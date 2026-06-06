@@ -63,7 +63,6 @@ from klai_kb_citation_render import (
     compose_non_streaming_kb_response as _compose_non_streaming_kb_response,
     compose_streaming_kb_response as _compose_streaming_kb_response,
     log_kb_citation_render as _log_kb_citation_render,
-    strict_kb_unavailable_message as _strict_kb_unavailable_message,
 )
 from klai_kb_answer_policy import (
     KbAnswerPolicy,
@@ -78,6 +77,7 @@ from klai_kb_answer_policy import (
     kb_retrieval_failure_notice as _kb_retrieval_failure_notice,
     kb_zero_chunks_notice as _kb_zero_chunks_notice,
     strict_no_kb_scope_notice as _strict_no_kb_scope_notice,
+    strict_kb_unavailable_message as _strict_kb_unavailable_message,
 )
 from klai_kb_context_prompt import (
     build_kb_context_prompt as _build_kb_context_prompt,
@@ -137,7 +137,14 @@ from klai_kb_scope_policy import (
     resolve_kb_retrieval_scope as _resolve_kb_retrieval_scope,
     resolve_kb_taxonomy_decision as _resolve_kb_taxonomy_decision,
 )
-from klai_llm_safety import SafetyDecision, SafetyPhase, SafetyRequest, SafetySurface, check_text, refusal_message
+from klai_llm_safety import (
+    SafetyDecision,
+    SafetyPhase,
+    SafetyRequest,
+    SafetySurface,
+    check_text,
+    refusal_message,
+)
 
 # SPEC-MCP-RETRIEVAL-001 Phase 1: telemetry helpers moved out of this file
 # into ``klai-libs/retrieval-telemetry/`` so klai-knowledge-mcp's new
@@ -253,7 +260,9 @@ KLAI_LITELLM_CLIENT_SECRET = os.getenv("KLAI_LITELLM_CLIENT_SECRET", "")
 _token_client: object | None = None
 _token_client_init_attempted: bool = False
 
-LLM_SAFETY_LITELLM_MODE = os.getenv("LLM_SAFETY_LITELLM_MODE", "enforce").strip().lower()
+LLM_SAFETY_LITELLM_MODE = (
+    os.getenv("LLM_SAFETY_LITELLM_MODE", "enforce").strip().lower()
+)
 
 
 def _get_token_client() -> object | None:
@@ -419,7 +428,9 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
 _STREAM_LINK_GUARD_TAIL_CHARS = 16
-KLAI_KB_CHAT_RENDER_MODE = _resolve_kb_render_mode(os.getenv("KLAI_KB_CHAT_RENDER_MODE"))
+KLAI_KB_CHAT_RENDER_MODE = _resolve_kb_render_mode(
+    os.getenv("KLAI_KB_CHAT_RENDER_MODE")
+)
 
 
 def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrategy:
@@ -427,6 +438,8 @@ def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrat
         original_stream,
         configured_mode=KLAI_KB_CHAT_RENDER_MODE,
     )
+
+
 _KLAI_CONTEXT_ORCHESTRATOR = KlaiContextOrchestrator()
 
 # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-U2: prompt-template fetch config.
@@ -434,6 +447,7 @@ PORTAL_TEMPLATES_URL = os.getenv(
     "PORTAL_TEMPLATES_URL", f"{PORTAL_API_URL}/internal/templates/effective"
 )
 TEMPLATES_TIMEOUT = float(os.getenv("TEMPLATES_TIMEOUT", "2.0"))
+
 
 def _llm_safety_enabled() -> bool:
     return LLM_SAFETY_LITELLM_MODE not in {"", "off", "disabled", "0", "false"}
@@ -794,12 +808,19 @@ def _filter_trusted_sources_for_chunks(
     for source in trusted_sources:
         evidence_ids = source.get("evidence_ids")
         source_evidence_ids = (
-            {str(evidence_id) for evidence_id in evidence_ids if isinstance(evidence_id, str | int)}
+            {
+                str(evidence_id)
+                for evidence_id in evidence_ids
+                if isinstance(evidence_id, str | int)
+            }
             if isinstance(evidence_ids, list)
             else set()
         )
         source_key = _source_key(source.get("url") or source.get("source_url"))
-        if source_evidence_ids.intersection(safe_evidence_ids) or source_key in safe_source_keys:
+        if (
+            source_evidence_ids.intersection(safe_evidence_ids)
+            or source_key in safe_source_keys
+        ):
             filtered.append(source)
     return filtered
 
@@ -854,7 +875,8 @@ def _filter_evidence_pack_for_chunks(
                     for evidence_id in (source.get("evidence_ids") or [])
                     if isinstance(evidence_id, str | int)
                 }.intersection(safe_evidence_ids)
-                or _source_key(source.get("source_url") or source.get("url")) in safe_source_keys
+                or _source_key(source.get("source_url") or source.get("url"))
+                in safe_source_keys
             )
         ]
         if not filtered["sources"] and filtered.get("no_citable_reason") is None:
@@ -936,7 +958,9 @@ class KlaiKnowledgeHook(CustomLogger):
         if not librechat_user_id:
             return data
 
-        user_provided_content_context = _has_user_provided_content_context(messages, query)
+        user_provided_content_context = _has_user_provided_content_context(
+            messages, query
+        )
         data["messages"] = messages
         if context_meta is not None:
             data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
@@ -968,8 +992,14 @@ class KlaiKnowledgeHook(CustomLogger):
             user_id=librechat_user_id,
             metadata=safety_metadata,
         )
-        if input_safety_decision is not None and not input_safety_decision.allowed and _llm_safety_enforces():
-            return _llm_safety_short_circuit(data, query=query, decision=input_safety_decision)
+        if (
+            input_safety_decision is not None
+            and not input_safety_decision.allowed
+            and _llm_safety_enforces()
+        ):
+            return _llm_safety_short_circuit(
+                data, query=query, decision=input_safety_decision
+            )
 
         last_tool_context_decision: SafetyDecision | None = None
         for index, tool_context in enumerate(_active_tool_result_contexts(messages)):
@@ -1290,7 +1320,9 @@ class KlaiKnowledgeHook(CustomLogger):
             # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English
             # instruction to the model; the warning the model emits is in the
             # user's detected language thanks to GROUNDED_CHAT_SYSTEM_PROMPT.
-            kb_unavailable_notice = _kb_retrieval_failure_notice(kb_narrow, retrieval_failure)
+            kb_unavailable_notice = _kb_retrieval_failure_notice(
+                kb_narrow, retrieval_failure
+            )
             prefix = _compose_kb_mode_chat_prefix(
                 kb_narrow, templates_block, kb_unavailable_notice
             )
@@ -1312,7 +1344,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 retrieval_ms=int((time.monotonic() - t0) * 1000),
                 no_citable_sources=bool(kb_narrow),
                 no_citable_reason="retrieval_failure" if kb_narrow else None,
-                no_citable_message=_strict_kb_unavailable_message(query) if kb_narrow else None,
+                no_citable_message=_strict_kb_unavailable_message(query)
+                if kb_narrow
+                else None,
                 original_stream=original_stream,
                 render_mode=render_strategy.mode,
                 retrieval_failure=retrieval_failure,
@@ -1488,7 +1522,9 @@ class KlaiKnowledgeHook(CustomLogger):
             empty_kb_header = _kb_zero_chunks_notice(kb_narrow)
             _prepend_system_prefix(
                 messages,
-                _compose_kb_mode_chat_prefix(kb_narrow, templates_block, empty_kb_header),
+                _compose_kb_mode_chat_prefix(
+                    kb_narrow, templates_block, empty_kb_header
+                ),
             )
             data["messages"] = messages
             if has_evidence_pack:
@@ -1502,34 +1538,38 @@ class KlaiKnowledgeHook(CustomLogger):
                     user_provided_content_context=user_provided_content_context,
                     low_confidence_inject=low_confidence_inject,
                 )
-                data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
-                    org_id=org_id,
-                    user_id=user_id,
-                    user_query=query,
-                    retrieval_ms=retrieval_ms,
-                    evidence_pack=evidence_pack if isinstance(evidence_pack, dict) else None,
-                    confidence_band=confidence_band,
-                    # Strict mode (kb_narrow=True) MUST refuse deterministically
-                    # when there are no citable sources; trusting the model's
-                    # system-prompt instruction to refuse risks a hallucinated
-                    # general-knowledge answer leaking through. We force the
-                    # post-call renderer to replace the model output with the
-                    # language-aware canned refusal from
-                    # ``klai_chat_prompts.no_citable_sources_message``.
-                    #
-                    # Broad mode (kb_narrow=False) lets the model answer from
-                    # general knowledge, so leave the flag False — the post-call
-                    # guard ``not trusted_sources and not force_no_citable and
-                    # not citation_chunks`` short-circuits and the streamed
-                    # tokens reach the client unchanged.
-                    no_citable_sources=bool(kb_narrow),
-                    no_citable_reason=(
-                        evidence_pack.get("no_citable_reason")
+                data.setdefault("metadata", {})["_klai_kb_meta"] = (
+                    answer_policy.to_kb_meta(
+                        org_id=org_id,
+                        user_id=user_id,
+                        user_query=query,
+                        retrieval_ms=retrieval_ms,
+                        evidence_pack=evidence_pack
                         if isinstance(evidence_pack, dict)
-                        else None
-                    ),
-                    original_stream=original_stream,
-                    render_mode=render_strategy.mode,
+                        else None,
+                        confidence_band=confidence_band,
+                        # Strict mode (kb_narrow=True) MUST refuse deterministically
+                        # when there are no citable sources; trusting the model's
+                        # system-prompt instruction to refuse risks a hallucinated
+                        # general-knowledge answer leaking through. We force the
+                        # post-call renderer to replace the model output with the
+                        # language-aware canned refusal from
+                        # ``klai_chat_prompts.no_citable_sources_message``.
+                        #
+                        # Broad mode (kb_narrow=False) lets the model answer from
+                        # general knowledge, so leave the flag False — the post-call
+                        # guard ``not trusted_sources and not force_no_citable and
+                        # not citation_chunks`` short-circuits and the streamed
+                        # tokens reach the client unchanged.
+                        no_citable_sources=bool(kb_narrow),
+                        no_citable_reason=(
+                            evidence_pack.get("no_citable_reason")
+                            if isinstance(evidence_pack, dict)
+                            else None
+                        ),
+                        original_stream=original_stream,
+                        render_mode=render_strategy.mode,
+                    )
                 )
             return data
 
@@ -1624,7 +1664,9 @@ class KlaiKnowledgeHook(CustomLogger):
             )
         return response
 
-    async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
+    async def async_post_call_streaming_iterator_hook(
+        self, user_api_key_dict, response, request_data
+    ):
         kb_meta = request_data.get("metadata", {}).get("_klai_kb_meta")
         if (
             not kb_meta
@@ -1645,8 +1687,12 @@ class KlaiKnowledgeHook(CustomLogger):
             footer_item = _split_if_rendered_stop_item(item, stats)
             if footer_item is not None:
                 yield footer_item
-        if pending_item is not None and not kb_meta.get("_citation_stream_sources_appended"):
-            stats = _compose_streaming_kb_response(pending_item, kb_meta, flush_stream=True)
+        if pending_item is not None and not kb_meta.get(
+            "_citation_stream_sources_appended"
+        ):
+            stats = _compose_streaming_kb_response(
+                pending_item, kb_meta, flush_stream=True
+            )
             _log_kb_citation_render(logger, kb_meta, stats, stream=True)
             footer_item = _split_if_rendered_stop_item(pending_item, stats)
             if footer_item is not None:

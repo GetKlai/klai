@@ -35,6 +35,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.klai_module_reset import reset_klai_kb_modules
+
 
 # ─── Mock litellm so klai_knowledge can be imported in the test env ────
 
@@ -76,7 +78,7 @@ def _mock_litellm():
         "litellm.integrations.custom_logger",
     ):
         sys.modules.pop(mod_name, None)
-    sys.modules.pop("klai_knowledge", None)
+    reset_klai_kb_modules()
 
 
 def _load_hook(monkeypatch):
@@ -88,8 +90,7 @@ def _load_hook(monkeypatch):
     }
     for k, v in env.items():
         monkeypatch.setenv(k, v)
-    sys.modules.pop("klai_knowledge", None)
-    sys.modules.pop("klai_kb_request_context", None)
+    reset_klai_kb_modules()
     import klai_knowledge
 
     importlib.reload(klai_knowledge)

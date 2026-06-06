@@ -21,6 +21,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.klai_module_reset import reset_klai_kb_modules
+
 
 @pytest.fixture(autouse=True)
 def _mock_litellm():
@@ -55,7 +57,7 @@ def _mock_litellm():
         "litellm.integrations.custom_logger",
     ]:
         sys.modules.pop(mod_name, None)
-    sys.modules.pop("klai_knowledge", None)
+    reset_klai_kb_modules()
 
 
 def _load_hook(monkeypatch, extra_env=None):
@@ -75,8 +77,7 @@ def _load_hook(monkeypatch, extra_env=None):
     for k, v in env.items():
         monkeypatch.setenv(k, v)
 
-    sys.modules.pop("klai_knowledge", None)
-    sys.modules.pop("klai_kb_confidence_policy", None)
+    reset_klai_kb_modules()
     import klai_knowledge
 
     importlib.reload(klai_knowledge)
@@ -275,7 +276,9 @@ def test_injection_trigger_table(band, expected_inject) -> None:
     assert inject is expected_inject
 
 
-def test_low_confidence_injection_skips_when_chunks_contain_query_entity(monkeypatch) -> None:
+def test_low_confidence_injection_skips_when_chunks_contain_query_entity(
+    monkeypatch,
+) -> None:
     """Strict mode must not refuse when low-scored chunks directly contain the answer."""
     klai_knowledge = _load_hook(monkeypatch)
 
@@ -294,7 +297,9 @@ def test_low_confidence_injection_skips_when_chunks_contain_query_entity(monkeyp
     )
 
 
-def test_low_confidence_injection_still_applies_without_direct_evidence(monkeypatch) -> None:
+def test_low_confidence_injection_still_applies_without_direct_evidence(
+    monkeypatch,
+) -> None:
     """The safety layer remains active for low-scored unrelated chunks."""
     klai_knowledge = _load_hook(monkeypatch)
 

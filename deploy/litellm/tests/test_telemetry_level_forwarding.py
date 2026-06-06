@@ -22,6 +22,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from tests.klai_module_reset import reset_klai_kb_modules
+
 
 def _load_test_helpers():
     """Load the existing test_klai_knowledge_hook module so we can reuse its
@@ -85,7 +87,7 @@ def _mock_litellm():
         "litellm.integrations.custom_logger",
     ]:
         sys.modules.pop(mod_name, None)
-    sys.modules.pop("klai_knowledge", None)
+    reset_klai_kb_modules()
 
 
 def _data_payload() -> dict:

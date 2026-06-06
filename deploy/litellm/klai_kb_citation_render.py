@@ -11,6 +11,7 @@ from typing import Any
 
 from klai_chat_prompts import no_citable_sources_message
 from klai_citations import compose_answer_with_trusted_sources
+from klai_kb_answer_policy import strict_kb_unavailable_message
 from klai_kb_urls import normalise_guard_url
 from klai_litellm_response import (
     get_choice_finish_reason,
@@ -40,33 +41,28 @@ class KbCitationRenderStats:
         self.citation_decisions.extend(other.citation_decisions)
 
 
-def strict_kb_unavailable_message(user_query: object) -> str:
-    baseline = no_citable_sources_message(user_query)
-    if baseline.startswith("Ik "):
-        return (
-            "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
-            "betrouwbaar beantwoorden op basis van je kennisbronnen."
-        )
-    return (
-        "The knowledge base is temporarily unavailable, so I cannot answer this "
-        "reliably from your knowledge sources."
-    )
-
-
 def _is_strict_refusal_answer(text: object, *, user_query: object) -> bool:
     if not isinstance(text, str) or not text.strip():
         return False
     answer = re.sub(r"\s+", " ", text).strip().casefold()
-    expected = re.sub(
-        r"\s+",
-        " ",
-        no_citable_sources_message(user_query),
-    ).strip().casefold()
-    unavailable = re.sub(
-        r"\s+",
-        " ",
-        strict_kb_unavailable_message(user_query),
-    ).strip().casefold()
+    expected = (
+        re.sub(
+            r"\s+",
+            " ",
+            no_citable_sources_message(user_query),
+        )
+        .strip()
+        .casefold()
+    )
+    unavailable = (
+        re.sub(
+            r"\s+",
+            " ",
+            strict_kb_unavailable_message(user_query),
+        )
+        .strip()
+        .casefold()
+    )
     return answer in {
         expected,
         unavailable,
@@ -86,7 +82,9 @@ def _citation_render_inputs(
         if url
     }
     citation_chunks = [
-        chunk for chunk in (kb_meta.get("citation_chunks") or []) if isinstance(chunk, dict)
+        chunk
+        for chunk in (kb_meta.get("citation_chunks") or [])
+        if isinstance(chunk, dict)
     ]
     trusted_sources = [
         source
@@ -144,45 +142,70 @@ def _render_kb_citation_content(
     )
     if not trusted_sources:
         if allow_uncited_user_content:
-            return text, [], False, {
-                "mode": "document_level_supported_sources",
-                "candidate_count": 0,
-                "selected": [],
-                "rejected": [],
-                "no_citable_reason": "user_provided_content_passthrough",
-            }
+            return (
+                text,
+                [],
+                False,
+                {
+                    "mode": "document_level_supported_sources",
+                    "candidate_count": 0,
+                    "selected": [],
+                    "rejected": [],
+                    "no_citable_reason": "user_provided_content_passthrough",
+                },
+            )
         if kb_narrow:
-            return strict_refusal, [], True, {
+            return (
+                strict_refusal,
+                [],
+                True,
+                {
+                    "mode": "document_level_supported_sources",
+                    "candidate_count": 0,
+                    "selected": [],
+                    "rejected": [],
+                    "no_citable_reason": "no_trusted_sources",
+                },
+            )
+        # Broad mode: keep model's answer, no citations appended.
+        return (
+            text,
+            [],
+            False,
+            {
                 "mode": "document_level_supported_sources",
                 "candidate_count": 0,
                 "selected": [],
                 "rejected": [],
-                "no_citable_reason": "no_trusted_sources",
-            }
-        # Broad mode: keep model's answer, no citations appended.
-        return text, [], False, {
-            "mode": "document_level_supported_sources",
-            "candidate_count": 0,
-            "selected": [],
-            "rejected": [],
-            "no_citable_reason": "no_trusted_sources_broad_passthrough",
-        }
+                "no_citable_reason": "no_trusted_sources_broad_passthrough",
+            },
+        )
     if kb_narrow and _is_strict_refusal_answer(text, user_query=user_query):
-        return text.strip(), [], True, {
-            "mode": "document_level_supported_sources",
-            "candidate_count": len(trusted_sources),
-            "selected": [],
-            "rejected": [],
-            "no_citable_reason": "strict_refusal_no_supported_sources",
-        }
+        return (
+            text.strip(),
+            [],
+            True,
+            {
+                "mode": "document_level_supported_sources",
+                "candidate_count": len(trusted_sources),
+                "selected": [],
+                "rejected": [],
+                "no_citable_reason": "strict_refusal_no_supported_sources",
+            },
+        )
     if suppress_citations_for_user_content:
-        return text, [], False, {
-            "mode": "document_level_supported_sources",
-            "candidate_count": len(trusted_sources),
-            "selected": [],
-            "rejected": [],
-            "no_citable_reason": "user_provided_content_no_kb_citations",
-        }
+        return (
+            text,
+            [],
+            False,
+            {
+                "mode": "document_level_supported_sources",
+                "candidate_count": len(trusted_sources),
+                "selected": [],
+                "rejected": [],
+                "no_citable_reason": "user_provided_content_no_kb_citations",
+            },
+        )
     composed = compose_answer_with_trusted_sources(
         text,
         trusted_sources,
@@ -208,7 +231,9 @@ def _render_kb_citation_content(
             return strict_refusal, [], True, decision
         # Broad mode: pass model's answer through even when no trusted
         # document-level source can be rendered — general knowledge is valid.
-        decision["no_citable_reason"] = "selector_rejected_all_sources_broad_passthrough"
+        decision["no_citable_reason"] = (
+            "selector_rejected_all_sources_broad_passthrough"
+        )
         return text, [], False, decision
     return (
         composed.content,
@@ -271,7 +296,11 @@ def _merge_source_metadata(
         if not isinstance(source, dict):
             continue
         match = next(
-            (trusted_by_key[key] for key in _source_metadata_keys(source) if key in trusted_by_key),
+            (
+                trusted_by_key[key]
+                for key in _source_metadata_keys(source)
+                if key in trusted_by_key
+            ),
             None,
         )
         merged = dict(source)
@@ -345,13 +374,16 @@ def _trusted_sources_visible_fallback(
     seen_keys: set[str] = set()
     for source in trusted_sources:
         url = normalise_guard_url(source.get("url"))
-        key = url or str(
-            source.get("artifact_id")
-            or source.get("source_id")
-            or source.get("title")
-            or source.get("source_label")
-            or ""
-        ).strip()
+        key = (
+            url
+            or str(
+                source.get("artifact_id")
+                or source.get("source_id")
+                or source.get("title")
+                or source.get("source_label")
+                or ""
+            ).strip()
+        )
         if not key or key in seen_keys:
             continue
         seen_keys.add(key)
@@ -369,7 +401,9 @@ def _format_visible_sources_markdown(sources: list[dict[str, Any]]) -> str:
     """Render source links or URL-less upload labels for the visible chat footer."""
     lines: list[str] = []
     for source in sources:
-        title = str(source.get("title") or source.get("source_label") or "Source").strip()
+        title = str(
+            source.get("title") or source.get("source_label") or "Source"
+        ).strip()
         url = normalise_guard_url(source.get("url"))
         if url:
             lines.append(f"- [{title or 'Source'}]({url})")
@@ -410,7 +444,9 @@ def _append_visible_sources_section(
 
 def _format_sources_metadata_marker(sources: list[dict[str, Any]]) -> str:
     try:
-        payload = json.dumps(sources, ensure_ascii=False, separators=(",", ":")).encode()
+        payload = json.dumps(
+            sources, ensure_ascii=False, separators=(",", ":")
+        ).encode()
     except (TypeError, ValueError):
         return ""
     encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
@@ -432,7 +468,11 @@ def _format_visible_agent_activity(
     lines: list[str] = []
     lines.append(
         "- Modus: "
-        + ("Strict, alleen kennisbank." if kb_narrow else "Open, kennisbank met fallback.")
+        + (
+            "Strict, alleen kennisbank."
+            if kb_narrow
+            else "Open, kennisbank met fallback."
+        )
     )
     if isinstance(chunks_injected, int):
         chunk_label = _plural_nl(chunks_injected, "fragment", "fragmenten")
@@ -472,12 +512,16 @@ def _format_visible_agent_activity(
 
     if isinstance(confidence_band, str) and confidence_band:
         if sources:
-            lines.append(f"- Retrieval score: {confidence_band}; bronfragmenten gekoppeld.")
+            lines.append(
+                f"- Retrieval score: {confidence_band}; bronfragmenten gekoppeld."
+            )
         else:
             lines.append(f"- Retrieval score: {confidence_band}.")
 
     if not sources and isinstance(no_citable_reason, str) and no_citable_reason:
-        lines.append(f"- Citeerbaarheid: geen bruikbare bron geselecteerd ({no_citable_reason}).")
+        lines.append(
+            f"- Citeerbaarheid: geen bruikbare bron geselecteerd ({no_citable_reason})."
+        )
 
     return "\n".join(lines)
 
@@ -554,7 +598,9 @@ def _pop_streaming_guard_text(buffer: str, *, final: bool) -> tuple[str, str]:
         return buffer, ""
     if len(buffer) <= _STREAM_LINK_GUARD_TAIL_CHARS:
         return "", buffer
-    return buffer[:-_STREAM_LINK_GUARD_TAIL_CHARS], buffer[-_STREAM_LINK_GUARD_TAIL_CHARS:]
+    return buffer[:-_STREAM_LINK_GUARD_TAIL_CHARS], buffer[
+        -_STREAM_LINK_GUARD_TAIL_CHARS:
+    ]
 
 
 def _collapse_whitespace_with_index_map(text: str) -> tuple[str, list[int]]:
@@ -604,7 +650,9 @@ def compose_non_streaming_kb_response(
 ) -> KbCitationRenderStats:
     """Replace non-streaming message content with deterministic citations."""
     stats = KbCitationRenderStats()
-    allowed_image_urls, citation_chunks, trusted_sources = _citation_render_inputs(kb_meta)
+    allowed_image_urls, citation_chunks, trusted_sources = _citation_render_inputs(
+        kb_meta
+    )
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
     if not citation_chunks and not trusted_sources and not force_no_citable:
         return stats
@@ -618,16 +666,18 @@ def compose_non_streaming_kb_response(
             continue
         content = get_message_content(message)
         if isinstance(content, str):
-            rendered_content, sources, no_citable_sources, decision = _render_kb_citation_content(
-                content,
-                allowed_image_urls=allowed_image_urls,
-                user_query=kb_meta.get("user_query"),
-                trusted_sources=trusted_sources,
-                evidence_chunks=citation_chunks,
-                kb_narrow=bool(kb_meta.get("kb_narrow", False)),
-                allow_uncited_user_content=allow_uncited_user_content,
-                suppress_citations_for_user_content=suppress_user_content_citations,
-                no_citable_message=kb_meta.get("no_citable_message"),
+            rendered_content, sources, no_citable_sources, decision = (
+                _render_kb_citation_content(
+                    content,
+                    allowed_image_urls=allowed_image_urls,
+                    user_query=kb_meta.get("user_query"),
+                    trusted_sources=trusted_sources,
+                    evidence_chunks=citation_chunks,
+                    kb_narrow=bool(kb_meta.get("kb_narrow", False)),
+                    allow_uncited_user_content=allow_uncited_user_content,
+                    suppress_citations_for_user_content=suppress_user_content_citations,
+                    no_citable_message=kb_meta.get("no_citable_message"),
+                )
             )
             if rendered_content != content or sources or no_citable_sources:
                 _remember_citation_decision(
@@ -637,13 +687,17 @@ def compose_non_streaming_kb_response(
                 )
                 set_message_content(
                     message,
-                    _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta),
+                    _append_visible_sources_section(
+                        rendered_content, sources, kb_meta=kb_meta
+                    ),
                 )
                 set_message_field(message, "sources", sources)
                 stats.mutated_messages += 1
                 stats.rendered_messages += 1
                 stats.rendered_sources = max(stats.rendered_sources, len(sources))
-                stats.no_citable_sources = stats.no_citable_sources or no_citable_sources
+                stats.no_citable_sources = (
+                    stats.no_citable_sources or no_citable_sources
+                )
                 stats.citation_decisions.append(decision)
     return stats
 
@@ -656,7 +710,9 @@ def compose_streaming_kb_response(
 ) -> KbCitationRenderStats:
     """Let answer tokens stream and append deterministic sources at the end."""
     stats = KbCitationRenderStats()
-    allowed_image_urls, citation_chunks, trusted_sources = _citation_render_inputs(kb_meta)
+    allowed_image_urls, citation_chunks, trusted_sources = _citation_render_inputs(
+        kb_meta
+    )
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
     if not citation_chunks and not trusted_sources and not force_no_citable:
         return stats
@@ -691,16 +747,18 @@ def compose_streaming_kb_response(
                 stats.mutated_messages += 1
             if not should_flush:
                 continue
-            rendered_content, sources, no_citable_sources, decision = _render_kb_citation_content(
-                kb_meta.get("_citation_stream_guard_buffer") or "",
-                allowed_image_urls=allowed_image_urls,
-                user_query=kb_meta.get("user_query"),
-                trusted_sources=trusted_sources,
-                evidence_chunks=citation_chunks,
-                kb_narrow=kb_narrow,
-                allow_uncited_user_content=allow_uncited_user_content,
-                suppress_citations_for_user_content=suppress_user_content_citations,
-                no_citable_message=kb_meta.get("no_citable_message"),
+            rendered_content, sources, no_citable_sources, decision = (
+                _render_kb_citation_content(
+                    kb_meta.get("_citation_stream_guard_buffer") or "",
+                    allowed_image_urls=allowed_image_urls,
+                    user_query=kb_meta.get("user_query"),
+                    trusted_sources=trusted_sources,
+                    evidence_chunks=citation_chunks,
+                    kb_narrow=kb_narrow,
+                    allow_uncited_user_content=allow_uncited_user_content,
+                    suppress_citations_for_user_content=suppress_user_content_citations,
+                    no_citable_message=kb_meta.get("no_citable_message"),
+                )
             )
             _remember_citation_decision(
                 kb_meta,
@@ -709,7 +767,9 @@ def compose_streaming_kb_response(
             )
             set_message_content(
                 delta,
-                _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta),
+                _append_visible_sources_section(
+                    rendered_content, sources, kb_meta=kb_meta
+                ),
             )
             kb_meta["_citation_stream_sources_appended"] = True
             kb_meta["_citation_stream_guard_buffer"] = ""
@@ -725,7 +785,9 @@ def compose_streaming_kb_response(
             full_parts = kb_meta.setdefault("_citation_stream_full_parts", [])
             full_parts.append(content)
             stream_buffer += content
-        safe_text, stream_buffer = _pop_streaming_guard_text(stream_buffer, final=should_flush)
+        safe_text, stream_buffer = _pop_streaming_guard_text(
+            stream_buffer, final=should_flush
+        )
         if safe_text != content:
             set_message_content(delta, safe_text)
             stats.mutated_messages += 1
@@ -737,28 +799,36 @@ def compose_streaming_kb_response(
             continue
 
         full_text = "".join(
-            part for part in kb_meta.get("_citation_stream_full_parts", []) if isinstance(part, str)
+            part
+            for part in kb_meta.get("_citation_stream_full_parts", [])
+            if isinstance(part, str)
         )
         emitted_text = "".join(
-            part for part in kb_meta.get("_citation_stream_emitted_parts", []) if isinstance(part, str)
+            part
+            for part in kb_meta.get("_citation_stream_emitted_parts", [])
+            if isinstance(part, str)
         )
-        rendered_content, sources, no_citable_sources, decision = _render_kb_citation_content(
-            full_text,
-            allowed_image_urls=allowed_image_urls,
-            user_query=kb_meta.get("user_query"),
-            trusted_sources=trusted_sources,
-            evidence_chunks=citation_chunks,
-            kb_narrow=kb_narrow,
-            allow_uncited_user_content=allow_uncited_user_content,
-            suppress_citations_for_user_content=suppress_user_content_citations,
-            no_citable_message=kb_meta.get("no_citable_message"),
+        rendered_content, sources, no_citable_sources, decision = (
+            _render_kb_citation_content(
+                full_text,
+                allowed_image_urls=allowed_image_urls,
+                user_query=kb_meta.get("user_query"),
+                trusted_sources=trusted_sources,
+                evidence_chunks=citation_chunks,
+                kb_narrow=kb_narrow,
+                allow_uncited_user_content=allow_uncited_user_content,
+                suppress_citations_for_user_content=suppress_user_content_citations,
+                no_citable_message=kb_meta.get("no_citable_message"),
+            )
         )
         _remember_citation_decision(
             kb_meta,
             decision,
             no_citable_sources=no_citable_sources,
         )
-        final_text = _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta)
+        final_text = _append_visible_sources_section(
+            rendered_content, sources, kb_meta=kb_meta
+        )
         final_text = remove_already_streamed_prefix(final_text, emitted_text)
         if sources:
             set_message_field(delta, "sources", sources)

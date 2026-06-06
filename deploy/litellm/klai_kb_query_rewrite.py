@@ -1,4 +1,9 @@
-"""Query rewrite and taxonomy classification helpers for LiteLLM KB retrieval."""
+"""Query rewrite and taxonomy classification helpers for LiteLLM KB retrieval.
+
+Environment-derived constants in this module are boot-time configuration:
+production imports the LiteLLM hook once per process, and runtime env toggles
+take effect on process restart.
+"""
 
 from __future__ import annotations
 

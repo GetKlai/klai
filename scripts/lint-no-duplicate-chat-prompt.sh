@@ -90,6 +90,7 @@ EXCLUDES=(
     --exclude-dir=__pycache__
     --exclude-dir=.eggs
     --exclude-dir=.git
+    --exclude-dir=.context
     --exclude-dir=.mypy_cache
     --exclude-dir=.pytest_cache
     --exclude-dir=.ruff_cache

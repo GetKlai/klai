@@ -1,4 +1,9 @@
-"""Low-confidence KB evidence policy for LiteLLM retrieval context."""
+"""Low-confidence KB evidence policy for LiteLLM retrieval context.
+
+Environment-derived constants in this module are boot-time configuration:
+production imports the LiteLLM hook once per process, and runtime env toggles
+take effect on process restart.
+"""
 
 from __future__ import annotations
 
