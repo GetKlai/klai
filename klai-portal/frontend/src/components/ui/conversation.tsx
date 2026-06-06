@@ -235,14 +235,17 @@ function MessageEditor({
     el.style.height = `${el.scrollHeight}px`
   }, [value])
   return (
-    <div className="w-full max-w-[82%] self-end">
+    <div className="w-full max-w-[85%] self-end">
+      {/* Box matches the own-message bubble exactly (same padding, line-height,
+          radius, fill, borderless) so swapping bubble→editor causes no shift;
+          the focus ring is a box-shadow and adds no layout height. */}
       <Textarea
         ref={ref}
         value={value}
         rows={1}
         maxLength={4000}
         autoFocus
-        className="max-h-[60vh] resize-none overflow-y-auto"
+        className="max-h-[60vh] resize-none overflow-y-auto rounded-2xl rounded-br-md border-0 bg-[var(--color-secondary)] px-3.5 py-2 leading-relaxed"
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
           if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
@@ -311,22 +314,24 @@ function MessageGroupView({
         return (
           <div
             key={message.id}
-            className={cn('group/bubble flex max-w-[85%] items-center gap-1.5', isMe ? 'self-end' : 'self-start')}
+            className={cn('group/bubble relative max-w-[85%]', isMe ? 'self-end' : 'self-start')}
           >
             {showEdit && (
+              // Absolutely positioned so it never consumes flow width — the bubble
+              // stays exactly as wide as the editor that replaces it (no reflow).
               <button
                 type="button"
                 onClick={() => onStartEdit(message.id, message.body)}
                 aria-label={m.account_conversation_edit()}
                 title={m.account_conversation_edit()}
-                className="shrink-0 text-gray-300 opacity-0 transition-opacity hover:text-gray-600 group-hover/bubble:opacity-100"
+                className="absolute right-full top-1/2 mr-1.5 -translate-y-1/2 text-gray-300 opacity-0 transition-opacity hover:text-gray-600 group-hover/bubble:opacity-100"
               >
                 <Pencil className="h-3.5 w-3.5" />
               </button>
             )}
             <div
               className={cn(
-                'max-w-full whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
+                'whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
                 isMe
                   ? 'rounded-br-md bg-[var(--color-secondary)] text-[var(--color-foreground)]'
                   : 'rounded-bl-md border border-[var(--color-border)] bg-white text-[var(--color-foreground)]',
