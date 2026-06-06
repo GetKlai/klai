@@ -242,6 +242,7 @@ services:
       - ./litellm/klai_knowledge.py:/app/klai_knowledge.py:ro
       - ./litellm/klai_context.py:/app/klai_context.py:ro
       - ./litellm/klai_kb_answer_policy.py:/app/klai_kb_answer_policy.py:ro
+      - ./litellm/klai_kb_chat_mode.py:/app/klai_kb_chat_mode.py:ro
       - ./litellm/klai_kb_citation_render.py:/app/klai_kb_citation_render.py:ro
       - ./litellm/klai_kb_confidence_policy.py:/app/klai_kb_confidence_policy.py:ro
       - ./litellm/klai_kb_context_prompt.py:/app/klai_kb_context_prompt.py:ro

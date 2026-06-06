@@ -975,6 +975,91 @@ class TestKlaiKnowledgeHookSlugsTriState:
         assert "use the available Web Search tool" in content
         assert "Do NOT tell the user to enable Search" in content
 
+    @pytest.mark.asyncio
+    async def test_empty_slugs_personal_off_missing_identity_still_uses_general_prompt(
+        self, monkeypatch
+    ):
+        """No KB selected means identity is irrelevant in Open/general mode."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+                "kb_narrow": False,
+                "version": 0,
+                "zitadel_user_id": None,
+            }
+        )
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "Wat is je algemene advies?"}],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
+        assert system_msg is not None
+        assert mc.post.call_count == 0
+        assert "general-purpose assistant" in system_msg["content"]
+        assert "TEMPORARILY UNAVAILABLE" not in system_msg["content"]
+        assert "identity-resolve-failed" not in system_msg["content"]
+
+    @pytest.mark.asyncio
+    async def test_strict_empty_slugs_personal_off_missing_identity_refuses_no_scope(
+        self, monkeypatch
+    ):
+        """No KB selected in Strict refuses because scope is empty, not identity."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+                "kb_narrow": True,
+                "version": 0,
+                "zitadel_user_id": None,
+            }
+        )
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "Wat zegt de kennisbank?"}],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
+        assert system_msg is not None
+        assert mc.post.call_count == 0
+        assert "no knowledge base evidence is available" in system_msg["content"]
+        assert "technical reason: kb-scopes-disabled" in system_msg["content"]
+        assert "TEMPORARILY UNAVAILABLE" not in system_msg["content"]
+        assert "identity-resolve-failed" not in system_msg["content"]
+
     def test_search_knowledge_tool_is_not_treated_as_web_search(self, monkeypatch):
         """KB/MCP search tools must not trip the web-search runtime override."""
         mod = _load_hook(monkeypatch)

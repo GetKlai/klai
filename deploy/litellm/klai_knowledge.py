@@ -82,6 +82,9 @@ from klai_kb_answer_policy import (
 from klai_kb_context_prompt import (
     build_kb_context_prompt as _build_kb_context_prompt,
 )
+from klai_kb_chat_mode import (
+    prompt_mode_is_unavailable as _prompt_mode_is_unavailable,
+)
 from klai_kb_query_rewrite import (
     KLAI_TAXONOMY_COVERAGE_THRESHOLD,
     TAXONOMY_ENABLED,
@@ -133,8 +136,7 @@ from klai_kb_render_policy import (
 )
 from klai_kb_scope_policy import (
     build_retrieve_body as _build_retrieve_body,
-    resolve_kb_feature_gate as _resolve_kb_feature_gate,
-    resolve_kb_retrieval_scope as _resolve_kb_retrieval_scope,
+    resolve_chat_retrieval_policy as _resolve_chat_retrieval_policy,
     resolve_kb_taxonomy_decision as _resolve_kb_taxonomy_decision,
 )
 from klai_kb_traceability import (
@@ -1067,24 +1069,25 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             return data
 
-        # Feature gate + KB scope preference (version-based cache, 30s propagation)
+        # Feature, KB scope, identity, and request-mode policy.
         feature = await _get_kb_feature(librechat_user_id, org_id, cache)
-        feature_gate = _resolve_kb_feature_gate(feature)
-        feature_kb_narrow = feature_gate.kb_narrow
-        if feature_gate.action == "strict_no_kb":
-            if feature_gate.strict_no_kb_reason is None:
-                raise RuntimeError("strict KB feature gate decision has no reason")
+        chat_retrieval_policy = _resolve_chat_retrieval_policy(feature)
+        if chat_retrieval_policy.prompt_mode == "strict_no_kb":
+            if chat_retrieval_policy.user_visible_failure_reason is None:
+                raise RuntimeError("strict KB chat retrieval policy has no reason")
             _prepend_system_prefix(
                 messages,
                 _compose_kb_mode_chat_prefix(
                     True,
                     templates_block,
-                    _strict_no_kb_scope_notice(feature_gate.strict_no_kb_reason),
+                    _strict_no_kb_scope_notice(
+                        chat_retrieval_policy.user_visible_failure_reason
+                    ),
                 ),
             )
             data["messages"] = messages
             return data
-        if feature_gate.action == "general":
+        if chat_retrieval_policy.prompt_mode == "general":
             _prepend_system_prefix(
                 messages,
                 _compose_general_chat_prefix(
@@ -1092,6 +1095,29 @@ class KlaiKnowledgeHook(CustomLogger):
                     templates_block,
                 ),
             )
+            data["messages"] = messages
+            return data
+        if _prompt_mode_is_unavailable(chat_retrieval_policy.prompt_mode):
+            failure_reason = (
+                chat_retrieval_policy.user_visible_failure_reason or "kb-unavailable"
+            )
+            if failure_reason == "identity-resolve-failed":
+                logger.error(
+                    "KlaiKnowledgeHook: portal returned no zitadel_user_id for "
+                    "librechat_user_id=%s org_id=%s — failing loud",
+                    librechat_user_id,
+                    org_id,
+                )
+            kb_unavailable_notice = _kb_retrieval_failure_notice(
+                chat_retrieval_policy.kb_narrow,
+                failure_reason,
+            )
+            prefix = _compose_kb_mode_chat_prefix(
+                chat_retrieval_policy.kb_narrow,
+                templates_block,
+                kb_unavailable_notice,
+            )
+            _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
             return data
 
@@ -1108,59 +1134,17 @@ class KlaiKnowledgeHook(CustomLogger):
         # stamped with the same Zitadel sub at ingest time
         # (klai-portal/backend/app/api/knowledge.py:172-204) so the
         # personal-scope filter matches.
-        user_id: str | None = feature.get("zitadel_user_id")
-        if not user_id:
-            # portal-api couldn't resolve the LibreChat ObjectId → Zitadel sub.
-            # Without it, retrieval-api's identity-verify denies. Surface to
-            # the user via the existing fail-loud path instead of degrading.
-            logger.error(
-                "KlaiKnowledgeHook: portal returned no zitadel_user_id for "
-                "librechat_user_id=%s org_id=%s — failing loud",
-                librechat_user_id,
-                org_id,
-            )
-            # The warning the model emits is in the user's detected language
-            # thanks to the mode-specific chat foundation.
-            kb_unavailable_notice = _kb_retrieval_failure_notice(
-                feature_kb_narrow,
-                "identity-resolve-failed",
-            )
-            prefix = _compose_kb_mode_chat_prefix(
-                feature_kb_narrow, templates_block, kb_unavailable_notice
-            )
-            _prepend_system_prefix(messages, prefix)
-            data["messages"] = messages
-            return data
-
-        scope_decision = _resolve_kb_retrieval_scope(feature)
-        kb_narrow = scope_decision.kb_narrow
-        if scope_decision.action == "strict_no_kb":
-            if scope_decision.strict_no_kb_reason is None:
-                raise RuntimeError("strict KB scope decision has no reason")
-            _prepend_system_prefix(
-                messages,
-                _compose_kb_mode_chat_prefix(
-                    True,
-                    templates_block,
-                    _strict_no_kb_scope_notice(scope_decision.strict_no_kb_reason),
-                ),
-            )
-            data["messages"] = messages
-            return data
-        if scope_decision.action == "general":
-            _prepend_system_prefix(
-                messages,
-                _compose_general_chat_prefix(
-                    _general_runtime_capabilities_block(data),
-                    templates_block,
-                ),
-            )
-            data["messages"] = messages
-            return data
-
+        user_id = chat_retrieval_policy.user_id
+        scope_decision = chat_retrieval_policy.scope_decision
+        if (
+            user_id is None
+            or scope_decision is None
+            or scope_decision.scope is None
+            or not chat_retrieval_policy.should_retrieve
+        ):
+            raise RuntimeError("KB chat retrieval policy continued without retrieval inputs")
+        kb_narrow = chat_retrieval_policy.kb_narrow
         scope = scope_decision.scope
-        if scope is None:
-            raise RuntimeError("KB scope decision continued without retrieval scope")
 
         conversation_history = _build_conversation_history(messages)
 
@@ -1343,7 +1327,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 data["stream"] = False
             answer_policy = KbAnswerPolicy(
                 state="retrieval_failure",
-                kb_narrow=kb_narrow,
+                prompt_mode=chat_retrieval_policy.prompt_mode,
                 user_provided_content_context=user_provided_content_context,
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
@@ -1375,7 +1359,7 @@ class KlaiKnowledgeHook(CustomLogger):
             data["messages"] = messages
             answer_policy = KbAnswerPolicy(
                 state="gate_bypassed",
-                kb_narrow=kb_narrow,
+                prompt_mode=chat_retrieval_policy.prompt_mode,
                 user_provided_content_context=user_provided_content_context,
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
@@ -1410,7 +1394,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 data["stream"] = False
             answer_policy = KbAnswerPolicy(
                 state="missing_evidence_pack",
-                kb_narrow=kb_narrow,
+                prompt_mode=chat_retrieval_policy.prompt_mode,
                 user_provided_content_context=user_provided_content_context,
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
@@ -1552,7 +1536,7 @@ class KlaiKnowledgeHook(CustomLogger):
                     data["stream"] = False
                 answer_policy = KbAnswerPolicy(
                     state="zero_chunks",
-                    kb_narrow=kb_narrow,
+                    prompt_mode=chat_retrieval_policy.prompt_mode,
                     user_provided_content_context=user_provided_content_context,
                     low_confidence_inject=low_confidence_inject,
                 )
@@ -1645,7 +1629,7 @@ class KlaiKnowledgeHook(CustomLogger):
             data["stream"] = False
         answer_policy = KbAnswerPolicy(
             state="chunks_present",
-            kb_narrow=kb_narrow,
+            prompt_mode=chat_retrieval_policy.prompt_mode,
             user_provided_content_context=user_provided_content_context,
             low_confidence_inject=low_confidence_inject,
         )
