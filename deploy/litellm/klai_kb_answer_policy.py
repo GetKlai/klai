@@ -284,3 +284,72 @@ def strict_no_kb_scope_notice(reason: str) -> str:
         "cannot answer reliably from their knowledge sources for this request "
         f"(technical reason: {reason}).]\n"
     )
+
+
+def kb_retrieval_failure_notice(kb_narrow: bool, retrieval_failure: object) -> str:
+    """Mode-aware notice when retrieval-api is temporarily unavailable."""
+    if kb_narrow:
+        return (
+            "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. The user "
+            "selected Strict mode, so do not answer from general "
+            "knowledge. Tell the user in their detected language that "
+            "the knowledge base is temporarily unavailable and you "
+            "cannot answer reliably from their knowledge sources right "
+            f"now (technical reason: {retrieval_failure}).]\n"
+        )
+    return (
+        "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. Answer using "
+        "your general knowledge. Begin your answer with a warning to "
+        "the user, written in the language you detected from their "
+        "most recent substantive message: tell them you could not "
+        f"reach the knowledge base (technical reason: {retrieval_failure}), "
+        "this answer is therefore not based on their own documentation, "
+        "and they should refresh or try again later.]\n"
+    )
+
+
+def kb_zero_chunks_notice(kb_narrow: bool) -> str:
+    """Mode-aware notice when retrieval succeeded but returned no usable chunks."""
+    if kb_narrow:
+        return (
+            "[Klai Knowledge Base — zero results for this query. "
+            "Tell the user in their detected language that the "
+            "answer is not in their knowledge base (e.g. "
+            "'I cannot find this in the knowledge base' / "
+            "'Dat staat niet in de kennisbank' / "
+            "'Das steht nicht in der Wissensdatenbank'). "
+            "Do not answer from general knowledge. "
+            "Suggest the user rephrase the question or add "
+            "documents to the knowledge base.]\n"
+        )
+    return (
+        "[Klai Knowledge Base — zero results for this query. "
+        "You may answer from your general knowledge instead. "
+        "Begin your answer with a brief note in the user's "
+        "detected language that nothing was found in their "
+        "knowledge base (e.g. 'I couldn't find this in your "
+        "knowledge base, but here is a general answer:' / "
+        "'Dit staat niet in jouw kennisbank, maar hier is "
+        "een algemeen antwoord:' / "
+        "'Ich konnte dies nicht in Ihrer Wissensdatenbank "
+        "finden, aber hier ist eine allgemeine Antwort:'), "
+        "then answer normally.]\n"
+    )
+
+
+def kb_chunks_present_header(kb_narrow: bool) -> str:
+    """Mode-aware KB context header when retrieval returned chunks."""
+    if kb_narrow:
+        return (
+            "[Klai Knowledge Base — answer strictly using only the sources "
+            "below. Do not use general knowledge beyond these sources. "
+            "If the answer is not present, say so plainly in the user's "
+            "detected language (e.g. 'I cannot find this in the knowledge "
+            "base' / 'Dat staat niet in de kennisbank' / 'Das steht nicht "
+            "in der Wissensdatenbank').]\n"
+        )
+    return (
+        "[Klai Knowledge Base — use this as supplementary context for "
+        "your answer. You may complement it with your general "
+        "knowledge.]\n"
+    )

@@ -168,6 +168,54 @@ def test_prompt_prefix_matrix_keeps_user_content_scope_in_open_and_strict_kb_mod
     assert strict_prefix != open_prefix
 
 
+def test_retrieval_failure_notice_keeps_strict_closed_and_open_broad():
+    policy_module = _policy_module()
+
+    strict_notice = policy_module.kb_retrieval_failure_notice(True, "HTTP 503")
+    assert "TEMPORARILY UNAVAILABLE" in strict_notice
+    assert "selected Strict mode" in strict_notice
+    assert "do not answer from general knowledge" in strict_notice
+    assert "technical reason: HTTP 503" in strict_notice
+    assert "Answer using your general knowledge" not in strict_notice
+
+    open_notice = policy_module.kb_retrieval_failure_notice(False, "ReadTimeout")
+    assert "TEMPORARILY UNAVAILABLE" in open_notice
+    assert "Answer using your general knowledge" in open_notice
+    assert "technical reason: ReadTimeout" in open_notice
+    assert "not based on their own documentation" in open_notice
+    assert "selected Strict mode" not in open_notice
+
+
+def test_zero_chunks_notice_keeps_strict_closed_and_open_broad():
+    policy_module = _policy_module()
+
+    strict_notice = policy_module.kb_zero_chunks_notice(True)
+    assert "zero results for this query" in strict_notice
+    assert "Dat staat niet in de kennisbank" in strict_notice
+    assert "Do not answer from general knowledge" in strict_notice
+    assert "You may answer from your general knowledge" not in strict_notice
+
+    open_notice = policy_module.kb_zero_chunks_notice(False)
+    assert "zero results for this query" in open_notice
+    assert "You may answer from your general knowledge" in open_notice
+    assert "Dit staat niet in jouw kennisbank, maar hier is een algemeen antwoord" in open_notice
+    assert "Do not answer from general knowledge" not in open_notice
+
+
+def test_chunks_present_header_keeps_strict_closed_and_open_broad():
+    policy_module = _policy_module()
+
+    strict_header = policy_module.kb_chunks_present_header(True)
+    assert "answer strictly using only the sources below" in strict_header
+    assert "Do not use general knowledge beyond these sources" in strict_header
+    assert "supplementary context" not in strict_header
+
+    open_header = policy_module.kb_chunks_present_header(False)
+    assert "use this as supplementary context" in open_header
+    assert "You may complement it with your general knowledge" in open_header
+    assert "answer strictly using only the sources below" not in open_header
+
+
 def test_user_content_detection_requires_attachment_or_explicit_reference():
     policy_module = _policy_module()
 
