@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Bug, CheckCheck, Download, Inbox, Lightbulb, Loader2, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
+import { Bug, CheckCheck, Download, Inbox, Lightbulb, Loader2, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
-import { ConversationComposer, ConversationTimeline, type ConversationEntry } from '@/components/ui/conversation'
+import { ConversationPanel, type ConversationEntry } from '@/components/ui/conversation'
 import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
@@ -389,6 +389,19 @@ function AccountMessagesPanel({
     onError: () => toast.error(m.account_messages_error()),
   })
 
+  const editMutation = useMutation({
+    mutationFn: (vars: { threadId: number; messageId: number; body: string }) =>
+      apiFetch(`/api/app/account/messages/${vars.threadId}/messages/${vars.messageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ body: vars.body }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
+    },
+    onError: () => toast.error(m.account_messages_error()),
+  })
+
   function openThread(thread: AccountPlatformMessageThread) {
     setSelectedThreadId(thread.id)
     setReplyBody('')
@@ -414,6 +427,7 @@ function AccountMessagesPanel({
       author: message.sender_type === 'user' ? m.account_messages_you() : m.account_messages_platform_admin(),
       body: message.body,
       at: message.created_at,
+      editable: message.sender_type === 'user',
     }))
 
     return (
@@ -433,6 +447,9 @@ function AccountMessagesPanel({
         isReplying={replyMutation.isPending}
         replyPlaceholder={m.account_messages_reply_placeholder()}
         sendLabel={m.account_messages_send()}
+        onEditMessage={(id, body) =>
+          editMutation.mutate({ threadId: selectedThreadId, messageId: Number(id), body })
+        }
         onBack={back}
       />
     )
@@ -536,6 +553,16 @@ function FeedbackUpdatesPanel({
     onError: () => toast.error(m.account_feedback_error()),
   })
 
+  const editMutation = useMutation({
+    mutationFn: (vars: { threadId: number; messageId: number; body: string }) =>
+      apiFetch(`/api/app/account/messages/${vars.threadId}/messages/${vars.messageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ body: vars.body }),
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] }),
+    onError: () => toast.error(m.account_feedback_error()),
+  })
+
   function openItem(item: AccountFeedbackUpdate) {
     setSelectedSubmissionId(item.submission_id)
     setReplyBody('')
@@ -572,6 +599,12 @@ function FeedbackUpdatesPanel({
         isReplying={replyMutation.isPending}
         replyPlaceholder={m.account_feedback_reply_placeholder()}
         sendLabel={m.account_feedback_send()}
+        onEditMessage={
+          selectedThreadId !== null
+            ? (id, body) =>
+                editMutation.mutate({ threadId: selectedThreadId, messageId: Number(id), body })
+            : undefined
+        }
         onBack={back}
       />
     )
@@ -645,6 +678,7 @@ function buildFeedbackEntries(
         author: message.sender_type === 'user' ? m.account_messages_you() : m.account_messages_platform_admin(),
         body: message.body,
         at: message.created_at,
+        editable: message.sender_type === 'user',
       })
     }
   }
@@ -677,6 +711,7 @@ function ConversationDetail({
   isReplying,
   replyPlaceholder,
   sendLabel,
+  onEditMessage,
   onBack,
 }: {
   title: string
@@ -691,34 +726,26 @@ function ConversationDetail({
   isReplying: boolean
   replyPlaceholder: string
   sendLabel: string
+  onEditMessage?: (id: string | number, body: string) => void
   onBack: () => void
 }) {
   return (
-    <div className="space-y-5">
-      <div className="flex items-start gap-3">
-        <Button type="button" variant="ghost" size="sm" className="-ml-2 shrink-0" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          {m.account_conversation_back()}
-        </Button>
-      </div>
-
-      <div className="flex items-start justify-between gap-3 border-b border-gray-200 pb-4">
-        <h2 className="min-w-0 text-base font-display-bold text-gray-900">{title}</h2>
-        {badge}
-      </div>
-      {subtitle && <p className="-mt-2 text-xs text-gray-400">{subtitle}</p>}
-
-      <ConversationTimeline entries={entries} locale={locale} loading={loading} />
-
-      <ConversationComposer
-        value={replyBody}
-        onChange={onReplyBodyChange}
-        onSubmit={onSubmitReply}
-        isSubmitting={isReplying}
-        placeholder={replyPlaceholder}
-        sendLabel={sendLabel}
-      />
-    </div>
+    <ConversationPanel
+      title={title}
+      subtitle={subtitle}
+      badge={badge}
+      entries={entries}
+      loading={loading}
+      locale={locale}
+      draft={replyBody}
+      onDraftChange={onReplyBodyChange}
+      onSend={onSubmitReply}
+      isSending={isReplying}
+      placeholder={replyPlaceholder}
+      sendLabel={sendLabel}
+      onEditMessage={onEditMessage}
+      onBack={onBack}
+    />
   )
 }
 

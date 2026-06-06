@@ -189,6 +189,9 @@ REFRESH_TOKEN_EXPIRY=2592000000
 
 # Search
 MEILI_HOST=http://meilisearch:7700
+# LibreChat hard-codes this env var name, but this value is a per-tenant
+# runtime key scoped to {slug}_messages and {slug}_convos; never use the real
+# Meili master key in a LibreChat tenant container.
 MEILI_MASTER_KEY={meili_api_key}
 MEILI_MESSAGES_INDEX={slug}_messages
 MEILI_CONVOS_INDEX={slug}_convos

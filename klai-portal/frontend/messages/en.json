@@ -393,6 +393,7 @@
   "account_conversation_yesterday": "Yesterday",
   "account_conversation_send_hint": "Cmd/Ctrl + Enter to send",
   "account_conversation_back": "Back to overview",
+  "account_conversation_edit": "Edit message",
   "account_messages_reply_placeholder": "Write a reply to the Klai team",
   "account_feedback_reply_placeholder": "Reply to this report",
   "account_feedback_marked_resolved": "Marked as resolved by the Klai team",

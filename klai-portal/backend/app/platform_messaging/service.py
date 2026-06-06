@@ -162,6 +162,15 @@ async def mark_platform_message_thread_read(
     return read_at
 
 
+async def mark_platform_thread_admin_read(db: AsyncSession, *, thread_id: int) -> datetime:
+    """Mark a thread as read by the platform admin (cross-org context)."""
+    thread = await get_platform_message_thread(db, thread_id)
+    read_at = datetime.now(UTC)
+    thread.admin_read_at = read_at
+    await db.flush()
+    return read_at
+
+
 async def user_can_access_thread(db: AsyncSession, *, thread_id: int, org_id: int, user_id: str) -> bool:
     participant = await db.scalar(
         select(PlatformMessageParticipant.thread_id).where(

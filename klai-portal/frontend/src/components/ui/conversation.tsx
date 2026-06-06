@@ -1,7 +1,8 @@
 import * as React from 'react'
-import { Loader2, Send } from 'lucide-react'
+import { ArrowLeft, Check, Loader2, Pencil, Send, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 
@@ -19,6 +20,8 @@ export interface ConversationMessageEntry {
   author: string
   body: string
   at: string
+  /** When true and `onEditMessage` is provided, the bubble shows an edit affordance. */
+  editable?: boolean
 }
 
 export interface ConversationSystemEntry {
@@ -60,11 +63,17 @@ function formatDaySeparator(value: string, locale: 'nl' | 'en'): string {
   }).format(new Date(value))
 }
 
+interface MessageBody {
+  id: string | number
+  body: string
+  editable?: boolean
+}
+
 interface MessageGroup {
   side: 'me' | 'them'
   author: string
   at: string
-  bodies: { id: string | number; body: string }[]
+  bodies: MessageBody[]
 }
 
 /** Build day buckets, each with sender-grouped message runs and system lines. */
@@ -88,15 +97,20 @@ function buildLayout(entries: ConversationEntry[]) {
       bucket.blocks.push(entry)
       continue
     }
+    const body: MessageBody = {
+      id: entry.id,
+      body: entry.body,
+      editable: entry.editable,
+    }
     const last = bucket.blocks.at(-1)
     if (last && !('label' in last) && last.side === entry.side && last.author === entry.author) {
-      last.bodies.push({ id: entry.id, body: entry.body })
+      last.bodies.push(body)
     } else {
       bucket.blocks.push({
         side: entry.side,
         author: entry.author,
         at: entry.at,
-        bodies: [{ id: entry.id, body: entry.body }],
+        bodies: [body],
       })
     }
   }
@@ -109,6 +123,7 @@ export function ConversationTimeline({
   loading = false,
   emptyLabel,
   autoScroll = true,
+  onEditMessage,
   className,
 }: {
   entries: ConversationEntry[]
@@ -116,10 +131,25 @@ export function ConversationTimeline({
   loading?: boolean
   emptyLabel?: string
   autoScroll?: boolean
+  /** When provided, editable own messages show an inline edit affordance. */
+  onEditMessage?: (id: string | number, body: string) => void
   className?: string
 }) {
   const bottomRef = React.useRef<HTMLDivElement | null>(null)
   const count = entries.length
+  const [editingId, setEditingId] = React.useState<string | number | null>(null)
+  const [editDraft, setEditDraft] = React.useState('')
+
+  const startEdit = (id: string | number, body: string) => {
+    setEditingId(id)
+    setEditDraft(body)
+  }
+  const cancelEdit = () => setEditingId(null)
+  const saveEdit = (id: string | number) => {
+    const trimmed = editDraft.trim()
+    if (trimmed.length > 0) onEditMessage?.(id, trimmed)
+    setEditingId(null)
+  }
 
   React.useEffect(() => {
     const node = bottomRef.current
@@ -151,13 +181,9 @@ export function ConversationTimeline({
     <div className={cn('space-y-5', className)}>
       {days.map((bucket) => (
         <div key={bucket.day} className="space-y-4">
-          <div className="flex items-center gap-3">
-            <span className="h-px flex-1 bg-gray-200" />
-            <span className="shrink-0 text-xs text-gray-400">
-              {formatDaySeparator(bucket.at, locale)}
-            </span>
-            <span className="h-px flex-1 bg-gray-200" />
-          </div>
+          <p className="text-center text-xs text-gray-400">
+            {formatDaySeparator(bucket.at, locale)}
+          </p>
 
           {bucket.blocks.map((block, index) =>
             'label' in block ? (
@@ -171,6 +197,13 @@ export function ConversationTimeline({
                 key={`grp-${block.side}-${index}-${block.bodies[0]?.id}`}
                 group={block}
                 locale={locale}
+                canEdit={!!onEditMessage}
+                editingId={editingId}
+                editDraft={editDraft}
+                onEditDraftChange={setEditDraft}
+                onStartEdit={startEdit}
+                onCancelEdit={cancelEdit}
+                onSaveEdit={saveEdit}
               />
             ),
           )}
@@ -181,26 +214,96 @@ export function ConversationTimeline({
   )
 }
 
-function MessageGroupView({ group, locale }: { group: MessageGroup; locale: 'nl' | 'en' }) {
+function MessageGroupView({
+  group,
+  locale,
+  canEdit,
+  editingId,
+  editDraft,
+  onEditDraftChange,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
+}: {
+  group: MessageGroup
+  locale: 'nl' | 'en'
+  canEdit: boolean
+  editingId: string | number | null
+  editDraft: string
+  onEditDraftChange: (value: string) => void
+  onStartEdit: (id: string | number, body: string) => void
+  onCancelEdit: () => void
+  onSaveEdit: (id: string | number) => void
+}) {
   const isMe = group.side === 'me'
   return (
     <div className={cn('flex flex-col gap-1', isMe ? 'items-end' : 'items-start')}>
       <p className="px-1 text-xs text-gray-400">
         {group.author} · {formatTime(group.at, locale)}
       </p>
-      {group.bodies.map(({ id, body }) => (
-        <div
-          key={id}
-          className={cn(
-            'max-w-[82%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
-            isMe
-              ? 'rounded-br-md bg-[var(--color-secondary)] text-[var(--color-foreground)]'
-              : 'rounded-bl-md border border-[var(--color-border)] bg-white text-[var(--color-foreground)]',
-          )}
-        >
-          {body}
-        </div>
-      ))}
+      {group.bodies.map((message) => {
+        const showEdit = canEdit && isMe && message.editable
+        if (editingId === message.id) {
+          return (
+            <div key={message.id} className="w-full max-w-[82%] self-end">
+              <Textarea
+                value={editDraft}
+                rows={2}
+                maxLength={4000}
+                autoFocus
+                onChange={(event) => onEditDraftChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                    event.preventDefault()
+                    onSaveEdit(message.id)
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    onCancelEdit()
+                  }
+                }}
+              />
+              <div className="mt-1 flex justify-end gap-2">
+                <InlineRowButton tone="success" onClick={() => onSaveEdit(message.id)}>
+                  <Check />
+                  {m.admin_shared_save()}
+                </InlineRowButton>
+                <InlineRowButton onClick={onCancelEdit}>
+                  <X />
+                  {m.admin_users_cancel()}
+                </InlineRowButton>
+              </div>
+            </div>
+          )
+        }
+        return (
+          <div
+            key={message.id}
+            className={cn('group/bubble flex max-w-[85%] items-center gap-1.5', isMe ? 'self-end' : 'self-start')}
+          >
+            {showEdit && (
+              <button
+                type="button"
+                onClick={() => onStartEdit(message.id, message.body)}
+                aria-label={m.account_conversation_edit()}
+                title={m.account_conversation_edit()}
+                className="shrink-0 text-gray-300 opacity-0 transition-opacity hover:text-gray-600 group-hover/bubble:opacity-100"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <div
+              className={cn(
+                'max-w-full whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
+                isMe
+                  ? 'rounded-br-md bg-[var(--color-secondary)] text-[var(--color-foreground)]'
+                  : 'rounded-bl-md border border-[var(--color-border)] bg-white text-[var(--color-foreground)]',
+              )}
+            >
+              {message.body}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -254,6 +357,89 @@ export function ConversationComposer({
           {sendLabel}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Full conversation detail surface: header (title + optional badge/actions, with
+ * the back action on the right per ui-standards "Back Actions"), the timeline,
+ * and the composer. Shared by account "Mijn meldingen"/"Berichten" and the
+ * platform-admin messages tab so the master→detail-with-back flow is identical.
+ */
+export function ConversationPanel({
+  title,
+  subtitle,
+  badge,
+  headerActions,
+  entries,
+  loading = false,
+  locale,
+  emptyLabel,
+  draft,
+  onDraftChange,
+  onSend,
+  isSending = false,
+  composerDisabled = false,
+  placeholder,
+  sendLabel,
+  onEditMessage,
+  onBack,
+}: {
+  title: string
+  subtitle?: string
+  badge?: React.ReactNode
+  headerActions?: React.ReactNode
+  entries: ConversationEntry[]
+  loading?: boolean
+  locale: 'nl' | 'en'
+  emptyLabel?: string
+  draft: string
+  onDraftChange: (value: string) => void
+  onSend: () => void
+  isSending?: boolean
+  composerDisabled?: boolean
+  placeholder?: string
+  sendLabel: string
+  onEditMessage?: (id: string | number, body: string) => void
+  onBack: () => void
+}) {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="truncate text-base font-display-bold text-gray-900">{title}</h2>
+            {badge}
+          </div>
+          {subtitle && <p className="mt-1 text-xs text-gray-400">{subtitle}</p>}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {headerActions}
+          <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {m.account_conversation_back()}
+          </Button>
+        </div>
+      </div>
+
+      <ConversationTimeline
+        entries={entries}
+        locale={locale}
+        loading={loading}
+        emptyLabel={emptyLabel}
+        onEditMessage={onEditMessage}
+      />
+
+      <ConversationComposer
+        value={draft}
+        onChange={onDraftChange}
+        onSubmit={onSend}
+        isSubmitting={isSending}
+        disabled={composerDisabled}
+        placeholder={placeholder}
+        sendLabel={sendLabel}
+      />
     </div>
   )
 }
