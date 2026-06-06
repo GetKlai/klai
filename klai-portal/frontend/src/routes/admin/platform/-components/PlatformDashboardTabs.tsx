@@ -5,7 +5,6 @@ import { useAuth } from "@/lib/auth"
 import { fetchMe } from "@/lib/api-me"
 import { Activity, Bug, ExternalLink } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { ConversationPanel, type ConversationEntry } from "@/components/ui/conversation"
 import {
   DataTable,
@@ -28,7 +27,6 @@ import {
   usePlatformMessageThreads,
   usePlatformOrgs,
   usePlatformReplyMessageThread,
-  usePlatformUpdateMessageThreadStatus,
   usePlatformSubdomains,
   usePlatformTemplates,
   usePlatformUsers,
@@ -356,7 +354,6 @@ export function MessagesTab({
   const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null)
   const selectedThread = usePlatformMessageThread(selectedThreadId)
   const reply = usePlatformReplyMessageThread()
-  const updateStatus = usePlatformUpdateMessageThreadStatus()
   const markRead = usePlatformMarkMessageThreadRead()
   const editMessage = usePlatformEditMessage()
   const auth = useAuth()
@@ -389,7 +386,6 @@ export function MessagesTab({
 
   if (selectedThreadId !== null) {
     const detail = selectedThread.data
-    const isOpen = detail?.thread.status === 'open'
     const entries: ConversationEntry[] = (detail?.messages ?? []).map((message) => ({
       id: message.id,
       side: message.sender_type === 'user' ? 'them' : 'me',
@@ -409,31 +405,6 @@ export function MessagesTab({
       <ConversationPanel
         title={detail?.thread.subject ?? ''}
         subtitle={recipients}
-        badge={
-          detail ? (
-            <Badge variant={isOpen ? 'success' : 'secondary'}>
-              {isOpen ? m.platform_messages_status_open() : m.platform_messages_status_closed()}
-            </Badge>
-          ) : undefined
-        }
-        headerActions={
-          detail ? (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={updateStatus.isPending}
-              onClick={() =>
-                updateStatus.mutate({
-                  threadId: detail.thread.id,
-                  status: isOpen ? 'closed' : 'open',
-                })
-              }
-            >
-              {isOpen ? m.platform_messages_close() : m.platform_messages_reopen()}
-            </Button>
-          ) : undefined
-        }
         entries={entries}
         loading={selectedThread.isLoading || !detail}
         locale={getLocale() === 'en' ? 'en' : 'nl'}
@@ -474,7 +445,6 @@ export function MessagesTab({
               <DataTableHead>{m.platform_messages_thread()}</DataTableHead>
               <DataTableHead>{m.platform_col_organization()}</DataTableHead>
               <DataTableHead>{m.platform_messages_recipients()}</DataTableHead>
-              <DataTableHead>{m.platform_col_status()}</DataTableHead>
               <DataTableHead>{m.platform_messages_updated()}</DataTableHead>
             </DataTableRow>
           </DataTableHeader>
@@ -498,13 +468,6 @@ export function MessagesTab({
                 </DataTableCell>
                 <DataTableCell>{thread.org_name ?? thread.org_slug ?? '-'}</DataTableCell>
                 <DataTableCell className="tabular-nums">{thread.recipient_count}</DataTableCell>
-                <DataTableCell>
-                  <Badge variant={thread.status === 'open' ? 'success' : 'secondary'}>
-                    {thread.status === 'open'
-                      ? m.platform_messages_status_open()
-                      : m.platform_messages_status_closed()}
-                  </Badge>
-                </DataTableCell>
                 <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
                   {fmtDate(thread.latest_message_at)}
                 </DataTableCell>

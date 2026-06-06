@@ -214,7 +214,6 @@ export interface PlatformMessageThread {
   org_name: string | null
   org_slug: string | null
   subject: string
-  status: string
   origin_type: string
   feedback_submission_id: number | null
   feedback_item_id: number | null

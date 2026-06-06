@@ -170,14 +170,13 @@ export function usePlatformChatErrors() {
   })
 }
 
-export function usePlatformMessageThreads(search: string, status = '') {
+export function usePlatformMessageThreads(search: string) {
   const auth = useAuth()
   return useQuery({
-    queryKey: ['platform-message-threads', search, status],
+    queryKey: ['platform-message-threads', search],
     queryFn: async () => {
       const params = new URLSearchParams({ limit: '200' })
       if (search) params.set('search', search)
-      if (status) params.set('status', status)
       return apiFetch<PlatformMessageThread[]>(
         `/api/admin/platform/messages/threads?${params.toString()}`,
       )
@@ -259,21 +258,6 @@ export function usePlatformEditMessage() {
       apiFetch<PlatformMessageThreadDetail>(
         `/api/admin/platform/messages/threads/${vars.threadId}/messages/${vars.messageId}`,
         { method: 'PATCH', body: JSON.stringify({ body: vars.body }) },
-      ),
-    onSuccess: opts.onSuccess,
-  })
-}
-
-export function usePlatformUpdateMessageThreadStatus() {
-  const opts = usePlatformMessageMutation()
-  return useMutation({
-    mutationFn: async (vars: { threadId: number; status: 'open' | 'closed' }) =>
-      apiFetch<PlatformMessageThreadDetail>(
-        `/api/admin/platform/messages/threads/${vars.threadId}/status`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify({ status: vars.status }),
-        },
       ),
     onSuccess: opts.onSuccess,
   })

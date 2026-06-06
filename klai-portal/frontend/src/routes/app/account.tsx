@@ -69,7 +69,6 @@ interface AccountFeedbackUpdatesResponse {
 interface AccountPlatformMessageThread {
   id: number
   subject: string
-  status: string
   origin_type: string
   feedback_submission_id?: number | null
   feedback_item_id?: number | null
