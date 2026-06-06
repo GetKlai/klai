@@ -287,6 +287,18 @@ jobs:
           done
           echo "✓ All RLS smoke-test assertions fired."
 
+      - name: Drop product-updates Cat-D policies before rollback
+        env:
+          PGPASSWORD: klai
+        working-directory: klai-portal/backend
+        # product_update_reads policies depend on _rls_current_org_id(), which
+        # the rollback script drops. They are a forward-only feature (the
+        # rollback reverts the raise-context infra in isolation; prod never runs
+        # *_rollback_*.sql — deploy-portal-api.sh skips it). Remove the dependents
+        # so the generic rollback can DROP the function cleanly.
+        run: |
+          psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS product_update_reads_select ON product_update_reads; DROP POLICY IF EXISTS product_update_reads_insert ON product_update_reads;"
+
       - name: Apply rollback migration (smoke-test rollback path too)
         env:
           PGPASSWORD: klai
