@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse, urlunparse
 
 from klai_citations import render_evidence_context
 from klai_kb_answer_policy import kb_chunks_present_header
+from klai_kb_urls import absolute_image_url, chunk_source_url
 
 KB_ANSWER_FORMAT_INSTRUCTION = (
     "[ANSWER FORMAT — always follow this, EXCEPT where an "
@@ -64,9 +64,6 @@ KB_LANGUAGE_REMINDER = (
     "content into the user's language without translator disclaimers."
 )
 
-_SENTINEL_URLS = {"undefined", "null", "none", "n/a", "na", "-", "#"}
-
-
 @dataclass(frozen=True)
 class KbContextPrompt:
     context_block: str
@@ -74,70 +71,6 @@ class KbContextPrompt:
     allowed_image_urls: list[str]
     citation_source_urls: dict[str, str]
     low_confidence_injection_applied: bool
-
-
-def normalise_guard_url(url: object) -> str:
-    if not isinstance(url, str):
-        return ""
-    value = url.strip().strip("<>")
-    if not value or value.lower() in _SENTINEL_URLS:
-        return ""
-    if value.startswith("/"):
-        return value
-
-    parsed = urlparse(value)
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-        return ""
-
-    netloc = parsed.netloc.lower()
-    if netloc.startswith("www."):
-        netloc = netloc[4:]
-    path = parsed.path or "/"
-    return urlunparse((parsed.scheme.lower(), netloc, path, "", parsed.query, ""))
-
-
-def chunk_source_url(chunk: dict[str, Any]) -> str:
-    candidates: list[object] = [
-        chunk.get("source_url"),
-        chunk.get("sourceUrl"),
-        chunk.get("canonical_url"),
-        chunk.get("page_url"),
-        chunk.get("url"),
-    ]
-    metadata = chunk.get("metadata")
-    if isinstance(metadata, dict):
-        candidates.extend(
-            [
-                metadata.get("source_url"),
-                metadata.get("sourceUrl"),
-                metadata.get("canonical_url"),
-                metadata.get("page_url"),
-                metadata.get("url"),
-            ]
-        )
-    source = chunk.get("source")
-    if isinstance(source, dict):
-        candidates.extend(
-            [
-                source.get("source_url"),
-                source.get("url"),
-                source.get("href"),
-            ]
-        )
-
-    for candidate in candidates:
-        normalised = normalise_guard_url(candidate)
-        if normalised and not normalised.startswith("/"):
-            return normalised
-    return ""
-
-
-def absolute_image_url(url: object, *, images_base_url: str) -> str:
-    normalised = normalise_guard_url(url)
-    if not normalised:
-        return ""
-    return f"{images_base_url}{normalised}" if normalised.startswith("/") else normalised
-
 
 def build_kb_context_prompt(
     *,

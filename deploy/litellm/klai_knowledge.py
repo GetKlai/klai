@@ -73,6 +73,8 @@ from klai_kb_answer_policy import (
 )
 from klai_kb_context_prompt import (
     build_kb_context_prompt as _build_kb_context_prompt,
+)
+from klai_kb_urls import (
     chunk_source_url as _chunk_source_url,
     normalise_guard_url as _normalise_guard_url,
 )
