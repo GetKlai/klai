@@ -3,16 +3,18 @@ import { useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, AlertTriangle, KeyRound } from 'lucide-react'
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogCancel,
-} from '@/components/ui/alert-dialog'
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { StepIndicator } from '@/components/ui/step-indicator'
 import { apiFetch } from '@/lib/apiFetch'
 import {
   useDeleteUserWithDispositions,
@@ -139,6 +141,7 @@ export function OffboardWizard({
   const [orgDispositions, setOrgDispositions] = useState<
     Record<number, OrgDispositionState>
   >({})
+  const [step, setStep] = useState(0)
 
   const orgKbs =
     previewQuery.data
@@ -200,11 +203,33 @@ export function OffboardWizard({
   const isReady = !previewQuery.isLoading && !usersQuery.isLoading
   const isSubmitting = lifecycleMutation.isPending
   const previewError = previewQuery.error?.message
+  const apiKeysCount = previewQuery.data?.api_keys_count ?? 0
+  const mcpTokensCount = previewQuery.data?.mcp_tokens_count ?? 0
+  const tokensCount = apiKeysCount + mcpTokensCount
+  const transferCount = orgKbs.filter(
+    (kb) => dispositionFor(kb).action === 'transfer',
+  ).length
+  const orgDeleteCount = orgKbs.length - transferCount
+  const hasIncompleteTransfer = orgKbs.some((kb) => {
+    const disposition = dispositionFor(kb)
+    return disposition.action === 'transfer' && !disposition.transferTo
+  })
+  const canGoNext =
+    isReady &&
+    !previewError &&
+    (step !== 1 || !hasIncompleteTransfer)
+  const isFinalStep = step === 2
+  const wizardSteps = [
+    { label: m.admin_users_wizard_step_impact(), onClick: () => setStep(0) },
+    { label: m.admin_users_wizard_step_kbs(), onClick: () => setStep(1) },
+    { label: m.admin_users_wizard_step_confirm(), onClick: () => setStep(2) },
+  ]
 
   function handleOpenChange(next: boolean) {
     if (isSubmitting) return
     if (!next) {
       setOrgDispositions({})
+      setStep(0)
     }
     onOpenChange(next)
   }
@@ -214,6 +239,8 @@ export function OffboardWizard({
       { userId, kb_dispositions: buildDispositions() },
       {
         onSuccess: () => {
+          setOrgDispositions({})
+          setStep(0)
           onOpenChange(false)
           void navigate({ to: '/admin/users' })
         },
@@ -221,22 +248,30 @@ export function OffboardWizard({
     )
   }
 
+  function handlePrimaryAction() {
+    if (!isFinalStep) {
+      setStep((current) => Math.min(current + 1, 2))
+      return
+    }
+    handleSubmit()
+  }
+
   return (
-    <AlertDialog open={open} onOpenChange={handleOpenChange}>
-      <AlertDialogContent className="max-w-2xl">
-        <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-[var(--color-destructive-text)]">
             <AlertTriangle className="h-5 w-5" />
             {mode === 'delete'
               ? m.admin_users_delete_wizard_title({ name: userLabel })
               : m.admin_users_offboard_wizard_title({ name: userLabel })}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
+          </DialogTitle>
+          <DialogDescription>
             {mode === 'delete'
               ? m.admin_users_delete_wizard_description()
               : m.admin_users_offboard_wizard_description()}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
+          </DialogDescription>
+        </DialogHeader>
 
         {!isReady && (
           <div className="flex items-center justify-center py-6 text-muted-foreground">
@@ -246,147 +281,298 @@ export function OffboardWizard({
         )}
 
         {previewError && (
-          <div className="rounded-md border border-destructive bg-destructive/5 p-3 text-sm text-destructive">
+          <div className="border-y border-[var(--color-destructive)]/30 py-3 text-sm text-[var(--color-destructive-text)]">
             {m.admin_users_wizard_preview_error({ error: previewError })}
           </div>
         )}
 
         {isReady && previewQuery.data && (
-          <div className="space-y-4 text-sm max-h-[60vh] overflow-y-auto">
-            {/* Token-revoke summary (REQ-2.1b / REQ-2.7) */}
-            {(previewQuery.data.api_keys_count > 0 ||
-              previewQuery.data.mcp_tokens_count > 0) && (
-              <div
-                className="flex items-start gap-2 rounded-md border border-border bg-secondary p-3"
-                data-test-id="offboard-token-banner"
-              >
-                <KeyRound className="h-4 w-4 mt-0.5 text-muted-foreground" />
-                <div>
-                  <p className="font-medium">
-                    {m.admin_users_wizard_tokens_title()}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {m.admin_users_wizard_tokens_description({
-                      apiKeys: previewQuery.data.api_keys_count,
-                      mcpTokens: previewQuery.data.mcp_tokens_count,
-                    })}
-                  </p>
-                </div>
-              </div>
-            )}
+          <div className="space-y-5">
+            <StepIndicator steps={wizardSteps} currentIndex={step} />
 
-            {/* Org-KBs the user solely owns */}
-            {orgKbs.length > 0 && (
-              <section>
-                <h3 className="font-medium mb-2">
-                  {m.admin_users_wizard_team_kbs({ count: orgKbs.length })}
-                </h3>
-                <ul className="space-y-2">
-                  {orgKbs.map((kb) => {
-                    const d = dispositionFor(kb)
-                    return (
-                      <li
-                        key={kb.kb_id}
-                        className="rounded-md border border-border p-3"
-                        data-test-id={`org-kb-row-${kb.slug}`}
-                      >
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <div>
-                            <p className="font-medium">{kb.name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {kb.slug}
-                            </p>
-                          </div>
-                          <Select
-                            value={d.action}
-                            onChange={(e) =>
-                              setOrgKbAction(kb.kb_id, e.target.value as OrgDispositionAction)
-                            }
-                            className="w-44"
-                          >
-                            <option value="transfer">{m.admin_users_wizard_transfer()}</option>
-                            <option value="delete">{m.admin_users_delete()}</option>
-                          </Select>
-                        </div>
-                        {d.action === 'transfer' && (
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">
-                              {m.admin_users_wizard_transfer_to()}
-                            </span>
-                            <Select
-                              value={d.transferTo}
-                              onChange={(e) => setOrgKbTransferTo(kb.kb_id, e.target.value)}
-                              className="w-full max-w-sm"
-                            >
-                              {eligibleReceivers.map((u) => (
-                                <option key={u.zitadel_user_id} value={u.zitadel_user_id}>
-                                  {u.first_name} {u.last_name} ({u.email})
-                                </option>
-                              ))}
-                            </Select>
-                          </div>
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </section>
-            )}
-
-            {/* Personal KBs - locked to delete */}
-            {personalKbs.length > 0 && (
-              <section>
-                <h3 className="font-medium mb-2">
-                  {m.admin_users_wizard_personal_kbs({ count: personalKbs.length })}
-                </h3>
-                <ul className="space-y-2">
-                  {personalKbs.map((kb) => (
-                    <li
-                      key={kb.kb_id}
-                      className="rounded-md border border-border p-3"
-                      data-test-id={`personal-kb-row-${kb.slug}`}
-                    >
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div>
-                          <p className="font-medium">{kb.name}</p>
-                          <p className="text-xs text-muted-foreground">{kb.slug}</p>
-                        </div>
-                        <span
-                          className="text-xs rounded-md bg-destructive/10 text-destructive px-2 py-1"
-                          title={m.admin_users_wizard_personal_delete_hint()}
-                        >
-                          {m.admin_users_wizard_will_be_deleted()}
+            <div className="max-h-[56vh] overflow-y-auto pr-1 text-sm">
+              {step === 0 && (
+                <div className="space-y-5">
+                  <section className="space-y-2">
+                    <h3 className="font-medium text-gray-900">
+                      {m.admin_users_wizard_impact_title()}
+                    </h3>
+                    <div className="divide-y divide-gray-200 border-y border-gray-200">
+                      <div className="flex items-center justify-between gap-4 py-3">
+                        <span className="text-gray-600">
+                          {m.admin_users_wizard_team_kbs_label()}
+                        </span>
+                        <span className="font-medium text-gray-900">
+                          {orgKbs.length}
                         </span>
                       </div>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
+                      <div className="flex items-center justify-between gap-4 py-3">
+                        <span className="text-gray-600">
+                          {m.admin_users_wizard_personal_kbs_label()}
+                        </span>
+                        <span className="font-medium text-gray-900">
+                          {personalKbs.length}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 py-3">
+                        <span className="text-gray-600">
+                          {m.admin_users_wizard_tokens_label()}
+                        </span>
+                        <span className="font-medium text-gray-900">
+                          {tokensCount}
+                        </span>
+                      </div>
+                    </div>
+                  </section>
 
-            {orgKbs.length === 0 && personalKbs.length === 0 && (
-              <p className="text-muted-foreground">
-                {mode === 'delete'
-                  ? m.admin_users_delete_wizard_no_kbs()
-                  : m.admin_users_offboard_wizard_no_kbs()}
-              </p>
-            )}
+                  {tokensCount > 0 && (
+                    <div
+                      className="flex items-start gap-2 border-y border-gray-200 py-3"
+                      data-test-id="offboard-token-banner"
+                    >
+                      <KeyRound className="mt-0.5 h-4 w-4 text-gray-400" />
+                      <div className="space-y-1">
+                        <p className="font-medium text-gray-900">
+                          {m.admin_users_wizard_tokens_title()}
+                        </p>
+                        <p className="text-gray-600">
+                          {m.admin_users_wizard_tokens_description({
+                            apiKeys: apiKeysCount,
+                            mcpTokens: mcpTokensCount,
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {orgKbs.length === 0 && personalKbs.length === 0 && (
+                    <p className="border-y border-gray-200 py-3 text-gray-600">
+                      {mode === 'delete'
+                        ? m.admin_users_delete_wizard_no_kbs()
+                        : m.admin_users_offboard_wizard_no_kbs()}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {step === 1 && (
+                <div className="space-y-6">
+                  {orgKbs.length > 0 && (
+                    <section className="space-y-2">
+                      <h3 className="font-medium text-gray-900">
+                        {m.admin_users_wizard_team_kbs({ count: orgKbs.length })}
+                      </h3>
+                      <ul className="divide-y divide-gray-200 border-y border-gray-200">
+                        {orgKbs.map((kb) => {
+                          const d = dispositionFor(kb)
+                          const actionId = `kb-action-${kb.kb_id}`
+                          const transferId = `kb-transfer-${kb.kb_id}`
+
+                          return (
+                            <li
+                              key={kb.kb_id}
+                              className="py-4"
+                              data-test-id={`org-kb-row-${kb.slug}`}
+                            >
+                              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px] sm:items-start">
+                                <div className="min-w-0">
+                                  <p className="truncate font-medium text-gray-900">
+                                    {kb.name}
+                                  </p>
+                                  <p className="truncate text-xs text-gray-400">
+                                    {kb.slug}
+                                  </p>
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label
+                                    htmlFor={actionId}
+                                    className="text-xs font-medium text-gray-600"
+                                  >
+                                    {m.admin_users_wizard_action_label()}
+                                  </Label>
+                                  <Select
+                                    id={actionId}
+                                    value={d.action}
+                                    onChange={(e) =>
+                                      setOrgKbAction(
+                                        kb.kb_id,
+                                        e.target.value as OrgDispositionAction,
+                                      )
+                                    }
+                                    containerClassName="w-full"
+                                  >
+                                    <option value="transfer">
+                                      {m.admin_users_wizard_transfer()}
+                                    </option>
+                                    <option value="delete">
+                                      {m.admin_users_delete()}
+                                    </option>
+                                  </Select>
+                                </div>
+                              </div>
+                              {d.action === 'transfer' && (
+                                <div className="mt-3 space-y-1.5 sm:ml-auto sm:max-w-sm">
+                                  <Label
+                                    htmlFor={transferId}
+                                    className="text-xs font-medium text-gray-600"
+                                  >
+                                    {m.admin_users_wizard_transfer_to()}
+                                  </Label>
+                                  <Select
+                                    id={transferId}
+                                    value={d.transferTo}
+                                    onChange={(e) =>
+                                      setOrgKbTransferTo(kb.kb_id, e.target.value)
+                                    }
+                                    containerClassName="w-full"
+                                  >
+                                    {eligibleReceivers.map((u) => (
+                                      <option
+                                        key={u.zitadel_user_id}
+                                        value={u.zitadel_user_id}
+                                      >
+                                        {u.first_name} {u.last_name} ({u.email})
+                                      </option>
+                                    ))}
+                                  </Select>
+                                </div>
+                              )}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </section>
+                  )}
+
+                  {personalKbs.length > 0 && (
+                    <section className="space-y-2">
+                      <h3 className="font-medium text-gray-900">
+                        {m.admin_users_wizard_personal_kbs({
+                          count: personalKbs.length,
+                        })}
+                      </h3>
+                      <ul className="divide-y divide-gray-200 border-y border-gray-200">
+                        {personalKbs.map((kb) => (
+                          <li
+                            key={kb.kb_id}
+                            className="flex items-center justify-between gap-3 py-4"
+                            data-test-id={`personal-kb-row-${kb.slug}`}
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate font-medium text-gray-900">
+                                {kb.name}
+                              </p>
+                              <p className="truncate text-xs text-gray-400">
+                                {kb.slug}
+                              </p>
+                            </div>
+                            <Badge
+                              variant="destructive"
+                              title={m.admin_users_wizard_personal_delete_hint()}
+                              className="shrink-0"
+                            >
+                              {m.admin_users_wizard_will_be_deleted()}
+                            </Badge>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+
+                  {orgKbs.length === 0 && personalKbs.length === 0 && (
+                    <p className="border-y border-gray-200 py-3 text-gray-600">
+                      {mode === 'delete'
+                        ? m.admin_users_delete_wizard_no_kbs()
+                        : m.admin_users_offboard_wizard_no_kbs()}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {step === 2 && (
+                <section className="space-y-3">
+                  <h3 className="font-medium text-gray-900">
+                    {m.admin_users_wizard_confirm_title()}
+                  </h3>
+                  <div className="divide-y divide-gray-200 border-y border-gray-200">
+                    <div className="flex items-center justify-between gap-4 py-3">
+                      <span className="text-gray-600">
+                        {m.admin_users_wizard_summary_transfer()}
+                      </span>
+                      <span className="font-medium text-gray-900">
+                        {transferCount}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 py-3">
+                      <span className="text-gray-600">
+                        {m.admin_users_wizard_summary_team_delete()}
+                      </span>
+                      <span className="font-medium text-gray-900">
+                        {orgDeleteCount}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 py-3">
+                      <span className="text-gray-600">
+                        {m.admin_users_wizard_summary_personal_delete()}
+                      </span>
+                      <span className="font-medium text-gray-900">
+                        {personalKbs.length}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 py-3">
+                      <span className="text-gray-600">
+                        {m.admin_users_wizard_tokens_label()}
+                      </span>
+                      <span className="font-medium text-gray-900">
+                        {tokensCount}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-sm text-[var(--color-destructive-text)]">
+                    {mode === 'delete'
+                      ? m.admin_users_delete_wizard_final_warning()
+                      : m.admin_users_offboard_wizard_final_warning()}
+                  </p>
+                </section>
+              )}
+            </div>
           </div>
         )}
 
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={isSubmitting}>Annuleren</AlertDialogCancel>
+        <DialogFooter>
+          {step > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setStep((current) => Math.max(current - 1, 0))}
+              disabled={isSubmitting}
+            >
+              {m.admin_users_wizard_back()}
+            </Button>
+          )}
           <Button
-            variant="destructive"
-            onClick={handleSubmit}
-            disabled={!isReady || isSubmitting || !!previewError}
+            type="button"
+            variant="outline"
+            onClick={() => handleOpenChange(false)}
+            disabled={isSubmitting}
+          >
+            {m.admin_users_cancel()}
+          </Button>
+          <Button
+            variant={isFinalStep ? 'destructive' : 'default'}
+            onClick={handlePrimaryAction}
+            disabled={!canGoNext || isSubmitting}
             data-test-id="offboard-submit-button"
           >
             {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            {mode === 'delete' ? m.admin_users_action_delete() : m.admin_users_action_offboard()}
+            {isFinalStep
+              ? mode === 'delete'
+                ? m.admin_users_action_delete()
+                : m.admin_users_action_offboard()
+              : m.admin_users_wizard_next()}
           </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
