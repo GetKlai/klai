@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Loader2, Send } from 'lucide-react'
+import { ArrowLeft, Loader2, Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -151,13 +151,9 @@ export function ConversationTimeline({
     <div className={cn('space-y-5', className)}>
       {days.map((bucket) => (
         <div key={bucket.day} className="space-y-4">
-          <div className="flex items-center gap-3">
-            <span className="h-px flex-1 bg-gray-200" />
-            <span className="shrink-0 text-xs text-gray-400">
-              {formatDaySeparator(bucket.at, locale)}
-            </span>
-            <span className="h-px flex-1 bg-gray-200" />
-          </div>
+          <p className="text-center text-xs text-gray-400">
+            {formatDaySeparator(bucket.at, locale)}
+          </p>
 
           {bucket.blocks.map((block, index) =>
             'label' in block ? (
@@ -254,6 +250,81 @@ export function ConversationComposer({
           {sendLabel}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Full conversation detail surface: header (title + optional badge/actions, with
+ * the back action on the right per ui-standards "Back Actions"), the timeline,
+ * and the composer. Shared by account "Mijn meldingen"/"Berichten" and the
+ * platform-admin messages tab so the master→detail-with-back flow is identical.
+ */
+export function ConversationPanel({
+  title,
+  subtitle,
+  badge,
+  headerActions,
+  entries,
+  loading = false,
+  locale,
+  emptyLabel,
+  draft,
+  onDraftChange,
+  onSend,
+  isSending = false,
+  composerDisabled = false,
+  placeholder,
+  sendLabel,
+  onBack,
+}: {
+  title: string
+  subtitle?: string
+  badge?: React.ReactNode
+  headerActions?: React.ReactNode
+  entries: ConversationEntry[]
+  loading?: boolean
+  locale: 'nl' | 'en'
+  emptyLabel?: string
+  draft: string
+  onDraftChange: (value: string) => void
+  onSend: () => void
+  isSending?: boolean
+  composerDisabled?: boolean
+  placeholder?: string
+  sendLabel: string
+  onBack: () => void
+}) {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="truncate text-base font-display-bold text-gray-900">{title}</h2>
+            {badge}
+          </div>
+          {subtitle && <p className="mt-1 text-xs text-gray-400">{subtitle}</p>}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {headerActions}
+          <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {m.account_conversation_back()}
+          </Button>
+        </div>
+      </div>
+
+      <ConversationTimeline entries={entries} locale={locale} loading={loading} emptyLabel={emptyLabel} />
+
+      <ConversationComposer
+        value={draft}
+        onChange={onDraftChange}
+        onSubmit={onSend}
+        isSubmitting={isSending}
+        disabled={composerDisabled}
+        placeholder={placeholder}
+        sendLabel={sendLabel}
+      />
     </div>
   )
 }

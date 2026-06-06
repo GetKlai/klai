@@ -70,6 +70,7 @@ function AdminLayout() {
     queryFn: () =>
       apiFetch<{
         new_feedback_count: number
+        unread_message_count: number
         chat_error_count: number
       }>(
         '/api/admin/platform/stats',
@@ -88,7 +89,9 @@ function AdminLayout() {
   const unlocked = me?.platform_unlocked_features ?? []
 
   const platformAlertCount =
-    (platformStats?.new_feedback_count ?? 0) + (platformStats?.chat_error_count ?? 0)
+    (platformStats?.new_feedback_count ?? 0) +
+    (platformStats?.unread_message_count ?? 0) +
+    (platformStats?.chat_error_count ?? 0)
 
   const adminNav = ADMIN_NAV_ITEMS.filter((item) => {
     if (!meetsMinRole(effectiveRole, item.minRole)) return false
