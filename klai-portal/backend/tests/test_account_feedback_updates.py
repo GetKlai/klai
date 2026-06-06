@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from app.api import app_account
 
@@ -409,3 +410,49 @@ async def test_account_platform_messages_reply_commits_after_service_helper(monk
     }
     assert result.message.body == "Dank voor je bericht."
     assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_account_edit_message_updates_own_message(monkeypatch):
+    now = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    message = SimpleNamespace(id=7, sender_type="user", sender_user_id="user-1", body="oud", created_at=now)
+    session = _Session([message])
+
+    async def fake_can_access(db, **_kwargs):
+        assert db is session
+        return True
+
+    monkeypatch.setattr(app_account, "user_can_access_thread", fake_can_access)
+
+    result = await app_account.edit_platform_message(
+        10,
+        7,
+        app_account.AccountPlatformMessageReplyIn(body="nieuw"),
+        perms=SimpleNamespace(org_id=1, user_id="user-1"),
+        db=session,
+    )
+
+    assert message.body == "nieuw"
+    assert result.message.body == "nieuw"
+    assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_account_edit_message_404_when_not_owned(monkeypatch):
+    # scalar_one_or_none() returns None -> the message is not the caller's own.
+    session = _Session([])
+
+    async def fake_can_access(db, **_kwargs):
+        return True
+
+    monkeypatch.setattr(app_account, "user_can_access_thread", fake_can_access)
+
+    with pytest.raises(HTTPException) as exc:
+        await app_account.edit_platform_message(
+            10,
+            7,
+            app_account.AccountPlatformMessageReplyIn(body="x"),
+            perms=SimpleNamespace(org_id=1, user_id="user-1"),
+            db=session,
+        )
+    assert exc.value.status_code == 404

@@ -201,6 +201,69 @@ def test_platform_message_thread_out_clears_unread_after_admin_reply():
     assert result.unread_for_admin is False
 
 
+def test_platform_message_thread_out_clears_unread_after_admin_opens_thread():
+    # Admin opened (read) the thread after the user's last message, without
+    # replying. The unread indicator must clear on read, not only on reply.
+    user_reply_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    admin_read_at = datetime(2026, 6, 6, 10, 30, tzinfo=UTC)
+
+    result = platform_messages._thread_out(
+        SimpleNamespace(
+            id=99,
+            org_id=42,
+            org_name="Acme",
+            org_slug="acme",
+            subject="Vraag over je feedback",
+            status="open",
+            origin_type="direct",
+            feedback_submission_id=None,
+            feedback_item_id=None,
+            recipient_count=1,
+            latest_message_body="Reactie",
+            latest_message_sender_type="user",
+            latest_message_at=user_reply_at,
+            latest_user_message_at=user_reply_at,
+            latest_admin_message_at=None,
+            admin_read_at=admin_read_at,
+            created_by="staff",
+            created_at=user_reply_at,
+        )
+    )
+
+    assert result.unread_for_admin is False
+
+
+def test_platform_message_thread_out_unread_when_user_replies_after_admin_read():
+    # A new user message after the admin's last read re-marks the thread unread.
+    admin_read_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    user_reply_at = datetime(2026, 6, 6, 11, 0, tzinfo=UTC)
+
+    result = platform_messages._thread_out(
+        SimpleNamespace(
+            id=99,
+            org_id=42,
+            org_name="Acme",
+            org_slug="acme",
+            subject="Vraag over je feedback",
+            status="open",
+            origin_type="direct",
+            feedback_submission_id=None,
+            feedback_item_id=None,
+            recipient_count=1,
+            latest_message_body="Nog een vraag",
+            latest_message_sender_type="user",
+            latest_message_at=user_reply_at,
+            latest_user_message_at=user_reply_at,
+            latest_admin_message_at=None,
+            admin_read_at=admin_read_at,
+            created_by="staff",
+            created_at=admin_read_at,
+        )
+    )
+
+    assert result.unread_for_admin is True
+
+
 @pytest.mark.asyncio
 async def test_platform_message_thread_reply_uses_thread_org(monkeypatch):
     session = _Session()

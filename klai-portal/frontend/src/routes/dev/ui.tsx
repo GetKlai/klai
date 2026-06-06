@@ -259,7 +259,7 @@ const conversationEntries: ConversationEntry[] = [
   { id: 'a1', side: 'them', author: 'Klai team', body: 'Bedankt voor je melding — we kijken ernaar.', at: '2026-06-04T09:40:00Z' },
   { id: 'a2', side: 'them', author: 'Klai team', body: 'Dit is opgelost in de release van vanochtend. Wil je het nog even checken?', at: '2026-06-05T11:03:00Z' },
   { type: 'system', id: 's1', label: 'Door het Klai-team gemarkeerd als opgelost', at: '2026-06-05T11:03:30Z' },
-  { id: 'r2', side: 'me', author: 'Jij', body: 'Top, het werkt weer. Bedankt!', at: '2026-06-05T11:20:00Z' },
+  { id: 'r2', side: 'me', author: 'Jij', body: 'Top, het werkt weer. Bedankt!', at: '2026-06-05T11:20:00Z', editable: true },
 ]
 const dividerListGrid = 'lg:grid-cols-[minmax(0,1fr)_144px]'
 
@@ -792,7 +792,11 @@ function UiCatalogPage() {
 
       <Section title="Conversation">
         <div className="max-w-xl space-y-5">
-          <ConversationTimeline entries={conversationEntries} locale="nl" />
+          <ConversationTimeline
+            entries={conversationEntries}
+            locale="nl"
+            onEditMessage={() => {}}
+          />
           <ConversationComposer
             value={conversationDraft}
             onChange={setConversationDraft}
@@ -803,9 +807,10 @@ function UiCatalogPage() {
           <p className="text-xs text-gray-400">
             Eén rustige tijdlijn: gegroepeerd per afzender en dag, met
             dag-scheiders en stille systeemregels (statuswijzigingen). Eigen
-            berichten rechts (cream), Klai-team links (wit met rand). De composer
-            verstuurt met Cmd/Ctrl + Enter. Gedeeld door account-meldingen en de
-            Berichten-tab.
+            berichten rechts (cream), Klai-team links (wit met rand). Eigen
+            (editable) berichten tonen op hover een potlood voor inline bewerken
+            (Save/Cancel via InlineRowButton). De composer verstuurt met
+            Cmd/Ctrl + Enter. Gedeeld door account-meldingen en de Berichten-tab.
           </p>
         </div>
       </Section>

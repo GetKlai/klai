@@ -243,6 +243,15 @@ export function usePlatformReplyMessageThread() {
   })
 }
 
+export function usePlatformMarkMessageThreadRead() {
+  const opts = usePlatformMessageMutation()
+  return useMutation({
+    mutationFn: async (threadId: number) =>
+      apiFetch(`/api/admin/platform/messages/threads/${threadId}/read`, { method: 'POST' }),
+    onSuccess: opts.onSuccess,
+  })
+}
+
 export function usePlatformUpdateMessageThreadStatus() {
   const opts = usePlatformMessageMutation()
   return useMutation({

@@ -703,6 +703,47 @@ async def reply_to_platform_message_thread(
     return result
 
 
+@router.patch("/messages/{thread_id}/messages/{message_id}", response_model=AccountPlatformMessageReplyOut)
+async def edit_platform_message(
+    thread_id: int,
+    message_id: int,
+    body: AccountPlatformMessageReplyIn,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountPlatformMessageReplyOut:
+    """Edit one of the caller's own messages in a thread they participate in."""
+    text = body.body.strip()
+    if len(text) < 1 or len(text) > 4000:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message body must be 1-4000 characters")
+    if not await user_can_access_thread(db, thread_id=thread_id, org_id=perms.org_id, user_id=perms.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found")
+    message = (
+        await db.execute(
+            select(PlatformMessage).where(
+                PlatformMessage.id == message_id,
+                PlatformMessage.thread_id == thread_id,
+                PlatformMessage.org_id == perms.org_id,
+                PlatformMessage.sender_type == "user",
+                PlatformMessage.sender_user_id == perms.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if message is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    message.body = text
+    result = AccountPlatformMessageReplyOut(
+        message=AccountPlatformMessageOut(
+            id=message.id,
+            sender_type=message.sender_type,
+            sender_user_id=message.sender_user_id,
+            body=message.body,
+            created_at=message.created_at,
+        )
+    )
+    await db.commit()
+    return result
+
+
 @router.post("/messages/{thread_id}/read", response_model=AccountPlatformMessageReadResponse)
 async def mark_platform_message_read(
     thread_id: int,

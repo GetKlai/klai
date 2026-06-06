@@ -66,7 +66,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `tooltip` | Hover/focus tooltips (used by `row-action`) | Yes |
 | `sonner` | Toasts (`toast()` feedback) | Yes |
 | `card` | Framed repeated items / stat blocks | Yes |
-| `conversation` | Message timeline + composer (`ConversationTimeline`, `ConversationComposer`): sender-grouped bubbles, day separators, quiet system lines, Cmd/Enter send. Shared by account "Mijn meldingen" + "Berichten" (and reusable by admin) | Yes |
+| `conversation` | Message timeline + composer + panel (`ConversationTimeline`, `ConversationComposer`, `ConversationPanel`): sender-grouped bubbles, day separators, quiet system lines, Cmd/Enter send, inline edit of own messages, back-right header. Shared by account "Mijn meldingen" + "Berichten" and the platform-admin messages tab | Yes |
 | `stat-card` | Metric tile (`StatCard`): uppercase label + large tabular value + optional sub. Sizes default/sm, `tone` (default/warning/destructive), `alert` frame, optional `onClick` to navigate | Yes |
 | `query-error-state` | Standard error block for failed queries | Yes |
 | `sheet` | Slide-over. **Forbidden** for admin entity detail (see Detail And Edit) | Restricted |
@@ -790,6 +790,10 @@ Rules (do not regress these):
   banner.
 - **The composer sends on Cmd/Ctrl + Enter**, clears on success, and the caller
   must surface send failures (toast) without discarding the typed text.
+- **Inline edit of own messages**: pass `onEditMessage(id, body)` and mark the
+  caller's own entries `editable`. A pencil appears on hover on the own bubble;
+  it swaps to a textarea with Save/Cancel via `InlineRowButton` (Cmd/Enter saves,
+  Esc cancels). Only `me`-side editable entries show it. No "(edited)" marker.
 - A feedback/melding conversation renders the original report and the Klai
   resolution as the first entries in the same timeline, so the report, the
   "opgelost" reply, and any follow-up read as one thread — not three stacked
