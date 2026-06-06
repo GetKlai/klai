@@ -111,12 +111,13 @@ async def test_platform_message_thread_create_uses_platform_admin_context(monkey
 
 
 def test_platform_message_thread_search_query_compiles_with_recipient_join():
-    query = platform_messages._thread_select().outerjoin(
-        platform_messages.PlatformMessageParticipant,
-        platform_messages.PlatformMessageParticipant.thread_id
-        == platform_messages.PlatformMessageThread.id,
-    ).where(
-        platform_messages.PlatformMessageParticipant.recipient_display_name.ilike("%jelle%")
+    query = (
+        platform_messages._thread_select()
+        .outerjoin(
+            platform_messages.PlatformMessageParticipant,
+            platform_messages.PlatformMessageParticipant.thread_id == platform_messages.PlatformMessageThread.id,
+        )
+        .where(platform_messages.PlatformMessageParticipant.recipient_display_name.ilike("%jelle%"))
     )
 
     compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
