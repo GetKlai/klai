@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import {
   RowActionGroup,
-  RowActionIconButton,
   BorderedRowActionIconButton,
 } from '@/components/ui/row-action'
 import {
@@ -172,7 +171,7 @@ function AdminGroupDetail() {
         </div>
         <div className="flex items-center gap-2">
           {!groupData.is_system && (
-            <RowActionIconButton
+            <BorderedRowActionIconButton
               action="edit"
               label={m.admin_groups_edit()}
               onClick={() =>
