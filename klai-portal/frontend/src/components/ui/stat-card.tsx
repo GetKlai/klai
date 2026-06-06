@@ -32,9 +32,8 @@ export interface StatCardProps {
 
 /**
  * A metric tile: uppercase label + large tabular value + optional sub-line.
- * The single source for the portal's stat cards (was the platform-only
- * `PlatformStatCard` / `PlatformMiniStat`). Use `size="sm"` for compact inline
- * stats. Clickable cards that navigate to a matching tab pass `onClick`.
+ * Use `size="sm"` for compact inline stats. Clickable cards that navigate to a
+ * matching tab pass `onClick`.
  */
 function StatCard({
   label,
