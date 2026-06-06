@@ -349,6 +349,61 @@ async def assert_platform_messages_rls_ready() -> None:
             )
 
 
+async def assert_product_updates_rls_ready() -> None:
+    """Fail-loud at startup if product update read-state RLS is incomplete."""
+    tables = (
+        "product_updates",
+        "product_update_reads",
+    )
+    required_policies = {
+        "product_updates": {
+            "product_updates_select",
+            "product_updates_insert",
+        },
+        "product_update_reads": {
+            "product_update_reads_select",
+            "product_update_reads_insert",
+        },
+    }
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity, "
+                "array_agg(p.polname ORDER BY p.polname) FILTER (WHERE p.polname IS NOT NULL) AS policies "
+                "FROM pg_class c "
+                "LEFT JOIN pg_policy p ON p.polrelid = c.oid "
+                "WHERE c.relname = ANY(:tables) AND c.relkind = 'r' "
+                "GROUP BY c.relname, c.relrowsecurity, c.relforcerowsecurity"
+            ),
+            {"tables": list(tables)},
+        )
+        rows = {row.relname: row for row in result.fetchall()}
+
+    for table in tables:
+        row = rows.get(table)
+        if row is None:
+            raise RuntimeError(
+                f"Startup RLS check: table '{table}' not found. "
+                "Apply the product updates migration and post-deploy RLS SQL."
+            )
+        if not row.relrowsecurity:
+            raise RuntimeError(
+                f"Startup RLS check: '{table}' has ENABLE ROW LEVEL SECURITY = FALSE. "
+                "Run post_deploy_p1r2o3d4u5p6_product_updates_rls.sql and restart portal-api."
+            )
+        if not row.relforcerowsecurity:
+            raise RuntimeError(
+                f"Startup RLS check: '{table}' has FORCE ROW LEVEL SECURITY = FALSE. "
+                "Run post_deploy_p1r2o3d4u5p6_product_updates_rls.sql and restart portal-api."
+            )
+        missing = required_policies[table] - set(row.policies or [])
+        if missing:
+            raise RuntimeError(
+                f"Startup RLS check: '{table}' is missing product update policies: {sorted(missing)}. "
+                "Run post_deploy_p1r2o3d4u5p6_product_updates_rls.sql and restart portal-api."
+            )
+
+
 @contextlib.asynccontextmanager
 async def tenant_scoped_session(org_id: int) -> AsyncIterator[AsyncSession]:
     """Yield an RLS-aware session for background tasks and fire-and-forget writes.

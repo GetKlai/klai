@@ -107,9 +107,20 @@ END $$;
 -- layer (redirect_uri allowlist + per-IP rate-limit on DCR endpoint).
 SELECT COUNT(*) AS oauth_clients_no_tenant FROM portal_oauth_clients;
 
-SELECT '=== Test 9: cleanup ===' AS test;
+SELECT '=== Test 9: product updates read-state ===' AS test;
+SELECT COUNT(*) AS product_updates_no_tenant FROM product_updates;
+DO $$
+BEGIN
+    BEGIN
+        PERFORM COUNT(*) FROM product_update_reads;
+        RAISE EXCEPTION 'RLS SMOKE FAILURE: SELECT on product_update_reads without tenant context did not raise';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK: product_update_reads raised insufficient_privilege as expected';
+    END;
+END $$;
+
+SELECT '=== Test 10: cleanup ===' AS test;
 SELECT set_config('app.current_org_id', '', false);
 SELECT set_config('app.cross_org_admin', '', false);
 
 SELECT 'RLS smoke test complete — all assertions passed' AS result;
-

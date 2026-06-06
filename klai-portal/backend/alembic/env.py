@@ -11,6 +11,7 @@ from app.models.base import Base
 from app.models.groups import PortalGroup, PortalGroupMembership  # noqa: F401 - registers models
 from app.models.mcp_oauth import PortalMcpToken, PortalOAuthClient  # noqa: F401 - registers models
 from app.models.portal import PortalOrg, PortalUser  # noqa: F401 - registers models
+from app.models.product_updates import ProductUpdate, ProductUpdateRead  # noqa: F401 - registers models
 from app.models.products import PortalUserProduct  # noqa: F401 - registers models
 from app.models.shield import PortalShieldLog, PortalShieldToken  # noqa: F401 - registers models
 
