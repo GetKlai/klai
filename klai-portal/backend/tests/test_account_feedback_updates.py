@@ -128,7 +128,7 @@ class _MessageSession:
     async def __aexit__(self, *_exc):
         return None
 
-    async def execute(self, _query):
+    async def execute(self, _query, *_args, **_kwargs):
         return _Result(self.rows)
 
     def add(self, row):
@@ -306,6 +306,9 @@ async def test_account_platform_messages_returns_only_current_user_threads():
     compiled = str(session.queries[0].compile(compile_kwargs={"literal_binds": True}))
     assert "platform_message_participants.org_id = 42" in compiled
     assert "platform_message_participants.user_id = 'user-123'" in compiled
+    # Berichten shows direct messages only; feedback-linked threads live under
+    # "Mijn meldingen" so a feedback reply never double-surfaces here.
+    assert "platform_message_threads.origin_type = 'direct'" in compiled
 
 
 def test_account_platform_message_query_compiles_without_auto_correlation():
