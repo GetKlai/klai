@@ -11,6 +11,7 @@ on:
       - 'deploy/searxng/settings.yml'             # SPEC-INFRA-CONFIG-SYNC-001 R3 — searxng search config
       - 'deploy/vexa/profiles.yaml'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — vexa runtime-api meeting-bot profiles
       - 'deploy/librechat/klai-entrypoint.sh'     # force light theme — synced before librechat-getklai recreate
+      - 'deploy/librechat/getklai/patches/**'     # getklai-only LibreChat canary patches
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
       - 'deploy/scripts/**'                       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — deploy scripts synced to /opt/klai/scripts
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
@@ -69,6 +70,7 @@ jobs:
               deploy/searxng/settings.yml \
               deploy/vexa/profiles.yaml \
               deploy/librechat/klai-entrypoint.sh \
+              deploy/librechat/getklai/patches \
               deploy/grafana/provisioning \
               deploy/scripts \
               deploy/systemd \
@@ -96,6 +98,9 @@ jobs:
             done
             test -x /opt/klai/scripts/backup.sh
             test -x /opt/klai/scripts/push-health.sh
+
+            mkdir -p /opt/klai/librechat/getklai/patches
+            rsync -a --delete deploy/librechat/getklai/patches/ /opt/klai/librechat/getklai/patches/
 
             # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-5 + REQ-6: sync systemd
             # units. Activation requires sudo and is one-time per host —

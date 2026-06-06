@@ -320,7 +320,7 @@ services:
 
   # ─── LibreChat (tenant: getklai) ─────────────────────────────────────────
   librechat-getklai:
-    image: ghcr.io/danny-avila/librechat:v0.8.5-rc1
+    image: ghcr.io/danny-avila/librechat:v0.8.6
     container_name: librechat-getklai
     restart: unless-stopped
     # Force light theme via the Klai entrypoint wrapper (LibreChat has no
@@ -342,11 +342,11 @@ services:
       - ./librechat/getklai/images:/app/client/public/images
       - ./librechat/klai-entrypoint.sh:/klai-entrypoint.sh:ro
       # Persistent patches - survive image updates until fixed upstream
-      - ./librechat/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
-      - ./librechat/patches/share.js:/app/api/server/routes/share.js:ro
-      - ./librechat/patches/stream.cjs:/app/node_modules/@librechat/agents/dist/cjs/stream.cjs:ro
-      - ./librechat/patches/search.cjs:/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs:ro
-      - ./librechat/patches/createStreamServices.ts:/app/packages/api/src/stream/createStreamServices.ts:ro
+      - ./librechat/getklai/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
+      - ./librechat/getklai/patches/share.js:/app/api/server/routes/share.js:ro
+      - ./librechat/getklai/patches/stream.cjs:/app/node_modules/@librechat/agents/dist/cjs/stream.cjs:ro
+      - ./librechat/getklai/patches/search.cjs:/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs:ro
+      - ./librechat/getklai/patches/createStreamServices.ts:/app/packages/api/src/stream/createStreamServices.ts:ro
     depends_on:
       mongodb:
         condition: service_healthy
