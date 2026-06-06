@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import cross_org_session, get_db
@@ -419,6 +420,13 @@ async def reply_to_feedback_update(
     subject_text = feedback_row.item_title or (fallback_subject_lines[0] if fallback_subject_lines else "")
     subject = subject_text[:256] or "Feedback follow-up"
     async with cross_org_session() as message_db:
+        # Serialize concurrent first-replies for the same submission (double-click,
+        # two tabs) so they can't each create a thread. The advisory lock is held
+        # until this transaction commits; the second caller then finds the thread.
+        await message_db.execute(
+            sa_text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": submission_id},
+        )
         existing_thread = (
             (
                 await message_db.execute(
@@ -616,6 +624,10 @@ async def get_platform_messages(
             .where(
                 PlatformMessageParticipant.org_id == perms.org_id,
                 PlatformMessageParticipant.user_id == perms.user_id,
+                # Direct admin-initiated messages only. Feedback-linked threads
+                # live under "Mijn meldingen" — keep the two surfaces separate
+                # so a feedback reply never double-surfaces here.
+                PlatformMessageThread.origin_type == "direct",
             )
             .order_by(PlatformMessageThread.last_message_at.desc())
             .limit(safe_limit)
