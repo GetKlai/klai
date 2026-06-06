@@ -1,7 +1,7 @@
 """Tests for the templates-injection path in deploy/litellm/klai_knowledge.py.
 
-Pytest-discoverable locally when run from this directory:
-    pytest deploy/litellm/test_klai_knowledge_templates.py
+Pytest-discoverable via the standard LiteLLM test scope:
+    pytest deploy/litellm/tests
 
 These tests are pure-function and mocked-httpx: they don't need Redis,
 Postgres or running portal-api. They cover SPEC-CHAT-TEMPLATES-001
@@ -19,12 +19,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 os.environ.setdefault("KNOWLEDGE_RETRIEVE_URL", "http://retrieval-api:8040/retrieve")
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # litellm is not installed in the portal-api backend venv. The hook ships
 # inside the LiteLLM container where CustomLogger is available. Stub the
-# minimum surface we need so the module imports cleanly in CI.
-if "litellm" not in sys.modules:
+# minimum surface we need so the module imports cleanly in CI. Other tests
+# clean these module names from sys.modules, so this must be callable per test.
+def _install_litellm_stub() -> None:
     litellm = types.ModuleType("litellm")
     integrations = types.ModuleType("litellm.integrations")
     custom_logger = types.ModuleType("litellm.integrations.custom_logger")
@@ -36,6 +37,9 @@ if "litellm" not in sys.modules:
     sys.modules["litellm"] = litellm
     sys.modules["litellm.integrations"] = integrations
     sys.modules["litellm.integrations.custom_logger"] = custom_logger
+
+
+_install_litellm_stub()
 
 
 class _FakeCache:
@@ -53,6 +57,7 @@ class _FakeCache:
 
 @pytest.fixture(autouse=True)
 def _set_secret(monkeypatch):
+    _install_litellm_stub()
     import klai_knowledge
 
     monkeypatch.setattr(klai_knowledge, "PORTAL_INTERNAL_SECRET", "test-secret")
