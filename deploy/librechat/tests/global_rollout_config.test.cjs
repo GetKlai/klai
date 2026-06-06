@@ -24,6 +24,7 @@ assert.match(entrypoint, /\[role="contentinfo"\]\{display:none!important\}/);
 assert.match(workflow, /deploy\/librechat\/klai-entrypoint\.sh/);
 assert.match(workflow, /cp deploy\/librechat\/klai-entrypoint\.sh \/opt\/klai\/librechat\/klai-entrypoint\.sh/);
 assert.match(workflow, /recreate_containers=true/);
+assert.match(workflow, /timeout=600\.0/);
 assert.match(drift, /LIBRECHAT_IMAGE="\$\{LIBRECHAT_IMAGE:-ghcr\.io\/danny-avila\/librechat:v0\.8\.6\}"/);
 assert.match(portalConfig, /librechat_image: str = "ghcr\.io\/danny-avila\/librechat:v0\.8\.6"/);
 

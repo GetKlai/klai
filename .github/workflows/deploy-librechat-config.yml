@@ -79,7 +79,7 @@ jobs:
                         "Authorization": f"Bearer {secret}",
                         "Content-Type": "application/json",
                     },
-                    timeout=120.0,
+                    timeout=600.0,
                 )
                 print(r.status_code)
                 print(r.text)
