@@ -105,7 +105,6 @@ class PlatformOrg(BaseModel):
     platform_unlocked_features: list[str] = Field(default_factory=list)
     billing_status: str
     billing_cycle: str
-    seats: int
     provisioning_status: str
     user_count: int
     bot_count: int
@@ -646,7 +645,7 @@ async def platform_organizations(
             result = await db.execute(
                 text(
                     "SELECT o.id, o.name, o.slug, o.plan, o.billing_status, "
-                    "o.platform_unlocked_features, o.billing_cycle, o.seats, o.provisioning_status, o.created_at, "
+                    "o.platform_unlocked_features, o.billing_cycle, o.provisioning_status, o.created_at, "
                     "(SELECT COUNT(*) FROM portal_users u "
                     "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
                     "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count, "
@@ -663,7 +662,7 @@ async def platform_organizations(
             result = await db.execute(
                 text(
                     "SELECT o.id, o.name, o.slug, o.plan, o.billing_status, "
-                    "o.platform_unlocked_features, o.billing_cycle, o.seats, o.provisioning_status, o.created_at, "
+                    "o.platform_unlocked_features, o.billing_cycle, o.provisioning_status, o.created_at, "
                     "(SELECT COUNT(*) FROM portal_users u "
                     "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
                     "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count, "
@@ -686,7 +685,6 @@ async def platform_organizations(
             platform_unlocked_features=list(r.platform_unlocked_features or []),
             billing_status=r.billing_status,
             billing_cycle=r.billing_cycle,
-            seats=r.seats,
             provisioning_status=r.provisioning_status,
             user_count=r.user_count,
             bot_count=r.bot_count,
@@ -709,7 +707,7 @@ async def platform_org_detail(
             await db.execute(
                 text(
                     "SELECT o.id, o.name, o.slug, o.plan, o.billing_status, "
-                    "o.platform_unlocked_features, o.billing_cycle, o.seats, o.provisioning_status, o.created_at, "
+                    "o.platform_unlocked_features, o.billing_cycle, o.provisioning_status, o.created_at, "
                     "(SELECT COUNT(*) FROM portal_users u "
                     "  WHERE u.org_id = o.id AND u.status <> 'offboarded') AS user_count, "
                     "(SELECT COUNT(*) FROM widgets w WHERE w.org_id = o.id) AS bot_count, "
@@ -785,7 +783,6 @@ async def platform_org_detail(
         platform_unlocked_features=list(org_row.platform_unlocked_features or []),
         billing_status=org_row.billing_status,
         billing_cycle=org_row.billing_cycle,
-        seats=org_row.seats,
         provisioning_status=org_row.provisioning_status,
         user_count=org_row.user_count,
         bot_count=org_row.bot_count,

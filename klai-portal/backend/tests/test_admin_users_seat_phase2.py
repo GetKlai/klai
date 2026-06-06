@@ -50,7 +50,6 @@ async def test_invite_user_default_seat_from_role(role: str, expected_default_se
 
     org = MagicMock()
     org.id = 101
-    org.seats = 100
     org.plan = "knowledge"  # allow every role for this test matrix
     mock_db = AsyncMock()
     locked = MagicMock()
@@ -107,7 +106,6 @@ async def test_invite_user_ignores_client_supplied_seat_override() -> None:
 
     org = MagicMock()
     org.id = 101
-    org.seats = 100
     org.plan = "knowledge"
     mock_db = AsyncMock()
     locked = MagicMock()

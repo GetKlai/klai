@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg
-from app.services.moneybird import MoneybirdService
 from app.services.widget_handoff import record_hubspot_agent_reply
 
 logger = logging.getLogger(__name__)
@@ -182,26 +181,11 @@ async def moneybird_webhook(
             result = await db.execute(select(PortalOrg).where(PortalOrg.moneybird_contact_id == contact_id))
             org = result.scalar_one_or_none()
             if org:
-                try:
-                    product_id = settings.moneybird_product_id(org.plan, org.billing_cycle)
-                except ValueError as exc:
-                    logger.exception("Moneybird product ID ontbreekt: %s", exc)
-                    return Response(status_code=200)
-
-                frequency_type = "yearly" if org.billing_cycle == "yearly" else "monthly"
-                moneybird = MoneybirdService(settings)
-                try:
-                    subscription = await moneybird.create_subscription(
-                        contact_id, product_id, frequency_type, quantity=org.seats
-                    )
-                    org.moneybird_subscription_id = str(subscription["id"])
-                except RuntimeError as exc:
-                    logger.exception("Moneybird create_subscription failed: %s", exc)
-                finally:
-                    await moneybird.close()
-
-                org.billing_status = "active"
-                await db.commit()
+                logger.warning(
+                    "Ignoring Moneybird mandate success for org %d: legacy single-tier "
+                    "subscription creation has been removed",
+                    org.id,
+                )
 
     elif event == "subscription_cancelled":
         contact_id = str(payload.get("entity", {}).get("contact_id", ""))

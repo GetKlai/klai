@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { apiFetch } from '@/lib/apiFetch'
 import { adminLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
-import { formatEur } from '../-_billing-helpers'
+import { getLocale } from '@/paraglide/runtime'
 
 type SeatTier = 'chat' | 'knowledge'
 
@@ -71,6 +71,14 @@ function billingBreakdownReducer(
 function seatLabel(tier: SeatTier): string {
   if (tier === 'chat') return m.admin_billing_breakdown_account_chat()
   return m.admin_billing_breakdown_account_knowledge()
+}
+
+function formatEur(amount: number): string {
+  return new Intl.NumberFormat(getLocale(), {
+    style: 'currency',
+    currency: 'EUR',
+    maximumFractionDigits: 0,
+  }).format(amount)
 }
 
 export function BillingBreakdownSection() {

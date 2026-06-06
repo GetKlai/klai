@@ -481,10 +481,9 @@ async def invite_user(
     #     role independently of plan; mismatches with the assigned seat
     #     are surfaced as a non-blocking warning in the invite modal
     #     (AC-5) and reconciled in Phase 4's capability resolver.
-    #   * ``if active_count >= org.seats: raise 409 Seat limit reached``:
-    #     the hard seat-cap is gone. Headcount is derived from active
-    #     users via /admin/billing/breakdown; Phase 5 prorates the bill
-    #     from portal_user_seat_history per active seat per day.
+    #   * the hard org-level seat cap is gone. Headcount is derived from
+    #     active users via /admin/billing/breakdown; Phase 5 prorates the
+    #     bill from portal_user_seat_history per active seat per day.
     # Both removals are guarded by ``rules/no-portal-plan-gate.yml`` (ast-
     # grep) so a future refactor cannot silently reintroduce them.
 
