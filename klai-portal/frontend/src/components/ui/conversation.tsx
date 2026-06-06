@@ -214,8 +214,21 @@ export function ConversationTimeline({
   )
 }
 
-/** Inline message editor that auto-grows to its content so the timeline does
- *  not jump when a (possibly long) bubble is swapped for the textarea. */
+// Shared bubble geometry. The real bubble, and the ghost that sizes the inline
+// editor, MUST use the exact same text-box classes — keeping them in one place
+// is what makes the editor truly zero-shift (and keeps them from drifting).
+const BUBBLE_TEXT = 'whitespace-pre-wrap break-words px-3.5 py-2 text-sm leading-relaxed'
+const ME_BUBBLE = 'rounded-2xl rounded-br-md bg-[var(--color-secondary)] text-[var(--color-foreground)]'
+const THEM_BUBBLE = 'rounded-2xl rounded-bl-md border border-[var(--color-border)] bg-white text-[var(--color-foreground)]'
+
+/**
+ * Inline message editor with zero layout shift (ui-standards "Inline Edit").
+ * An invisible ghost copy of the text defines the exact same box the bubble
+ * occupied (shrink-to-fit width, identical wrap and height); the textarea is
+ * painted absolutely on top. Editing never moves the message — only the
+ * Save/Cancel row is added below. The ghost grows with the draft, so the box
+ * keeps matching as you type.
+ */
 function MessageEditor({
   value,
   onChange,
@@ -227,37 +240,42 @@ function MessageEditor({
   onSave: () => void
   onCancel: () => void
 }) {
-  const ref = React.useRef<HTMLTextAreaElement | null>(null)
-  React.useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
-  }, [value])
+  function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault()
+      onSave()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      onCancel()
+    }
+  }
   return (
-    <div className="w-full max-w-[85%] self-end">
-      {/* Box matches the own-message bubble exactly (same padding, line-height,
-          radius, fill, borderless) so swapping bubble→editor causes no shift;
-          the focus ring is a box-shadow and adds no layout height. */}
-      <Textarea
-        ref={ref}
-        value={value}
-        rows={1}
-        maxLength={4000}
-        autoFocus
-        className="max-h-[60vh] resize-none overflow-y-auto rounded-2xl rounded-br-md border-0 bg-[var(--color-secondary)] px-3.5 py-2 leading-relaxed"
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-            event.preventDefault()
-            onSave()
-          } else if (event.key === 'Escape') {
-            event.preventDefault()
-            onCancel()
-          }
-        }}
-      />
-      <div className="mt-1 flex justify-end gap-2">
+    <div className="flex max-w-[85%] flex-col items-end gap-1 self-end">
+      <div
+        className={cn(
+          'relative max-h-[60vh] overflow-hidden focus-within:ring-2 focus-within:ring-[var(--color-ring)]',
+          ME_BUBBLE,
+        )}
+      >
+        {/* Ghost: invisible, defines the box. Trailing ZWSP keeps a final empty
+            line from collapsing the height. */}
+        <div aria-hidden className={cn(BUBBLE_TEXT, 'invisible')}>
+          {value + '​'}
+        </div>
+        <textarea
+          value={value}
+          maxLength={4000}
+          autoFocus
+          aria-label={m.account_conversation_edit()}
+          className={cn(
+            BUBBLE_TEXT,
+            'absolute inset-0 resize-none overflow-y-auto border-0 bg-transparent text-[var(--color-foreground)] outline-none',
+          )}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </div>
+      <div className="flex justify-end gap-2">
         <InlineRowButton tone="success" onClick={onSave}>
           <Check />
           {m.admin_shared_save()}
@@ -329,14 +347,7 @@ function MessageGroupView({
                 <Pencil className="h-3.5 w-3.5" />
               </button>
             )}
-            <div
-              className={cn(
-                'whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
-                isMe
-                  ? 'rounded-br-md bg-[var(--color-secondary)] text-[var(--color-foreground)]'
-                  : 'rounded-bl-md border border-[var(--color-border)] bg-white text-[var(--color-foreground)]',
-              )}
-            >
+            <div className={cn(BUBBLE_TEXT, isMe ? ME_BUBBLE : THEM_BUBBLE)}>
               {message.body}
             </div>
           </div>
