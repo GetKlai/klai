@@ -222,7 +222,6 @@ def make_org(
     org.moneybird_subscription_id = "ms-test-123"
     org.moneybird_contact_id = "mc-test-123"
     org.billing_cycle = "monthly"
-    org.seats = 5
     org.billing_status = "active"
     org.mcp_servers = []
     return org

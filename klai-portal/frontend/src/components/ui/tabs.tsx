@@ -1,9 +1,10 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
-export type TabCountTone = 'success' | 'warning' | 'destructive' | 'info'
+export type TabCountTone = 'neutral' | 'success' | 'warning' | 'destructive' | 'info'
 
 const tabCountToneClass: Record<TabCountTone, string> = {
+  neutral: 'bg-gray-100 text-gray-600',
   success: 'bg-[var(--color-success)]',
   warning: 'bg-[var(--color-warning)]',
   destructive: 'bg-[var(--color-destructive)]',
@@ -17,7 +18,7 @@ export interface TabItem<T extends string = string> {
   icon?: React.ElementType
   /** Optional trailing count badge. Only shown when > 0. */
   count?: number
-  /** Tone of the count badge. Defaults to `success`. */
+  /** Tone of the count badge. Defaults to neutral. */
   countTone?: TabCountTone
   /** Accessible label for the count badge (e.g. "3 unread"). */
   countLabel?: string
@@ -104,8 +105,9 @@ function Tabs<T extends string>({ tabs, value, onValueChange, className, ...prop
               <span
                 aria-label={tab.countLabel}
                 className={cn(
-                  'ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium leading-5 text-white',
-                  tabCountToneClass[tab.countTone ?? 'success'],
+                  'ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium leading-5',
+                  tab.countTone && tab.countTone !== 'neutral' ? 'text-white' : null,
+                  tabCountToneClass[tab.countTone ?? 'neutral'],
                 )}
               >
                 {tab.count}

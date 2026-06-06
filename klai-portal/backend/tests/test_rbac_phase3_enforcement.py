@@ -244,16 +244,11 @@ class TestPlanCeilingGoneOnRoleAssignment:
 
     @pytest.mark.asyncio
     async def test_invite_user_no_seat_cap(self):
-        """SPEC AC-2: inviting the (N+1)th user on an org with
-        ``seats = N`` succeeds. Bill rolls up from active user count per
-        seat tier (Phase 5), not from ``org.seats``.
-        """
+        """SPEC AC-2: inviting another user does not check an org-level seat cap."""
         from app.api.admin.users import InviteRequest, invite_user
 
         org = MagicMock()
         org.id = 101
-        # Hard cap of 5 — pre-Phase-3 this would 409 once active >= 5.
-        org.seats = 5
         org.plan = "knowledge"
 
         mock_db = AsyncMock()

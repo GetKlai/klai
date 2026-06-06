@@ -67,19 +67,15 @@ export function TelemetrySettingsSection({
                 <option value="full">{m.admin_settings_telemetry_full_name()}</option>
               </Select>
               <p className="text-xs text-gray-400">
-                {selectedTelemetry === 'off' && m.admin_settings_telemetry_off_hint()}
-                {selectedTelemetry === 'shadow' && m.admin_settings_telemetry_shadow_hint()}
-                {selectedTelemetry === 'full' && m.admin_settings_telemetry_full_hint()}
+                {m.admin_settings_telemetry_help()}{' '}
+                <a href="/privacy" className="underline">
+                  {m.admin_settings_telemetry_privacy_link()}
+                </a>
               </p>
             </div>
             {telemetryMutation.error && (
               <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
             )}
-            <p className="text-xs text-gray-400">
-              <a href="/privacy" className="underline">
-                {m.admin_settings_telemetry_privacy_link()}
-              </a>
-            </p>
             <div className="pt-2">
               <Button
                 type="submit"

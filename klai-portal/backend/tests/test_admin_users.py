@@ -144,7 +144,6 @@ async def test_invite_user_grants_portal_role_to_zitadel(
 
     org = MagicMock()
     org.id = 101
-    org.seats = 100  # plenty of headroom; do not trip seat limit
     # The role→Zitadel-grant mapping does not depend on plan; pick the plan
     # that allows every role in the parametrize matrix so the role-mapping
     # assertion is the one under test, not the plan ceiling. REQ-12/REQ-13
@@ -975,7 +974,6 @@ async def test_invite_user_creates_personal_kb_before_commit() -> None:
 
     org = MagicMock()
     org.id = 8  # arbitrary
-    org.seats = 100
     # Plan must allow ``kb_manager`` for the role-mapping branch to be the
     # one under test; REQ-12/REQ-13 plan ceiling is covered separately.
     org.plan = "knowledge"

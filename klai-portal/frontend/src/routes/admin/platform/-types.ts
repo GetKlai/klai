@@ -43,7 +43,6 @@ export interface PlatformOrg {
   platform_unlocked_features: string[]
   billing_status: string
   billing_cycle: string
-  seats: number
   provisioning_status: string
   user_count: number
   bot_count: number
