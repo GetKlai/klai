@@ -126,7 +126,7 @@ mounts:
     kind: named
     host: qdrant-data
     container_path: /qdrant/storage
-    image: qdrant/qdrant:v1.17.1
+    image: qdrant/qdrant:v1.18.2
     category: data
     data_path_source: upstream docs (QDRANT__STORAGE__STORAGE_PATH default)
     pii: true
@@ -144,7 +144,7 @@ mounts:
     kind: bind
     host: /opt/klai/falkordb-data
     container_path: /var/lib/falkordb/data
-    image: falkordb/falkordb:v4.18.1
+    image: falkordb/falkordb:v4.18.9
     category: data
     data_path_source: env FALKORDB_DATA_PATH (verified on image 2026-04-19)
     pii: true
@@ -198,7 +198,7 @@ mounts:
     kind: named
     host: gitea-data
     container_path: /data
-    image: gitea/gitea:1.26.0
+    image: gitea/gitea:1.26.2
     category: data
     data_path_source: upstream docs (gitea GITEA_WORK_DIR default)
     pii: false
@@ -250,7 +250,7 @@ mounts:
     kind: named
     host: grafana-data
     container_path: /var/lib/grafana
-    image: grafana/grafana:13.0.1
+    image: grafana/grafana:13.0.2
     category: data
     data_path_source: upstream docs (GF_PATHS_DATA default)
     pii: false
@@ -265,7 +265,7 @@ mounts:
     kind: named
     host: glitchtip-data
     container_path: /code/uploads
-    image: glitchtip/glitchtip:6.1.6
+    image: glitchtip/glitchtip:6.1.8
     category: data
     data_path_source: upstream docs (app MEDIA_ROOT)
     pii: true
@@ -283,7 +283,7 @@ mounts:
     kind: named
     host: glitchtip-data
     container_path: /code/uploads
-    image: glitchtip/glitchtip:6.1.6
+    image: glitchtip/glitchtip:6.1.8
     category: data
     data_path_source: shared named volume with glitchtip-web
     pii: true
@@ -313,7 +313,7 @@ mounts:
     kind: bind
     host: /opt/klai/ollama/models
     container_path: /root/.ollama
-    image: ollama/ollama:0.21.0
+    image: ollama/ollama:0.30.6
     category: data
     data_path_source: upstream docs (OLLAMA_MODELS default root/.ollama)
     verified: true

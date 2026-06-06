@@ -198,7 +198,7 @@ services:
 
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
-    image: ghcr.io/zitadel/zitadel:v4.13.1
+    image: ghcr.io/zitadel/zitadel:v4.15.0
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -234,7 +234,7 @@ services:
 
   # ─── LiteLLM ──────────────────────────────────────────────────────────────
   litellm:
-    image: ghcr.io/berriai/litellm:v1.83.7-stable
+    image: ghcr.io/berriai/litellm:v1.87.1
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
@@ -360,7 +360,7 @@ services:
 
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
-    image: ollama/ollama:0.21.0
+    image: ollama/ollama:0.30.6
     restart: unless-stopped
     volumes:
       - /opt/klai/ollama/models:/root/.ollama
@@ -695,7 +695,7 @@ services:
 
   # ─── GlitchTip (frontend error tracking) ────────────────────────────────
   glitchtip-web:
-    image: glitchtip/glitchtip:6.1.6
+    image: glitchtip/glitchtip:6.1.8
     restart: unless-stopped
     depends_on:
       postgres:
@@ -728,7 +728,7 @@ services:
       start_period: 60s
 
   glitchtip-worker:
-    image: glitchtip/glitchtip:6.1.6
+    image: glitchtip/glitchtip:6.1.8
     restart: unless-stopped
     command: ./bin/run-celery-with-beat.sh
     depends_on:
@@ -752,7 +752,7 @@ services:
       - net-redis
 
   glitchtip-migrate:
-    image: glitchtip/glitchtip:6.1.6
+    image: glitchtip/glitchtip:6.1.8
     command: "./manage.py migrate"
     restart: "no"
     depends_on:
@@ -834,7 +834,7 @@ services:
       start_period: 30s
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    image: ghcr.io/google/cadvisor:v0.57.0
     restart: unless-stopped
     privileged: false
     cap_add:
@@ -856,7 +856,7 @@ services:
       - monitoring
 
   alloy:
-    image: grafana/alloy:v1.15.1
+    image: grafana/alloy:v1.16.2
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -882,7 +882,7 @@ services:
       - monitoring
 
   grafana:
-    image: grafana/grafana:13.0.1
+    image: grafana/grafana:13.0.2
     restart: unless-stopped
     volumes:
       - grafana-data:/var/lib/grafana
@@ -956,7 +956,7 @@ services:
   # ─── Research: document Q&A service ─────────────────────────────────────
 
   docling-serve:
-    image: ghcr.io/docling-project/docling-serve:v1.16.1
+    image: ghcr.io/docling-project/docling-serve:v1.21.0
     restart: unless-stopped
     environment:
       # Portal-api may need to retry /v1/result after a transient
@@ -969,7 +969,7 @@ services:
     # NOT exposed via Caddy — internal Docker network only
 
   searxng:
-    image: searxng/searxng:2026.4.17-e8299a4c3
+    image: searxng/searxng:2026.6.5-37187dc2d
     restart: unless-stopped
     environment:
       SEARXNG_SECRET: "${SEARXNG_SECRET}"
@@ -1038,7 +1038,7 @@ services:
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
   gitea:
-    image: gitea/gitea:1.26.0
+    image: gitea/gitea:1.26.2
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -1170,18 +1170,18 @@ services:
     depends_on:
       - postgres
 
-  # ─── Vexa stack (SPEC-VEXA-003 — upstream Vexa-ai/vexa v0.10.6.2) ────────
-  # Source: https://github.com/Vexa-ai/vexa/releases/tag/v0.10.6.2
+  # ─── Vexa stack (SPEC-VEXA-003 — upstream Vexa-ai/vexa v0.10.6.3) ────────
+  # Source: https://github.com/Vexa-ai/vexa/releases/tag/v0.10.6.3
   # Images pulled directly from Docker Hub (vexaai/*) — no local build needed.
-  # v0.10.6.2 is the corrective patch for v0.10.6.1 deployment/browser
+  # v0.10.6.3 is the current validated patch release for v0.10.6.x deployment/browser
   # regressions. v0.10.6 remains the validated base release with Pack U audio
   # unification and Pack M chunk-leak fixes.
-  # Tag format: upstream version `:0.10.6.2`. The pre-v0.10.4 timestamped
+  # Tag format: upstream version `:0.10.6.3`. The pre-v0.10.4 timestamped
   # form `<semver>-YYMMDD-HHMM` is no longer used upstream.
 
   # ─── Vexa admin-api (management) ────────────────────────────────────────
   admin-api:
-    image: vexaai/admin-api:0.10.6.2
+    image: vexaai/admin-api:0.10.6.3
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -1213,7 +1213,7 @@ services:
 
   # ─── Vexa api-gateway (public entry, rate-limited, CORS) ────────────────
   api-gateway:
-    image: vexaai/api-gateway:0.10.6.2
+    image: vexaai/api-gateway:0.10.6.3
     restart: unless-stopped
     environment:
       ADMIN_API_URL: http://admin-api:8001
@@ -1251,7 +1251,7 @@ services:
   # Network alias `vexa-meeting-api` retained for portal-api backwards compat
   # (REQ-E-001, REQ-U-001 — no config churn in portal-api during this migration).
   meeting-api:
-    image: vexaai/meeting-api:0.10.6.2
+    image: vexaai/meeting-api:0.10.6.3
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -1270,7 +1270,7 @@ services:
       RUNTIME_API_URL: http://runtime-api:8090
       RUNTIME_API_TOKEN: ${BOT_API_TOKEN}
       MEETING_API_URL: http://meeting-api:8080
-      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.6.2
+      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.6.3
       DOCKER_NETWORK: vexa-bots
       TRANSCRIPTION_COLLECTOR_URL: http://meeting-api:8080
       # Storage backend: Garage speaks S3, so minio-* vars point at Garage.
@@ -1348,11 +1348,11 @@ services:
 
   # ─── Vexa runtime-api (Docker-socket bot orchestrator) ──────────────────
   runtime-api:
-    image: vexaai/runtime-api:0.10.6.2
+    image: vexaai/runtime-api:0.10.6.3
     restart: unless-stopped
     environment:
       DOCKER_NETWORK: vexa-bots
-      BROWSER_IMAGE: vexaai/vexa-bot:0.10.6.2
+      BROWSER_IMAGE: vexaai/vexa-bot:0.10.6.3
       AGENT_IMAGE: ""                              # agent profile not shipped in v1
       REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
       MINIO_ENDPOINT: garage:3900
@@ -1426,7 +1426,7 @@ services:
 
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
-    image: qdrant/qdrant:v1.17.1
+    image: qdrant/qdrant:v1.18.2
     restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
@@ -1447,7 +1447,7 @@ services:
   # The previous /data mount was cosmetic and caused total graph loss on 2026-04-19
   # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
-    image: falkordb/falkordb:v4.18.1
+    image: falkordb/falkordb:v4.18.9
     restart: unless-stopped
     ports:
       - "127.0.0.1:6380:6379"
@@ -1625,11 +1625,11 @@ services:
 
   # ─── Crawl4AI (internal web crawler for klai-connector) ─────────────────────
   crawl4ai:
-    image: unclecode/crawl4ai:0.8.6
+    image: unclecode/crawl4ai:0.8.9
     restart: unless-stopped
     environment:
       CRAWL4AI_API_TOKEN: ${CRAWL4AI_INTERNAL_KEY}
-      CRAWL4AI_HOOKS_ENABLED: "true"
+      CRAWL4AI_HOOKS_ENABLED: "false"
     networks:
       - klai-net
     deploy:
