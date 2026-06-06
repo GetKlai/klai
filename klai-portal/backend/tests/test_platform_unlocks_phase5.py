@@ -145,8 +145,6 @@ class TestPartnerAPIGate:
             side_effect=[
                 # Step 3: key lookup
                 _make_scalar_result(key_row),
-                # Step 5: KB access
-                _make_scalars_result([]),
                 # Step 6: org lookup
                 _make_scalar_result(org),
             ]
@@ -187,8 +185,8 @@ class TestPartnerAPIGate:
         db.execute = AsyncMock(
             side_effect=[
                 _make_scalar_result(key_row),
-                _make_scalars_result([]),
                 _make_scalar_result(org),
+                _make_scalars_result([]),
                 # Any further execute calls would trigger AsyncMock default
             ]
         )

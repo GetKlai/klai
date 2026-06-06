@@ -295,8 +295,8 @@ class TestRecreateMode:
         assert sorted(resp.tenants_updated) == ["getklai", "voys"]
         assert resp.errors == []
         assert start_librechat.call_count == 2
-        start_librechat.assert_any_call("getklai", [])
-        start_librechat.assert_any_call("voys", [])
+        start_librechat.assert_any_call("getklai", "/opt/klai/librechat/getklai/.env", None)
+        start_librechat.assert_any_call("voys", "/opt/klai/librechat/voys/.env", None)
         docker_client.containers.get.assert_not_called()
         redis_client.flushall.assert_not_called()
 
