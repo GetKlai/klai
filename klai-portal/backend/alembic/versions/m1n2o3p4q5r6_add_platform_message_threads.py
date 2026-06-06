@@ -114,4 +114,3 @@ def downgrade() -> None:
     op.drop_index("ix_platform_message_threads_last_message", table_name="platform_message_threads")
     op.drop_index("ix_platform_message_threads_org_status", table_name="platform_message_threads")
     op.drop_table("platform_message_threads")
-
