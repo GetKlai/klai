@@ -414,7 +414,7 @@ export function OffboardWizard({
                       return (
                         <li
                           key={kb.kb_id}
-                          className="py-4"
+                          className="px-1 py-4"
                           data-test-id={`org-kb-row-${kb.slug}`}
                         >
                           <div className="min-w-0">
@@ -425,8 +425,8 @@ export function OffboardWizard({
                               {kb.slug}
                             </p>
                           </div>
-                          <div className="mt-3 grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
-                            <div className="space-y-1.5">
+                          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-start">
+                            <div className="space-y-1.5 sm:w-40">
                               <Label
                                 htmlFor={actionId}
                                 className="text-xs font-medium text-gray-600"
@@ -453,7 +453,7 @@ export function OffboardWizard({
                               </Select>
                             </div>
                             {d.action === 'transfer' ? (
-                              <div className="space-y-1.5">
+                              <div className="min-w-0 space-y-1.5 sm:w-80">
                                 <Label
                                   htmlFor={transferId}
                                   className="text-xs font-medium text-gray-600"
