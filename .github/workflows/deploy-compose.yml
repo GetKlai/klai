@@ -220,6 +220,27 @@ jobs:
             sync_and_recreate alloy       deploy/alloy/config.alloy     /opt/klai/alloy/config.alloy
             sync_and_recreate searxng     deploy/searxng/settings.yml   /opt/klai/searxng/settings.yml
             sync_and_recreate runtime-api deploy/vexa/profiles.yaml     /opt/klai/vexa/profiles.yaml
+            clear_librechat_config_cache() {
+              local pattern="${1:-configs:*}"
+              docker compose --project-directory /opt/klai exec -T redis sh -lc '
+                set -e
+                pattern="$1"
+                keys=$(redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --scan --pattern "$pattern")
+                if [ -z "$keys" ]; then
+                  echo "LibreChat config cache clear: pattern=$pattern deleted=0"
+                  exit 0
+                fi
+                deleted=0
+                printf "%s\n" "$keys" | while IFS= read -r key; do
+                  redis-cli -a "$REDIS_PASSWORD" --no-auth-warning unlink "$key" >/dev/null
+                  deleted=$((deleted + 1))
+                  echo "$deleted" > /tmp/klai-librechat-cache-deleted
+                done
+                deleted=$(cat /tmp/klai-librechat-cache-deleted 2>/dev/null || echo 0)
+                rm -f /tmp/klai-librechat-cache-deleted
+                echo "LibreChat config cache clear: pattern=$pattern deleted=$deleted"
+              ' sh "$pattern"
+            }
             # Force-light-theme wrapper for the compose-managed getklai tenant.
             # Copies the script to the host THEN force-recreates the container,
             # so the bind-mount source exists before (re)create — no empty-dir
@@ -227,10 +248,9 @@ jobs:
             # their next recreate via _start_librechat_container.
             sync_and_recreate librechat-getklai deploy/librechat/getklai/entrypoint.sh /opt/klai/librechat/getklai/entrypoint.sh
 
-            if [ "$getklai_config_status" = "changed" ]; then
-              echo "getklai LibreChat config changed; force-recreating librechat-getklai"
-              docker compose --project-directory /opt/klai up -d --force-recreate librechat-getklai
-            fi
+            clear_librechat_config_cache "configs:*"
+            echo "getklai LibreChat config cache cleared; force-recreating librechat-getklai"
+            docker compose --project-directory /opt/klai up -d --force-recreate librechat-getklai
 
             # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
             # git clone on a Linux runner usually preserves the execute bit,
