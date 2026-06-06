@@ -98,9 +98,11 @@ class TestUserDeletePreview:
 
         db = AsyncMock()
         db.execute.side_effect = [
+            MagicMock(),  # set_tenant for delete preview
             _scalars_result([owned, co_owned]),
             _scalar_result(1),
             _scalar_result(2),
+            MagicMock(),  # set_tenant for personal KB preview helper
             _scalars_result([personal]),
             _scalar_result(4),
             _scalar_result(99),

@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import set_tenant
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.services.zitadel import zitadel
 
@@ -134,6 +135,7 @@ async def step_portal_db_delete(state: _UserDeletionState) -> None:
     """
     assert state.db_for_steps is not None, "db_for_steps must be set before step_portal_db_delete"
     db: AsyncSession = state.db_for_steps
+    await set_tenant(db, state.org_id)
 
     membership_delete_result = await db.execute(
         delete(PortalGroupMembership).where(
