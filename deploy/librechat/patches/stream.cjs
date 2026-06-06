@@ -533,7 +533,8 @@ function createContentAggregator() {
             // Without this, Mistral (content: null + tool_calls) leaves contentParts[index]
             // as a sparse hole, which MongoDB serializes as null and crashes formatAgentMessages.
             if (runStep.stepDetails.type === _enum.StepTypes.MESSAGE_CREATION &&
-                runStep.index != null) {
+                runStep.index != null &&
+                !contentParts[runStep.index]) {
                 contentParts[runStep.index] = { type: 'text', text: '' };
             }
             // Store tool call IDs if present

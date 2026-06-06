@@ -770,6 +770,26 @@ async def chat_completions(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"error": {"type": "upstream_error", "message": "Retrieval service timeout"}},
         ) from exc
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "partner_chat_retrieval_upstream_status_error",
+            org_id=auth.org_id,
+            status_code=exc.response.status_code if exc.response is not None else None,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": {"type": "upstream_error", "message": "Retrieval service error"}},
+        ) from exc
+    except httpx.RequestError as exc:
+        logger.warning(
+            "partner_chat_retrieval_upstream_request_error",
+            org_id=auth.org_id,
+            error_type=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": {"type": "upstream_error", "message": "Retrieval service unavailable"}},
+        ) from exc
 
     # 6b. Optional live web search (opt-in per request, gated per API key,
     #     never for public widget keys). Web results are a SEPARATE citation

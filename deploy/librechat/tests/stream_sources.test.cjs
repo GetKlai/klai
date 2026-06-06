@@ -108,6 +108,35 @@ aggregator.aggregateContent({
 assert.equal(aggregator.contentParts[0].text, 'Antwoord. Vervolg zonder metadata.');
 assert.equal(JSON.stringify(aggregator.contentParts[0].sources), JSON.stringify(sources));
 
+const repeatedMessageCreationAggregator = createContentAggregator();
+repeatedMessageCreationAggregator.aggregateContent({
+  event: 'on_run_step',
+  data: { id: 'step-repeat', index: 0, stepDetails: { type: 'message_creation' } },
+});
+repeatedMessageCreationAggregator.aggregateContent({
+  event: 'on_message_delta',
+  data: {
+    id: 'step-repeat',
+    delta: { content: { type: 'text', text: 'Klai typt zichtbaar. ' } },
+  },
+});
+repeatedMessageCreationAggregator.aggregateContent({
+  event: 'on_run_step',
+  data: { id: 'step-repeat', index: 0, stepDetails: { type: 'message_creation' } },
+});
+repeatedMessageCreationAggregator.aggregateContent({
+  event: 'on_message_delta',
+  data: {
+    id: 'step-repeat',
+    delta: { content: { type: 'text', text: 'Bij compleet antwoord blijft dit staan.' } },
+  },
+});
+
+assert.equal(
+  repeatedMessageCreationAggregator.contentParts[0].text,
+  'Klai typt zichtbaar. Bij compleet antwoord blijft dit staan.',
+);
+
 const toolAggregator = createContentAggregator();
 toolAggregator.aggregateContent({
   event: 'on_run_step',
