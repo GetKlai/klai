@@ -1,8 +1,9 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import { useState } from 'react'
-import { PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react'
+import { LayoutGrid, PanelLeftClose, PanelLeftOpen, Shield, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { STORAGE_KEYS } from '@/lib/storage'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
 
 export interface NavItem {
@@ -21,8 +22,10 @@ interface SidebarProps {
 
 export function Sidebar({ navItems }: SidebarProps) {
   const location = useLocation()
+  const { user } = useCurrentUser()
 
   const inAdmin = location.pathname.startsWith('/admin')
+  const isAdmin = inAdmin || user?.isAdmin === true
 
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.sidebarCollapsed) === 'true'
@@ -154,6 +157,26 @@ export function Sidebar({ navItems }: SidebarProps) {
           ))}
         </ul>
       </nav>
+
+      {isAdmin && (
+        <div className="border-t border-[var(--color-sidebar-border)] py-3">
+          <Link
+            to={inAdmin ? '/app' : '/admin'}
+            title={collapsed ? (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()) : undefined}
+            className={cn(
+              'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
+              'text-[var(--color-sidebar-foreground)]/70 klai-hover hover:text-[var(--color-sidebar-foreground)]',
+              collapsed ? 'justify-center' : 'gap-3 px-3'
+            )}
+          >
+            {inAdmin
+              ? <LayoutGrid size={18} strokeWidth={1.5} />
+              : <Shield size={18} strokeWidth={1.5} />
+            }
+            {!collapsed && (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin())}
+          </Link>
+        </div>
+      )}
     </aside>
   )
 }
