@@ -87,12 +87,13 @@ class PlatformMessageStatusIn(BaseModel):
 
 
 async def _audit(perms: UserPermissions, action: str, resource_id: str | None = None) -> None:
+    audit_resource_id = resource_id or "collection"
     await log_event(
         org_id=perms.org_id,
         actor=perms.user_id,
         action=f"platform_admin.messages.{action}",
         resource_type="platform_message_thread",
-        resource_id=resource_id,
+        resource_id=audit_resource_id,
         details=None,
     )
 
