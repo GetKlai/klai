@@ -45,33 +45,40 @@ export function LanguageSettingsSection({
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : (
           <>
-            <div className="space-y-1.5">
-              <Label htmlFor="settings-language">
-                {m.admin_settings_language_label()}
-              </Label>
-              <Select
-                id="settings-language"
-                value={selectedLang}
-                onChange={(e) => setSelectedLang(e.target.value as OrgSettings['default_language'])}
-                className="max-w-xs"
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Label htmlFor="settings-language">
+                  {m.admin_settings_language_label()}
+                </Label>
+                <Select
+                  id="settings-language"
+                  value={selectedLang}
+                  onChange={(e) => setSelectedLang(e.target.value as OrgSettings['default_language'])}
+                  className="max-w-xs"
+                >
+                  <option value="nl">{m.admin_settings_language_nl()}</option>
+                  <option value="en">{m.admin_settings_language_en()}</option>
+                </Select>
+              </div>
+              <Button
+                className="w-fit"
+                onClick={() => langMutation.mutate(selectedLang)}
+                disabled={
+                  langMutation.isPending ||
+                  savedLang ||
+                  selectedLang === settings?.default_language
+                }
               >
-                <option value="nl">{m.admin_settings_language_nl()}</option>
-                <option value="en">{m.admin_settings_language_en()}</option>
-              </Select>
+                {savedLang
+                  ? m.admin_settings_saved()
+                  : langMutation.isPending
+                    ? m.admin_settings_saving()
+                    : m.admin_settings_save()}
+              </Button>
             </div>
             {langMutation.error && (
               <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
             )}
-            <Button
-              onClick={() => langMutation.mutate(selectedLang)}
-              disabled={langMutation.isPending || savedLang}
-            >
-              {savedLang
-                ? m.admin_settings_saved()
-                : langMutation.isPending
-                  ? m.admin_settings_saving()
-                  : m.admin_settings_save()}
-            </Button>
           </>
         )}
       </CardContent>
