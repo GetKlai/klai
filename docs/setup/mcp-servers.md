@@ -217,6 +217,75 @@ Agents MUST NOT swap those environments silently. If e2e credentials fail,
 report the credential blocker. If Voys storage-state is stale, recapture Voys;
 do not test `e2e.getklai.com` and call that Voys.
 
+### Isolated e2e credentials and TOTP repair
+
+`klai-portal/frontend/.env.local` is gitignored and is the local source for
+isolated prod-tenant e2e credentials:
+
+```bash
+export E2E_BASE_URL=https://e2e.getklai.com
+export E2E_USER_EMAIL=e2e@getklai.com
+export E2E_USER_PASSWORD=...
+export E2E_TOTP_SECRET=...
+```
+
+`E2E_TOTP_SECRET` is the raw Base32 seed returned during TOTP registration. A
+current 6-digit authenticator code, QR image, or recovery code is not enough.
+If the seed is missing or invalid, rotate the e2e user's TOTP in Zitadel and
+store the new seed locally and in GitHub Secrets.
+
+Known-good validation sequence:
+
+```bash
+scripts/local-dev-status.sh --mode prod-e2e
+cd klai-portal/frontend
+source .env.local
+npm run test:e2e:prod
+```
+
+Expected login smoke result:
+
+```text
+✓ J01 - login + TOTP and persist storage-state
+```
+
+If the login page says "Email address or password is incorrect", the stored
+`E2E_USER_PASSWORD` is stale; reset the e2e user's password in Zitadel and update
+both local `.env.local` and GitHub Secret `E2E_USER_PASSWORD`.
+
+If Playwright times out waiting for `input[name="totp"]` after a successful
+password submit, check whether the account has a verified TOTP factor. If not,
+register and verify a new TOTP factor, then update `E2E_TOTP_SECRET`.
+
+CLI repair path used by agents with production access:
+
+1. Read `PORTAL_API_ZITADEL_PAT` and `ZITADEL_PORTAL_ORG_ID` from
+   `core-01:/opt/klai/.env`.
+2. Find the user with `POST https://auth.getklai.com/v2/users` and
+   `loginNameQuery` for `E2E_USER_EMAIL`.
+3. Remove stale TOTP with
+   `DELETE https://auth.getklai.com/v2/users/{user_id}/totp`.
+4. Register TOTP with
+   `POST https://auth.getklai.com/v2/users/{user_id}/totp`; persist the returned
+   `secret`/`totpSecret` as `E2E_TOTP_SECRET`.
+5. Generate a code from that seed with `otplib` and verify with
+   `POST https://auth.getklai.com/v2/users/{user_id}/totp/verify`.
+6. If needed, reset password through the Zitadel Management API
+   `POST /management/v1/users/{user_id}/password` with `noChangeRequired: true`,
+   then persist the new value as `E2E_USER_PASSWORD`.
+7. Update GitHub Secrets `E2E_BASE_URL`, `E2E_USER_EMAIL`,
+   `E2E_USER_PASSWORD`, and `E2E_TOTP_SECRET`.
+8. Run the known-good validation sequence above.
+
+Never print secret values in logs. Print only key names, success/failure, and
+the e2e user email.
+
+Conductor workspace setup: `.worktreeinclude` includes
+`klai-portal/frontend/.env.local`, so new Conductor workspaces copy the
+gitignored e2e env file from the repository root when setup runs. If a workspace
+already exists and lacks the key, copy or resync the file manually, then rerun
+`scripts/local-dev-status.sh --mode prod-e2e`.
+
 ### Voys attached-session capture and verification
 
 Use Voys when the request says "Voys", "voice" in browser/auth context,
