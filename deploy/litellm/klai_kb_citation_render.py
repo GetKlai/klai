@@ -72,6 +72,22 @@ def _is_strict_refusal_answer(text: object, *, user_query: object) -> bool:
     }
 
 
+def _selector_rejected_all_without_answer_support(decision: dict[str, Any]) -> bool:
+    selected = decision.get("selected")
+    rejected = decision.get("rejected")
+    if selected:
+        return False
+    if not isinstance(rejected, list) or not rejected:
+        return False
+    for item in rejected:
+        if not isinstance(item, dict):
+            return False
+        answer_score = item.get("answer_score")
+        if isinstance(answer_score, int | float) and answer_score > 0:
+            return False
+    return True
+
+
 def _citation_render_inputs(
     kb_meta: dict[str, Any],
 ) -> tuple[set[str], list[dict], list[dict[str, Any]]]:
@@ -224,6 +240,11 @@ def _render_kb_citation_content(
             return strict_refusal, [], True, decision
         fallback_sources = _trusted_sources_visible_fallback(trusted_sources)
         if kb_narrow and fallback_sources:
+            if _selector_rejected_all_without_answer_support(decision):
+                decision["no_citable_reason"] = (
+                    "selector_rejected_all_sources_without_answer_support"
+                )
+                return composed.content or text, [], True, decision
             decision["fallback"] = "document_level_trusted_sources"
             decision["no_citable_reason"] = "selector_rejected_all_sources_fallback"
             return composed.content or text, fallback_sources, False, decision
