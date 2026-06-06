@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import cross_org_session, get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackNotification, FeedbackSubmission
 from app.models.knowledge_bases import PortalKnowledgeBase
@@ -122,6 +122,7 @@ class AccountFeedbackUpdateOut(BaseModel):
     notification_id: int | None = None
     notification_body: str | None = None
     notification_read_at: datetime | None = None
+    message_thread_id: int | None = None
     latest_update_at: datetime
     unread: bool = False
 
@@ -188,6 +189,12 @@ class AccountPlatformMessageReplyOut(BaseModel):
 class AccountPlatformMessageReadResponse(BaseModel):
     ok: bool = True
     thread_id: int
+    read_at: datetime
+
+
+class AccountPlatformMessageReadAllResponse(BaseModel):
+    ok: bool = True
+    read_count: int
     read_at: datetime
 
 
@@ -273,6 +280,17 @@ async def get_feedback_updates(
             FeedbackItem.summary.label("item_summary"),
             FeedbackItem.status.label("item_status"),
             FeedbackItem.updated_at.label("item_updated_at"),
+            (
+                select(PlatformMessageThread.id)
+                .where(
+                    PlatformMessageThread.org_id == FeedbackSubmission.org_id,
+                    PlatformMessageThread.feedback_submission_id == FeedbackSubmission.id,
+                )
+                .order_by(PlatformMessageThread.last_message_at.desc(), PlatformMessageThread.id.desc())
+                .limit(1)
+                .correlate(FeedbackSubmission)
+                .scalar_subquery()
+            ).label("message_thread_id"),
         )
         .select_from(FeedbackSubmission)
         .outerjoin(FeedbackItemLink, FeedbackItemLink.submission_id == FeedbackSubmission.id)
@@ -329,6 +347,7 @@ async def get_feedback_updates(
                 notification_id=notification.id if notification is not None else None,
                 notification_body=notification.body if notification is not None else None,
                 notification_read_at=notification.read_at if notification is not None else None,
+                message_thread_id=row.message_thread_id,
                 latest_update_at=latest_update_at,
                 unread=notification is not None and notification.read_at is None,
             )
@@ -384,6 +403,119 @@ async def mark_all_feedback_updates_read(
     return AccountFeedbackReadAllResponse(read_count=len(notifications), read_at=read_at)
 
 
+@router.post("/feedback-updates/{submission_id}/reply", response_model=AccountPlatformMessageThreadDetailOut)
+async def reply_to_feedback_update(
+    submission_id: int,
+    body: AccountPlatformMessageReplyIn,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountPlatformMessageThreadDetailOut:
+    text = body.body.strip()
+    if len(text) < 1 or len(text) > 4000:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message body must be 1-4000 characters")
+
+    caller = await _load_caller_user(perms, db)
+    feedback_row = (
+        await db.execute(
+            select(
+                FeedbackSubmission.id.label("submission_id"),
+                FeedbackSubmission.raw_text.label("raw_text"),
+                FeedbackItem.id.label("item_id"),
+                FeedbackItem.title.label("item_title"),
+            )
+            .select_from(FeedbackSubmission)
+            .outerjoin(FeedbackItemLink, FeedbackItemLink.submission_id == FeedbackSubmission.id)
+            .outerjoin(FeedbackItem, FeedbackItem.id == FeedbackItemLink.item_id)
+            .where(
+                FeedbackSubmission.id == submission_id,
+                FeedbackSubmission.org_id == perms.org_id,
+                FeedbackSubmission.user_id == perms.user_id,
+                FeedbackSubmission.source.in_(["assistant_problem", "assistant_feedback"]),
+            )
+            .order_by(FeedbackItem.updated_at.desc().nullslast())
+            .limit(1)
+        )
+    ).first()
+    if feedback_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback update not found")
+
+    fallback_subject_lines = feedback_row.raw_text.strip().splitlines()
+    subject_text = feedback_row.item_title or (fallback_subject_lines[0] if fallback_subject_lines else "")
+    subject = subject_text[:256] or "Feedback follow-up"
+    async with cross_org_session() as message_db:
+        existing_thread = (
+            (
+                await message_db.execute(
+                    select(PlatformMessageThread)
+                    .join(
+                        PlatformMessageParticipant,
+                        PlatformMessageParticipant.thread_id == PlatformMessageThread.id,
+                    )
+                    .where(
+                        PlatformMessageThread.org_id == perms.org_id,
+                        PlatformMessageThread.feedback_submission_id == submission_id,
+                        PlatformMessageParticipant.org_id == perms.org_id,
+                        PlatformMessageParticipant.user_id == perms.user_id,
+                    )
+                    .order_by(PlatformMessageThread.last_message_at.desc(), PlatformMessageThread.id.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing_thread is None:
+            now = datetime.now(UTC)
+            existing_thread = PlatformMessageThread(
+                org_id=perms.org_id,
+                subject=subject,
+                created_by=perms.user_id,
+                origin_type="feedback_submission",
+                feedback_submission_id=submission_id,
+                feedback_item_id=feedback_row.item_id,
+                last_message_at=now,
+            )
+            message_db.add(existing_thread)
+            await message_db.flush()
+            message_db.add(
+                PlatformMessageParticipant(
+                    thread_id=existing_thread.id,
+                    org_id=perms.org_id,
+                    user_id=perms.user_id,
+                    recipient_email=caller.email,
+                    recipient_display_name=caller.display_name,
+                )
+            )
+            message_db.add(
+                PlatformMessage(
+                    thread_id=existing_thread.id,
+                    org_id=perms.org_id,
+                    sender_type="user",
+                    sender_user_id=perms.user_id,
+                    body=text,
+                    created_at=now,
+                )
+            )
+            await message_db.flush()
+        else:
+            await add_platform_message_reply(
+                message_db,
+                thread_id=existing_thread.id,
+                org_id=perms.org_id,
+                sender_type="user",
+                sender_user_id=perms.user_id,
+                body=text,
+            )
+        detail = await _load_account_message_thread_detail(
+            message_db,
+            thread_id=existing_thread.id,
+            org_id=perms.org_id,
+            user_id=perms.user_id,
+        )
+        await message_db.commit()
+        return detail
+
+
 def _thread_out(row, latest_admin_at: datetime | None = None) -> AccountPlatformMessageThreadOut:
     last_read_at = row.last_read_at
     unread = latest_admin_at is not None and (last_read_at is None or latest_admin_at > last_read_at)
@@ -400,6 +532,51 @@ def _thread_out(row, latest_admin_at: datetime | None = None) -> AccountPlatform
         last_read_at=last_read_at,
         unread=unread,
         created_at=row.created_at,
+    )
+
+
+async def _load_account_message_thread_detail(
+    db: AsyncSession,
+    *,
+    thread_id: int,
+    org_id: int,
+    user_id: str,
+) -> AccountPlatformMessageThreadDetailOut:
+    row = (
+        await db.execute(
+            _account_thread_select().where(
+                PlatformMessageParticipant.org_id == org_id,
+                PlatformMessageParticipant.user_id == user_id,
+                PlatformMessageThread.id == thread_id,
+            )
+        )
+    ).first()
+    if row is None:
+        raise PlatformMessageThreadNotFoundError()
+    thread = _thread_out(row, row.latest_admin_at)
+    messages = (
+        (
+            await db.execute(
+                select(PlatformMessage)
+                .where(PlatformMessage.thread_id == thread_id, PlatformMessage.org_id == org_id)
+                .order_by(PlatformMessage.created_at.asc(), PlatformMessage.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return AccountPlatformMessageThreadDetailOut(
+        thread=thread,
+        messages=[
+            AccountPlatformMessageOut(
+                id=message.id,
+                sender_type=message.sender_type,
+                sender_user_id=message.sender_user_id,
+                body=message.body,
+                created_at=message.created_at,
+            )
+            for message in messages
+        ],
     )
 
 
@@ -479,42 +656,15 @@ async def get_platform_message_thread(
 ) -> AccountPlatformMessageThreadDetailOut:
     if not await user_can_access_thread(db, thread_id=thread_id, org_id=perms.org_id, user_id=perms.user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found")
-    row = (
-        await db.execute(
-            _account_thread_select().where(
-                PlatformMessageParticipant.org_id == perms.org_id,
-                PlatformMessageParticipant.user_id == perms.user_id,
-                PlatformMessageThread.id == thread_id,
-            )
+    try:
+        return await _load_account_message_thread_detail(
+            db,
+            thread_id=thread_id,
+            org_id=perms.org_id,
+            user_id=perms.user_id,
         )
-    ).first()
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found")
-    thread = _thread_out(row, row.latest_admin_at)
-    messages = (
-        (
-            await db.execute(
-                select(PlatformMessage)
-                .where(PlatformMessage.thread_id == thread_id, PlatformMessage.org_id == perms.org_id)
-                .order_by(PlatformMessage.created_at.asc(), PlatformMessage.id.asc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return AccountPlatformMessageThreadDetailOut(
-        thread=thread,
-        messages=[
-            AccountPlatformMessageOut(
-                id=message.id,
-                sender_type=message.sender_type,
-                sender_user_id=message.sender_user_id,
-                body=message.body,
-                created_at=message.created_at,
-            )
-            for message in messages
-        ],
-    )
+    except PlatformMessageThreadNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found") from exc
 
 
 @router.post("/messages/{thread_id}/reply", response_model=AccountPlatformMessageReplyOut)
@@ -570,6 +720,39 @@ async def mark_platform_message_read(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found") from exc
     await db.commit()
     return AccountPlatformMessageReadResponse(thread_id=thread_id, read_at=read_at)
+
+
+@router.post("/messages/read-all", response_model=AccountPlatformMessageReadAllResponse)
+async def mark_all_platform_messages_read(
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountPlatformMessageReadAllResponse:
+    latest_admin_at = (
+        select(func.max(PlatformMessage.created_at))
+        .where(
+            PlatformMessage.thread_id == PlatformMessageParticipant.thread_id,
+            PlatformMessage.sender_type.in_(("platform_admin", "system")),
+        )
+        .correlate(PlatformMessageParticipant)
+        .scalar_subquery()
+    )
+    rows = (
+        await db.execute(
+            select(PlatformMessageParticipant, latest_admin_at.label("latest_admin_at")).where(
+                PlatformMessageParticipant.org_id == perms.org_id,
+                PlatformMessageParticipant.user_id == perms.user_id,
+            )
+        )
+    ).all()
+    read_at = datetime.now(UTC)
+    read_count = 0
+    for participant, latest_at in rows:
+        if latest_at is not None and (participant.last_read_at is None or latest_at > participant.last_read_at):
+            participant.last_read_at = read_at
+            read_count += 1
+    if read_count:
+        await db.commit()
+    return AccountPlatformMessageReadAllResponse(read_count=read_count, read_at=read_at)
 
 
 @router.patch("/kb-preference", response_model=KBPreferenceOut)

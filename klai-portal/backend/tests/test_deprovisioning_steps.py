@@ -290,7 +290,9 @@ class TestDeleteMeilisearchIndex:
                 messages = router.delete("/indexes/acme_messages").mock(return_value=httpx.Response(200))
                 convos = router.delete("/indexes/acme_convos").mock(return_value=httpx.Response(200))
                 keys = router.get("/keys").mock(
-                    return_value=httpx.Response(200, json={"results": [{"uid": "key-1", "name": "librechat-acme-meili"}]})
+                    return_value=httpx.Response(
+                        200, json={"results": [{"uid": "key-1", "name": "librechat-acme-meili"}]}
+                    )
                 )
                 key_delete = router.delete("/keys/key-1").mock(return_value=httpx.Response(204))
                 from app.services.provisioning.deprovisioning_steps import _delete_meilisearch_index
@@ -371,7 +373,9 @@ class TestDeleteMeilisearchIndex:
                 )
                 convos = router.delete("/indexes/acme_convos").mock(return_value=httpx.Response(200))
                 keys = router.get("/keys").mock(
-                    return_value=httpx.Response(200, json={"results": [{"uid": "key-1", "name": "librechat-acme-meili"}]})
+                    return_value=httpx.Response(
+                        200, json={"results": [{"uid": "key-1", "name": "librechat-acme-meili"}]}
+                    )
                 )
                 key_delete = router.delete("/keys/key-1").mock(return_value=httpx.Response(204))
                 from app.services.provisioning.deprovisioning_steps import _delete_meilisearch_index

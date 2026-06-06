@@ -12,6 +12,7 @@ export interface PlatformStats {
   total_templates: number
   total_feedback_count: number
   new_feedback_count: number
+  unread_message_count: number
   chat_error_count: number
   mrr_cents: number
   arr_cents: number
@@ -222,6 +223,8 @@ export interface PlatformMessageThread {
   latest_message_sender_type: string
   latest_message_at: string
   latest_user_message_at: string | null
+  latest_admin_message_at: string | null
+  unread_for_admin: boolean
   created_by: string
   created_at: string
 }

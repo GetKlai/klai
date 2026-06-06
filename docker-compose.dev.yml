@@ -60,8 +60,8 @@ services:
       - klai-dev-meilisearch:/meili_data
     environment:
       MEILI_ENV: development
-      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-klai-dev-meili-key}
       MEILI_DB_PATH: /meili_data
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-klai-dev-meili-key}
       MEILI_NO_ANALYTICS: "true"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7700/health"]
@@ -70,7 +70,7 @@ services:
       retries: 5
 
   litellm:
-    image: ghcr.io/berriai/litellm:v1.83.7-stable
+    image: ghcr.io/berriai/litellm:v1.87.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:4000:4000"

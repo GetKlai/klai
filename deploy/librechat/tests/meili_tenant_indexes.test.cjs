@@ -9,6 +9,10 @@ const entrypoint = fs.readFileSync(
   path.join(repoRoot, 'deploy/librechat/klai-entrypoint.sh'),
   'utf8',
 );
+const getklaiEntrypoint = fs.readFileSync(
+  path.join(repoRoot, 'deploy/librechat/getklai/entrypoint.sh'),
+  'utf8',
+);
 const dockerCompose = fs.readFileSync(path.join(repoRoot, 'deploy/docker-compose.yml'), 'utf8');
 const devCompose = fs.readFileSync(path.join(repoRoot, 'docker-compose.dev.yml'), 'utf8');
 const generator = fs.readFileSync(
@@ -47,11 +51,24 @@ assert.match(entrypoint, /client\\\.index\\\(\['"\]messages\['"\]\\\)/);
 assert.match(entrypoint, /process\.env\.MEILI_MESSAGES_INDEX \|\| 'messages'/);
 assert.match(entrypoint, /process\.env\.MEILI_CONVOS_INDEX \|\| 'convos'/);
 
+for (const target of [entrypoint, getklaiEntrypoint]) {
+  assert.match(target, /MEILI_MESSAGES_INDEX/);
+  assert.match(target, /MEILI_CONVOS_INDEX/);
+  assert.match(target, /SEARCH=true requires MEILI_MESSAGES_INDEX and MEILI_CONVOS_INDEX/);
+  assert.match(target, /unsafe global Meili reference remains/);
+  assert.match(target, /\/app\/packages\/data-schemas\/dist\/models\/message\.cjs/);
+  assert.match(target, /\/app\/packages\/data-schemas\/dist\/models\/convo\.cjs/);
+  assert.match(target, /\/app\/packages\/data-schemas\/dist\/models\/plugins\/mongoMeili\.cjs/);
+  assert.match(target, /\/app\/api\/db\/indexSync\.js/);
+}
+
 assert.match(dockerCompose, /image: getmeili\/meilisearch:v1\.45\.2/);
 assert.match(dockerCompose, /MEILI_DB_PATH: \/meili_data/);
 assert.match(dockerCompose, /MEILI_MASTER_KEY: "\$\{GETKLAI_MEILI_API_KEY:\?set a Meili key scoped to getklai_messages,getklai_convos\}"/);
 assert.match(dockerCompose, /MEILI_MESSAGES_INDEX: getklai_messages/);
 assert.match(dockerCompose, /MEILI_CONVOS_INDEX: getklai_convos/);
+assert.match(dockerCompose, /ghcr\.io\/danny-avila\/librechat:v0\.8\.6/);
+assert.match(dockerCompose, /librechat\/getklai\/entrypoint\.sh:\/klai-entrypoint\.sh:ro/);
 assert.match(devCompose, /image: getmeili\/meilisearch:v1\.45\.2/);
 assert.match(devCompose, /MEILI_DB_PATH: \/meili_data/);
 

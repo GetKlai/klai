@@ -302,3 +302,69 @@ export function buildFeedbackDebugInstructions(
     '7. Report the root cause, changed files, any architectural findings, tests run, and residual risk.',
   ].join('\n')
 }
+
+export function buildFeedbackFeatureInstructions(
+  item: PlatformFeedbackItem,
+  submissions: PlatformFeedbackLinkedSubmission[],
+  fmtDate: (s: string | null) => string,
+) {
+  const distinct = (values: Array<string | null | undefined>) => [
+    ...new Set(values.map((value) => (value ?? '').trim()).filter(Boolean)),
+  ]
+  const routes = distinct(submissions.map((submission) => submission.route_id))
+  const urls = distinct(submissions.map((submission) => submission.page_url))
+  const locales = distinct(submissions.map((submission) => submission.locale))
+
+  const context = [
+    `- Area: ${item.area || 'unknown'}`,
+    `- Routes mentioned: ${routes.length ? routes.join(', ') : 'unknown'}`,
+    `- Page URLs mentioned: ${urls.length ? urls.join(', ') : 'unknown'}`,
+    `- Locales seen: ${locales.length ? locales.join(', ') : 'unknown'}`,
+  ].join('\n')
+
+  const evidence = submissions.length
+    ? submissions
+        .map((submission, index) =>
+          [
+            `${index + 1}. ${submission.raw_text || '(empty)'}`,
+            `   Org: ${submission.org_name ?? submission.org_slug ?? 'unknown'}`,
+            `   Reporter: ${feedbackSubmissionReporterLabel(submission) || submission.user_id || 'unknown'}`,
+            `   Type/severity: ${[submission.feedback_type, submission.severity].filter(Boolean).join(' / ') || 'unknown'}`,
+            `   URL: ${submission.page_url || 'unknown'}`,
+            `   Route: ${submission.route_id || 'unknown'}`,
+            `   Locale/viewport: ${[submission.locale, submission.viewport].filter(Boolean).join(' / ') || 'unknown'}`,
+            `   Submitted: ${fmtDate(submission.created_at)}`,
+          ].join('\n'),
+        )
+        .join('\n\n')
+    : 'No linked feedback evidence yet.'
+
+  return [
+    'You are implementing a Klai product feature request from the Platform feedback workflow.',
+    '',
+    'Goal:',
+    `Implement feature item #${item.id}: ${item.title}`,
+    '',
+    'Requested improvement context:',
+    context,
+    '',
+    'Current item state:',
+    `- Kind: ${item.kind}`,
+    `- Status: ${item.status}`,
+    `- Priority score: ${item.priority_score}`,
+    `- Reporter signal: ${item.org_count} org(s), ${item.user_count} user(s)`,
+    '',
+    'Internal note:',
+    item.summary || '(empty)',
+    '',
+    'Linked customer evidence:',
+    evidence,
+    '',
+    'Approach:',
+    '1. Start from the Area, Routes, and URLs above to locate the affected workflow.',
+    '2. Translate the customer need into the smallest product change that satisfies the request and fits the existing UX patterns.',
+    '3. Check nearby states and permissions so the feature works for the relevant roles and does not regress existing behavior.',
+    '4. Implement the change with focused tests for the requested path and one adjacent edge case.',
+    '5. Report what changed, which customer need it addresses, tests run, and any remaining product or rollout risk.',
+  ].join('\n')
+}

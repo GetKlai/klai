@@ -1,8 +1,7 @@
-import { Link, useLocation } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { LayoutGrid, LogOut, Shield, User, UserCircle } from 'lucide-react'
+import { LogOut, User, UserCircle } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
-import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { apiFetch } from '@/lib/apiFetch'
 import {
   DropdownMenu,
@@ -36,8 +35,6 @@ function getInitials(name: string | null): string {
 
 export function AccountMenu() {
   const auth = useAuth()
-  const location = useLocation()
-  const { user } = useCurrentUser()
   const { data: feedbackUpdates } = useQuery({
     queryKey: ['account-feedback-updates'],
     queryFn: () => apiFetch<AccountFeedbackUpdatesResponse>('/api/app/account/feedback-updates'),
@@ -49,8 +46,6 @@ export function AccountMenu() {
     enabled: auth.isAuthenticated,
   })
 
-  const inAdmin = location.pathname.startsWith('/admin')
-  const isAdmin = inAdmin || user?.isAdmin === true
   const feedbackUnreadCount = feedbackUpdates?.unread_count ?? 0
   const messageUnreadCount = platformMessages?.unread_count ?? 0
   const unreadCount = feedbackUnreadCount + messageUnreadCount
@@ -87,15 +82,6 @@ export function AccountMenu() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
           </>
-        )}
-
-        {isAdmin && (
-          <DropdownMenuItem asChild>
-            <Link to={inAdmin ? '/app' : '/admin'} className="cursor-pointer">
-              {inAdmin ? <LayoutGrid className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
-              {inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()}
-            </Link>
-          </DropdownMenuItem>
         )}
 
         <DropdownMenuItem asChild>

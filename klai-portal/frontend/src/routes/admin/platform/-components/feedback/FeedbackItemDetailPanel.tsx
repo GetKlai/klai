@@ -6,9 +6,7 @@ import {
   ChevronRight,
   Copy,
   Loader2,
-  Pencil,
   Save,
-  Trash2,
   X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -19,6 +17,7 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { StepIndicator, type StepItem } from "@/components/ui/step-indicator"
 import { Textarea } from "@/components/ui/textarea"
+import { RowActionGroup, RowActionIconButton } from "@/components/ui/row-action"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +42,7 @@ import type {
 import {
   CLOSED_FEEDBACK_ITEM_STATUSES,
   buildFeedbackDebugInstructions,
+  buildFeedbackFeatureInstructions,
   defaultResolutionSummary,
   feedbackActionErrorMessage,
   feedbackItemKindLabel,
@@ -138,9 +138,29 @@ function FeedbackItemDetailForm({
   )
   const resolveLabel = feedbackResolveLabel(item.kind)
   const isClosed = CLOSED_FEEDBACK_ITEM_STATUSES.has(status)
-  const debugInstructions = buildFeedbackDebugInstructions(item, submissions, fmtDate)
+  const hasLlmPrompt = item.kind === 'bug' || item.kind === 'feature'
+  const llmPrompt =
+    item.kind === 'feature'
+      ? buildFeedbackFeatureInstructions(item, submissions, fmtDate)
+      : hasLlmPrompt
+        ? buildFeedbackDebugInstructions(item, submissions, fmtDate)
+        : ''
+  const llmPromptLabel =
+    item.kind === 'feature'
+      ? {
+          title: m.platform_feedback_copy_feature_prompt_title(),
+          description: m.platform_feedback_copy_feature_prompt_description(),
+          button: m.platform_feedback_copy_feature_prompt_button(),
+          copied: m.platform_feedback_copy_feature_prompt_copied(),
+        }
+      : {
+          title: m.platform_feedback_copy_debug_title(),
+          description: m.platform_feedback_copy_debug_description(),
+          button: m.platform_feedback_copy_debug_button(),
+          copied: m.platform_feedback_copy_debug_copied(),
+        }
   const itemStepOrder: Array<'understand' | 'debug' | 'message'> =
-    item.kind === 'bug'
+    hasLlmPrompt
       ? ['understand', 'debug', 'message']
       : ['understand', 'message']
   const itemStepIndex = Math.max(0, itemStepOrder.indexOf(itemStep))
@@ -149,7 +169,7 @@ function FeedbackItemDetailForm({
       step === 'understand'
         ? m.platform_feedback_item_details()
         : step === 'debug'
-          ? m.platform_feedback_copy_debug_title()
+          ? llmPromptLabel.title
           : resolveLabel.title,
     onClick: () => setItemStep(step),
   }))
@@ -212,14 +232,14 @@ function FeedbackItemDetailForm({
       },
     )
   }
-  const copyDebugInstructions = async () => {
+  const copyLlmPrompt = async () => {
     if (typeof navigator === 'undefined' || !navigator.clipboard) {
       setCopyNotice(m.platform_feedback_copy_debug_failed())
       return
     }
     try {
-      await navigator.clipboard.writeText(debugInstructions)
-      setCopyNotice(m.platform_feedback_copy_debug_copied())
+      await navigator.clipboard.writeText(llmPrompt)
+      setCopyNotice(llmPromptLabel.copied)
     } catch {
       setCopyNotice(m.platform_feedback_copy_debug_failed())
     }
@@ -253,26 +273,18 @@ function FeedbackItemDetailForm({
               {feedbackItemStatusLabel(status)}
             </Badge>
             {!isEditing && (
-              <>
-                <button
-                  type="button"
+              <RowActionGroup className="ml-1">
+                <RowActionIconButton
+                  action="edit"
+                  label={m.platform_feedback_edit_item_title()}
                   onClick={() => setIsEditing(true)}
-                  aria-label={m.platform_feedback_edit_item_title()}
-                  title={m.platform_feedback_edit_item_title()}
-                  className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
+                />
+                <RowActionIconButton
+                  action="delete"
+                  label={m.platform_feedback_delete_item()}
                   onClick={() => setConfirmDeleteOpen(true)}
-                  aria-label={m.platform_feedback_delete_item()}
-                  title={m.platform_feedback_delete_item()}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </>
+                />
+              </RowActionGroup>
             )}
           </div>
         </div>
@@ -386,20 +398,20 @@ function FeedbackItemDetailForm({
         </>
       )}
 
-      {item.kind === 'bug' && itemStep === 'debug' && (
+      {hasLlmPrompt && itemStep === 'debug' && (
         <section className="space-y-4">
           <div>
             <h3 className="mt-1 text-base font-display-bold text-gray-900">
-              {m.platform_feedback_copy_debug_title()}
+              {llmPromptLabel.title}
             </h3>
             <p className="mt-1 text-sm leading-6 text-gray-600">
-              {m.platform_feedback_copy_debug_description()}
+              {llmPromptLabel.description}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" onClick={() => void copyDebugInstructions()}>
+            <Button type="button" onClick={() => void copyLlmPrompt()}>
               <Copy className="h-4 w-4" />
-              {m.platform_feedback_copy_debug_button()}
+              {llmPromptLabel.button}
             </Button>
             {copyNotice && (
               <p className="text-sm text-[var(--color-success)]">

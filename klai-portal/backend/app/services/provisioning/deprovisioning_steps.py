@@ -185,7 +185,9 @@ async def _delete_meilisearch_index(state: _DeprovisionState) -> None:
                 resp.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 errors.append(exc)
-                logger.warning("meilisearch_index_delete_failed", slug=state.slug, index=index_name, status=resp.status_code)
+                logger.warning(
+                    "meilisearch_index_delete_failed", slug=state.slug, index=index_name, status=resp.status_code
+                )
                 continue
             else:
                 logger.info("meilisearch_index_deleted", slug=state.slug, index=index_name)
@@ -207,7 +209,9 @@ async def _delete_meilisearch_index(state: _DeprovisionState) -> None:
                     delete_resp.raise_for_status()
                 except httpx.HTTPError as exc:
                     errors.append(exc)
-                    logger.warning("meilisearch_tenant_key_delete_failed", slug=state.slug, key_name=key_name, key_uid=uid)
+                    logger.warning(
+                        "meilisearch_tenant_key_delete_failed", slug=state.slug, key_name=key_name, key_uid=uid
+                    )
                     continue
                 else:
                     deleted_keys += 1

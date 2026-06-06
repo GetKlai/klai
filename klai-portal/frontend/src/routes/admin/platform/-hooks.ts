@@ -204,6 +204,7 @@ function usePlatformMessageMutation() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['platform-message-threads'] })
       void qc.invalidateQueries({ queryKey: ['platform-message-thread'] })
+      void qc.invalidateQueries({ queryKey: ['platform-stats'] })
     },
   }
 }

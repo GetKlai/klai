@@ -55,6 +55,8 @@ class PlatformMessageThreadOut(BaseModel):
     latest_message_sender_type: str
     latest_message_at: datetime
     latest_user_message_at: datetime | None = None
+    latest_admin_message_at: datetime | None = None
+    unread_for_admin: bool = False
     created_by: str
     created_at: datetime
 
@@ -132,6 +134,18 @@ def _latest_user_message_at_subquery():
     )
 
 
+def _latest_admin_message_at_subquery():
+    return (
+        select(func.max(PlatformMessage.created_at))
+        .where(
+            PlatformMessage.thread_id == PlatformMessageThread.id,
+            PlatformMessage.sender_type.in_(("platform_admin", "system")),
+        )
+        .correlate(PlatformMessageThread)
+        .scalar_subquery()
+    )
+
+
 def _recipient_count_subquery():
     return (
         select(func.count(PlatformMessageParticipant.user_id))
@@ -159,6 +173,7 @@ def _thread_select():
             _latest_body_subquery().label("latest_message_body"),
             _latest_sender_type_subquery().label("latest_message_sender_type"),
             _latest_user_message_at_subquery().label("latest_user_message_at"),
+            _latest_admin_message_at_subquery().label("latest_admin_message_at"),
             _recipient_count_subquery().label("recipient_count"),
         )
         .select_from(PlatformMessageThread)
@@ -167,6 +182,9 @@ def _thread_select():
 
 
 def _thread_out(row) -> PlatformMessageThreadOut:
+    unread_for_admin = row.latest_user_message_at is not None and (
+        row.latest_admin_message_at is None or row.latest_user_message_at > row.latest_admin_message_at
+    )
     return PlatformMessageThreadOut(
         id=row.id,
         org_id=row.org_id,
@@ -182,6 +200,8 @@ def _thread_out(row) -> PlatformMessageThreadOut:
         latest_message_sender_type=row.latest_message_sender_type,
         latest_message_at=row.latest_message_at,
         latest_user_message_at=row.latest_user_message_at,
+        latest_admin_message_at=row.latest_admin_message_at,
+        unread_for_admin=unread_for_admin,
         created_by=row.created_by,
         created_at=row.created_at,
     )
