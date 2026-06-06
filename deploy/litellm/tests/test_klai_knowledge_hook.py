@@ -3630,7 +3630,16 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "The application adds citations after generation" in format_section
         assert "NEVER create, guess, search for, or suggest an image URL" in format_section
         assert "no explicit image tag is present" in format_section
-        assert "no image is available in the knowledge base" in format_section
+        assert "image from the knowledge base" in format_section
+        assert "no knowledge-base image is available" in format_section
+        # KB-image-markdown rules must NOT define user-attachment handling.
+        assert "Knowledge-base images only" in format_section
+        assert "user-provided attachments may be used" in format_section
+        # The mode-independent user-content clause lives in the foundation
+        # layer (before the ANSWER FORMAT block), not the answer-format block.
+        assert "[User-provided content]" in sys_content
+        assert "never cite them as numbered sources" in sys_content
+        assert "Open mode: user-provided image attachments" not in sys_content
         assert "placeholder, example, or documentation-only" in format_section
         assert "example.com" not in format_section
         assert "![afbeelding" not in format_section
@@ -4180,6 +4189,68 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "selector_rejected_all_sources_fallback" not in caplog.text
 
     @pytest.mark.asyncio
+    async def test_open_low_confidence_user_attachment_answer_does_not_get_kb_citation(
+        self, monkeypatch
+    ):
+        """Attachment answers are not KB claims, even if token overlap would
+        otherwise make the citation selector attach a weak KB source.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="Op de screenshot staat een foutmelding over inloggen."
+                    )
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "wat staat er op deze screenshot?",
+                    "kb_narrow": False,
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "confidence_band": "low",
+                    "low_confidence_inject": True,
+                    "user_provided_content_context": True,
+                    "allow_uncited_user_content": True,
+                    "suppress_kb_citations": True,
+                    "allowed_image_urls": [],
+                    "citation_chunks": [
+                        {
+                            "title": "Screenshot handleiding",
+                            "source_url": "https://kb.getklai.test/screenshot",
+                            "text": "Een screenshot kan een foutmelding tonen.",
+                        }
+                    ],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Screenshot handleiding",
+                            "url": "https://kb.getklai.test/screenshot",
+                            "relevance_score": 0.9,
+                        }
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        message = response.choices[0].message
+        assert message.content == "Op de screenshot staat een foutmelding over inloggen."
+        assert "**Bronnen**" not in message.content
+        assert "Screenshot handleiding" not in message.content
+        assert getattr(message, "sources", []) == []
+
+    @pytest.mark.asyncio
     async def test_post_call_guard_renders_uploaded_document_source_without_url(
         self, monkeypatch, caplog
     ):
@@ -4301,6 +4372,51 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "**Agent activiteit**" in content
         assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
         assert "kb_citations_no_citable_sources" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_strict_no_citable_user_attachment_answer_is_not_replaced(
+        self, monkeypatch
+    ):
+        """Strict still refuses KB-unsupported KB claims, but not standalone
+        answers about the user's own visible attachment.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        original_answer = "Op de screenshot staat de tekst: Modus Open."
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=original_answer))]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Wat staat op deze screenshot?",
+                    "kb_narrow": True,
+                    "chunks_injected": 0,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "citation_chunks": [],
+                    "trusted_sources": [],
+                    "no_citable_sources": True,
+                    "no_citable_reason": "zero_results",
+                    "user_provided_content_context": True,
+                    "low_confidence_inject": False,
+                    "allow_uncited_user_content": True,
+                    "suppress_kb_citations": False,
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        message = response.choices[0].message
+        assert message.content == original_answer
+        assert "Ik kan dit niet betrouwbaar beantwoorden" not in message.content
+        assert "**Bronnen**" not in message.content
+        assert getattr(message, "sources", []) == []
 
     @pytest.mark.asyncio
     async def test_strict_refusal_does_not_present_consulted_docs_as_sources(
@@ -5115,9 +5231,82 @@ class TestKlaiKnowledgeHookOpenMode:
 
         sys_content = self._system_msg(result)
         assert "lage relevantie in Open modus" in sys_content
-        assert "Je mag algemene kennis gebruiken" in sys_content
+        assert "Open mode blijft actief" in sys_content
+        assert "weiger niet alleen omdat KB-bewijs zwak" in sys_content
+        assert "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext" in sys_content
+        assert "alleen een algemeen antwoord wanneer dat veilig kan" not in sys_content
         assert "Citeer alleen wat letterlijk in de chunks staat" not in sys_content
         self._assert_open_kb_foundation(sys_content)
+
+    @pytest.mark.asyncio
+    async def test_open_low_confidence_screenshot_question_does_not_become_kb_image_only(
+        self, monkeypatch
+    ):
+        """Open + weak KB chunks: a screenshot is standalone user content and
+        must not inherit the KB-image-only instructions.
+
+        Production trace 2026-06-06 12:20:53Z:
+        retrieval_decision_record for "wat staat er op deze screenshot?"
+        returned confidence_band=low with weak klai-web-demo chunks. The model
+        then answered as if no KB image tag meant no image was available,
+        despite Open mode. A user-provided screenshot is the user's own input,
+        usable independently of KB results.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "wat staat er op deze screenshot?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.test/screenshot.png"},
+                        },
+                    ],
+                }
+            ],
+        }
+        chunks = [
+            {
+                "text": "Klai is steward-owned.",
+                "scope": "org",
+                "metadata": {"title": "Steward ownership"},
+                "source_url": "https://getklai.com/docs/company/steward-ownership",
+                "chunk_id": f"weak-{i}",
+                "reranker_score": 0.0005,
+            }
+            for i in range(6)
+        ]
+        retrieval_resp = _make_resp(
+            {"chunks": chunks, "retrieval_bypassed": False, "confidence_band": "low"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        self._assert_open_kb_foundation(sys_content)
+        assert "lage relevantie in Open modus" in sys_content
+        assert "Knowledge-base images only" in sys_content
+        # Screenshot = standalone user content, usable in any mode.
+        assert "[User-provided content]" in sys_content
+        assert "you may read and reason about" in sys_content
+        assert "Open mode blijft actief" in sys_content
+        assert "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext" in sys_content
+        assert "no image is available in the knowledge base" not in sys_content
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["kb_narrow"] is False
+        assert meta["user_provided_content_context"] is True
+        assert meta["low_confidence_inject"] is True
+        assert meta["allow_uncited_user_content"] is True
+        assert meta["suppress_kb_citations"] is True
 
     @pytest.mark.asyncio
     async def test_strict_low_confidence_injection_remains_strict(
@@ -5144,7 +5333,129 @@ class TestKlaiKnowledgeHookOpenMode:
         assert "Klai retrieval — lage relevantie" in sys_content
         assert "Citeer alleen wat letterlijk in de chunks staat" in sys_content
         assert "lage relevantie in Open modus" not in sys_content
+        assert "Open mode blijft actief" not in sys_content
+        # Strict keeps the KB-only grounding contract...
         assert "answer strictly using only the sources below" in sys_content
+        # ...but a user-provided attachment is still standalone content the
+        # model may inspect, even in Strict. The clause is mode-independent.
+        assert "[User-provided content]" in sys_content
+        assert "even in Strict mode" in sys_content
+        assert "Strict mode: user-provided image attachments" not in sys_content
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kb_narrow", [False, True])
+    async def test_user_provided_content_scope_present_in_both_modes(
+        self, monkeypatch, _kb_chunks, kb_narrow
+    ):
+        """A user attachment is standalone content in BOTH Strict and Open.
+
+        The clause must never depend on the mode and must never tell the model
+        it cannot look at the user's own input. Mode only governs KB grounding
+        + general-knowledge fallback (asserted via the mode-specific KB header).
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": kb_narrow})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat staat hierop?"}],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": _kb_chunks, "retrieval_bypassed": False, "confidence_band": "high"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "[User-provided content]" in sys_content
+        assert "never present their contents as knowledge-base facts" in sys_content
+        assert "directly observable or user-provided information" in sys_content
+        assert "do not add general-world explanations" in sys_content
+        assert "it never blocks the user's own attachments or visible conversation" in sys_content
+        # Mode still differentiates KB grounding, not attachment access.
+        if kb_narrow:
+            assert "answer strictly using only the sources below" in sys_content
+        else:
+            assert "use this as supplementary context" in sys_content
+
+    @pytest.mark.asyncio
+    async def test_strict_zero_chunks_still_allows_user_attachment(
+        self, monkeypatch
+    ):
+        """Strict + zero KB results: the model must still be told it may read
+        the user's attachment. Previously the attachment instruction only
+        existed on the chunks-present path, so Strict + zero chunks gave no
+        guidance and risked refusing to look at the user's own screenshot.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat staat op deze screenshot?"}],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False, "confidence_band": "unknown"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        # Strict zero-chunks refusal header is present...
+        assert "zero results for this query" in sys_content
+        # ...and the user-attachment clause is STILL there.
+        assert "[User-provided content]" in sys_content
+        assert "even when the" in sys_content  # "...even when the knowledge base has zero..."
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["user_provided_content_context"] is True
+        assert meta["no_citable_sources"] is True
+        assert meta["allow_uncited_user_content"] is True
+
+    @pytest.mark.asyncio
+    async def test_strict_zero_chunks_still_allows_visible_conversation(
+        self, monkeypatch
+    ):
+        """Strict + zero KB results: explicit questions about the visible
+        conversation are also user-provided context, not KB claims.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Mijn project heet Atlas."},
+                {"role": "assistant", "content": "Begrepen."},
+                {"role": "user", "content": "Wat zei ik hierboven?"},
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False, "confidence_band": "unknown"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "[User-provided content]" in sys_content
+        assert "visible conversation" in sys_content
+        assert "zero results for this query" in sys_content
+        assert "Do not answer from general knowledge" in sys_content
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["user_provided_content_context"] is True
+        assert meta["no_citable_sources"] is True
+        assert meta["allow_uncited_user_content"] is True
 
 
 # ─── 2026-05-27: Open/Strict mode zero-chunks behaviour ─────────────────────
@@ -5345,6 +5656,8 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         )
         assert meta["chunks_injected"] == 0
         assert meta["kb_narrow"] is True
+        assert meta["user_provided_content_context"] is False
+        assert meta["allow_uncited_user_content"] is False
 
     @pytest.mark.asyncio
     async def test_zero_chunks_metadata_records_mode_open(self, monkeypatch):

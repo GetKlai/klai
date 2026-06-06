@@ -57,6 +57,7 @@ from klai_chat_prompts import (
 from klai_context import (
     HISTORY_BUDGET_CONTEXT_PLACEHOLDER as _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
     KlaiContextOrchestrator,
+    STALE_LIBRECHAT_UPLOAD_PREFIX as _STALE_LIBRECHAT_UPLOAD_PREFIX,
     STALE_ATTACHMENT_CONTEXT_PLACEHOLDER as _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
 )
 from klai_citations import (
@@ -367,12 +368,14 @@ _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT = (
     "[Klai retrieval — lage relevantie in Open modus]\n"
     "Het opgehaalde KB-materiaal heeft een lage relevantie-score voor "
     "deze vraag. Behandel de chunks als zwakke aanvullende context. "
-    "Je mag algemene kennis gebruiken, maar presenteer die dan expliciet "
-    "als algemene kennis en niet als iets dat uit de kennisbank komt. "
-    "Als de kennisbank de vraag niet dekt, zeg dat kort en geef daarna "
-    "alleen een algemeen antwoord wanneer dat veilig kan zonder specifieke "
-    "organisatiegegevens, prijzen, routes, productnamen of bronclaims te "
-    "verzinnen."
+    "Open mode blijft actief: weiger niet alleen omdat KB-bewijs zwak, "
+    "tangentieel, of afwezig is. Antwoord vanuit algemene kennis of "
+    "zichtbare gebruikerscontext wanneer de vraag daarmee betrouwbaar te "
+    "beantwoorden is. Presenteer zulke delen expliciet als algemene kennis "
+    "of als afgeleid uit de gebruikerscontext, niet als iets dat uit de "
+    "kennisbank komt. Voor organisatie-specifieke feiten, prijzen, routes, "
+    "productnamen, stappen, of bronclaims: verzin ze niet en zeg kort dat "
+    "de kennisbank die specifieke claim niet ondersteunt."
 )
 _LOW_CONFIDENCE_INJECTION_DISABLED = (
     os.getenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", "0") == "1"
@@ -694,6 +697,71 @@ def _last_user_message(messages: list[dict]) -> str | None:
                     p.get("text", "") for p in content if p.get("type") == "text"
                 )
     return None
+
+
+_USER_ATTACHMENT_PART_TYPES = frozenset({
+    "file",
+    "image",
+    "image_url",
+    "input_file",
+    "input_image",
+})
+_USER_PROVIDED_CONTENT_QUERY_RE = re.compile(
+    r"\b(afbeelding|bijlage|foto|geupload(?:e|de)?|image|pasted|plak(?:te)?|"
+    r"screenshot|upload(?:ed)?)\b"
+    r"|"
+    r"\b(deze|dit|onderstaande|bovenstaande|meegegeven|geplakte)\s+"
+    r"(bestand|document|file|tekst)\b"
+    r"|"
+    r"\b(wat\s+(zei|schreef)\s+ik|wat\s+staat\s+(hierboven|daarboven)|"
+    r"(vorige|eerdere)\s+(bericht|vraag)|dit\s+gesprek|deze\s+"
+    r"(chat|conversatie)|chatgeschiedenis|conversation\s+history)\b",
+    re.IGNORECASE,
+)
+_OMITTED_USER_CONTENT_PLACEHOLDERS = frozenset({
+    _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
+    _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
+})
+
+
+def _has_user_provided_content_context(messages: list[dict], query: object) -> bool:
+    """Return whether the current turn can be answered from user-owned content.
+
+    Ordinary chat text is intentionally not enough: treating every latest user
+    message as "user-provided content" would make Strict+zero-results pass
+    through general-knowledge answers. We only unlock the post-call exception
+    for concrete attachment/file/image shapes or queries that explicitly ask
+    about pasted/attached content.
+    """
+    if isinstance(query, str) and _USER_PROVIDED_CONTENT_QUERY_RE.search(query):
+        return True
+
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            stripped = content.lstrip()
+            if stripped in _OMITTED_USER_CONTENT_PLACEHOLDERS:
+                continue
+            if stripped.startswith(_STALE_LIBRECHAT_UPLOAD_PREFIX):
+                return True
+            continue
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            part_type = part.get("type")
+            if part_type in _USER_ATTACHMENT_PART_TYPES:
+                return True
+            if (
+                part_type == "text"
+                and isinstance(part.get("text"), str)
+                and part["text"].lstrip().startswith(_STALE_LIBRECHAT_UPLOAD_PREFIX)
+            ):
+                return True
+    return False
 
 
 def _llm_safety_enabled() -> bool:
@@ -1657,6 +1725,35 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+# A user-provided attachment is the user's OWN input, not a knowledge-base
+# source. It must always be usable standalone content, in every mode and on
+# every branch — a screenshot held up against the KB is a legitimate Strict
+# use case. Strict/Open governs KB-grounding and general-knowledge fallback,
+# NOT whether the model may look at what the user attached. Injected by the
+# path-A prefix composers below so it applies on every branch (chunks-present,
+# zero chunks, bypass, retrieval failure, no-scope, general). Paths B/C never
+# carry user attachments, so this deliberately stays out of the shared
+# ``klai_chat_prompts`` foundation constants.
+_USER_PROVIDED_CONTENT_SCOPE = (
+    "[User-provided content]\n"
+    "Any images, screenshots, files, or text the user attached or pasted in "
+    "this conversation, and the visible conversation itself, are the user's "
+    "own input. Always inspect and use them to understand and answer the "
+    "request. This is independent of Strict/Open mode and of whether the "
+    "knowledge base returned results: even in Strict mode, and even when the "
+    "knowledge base has zero or weak results, you may read and reason about "
+    "what the user gave you. In Strict mode this permission only covers "
+    "directly observable or user-provided information: do not add general-world "
+    "explanations, organization-specific facts, prices, routes, product names, "
+    "steps, or source claims unless the knowledge-base evidence below supports "
+    "them. They are NOT knowledge-base sources — never cite them as numbered "
+    "sources and never present their contents as knowledge-base facts. "
+    "Strict/Open only controls how you use the knowledge base and whether you "
+    "may add general knowledge; it never blocks the user's own attachments or "
+    "visible conversation."
+)
+
+
 def _compose_libre_chat_prefix(*blocks: str) -> str:
     """Compose the system-prompt prefix for path A (LibreChat → LiteLLM).
 
@@ -1664,7 +1761,10 @@ def _compose_libre_chat_prefix(*blocks: str) -> str:
     ``GROUNDED_CHAT_SYSTEM_PROMPT`` so language detection / 3-guard switch
     semantics apply, AND so the model defaults to KB-grounded behaviour on
     every branch where a KB scope is in play — even when retrieval returned
-    zero chunks or failed loud. Empty blocks are filtered out.
+    zero chunks or failed loud. The mode-independent
+    ``_USER_PROVIDED_CONTENT_SCOPE`` clause follows the foundation so user
+    attachments stay usable on every Strict branch. Empty blocks are
+    filtered out.
 
     Used by every code path downstream of ``if not librechat_user_id:
     return data`` EXCEPT the explicit "user opted out of every KB scope"
@@ -1673,12 +1773,20 @@ def _compose_libre_chat_prefix(*blocks: str) -> str:
     own prompts via the canonical ``klai_chat_prompts`` library — they do
     NOT route through this helper.
     """
-    return "\n\n".join(b for b in (GROUNDED_CHAT_SYSTEM_PROMPT, *blocks) if b)
+    return "\n\n".join(
+        b
+        for b in (GROUNDED_CHAT_SYSTEM_PROMPT, _USER_PROVIDED_CONTENT_SCOPE, *blocks)
+        if b
+    )
 
 
 def _compose_open_kb_chat_prefix(*blocks: str) -> str:
     """Compose the system-prompt prefix for Open mode with KB scope."""
-    return "\n\n".join(b for b in (OPEN_KB_CHAT_SYSTEM_PROMPT, *blocks) if b)
+    return "\n\n".join(
+        b
+        for b in (OPEN_KB_CHAT_SYSTEM_PROMPT, _USER_PROVIDED_CONTENT_SCOPE, *blocks)
+        if b
+    )
 
 
 def _compose_kb_mode_chat_prefix(kb_narrow: bool, *blocks: str) -> str:
@@ -2074,6 +2182,8 @@ def _render_kb_citation_content(
     trusted_sources: list[dict[str, Any]],
     evidence_chunks: list[dict],
     kb_narrow: bool,
+    allow_uncited_user_content: bool = False,
+    suppress_citations_for_user_content: bool = False,
     no_citable_message: object = None,
 ) -> tuple[str, list[dict[str, str]], bool, dict[str, Any]]:
     """Render the model's answer with deterministic citations.
@@ -2105,6 +2215,14 @@ def _render_kb_citation_content(
         else _no_citable_sources_message(user_query)
     )
     if not trusted_sources:
+        if allow_uncited_user_content:
+            return text, [], False, {
+                "mode": "document_level_supported_sources",
+                "candidate_count": 0,
+                "selected": [],
+                "rejected": [],
+                "no_citable_reason": "user_provided_content_passthrough",
+            }
         if kb_narrow:
             return strict_refusal, [], True, {
                 "mode": "document_level_supported_sources",
@@ -2128,6 +2246,14 @@ def _render_kb_citation_content(
             "selected": [],
             "rejected": [],
             "no_citable_reason": "strict_refusal_no_supported_sources",
+        }
+    if suppress_citations_for_user_content:
+        return text, [], False, {
+            "mode": "document_level_supported_sources",
+            "candidate_count": len(trusted_sources),
+            "selected": [],
+            "rejected": [],
+            "no_citable_reason": "user_provided_content_no_kb_citations",
         }
     composed = compose_answer_with_trusted_sources(
         text,
@@ -2477,6 +2603,13 @@ def _remember_citation_decision(
         kb_meta["no_citable_reason"] = reason
 
 
+def _citation_user_content_flags(kb_meta: dict[str, Any]) -> tuple[bool, bool]:
+    return (
+        bool(kb_meta.get("allow_uncited_user_content")),
+        bool(kb_meta.get("suppress_kb_citations")),
+    )
+
+
 def _flush_citation_stream_buffer(
     response: object,
     kb_meta: dict[str, Any],
@@ -2495,6 +2628,9 @@ def _flush_citation_stream_buffer(
         trusted_sources = []
     if not trusted_sources and not force_no_citable and not citation_chunks:
         return stats
+    allow_uncited_user_content, suppress_user_content_citations = (
+        _citation_user_content_flags(kb_meta)
+    )
     rendered_content, sources, no_citable_sources, decision = _render_kb_citation_content(
         full_text,
         allowed_image_urls=allowed_image_urls,
@@ -2502,6 +2638,8 @@ def _flush_citation_stream_buffer(
         trusted_sources=trusted_sources,
         evidence_chunks=citation_chunks,
         kb_narrow=bool(kb_meta.get("kb_narrow", False)),
+        allow_uncited_user_content=allow_uncited_user_content,
+        suppress_citations_for_user_content=suppress_user_content_citations,
         no_citable_message=kb_meta.get("no_citable_message"),
     )
 
@@ -2563,6 +2701,9 @@ def _compose_non_streaming_kb_response(
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
     if not citation_chunks and not trusted_sources and not force_no_citable:
         return stats
+    allow_uncited_user_content, suppress_user_content_citations = (
+        _citation_user_content_flags(kb_meta)
+    )
 
     for choice in _get_response_choices(response):
         message = _get_choice_message(choice, "message")
@@ -2577,6 +2718,8 @@ def _compose_non_streaming_kb_response(
                 trusted_sources=trusted_sources,
                 evidence_chunks=citation_chunks,
                 kb_narrow=bool(kb_meta.get("kb_narrow", False)),
+                allow_uncited_user_content=allow_uncited_user_content,
+                suppress_citations_for_user_content=suppress_user_content_citations,
                 no_citable_message=kb_meta.get("no_citable_message"),
             )
             if rendered_content != content or sources or no_citable_sources:
@@ -2620,7 +2763,14 @@ def _compose_streaming_kb_response(
         return stats
 
     kb_narrow = bool(kb_meta.get("kb_narrow", False))
-    strict_no_sources = not trusted_sources and (force_no_citable or kb_narrow)
+    allow_uncited_user_content, suppress_user_content_citations = (
+        _citation_user_content_flags(kb_meta)
+    )
+    strict_no_sources = (
+        not trusted_sources
+        and (force_no_citable or kb_narrow)
+        and not allow_uncited_user_content
+    )
     if not trusted_sources and not strict_no_sources:
         return stats
 
@@ -2647,6 +2797,8 @@ def _compose_streaming_kb_response(
                 trusted_sources=trusted_sources,
                 evidence_chunks=citation_chunks,
                 kb_narrow=kb_narrow,
+                allow_uncited_user_content=allow_uncited_user_content,
+                suppress_citations_for_user_content=suppress_user_content_citations,
                 no_citable_message=kb_meta.get("no_citable_message"),
             )
             _remember_citation_decision(
@@ -2694,6 +2846,8 @@ def _compose_streaming_kb_response(
             trusted_sources=trusted_sources,
             evidence_chunks=citation_chunks,
             kb_narrow=kb_narrow,
+            allow_uncited_user_content=allow_uncited_user_content,
+            suppress_citations_for_user_content=suppress_user_content_citations,
             no_citable_message=kb_meta.get("no_citable_message"),
         )
         _remember_citation_decision(
@@ -2744,7 +2898,11 @@ def _compose_general_chat_prefix(*blocks: str) -> str:
     still acts as a KB assistant when a KB scope was intended but data
     was unavailable.
     """
-    return "\n\n".join(b for b in (GENERAL_CHAT_SYSTEM_PROMPT, *blocks) if b)
+    return "\n\n".join(
+        b
+        for b in (GENERAL_CHAT_SYSTEM_PROMPT, _USER_PROVIDED_CONTENT_SCOPE, *blocks)
+        if b
+    )
 
 
 def _compose_meta_chat_prefix(*blocks: str) -> str:
@@ -2831,6 +2989,7 @@ class KlaiKnowledgeHook(CustomLogger):
         if not librechat_user_id:
             return data
 
+        user_provided_content_context = _has_user_provided_content_context(messages, query)
         data["messages"] = messages
         if context_meta is not None:
             data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
@@ -3328,6 +3487,10 @@ class KlaiKnowledgeHook(CustomLogger):
                 "retrieval_ms": int((time.monotonic() - t0) * 1000),
                 "gate_bypassed": False,
                 "retrieval_failure": retrieval_failure,
+                "user_provided_content_context": user_provided_content_context,
+                "low_confidence_inject": False,
+                "allow_uncited_user_content": user_provided_content_context,
+                "suppress_kb_citations": False,
             }
             return data
 
@@ -3346,6 +3509,10 @@ class KlaiKnowledgeHook(CustomLogger):
                 "chunks_injected": 0,
                 "retrieval_ms": retrieval_ms,
                 "gate_bypassed": True,
+                "user_provided_content_context": user_provided_content_context,
+                "low_confidence_inject": False,
+                "allow_uncited_user_content": user_provided_content_context,
+                "suppress_kb_citations": False,
             }
             return data
 
@@ -3388,6 +3555,10 @@ class KlaiKnowledgeHook(CustomLogger):
                 "render_mode": render_strategy.mode,
                 "retrieval_ms": retrieval_ms,
                 "gate_bypassed": False,
+                "user_provided_content_context": user_provided_content_context,
+                "low_confidence_inject": False,
+                "allow_uncited_user_content": user_provided_content_context,
+                "suppress_kb_citations": False,
             }
             return data
         evidence_chunks = evidence_pack_items_as_chunks(evidence_pack)
@@ -3570,6 +3741,12 @@ class KlaiKnowledgeHook(CustomLogger):
                     "render_mode": render_strategy.mode,
                     "retrieval_ms": retrieval_ms,
                     "gate_bypassed": False,
+                    "user_provided_content_context": user_provided_content_context,
+                    "low_confidence_inject": low_confidence_inject,
+                    "allow_uncited_user_content": user_provided_content_context,
+                    "suppress_kb_citations": (
+                        user_provided_content_context and low_confidence_inject
+                    ),
                 }
             return data
 
@@ -3631,9 +3808,13 @@ class KlaiKnowledgeHook(CustomLogger):
             "![...](https://...) tag exactly.\n"
             "- NEVER create, guess, search for, or suggest an image URL.\n"
             "- NEVER use placeholder, example, or documentation-only image URLs.\n"
-            "- If the user asks for an image and no explicit image tag is "
-            "present in the chunks, say plainly that no image is available "
-            "in the knowledge base.\n"
+            "- If the user asks for an image from the knowledge base and no "
+            "explicit image tag is present in the chunks, say plainly that "
+            "no knowledge-base image is available.\n"
+            "- Knowledge-base images only: these image markdown rules apply "
+            "only to images retrieved from knowledge-base chunks. They do "
+            "not define how user-provided attachments may be used — see the "
+            "[User-provided content] note above.\n"
             "- Do NOT add images in the TL;DR (section 1).]\n"
         )
         lines = [header, source_link_instruction]
@@ -3763,6 +3944,12 @@ class KlaiKnowledgeHook(CustomLogger):
             "render_mode": render_strategy.mode,
             "retrieval_ms": retrieval_ms,
             "gate_bypassed": False,
+            "user_provided_content_context": user_provided_content_context,
+            "low_confidence_inject": low_confidence_inject,
+            "allow_uncited_user_content": user_provided_content_context,
+            "suppress_kb_citations": (
+                user_provided_content_context and low_confidence_inject
+            ),
         }
         return data
 
