@@ -71,6 +71,7 @@ async def test_account_feedback_updates_returns_current_user_feedback_reports():
                 item_summary="Gebruikers zien een fout op de accountpagina.",
                 item_status="open",
                 item_updated_at=later,
+                message_thread_id=77,
             )
         ]
     )
@@ -88,6 +89,7 @@ async def test_account_feedback_updates_returns_current_user_feedback_reports():
     assert item.item_id == 456
     assert item.item_kind == "bug"
     assert item.item_status == "open"
+    assert item.message_thread_id == 77
     assert item.latest_update_at == later
 
     compiled = str(session.queries[0].compile(compile_kwargs={"literal_binds": True}))
@@ -110,6 +112,99 @@ async def test_account_feedback_updates_can_mark_all_unread_notifications_read()
     assert result.read_count == 1
     assert notification.read_at == result.read_at
     assert session.commits == 1
+
+
+class _MessageSession:
+    def __init__(self, rows):
+        self.rows = rows
+        self.added = []
+        self.commits = 0
+        self.flushes = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return None
+
+    async def execute(self, _query):
+        return _Result(self.rows)
+
+    def add(self, row):
+        self.added.append(row)
+
+    async def flush(self):
+        self.flushes += 1
+        for row in self.added:
+            if isinstance(row, app_account.PlatformMessageThread) and row.id is None:
+                row.id = 987
+
+    async def commit(self):
+        self.commits += 1
+
+
+@pytest.mark.asyncio
+async def test_account_feedback_updates_reply_creates_feedback_message_thread(monkeypatch):
+    now = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    feedback_session = _Session(
+        [
+            SimpleNamespace(
+                submission_id=123,
+                raw_text="De accountpagina laadt niet goed.",
+                item_id=456,
+                item_title="Accountpagina laadt niet",
+            )
+        ]
+    )
+    message_session = _MessageSession([])
+    detail = app_account.AccountPlatformMessageThreadDetailOut(
+        thread=app_account.AccountPlatformMessageThreadOut(
+            id=987,
+            subject="Accountpagina laadt niet",
+            status="open",
+            origin_type="feedback_submission",
+            feedback_submission_id=123,
+            feedback_item_id=456,
+            latest_message_body="Ik heb nog extra context.",
+            latest_message_sender_type="user",
+            latest_message_at=now,
+            last_read_at=None,
+            unread=False,
+            created_at=now,
+        ),
+        messages=[],
+    )
+
+    async def fake_load_caller_user(*_args, **_kwargs):
+        return SimpleNamespace(email="user@example.com", display_name="User")
+
+    async def fake_load_detail(db, **kwargs):
+        assert db is message_session
+        assert kwargs == {"thread_id": 987, "org_id": 42, "user_id": "user-123"}
+        return detail
+
+    monkeypatch.setattr(app_account, "_load_caller_user", fake_load_caller_user)
+    monkeypatch.setattr(app_account, "cross_org_session", lambda: message_session)
+    monkeypatch.setattr(app_account, "_load_account_message_thread_detail", fake_load_detail)
+
+    result = await app_account.reply_to_feedback_update(
+        123,
+        app_account.AccountPlatformMessageReplyIn(body="Ik heb nog extra context."),
+        perms=SimpleNamespace(org_id=42, user_id="user-123"),
+        db=feedback_session,
+    )
+
+    thread = next(row for row in message_session.added if isinstance(row, app_account.PlatformMessageThread))
+    participant = next(row for row in message_session.added if isinstance(row, app_account.PlatformMessageParticipant))
+    message = next(row for row in message_session.added if isinstance(row, app_account.PlatformMessage))
+    assert thread.origin_type == "feedback_submission"
+    assert thread.feedback_submission_id == 123
+    assert thread.feedback_item_id == 456
+    assert participant.user_id == "user-123"
+    assert message.sender_type == "user"
+    assert message.body == "Ik heb nog extra context."
+    assert message_session.commits == 1
+    assert result.thread.id == 987
 
 
 @pytest.mark.asyncio
@@ -186,6 +281,24 @@ async def test_account_platform_messages_can_mark_thread_read():
 
     assert result.thread_id == 99
     assert participant.last_read_at == result.read_at
+    assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_account_platform_messages_can_mark_all_unread_threads_read():
+    now = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    unread = SimpleNamespace(last_read_at=None)
+    already_read = SimpleNamespace(last_read_at=now)
+    session = _Session([(unread, now), (already_read, now)])
+
+    result = await app_account.mark_all_platform_messages_read(
+        perms=SimpleNamespace(org_id=42, user_id="user-123"),
+        db=session,
+    )
+
+    assert result.read_count == 1
+    assert unread.last_read_at == result.read_at
+    assert already_read.last_read_at == now
     assert session.commits == 1
 
 
