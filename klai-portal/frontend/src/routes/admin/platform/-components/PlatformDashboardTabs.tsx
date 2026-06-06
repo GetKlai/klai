@@ -1,8 +1,9 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
-import { Activity, Bug, ExternalLink, Loader2, Send } from "lucide-react"
+import { Activity, Bug, ExternalLink } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ConversationPanel, type ConversationEntry } from "@/components/ui/conversation"
 import {
   DataTable,
   DataTableBody,
@@ -11,9 +12,8 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@/components/ui/data-table"
-import { Label } from "@/components/ui/label"
 import { ListEmptyState, ListLoadingState } from "@/components/ui/list-state"
-import { Textarea } from "@/components/ui/textarea"
+import { getLocale } from "@/paraglide/runtime"
 import * as m from "@/paraglide/messages"
 import {
   usePlatformBots,
@@ -362,6 +362,71 @@ export function MessagesTab({
     )
   }
 
+  function backToList() {
+    setSelectedThreadId(null)
+    setReplyBody('')
+  }
+
+  if (selectedThreadId !== null) {
+    const detail = selectedThread.data
+    const isOpen = detail?.thread.status === 'open'
+    const entries: ConversationEntry[] = (detail?.messages ?? []).map((message) => ({
+      id: message.id,
+      side: message.sender_type === 'user' ? 'them' : 'me',
+      author:
+        message.sender_type === 'user'
+          ? m.platform_messages_sender_user()
+          : m.platform_messages_sender_admin(),
+      body: message.body,
+      at: message.created_at,
+    }))
+    const recipients = detail
+      ? detail.recipients.map((r) => r.display_name || r.email || r.user_id).join(', ')
+      : undefined
+
+    return (
+      <ConversationPanel
+        title={detail?.thread.subject ?? ''}
+        subtitle={recipients}
+        badge={
+          detail ? (
+            <Badge variant={isOpen ? 'success' : 'secondary'}>
+              {isOpen ? m.platform_messages_status_open() : m.platform_messages_status_closed()}
+            </Badge>
+          ) : undefined
+        }
+        headerActions={
+          detail ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={updateStatus.isPending}
+              onClick={() =>
+                updateStatus.mutate({
+                  threadId: detail.thread.id,
+                  status: isOpen ? 'closed' : 'open',
+                })
+              }
+            >
+              {isOpen ? m.platform_messages_close() : m.platform_messages_reopen()}
+            </Button>
+          ) : undefined
+        }
+        entries={entries}
+        loading={selectedThread.isLoading || !detail}
+        locale={getLocale() === 'en' ? 'en' : 'nl'}
+        draft={replyBody}
+        onDraftChange={setReplyBody}
+        onSend={sendReply}
+        isSending={reply.isPending}
+        placeholder={m.platform_messages_reply()}
+        sendLabel={m.platform_messages_send()}
+        onBack={backToList}
+      />
+    )
+  }
+
   return (
     <div className="space-y-6">
       {composeTarget && (
@@ -422,83 +487,6 @@ export function MessagesTab({
         </DataTable>
       )}
 
-      {selectedThreadId !== null && (
-        <section className="space-y-4 border-t border-gray-200 pt-6">
-          {selectedThread.isLoading || !selectedThread.data ? (
-            <ListLoadingState label={m.admin_shared_loading()} />
-          ) : (
-            <>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h2 className="text-base font-display-bold text-gray-900">
-                    {selectedThread.data.thread.subject}
-                  </h2>
-                  <p className="mt-1 text-sm text-gray-400">
-                    {selectedThread.data.recipients
-                      .map((recipient) => recipient.display_name || recipient.email || recipient.user_id)
-                      .join(', ')}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={updateStatus.isPending}
-                  onClick={() =>
-                    updateStatus.mutate({
-                      threadId: selectedThread.data.thread.id,
-                      status: selectedThread.data.thread.status === 'open' ? 'closed' : 'open',
-                    })
-                  }
-                >
-                  {selectedThread.data.thread.status === 'open'
-                    ? m.platform_messages_close()
-                    : m.platform_messages_reopen()}
-                </Button>
-              </div>
-              <div className="divide-y divide-gray-100 border-y border-gray-200">
-                {selectedThread.data.messages.map((message) => (
-                  <article key={message.id} className="py-4">
-                    <div className="mb-1 flex items-center gap-2 text-xs text-gray-400">
-                      <Badge variant={message.sender_type === 'user' ? 'outline' : 'secondary'}>
-                        {message.sender_type === 'user'
-                          ? m.platform_messages_sender_user()
-                          : m.platform_messages_sender_admin()}
-                      </Badge>
-                      <span>{fmtDate(message.created_at)}</span>
-                    </div>
-                    <p className="whitespace-pre-wrap text-sm leading-6 text-gray-900">
-                      {message.body}
-                    </p>
-                  </article>
-                ))}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="platform-message-reply">{m.platform_messages_reply()}</Label>
-                <Textarea
-                  id="platform-message-reply"
-                  value={replyBody}
-                  rows={4}
-                  maxLength={4000}
-                  onChange={(event) => setReplyBody(event.target.value)}
-                />
-                <Button
-                  type="button"
-                  disabled={replyBody.trim().length === 0 || reply.isPending}
-                  onClick={sendReply}
-                >
-                  {reply.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                  {m.platform_messages_send()}
-                </Button>
-              </div>
-            </>
-          )}
-        </section>
-      )}
     </div>
   )
 }
