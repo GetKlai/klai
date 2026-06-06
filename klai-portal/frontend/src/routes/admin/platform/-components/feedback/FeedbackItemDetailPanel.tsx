@@ -43,6 +43,7 @@ import type {
 import {
   CLOSED_FEEDBACK_ITEM_STATUSES,
   buildFeedbackDebugInstructions,
+  buildFeedbackFeatureInstructions,
   defaultResolutionSummary,
   feedbackActionErrorMessage,
   feedbackItemKindLabel,
@@ -138,9 +139,29 @@ function FeedbackItemDetailForm({
   )
   const resolveLabel = feedbackResolveLabel(item.kind)
   const isClosed = CLOSED_FEEDBACK_ITEM_STATUSES.has(status)
-  const debugInstructions = buildFeedbackDebugInstructions(item, submissions, fmtDate)
+  const hasLlmPrompt = item.kind === 'bug' || item.kind === 'feature'
+  const llmPrompt =
+    item.kind === 'feature'
+      ? buildFeedbackFeatureInstructions(item, submissions, fmtDate)
+      : hasLlmPrompt
+        ? buildFeedbackDebugInstructions(item, submissions, fmtDate)
+        : ''
+  const llmPromptLabel =
+    item.kind === 'feature'
+      ? {
+          title: m.platform_feedback_copy_feature_prompt_title(),
+          description: m.platform_feedback_copy_feature_prompt_description(),
+          button: m.platform_feedback_copy_feature_prompt_button(),
+          copied: m.platform_feedback_copy_feature_prompt_copied(),
+        }
+      : {
+          title: m.platform_feedback_copy_debug_title(),
+          description: m.platform_feedback_copy_debug_description(),
+          button: m.platform_feedback_copy_debug_button(),
+          copied: m.platform_feedback_copy_debug_copied(),
+        }
   const itemStepOrder: Array<'understand' | 'debug' | 'message'> =
-    item.kind === 'bug'
+    hasLlmPrompt
       ? ['understand', 'debug', 'message']
       : ['understand', 'message']
   const itemStepIndex = Math.max(0, itemStepOrder.indexOf(itemStep))
@@ -149,7 +170,7 @@ function FeedbackItemDetailForm({
       step === 'understand'
         ? m.platform_feedback_item_details()
         : step === 'debug'
-          ? m.platform_feedback_copy_debug_title()
+          ? llmPromptLabel.title
           : resolveLabel.title,
     onClick: () => setItemStep(step),
   }))
@@ -212,14 +233,14 @@ function FeedbackItemDetailForm({
       },
     )
   }
-  const copyDebugInstructions = async () => {
+  const copyLlmPrompt = async () => {
     if (typeof navigator === 'undefined' || !navigator.clipboard) {
       setCopyNotice(m.platform_feedback_copy_debug_failed())
       return
     }
     try {
-      await navigator.clipboard.writeText(debugInstructions)
-      setCopyNotice(m.platform_feedback_copy_debug_copied())
+      await navigator.clipboard.writeText(llmPrompt)
+      setCopyNotice(llmPromptLabel.copied)
     } catch {
       setCopyNotice(m.platform_feedback_copy_debug_failed())
     }
@@ -386,20 +407,20 @@ function FeedbackItemDetailForm({
         </>
       )}
 
-      {item.kind === 'bug' && itemStep === 'debug' && (
+      {hasLlmPrompt && itemStep === 'debug' && (
         <section className="space-y-4">
           <div>
             <h3 className="mt-1 text-base font-display-bold text-gray-900">
-              {m.platform_feedback_copy_debug_title()}
+              {llmPromptLabel.title}
             </h3>
             <p className="mt-1 text-sm leading-6 text-gray-600">
-              {m.platform_feedback_copy_debug_description()}
+              {llmPromptLabel.description}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" onClick={() => void copyDebugInstructions()}>
+            <Button type="button" onClick={() => void copyLlmPrompt()}>
               <Copy className="h-4 w-4" />
-              {m.platform_feedback_copy_debug_button()}
+              {llmPromptLabel.button}
             </Button>
             {copyNotice && (
               <p className="text-sm text-[var(--color-success)]">
