@@ -2015,6 +2015,35 @@ Reference: PR #441 → crashloop → hotfix #442 (rebase) + #443 (merge
 migration). Operator timeline: 5 minutes from deploy to crashloop, 13
 minutes from crashloop to recovered deploy.
 
+**Second incident (2026-06-06, PR #793 + product-updates):** the
+`alembic heads` CI gate WORKED — it is wired as a deploy-gating quality
+check, so the double-head did NOT reach prod (the status-removal run
+failed on "Alembic integrity", deploy never ran, prod stayed on the
+last single-head image). This is the fail-closed behavior you want. But
+two follow-on gotchas turned a 1-line fix into three PRs:
+
+1. **The merge migration's own boilerplate fails the deploy it unblocks.**
+   `alembic merge heads -m "…"` generates `from alembic import op` +
+   `import sqlalchemy as sa` in a no-op merge body that uses neither →
+   ruff F401 → quality red → deploy still gated. Strip both imports
+   (keep only `from typing import Sequence, Union`) before pushing the
+   merge migration. Run `uv run ruff check` AND `uv run ruff format
+   --check` on the generated file locally first.
+
+2. **`--admin` merge bypasses checks, so the head-split lands silently.**
+   PR-level CI checks PR+main at check-time and is green; if a second
+   migration off the same parent merges in the same window, post-merge
+   main has two heads with no red PR. The deploy-gating `alembic heads`
+   check on the main branch is the only thing that catches it — and it
+   catches it by blocking deploy, not by blocking the merge. After any
+   `--admin` merge of a PR carrying a migration, run `gh run list
+   --branch main --limit 1` and confirm the post-merge run is green
+   BEFORE walking away.
+
+Recovery was clean fix-forward (no prod impact): PR #794 added the merge
+migration, PR #795 stripped its unused imports, deploy went green,
+`alembic current` on the container = `0aac04f1bccc (head) (mergepoint)`.
+
 ## docker-cp-not-a-deploy-mechanism (HIGH)
 
 `docker cp` from a developer laptop into a running production container
