@@ -137,6 +137,11 @@ from klai_kb_scope_policy import (
     resolve_kb_retrieval_scope as _resolve_kb_retrieval_scope,
     resolve_kb_taxonomy_decision as _resolve_kb_taxonomy_decision,
 )
+from klai_kb_traceability import (
+    kb_labels_from_chunks as _kb_labels_from_chunks,
+    kb_labels_used_by_sources as _kb_labels_used_by_sources,
+    kb_scope_mode as _kb_scope_mode,
+)
 from klai_llm_safety import (
     SafetyDecision,
     SafetyPhase,
@@ -1172,6 +1177,10 @@ class KlaiKnowledgeHook(CustomLogger):
         #     retrieval-api still applies its org/scope filters.
         #   * personal-only scope ("personal") → no org KBs → skip taxonomy.
         kbs_in_scope: list[str] = scope_decision.kbs_in_scope or []
+        kb_scope_mode = _kb_scope_mode(
+            scope=scope,
+            kb_slugs_for_request=scope_decision.kb_slugs_for_request,
+        )
         taxonomy_trees: dict[str, list[dict]] = {}
         taxonomy_coverage_map: dict[str, float] = {}
         if kbs_in_scope and TAXONOMY_ENABLED and scope in ("org", "both"):
@@ -1350,6 +1359,8 @@ class KlaiKnowledgeHook(CustomLogger):
                 original_stream=original_stream,
                 render_mode=render_strategy.mode,
                 retrieval_failure=retrieval_failure,
+                kb_scope_mode=kb_scope_mode,
+                kbs_in_scope=kbs_in_scope,
             )
             return data
 
@@ -1372,10 +1383,14 @@ class KlaiKnowledgeHook(CustomLogger):
                 user_id=user_id,
                 retrieval_ms=retrieval_ms,
                 gate_bypassed=True,
+                kb_scope_mode=kb_scope_mode,
+                kbs_in_scope=kbs_in_scope,
             )
             return data
 
         chunks = result.get("chunks", [])
+        raw_chunks = chunks if isinstance(chunks, list) else []
+        kbs_with_results = _kb_labels_from_chunks(raw_chunks)
         evidence_pack = result.get("evidence_pack")
         has_evidence_pack = isinstance(evidence_pack, dict)
         if not has_evidence_pack:
@@ -1408,6 +1423,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 no_citable_reason="missing_evidence_pack",
                 original_stream=original_stream,
                 render_mode=render_strategy.mode,
+                kb_scope_mode=kb_scope_mode,
+                kbs_in_scope=kbs_in_scope,
+                kbs_with_results=kbs_with_results,
             )
             return data
         evidence_chunks = evidence_pack_items_as_chunks(evidence_pack)
@@ -1569,6 +1587,9 @@ class KlaiKnowledgeHook(CustomLogger):
                         ),
                         original_stream=original_stream,
                         render_mode=render_strategy.mode,
+                        kb_scope_mode=kb_scope_mode,
+                        kbs_in_scope=kbs_in_scope,
+                        kbs_with_results=kbs_with_results,
                     )
                 )
             return data
@@ -1647,6 +1668,14 @@ class KlaiKnowledgeHook(CustomLogger):
             confidence_band=confidence_band,
             original_stream=original_stream,
             render_mode=render_strategy.mode,
+            kb_scope_mode=kb_scope_mode,
+            kbs_in_scope=kbs_in_scope,
+            kbs_with_results=kbs_with_results,
+            kbs_used_as_sources=_kb_labels_used_by_sources(
+                trusted_sources,
+                evidence_pack,
+                raw_chunks,
+            ),
         )
         return data
 

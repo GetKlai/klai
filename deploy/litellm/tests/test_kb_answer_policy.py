@@ -100,6 +100,10 @@ _EXPECTED_KEYS = {
     "retrieval_ms",
     "gate_bypassed",
     "retrieval_failure",
+    "kb_scope_mode",
+    "kbs_in_scope",
+    "kbs_with_results",
+    "kbs_used_as_sources",
     # policy-derived
     "answer_policy_state",
     "answer_policy_mode",
@@ -306,6 +310,10 @@ def test_to_kb_meta_minimal_call_defaults_are_safe():
     assert meta["no_citable_reason"] is None
     assert meta["retrieval_failure"] is False
     assert meta["confidence_band"] is None
+    assert meta["kb_scope_mode"] is None
+    assert meta["kbs_in_scope"] == []
+    assert meta["kbs_with_results"] == []
+    assert meta["kbs_used_as_sources"] == []
 
 
 def test_mode_follows_kb_narrow():
