@@ -182,7 +182,10 @@ class TestCharacterizeWriteTenantCaddyfile:
         assert "chat-acme.getklai.com" in content
         assert "reverse_proxy librechat-acme:3080" in content
         assert "Strict-Transport-Security" in content
-        assert "rate_limit" in content
+        assert "@chat_generation" in content
+        assert "method POST" in content
+        assert "path /api/agents/chat/* /api/ask/*" in content
+        assert "rate_limit @chat_generation" in content
 
     def test_creates_directory_if_needed(self, tmp_path):
         from app.services.provisioning import _write_tenant_caddyfile

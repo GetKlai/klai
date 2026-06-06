@@ -381,7 +381,11 @@ def _write_tenant_caddyfile(slug: str) -> None:
         Content-Security-Policy "frame-ancestors https://*.{domain}"
         -Server
     }}
-    rate_limit {{
+    @chat_generation {{
+        method POST
+        path /api/agents/chat/* /api/ask/*
+    }}
+    rate_limit @chat_generation {{
         zone {names.caddy_rate_limit_zone} {{
             key {{remote_host}}
             events 120
