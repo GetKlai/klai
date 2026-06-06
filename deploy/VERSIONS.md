@@ -45,13 +45,13 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 |---|---|---|
 | `litellm` | `ghcr.io/berriai/litellm:v1.83.7-stable` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). v1.83.x fixes CVE-2026-35030 (OIDC userinfo cache key collision — auth bypass). Re-assess monthly; LiteLLM ships stable tags ~weekly. |
 | `ollama` | `ollama/ollama:0.21.0` | CPU fallback for LLM inference. |
-| `librechat-getklai` | `ghcr.io/danny-avila/librechat:v0.8.5-rc1` | Multi-tenant chat UI. **Currently on RC1** — rolled in from `:latest` during 2026-04-19 audit. 4 mounted patches (`format.cjs`, `share.js`, `stream.cjs`, `search.cjs`) target LibreChat internal files — any LibreChat upgrade must re-verify those patches against `deploy/librechat/patch-manifest.txt`. Goal: move to stable v0.8.5 when released. |
+| `librechat-getklai` | `ghcr.io/danny-avila/librechat:v0.8.5-rc1` | Multi-tenant chat UI. **Currently on RC1** — rolled in from `:latest` during 2026-04-19 audit. 4 mounted patches (`format.cjs`, `share.js`, `stream.cjs`, `search.cjs`) plus the Klai entrypoint runtime guard target LibreChat internal files — any LibreChat upgrade must re-verify those patches against `deploy/librechat/patch-manifest.txt` and the entrypoint Meili patch block. Goal: move to stable v0.8.5 when released. |
 
 ### Document + search
 
 | Service | Image | Rationale |
 |---|---|---|
-| `meilisearch` | `getmeili/meilisearch:v1.42.1` | Search index for LibreChat conversations. **Data migration required on minor bumps** — breaking v1.40 → v1.42 schema change. Pin explicitly to control migration timing. |
+| `meilisearch` | `getmeili/meilisearch:v1.45.2` | Search index for LibreChat conversations. **Data migration required on minor bumps** — breaking v1.40 → v1.42 schema change. `MEILI_DB_PATH=/meili_data` is required so the engine uses the mounted volume instead of its default `./data.ms`. Pin explicitly to control migration timing. |
 | `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.16.1` | Document parsing (PDF, DOCX → structured). |
 | `searxng` | `searxng/searxng:2026.4.17-e8299a4c3` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
 | `gitea` | `gitea/gitea:1.26.0` | Self-hosted git for klai-docs. |
@@ -94,7 +94,7 @@ Uses the same versions as production core-01 to catch version-related issues loc
 | `postgres` | `pgvector/pgvector:pg18` | Same as prod. |
 | `redis` | `redis:8-alpine` | Aligned with prod (was `redis:alpine`). |
 | `mongodb` | `mongo:8.2.7` | Same as prod. |
-| `meilisearch` | `getmeili/meilisearch:v1.42.1` | Aligned with prod (was v1.13 — multi-major skew). |
+| `meilisearch` | `getmeili/meilisearch:v1.45.2` | Aligned with prod. Uses `MEILI_DB_PATH=/meili_data` so the named volume is the active database path. |
 | `litellm` | `ghcr.io/berriai/litellm:main-stable` | Same rolling tag as prod. |
 
 ---

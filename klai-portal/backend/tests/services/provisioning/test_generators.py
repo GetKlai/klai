@@ -98,6 +98,7 @@ class TestCharacterizeGenerateLibrechatEnvSnapshot:
                 client_secret="csec-snap",
                 litellm_api_key="key-snap",
                 mongo_password="pw-snap",
+                meili_api_key="meili-tenant-snap",
                 zitadel_org_id="org-snap-123",
             )
 
@@ -109,6 +110,12 @@ class TestCharacterizeGenerateLibrechatEnvSnapshot:
         assert "ALLOW_SHARED_LINKS_PUBLIC=true" in result
         assert "KLAI_ZITADEL_ORG_ID=org-snap-123" in result
         assert "KLAI_ORG_SLUG=snapshot-org" in result
+        assert "MEILI_MESSAGES_INDEX=snapshot-org_messages" in result
+        assert "MEILI_CONVOS_INDEX=snapshot-org_convos" in result
+        assert "MEILI_MASTER_KEY=meili-tenant-snap" in result
+        assert "MEILI_MASTER_KEY=test-meili-key" not in result
+        assert "MEILI_NO_SYNC=true" in result
+        assert "SEARCH=true" not in result
         # Deterministic secrets
         assert f"JWT_SECRET={'ab' * 32}" in result
         assert f"CREDS_IV={'ab' * 8}" in result

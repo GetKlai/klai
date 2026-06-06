@@ -179,13 +179,14 @@ services:
 
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
-    image: getmeili/meilisearch:v1.42.1
+    image: getmeili/meilisearch:v1.45.2
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
     environment:
       MEILI_ENV: production
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_DB_PATH: /meili_data
       MEILI_NO_ANALYTICS: "true"
     networks:
       - net-meilisearch
@@ -336,6 +337,11 @@ services:
     environment:
       REDIS_URI: ${REDIS_URI}
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      # LibreChat expects this env var name, but the value must be a
+      # getklai-scoped Meili API key, not MEILI_MASTER_KEY.
+      MEILI_MASTER_KEY: "${GETKLAI_MEILI_API_KEY:?set a Meili key scoped to getklai_messages,getklai_convos}"
+      MEILI_MESSAGES_INDEX: getklai_messages
+      MEILI_CONVOS_INDEX: getklai_convos
     volumes:
       - ./librechat/getklai/librechat.yaml:/app/librechat.yaml:ro
       - ./librechat/getklai/images:/app/client/public/images

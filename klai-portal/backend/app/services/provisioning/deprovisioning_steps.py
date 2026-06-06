@@ -157,23 +157,67 @@ async def _drop_mongodb_user(state: _DeprovisionState) -> None:
 
 
 async def _delete_meilisearch_index(state: _DeprovisionState) -> None:
-    """DELETE /indexes/{slug} via Meilisearch API. Idempotent on 404.
+    """DELETE tenant-scoped LibreChat Meilisearch indexes and runtime keys.
 
     # @MX:NOTE: idempotent — al-weg = geen exception. SPEC R3.
     """
     meili_url = "http://meilisearch:7700"
     meili_key = settings.meili_master_key
+    index_names = (f"{state.slug}_messages", f"{state.slug}_convos")
+    key_name = f"librechat-{state.slug}-meili"
+    errors: list[Exception] = []
     async with httpx.AsyncClient(
         base_url=meili_url,
         headers={"Authorization": f"Bearer {meili_key}"},
         timeout=15.0,
     ) as client:
-        resp = await client.delete(f"/indexes/{state.slug}")
-        if resp.status_code == 404:
-            logger.info("meilisearch_index_already_absent", slug=state.slug)
-            return
-        resp.raise_for_status()
-    logger.info("meilisearch_index_deleted", slug=state.slug)
+        for index_name in index_names:
+            try:
+                resp = await client.delete(f"/indexes/{index_name}")
+            except httpx.HTTPError as exc:
+                errors.append(exc)
+                logger.warning("meilisearch_index_delete_failed", slug=state.slug, index=index_name, error=str(exc))
+                continue
+            if resp.status_code == 404:
+                logger.info("meilisearch_index_already_absent", slug=state.slug, index=index_name)
+                continue
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                errors.append(exc)
+                logger.warning("meilisearch_index_delete_failed", slug=state.slug, index=index_name, status=resp.status_code)
+                continue
+            else:
+                logger.info("meilisearch_index_deleted", slug=state.slug, index=index_name)
+
+        try:
+            keys_resp = await client.get("/keys", params={"limit": 1000})
+            keys_resp.raise_for_status()
+            deleted_keys = 0
+            for key in keys_resp.json().get("results", []):
+                if key.get("name") != key_name:
+                    continue
+                uid = key.get("uid")
+                if not uid:
+                    continue
+                try:
+                    delete_resp = await client.delete(f"/keys/{uid}")
+                    if delete_resp.status_code == 404:
+                        continue
+                    delete_resp.raise_for_status()
+                except httpx.HTTPError as exc:
+                    errors.append(exc)
+                    logger.warning("meilisearch_tenant_key_delete_failed", slug=state.slug, key_name=key_name, key_uid=uid)
+                    continue
+                else:
+                    deleted_keys += 1
+            logger.info("meilisearch_tenant_keys_deleted", slug=state.slug, key_name=key_name, deleted=deleted_keys)
+        except httpx.HTTPError as exc:
+            errors.append(exc)
+            logger.warning("meilisearch_tenant_key_delete_failed", slug=state.slug, key_name=key_name)
+
+    if errors:
+        raise errors[0]
 
 
 # ---------------------------------------------------------------------------

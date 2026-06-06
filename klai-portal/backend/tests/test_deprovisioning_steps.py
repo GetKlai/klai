@@ -281,43 +281,107 @@ class TestDropMongodbUser:
 class TestDeleteMeilisearchIndex:
     @pytest.mark.asyncio
     async def test_204_success(self) -> None:
-        """204 No Content (or 200) means deletion succeeded — no exception raised."""
+        """204 No Content (or 200) means both tenant-scoped index deletes succeeded."""
         state = _make_state(slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.meili_master_key = "test-key"
             with respx_router() as router:
-                router.delete("/indexes/acme").mock(return_value=httpx.Response(200))
+                messages = router.delete("/indexes/acme_messages").mock(return_value=httpx.Response(200))
+                convos = router.delete("/indexes/acme_convos").mock(return_value=httpx.Response(200))
+                keys = router.get("/keys").mock(
+                    return_value=httpx.Response(200, json={"results": [{"uid": "key-1", "name": "librechat-acme-meili"}]})
+                )
+                key_delete = router.delete("/keys/key-1").mock(return_value=httpx.Response(204))
                 from app.services.provisioning.deprovisioning_steps import _delete_meilisearch_index
 
                 await _delete_meilisearch_index(state)
+                assert messages.called
+                assert convos.called
+                assert keys.called
+                assert key_delete.called
 
     @pytest.mark.asyncio
     async def test_404_is_idempotent(self) -> None:
-        """404 = index already absent — must return without raising."""
+        """404 = index already absent — must continue deleting the remaining tenant index."""
         state = _make_state(slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.meili_master_key = "test-key"
             with respx_router() as router:
-                router.delete("/indexes/acme").mock(return_value=httpx.Response(404))
+                messages = router.delete("/indexes/acme_messages").mock(return_value=httpx.Response(404))
+                convos = router.delete("/indexes/acme_convos").mock(return_value=httpx.Response(200))
+                keys = router.get("/keys").mock(return_value=httpx.Response(200, json={"results": []}))
                 from app.services.provisioning.deprovisioning_steps import _delete_meilisearch_index
 
                 await _delete_meilisearch_index(state)  # should not raise
+                assert messages.called
+                assert convos.called
+                assert keys.called
 
     @pytest.mark.asyncio
-    async def test_500_raises(self) -> None:
-        """5xx from Meilisearch must propagate."""
+    async def test_first_index_500_still_attempts_second_index_before_raising(self) -> None:
+        """A 5xx on messages must not prevent convos/key cleanup attempts."""
         state = _make_state(slug="acme")
 
         with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
             mock_settings.meili_master_key = "test-key"
             with respx_router() as router:
-                router.delete("/indexes/acme").mock(return_value=httpx.Response(500))
+                messages = router.delete("/indexes/acme_messages").mock(return_value=httpx.Response(500))
+                convos = router.delete("/indexes/acme_convos").mock(return_value=httpx.Response(200))
+                keys = router.get("/keys").mock(return_value=httpx.Response(200, json={"results": []}))
                 from app.services.provisioning.deprovisioning_steps import _delete_meilisearch_index
 
                 with pytest.raises(httpx.HTTPStatusError):
                     await _delete_meilisearch_index(state)
+                assert messages.called
+                assert convos.called
+                assert keys.called
+
+    @pytest.mark.asyncio
+    async def test_second_index_500_raises_after_first_index_and_keys_attempted(self) -> None:
+        """A 5xx on convos propagates after messages/key cleanup attempts."""
+        state = _make_state(slug="acme")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.meili_master_key = "test-key"
+            with respx_router() as router:
+                messages = router.delete("/indexes/acme_messages").mock(return_value=httpx.Response(200))
+                convos = router.delete("/indexes/acme_convos").mock(return_value=httpx.Response(500))
+                keys = router.get("/keys").mock(return_value=httpx.Response(200, json={"results": []}))
+                from app.services.provisioning.deprovisioning_steps import _delete_meilisearch_index
+
+                with pytest.raises(httpx.HTTPStatusError):
+                    await _delete_meilisearch_index(state)
+                assert messages.called
+                assert convos.called
+                assert keys.called
+
+    @pytest.mark.asyncio
+    async def test_transport_error_still_attempts_remaining_indexes_and_key_cleanup(self) -> None:
+        """A transport error on messages must not skip convos or tenant key cleanup."""
+        state = _make_state(slug="acme")
+        request = httpx.Request("DELETE", "http://meilisearch:7700/indexes/acme_messages")
+
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.meili_master_key = "test-key"
+            with respx_router() as router:
+                messages = router.delete("/indexes/acme_messages").mock(
+                    side_effect=httpx.ConnectError("connection refused", request=request)
+                )
+                convos = router.delete("/indexes/acme_convos").mock(return_value=httpx.Response(200))
+                keys = router.get("/keys").mock(
+                    return_value=httpx.Response(200, json={"results": [{"uid": "key-1", "name": "librechat-acme-meili"}]})
+                )
+                key_delete = router.delete("/keys/key-1").mock(return_value=httpx.Response(204))
+                from app.services.provisioning.deprovisioning_steps import _delete_meilisearch_index
+
+                with pytest.raises(httpx.ConnectError):
+                    await _delete_meilisearch_index(state)
+                assert messages.called
+                assert convos.called
+                assert keys.called
+                assert key_delete.called
 
 
 # ---------------------------------------------------------------------------

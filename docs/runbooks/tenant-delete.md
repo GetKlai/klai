@@ -47,7 +47,7 @@ Current orchestrator: **21 steps**.
 | 3 | `_delete_librechat_filesystem` | LibreChat tenant files |
 | 4 | `_drop_mongodb_database` | LibreChat MongoDB database |
 | 5 | `_drop_mongodb_user` | LibreChat MongoDB user |
-| 6 | `_delete_meilisearch_index` | Meilisearch index |
+| 6 | `_delete_meilisearch_index` | Meilisearch tenant indexes (`{slug}_messages`, `{slug}_convos`) and `librechat-{slug}-meili` runtime API key |
 | 7 | `_flush_redis_tenant_keys` | `configs:{slug}:*` Redis keys |
 | 8 | `_delete_qdrant_points` | `klai_knowledge` points by Zitadel org id |
 | 9 | `_delete_falkordb_graph` | Knowledge-ingest graph wipe |

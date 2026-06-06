@@ -108,7 +108,7 @@ mounts:
     kind: named
     host: meilisearch-data
     container_path: /meili_data
-    image: getmeili/meilisearch:v1.42.1
+    image: getmeili/meilisearch:v1.45.2
     category: data
     data_path_source: upstream docs (default data dir)
     pii: true
@@ -117,9 +117,11 @@ mounts:
     retention: manual
     retention_enforced_by: n/a
     notes: |
-      LibreChat full-text search index. Meilisearch `snapshots` HTTP endpoint
-      produces a consistent snapshot file inside the volume without stopping
-      the service.
+      LibreChat full-text search indexes. Runtime must set
+      `MEILI_DB_PATH=/meili_data`; otherwise Meilisearch uses its default
+      relative `./data.ms` path and ignores this mounted volume. The
+      Meilisearch `snapshots` HTTP endpoint produces a consistent snapshot
+      file inside the volume without stopping the service.
 
   qdrant:
     service: qdrant
