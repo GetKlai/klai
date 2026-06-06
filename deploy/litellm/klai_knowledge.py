@@ -19,7 +19,6 @@ The custom_router uses this to prevent model downgrade for KB-enriched requests.
 import asyncio
 import logging
 import os
-import re
 import time
 from typing import Any
 
@@ -94,6 +93,26 @@ from klai_kb_query_rewrite import (
     format_taxonomy_for_prompt as _format_taxonomy_for_prompt,
     rewrite_and_classify as _rewrite_and_classify,
     rewrite_query as _rewrite_query,
+)
+from klai_kb_request_context import (
+    META_QUERY_PATTERNS as _META_QUERY_PATTERNS,
+    RETRIEVE_HISTORY_API_CONTENT_LIMIT_CHARS,
+    RETRIEVE_HISTORY_MAX_CONTENT_CHARS,
+    RETRIEVE_HISTORY_OMISSION_MARKER,
+    active_tool_result_contexts as _active_tool_result_contexts,
+    build_conversation_history as _build_conversation_history,
+    clip_retrieval_history_content as _clip_retrieval_history_content,
+    general_runtime_capabilities_block as _general_runtime_capabilities_block,
+    is_meta_query as _is_meta_query,
+    is_title_generation_request as _is_title_generation_request,
+    is_trivial as _is_trivial,
+    last_user_message as _last_user_message,
+    message_text as _message_text,
+    request_has_web_search as _request_has_web_search,
+    request_metadata as _request_metadata,
+    sanitize_assistant_history_messages as _sanitize_assistant_history_messages,
+    strip_klai_backend_footer_from_text as _strip_klai_backend_footer_from_text,
+    truthy as _truthy,
 )
 from klai_kb_urls import (
     chunk_source_url as _chunk_source_url,
@@ -179,6 +198,24 @@ __all__ = [
     "_low_confidence_query_tokens",
     "_has_direct_evidence_for_query",
     "_should_apply_low_confidence_injection",
+    "_META_QUERY_PATTERNS",
+    "RETRIEVE_HISTORY_API_CONTENT_LIMIT_CHARS",
+    "RETRIEVE_HISTORY_MAX_CONTENT_CHARS",
+    "RETRIEVE_HISTORY_OMISSION_MARKER",
+    "_active_tool_result_contexts",
+    "_build_conversation_history",
+    "_clip_retrieval_history_content",
+    "_general_runtime_capabilities_block",
+    "_is_meta_query",
+    "_is_title_generation_request",
+    "_is_trivial",
+    "_last_user_message",
+    "_message_text",
+    "_request_has_web_search",
+    "_request_metadata",
+    "_sanitize_assistant_history_messages",
+    "_strip_klai_backend_footer_from_text",
+    "_truthy",
     "klai_knowledge_hook",
 ]
 
@@ -374,14 +411,6 @@ RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
 # candidates server-side (reranker_candidates=20) so this only changes
 # how many chunks are forwarded to the LLM, not how many are scored.
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "20"))
-RETRIEVE_HISTORY_API_CONTENT_LIMIT_CHARS = 8000
-RETRIEVE_HISTORY_MAX_CONTENT_CHARS = min(
-    int(os.getenv("KNOWLEDGE_RETRIEVE_HISTORY_MAX_CONTENT_CHARS", "7800")),
-    RETRIEVE_HISTORY_API_CONTENT_LIMIT_CHARS - 100,
-)
-RETRIEVE_HISTORY_OMISSION_MARKER = (
-    "\n\n[... content omitted from retrieval conversation history ...]\n\n"
-)
 KLAI_GAP_SOFT_THRESHOLD = float(os.getenv("KLAI_GAP_SOFT_THRESHOLD", "0.4"))
 KLAI_GAP_DENSE_THRESHOLD = float(os.getenv("KLAI_GAP_DENSE_THRESHOLD", "0.35"))
 PORTAL_RETRIEVAL_LOG_URL = os.getenv(
@@ -405,251 +434,6 @@ PORTAL_TEMPLATES_URL = os.getenv(
     "PORTAL_TEMPLATES_URL", f"{PORTAL_API_URL}/internal/templates/effective"
 )
 TEMPLATES_TIMEOUT = float(os.getenv("TEMPLATES_TIMEOUT", "2.0"))
-
-# Trivial message patterns — skip retrieval (NL + EN)
-_TRIVIAL_PATTERNS = re.compile(
-    r"^(ok|okay|oke|oké|ja|nee|yes|no|bedankt|thanks|thank you|"
-    r"dank je|dank u|graag|np|prima|goed|good|sure|hmm+|ah+|oh+|"
-    r"begrepen|understood|clear|got it|doei|bye|hoi|hallo|hello|hi)[\s!.?]*$",
-    re.IGNORECASE,
-)
-
-
-def _is_trivial(text: str) -> bool:
-    text = text.strip()
-    if len(text) < 8:
-        return True
-    return bool(_TRIVIAL_PATTERNS.match(text))
-
-
-# Meta-question patterns — detect questions ABOUT Klai itself (capability
-# discovery) rather than questions about content in the knowledge base.
-# Anchored at start AND end of string so we only match short stand-alone
-# meta-questions, not content questions that happen to contain a meta-y
-# substring (e.g. "hoe werkt onze prijsstrategie" must NOT match
-# "hoe werkt"; "ik wil weten wat ik hier kan doen" must NOT match either).
-#
-# Background: 2026-05-12 Voys "Meldingen" incident. The user typed
-# "wat kan ik hier?" — 16 chars, fell through `_is_trivial`, hit
-# retrieval, returned a tangential KB chunk about voice-mail
-# announcements ("Meldingen") that lexically matched on common Dutch
-# words. The chunk became the answer. Solution: detect meta-questions
-# before retrieval and route to META_CHAT_SYSTEM_PROMPT instead.
-#
-# Tight regex by design — preferring false negatives (a meta-question
-# slipping through to retrieval, where it might still get a reasonable
-# answer or a low-confidence abstention) over false positives (a
-# legitimate content question losing access to its KB chunks).
-_META_QUERY_PATTERNS = re.compile(
-    r"^\s*(?:"
-    # NL — "wat kan/kun ik/je/jij" + 0-3 modifier words ("hier", "doen",
-    # "allemaal", "met klai/jou/je"). The {0,3} is what makes
-    # "wat kan ik hier doen?" match alongside "wat kan ik?".
-    r"wat\s+(?:kan|kun)\s+(?:ik|je|jij)"
-    r"(?:\s+(?:hier|met\s+(?:klai|jou|je)|allemaal|doen)){0,3}"
-    # NL — "wat is/doet/doe klai/jij/je"
-    r"|wat\s+(?:is|doet|doe)\s+(?:klai|jij|je)"
-    # NL — "wat kan/kun klai/je/jij (doen)?"
-    r"|wat\s+(?:kan|kun)\s+(?:klai|je|jij)(?:\s+doen)?"
-    # NL — "hoe werkt deze chat/dit/klai/jij/je". Longest alternatives
-    # first so "deze chat" wins over "dit" in left-to-right alternation.
-    r"|hoe\s+werkt\s+(?:deze\s+chat|dit|klai|jij|je)"
-    # NL — "hoe gebruik/werk ik (met)? deze chat/klai/dit"
-    r"|hoe\s+(?:gebruik|werk)\s+ik\s+(?:met\s+)?(?:deze\s+chat|klai|dit)"
-    # NL — "wie ben je"
-    r"|wie\s+ben\s+je"
-    # NL — "waarvoor is dit/klai"
-    r"|waarvoor\s+is\s+(?:dit|klai)"
-    # NL — "waar is dit/klai voor"
-    r"|waar\s+is\s+(?:dit|klai)\s+voor"
-    # NL/EN — "help" standalone (single rule, case-insensitive flag)
-    r"|help"
-    # EN — "what can I/you do" + 0-2 modifier suffixes
-    r"|what\s+can\s+(?:i|you)\s+do"
-    r"(?:\s+(?:here|with\s+(?:klai|you))){0,2}"
-    # EN — "what is/are/does klai (do)?"
-    r"|what\s+(?:is|are|does)\s+klai(?:\s+do)?"
-    # EN — "how does this chat/this/klai work". Longest alternative first.
-    r"|how\s+does\s+(?:this\s+chat|this|klai)\s+work"
-    # EN — "how do I use this chat/klai/this". Longest alternative first.
-    r"|how\s+do\s+i\s+use\s+(?:this\s+chat|klai|this)"
-    # EN — "who are you"
-    r"|who\s+are\s+you"
-    r")[\s!.?]*$",
-    re.IGNORECASE,
-)
-
-
-def _is_meta_query(text: str) -> bool:
-    """Return True if the user is asking ABOUT Klai itself (capability
-    discovery) rather than asking a content question.
-
-    Anchored full-string match — long content questions that contain
-    a meta-y substring do not match. See ``_META_QUERY_PATTERNS`` for
-    the rationale.
-    """
-    return bool(_META_QUERY_PATTERNS.match(text.strip()))
-
-
-_TITLE_GENERATION_RE = re.compile(
-    r"(?:"
-    r"\b(?:generate|write|create|provide|give|summarize)\b"
-    r"(?=[\s\S]{0,240}\b(?:title|name|summary)\b)"
-    r"(?=[\s\S]{0,240}\b(?:conversation|chat)\b)"
-    r"|\b(?:title|name)\s+(?:this|the)\s+(?:conversation|chat)\b"
-    r")",
-    re.IGNORECASE,
-)
-
-
-def _message_text(message: dict[str, Any]) -> str:
-    content = message.get("content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(
-            str(part.get("text", ""))
-            for part in content
-            if isinstance(part, dict) and part.get("type") == "text"
-        )
-    return ""
-
-
-def _is_title_generation_request(messages: list[dict]) -> bool:
-    """Detect LibreChat's internal conversation-title prompt.
-
-    Title generation is application metadata, not a user KB question. Routing it
-    through retrieval can turn the KB no-citation refusal into the conversation
-    title itself.
-    """
-    for message in messages:
-        if message.get("role") not in {"system", "developer", "user"}:
-            continue
-        text = _message_text(message)
-        if not text or len(text) > 4000:
-            continue
-        if _TITLE_GENERATION_RE.search(text):
-            return True
-    return False
-
-
-_WEB_SEARCH_TOOL_RE = re.compile(
-    r"(?:^|[_\-\s])"
-    r"(?:web[_\-\s]*search|websearch|search[_\-\s]*web|browser|searx|firecrawl)"
-    r"(?:$|[_\-\s])",
-    re.IGNORECASE,
-)
-
-
-def _truthy(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
-    if isinstance(value, (int, float)):
-        return value != 0
-    return False
-
-
-def _request_metadata(data: dict[str, Any]) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
-    for candidate in (
-        data.get("metadata"),
-        data.get("litellm_metadata"),
-        data.get("litellm_params", {}).get("metadata")
-        if isinstance(data.get("litellm_params"), dict)
-        else None,
-    ):
-        if isinstance(candidate, dict):
-            metadata.update(candidate)
-    return metadata
-
-
-def _tool_name(tool: object) -> str:
-    if not isinstance(tool, dict):
-        return ""
-    function = tool.get("function")
-    names = [
-        tool.get("name"),
-        tool.get("type"),
-        function.get("name") if isinstance(function, dict) else None,
-    ]
-    return " ".join(str(name) for name in names if name)
-
-
-def _tool_description(tool: object) -> str:
-    if not isinstance(tool, dict):
-        return ""
-    function = tool.get("function")
-    descriptions = [
-        tool.get("description"),
-        function.get("description") if isinstance(function, dict) else None,
-    ]
-    return " ".join(str(description) for description in descriptions if description)
-
-
-def _request_has_web_search(data: dict[str, Any]) -> bool:
-    """Return True when this LiteLLM request advertises Web Search.
-
-    LibreChat can expose search either as an OpenAI-style tool/function or as
-    explicit metadata. We accept both so the hook works with current LibreChat
-    tool payloads and with a future first-class ``klai_web_search_enabled`` flag.
-    """
-    metadata = _request_metadata(data)
-    for key in (
-        "klai_web_search_enabled",
-        "web_search_enabled",
-        "webSearch",
-        "web_search",
-    ):
-        if _truthy(metadata.get(key)):
-            return True
-
-    if isinstance(data.get("web_search_options"), dict):
-        return True
-
-    tools = data.get("tools")
-    if not isinstance(tools, list):
-        return False
-    for tool in tools:
-        name = _tool_name(tool)
-        if name and _WEB_SEARCH_TOOL_RE.search(name):
-            return True
-        if (
-            name.strip().lower() == "search"
-            and "web" in _tool_description(tool).lower()
-        ):
-            return True
-    return False
-
-
-def _general_runtime_capabilities_block(data: dict[str, Any]) -> str:
-    if not _request_has_web_search(data):
-        return ""
-    return (
-        "[Klai Runtime Capabilities]\n"
-        "Knowledge Base: none selected.\n"
-        "Web Search: available for this turn.\n"
-        "Instruction: for questions that need a live lookup, use the available "
-        "Web Search tool or provided web results now. Do NOT tell the user to "
-        "enable Search unless the tool call fails or no search result is returned.\n"
-        "[End Klai Runtime Capabilities]"
-    )
-
-
-def _last_user_message(messages: list[dict]) -> str | None:
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                # Multi-modal message — extract text parts
-                return " ".join(
-                    p.get("text", "") for p in content if p.get("type") == "text"
-                )
-    return None
-
 
 def _llm_safety_enabled() -> bool:
     return LLM_SAFETY_LITELLM_MODE not in {"", "off", "disabled", "0", "false"}
@@ -736,129 +520,6 @@ def _llm_safety_short_circuit(
     """
     data["mock_response"] = _llm_safety_refusal_text(query, decision)
     return data
-
-
-_KLAI_SOURCES_METADATA_MARKER_RE = re.compile(
-    r"\n?<!--\s*klai_sources=[A-Za-z0-9_-]+={0,2}\s*-->\n?",
-    re.IGNORECASE,
-)
-_KLAI_BACKEND_FOOTER_HEADING_RE = re.compile(
-    r"(?im)^[ \t]*(?:\*\*)?(Bronnen|Agent activiteit)(?:\*\*)?[ \t]*$"
-)
-
-
-def _strip_klai_backend_footer_from_text(text: str) -> str:
-    """Remove Klai-managed citation/provenance footer from assistant history."""
-    without_marker = _KLAI_SOURCES_METADATA_MARKER_RE.sub("\n", text)
-    matches = list(_KLAI_BACKEND_FOOTER_HEADING_RE.finditer(without_marker))
-    first_activity_index = next(
-        (
-            index
-            for index, match in enumerate(matches)
-            if match.group(1).lower() == "agent activiteit"
-        ),
-        None,
-    )
-    if first_activity_index is None:
-        return without_marker.rstrip() if without_marker != text else text
-
-    cut_match = matches[first_activity_index]
-    for match in reversed(matches[:first_activity_index]):
-        if match.group(1).lower() == "bronnen":
-            cut_match = match
-            break
-    return without_marker[: cut_match.start()].rstrip()
-
-
-def _strip_klai_backend_footer_from_content(content: object) -> object:
-    if isinstance(content, str):
-        return _strip_klai_backend_footer_from_text(content)
-    if isinstance(content, list):
-        changed = False
-        stripped_parts: list[object] = []
-        for part in content:
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                stripped_text = _strip_klai_backend_footer_from_text(part["text"])
-                if stripped_text != part["text"]:
-                    changed = True
-                    part = {**part, "text": stripped_text}
-            stripped_parts.append(part)
-        return stripped_parts if changed else content
-    return content
-
-
-def _sanitize_assistant_history_messages(messages: object) -> object:
-    """Strip backend-only footers from assistant messages before model input."""
-    if not isinstance(messages, list):
-        return messages
-    sanitized: list[object] = []
-    for message in messages:
-        if not isinstance(message, dict) or message.get("role") != "assistant":
-            sanitized.append(message)
-            continue
-        content = message.get("content")
-        stripped_content = _strip_klai_backend_footer_from_content(content)
-        if stripped_content == content:
-            sanitized.append(message)
-        else:
-            sanitized.append({**message, "content": stripped_content})
-    return sanitized
-
-
-def _active_tool_result_contexts(messages: object) -> list[str]:
-    if not isinstance(messages, list):
-        return []
-    contexts: list[str] = []
-    for message in messages:
-        if not isinstance(message, dict) or message.get("role") != "tool":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            contexts.append(content)
-    return contexts
-
-
-def _build_conversation_history(messages: list[dict]) -> list[dict]:
-    """Return up to the last 6 turns (3 exchanges) of user/assistant history.
-
-    The last user message is excluded — it is the current query being retrieved for.
-    Used by retrieval-api for coreference resolution ("hij" → "Jan Pietersen").
-    """
-    history: list[dict] = []
-    for message in messages[:-1]:
-        if message.get("role") not in ("user", "assistant"):
-            continue
-        content = message.get("content")
-        if not isinstance(content, str):
-            continue
-        if message.get("role") == "assistant":
-            content = _strip_klai_backend_footer_from_text(content)
-        history.append(
-            {
-                "role": message["role"],
-                "content": _clip_retrieval_history_content(content),
-            }
-        )
-    return history[-6:]
-
-
-def _clip_retrieval_history_content(content: str) -> str:
-    max_chars = RETRIEVE_HISTORY_MAX_CONTENT_CHARS
-    if max_chars <= 0 or len(content) <= max_chars:
-        return content
-
-    marker = RETRIEVE_HISTORY_OMISSION_MARKER
-    if max_chars <= len(marker) + 20:
-        return content[:max_chars]
-
-    remaining = max_chars - len(marker)
-    head_chars = remaining // 2
-    tail_chars = remaining - head_chars
-    return (
-        content[:head_chars].rstrip()
-        + marker
-        + content[-tail_chars:].lstrip()
-    )
 
 
 async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:

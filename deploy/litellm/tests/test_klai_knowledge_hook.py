@@ -80,6 +80,7 @@ def _load_hook(monkeypatch, extra_env=None, *, mock_fire_and_forget=True):
         monkeypatch.setenv(k, v)
 
     sys.modules.pop("klai_knowledge", None)
+    sys.modules.pop("klai_kb_request_context", None)
     import klai_knowledge
     importlib.reload(klai_knowledge)
     if mock_fire_and_forget:
