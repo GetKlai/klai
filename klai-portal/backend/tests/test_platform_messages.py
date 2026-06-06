@@ -45,6 +45,8 @@ def _detail(thread_id=99):
             latest_message_sender_type="platform_admin",
             latest_message_at=now,
             latest_user_message_at=None,
+            latest_admin_message_at=now,
+            unread_for_admin=False,
             created_by="staff",
             created_at=now,
         ),
@@ -137,6 +139,66 @@ def test_platform_message_thread_detail_query_compiles_without_auto_correlation(
 
     assert "platform_message_threads.id = 99" in compiled
     assert "SELECT platform_messages.body" in compiled
+    assert "platform_messages.sender_type = 'user'" in compiled
+    assert "platform_messages.sender_type IN ('platform_admin', 'system')" in compiled
+
+
+def test_platform_message_thread_out_marks_user_replies_unread_for_admin():
+    user_reply_at = datetime(2026, 6, 6, 11, 0, tzinfo=UTC)
+    admin_reply_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+
+    result = platform_messages._thread_out(
+        SimpleNamespace(
+            id=99,
+            org_id=42,
+            org_name="Acme",
+            org_slug="acme",
+            subject="Vraag over je feedback",
+            status="open",
+            origin_type="direct",
+            feedback_submission_id=None,
+            feedback_item_id=None,
+            recipient_count=1,
+            latest_message_body="Reactie",
+            latest_message_sender_type="user",
+            latest_message_at=user_reply_at,
+            latest_user_message_at=user_reply_at,
+            latest_admin_message_at=admin_reply_at,
+            created_by="staff",
+            created_at=admin_reply_at,
+        )
+    )
+
+    assert result.unread_for_admin is True
+
+
+def test_platform_message_thread_out_clears_unread_after_admin_reply():
+    user_reply_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    admin_reply_at = datetime(2026, 6, 6, 11, 0, tzinfo=UTC)
+
+    result = platform_messages._thread_out(
+        SimpleNamespace(
+            id=99,
+            org_id=42,
+            org_name="Acme",
+            org_slug="acme",
+            subject="Vraag over je feedback",
+            status="open",
+            origin_type="direct",
+            feedback_submission_id=None,
+            feedback_item_id=None,
+            recipient_count=1,
+            latest_message_body="Dank",
+            latest_message_sender_type="platform_admin",
+            latest_message_at=admin_reply_at,
+            latest_user_message_at=user_reply_at,
+            latest_admin_message_at=admin_reply_at,
+            created_by="staff",
+            created_at=user_reply_at,
+        )
+    )
+
+    assert result.unread_for_admin is False
 
 
 @pytest.mark.asyncio
