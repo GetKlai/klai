@@ -46,6 +46,8 @@ def _mock_litellm(monkeypatch):
 
     for mod_name in ("litellm", "litellm.integrations", "litellm.integrations.custom_logger"):
         sys.modules.pop(mod_name, None)
+    sys.modules.pop("klai_kb_answer_policy", None)
+    sys.modules.pop("klai_kb_render_policy", None)
     sys.modules.pop("klai_knowledge", None)
 
 
@@ -53,6 +55,12 @@ def _kk():
     import klai_knowledge as kk
 
     return kk
+
+
+def _policy_module():
+    import klai_kb_answer_policy as policy
+
+    return policy
 
 
 # Every state the pre-call hook can return on.
@@ -112,6 +120,78 @@ def test_to_kb_meta_key_set_is_identical_across_every_state():
     for state in _ALL_STATES:
         meta = _policy(state).to_kb_meta(org_id="o", user_id="u", retrieval_ms=1)
         assert set(meta) == _EXPECTED_KEYS, f"state={state} diverged: {set(meta) ^ _EXPECTED_KEYS}"
+
+
+def test_policy_module_declares_every_pre_call_answer_state():
+    assert tuple(_ALL_STATES) == _policy_module().KB_ANSWER_POLICY_STATES
+
+
+def test_answer_policy_matrix_is_independent_of_renderer_state():
+    policy_module = _policy_module()
+    for state in policy_module.KB_ANSWER_POLICY_STATES:
+        for kb_narrow in (False, True):
+            for user_content in (False, True):
+                for low_confidence in (False, True):
+                    policy = policy_module.KbAnswerPolicy(
+                        state=state,
+                        kb_narrow=kb_narrow,
+                        user_provided_content_context=user_content,
+                        low_confidence_inject=low_confidence,
+                    )
+                    assert policy.mode == ("strict" if kb_narrow else "open")
+                    assert policy.allow_uncited_user_content is user_content
+                    assert policy.suppress_kb_citations is (
+                        user_content
+                        and low_confidence
+                        and state in policy_module.KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES
+                    )
+                    meta = policy.to_kb_meta(
+                        org_id="o",
+                        user_id="u",
+                        retrieval_ms=1,
+                        render_mode="deterministic_non_streaming",
+                    )
+                    assert meta["answer_policy_mode"] == policy.mode
+                    assert meta["allow_uncited_user_content"] is user_content
+                    assert meta["render_mode"] == "deterministic_non_streaming"
+
+
+def test_prompt_prefix_matrix_keeps_user_content_scope_in_open_and_strict_kb_modes():
+    policy_module = _policy_module()
+    strict_prefix = policy_module.compose_kb_mode_chat_prefix(True, "KB BLOCK")
+    open_prefix = policy_module.compose_kb_mode_chat_prefix(False, "KB BLOCK")
+
+    assert policy_module.USER_PROVIDED_CONTENT_SCOPE in strict_prefix
+    assert policy_module.USER_PROVIDED_CONTENT_SCOPE in open_prefix
+    assert "KB BLOCK" in strict_prefix
+    assert "KB BLOCK" in open_prefix
+    assert strict_prefix != open_prefix
+
+
+def test_user_content_detection_requires_attachment_or_explicit_reference():
+    policy_module = _policy_module()
+
+    assert (
+        policy_module.has_user_provided_content_context(
+            [{"role": "user", "content": "Wat is het beleid?"}],
+            "Wat is het beleid?",
+        )
+        is False
+    )
+    assert (
+        policy_module.has_user_provided_content_context(
+            [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}],
+            "Wat zie je?",
+        )
+        is True
+    )
+    assert (
+        policy_module.has_user_provided_content_context(
+            [{"role": "user", "content": "Leg dit uit"}],
+            "Wat staat in deze screenshot?",
+        )
+        is True
+    )
 
 
 def test_to_kb_meta_minimal_call_defaults_are_safe():
