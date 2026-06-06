@@ -33,9 +33,11 @@ class TestSearch:
     async def test_org_search(self):
         """Org scope uses dense cosine search on klai_knowledge (single unnamed vector)."""
         mock_client = AsyncMock()
-        mock_client.query_points.return_value = _make_query_response([
-            _make_point("c1", "knowledge chunk", 0.8, org_id="org-1"),
-        ])
+        mock_client.query_points.return_value = _make_query_response(
+            [
+                _make_point("c1", "knowledge chunk", 0.8, org_id="org-1"),
+            ]
+        )
 
         with patch.object(search, "_get_client", return_value=mock_client):
             req = RetrieveRequest(query="test", org_id="org-1", scope="org")
@@ -53,9 +55,11 @@ class TestSearch:
         # Mock returns only the chunk that Qdrant would keep after applying the filter.
         # We verify that the Qdrant call includes the kb_slug MatchAny condition.
         mock_client = AsyncMock()
-        mock_client.query_points.return_value = _make_query_response([
-            _make_point("c1", "intern chunk", 0.8, org_id="org-1", kb_slug="intern"),
-        ])
+        mock_client.query_points.return_value = _make_query_response(
+            [
+                _make_point("c1", "intern chunk", 0.8, org_id="org-1", kb_slug="intern"),
+            ]
+        )
 
         with patch.object(search, "_get_client", return_value=mock_client):
             req = RetrieveRequest(
@@ -89,7 +93,9 @@ class TestSearch:
     async def test_knowledge_search_passes_through_evidence_metadata(self):
         """Search result dicts include ingested_at, assertion_mode from payload (R4)."""
         point = _make_point(
-            "c1", "chunk text", 0.8,
+            "c1",
+            "chunk text",
+            0.8,
             org_id="org-1",
             ingested_at=1711843200,
             assertion_mode="fact",
@@ -135,3 +141,95 @@ class TestSearch:
             results = await search.hybrid_search([0.1, 0.2], req, 10)
 
         assert results[0]["heading_path"] == "Admin > Mensen"
+
+    @pytest.mark.asyncio
+    async def test_raw_query_adds_literal_term_rrf_leg(self):
+        """A differing raw_query adds dense + sparse RRF legs so literal-term
+        matches survive an over-eager coreference/query rewrite.
+
+        Contract: candidate retrieval must not depend solely on the rewritten
+        query. Without the raw leg, an exact term the user typed (e.g. a product
+        name like "Salesforce") that the rewrite paraphrased away never enters
+        the candidate pool, and the reranker cannot recover it (bounded recall).
+        """
+        from qdrant_client.models import SparseVector
+
+        mock_client = AsyncMock()
+        mock_client.query_points.return_value = _make_query_response(
+            [
+                _make_point("c1", "Salesforce CRM-configuratie", 1.0, org_id="org-1"),
+            ]
+        )
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="rewritten", org_id="org-1", scope="org")
+            await search.hybrid_search(
+                [0.1, 0.2],
+                req,
+                10,
+                SparseVector(indices=[1], values=[0.9]),
+                raw_query_vector=[0.3, 0.4],
+                raw_sparse_vector=SparseVector(indices=[2], values=[0.8]),
+            )
+
+        prefetches = mock_client.query_points.call_args.kwargs["prefetch"]
+        using = [pf.using for pf in prefetches]
+        # resolved query: chunk + questions + sparse; raw query: chunk + sparse.
+        assert using == [
+            "vector_chunk",
+            "vector_questions",
+            "vector_sparse",
+            "vector_chunk",
+            "vector_sparse",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_raw_query_dense_leg_without_sparse(self):
+        """raw_query adds a dense leg even when the raw sparse vector is absent."""
+        from qdrant_client.models import SparseVector
+
+        mock_client = AsyncMock()
+        mock_client.query_points.return_value = _make_query_response(
+            [
+                _make_point("c1", "chunk", 0.8, org_id="org-1"),
+            ]
+        )
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="rewritten", org_id="org-1", scope="org")
+            await search.hybrid_search(
+                [0.1, 0.2],
+                req,
+                10,
+                SparseVector(indices=[1], values=[0.9]),
+                raw_query_vector=[0.3, 0.4],
+            )
+
+        prefetches = mock_client.query_points.call_args.kwargs["prefetch"]
+        using = [pf.using for pf in prefetches]
+        assert using == [
+            "vector_chunk",
+            "vector_questions",
+            "vector_sparse",
+            "vector_chunk",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_no_raw_query_keeps_baseline_leg_shape(self):
+        """Without a raw_query vector the prefetch shape is unchanged (no extra legs)."""
+        from qdrant_client.models import SparseVector
+
+        mock_client = AsyncMock()
+        mock_client.query_points.return_value = _make_query_response(
+            [
+                _make_point("c1", "chunk", 0.8, org_id="org-1"),
+            ]
+        )
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="q", org_id="org-1", scope="org")
+            await search.hybrid_search([0.1, 0.2], req, 10, SparseVector(indices=[1], values=[0.9]))
+
+        prefetches = mock_client.query_points.call_args.kwargs["prefetch"]
+        using = [pf.using for pf in prefetches]
+        assert using == ["vector_chunk", "vector_questions", "vector_sparse"]
