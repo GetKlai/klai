@@ -12,9 +12,14 @@ import {
   DataTableHeader,
   DataTableRow,
 } from '@/components/ui/data-table'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ListEmptyState } from '@/components/ui/list-state'
+import {
+  BorderedRowActionIconButton,
+  RowActionGroup,
+} from '@/components/ui/row-action'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import {
@@ -194,7 +199,9 @@ export function UsersSection({
               <DataTableHead>{m.platform_col_user()}</DataTableHead>
               <DataTableHead>{m.platform_col_role()}</DataTableHead>
               <DataTableHead>{m.platform_col_status()}</DataTableHead>
-              <DataTableHead>{m.platform_col_actions()}</DataTableHead>
+              <DataTableHead align="right">
+                {m.platform_col_actions()}
+              </DataTableHead>
             </DataTableRow>
           </DataTableHeader>
           <DataTableBody>
@@ -209,8 +216,12 @@ export function UsersSection({
                   retryDelete.variables === u.zitadel_user_id)
               const deleteFailed = u.deletion_status === 'failed_partial'
               const failureStep = u.deletion_last_attempted_step
+              const isConfirmingDelete = confirmDelete === u.zitadel_user_id
               return (
-                <DataTableRow key={u.zitadel_user_id}>
+                <DataTableRow
+                  key={u.zitadel_user_id}
+                  confirming={isConfirmingDelete}
+                >
                   <DataTableCell>
                     <span className="font-medium">
                       {u.display_name || u.email || u.zitadel_user_id}
@@ -267,123 +278,108 @@ export function UsersSection({
                       </p>
                     ) : null}
                   </DataTableCell>
-                  <DataTableCell>
-                    <div className="flex items-center gap-3">
-                      {u.status === 'suspended' ? (
-                        <Button
-                          type="button"
-                          variant="link"
-                          disabled={busy}
-                          onClick={() =>
-                            suspend.mutate(
-                              { zid: u.zitadel_user_id, reactivate: true },
-                              {
-                                onSuccess: () =>
-                                  toast.success(m.platform_user_reactivated()),
-                              },
+                  <DataTableCell align="right">
+                    <InlineDeleteConfirm
+                      isConfirming={isConfirmingDelete}
+                      isPending={busy}
+                      label={busy ? m.platform_busy() : m.platform_yes_delete()}
+                      cancelLabel={m.platform_no()}
+                      onConfirm={() =>
+                        del.mutate(u.zitadel_user_id, {
+                          onSuccess: () => {
+                            toast.success(m.platform_user_deleted())
+                            setConfirmDelete(null)
+                          },
+                          onError: (err) => {
+                            toast.error(
+                              err instanceof Error
+                                ? err.message
+                                : m.platform_delete_failed(),
                             )
-                          }
-                          className="h-auto p-0 text-xs font-medium text-[var(--color-success)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
-                        >
-                          {m.platform_reactivate()}
-                        </Button>
-                      ) : u.status === 'active' ? (
-                        <Button
-                          type="button"
-                          variant="link"
-                          disabled={busy}
-                          onClick={() =>
-                            suspend.mutate(
-                              { zid: u.zitadel_user_id, reactivate: false },
-                              {
-                                onSuccess: () =>
-                                  toast.success(m.platform_user_suspended()),
-                              },
-                            )
-                          }
-                          className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
-                        >
-                          {m.platform_suspend()}
-                        </Button>
-                      ) : null}
-
-                      {confirmDelete === u.zitadel_user_id ? (
-                        <span className="inline-flex items-center gap-2 whitespace-nowrap text-xs">
-                          <span className="text-gray-500">
-                            {m.platform_confirm_short()}
-                          </span>
-                          <Button
-                            type="button"
-                            variant="link"
+                            setConfirmDelete(null)
+                          },
+                        })
+                      }
+                      onCancel={() => setConfirmDelete(null)}
+                    >
+                      <RowActionGroup>
+                        {u.status === 'suspended' ? (
+                          <BorderedRowActionIconButton
+                            label={m.platform_reactivate()}
+                            action="reactivate"
                             disabled={busy}
+                            spinner={
+                              suspend.isPending &&
+                              suspend.variables?.zid === u.zitadel_user_id
+                                ? <Loader2 className="animate-spin" />
+                                : undefined
+                            }
                             onClick={() =>
-                              del.mutate(u.zitadel_user_id, {
-                                onSuccess: () => {
-                                  toast.success(m.platform_user_deleted())
-                                  setConfirmDelete(null)
+                              suspend.mutate(
+                                { zid: u.zitadel_user_id, reactivate: true },
+                                {
+                                  onSuccess: () =>
+                                    toast.success(m.platform_user_reactivated()),
                                 },
-                                onError: (err) => {
+                              )
+                            }
+                          />
+                        ) : u.status === 'active' ? (
+                          <BorderedRowActionIconButton
+                            label={m.platform_suspend()}
+                            action="suspend"
+                            disabled={busy}
+                            spinner={
+                              suspend.isPending &&
+                              suspend.variables?.zid === u.zitadel_user_id
+                                ? <Loader2 className="animate-spin" />
+                                : undefined
+                            }
+                            onClick={() =>
+                              suspend.mutate(
+                                { zid: u.zitadel_user_id, reactivate: false },
+                                {
+                                  onSuccess: () =>
+                                    toast.success(m.platform_user_suspended()),
+                                },
+                              )
+                            }
+                          />
+                        ) : null}
+
+                        {deleteFailed ? (
+                          <BorderedRowActionIconButton
+                            label={m.platform_retry_delete()}
+                            action="retry"
+                            disabled={busy}
+                            spinner={
+                              retryDelete.isPending &&
+                              retryDelete.variables === u.zitadel_user_id
+                                ? <Loader2 className="animate-spin" />
+                                : undefined
+                            }
+                            onClick={() =>
+                              retryDelete.mutate(u.zitadel_user_id, {
+                                onSuccess: () =>
+                                  toast.success(m.platform_user_deleted()),
+                                onError: (err) =>
                                   toast.error(
                                     err instanceof Error
                                       ? err.message
                                       : m.platform_delete_failed(),
-                                  )
-                                  setConfirmDelete(null)
-                                },
+                                  ),
                               })
                             }
-                            className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
-                          >
-                            {busy ? m.platform_busy() : m.platform_yes_delete()}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="link"
-                            onClick={() => setConfirmDelete(null)}
-                            className="h-auto p-0 text-xs text-gray-400 no-underline hover:text-gray-900 hover:no-underline"
-                          >
-                            {m.platform_no()}
-                          </Button>
-                        </span>
-                      ) : (
-                        <>
-                          {deleteFailed ? (
-                            <Button
-                              type="button"
-                              variant="link"
-                              disabled={busy}
-                              onClick={() =>
-                                retryDelete.mutate(u.zitadel_user_id, {
-                                  onSuccess: () =>
-                                    toast.success(m.platform_user_deleted()),
-                                  onError: (err) =>
-                                    toast.error(
-                                      err instanceof Error
-                                        ? err.message
-                                        : m.platform_delete_failed(),
-                                    ),
-                                })
-                              }
-                              className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
-                            >
-                              {busy
-                                ? m.platform_busy()
-                                : m.platform_retry_delete()}
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="link"
-                            disabled={busy}
-                            onClick={() => setConfirmDelete(u.zitadel_user_id)}
-                            className="h-auto p-0 text-xs font-medium text-[var(--color-destructive)] no-underline hover:opacity-70 hover:no-underline disabled:opacity-40"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            {m.platform_delete()}
-                          </Button>
-                        </>
-                      )}
-                    </div>
+                          />
+                        ) : null}
+                        <BorderedRowActionIconButton
+                          label={m.platform_delete()}
+                          action="delete"
+                          disabled={busy}
+                          onClick={() => setConfirmDelete(u.zitadel_user_id)}
+                        />
+                      </RowActionGroup>
+                    </InlineDeleteConfirm>
                   </DataTableCell>
                 </DataTableRow>
               )
