@@ -39,6 +39,9 @@ class PlatformMessageThread(Base):
         nullable=False,
         server_default=func.now(),
     )
+    # Set when a platform admin opens the thread, so the admin unread indicator
+    # clears on read (not only when the admin replies).
+    admin_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

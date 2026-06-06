@@ -542,14 +542,17 @@ async def platform_stats(
                               FROM platform_messages msg
                              WHERE msg.thread_id = thread.id
                                AND msg.sender_type = 'user'
-                          ) > COALESCE(
-                            (
-                              SELECT MAX(msg.created_at)
-                                FROM platform_messages msg
-                               WHERE msg.thread_id = thread.id
-                                 AND msg.sender_type IN ('platform_admin', 'system')
+                          ) > GREATEST(
+                            COALESCE(
+                              (
+                                SELECT MAX(msg.created_at)
+                                  FROM platform_messages msg
+                                 WHERE msg.thread_id = thread.id
+                                   AND msg.sender_type IN ('platform_admin', 'system')
+                              ),
+                              '-infinity'::timestamptz
                             ),
-                            '-infinity'::timestamptz
+                            COALESCE(thread.admin_read_at, '-infinity'::timestamptz)
                           )) AS unread_message_count,
                       (SELECT COUNT(*) FROM product_events
                          WHERE event_type LIKE '%error%'

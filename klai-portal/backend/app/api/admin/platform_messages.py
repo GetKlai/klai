@@ -19,6 +19,7 @@ from app.platform_messaging.service import (
     add_platform_message_reply,
     create_platform_message_thread,
     get_platform_message_thread,
+    mark_platform_thread_admin_read,
 )
 from app.services.audit import log_event
 
@@ -170,6 +171,7 @@ def _thread_select():
             PlatformMessageThread.created_by.label("created_by"),
             PlatformMessageThread.created_at.label("created_at"),
             PlatformMessageThread.last_message_at.label("latest_message_at"),
+            PlatformMessageThread.admin_read_at.label("admin_read_at"),
             _latest_body_subquery().label("latest_message_body"),
             _latest_sender_type_subquery().label("latest_message_sender_type"),
             _latest_user_message_at_subquery().label("latest_user_message_at"),
@@ -182,8 +184,13 @@ def _thread_select():
 
 
 def _thread_out(row) -> PlatformMessageThreadOut:
+    # The admin has "seen" everything up to the later of their last reply and
+    # the last time they opened the thread. A newer user message = unread.
+    admin_read_at = getattr(row, "admin_read_at", None)
+    seen_candidates = [t for t in (row.latest_admin_message_at, admin_read_at) if t is not None]
+    seen_at = max(seen_candidates) if seen_candidates else None
     unread_for_admin = row.latest_user_message_at is not None and (
-        row.latest_admin_message_at is None or row.latest_user_message_at > row.latest_admin_message_at
+        seen_at is None or row.latest_user_message_at > seen_at
     )
     return PlatformMessageThreadOut(
         id=row.id,
@@ -346,6 +353,22 @@ async def platform_message_thread_reply(
                 sender_user_id=perms.user_id,
                 body=body.body,
             )
+            detail = await _load_thread_detail(db, thread_id)
+            await db.commit()
+            return detail
+        except PlatformMessageThreadNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Message thread not found") from exc
+
+
+@router.post("/threads/{thread_id}/read", response_model=PlatformMessageThreadDetailOut)
+async def platform_message_thread_mark_read(
+    thread_id: int,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> PlatformMessageThreadDetailOut:
+    await _audit(perms, "read", str(thread_id))
+    async with cross_org_session() as db:
+        try:
+            await mark_platform_thread_admin_read(db, thread_id=thread_id)
             detail = await _load_thread_detail(db, thread_id)
             await db.commit()
             return detail
