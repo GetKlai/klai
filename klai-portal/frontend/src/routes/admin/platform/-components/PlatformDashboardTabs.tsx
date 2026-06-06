@@ -395,7 +395,7 @@ export function MessagesTab({
               >
                 <DataTableCell>
                   <div className="flex items-center gap-2">
-                    {thread.latest_message_sender_type === 'user' && (
+                    {thread.unread_for_admin && (
                       <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-success)]" />
                     )}
                     <span className="font-medium">{thread.subject}</span>

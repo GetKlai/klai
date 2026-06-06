@@ -112,6 +112,7 @@ function PlatformConsole() {
         }
       : null
   const newFeedbackCount = stats?.new_feedback_count ?? 0
+  const unreadMessageCount = stats?.unread_message_count ?? 0
   const chatErrorCount = stats?.chat_error_count ?? 0
   const extensionDownloadUrl = `${API_BASE}/api/app/shield/extension.zip`
 
@@ -134,7 +135,9 @@ function PlatformConsole() {
     id: t.id,
     label: t.label(),
     notificationCount:
-      t.id === 'feedback'
+      t.id === 'messages'
+        ? unreadMessageCount
+        : t.id === 'feedback'
         ? newFeedbackCount
         : t.id === 'chat-errors'
           ? chatErrorCount
