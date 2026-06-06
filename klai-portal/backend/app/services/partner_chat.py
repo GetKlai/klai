@@ -1727,10 +1727,10 @@ async def chat_completion_non_streaming(
             )
             resp.raise_for_status()
             body = resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+    except httpx.TransportError as exc:
         # Upstream unreachable or slow (e.g. LiteLLM mid-restart during a
         # deploy). Return a clean 502 instead of a bare 500 so callers can tell
-        # it apart from a request error and retry. ConnectError has no
+        # it apart from a request error and retry. Transport errors have no
         # .response, so log the target URL per the python error-handling rules.
         logger.warning(
             "partner_chat_upstream_unreachable",

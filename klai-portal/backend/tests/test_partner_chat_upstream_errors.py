@@ -69,6 +69,16 @@ async def test_non_streaming_timeout_returns_502():
 
 
 @pytest.mark.asyncio
+async def test_non_streaming_read_error_returns_502():
+    fake_client = _patched_client(post_side_effect=httpx.ReadError("connection dropped while reading"))
+    with patch("app.services.partner_chat.httpx.AsyncClient", fake_client):
+        with pytest.raises(HTTPException) as exc:
+            await _call()
+    assert exc.value.status_code == 502
+    assert exc.value.detail["error"]["type"] == "upstream_error"
+
+
+@pytest.mark.asyncio
 async def test_non_streaming_upstream_status_error_returns_502():
     request = httpx.Request("POST", "http://litellm:4000/v1/chat/completions")
     response = httpx.Response(503, request=request)
