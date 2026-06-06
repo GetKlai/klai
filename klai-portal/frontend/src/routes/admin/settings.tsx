@@ -52,9 +52,6 @@ function AdminSettingsPage() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_settings_heading()}
         </h1>
-        <p className="text-sm text-gray-400">
-          {m.admin_settings_subtitle()}
-        </p>
       </div>
 
       <Tabs

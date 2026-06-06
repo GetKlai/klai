@@ -138,7 +138,7 @@ describe('AdminSettings page', () => {
       </Wrapper>,
     )
 
-    const autoAccept = await screen.findByRole('switch', {
+    const autoAccept = await screen.findByRole('checkbox', {
       name: 'Automatically accept users with @getklai.com',
     })
     fireEvent.click(autoAccept)

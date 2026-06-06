@@ -39,14 +39,11 @@ export function TelemetrySettingsSection({
   }
 
   return (
-    <section className="space-y-4">
-      <div className="space-y-1">
+    <section className="space-y-3">
+      <div>
         <h2 className="text-base font-display-bold text-gray-900">
           {m.admin_settings_telemetry_title()}
         </h2>
-        <p className="text-sm text-gray-400">
-          {m.admin_settings_telemetry_description()}
-        </p>
       </div>
       <form onSubmit={handleSubmit} className="space-y-4">
         {isLoading ? (
@@ -55,16 +52,6 @@ export function TelemetrySettingsSection({
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : (
           <>
-            <p className="text-sm text-gray-400">
-              {m.admin_settings_telemetry_current({
-                level:
-                  settings?.telemetry_level === 'off'
-                    ? m.admin_settings_telemetry_off_name()
-                    : settings?.telemetry_level === 'full'
-                      ? m.admin_settings_telemetry_full_name()
-                      : m.admin_settings_telemetry_shadow_name(),
-              })}
-            </p>
             <div className="space-y-1.5">
               <Label htmlFor="settings-telemetry-level">
                 {m.admin_settings_telemetry_label()}
