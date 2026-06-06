@@ -31,7 +31,6 @@ vi.mock('@/paraglide/messages', () => ({
   product_updates_error: () => 'Could not load product updates.',
   product_updates_not_available: () => 'Product updates are not available yet.',
   product_updates_back: () => 'Back',
-  product_updates_commits: () => 'Related commits',
 }))
 
 import { ProductUpdatesPopover } from '../ProductUpdatesPopover'
@@ -100,9 +99,8 @@ describe('ProductUpdatesPopover', () => {
     await waitFor(() => {
       expect(apiFetchMock).toHaveBeenCalledWith('/api/app/product-updates/12/read', { method: 'POST' })
     })
-    expect(screen.getByText('Related commits')).toBeTruthy()
-    expect(screen.getByText('abc1234')).toBeTruthy()
-    expect(screen.getByText('def5678')).toBeTruthy()
+    expect(screen.queryByText('abc1234')).toBeNull()
+    expect(screen.queryByText('def5678')).toBeNull()
   })
 
   it('marks all updates as read from the list header', async () => {

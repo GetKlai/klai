@@ -10,6 +10,10 @@ class ProductUpdateOut(BaseModel):
     title: str
     body: str
     commit_shas: list[str]
+    dedupe_key: str | None = None
+    created_by_user_id: str | None = None
+    published_via: str
+    published_at: datetime
     created_at: datetime
     read_at: datetime | None = None
     unread: bool = False
@@ -26,6 +30,10 @@ def product_update_out(update: ProductUpdate, read_at: datetime | None = None) -
         title=update.title,
         body=update.body,
         commit_shas=list(update.commit_shas or []),
+        dedupe_key=update.dedupe_key,
+        created_by_user_id=update.created_by_user_id,
+        published_via=update.published_via or "admin_api",
+        published_at=update.published_at or update.created_at,
         created_at=update.created_at,
         read_at=read_at,
         unread=read_at is None,

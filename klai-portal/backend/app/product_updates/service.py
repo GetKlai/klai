@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from hashlib import sha256
 
 from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.product_updates import ProductUpdate, ProductUpdateRead
 
 _COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
+_DEDUPE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 class ProductUpdateNotFoundError(Exception):
@@ -35,18 +37,55 @@ def normalize_commit_shas(commit_shas: list[str] | None) -> list[str]:
     return normalized
 
 
+def normalize_dedupe_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    dedupe_key = value.strip()
+    if not dedupe_key:
+        return None
+    if not _DEDUPE_KEY_RE.fullmatch(dedupe_key):
+        raise ProductUpdateValidationError(
+            "Dedupe key must be 1-128 characters and use letters, numbers, '.', '_', ':' or '-'"
+        )
+    return dedupe_key
+
+
+def generated_dedupe_key(*, title: str, body: str, commit_shas: list[str]) -> str:
+    payload = "\n".join([title.strip(), body.strip(), ",".join(commit_shas)])
+    return "sha256:" + sha256(payload.encode("utf-8")).hexdigest()
+
+
 async def create_product_update(
     db: AsyncSession,
     *,
     title: str,
     body: str,
     commit_shas: list[str] | None = None,
+    created_at: datetime | None = None,
+    created_by_user_id: str | None = None,
+    dedupe_key: str | None = None,
+    published_via: str = "admin_api",
 ) -> ProductUpdate:
+    normalized_commit_shas = normalize_commit_shas(commit_shas)
+    normalized_dedupe_key = normalize_dedupe_key(dedupe_key) or generated_dedupe_key(
+        title=title,
+        body=body,
+        commit_shas=normalized_commit_shas,
+    )
+    existing = await db.scalar(select(ProductUpdate).where(ProductUpdate.dedupe_key == normalized_dedupe_key))
+    if existing is not None:
+        return existing
+
     update = ProductUpdate(
         title=title.strip(),
         body=body.strip(),
-        commit_shas=normalize_commit_shas(commit_shas),
+        commit_shas=normalized_commit_shas,
+        created_by_user_id=created_by_user_id,
+        dedupe_key=normalized_dedupe_key,
+        published_via=published_via,
     )
+    if created_at is not None:
+        update.created_at = created_at
     db.add(update)
     await db.flush()
     return update
