@@ -10,7 +10,7 @@ Publish with the operator script only:
 klai-portal/backend/scripts/create_product_update.py
 ```
 
-The script must run from trusted infra or an equivalent operator shell with production backend database access. There is no portal/API publish endpoint. Infra access is the admin boundary.
+The script must run from trusted infra or an equivalent operator shell with production backend database access. In production, it is available inside the `portal-api` image at `scripts/create_product_update.py`. There is no portal/API publish endpoint. Infra access is the admin boundary.
 
 Do not publish product updates by:
 
@@ -79,6 +79,16 @@ Then publish from `klai-portal/backend`:
 ```bash
 uv run python scripts/create_product_update.py \
   --json ../../.context/product-updates.json
+```
+
+Or publish from the production backend container:
+
+```bash
+docker cp .context/product-updates.json klai-core-portal-api-1:/tmp/product-updates.json
+docker exec \
+  -w /repo/klai-portal/backend \
+  klai-core-portal-api-1 \
+  python scripts/create_product_update.py --json /tmp/product-updates.json
 ```
 
 Preview without publishing:
