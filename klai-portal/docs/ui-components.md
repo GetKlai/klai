@@ -283,6 +283,8 @@ import { Tabs, type TabItem } from '@/components/ui/tabs'
 
 const tabs: TabItem<TabId>[] = [
   { id: 'settings', label: m.account_tab_settings(), icon: Settings },
+  { id: 'users', label: m.platform_tab_users(), count: userCount },
+  { id: 'feedback', label: m.account_tab_feedback(), notificationCount: unreadCount },
   { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
 ]
 

@@ -596,7 +596,8 @@ import { Tabs, type TabItem } from '@/components/ui/tabs'
 
 const tabs: TabItem<TabId>[] = [
   { id: 'details', label: m.account_tab_settings() },
-  { id: 'feedback', label: m.account_tab_feedback(), count: unreadCount },
+  { id: 'users', label: m.platform_tab_users(), count: userCount },
+  { id: 'feedback', label: m.account_tab_feedback(), notificationCount: unreadCount },
 ]
 
 <Tabs tabs={tabs} value={activeTab} onValueChange={setTab} />
@@ -605,10 +606,13 @@ const tabs: TabItem<TabId>[] = [
 - **Active state is a strong `border-gray-900` underline** — unmistakable
   against the gray-200 container divider. (The old `border-gray-200` active
   style was a defect: it blended into the divider.)
-- **Text-only is the default, on-brand look.** `icon` and `count` are
-  optional. Use icons sparingly (detail/settings surfaces); the `count` badge
-  takes an optional `countTone` (`success` default, or `warning`/`destructive`/
-  `info`).
+- **Text-only is the default, on-brand look.** `icon`, `count`, and
+  `notificationCount` are optional. Use icons sparingly (detail/settings
+  surfaces). Use `count` for neutral entity totals such as users, bots,
+  knowledge bases, or templates. Use `notificationCount` for new/unread items;
+  it defaults to the success tone because green means "new". Only use
+  `notificationTone="warning" | "destructive" | "info"` when the badge is an
+  alert state, not a plain entity total.
 - `Tabs` is **controlled and presentational** — it owns no state. Wire
   `value`/`onValueChange` to local state or to URL search state when the tab
   must survive navigation (the account/api-keys/widgets/platform pattern).

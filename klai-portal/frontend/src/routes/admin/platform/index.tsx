@@ -133,14 +133,14 @@ function PlatformConsole() {
   const platformTabs: TabItem<PlatformTab>[] = TABS.map((t) => ({
     id: t.id,
     label: t.label(),
-    count:
+    notificationCount:
       t.id === 'feedback'
         ? newFeedbackCount
         : t.id === 'chat-errors'
           ? chatErrorCount
           : undefined,
-    countTone:
-      t.id === 'feedback' ? 'warning' : t.id === 'chat-errors' ? 'destructive' : undefined,
+    notificationTone:
+      t.id === 'chat-errors' ? 'destructive' : undefined,
   }))
 
   useEffect(() => {
