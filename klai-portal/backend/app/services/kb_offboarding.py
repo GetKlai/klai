@@ -46,6 +46,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import set_tenant
 from app.models.knowledge_bases import PortalKnowledgeBase, PortalUserKBAccess
 from app.models.mcp_oauth import PortalMcpToken
 from app.models.partner_api_keys import PartnerAPIKey
@@ -206,6 +207,7 @@ async def compute_user_delete_preview(
     delete removes the portal user row, so every ``created_by`` reference must
     be handled explicitly.
     """
+    await set_tenant(db, org_id)
 
     org_kbs_result = await db.execute(
         select(PortalKnowledgeBase).where(
@@ -249,6 +251,8 @@ async def _personal_kb_preview_rows(
     org_id: int,
     db: AsyncSession,
 ) -> list[OffboardPreviewKb]:
+    await set_tenant(db, org_id)
+
     personal_kbs_result = await db.execute(
         select(PortalKnowledgeBase).where(
             PortalKnowledgeBase.org_id == org_id,
