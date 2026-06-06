@@ -13,6 +13,8 @@ import type {
   PlatformFeedbackItemDetail,
   PlatformFeedbackResolveResult,
   PlatformFeedbackSubmission,
+  PlatformMessageThread,
+  PlatformMessageThreadDetail,
   PlatformOrgDetail,
   PlatformUnlocksResponse,
   PlatformKB,
@@ -165,6 +167,93 @@ export function usePlatformChatErrors() {
     queryFn: async () =>
       apiFetch<PlatformChatError[]>('/api/admin/platform/chat-errors?limit=100'),
     enabled: auth.isAuthenticated,
+  })
+}
+
+export function usePlatformMessageThreads(search: string, status = '') {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-message-threads', search, status],
+    queryFn: async () => {
+      const params = new URLSearchParams({ limit: '200' })
+      if (search) params.set('search', search)
+      if (status) params.set('status', status)
+      return apiFetch<PlatformMessageThread[]>(
+        `/api/admin/platform/messages/threads?${params.toString()}`,
+      )
+    },
+    enabled: auth.isAuthenticated,
+  })
+}
+
+export function usePlatformMessageThread(threadId: number | null) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-message-thread', threadId],
+    queryFn: async () =>
+      apiFetch<PlatformMessageThreadDetail>(
+        `/api/admin/platform/messages/threads/${threadId}`,
+      ),
+    enabled: auth.isAuthenticated && threadId !== null,
+  })
+}
+
+function usePlatformMessageMutation() {
+  const qc = useQueryClient()
+  return {
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-message-threads'] })
+      void qc.invalidateQueries({ queryKey: ['platform-message-thread'] })
+    },
+  }
+}
+
+export function usePlatformCreateMessageThread() {
+  const opts = usePlatformMessageMutation()
+  return useMutation({
+    mutationFn: async (body: {
+      org_id: number
+      user_ids: string[]
+      subject: string
+      body: string
+      feedback_submission_id?: number | null
+      feedback_item_id?: number | null
+    }) =>
+      apiFetch<PlatformMessageThreadDetail>('/api/admin/platform/messages/threads', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: opts.onSuccess,
+  })
+}
+
+export function usePlatformReplyMessageThread() {
+  const opts = usePlatformMessageMutation()
+  return useMutation({
+    mutationFn: async (vars: { threadId: number; body: string }) =>
+      apiFetch<PlatformMessageThreadDetail>(
+        `/api/admin/platform/messages/threads/${vars.threadId}/reply`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ body: vars.body }),
+        },
+      ),
+    onSuccess: opts.onSuccess,
+  })
+}
+
+export function usePlatformUpdateMessageThreadStatus() {
+  const opts = usePlatformMessageMutation()
+  return useMutation({
+    mutationFn: async (vars: { threadId: number; status: 'open' | 'closed' }) =>
+      apiFetch<PlatformMessageThreadDetail>(
+        `/api/admin/platform/messages/threads/${vars.threadId}/status`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ status: vars.status }),
+        },
+      ),
+    onSuccess: opts.onSuccess,
   })
 }
 

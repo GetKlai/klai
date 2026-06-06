@@ -16,6 +16,7 @@ import {
   BotsTab,
   ChatErrorsTab,
   KbTab,
+  MessagesTab,
   OrgsTab,
   StatusTab,
   SubdomainsTab,
@@ -30,6 +31,7 @@ import type { PlatformTab } from './-types'
 const VALID_TABS = new Set<PlatformTab>([
   'users',
   'organizations',
+  'messages',
   'knowledge-bases',
   'templates',
   'subscriptions',
@@ -56,6 +58,7 @@ export const Route = createFileRoute('/admin/platform/')({
 const TABS: { id: PlatformTab; label: () => string }[] = [
   { id: 'users', label: m.platform_tab_users },
   { id: 'organizations', label: m.platform_tab_organizations },
+  { id: 'messages', label: m.platform_tab_messages },
   { id: 'knowledge-bases', label: m.platform_tab_knowledge_bases },
   { id: 'templates', label: m.platform_tab_templates },
   { id: 'subscriptions', label: m.platform_tab_subscriptions },
@@ -144,6 +147,7 @@ function PlatformConsole() {
     void queryClient.invalidateQueries({ queryKey: ['platform-templates'] })
     void queryClient.invalidateQueries({ queryKey: ['platform-chat-errors'] })
     void queryClient.invalidateQueries({ queryKey: ['platform-feedback-submissions'] })
+    void queryClient.invalidateQueries({ queryKey: ['platform-message-threads'] })
   }
 
   return (
@@ -314,6 +318,7 @@ function PlatformConsole() {
       {tab === 'organizations' && (
         <OrgsTab search={search} fmtDate={fmtDate} />
       )}
+      {tab === 'messages' && <MessagesTab search={search} fmtDate={fmtDate} />}
       {tab === 'subscriptions' && <SubsTab search={search} />}
       {tab === 'knowledge-bases' && <KbTab search={search} fmtDate={fmtDate} />}
       {tab === 'templates' && (

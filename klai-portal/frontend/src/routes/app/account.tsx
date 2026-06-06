@@ -2,19 +2,20 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bug, Download, Lightbulb, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
+import { Bug, Download, Lightbulb, Loader2, MessageSquare, Send, Settings, SlidersHorizontal } from 'lucide-react'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
 
-type TabId = 'settings' | 'feedback' | 'advanced'
+type TabId = 'settings' | 'messages' | 'feedback' | 'advanced'
 
-const VALID_TABS = new Set<TabId>(['settings', 'feedback', 'advanced'])
+const VALID_TABS = new Set<TabId>(['settings', 'messages', 'feedback', 'advanced'])
 
 type AccountSearch = {
   tab?: TabId
@@ -62,6 +63,39 @@ interface AccountFeedbackUpdatesResponse {
   unread_count: number
 }
 
+interface AccountPlatformMessageThread {
+  id: number
+  subject: string
+  status: string
+  origin_type: string
+  feedback_submission_id?: number | null
+  feedback_item_id?: number | null
+  latest_message_body: string
+  latest_message_sender_type: string
+  latest_message_at: string
+  last_read_at?: string | null
+  unread: boolean
+  created_at: string
+}
+
+interface AccountPlatformMessage {
+  id: number
+  sender_type: string
+  sender_user_id?: string | null
+  body: string
+  created_at: string
+}
+
+interface AccountPlatformMessagesResponse {
+  items: AccountPlatformMessageThread[]
+  unread_count: number
+}
+
+interface AccountPlatformMessageThreadDetail {
+  thread: AccountPlatformMessageThread
+  messages: AccountPlatformMessage[]
+}
+
 function AccountPage() {
   const auth = useAuth()
   const { locale, switchLocale } = useLocale()
@@ -71,6 +105,7 @@ function AccountPage() {
 
   const [saved, setSaved] = useState(false)
   const [selectedLang, setSelectedLang] = useState<'nl' | 'en'>(locale)
+  const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null)
   const activeTab: TabId = search.tab ?? 'settings'
 
   // Fetch current user's preferred language from the portal DB
@@ -90,6 +125,18 @@ function AccountPage() {
     queryKey: ['account-feedback-updates'],
     queryFn: () => apiFetch<AccountFeedbackUpdatesResponse>('/api/app/account/feedback-updates'),
     enabled: auth.isAuthenticated,
+  })
+
+  const { data: platformMessages, isLoading: messagesLoading, error: messagesError } = useQuery({
+    queryKey: ['account-platform-messages'],
+    queryFn: () => apiFetch<AccountPlatformMessagesResponse>('/api/app/account/messages'),
+    enabled: auth.isAuthenticated,
+  })
+
+  const selectedThreadQuery = useQuery({
+    queryKey: ['account-platform-message-thread', selectedThreadId],
+    queryFn: () => apiFetch<AccountPlatformMessageThreadDetail>(`/api/app/account/messages/${selectedThreadId}`),
+    enabled: auth.isAuthenticated && selectedThreadId !== null,
   })
 
   useEffect(() => {
@@ -149,6 +196,29 @@ function AccountPage() {
     },
   })
 
+  const markMessageReadMutation = useMutation({
+    mutationFn: async (threadId: number) => {
+      return apiFetch(`/api/app/account/messages/${threadId}/read`, { method: 'POST' })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
+    },
+  })
+
+  const replyMessageMutation = useMutation({
+    mutationFn: async (vars: { threadId: number; body: string }) => {
+      return apiFetch(`/api/app/account/messages/${vars.threadId}/reply`, {
+        method: 'POST',
+        body: JSON.stringify({ body: vars.body }),
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
+    },
+  })
+
   // Name and email come from /api/me (sourced server-side from the Zitadel
   // userinfo claims). The BFF session only carries `sub`, so reading from
   // auth.user.profile here would always be empty.
@@ -156,9 +226,17 @@ function AccountPage() {
   const email = meData?.email ?? ''
   const hasProfileInfo = Boolean(name || email)
   const feedbackUnreadCount = feedbackUpdates?.unread_count ?? 0
+  const messageUnreadCount = platformMessages?.unread_count ?? 0
 
   const tabs: TabItem<TabId>[] = [
     { id: 'settings', label: m.account_tab_settings(), icon: Settings },
+    {
+      id: 'messages',
+      label: m.account_tab_messages(),
+      icon: MessageSquare,
+      count: messageUnreadCount,
+      countLabel: m.account_messages_unread(),
+    },
     {
       id: 'feedback',
       label: m.account_tab_feedback(),
@@ -265,6 +343,28 @@ function AccountPage() {
         />
       )}
 
+      {activeTab === 'messages' && (
+        <AccountMessagesPanel
+          items={platformMessages?.items ?? []}
+          detail={selectedThreadQuery.data ?? null}
+          selectedThreadId={selectedThreadId}
+          isLoading={messagesLoading}
+          detailLoading={selectedThreadQuery.isLoading}
+          error={messagesError}
+          locale={locale}
+          onSelect={(thread) => {
+            setSelectedThreadId(thread.id)
+            if (thread.unread) markMessageReadMutation.mutate(thread.id)
+          }}
+          onReply={(body) => {
+            if (selectedThreadId !== null) {
+              replyMessageMutation.mutate({ threadId: selectedThreadId, body })
+            }
+          }}
+          isReplying={replyMessageMutation.isPending}
+        />
+      )}
+
       {activeTab === 'advanced' && (
         <div className="space-y-6">
           <div>
@@ -290,6 +390,156 @@ function AccountPage() {
             )}
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+function AccountMessagesPanel({
+  items,
+  detail,
+  selectedThreadId,
+  isLoading,
+  detailLoading,
+  error,
+  locale,
+  onSelect,
+  onReply,
+  isReplying,
+}: {
+  items: AccountPlatformMessageThread[]
+  detail: AccountPlatformMessageThreadDetail | null
+  selectedThreadId: number | null
+  isLoading: boolean
+  detailLoading: boolean
+  error: unknown
+  locale: 'nl' | 'en'
+  onSelect: (thread: AccountPlatformMessageThread) => void
+  onReply: (body: string) => void
+  isReplying: boolean
+}) {
+  const [replyBody, setReplyBody] = useState('')
+  const hasError = error != null
+
+  function submitReply() {
+    const trimmed = replyBody.trim()
+    if (!trimmed) return
+    onReply(trimmed)
+    setReplyBody('')
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-sm font-medium text-gray-900 mb-2">{m.account_messages_title()}</h2>
+        <p className="text-sm text-gray-400">{m.account_messages_description()}</p>
+      </div>
+
+      {isLoading && (
+        <div className="border-y border-gray-200 divide-y divide-gray-100">
+          {[0, 1, 2].map((index) => (
+            <div key={index} className="flex gap-3 py-4">
+              <div className="mt-0.5 h-8 w-8 shrink-0 rounded-full bg-gray-100" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="h-4 w-2/3 rounded bg-gray-100" />
+                <div className="h-3 w-full rounded bg-gray-100" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!isLoading && hasError && (
+        <p className="text-sm text-[var(--color-destructive)]">{m.account_messages_error()}</p>
+      )}
+
+      {!isLoading && !hasError && items.length === 0 && (
+        <div className="border-y border-gray-200 py-8">
+          <p className="text-sm font-medium text-gray-900">{m.account_messages_empty_title()}</p>
+          <p className="mt-1 text-sm text-gray-400">{m.account_messages_empty_description()}</p>
+        </div>
+      )}
+
+      {!isLoading && !hasError && items.length > 0 && (
+        <div className="border-y border-gray-200 divide-y divide-gray-100">
+          {items.map((thread) => (
+            <button
+              key={thread.id}
+              type="button"
+              onClick={() => onSelect(thread)}
+              className="flex w-full gap-3 py-4 text-left klai-hover"
+            >
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+                <MessageSquare className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  {thread.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-success)]" />}
+                  <h3 className="truncate text-sm font-medium text-gray-900">{thread.subject}</h3>
+                </div>
+                <p className="mt-1 line-clamp-2 text-sm text-gray-500">{thread.latest_message_body}</p>
+                <p className="mt-2 text-xs text-gray-400">
+                  {formatFeedbackDate(thread.latest_message_at, locale)}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {selectedThreadId !== null && (
+        <section className="space-y-4 border-t border-gray-200 pt-6">
+          {detailLoading || !detail ? (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {m.admin_shared_loading()}
+            </div>
+          ) : (
+            <>
+              <div>
+                <h3 className="text-base font-display-bold text-gray-900">{detail.thread.subject}</h3>
+                <p className="mt-1 text-xs text-gray-400">
+                  {m.account_messages_started()} {formatFeedbackDate(detail.thread.created_at, locale)}
+                </p>
+              </div>
+              <div className="divide-y divide-gray-100 border-y border-gray-200">
+                {detail.messages.map((message) => (
+                  <article key={message.id} className="py-4">
+                    <p className="mb-1 text-xs text-gray-400">
+                      {message.sender_type === 'user'
+                        ? m.account_messages_you()
+                        : m.account_messages_platform_admin()}{' '}
+                      · {formatFeedbackDate(message.created_at, locale)}
+                    </p>
+                    <p className="whitespace-pre-wrap text-sm leading-6 text-gray-900">{message.body}</p>
+                  </article>
+                ))}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="account-message-reply">{m.account_messages_reply()}</Label>
+                <Textarea
+                  id="account-message-reply"
+                  rows={4}
+                  value={replyBody}
+                  maxLength={4000}
+                  onChange={(event) => setReplyBody(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  disabled={replyBody.trim().length === 0 || isReplying}
+                  onClick={submitReply}
+                >
+                  {isReplying ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  {m.account_messages_send()}
+                </Button>
+              </div>
+            </>
+          )}
+        </section>
       )}
     </div>
   )

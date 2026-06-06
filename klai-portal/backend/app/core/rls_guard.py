@@ -64,6 +64,9 @@ RLS_DML_TABLES: frozenset[str] = frozenset(
         "portal_taxonomy_nodes",
         "portal_taxonomy_proposals",
         "portal_templates",  # SPEC-PLATFORM-ADMIN-001 Cat-D (helper policy)
+        "platform_message_participants",
+        "platform_message_threads",
+        "platform_messages",
         "portal_user_kb_access",
         "portal_user_products",
         "portal_user_seat_history",  # SPEC-PORTAL-PRICING-PER-USER-001 Cat-D
