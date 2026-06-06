@@ -3,6 +3,7 @@
 var axios = require('axios');
 var textsplitters = require('@langchain/textsplitters');
 var utils = require('./utils.cjs');
+var tavilySearch = require('./tavily-search.cjs');
 
 const chunker = {
     cleanText: (text) => {
@@ -315,97 +316,85 @@ const createSearXNGAPI = (instanceUrl, apiKey) => {
     return { getSources };
 };
 const createSearchAPI = (config) => {
-    const { searchProvider = 'serper', serperApiKey, searxngInstanceUrl, searxngApiKey, } = config;
+    const { searchProvider = 'serper', serperApiKey, searxngInstanceUrl, searxngApiKey, tavilyApiKey, tavilySearchUrl, tavilySearchOptions, } = config;
     if (searchProvider.toLowerCase() === 'serper') {
         return createSerperAPI(serperApiKey);
     }
     else if (searchProvider.toLowerCase() === 'searxng') {
         return createSearXNGAPI(searxngInstanceUrl, searxngApiKey);
     }
+    else if (searchProvider.toLowerCase() === 'tavily') {
+        return tavilySearch.createTavilyAPI(tavilyApiKey, tavilySearchUrl, tavilySearchOptions);
+    }
     else {
-        throw new Error(`Invalid search provider: ${searchProvider}. Must be 'serper' or 'searxng'`);
+        throw new Error(`Invalid search provider: ${searchProvider}. Must be 'serper', 'searxng', or 'tavily'`);
     }
 };
 const createSourceProcessor = (config = {}, scraperInstance) => {
     if (!scraperInstance) {
         throw new Error('Scraper instance is required');
     }
-    const { topResults = 3, 
+    const { topResults = 3,
     // strategies = ['no_extraction'],
     // filterContent = true,
     reranker, logger, } = config;
     const logger_ = logger || utils.createDefaultLogger();
     const scraper = scraperInstance;
+    const processResponse = (url, response) => {
+        const rawMetadata = scraper.extractMetadata(response);
+        const metadata = Object.keys(rawMetadata).length > 0 ? rawMetadata : undefined;
+        const attribution = utils.getAttribution(url, metadata, logger_);
+        if (response.success && response.data) {
+            const [content, references] = scraper.extractContent(response);
+            return {
+                url,
+                references,
+                attribution,
+                content: chunker.cleanText(content),
+            };
+        }
+        logger_.error(`Error scraping ${url}: ${response.error ?? 'Unknown error'}`);
+        return { url, attribution, error: true, content: '' };
+    };
+    const addHighlights = async (result, query, onGetHighlights) => {
+        if (result.error != null) {
+            return result;
+        }
+        try {
+            const highlights = await getHighlights({
+                query,
+                reranker,
+                content: result.content,
+                logger: logger_,
+            });
+            if (onGetHighlights) {
+                onGetHighlights(result.url);
+            }
+            return { ...result, highlights };
+        }
+        catch (error) {
+            logger_.error('Error processing scraped content:', error);
+            return result;
+        }
+    };
     const webScraper = {
         scrapeMany: async ({ query, links, onGetHighlights, }) => {
             logger_.debug(`Scraping ${links.length} links`);
-            const promises = [];
             try {
-                for (let i = 0; i < links.length; i++) {
-                    const currentLink = links[i];
-                    const promise = scraper
-                        .scrapeUrl(currentLink, {})
-                        .then(([url, response]) => {
-                        const attribution = utils.getAttribution(url, response.data?.metadata, logger_);
-                        if (response.success && response.data) {
-                            const [content, references] = scraper.extractContent(response);
-                            return {
-                                url,
-                                references,
-                                attribution,
-                                content: chunker.cleanText(content),
-                            };
-                        }
-                        else {
-                            logger_.error(`Error scraping ${url}: ${response.error ?? 'Unknown error'}`);
-                        }
-                        return {
-                            url,
-                            attribution,
-                            error: true,
-                            content: '',
-                        };
-                    })
-                        .then(async (result) => {
-                        try {
-                            if (result.error != null) {
-                                logger_.error(`Error scraping ${result.url}: ${result.content}`);
-                                return {
-                                    ...result,
-                                };
-                            }
-                            const highlights = await getHighlights({
-                                query,
-                                reranker,
-                                content: result.content,
-                                logger: logger_,
-                            });
-                            if (onGetHighlights) {
-                                onGetHighlights(result.url);
-                            }
-                            return {
-                                ...result,
-                                highlights,
-                            };
-                        }
-                        catch (error) {
-                            logger_.error('Error processing scraped content:', error);
-                            return {
-                                ...result,
-                            };
-                        }
-                    })
-                        .catch((error) => {
-                        logger_.error(`Error scraping ${currentLink}:`, error);
-                        return {
-                            url: currentLink,
-                            error: true,
-                            content: '',
-                        };
-                    });
-                    promises.push(promise);
+                let responses;
+                if (scraper.scrapeUrls) {
+                    responses = await scraper.scrapeUrls(links);
                 }
-                return await Promise.all(promises);
+                else {
+                    responses = await Promise.all(links.map((link) => scraper
+                        .scrapeUrl(link, {})
+                        .catch((error) => {
+                        logger_.error(`Error scraping ${link}:`, error);
+                        return [link, { success: false, error: String(error) }];
+                    })));
+                }
+                const withHighlights = await Promise.all(responses.map(([url, response]) => addHighlights(processResponse(url, response), query, onGetHighlights)));
+                return withHighlights;
             }
             catch (error) {
                 logger_.error('Error in scrapeMany:', error);

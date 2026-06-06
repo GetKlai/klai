@@ -173,16 +173,16 @@ fi
 
 INDEX=${KLAI_LIBRECHAT_INDEX:-/app/client/dist/index.html}
 LIGHT_MARKER=klai-force-light
-KB_DISCLOSURE_MARKER=klai-kb-disclosure-v7
 FOOTER_MARKER=klai-hide-librechat-footer-v1
+KB_DISCLOSURE_MARKER=klai-kb-disclosure-v8
 
 if [ -f "$INDEX" ]; then
-  node - "$INDEX" "$LIGHT_MARKER" "$KB_DISCLOSURE_MARKER" "$FOOTER_MARKER" <<'NODE' || echo "[klai-entrypoint] client polish inject failed (non-fatal), booting anyway"
+  node - "$INDEX" "$LIGHT_MARKER" "$FOOTER_MARKER" "$KB_DISCLOSURE_MARKER" <<'NODE' || echo "[klai-entrypoint] client polish inject failed (non-fatal), booting anyway"
 const { readFileSync, writeFileSync } = require('fs');
 const target = process.argv[2];
 const lightMarker = process.argv[3];
-const disclosureMarker = process.argv[4];
-const footerMarker = process.argv[5];
+const footerMarker = process.argv[4];
+const disclosureMarker = process.argv[5];
 let html = readFileSync(target, 'utf8');
 if (!html.includes(disclosureMarker)) {
   html = html
@@ -199,11 +199,12 @@ if (!html.includes(lightMarker)) {
   injections.push("<script>/*klai-force-light*/try{localStorage.setItem('color-theme','light');}catch(e){}</script>");
 }
 if (!html.includes(footerMarker)) {
-  injections.push(`<script id="klai-hide-librechat-footer-script">/*klai-hide-librechat-footer-v1*/
-(()=>{const tagline=/LibreChat\\s+v[\\w.-]+\\s*-\\s*Every AI for Everyone\\.?/i;const isBrandLink=a=>{const href=a?.getAttribute?.("href")||"";return /(^|\\.)librechat\\.ai\\/?$/i.test(href.replace(/^https?:\\/\\//i,"").replace(/^www\\./i,"").split(/[?#]/)[0])};const hide=node=>{if(!(node instanceof HTMLElement))return;const text=(node.textContent||"").replace(/\\s+/g," ").trim();if(!tagline.test(text))return;const link=[...node.querySelectorAll("a")].find(isBrandLink);if(!link)return;const target=node.closest("footer,[role='contentinfo']")||node;target.dataset.klaiLibrechatFooterHidden="1";target.style.display="none"};const scan=root=>{if(!(root instanceof HTMLElement))return;hide(root);for(const el of root.querySelectorAll("footer,[role='contentinfo'],div,p,span"))hide(el)};let pending=false;const run=()=>{pending=false;scan(document.body)};const schedule=()=>{if(pending)return;pending=true;(window.queueMicrotask||((fn)=>Promise.resolve().then(fn)))(run)};new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true,characterData:true});document.readyState==="loading"?document.addEventListener("DOMContentLoaded",schedule):schedule();})();</script>`);
+  injections.push(`<style id="klai-hide-librechat-footer-style">/*klai-hide-librechat-footer-v1*/
+[role="contentinfo"]{display:none!important}
+</style>`);
 }
 if (!html.includes(disclosureMarker)) {
-  injections.push(`<style id="klai-kb-disclosure-style">/*klai-kb-disclosure-v7*/
+  injections.push(`<style id="klai-kb-disclosure-style">/*klai-kb-disclosure-v8*/
 .klai-kb-disclosure{margin:.9rem 0 0;max-width:38rem;border:0;border-radius:.375rem;background:transparent;overflow:visible;color:#19191880}
 .klai-kb-disclosure+.klai-kb-disclosure{margin-top:.125rem}
 .klai-kb-disclosure[open]{background:transparent}
@@ -219,8 +220,8 @@ if (!html.includes(disclosureMarker)) {
 .klai-kb-disclosure-body ul,.klai-kb-disclosure-body ol{margin:0;padding-left:1rem}
 .klai-kb-disclosure-body li{margin:.2rem 0}
 </style>
-<script id="klai-kb-disclosure-script">/*klai-kb-disclosure-v7*/
-(()=>{const H=new Set(["Bronnen","Agent activiteit"]);const norm=t=>(t||"").replace(/\\s+/g," ").trim();const title=e=>H.has(norm(e?.textContent))?norm(e.textContent):"";const heading=e=>{if(!(e instanceof HTMLElement))return"";const tag=e.tagName;if(/^H[1-6]$/.test(tag)||["P","LI","STRONG","B"].includes(tag))return title(e);return""};const headingIn=e=>{if(!(e instanceof HTMLElement))return"";const direct=heading(e);if(direct)return direct;const c=e.querySelector("strong,b,h1,h2,h3,h4,h5,h6,p,li");return heading(c)};const block=e=>/^H[1-6]$/.test(e.tagName)||["P","LI"].includes(e.tagName)?e:e.closest("p,li,h1,h2,h3,h4,h5,h6")||e;const label=(name,n)=>name==="Bronnen"?(n===1?"1 bron":n+" bronnen"):(n===1?"1 stap":n+" stappen");const count=nodes=>{const l=nodes.find(n=>/^[UO]L$/.test(n.tagName));return l?l.querySelectorAll(":scope > li").length:nodes.filter(n=>norm(n.textContent)).length};const wrap=e=>{const name=heading(e);if(!name)return;const head=block(e);if(!head||head.dataset.klaiKbDisclosure==="1"||head.closest(".klai-kb-disclosure"))return;const body=[];let next=head.nextElementSibling;while(next){if(next.classList?.contains("klai-kb-disclosure")||headingIn(next))break;if(!["SCRIPT","STYLE"].includes(next.tagName))body.push(next);next=next.nextElementSibling}if(body.length===0){if(next&&headingIn(next)){head.dataset.klaiKbDisclosure="1";head.style.display="none"}return}const d=document.createElement("details");d.className="klai-kb-disclosure klai-kb-disclosure--"+(name==="Bronnen"?"sources":"activity");const summary=document.createElement("summary");const t=document.createElement("span");t.className="klai-kb-disclosure-title";t.textContent=name;const c=document.createElement("span");c.className="klai-kb-disclosure-count";c.textContent=label(name,count(body));summary.append(t,c);const inner=document.createElement("div");inner.className="klai-kb-disclosure-body";for(const node of body)inner.appendChild(node);d.append(summary,inner);head.dataset.klaiKbDisclosure="1";head.replaceWith(d)};const scan=root=>{const list=[];if(root instanceof HTMLElement)list.push(root);list.push(...(root.querySelectorAll?.("strong,b,h1,h2,h3,h4,h5,h6,p,li")||[]));for(const e of list)wrap(e)};let pending=false;const run=()=>{pending=false;scan(document.body)};const schedule=()=>{if(pending)return;pending=true;(window.queueMicrotask||((fn)=>Promise.resolve().then(fn)))(run)};new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true,characterData:true});document.readyState==="loading"?document.addEventListener("DOMContentLoaded",schedule):schedule();})();</script>`);
+<script id="klai-kb-disclosure-script">/*klai-kb-disclosure-v8*/
+(()=>{const H=new Set(["Bronnen","Agent activiteit"]);const norm=t=>(t||"").replace(/\\s+/g," ").trim();const title=e=>H.has(norm(e?.textContent))?norm(e.textContent):"";const heading=e=>{if(!(e instanceof HTMLElement))return"";const tag=e.tagName;if(/^H[1-6]$/.test(tag)||["P","LI","STRONG","B"].includes(tag))return title(e);return""};const headingIn=e=>{if(!(e instanceof HTMLElement))return"";const direct=heading(e);if(direct)return direct;const c=e.querySelector("strong,b,h1,h2,h3,h4,h5,h6,p,li");return heading(c)};const block=e=>/^H[1-6]$/.test(e.tagName)||["P","LI"].includes(e.tagName)?e:e.closest("p,li,h1,h2,h3,h4,h5,h6")||e;const label=(name,n)=>name==="Bronnen"?(n===1?"1 bron":n+" bronnen"):(n===1?"1 stap":n+" stappen");const count=nodes=>{const l=nodes.find(n=>/^[UO]L$/.test(n.tagName));return l?l.querySelectorAll(":scope > li").length:nodes.filter(n=>norm(n.textContent)).length};const wrap=e=>{const name=heading(e);if(!name)return;const head=block(e);if(!head||head.dataset.klaiKbDisclosure==="1"||head.closest(".klai-kb-disclosure"))return;const body=[];let next=head.nextElementSibling;while(next){if(next.classList?.contains("klai-kb-disclosure")||headingIn(next))break;if(!["SCRIPT","STYLE"].includes(next.tagName))body.push(next);next=next.nextElementSibling}if(body.length===0){if(next&&headingIn(next)){head.dataset.klaiKbDisclosure="1";head.style.display="none"}return}const d=document.createElement("details");d.className="klai-kb-disclosure klai-kb-disclosure--"+(name==="Bronnen"?"sources":"activity");const summary=document.createElement("summary");const t=document.createElement("span");t.className="klai-kb-disclosure-title";t.textContent=name;const c=document.createElement("span");c.className="klai-kb-disclosure-count";c.textContent=label(name,count(body));summary.append(t,c);const inner=document.createElement("div");inner.className="klai-kb-disclosure-body";for(const node of body)inner.appendChild(node);d.append(summary,inner);head.dataset.klaiKbDisclosure="1";head.replaceWith(d)};const scan=root=>{if(!(root instanceof HTMLElement))return;const list=[root,...root.querySelectorAll("strong,b,h1,h2,h3,h4,h5,h6,p,li")];for(const e of list)wrap(e)};let pending=false;const run=()=>{pending=false;scan(document.body)};const schedule=()=>{if(pending)return;pending=true;(window.queueMicrotask||((fn)=>Promise.resolve().then(fn)))(run)};new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true,characterData:true});document.readyState==="loading"?document.addEventListener("DOMContentLoaded",schedule):schedule();})();</script>`);
 }
 if (!injections.length) {
   process.stdout.write('[klai-entrypoint] client polish already injected, skipping\n');

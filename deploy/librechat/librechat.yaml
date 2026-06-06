@@ -1,4 +1,4 @@
-version: 1.3.8
+version: 1.3.12
 
 cache: true
 
@@ -9,7 +9,7 @@ registration:
 # Stripped-down UI for Klai tenants. Everything non-essential is disabled at
 # config level so new users start with the minimum surface area. Keep the list
 # exhaustive — missing keys fall back to LibreChat defaults (usually `true`),
-# and v0.8.5 has added keys that re-enabled surfaces we intentionally hid in
+# and v0.8.6 has added keys that re-enabled surfaces we intentionally hid in
 # earlier versions (parameters, endpointsMenu, temporaryChat, peoplePicker,
 # fileCitations, marketplace, sidePanel).
 #
@@ -59,7 +59,7 @@ interface:
   parameters: false
   sidePanel: false
   temporaryChat: false
-  artifacts: false
+  artifacts: true
 
 balance:
   enabled: false
@@ -105,6 +105,13 @@ mcpSettings:
 endpoints:
   openAI:
     disabled: true
+  agents:
+    capabilities:
+      - 'deferred_tools'
+      - 'web_search'
+      - 'artifacts'
+      - 'ocr'
+      - 'tools'
   assistants:
     disabled: true
   google:

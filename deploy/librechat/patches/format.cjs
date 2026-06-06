@@ -1,7 +1,9 @@
 'use strict';
 
 var messages = require('@langchain/core/messages');
+var events = require('../utils/events.cjs');
 var _enum = require('../common/enum.cjs');
+var langchain = require('./langchain.cjs');
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
@@ -107,19 +109,19 @@ const formatMessage = ({ message, userName, endpoint, assistantName, langChain =
         if (!langChain) {
             return mediaMessage;
         }
-        return new messages.HumanMessage(mediaMessage);
+        return new messages.HumanMessage(langchain.toLangChainMessageFields(mediaMessage));
     }
     if (!langChain) {
         return formattedMessage;
     }
     if (role === 'user') {
-        return new messages.HumanMessage(formattedMessage);
+        return new messages.HumanMessage(langchain.toLangChainMessageFields(formattedMessage));
     }
     else if (role === 'assistant') {
-        return new messages.AIMessage(formattedMessage);
+        return new messages.AIMessage(langchain.toLangChainMessageFields(formattedMessage));
     }
     else {
-        return new messages.SystemMessage(formattedMessage);
+        return new messages.SystemMessage(langchain.toLangChainMessageFields(formattedMessage));
     }
 };
 /**
@@ -153,20 +155,137 @@ const formatFromLangChain = (message) => {
         ...additional_kwargs,
     };
 };
+function extractReasoningContent(part) {
+    if (part == null || typeof part !== 'object') {
+        return '';
+    }
+    if (part.type === _enum.ContentTypes.THINK) {
+        const think = part.think;
+        return typeof think === 'string' ? think : '';
+    }
+    if (part.type === _enum.ContentTypes.THINKING) {
+        const thinking = part.thinking;
+        return typeof thinking === 'string' ? thinking : '';
+    }
+    if (part.type === _enum.ContentTypes.REASONING) {
+        const reasoning = part.reasoning;
+        return typeof reasoning === 'string' ? reasoning : '';
+    }
+    if (part.type === _enum.ContentTypes.REASONING_CONTENT) {
+        const reasoningText = part.reasoningText;
+        return typeof reasoningText.text === 'string' ? reasoningText.text : '';
+    }
+    return '';
+}
+function parseServerToolInput(args) {
+    if (typeof args === 'string') {
+        try {
+            const parsed = JSON.parse(args);
+            return parsed != null &&
+                typeof parsed === 'object' &&
+                !Array.isArray(parsed)
+                ? parsed
+                : {};
+        }
+        catch {
+            return {};
+        }
+    }
+    return args != null && typeof args === 'object' ? args : {};
+}
+function getTextContent(part) {
+    const { text } = part;
+    return typeof text === 'string' ? text : '';
+}
+function hasMeaningfulAssistantContent(part) {
+    if (part.type === _enum.ContentTypes.TEXT) {
+        return getTextContent(part).trim().length > 0;
+    }
+    if (part.type === _enum.ContentTypes.TOOL_CALL ||
+        part.type === _enum.ContentTypes.ERROR ||
+        part.type === _enum.ContentTypes.AGENT_UPDATE ||
+        part.type === _enum.ContentTypes.SUMMARY) {
+        return false;
+    }
+    if (part.type === _enum.ContentTypes.THINK ||
+        part.type === _enum.ContentTypes.THINKING ||
+        part.type === _enum.ContentTypes.REASONING ||
+        part.type === _enum.ContentTypes.REASONING_CONTENT ||
+        part.type === 'redacted_thinking') {
+        return extractReasoningContent(part).trim().length > 0;
+    }
+    return part.type != null && part.type !== '';
+}
+function getToolUseId(part) {
+    if (!('tool_use_id' in part) || typeof part.tool_use_id !== 'string') {
+        return undefined;
+    }
+    return part.tool_use_id;
+}
 /**
  * Helper function to format an assistant message
  * @param message The message to format
+ * @param options Optional formatting options
  * @returns Array of formatted messages
  */
-function formatAssistantMessage(message) {
+function formatAssistantMessage(message, options) {
     const formattedMessages = [];
     let currentContent = [];
     let lastAIMessage = null;
     let hasReasoning = false;
+    let pendingReasoningContent = '';
+    const emittedServerToolUseIds = new Set();
+    const pendingServerToolUses = new Map();
+    const shouldPreserveReasoningContent = options?.preserveReasoningContent === true;
+    const takePendingReasoningContent = () => {
+        if (!shouldPreserveReasoningContent || !pendingReasoningContent) {
+            return undefined;
+        }
+        const reasoningContent = pendingReasoningContent;
+        pendingReasoningContent = '';
+        return reasoningContent;
+    };
+    const createAIMessage = (content) => {
+        const reasoningContent = takePendingReasoningContent();
+        return new messages.AIMessage({
+            content,
+            ...(reasoningContent != null && {
+                additional_kwargs: { reasoning_content: reasoningContent },
+            }),
+        });
+    };
+    const attachPendingReasoningContent = (aiMessage) => {
+        const reasoningContent = takePendingReasoningContent();
+        if (reasoningContent == null) {
+            return;
+        }
+        aiMessage.additional_kwargs.reasoning_content =
+            typeof aiMessage.additional_kwargs.reasoning_content === 'string'
+                ? `${aiMessage.additional_kwargs.reasoning_content}${reasoningContent}`
+                : reasoningContent;
+    };
+    const flushPendingServerToolUse = (toolUseId) => {
+        for (const [id, content] of pendingServerToolUses) {
+            pendingServerToolUses.delete(id);
+            if (id === toolUseId) {
+                currentContent.push(content);
+                emittedServerToolUseIds.add(id);
+                return;
+            }
+        }
+    };
     if (Array.isArray(message.content)) {
-        for (const part of message.content) {
+        const contentParts = message.content;
+        for (const part of contentParts) {
             if (part == null) {
                 continue;
+            }
+            const toolUseId = getToolUseId(part);
+            if (toolUseId != null) {
+                flushPendingServerToolUse(toolUseId);
+            }
+            else if (hasMeaningfulAssistantContent(part)) {
+                pendingServerToolUses.clear();
             }
             if (part.type === _enum.ContentTypes.TEXT && part.tool_call_ids) {
                 /*
@@ -176,21 +295,18 @@ function formatAssistantMessage(message) {
                 if (currentContent.length > 0) {
                     let content = currentContent.reduce((acc, curr) => {
                         if (curr.type === _enum.ContentTypes.TEXT) {
-                            return `${acc}${String(curr[_enum.ContentTypes.TEXT] ?? '')}\n`;
+                            return `${acc}${getTextContent(curr)}\n`;
                         }
                         return acc;
                     }, '');
-                    content =
-                        `${content}\n${part[_enum.ContentTypes.TEXT] ?? part.text ?? ''}`.trim();
-                    lastAIMessage = new messages.AIMessage({ content });
+                    content = `${content}\n${getTextContent(part)}`.trim();
+                    lastAIMessage = createAIMessage(content);
                     formattedMessages.push(lastAIMessage);
                     currentContent = [];
                     continue;
                 }
                 // Create a new AIMessage with this text and prepare for tool calls
-                lastAIMessage = new messages.AIMessage({
-                    content: part.text != null ? part.text : '',
-                });
+                lastAIMessage = createAIMessage(getTextContent(part));
                 formattedMessages.push(lastAIMessage);
             }
             else if (part.type === _enum.ContentTypes.TOOL_CALL) {
@@ -205,10 +321,28 @@ function formatAssistantMessage(message) {
                     (_tool_call.name === '' && (output == null || output === ''))) {
                     continue;
                 }
+                if (options?.provider === _enum.Providers.ANTHROPIC &&
+                    typeof _tool_call.id === 'string' &&
+                    _tool_call.id.startsWith(_enum.Constants.ANTHROPIC_SERVER_TOOL_PREFIX)) {
+                    if (emittedServerToolUseIds.has(_tool_call.id) ||
+                        pendingServerToolUses.has(_tool_call.id)) {
+                        continue;
+                    }
+                    pendingServerToolUses.set(_tool_call.id, {
+                        type: 'server_tool_use',
+                        id: _tool_call.id,
+                        name: _tool_call.name,
+                        input: parseServerToolInput(_args),
+                    });
+                    continue;
+                }
                 if (!lastAIMessage) {
                     // "Heal" the payload by creating an AIMessage to precede the tool call
-                    lastAIMessage = new messages.AIMessage({ content: '' });
+                    lastAIMessage = createAIMessage('');
                     formattedMessages.push(lastAIMessage);
+                }
+                else {
+                    attachPendingReasoningContent(lastAIMessage);
                 }
                 const tool_call = _tool_call;
                 // TODO: investigate; args as dictionary may need to be providers-or-tool-specific
@@ -236,41 +370,56 @@ function formatAssistantMessage(message) {
             }
             else if (part.type === _enum.ContentTypes.THINK ||
                 part.type === _enum.ContentTypes.THINKING ||
+                part.type === _enum.ContentTypes.REASONING ||
                 part.type === _enum.ContentTypes.REASONING_CONTENT ||
                 part.type === 'redacted_thinking') {
                 hasReasoning = true;
+                pendingReasoningContent += extractReasoningContent(part);
                 continue;
             }
             else if (part.type === _enum.ContentTypes.ERROR ||
-                part.type === _enum.ContentTypes.AGENT_UPDATE) {
+                part.type === _enum.ContentTypes.AGENT_UPDATE ||
+                part.type === _enum.ContentTypes.SUMMARY) {
                 continue;
             }
             else {
-                if (part.type === _enum.ContentTypes.TEXT &&
-                    !String(part.text ?? '').trim()) {
+                if (part.type === _enum.ContentTypes.TEXT && !getTextContent(part).trim()) {
                     continue;
                 }
                 currentContent.push(part);
             }
         }
+        for (const content of pendingServerToolUses.values()) {
+            currentContent.push(content);
+        }
     }
     if (hasReasoning && currentContent.length > 0) {
-        const content = currentContent
-            .reduce((acc, curr) => {
-            if (curr.type === _enum.ContentTypes.TEXT) {
-                return `${acc}${String(curr[_enum.ContentTypes.TEXT] ?? '')}\n`;
+        let content = '';
+        for (const part of currentContent) {
+            if (part.type !== _enum.ContentTypes.TEXT) {
+                formattedMessages.push(createAIMessage(langchain.toLangChainContent(currentContent)));
+                return formattedMessages;
             }
-            return acc;
-        }, '')
-            .trim();
+            content += `${getTextContent(part)}\n`;
+        }
+        content = content.trim();
         if (content) {
-            formattedMessages.push(new messages.AIMessage({ content }));
+            formattedMessages.push(createAIMessage(content));
         }
     }
     else if (currentContent.length > 0) {
-        formattedMessages.push(new messages.AIMessage({ content: currentContent }));
+        formattedMessages.push(createAIMessage(langchain.toLangChainContent(currentContent)));
     }
     return formattedMessages;
+}
+function getSourceMessageId(message) {
+    const candidate = message.messageId ??
+        message.id;
+    if (typeof candidate !== 'string') {
+        return undefined;
+    }
+    const normalized = candidate.trim();
+    return normalized.length > 0 ? normalized : undefined;
 }
 /**
  * Labels all agent content for parallel patterns (fan-out/fan-in)
@@ -476,20 +625,121 @@ function extractToolNamesFromSearchOutput(output) {
     }
     return [];
 }
+function getLatestSummaryBoundary(payload) {
+    let summaryBoundary;
+    for (let i = 0; i < payload.length; i++) {
+        const message = payload[i];
+        if (!isRecord(message) || !Array.isArray(message.content)) {
+            continue;
+        }
+        for (let j = 0; j < message.content.length; j++) {
+            const part = message.content[j];
+            if (part == null || part.type !== _enum.ContentTypes.SUMMARY) {
+                continue;
+            }
+            const summaryPart = part;
+            // Try content array first (new format), then direct text (legacy format)
+            let summaryText = (summaryPart.content ?? [])
+                .map((block) => 'text' in block ? block.text : '')
+                .join('')
+                .trim();
+            // Fallback: legacy format where text was a direct field on the block
+            if (summaryText.length === 0 && typeof summaryPart.text === 'string') {
+                summaryText = summaryPart.text.trim();
+            }
+            if (summaryText.length === 0) {
+                continue;
+            }
+            summaryBoundary = {
+                messageIndex: i,
+                contentIndex: j,
+                text: summaryText,
+                tokenCount: typeof summaryPart.tokenCount === 'number' &&
+                    Number.isFinite(summaryPart.tokenCount)
+                    ? summaryPart.tokenCount
+                    : 0,
+            };
+        }
+    }
+    return summaryBoundary;
+}
+function applySummaryBoundary(message, messageIndex, summaryBoundary) {
+    if (!summaryBoundary) {
+        return message;
+    }
+    if (messageIndex < summaryBoundary.messageIndex) {
+        return null;
+    }
+    if (messageIndex !== summaryBoundary.messageIndex ||
+        !isRecord(message) ||
+        !Array.isArray(message.content)) {
+        return message;
+    }
+    return {
+        ...message,
+        content: message.content.slice(summaryBoundary.contentIndex + 1),
+    };
+}
+function contentPartCharLength(part) {
+    const record = part;
+    let len = 0;
+    if (typeof record.text === 'string') {
+        len += record.text.length;
+    }
+    if (typeof record.thinking === 'string') {
+        len += record.thinking.length;
+    }
+    const { input } = record;
+    if (typeof input === 'string') {
+        len += input.length;
+    }
+    else if (input != null && typeof input === 'object') {
+        len += JSON.stringify(input).length;
+    }
+    return len;
+}
+/** Extracts the skillName from a skill tool_call's args (string or object). */
+function extractSkillName(args) {
+    let parsed;
+    if (typeof args === 'string') {
+        try {
+            parsed = JSON.parse(args);
+        }
+        catch {
+            /* malformed args — skip */
+        }
+    }
+    else {
+        parsed = args;
+    }
+    const name = parsed?.skillName;
+    return typeof name === 'string' && name !== '' ? name : undefined;
+}
 /**
  * Formats an array of messages for LangChain, handling tool calls and creating ToolMessage instances.
  *
  * @param payload - The array of messages to format.
  * @param indexTokenCountMap - Optional map of message indices to token counts.
  * @param tools - Optional set of tool names that are allowed in the request.
+ * @param skills - Optional map of skill name to body for reconstructing skill HumanMessages.
  * @returns - Object containing formatted messages and updated indexTokenCountMap if provided.
  */
-const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
-    const messages = [];
+const formatAgentMessages = (payload, indexTokenCountMap, tools,
+/** Pre-resolved skill bodies keyed by skill name. When present, HumanMessages
+ *  are reconstructed after skill ToolMessages to restore skill instructions
+ *  that were only in LangGraph state during the original run. */
+skills, options) => {
+    const messages$1 = [];
     // If indexTokenCountMap is provided, create a new map to track the updated indices
     const updatedIndexTokenCountMap = {};
+    let boundaryTokenAdjustment;
     // Keep track of the mapping from original payload indices to result indices
     const indexMapping = {};
+    const summaryBoundary = getLatestSummaryBoundary(payload);
+    // Summary metadata is returned to the caller so it can be forwarded to the
+    // agent run and included in the single system message via AgentContext.
+    // We intentionally do NOT create a SystemMessage here — that would conflict
+    // with the agent's own system message (instructions + summary combined).
     /**
      * Create a mutable copy of the tools set that can be expanded dynamically.
      * When we encounter tool_search results, we add discovered tools to this set,
@@ -498,28 +748,46 @@ const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
     const discoveredTools = tools ? new Set(tools) : undefined;
     // Process messages with tool conversion if tools set is provided
     for (let i = 0; i < payload.length; i++) {
-        const message = payload[i];
-        if (!isRecord(message)) {
+        const rawMessage = payload[i];
+        if (!isRecord(rawMessage)) {
+            indexMapping[i] = [];
+            continue;
+        }
+        const sourceMessageId = getSourceMessageId(rawMessage);
+        let message = applySummaryBoundary(rawMessage, i, summaryBoundary);
+        if (!message) {
+            indexMapping[i] = [];
             continue;
         }
         // Q: Store the current length of messages to track where this payload message starts in the result?
         // const startIndex = messages.length;
         if (typeof message.content === 'string') {
-            message.content = [
-                { type: _enum.ContentTypes.TEXT, [_enum.ContentTypes.TEXT]: message.content },
-            ];
+            message = {
+                ...message,
+                content: [
+                    { type: _enum.ContentTypes.TEXT, [_enum.ContentTypes.TEXT]: message.content },
+                ],
+            };
+        }
+        else if (Array.isArray(message.content) && message.content.length === 0) {
+            indexMapping[i] = [];
+            continue;
         }
         if (message.role !== 'assistant') {
-            messages.push(formatMessage({
+            const formattedMessage = formatMessage({
                 message: message,
                 langChain: true,
-            }));
+            });
+            if (sourceMessageId != null && sourceMessageId !== '') {
+                formattedMessage.id = sourceMessageId;
+            }
+            messages$1.push(formattedMessage);
             // Update the index mapping for this message
-            indexMapping[i] = [messages.length - 1];
+            indexMapping[i] = [messages$1.length - 1];
             continue;
         }
         // For assistant messages, track the starting index before processing
-        const startMessageIndex = messages.length;
+        const startMessageIndex = messages$1.length;
         /**
          * If tools set is provided, process tool_calls:
          * - Keep valid tool_calls (tools in the set or dynamically discovered)
@@ -527,9 +795,10 @@ const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
          * - Dynamically expand the set when tool_search results are encountered
          */
         let processedMessage = message;
+        let pendingSkillNames;
         if (discoveredTools) {
             const content = message.content;
-            if (content && Array.isArray(content)) {
+            if (content != null && Array.isArray(content)) {
                 const filteredContent = [];
                 const invalidToolCallIds = new Set();
                 const invalidToolStrings = [];
@@ -565,8 +834,15 @@ const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
                         }
                     }
                     if (discoveredTools.has(toolName)) {
-                        /** Valid tool - keep it */
                         filteredContent.push(part);
+                        if (toolName === _enum.Constants.SKILL_TOOL &&
+                            skills?.size != null &&
+                            skills.size > 0) {
+                            const skillName = extractSkillName(part.tool_call.args) ?? '';
+                            if (skillName) {
+                                (pendingSkillNames ??= new Set()).add(skillName);
+                            }
+                        }
                     }
                     else {
                         /** Invalid tool - convert to string for context preservation */
@@ -626,12 +902,51 @@ const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
                 }
             }
         }
-        // Process the assistant message using the helper function
-        const formattedMessages = formatAssistantMessage(processedMessage);
-        messages.push(...formattedMessages);
-        // Update the index mapping for this assistant message
-        // Store all indices that were created from this original message
-        const endMessageIndex = messages.length;
+        /** When tools filtering is off, still detect skill tool_calls for body reconstruction */
+        if (!discoveredTools && skills?.size != null && skills.size > 0) {
+            const content = processedMessage.content;
+            if (Array.isArray(content)) {
+                for (const part of content) {
+                    if (part.type !== _enum.ContentTypes.TOOL_CALL ||
+                        part.tool_call?.name !== _enum.Constants.SKILL_TOOL) {
+                        continue;
+                    }
+                    const skillName = extractSkillName(part.tool_call.args) ?? '';
+                    if (skillName) {
+                        (pendingSkillNames ??= new Set()).add(skillName);
+                    }
+                }
+            }
+        }
+        const formattedMessages = formatAssistantMessage(processedMessage, {
+            preserveReasoningContent: options?.provider === _enum.Providers.DEEPSEEK,
+            provider: options?.provider,
+        });
+        if (sourceMessageId != null && sourceMessageId !== '') {
+            for (const formattedMessage of formattedMessages) {
+                formattedMessage.id = sourceMessageId;
+            }
+        }
+        messages$1.push(...formattedMessages);
+        // Capture index range BEFORE skill body injection so injected
+        // HumanMessages are excluded from the assistant's token distribution.
+        const endMessageIndex = messages$1.length;
+        if (pendingSkillNames?.size != null && pendingSkillNames.size > 0) {
+            for (const skillName of pendingSkillNames) {
+                const body = skills?.get(skillName) ?? '';
+                if (body) {
+                    messages$1.push(new messages.HumanMessage({
+                        content: body,
+                        additional_kwargs: {
+                            role: 'user',
+                            isMeta: true,
+                            source: 'skill',
+                            skillName,
+                        },
+                    }));
+                }
+            }
+        }
         const resultIndices = [];
         for (let j = startMessageIndex; j < endMessageIndex; j++) {
             resultIndices.push(j);
@@ -641,9 +956,37 @@ const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
     if (indexTokenCountMap) {
         for (let originalIndex = 0; originalIndex < payload.length; originalIndex++) {
             const resultIndices = indexMapping[originalIndex] || [];
-            const tokenCount = indexTokenCountMap[originalIndex];
+            let tokenCount = indexTokenCountMap[originalIndex];
             if (tokenCount === undefined) {
                 continue;
+            }
+            if (summaryBoundary &&
+                originalIndex === summaryBoundary.messageIndex &&
+                Array.isArray(payload[originalIndex].content)) {
+                const content = payload[originalIndex]
+                    .content;
+                const { contentIndex } = summaryBoundary;
+                if (contentIndex >= 0 && contentIndex < content.length - 1) {
+                    let totalCharLen = 0;
+                    let remainingCharLen = 0;
+                    for (let p = 0; p < content.length; p++) {
+                        const charLen = contentPartCharLength(content[p]);
+                        totalCharLen += charLen;
+                        if (p > contentIndex) {
+                            remainingCharLen += charLen;
+                        }
+                    }
+                    if (totalCharLen > 0) {
+                        const original = tokenCount;
+                        tokenCount = Math.max(1, Math.round(tokenCount * (remainingCharLen / totalCharLen)));
+                        boundaryTokenAdjustment = {
+                            original,
+                            adjusted: tokenCount,
+                            remainingChars: remainingCharLen,
+                            totalChars: totalCharLen,
+                        };
+                    }
+                }
             }
             const msgCount = resultIndices.length;
             if (msgCount === 1) {
@@ -657,7 +1000,7 @@ const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
             const lastIdx = msgCount - 1;
             const lengths = new Array(msgCount);
             for (let k = 0; k < msgCount; k++) {
-                const msg = messages[resultIndices[k]];
+                const msg = messages$1[resultIndices[k]];
                 const { content } = msg;
                 let len = 0;
                 if (typeof content === 'string') {
@@ -715,10 +1058,14 @@ const formatAgentMessages = (payload, indexTokenCountMap, tools) => {
         }
     }
     return {
-        messages,
+        messages: messages$1,
         indexTokenCountMap: indexTokenCountMap
             ? updatedIndexTokenCountMap
             : undefined,
+        summary: summaryBoundary
+            ? { text: summaryBoundary.text, tokenCount: summaryBoundary.tokenCount }
+            : undefined,
+        boundaryTokenAdjustment,
     };
 };
 /**
@@ -743,7 +1090,7 @@ function shiftIndexTokenCountMap(indexTokenCountMap, instructionsTokenCount) {
 /** Block types that contain binary image data and must be preserved structurally. */
 const IMAGE_BLOCK_TYPES = new Set(['image_url', 'image']);
 /** Checks whether a BaseMessage is a tool-role message. */
-const isToolMessage = (m) => m instanceof messages.ToolMessage || (isRecord(m) && 'role' in m && m.role === 'tool');
+const isToolMessage = (m) => m instanceof messages.ToolMessage || ('role' in m && m.role === 'tool');
 /** Flushes accumulated text chunks into `parts` as a single text block. */
 function flushTextChunks(textChunks, parts) {
     if (textChunks.length === 0) {
@@ -781,9 +1128,6 @@ function appendMessageContent(msg, role, textChunks, parts) {
     }
     let hasToolUseBlock = false;
     for (const block of content) {
-        if (!isRecord(block)) {
-            continue;
-        }
         if (IMAGE_BLOCK_TYPES.has(block.type ?? '')) {
             flushTextChunks(textChunks, parts);
             parts.push({ ...block });
@@ -835,9 +1179,20 @@ function appendToolCalls(msg, role, textChunks) {
  *
  * @param messages - Array of messages to process
  * @param provider - The provider being used (unused but kept for future compatibility)
+ * @param config - Optional RunnableConfig for structured agent logging
+ * @param runStartIndex - Index in `messages` where the CURRENT run's own
+ *   appended AI/Tool messages begin (i.e. anything at this index or later
+ *   was just produced by this run's own iterations, not historical
+ *   context). When provided, AI messages at or after this index are
+ *   never converted to `[Previous agent context]` placeholders — Claude
+ *   can validly skip a thinking block before a tool_use (cf. PR #116),
+ *   so the agent's own in-run iterations must not be misclassified as
+ *   foreign history. Without the signal the function falls back to its
+ *   prior heuristic (`chainHasThinkingBlock`), preserving backward
+ *   compatibility for callers that don't yet pass the boundary.
  * @returns The messages array with tool sequences converted to buffer strings if necessary
  */
-function ensureThinkingBlockInMessages(messages$1, _provider) {
+function ensureThinkingBlockInMessages(messages$1, _provider, config, runStartIndex) {
     if (messages$1.length === 0) {
         return messages$1;
     }
@@ -846,9 +1201,6 @@ function ensureThinkingBlockInMessages(messages$1, _provider) {
     let lastHumanIndex = -1;
     for (let k = messages$1.length - 1; k >= 0; k--) {
         const m = messages$1[k];
-        if (!isRecord(m)) {
-            continue;
-        }
         if (m instanceof messages.HumanMessage ||
             ('role' in m && m.role === 'user')) {
             lastHumanIndex = k;
@@ -862,10 +1214,6 @@ function ensureThinkingBlockInMessages(messages$1, _provider) {
     let i = lastHumanIndex + 1;
     while (i < messages$1.length) {
         const msg = messages$1[i];
-        if (!isRecord(msg)) {
-            i++;
-            continue;
-        }
         /** Detect AI messages by instanceof OR by role, in case cache-control cloning
          produced a plain object that lost the LangChain prototype. */
         const isAI = msg instanceof messages.AIMessage ||
@@ -913,6 +1261,22 @@ function ensureThinkingBlockInMessages(messages$1, _provider) {
         // but follow-ups have content: "" with only tool_calls. These are the
         // same agent's turn and must NOT be converted to HumanMessages.
         if (hasToolUse && !hasThinkingBlock) {
+            // Current-run boundary check: anything at or after `runStartIndex`
+            // is the current run's own work — preserve it. Claude is allowed
+            // to skip a thinking block before a tool_use (cf. PR #116 in the
+            // agents repo), so the agent's own first-iteration AI message can
+            // legitimately have tool_calls without reasoning. Converting it to
+            // a `[Previous agent context]` placeholder pollutes the next
+            // iteration's prompt — the LLM sees the placeholder, treats it as
+            // suspicious injected content, ignores its own real prior tool
+            // result, and re-runs the tool to verify (which then often fails
+            // because subsequent calls land in fresh sandboxes without the
+            // file). Skip the conversion when we know this is in-run.
+            if (runStartIndex !== undefined && i >= runStartIndex) {
+                result.push(msg);
+                i++;
+                continue;
+            }
             // Walk backwards — if an earlier AI message in the same chain (before
             // the nearest HumanMessage) has a thinking/reasoning block, this is a
             // continuation of a thinking-enabled turn, not a non-thinking handoff.
@@ -933,7 +1297,9 @@ function ensureThinkingBlockInMessages(messages$1, _provider) {
                 j++;
             }
             flushTextChunks(textChunks, parts);
-            result.push(new messages.HumanMessage({ content: parts }));
+            events.emitAgentLog(config, 'warn', 'format', 'ensureThinkingBlockInMessages: injecting [Previous agent context] HumanMessage' +
+                ` (${parts.length} msgs at index ${i}, no thinking block in chain)`);
+            result.push(new messages.HumanMessage({ content: langchain.toLangChainContent(parts) }));
             i = j;
         }
         else {
@@ -958,9 +1324,6 @@ function ensureThinkingBlockInMessages(messages$1, _provider) {
 function chainHasThinkingBlock(messages$1, currentIndex) {
     for (let k = currentIndex - 1; k >= 0; k--) {
         const prev = messages$1[k];
-        if (!isRecord(prev)) {
-            continue;
-        }
         // HumanMessage = turn boundary — stop searching
         if (prev instanceof messages.HumanMessage ||
             ('role' in prev && prev.role === 'user')) {
