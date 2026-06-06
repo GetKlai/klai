@@ -30,6 +30,11 @@ vi.mock('../../-hooks', () => ({
     mutate: vi.fn(),
     isPending: false,
   }),
+  usePlatformCreateMessageThread: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
 }))
 
 vi.mock('@/paraglide/messages', () => {
@@ -54,6 +59,14 @@ vi.mock('@/paraglide/messages', () => {
     updated_at: fixed('Updated at'),
     user_count: fixed('User count'),
     platform_back_to_feedback: fixed('Back to feedback'),
+    platform_feedback_ask_info: fixed('Ask for info'),
+    platform_feedback_ask_info_title: fixed('Ask the reporter for more info'),
+    platform_feedback_ask_info_description: fixed('Send a message to everyone who reported this.'),
+    platform_feedback_ask_info_placeholder: fixed('For example...'),
+    platform_feedback_ask_info_send: fixed('Send question'),
+    platform_feedback_ask_info_sent: fixed('Question sent'),
+    platform_feedback_ask_info_failed: fixed('Could not send'),
+    platform_feedback_ask_info_no_reporters: fixed('No reporter linked'),
     platform_col_created: fixed('Created'),
     platform_col_status: fixed('Status'),
     platform_delete: fixed('Delete'),
