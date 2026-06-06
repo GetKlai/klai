@@ -2344,6 +2344,7 @@
   "platform_feedback_search_placeholder": "Titel of onderwerp",
   "platform_feedback_ai_matches_help": "AI heeft al mogelijke matches hierboven getoond. Gebruik zoeken alleen als je een ander item wilt koppelen.",
   "platform_feedback_link": "Link",
+  "platform_feedback_reopen_linked_item": "Heropen dit item bij koppelen",
   "platform_feedback_no_existing_item": "Geen bestaand open item gevonden.",
   "platform_feedback_create_new_title": "Maak nieuw item",
   "platform_feedback_title_placeholder": "Titel",

@@ -36,6 +36,7 @@ vi.mock('@/paraglide/messages', () => ({
   platform_feedback_klai_suggestion: () => 'Klai suggestion',
   platform_feedback_link: () => 'Link',
   platform_feedback_product_step_title: () => 'Link to existing item',
+  platform_feedback_reopen_linked_item: () => 'Reopen this item when linking',
   platform_feedback_search_placeholder: () => 'Search feedback items',
   platform_feedback_status_dismissed: () => 'Dismissed',
   platform_feedback_status_new: () => 'New',
@@ -155,7 +156,7 @@ beforeEach(() => {
 })
 
 describe('FeedbackSubmissionDetailPanel link flow', () => {
-  it('navigates to the linked item after linking existing feedback', () => {
+  it('reopens closed linked feedback items by default and navigates to the item', () => {
     render(
       <FeedbackSubmissionDetailPanel
         item={submissionWithCandidate()}
@@ -165,10 +166,11 @@ describe('FeedbackSubmissionDetailPanel link flow', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /Product item/ }))
+    expect(screen.getByLabelText<HTMLInputElement>('Reopen this item when linking').checked).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: /Link/ }))
 
     expect(linkMutate).toHaveBeenCalledWith(
-      { submissionId: 99, item_id: 12, link_type: 'bug_repro' },
+      { submissionId: 99, item_id: 12, link_type: 'bug_repro', reopen_item: true },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     )
     expect(navigate).toHaveBeenCalledWith({
@@ -176,5 +178,24 @@ describe('FeedbackSubmissionDetailPanel link flow', () => {
       params: { itemId: '12' },
     })
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('can link a closed feedback item without reopening it', () => {
+    render(
+      <FeedbackSubmissionDetailPanel
+        item={submissionWithCandidate()}
+        fmtDate={(value) => value ?? '-'}
+        onClose={onClose}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Product item/ }))
+    fireEvent.click(screen.getByLabelText('Reopen this item when linking'))
+    fireEvent.click(screen.getByRole('button', { name: /Link/ }))
+
+    expect(linkMutate).toHaveBeenCalledWith(
+      { submissionId: 99, item_id: 12, link_type: 'bug_repro', reopen_item: false },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    )
   })
 })

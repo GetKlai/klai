@@ -234,6 +234,7 @@ class PlatformFeedbackCreateItemIn(BaseModel):
 class PlatformFeedbackLinkItemIn(BaseModel):
     item_id: int
     link_type: Literal["upvote", "evidence", "bug_repro", "support_signal"] = "evidence"
+    reopen_item: bool = False
 
 
 class PlatformFeedbackSubmissionPatchIn(BaseModel):
@@ -1544,6 +1545,7 @@ async def platform_feedback_link_item(
                 submission_id=submission_id,
                 item_id=body.item_id,
                 link_type=body.link_type,
+                reopen_item=body.reopen_item,
             )
         except FeedbackSubmissionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Feedback submission not found") from exc

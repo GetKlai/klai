@@ -107,7 +107,7 @@ function Tabs<T extends string>({ tabs, value, onValueChange, className, ...prop
                 className={cn(
                   'ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium leading-5',
                   tab.countTone && tab.countTone !== 'neutral' ? 'text-white' : null,
-                  tabCountToneClass[tab.countTone ?? 'neutral'],
+                  tabCountToneClass[tab.countTone ?? 'success'],
                 )}
               >
                 {tab.count}
