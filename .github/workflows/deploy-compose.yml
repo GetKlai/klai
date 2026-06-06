@@ -248,9 +248,23 @@ jobs:
             # their next recreate via _start_librechat_container.
             sync_and_recreate librechat-getklai deploy/librechat/getklai/entrypoint.sh /opt/klai/librechat/getklai/entrypoint.sh
 
+            cleanup_stale_librechat_getklai_container() {
+              local svc="librechat-getklai"
+              local current_project_id
+              local exact_name_id
+              current_project_id=$(docker compose --project-directory /opt/klai ps -aq "$svc" 2>/dev/null || true)
+              exact_name_id=$(docker ps -aq --filter "name=^/${svc}$" | head -n1)
+              if [ -n "$exact_name_id" ] && [ -z "$current_project_id" ]; then
+                echo "::warning title=${svc} stale container::Removing exact-name container not attached to the current /opt/klai Compose project before recreate."
+                docker inspect --format 'stale container={{.Id}} name={{.Name}} image={{.Config.Image}} compose_project={{index .Config.Labels "com.docker.compose.project"}} compose_service={{index .Config.Labels "com.docker.compose.service"}}' "$exact_name_id" || true
+                docker rm -f "$exact_name_id"
+              fi
+            }
+
             clear_librechat_config_cache "configs:*"
-            echo "getklai LibreChat config cache cleared; force-recreating librechat-getklai"
-            docker compose --project-directory /opt/klai up -d --force-recreate librechat-getklai
+            echo "getklai LibreChat config cache cleared; force-recreating librechat-getklai via compose-up wrapper"
+            cleanup_stale_librechat_getklai_container
+            /opt/klai/scripts/compose-up.sh --force-recreate librechat-getklai
 
             # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
             # git clone on a Linux runner usually preserves the execute bit,

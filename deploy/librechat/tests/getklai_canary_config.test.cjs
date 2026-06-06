@@ -58,7 +58,16 @@ assert.match(compose, /CUSTOM_FOOTER: ""/);
 assert.match(workflow, /deploy\/librechat\/getklai\/entrypoint\.sh/);
 assert.match(workflow, /apply-canary-config\.py \/opt\/klai\/librechat\/getklai\/librechat\.yaml/);
 assert.match(workflow, /clear_librechat_config_cache "configs:\*"/);
-assert.match(workflow, /force-recreating librechat-getklai/);
+assert.match(workflow, /cleanup_stale_librechat_getklai_container\(\)/);
+assert.match(workflow, /docker compose --project-directory \/opt\/klai ps -aq "\$svc"/);
+assert.match(workflow, /docker ps -aq --filter "name=\^\/\$\{svc\}\$"/);
+assert.match(workflow, /docker rm -f "\$exact_name_id"/);
+assert.match(workflow, /force-recreating librechat-getklai via compose-up wrapper/);
+assert.match(workflow, /\/opt\/klai\/scripts\/compose-up\.sh --force-recreate librechat-getklai/);
+assert.doesNotMatch(
+  workflow,
+  /docker compose --project-directory \/opt\/klai up -d --force-recreate librechat-getklai/,
+);
 
 class Element {
   constructor(tagName = 'DIV') {
