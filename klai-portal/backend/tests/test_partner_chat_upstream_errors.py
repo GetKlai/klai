@@ -102,6 +102,34 @@ def _stream_client_raising(exc: Exception):
     return lambda timeout: _Client()
 
 
+def _stream_client_read_error():
+    class _Stream:
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"partial"}}]}'
+            raise httpx.ReadError("connection dropped while reading")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        def stream(self, *_, **__):
+            return _Stream()
+
+    return lambda timeout: _Client()
+
+
 @pytest.mark.asyncio
 async def test_streaming_markers_upstream_connect_error_emits_error_frame():
     with patch(
@@ -122,6 +150,26 @@ async def test_streaming_markers_upstream_connect_error_emits_error_frame():
         ]
     body = b"".join(chunks).decode()
     assert '"error"' in body
+    assert "upstream_error" in body
+    assert "data: [DONE]" in body
+
+
+@pytest.mark.asyncio
+async def test_streaming_markers_upstream_read_error_emits_error_frame():
+    with patch("app.services.partner_chat.httpx.AsyncClient", _stream_client_read_error()):
+        chunks = [
+            chunk
+            async for chunk in chat_completion_streaming(
+                messages=[{"role": "user", "content": "hi"}],
+                model="klai-primary",
+                temperature=0.7,
+                system_prompt="system",
+                settings=_settings(),
+                org_id=1,
+                citation_output="markers",
+            )
+        ]
+    body = b"".join(chunks).decode()
     assert "upstream_error" in body
     assert "data: [DONE]" in body
 

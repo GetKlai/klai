@@ -1370,7 +1370,7 @@ async def _chat_completion_streaming_with_composed_citations(
                     text = delta.get("content")
                     if isinstance(text, str) and text:
                         raw_text_parts.append(text)
-    except (httpx.ConnectError, httpx.TimeoutException):
+    except httpx.TransportError:
         logger.warning("partner_chat_upstream_unreachable", org_id=org_id, target=chat_url, exc_info=True)
         yield _sse_error_frame("Chat service unavailable")
         yield b"data: [DONE]\n\n"

@@ -208,21 +208,26 @@ export function WidgetChatSurface({
           if (!line.startsWith('data:')) continue
           const data = line.slice(5).trim()
           if (!data || data === '[DONE]') continue
+          let parsed
           try {
-            const parsed = JSON.parse(data)
-            const token =
-              parsed.choices?.[0]?.delta?.content ??
-              parsed.choices?.[0]?.message?.content ??
-              parsed.content ??
-              ''
-            if (token) appendAssistantToken(token)
-            const sources = normalizeSources(parsed.choices?.[0]?.delta?.sources)
-            if (sources.length > 0) setLastAssistantSources(sources)
-            const activity = normalizeActivity(parsed.choices?.[0]?.delta?.activity)
-            if (activity.length > 0) appendLastAssistantActivity(activity)
+            parsed = JSON.parse(data)
           } catch {
             // Ignore malformed streaming chunks.
+            continue
           }
+          if (parsed.error) {
+            throw new Error(parsed.error.message ?? 'Stream error')
+          }
+          const token =
+            parsed.choices?.[0]?.delta?.content ??
+            parsed.choices?.[0]?.message?.content ??
+            parsed.content ??
+            ''
+          if (token) appendAssistantToken(token)
+          const sources = normalizeSources(parsed.choices?.[0]?.delta?.sources)
+          if (sources.length > 0) setLastAssistantSources(sources)
+          const activity = normalizeActivity(parsed.choices?.[0]?.delta?.activity)
+          if (activity.length > 0) appendLastAssistantActivity(activity)
         }
       }
     } catch (err) {
