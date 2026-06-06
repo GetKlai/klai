@@ -29,7 +29,6 @@ vi.mock('@/paraglide/messages', () => {
     platform_feedback_item_kind_ux: fixed('UX'),
     platform_feedback_item_kind_docs: fixed('Docs'),
     platform_feedback_item_kind_support: fixed('Support pattern'),
-    platform_feedback_closed_hidden_hint: fixed('Closed items are hidden by default.'),
     admin_shared_loading: fixed('Loading'),
     platform_empty_feedback: fixed('No feedback'),
     platform_feedback_items_empty: fixed('No feedback items'),
@@ -62,5 +61,6 @@ describe('FeedbackTab filters', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Items' }))
 
     expectSelectWidthsOnWrapper()
+    expect(screen.queryByText('Closed items are hidden by default.')).toBeNull()
   })
 })

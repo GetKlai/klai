@@ -2265,7 +2265,6 @@
   "platform_feedback_filter_all_types": "All types",
   "platform_feedback_filter_status": "Filter by status",
   "platform_feedback_filter_type": "Filter by type",
-  "platform_feedback_closed_hidden_hint": "Closed items are hidden from active feedback by default.",
   "platform_feedback_items_refreshing": "Updating open items",
   "platform_feedback_items_empty": "No feedback items found.",
   "platform_feedback_col_item": "Item",

@@ -284,9 +284,6 @@ function OpenItemsPanel({
           </Select>
         </div>
       </div>
-      <p className="mb-4 text-xs text-gray-400">
-        {m.platform_feedback_closed_hidden_hint()}
-      </p>
       {items.isFetching && !items.isLoading && (
         <p className="mb-2 text-xs text-gray-400">
           <Loader2 className="mr-2 inline h-3 w-3 animate-spin" />
