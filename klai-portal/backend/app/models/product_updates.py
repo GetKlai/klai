@@ -29,9 +29,7 @@ class ProductUpdate(Base):
 
 class ProductUpdateRead(Base):
     __tablename__ = "product_update_reads"
-    __table_args__ = (
-        Index("ix_product_update_reads_user", "org_id", "user_id", "read_at"),
-    )
+    __table_args__ = (Index("ix_product_update_reads_user", "org_id", "user_id", "read_at"),)
 
     product_update_id: Mapped[int] = mapped_column(
         BigInteger,
