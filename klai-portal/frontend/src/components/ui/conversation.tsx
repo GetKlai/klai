@@ -1,0 +1,259 @@
+import * as React from 'react'
+import { Loader2, Send } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import * as m from '@/paraglide/messages'
+
+// Owned conversation surface. Single calm Klai visual language shared by the
+// account "Mijn meldingen" conversation and the "Berichten" tab (and reusable
+// by admin). One message timeline: grouped by sender + day, quiet system lines
+// for status changes, and a composer with Cmd/Enter to send. Do not hand-roll
+// chat bubbles in a page again — extend this component.
+
+export interface ConversationMessageEntry {
+  type?: 'message'
+  id: string | number
+  /** `me` = the current viewer (right), `them` = the other party (left). */
+  side: 'me' | 'them'
+  author: string
+  body: string
+  at: string
+}
+
+export interface ConversationSystemEntry {
+  type: 'system'
+  id: string | number
+  label: string
+  at: string
+}
+
+export type ConversationEntry = ConversationMessageEntry | ConversationSystemEntry
+
+function isSystem(entry: ConversationEntry): entry is ConversationSystemEntry {
+  return entry.type === 'system'
+}
+
+function startOfDay(value: string): number {
+  const d = new Date(value)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+function formatTime(value: string, locale: 'nl' | 'en'): string {
+  return new Intl.DateTimeFormat(locale === 'nl' ? 'nl-NL' : 'en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
+
+function formatDaySeparator(value: string, locale: 'nl' | 'en'): string {
+  const day = startOfDay(value)
+  const today = startOfDay(new Date().toISOString())
+  const oneDay = 24 * 60 * 60 * 1000
+  if (day === today) return m.account_conversation_today()
+  if (day === today - oneDay) return m.account_conversation_yesterday()
+  const now = new Date()
+  return new Intl.DateTimeFormat(locale === 'nl' ? 'nl-NL' : 'en-US', {
+    day: 'numeric',
+    month: 'short',
+    ...(new Date(value).getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+  }).format(new Date(value))
+}
+
+interface MessageGroup {
+  side: 'me' | 'them'
+  author: string
+  at: string
+  bodies: { id: string | number; body: string }[]
+}
+
+/** Build day buckets, each with sender-grouped message runs and system lines. */
+function buildLayout(entries: ConversationEntry[]) {
+  const sorted = [...entries].sort((a, b) => {
+    const ta = new Date(a.at).getTime()
+    const tb = new Date(b.at).getTime()
+    if (ta !== tb) return ta - tb
+    return String(a.id).localeCompare(String(b.id))
+  })
+
+  const days: { day: number; at: string; blocks: (MessageGroup | ConversationSystemEntry)[] }[] = []
+  for (const entry of sorted) {
+    const day = startOfDay(entry.at)
+    let bucket = days.at(-1)
+    if (!bucket || bucket.day !== day) {
+      bucket = { day, at: entry.at, blocks: [] }
+      days.push(bucket)
+    }
+    if (isSystem(entry)) {
+      bucket.blocks.push(entry)
+      continue
+    }
+    const last = bucket.blocks.at(-1)
+    if (last && !('label' in last) && last.side === entry.side && last.author === entry.author) {
+      last.bodies.push({ id: entry.id, body: entry.body })
+    } else {
+      bucket.blocks.push({
+        side: entry.side,
+        author: entry.author,
+        at: entry.at,
+        bodies: [{ id: entry.id, body: entry.body }],
+      })
+    }
+  }
+  return days
+}
+
+export function ConversationTimeline({
+  entries,
+  locale,
+  loading = false,
+  emptyLabel,
+  autoScroll = true,
+  className,
+}: {
+  entries: ConversationEntry[]
+  locale: 'nl' | 'en'
+  loading?: boolean
+  emptyLabel?: string
+  autoScroll?: boolean
+  className?: string
+}) {
+  const bottomRef = React.useRef<HTMLDivElement | null>(null)
+  const count = entries.length
+
+  React.useEffect(() => {
+    const node = bottomRef.current
+    if (autoScroll && count > 0 && typeof node?.scrollIntoView === 'function') {
+      node.scrollIntoView({ block: 'nearest' })
+    }
+  }, [autoScroll, count])
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center gap-2 text-sm text-gray-400">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        {m.admin_shared_loading()}
+      </div>
+    )
+  }
+
+  if (count === 0) {
+    return (
+      <div className="flex min-h-[160px] items-center justify-center px-4 text-center text-sm text-gray-400">
+        {emptyLabel ?? ''}
+      </div>
+    )
+  }
+
+  const days = buildLayout(entries)
+
+  return (
+    <div className={cn('space-y-5', className)}>
+      {days.map((bucket) => (
+        <div key={bucket.day} className="space-y-4">
+          <div className="flex items-center gap-3">
+            <span className="h-px flex-1 bg-gray-200" />
+            <span className="shrink-0 text-xs text-gray-400">
+              {formatDaySeparator(bucket.at, locale)}
+            </span>
+            <span className="h-px flex-1 bg-gray-200" />
+          </div>
+
+          {bucket.blocks.map((block, index) =>
+            'label' in block ? (
+              <div key={`sys-${block.id}`} className="flex justify-center">
+                <span className="rounded-full bg-[var(--color-secondary)] px-3 py-1 text-xs text-gray-500">
+                  {block.label}
+                </span>
+              </div>
+            ) : (
+              <MessageGroupView
+                key={`grp-${block.side}-${index}-${block.bodies[0]?.id}`}
+                group={block}
+                locale={locale}
+              />
+            ),
+          )}
+        </div>
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  )
+}
+
+function MessageGroupView({ group, locale }: { group: MessageGroup; locale: 'nl' | 'en' }) {
+  const isMe = group.side === 'me'
+  return (
+    <div className={cn('flex flex-col gap-1', isMe ? 'items-end' : 'items-start')}>
+      <p className="px-1 text-xs text-gray-400">
+        {group.author} · {formatTime(group.at, locale)}
+      </p>
+      {group.bodies.map(({ id, body }) => (
+        <div
+          key={id}
+          className={cn(
+            'max-w-[82%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
+            isMe
+              ? 'rounded-br-md bg-[var(--color-secondary)] text-[var(--color-foreground)]'
+              : 'rounded-bl-md border border-[var(--color-border)] bg-white text-[var(--color-foreground)]',
+          )}
+        >
+          {body}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function ConversationComposer({
+  value,
+  onChange,
+  onSubmit,
+  isSubmitting = false,
+  disabled = false,
+  placeholder,
+  sendLabel,
+  textareaId,
+  maxLength = 4000,
+}: {
+  value: string
+  onChange: (value: string) => void
+  onSubmit: () => void
+  isSubmitting?: boolean
+  disabled?: boolean
+  placeholder?: string
+  sendLabel: string
+  textareaId?: string
+  maxLength?: number
+}) {
+  const canSend = value.trim().length > 0 && !isSubmitting && !disabled
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault()
+      if (canSend) onSubmit()
+    }
+  }
+
+  return (
+    <div className="space-y-2 border-t border-gray-200 pt-4">
+      <Textarea
+        id={textareaId}
+        rows={3}
+        value={value}
+        maxLength={maxLength}
+        placeholder={placeholder}
+        disabled={disabled || isSubmitting}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={handleKeyDown}
+      />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs text-gray-400">{m.account_conversation_send_hint()}</span>
+        <Button type="button" disabled={!canSend} onClick={onSubmit}>
+          {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          {sendLabel}
+        </Button>
+      </div>
+    </div>
+  )
+}

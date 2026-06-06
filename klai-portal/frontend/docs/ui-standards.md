@@ -66,6 +66,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `tooltip` | Hover/focus tooltips (used by `row-action`) | Yes |
 | `sonner` | Toasts (`toast()` feedback) | Yes |
 | `card` | Framed repeated items / stat blocks | Yes |
+| `conversation` | Message timeline + composer (`ConversationTimeline`, `ConversationComposer`): sender-grouped bubbles, day separators, quiet system lines, Cmd/Enter send. Shared by account "Mijn meldingen" + "Berichten" (and reusable by admin) | Yes |
 | `stat-card` | Metric tile (`StatCard`): uppercase label + large tabular value + optional sub. Sizes default/sm, `tone` (default/warning/destructive), `alert` frame, optional `onClick` to navigate | Yes |
 | `query-error-state` | Standard error block for failed queries | Yes |
 | `sheet` | Slide-over. **Forbidden** for admin entity detail (see Detail And Edit) | Restricted |
@@ -757,6 +758,46 @@ Rules:
 - Use a small `ChevronRight` from Lucide, rotating with `group-open:rotate-90`.
 - Do not use `klai-hover` or loud hover backgrounds for disclosure summaries.
 - Do not render `Bronnen` or `Agent activiteit` as plain bold headings below the answer.
+
+## Conversations
+
+Any back-and-forth between a user and the Klai team — account "Mijn meldingen"
+follow-ups, the account "Berichten" tab, and (reusable) the admin side — uses
+the owned `conversation` component. Never hand-roll chat bubbles in a page.
+
+```tsx
+import { ConversationTimeline, ConversationComposer, type ConversationEntry } from '@/components/ui/conversation'
+
+const entries: ConversationEntry[] = [
+  { id: 1, side: 'me', author: 'Jij', body: '…', at: iso },
+  { id: 2, side: 'them', author: 'Klai team', body: '…', at: iso },
+  { type: 'system', id: 's1', label: 'Gemarkeerd als opgelost', at: iso },
+]
+
+<ConversationTimeline entries={entries} locale={locale} loading={isLoading} />
+<ConversationComposer value={draft} onChange={setDraft} onSubmit={send} sendLabel={…} />
+```
+
+Rules (do not regress these):
+
+- **One calm timeline, not consumer chat.** Messages are grouped by sender and
+  by day; the sender label + time shows once per group, with a centered day
+  separator between days. Own messages sit right in a soft cream bubble
+  (`bg-[var(--color-secondary)]`); the other party sits left on white with a
+  `border-gray-200`. Do not use `bg-gray-900` WhatsApp-style bubbles.
+- **Status changes are quiet system lines** (`type: 'system'`) centered in the
+  timeline — e.g. "Door het Klai-team gemarkeerd als opgelost" — never a loud
+  banner.
+- **The composer sends on Cmd/Ctrl + Enter**, clears on success, and the caller
+  must surface send failures (toast) without discarding the typed text.
+- A feedback/melding conversation renders the original report and the Klai
+  resolution as the first entries in the same timeline, so the report, the
+  "opgelost" reply, and any follow-up read as one thread — not three stacked
+  zones. The melding overview stays a calm single-column feed; opening a melding
+  navigates into this conversation, it is not a second pane glued beside the
+  list.
+
+The live render is the `/dev/ui` "Conversation" section.
 
 ## Colors
 

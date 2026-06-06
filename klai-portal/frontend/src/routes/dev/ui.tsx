@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { ActionTag } from '@/components/ui/action-tag'
 import { Alert } from '@/components/ui/alert'
+import { ConversationComposer, ConversationTimeline, type ConversationEntry } from '@/components/ui/conversation'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -251,6 +252,15 @@ const multiSelectOptions = [
   { value: 'widgets', label: 'Widgets' },
 ]
 const commandItems = ['Kennisbank', 'Chat', 'Connectors', 'Widgets', 'Instellingen']
+// Conversation sample: report → Klai resolution → system line → user reply,
+// across two days, to show day separators, sender grouping, and system lines.
+const conversationEntries: ConversationEntry[] = [
+  { id: 'r1', side: 'me', author: 'Jij', body: 'De zoekfunctie geeft geen resultaten meer sinds vanmorgen.', at: '2026-06-04T09:12:00Z' },
+  { id: 'a1', side: 'them', author: 'Klai team', body: 'Bedankt voor je melding — we kijken ernaar.', at: '2026-06-04T09:40:00Z' },
+  { id: 'a2', side: 'them', author: 'Klai team', body: 'Dit is opgelost in de release van vanochtend. Wil je het nog even checken?', at: '2026-06-05T11:03:00Z' },
+  { type: 'system', id: 's1', label: 'Door het Klai-team gemarkeerd als opgelost', at: '2026-06-05T11:03:30Z' },
+  { id: 'r2', side: 'me', author: 'Jij', body: 'Top, het werkt weer. Bedankt!', at: '2026-06-05T11:20:00Z' },
+]
 const dividerListGrid = 'lg:grid-cols-[minmax(0,1fr)_144px]'
 
 // Sample collection for the "Volledig lijstoverzicht" anatomy section. 14 rows
@@ -301,6 +311,7 @@ function UiCatalogPage() {
   )
   const [subDeleteConfirm, setSubDeleteConfirm] = useState(false)
   const [searchValue, setSearchValue] = useState('')
+  const [conversationDraft, setConversationDraft] = useState('')
   const [radioValue, setRadioValue] = useState('personal')
   const [demoPage, setDemoPage] = useState(5)
   const overview = useListControls(overviewItems, {
@@ -776,6 +787,26 @@ function UiCatalogPage() {
               description="Gebruik deze rustige lege staat voor lijst- en tabeloverzichten."
             />
           </div>
+        </div>
+      </Section>
+
+      <Section title="Conversation">
+        <div className="max-w-xl space-y-5">
+          <ConversationTimeline entries={conversationEntries} locale="nl" />
+          <ConversationComposer
+            value={conversationDraft}
+            onChange={setConversationDraft}
+            onSubmit={() => setConversationDraft('')}
+            placeholder="Reageer op deze melding"
+            sendLabel="Verstuur reactie"
+          />
+          <p className="text-xs text-gray-400">
+            Eén rustige tijdlijn: gegroepeerd per afzender en dag, met
+            dag-scheiders en stille systeemregels (statuswijzigingen). Eigen
+            berichten rechts (cream), Klai-team links (wit met rand). De composer
+            verstuurt met Cmd/Ctrl + Enter. Gedeeld door account-meldingen en de
+            Berichten-tab.
+          </p>
         </div>
       </Section>
 
