@@ -169,7 +169,13 @@ OIDC configuration is in `.env` (not in `librechat.yaml`). Zitadel integration v
 
 **Database per tenant:** shared MongoDB server, separate database per tenant via `MONGO_URI` (e.g. `mongodb://mongo/tenant_abc`). Database-level isolation without a MongoDB container per customer. One MongoDB process, N databases — standard pattern for multi-tenant MongoDB deployments.
 
-**Meilisearch:** one shared instance exists, but broad LibreChat search is not enabled for every tenant. LibreChat's upstream startup sync uses shared `messages` and `convos` indexes and its cleanup step removes documents not present in the current tenant Mongo database. In a silo-per-tenant Mongo topology, enabling `SEARCH=true` everywhere against one shared Meili instance can delete another tenant's indexed search docs. As of 2026-06-06 only `getklai` is enabled as a canary with `MEILI_NO_SYNC=true`; broad rollout requires tenant-scoped indexes or a patched/backfill flow that proves tenant isolation.
+**Meilisearch:** one shared instance with tenant-scoped LibreChat indexes
+(`{slug}_messages`, `{slug}_convos`). Do not rely on shared global
+`messages`/`convos` plus `userId` filtering: LibreChat startup sync and delete
+hooks mutate indexes by primary key, so global indexes are unsafe with
+Klai's silo-per-tenant MongoDB topology. As of 2026-06-06 only `getklai` is
+enabled as a canary with tenant-scoped indexes and a scoped Meili runtime key.
+Broad rollout still requires a migration/backfill for existing tenants.
 
 Resource per LibreChat container (without own Meilisearch): ~250-350 MB RAM idle. Core-01 (EX44, 64 GB) has room for 50+ tenants on a RAM basis.
 
@@ -580,11 +586,13 @@ Legend: ✅ confirmed compatible | ⚠️ attention point | ❌ correction neede
 - ⚠️ No built-in bridge. LibreChat stores transactions in MongoDB (Transactions collection). Export via: direct MongoDB query or [virtUOS/librechat_exporter](https://github.com/virtUOS/librechat_exporter) (Prometheus exporter). ETL from MongoDB to PostgreSQL for billing is custom work.
 - Docs: [librechat.ai/docs/configuration/token_usage](https://www.librechat.ai/docs/configuration/token_usage)
 
-**Meilisearch: current decision — shared service, canary search only**
+**Meilisearch: current decision — shared service, getklai tenant-scoped canary**
 - One shared Meilisearch service is deployed for operational simplicity.
-- Do not enable LibreChat `SEARCH=true` for all tenants against the shared upstream `messages`/`convos` indexes. Startup sync performs cross-tenant cleanup because each LibreChat container only sees its own Mongo database.
-- Current safe state: `getklai` canary has `SEARCH=true` and `MEILI_NO_SYNC=true`; other tenants keep LibreChat search disabled until tenant-scoped indexing is implemented and verified.
-- Broad rollout options: patch LibreChat to use tenant-specific index names, run per-tenant Meili instances, or build a controlled backfill/realtime indexing path with an explicit tenant field and tests proving no cross-tenant results.
+- `getklai` canary uses tenant-scoped indexes (`getklai_messages`, `getklai_convos`) via `MEILI_MESSAGES_INDEX` and `MEILI_CONVOS_INDEX`.
+- LibreChat still expects the env var name `MEILI_MASTER_KEY`, but the getklai compose value is `GETKLAI_MEILI_API_KEY`, scoped to only `getklai_messages` and `getklai_convos`.
+- Provisioned tenants receive their own scoped Meili API key when generated; `SEARCH=true` is still not enabled automatically.
+- Do not enable multiple tenants against upstream global `messages`/`convos` indexes. `userId` filtering only scopes reads; it does not make startup sync cleanup or delete hooks tenant-safe.
+- Migration requirement before broad `SEARCH=true`: create tenant-scoped indexes, reset or backfill documents whose Mongo `_meiliIndex=true` was set by the old global-index sync, and verify document counts/key parity before enabling search. `MEILI_NO_SYNC=true` alone is not a migration. Rollout checklist: `docs/runbooks/meili-tenant-search-rollout.md`.
 
 ---
 
@@ -718,7 +726,7 @@ Legend: ✅ confirmed compatible | ⚠️ attention point | ❌ correction neede
 | ✅ Done | LibreChat database | MongoDB as shared server, separate database per tenant via `MONGO_URI`. Silo model. |
 | ✅ Done | vLLM gpu-memory-utilization | Corrected: ~0.55 (32B) + ~0.40 (8B). Original (0.41 + 0.12) was incorrect. |
 | ✅ Done | Caddy wildcard TLS | `caddy-hetzner:latest` deployed. xcaddy + `github.com/caddy-dns/hetzner`. DNS on Hetzner DNS. |
-| ⚠️ Canary only | Meilisearch | Shared instance exists, but broad LibreChat search is blocked until tenant-scoped indexing is implemented. `getklai` only is enabled with startup sync disabled. |
+| ⚠️ Canary only | Meilisearch | Shared instance exists. `getklai` uses tenant-scoped indexes and a scoped runtime key; broad LibreChat search is blocked until migration/backfill is proven per tenant. |
 | ✅ Done | Grafana VictoriaLogs plugin | Required (`victoriametrics-logs-datasource`). LogsQL != LogQL, generic Loki does not work. |
 | ✅ Done | LibreChat provisioning | portal-api provisioning service live (Phase 1 complete). Template logic: `provisioning.py`. |
 | ✅ Done | LiteLLM `drop_params` | `drop_params: true` in `litellm/config.yaml`. |

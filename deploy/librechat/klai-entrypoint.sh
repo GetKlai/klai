@@ -1,5 +1,5 @@
 #!/bin/sh
-# Klai LibreChat entrypoint wrapper — force light theme for every tenant.
+# Klai LibreChat entrypoint wrapper — apply safety guards and client polish for every tenant.
 #
 # LibreChat has NO server-side config to force a default/locked theme
 # (enhancement danny-avila/LibreChat#5389 is still open as of v0.8.5). The
@@ -24,9 +24,12 @@
 #   * Idempotent via the `klai-force-light` marker. `docker restart` keeps the
 #     writable layer (so the marker is already present); `up -d --force-recreate`
 #     resets it to the image and this re-runs once.
-#   * Fail-safe: nothing here may stop LibreChat from booting. If the index.html
-#     path moves in a future version, or node/sed misbehaves, we log and boot
-#     normally (theme just not forced — visible by the absent marker in logs).
+#   * Client-polish injection is fail-safe: if the index.html path moves in a
+#     future version, or node/sed misbehaves, we log and boot normally (theme
+#     just not forced — visible by the absent marker in logs).
+#   * Meili tenant-index wiring is fail-loud: SEARCH=true without
+#     MEILI_MESSAGES_INDEX and MEILI_CONVOS_INDEX would use upstream global
+#     `messages`/`convos` indexes, so the container must not boot.
 #
 # Wired identically by two deployment paths (keep them in lockstep):
 #   * deploy/docker-compose.yml          — librechat-getklai (compose-managed)
@@ -37,7 +40,138 @@
 
 set -e
 
-INDEX=/app/client/dist/index.html
+case "${SEARCH:-}" in
+  true|TRUE|True|1|yes|YES|on|ON)
+    if [ -z "${MEILI_MESSAGES_INDEX:-}" ] || [ -z "${MEILI_CONVOS_INDEX:-}" ]; then
+      echo "[klai-entrypoint] SEARCH=true requires MEILI_MESSAGES_INDEX and MEILI_CONVOS_INDEX; refusing unsafe global Meili indexes" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+if [ -n "${MEILI_MESSAGES_INDEX:-}" ] || [ -n "${MEILI_CONVOS_INDEX:-}" ]; then
+  if [ -z "${MEILI_MESSAGES_INDEX:-}" ] || [ -z "${MEILI_CONVOS_INDEX:-}" ]; then
+    echo "[klai-entrypoint] both MEILI_MESSAGES_INDEX and MEILI_CONVOS_INDEX are required for tenant-scoped search" >&2
+    exit 1
+  fi
+
+  node <<'NODE'
+const { existsSync, readFileSync, writeFileSync } = require('fs');
+
+const messageIndexExpr = "process.env.MEILI_MESSAGES_INDEX || 'messages'";
+const convoIndexExpr = "process.env.MEILI_CONVOS_INDEX || 'convos'";
+
+const files = [
+  {
+    path: '/app/packages/data-schemas/dist/models/message.cjs',
+    required: true,
+    forbidden: [{ label: 'global messages model indexName', pattern: /indexName:\s*['"]messages['"]/ }],
+    replacements: [
+      {
+        label: 'message model indexName',
+        search: /indexName:\s*['"]messages['"]/,
+        replacement: `indexName: ${messageIndexExpr}`,
+        already: new RegExp(`indexName:\\s*${escapeRegExp(messageIndexExpr)}`),
+      },
+    ],
+  },
+  {
+    path: '/app/packages/data-schemas/dist/models/convo.cjs',
+    required: true,
+    forbidden: [{ label: 'global convos model indexName', pattern: /indexName:\s*['"]convos['"]/ }],
+    replacements: [
+      {
+        label: 'conversation model indexName',
+        search: /indexName:\s*['"]convos['"]/,
+        replacement: `indexName: ${convoIndexExpr}`,
+        already: new RegExp(`indexName:\\s*${escapeRegExp(convoIndexExpr)}`),
+      },
+    ],
+  },
+  {
+    path: '/app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs',
+    required: true,
+    forbidden: [
+      { label: 'global messages client index', pattern: /client\.index\(['"]messages['"]\)/ },
+      { label: 'global convos client index', pattern: /client\.index\(['"]convos['"]\)/ },
+    ],
+    replacements: [
+      {
+        label: 'mongoMeili hard-coded messages index',
+        search: /client\.index\(['"]messages['"]\)/g,
+        replacement: `client.index(${messageIndexExpr})`,
+        already: new RegExp(`client\\.index\\(${escapeRegExp(messageIndexExpr)}\\)`),
+      },
+      {
+        label: 'mongoMeili hard-coded convos index',
+        search: /client\.index\(['"]convos['"]\)/g,
+        replacement: `client.index(${convoIndexExpr})`,
+        already: new RegExp(`client\\.index\\(${escapeRegExp(convoIndexExpr)}\\)`),
+      },
+    ],
+  },
+  {
+    path: '/app/api/db/indexSync.js',
+    required: true,
+    forbidden: [
+      { label: 'global messages client index', pattern: /client\.index\(['"]messages['"]\)/ },
+      { label: 'global convos client index', pattern: /client\.index\(['"]convos['"]\)/ },
+    ],
+    replacements: [
+      {
+        label: 'indexSync hard-coded messages index',
+        search: /client\.index\(['"]messages['"]\)/g,
+        replacement: `client.index(${messageIndexExpr})`,
+        already: new RegExp(`client\\.index\\(${escapeRegExp(messageIndexExpr)}\\)`),
+      },
+      {
+        label: 'indexSync hard-coded convos index',
+        search: /client\.index\(['"]convos['"]\)/g,
+        replacement: `client.index(${convoIndexExpr})`,
+        already: new RegExp(`client\\.index\\(${escapeRegExp(convoIndexExpr)}\\)`),
+      },
+    ],
+  },
+];
+
+for (const file of files) {
+  if (!existsSync(file.path)) {
+    if (file.required) {
+      throw new Error(`[klai-entrypoint] required LibreChat Meili patch target is missing: ${file.path}`);
+    }
+    continue;
+  }
+
+  let content = readFileSync(file.path, 'utf8');
+  let changed = false;
+  for (const replacement of file.replacements) {
+    if (replacement.already.test(content)) {
+      continue;
+    }
+    if (!replacement.search.test(content)) {
+      throw new Error(`[klai-entrypoint] could not apply ${replacement.label} in ${file.path}`);
+    }
+    content = content.replace(replacement.search, replacement.replacement);
+    changed = true;
+  }
+  if (changed) {
+    writeFileSync(file.path, content);
+    process.stdout.write(`[klai-entrypoint] tenant-scoped Meili patch applied: ${file.path}\n`);
+  }
+  for (const forbidden of file.forbidden || []) {
+    if (forbidden.pattern.test(content)) {
+      throw new Error(`[klai-entrypoint] unsafe global Meili reference remains in ${file.path}: ${forbidden.label}`);
+    }
+  }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+NODE
+fi
+
+INDEX=${KLAI_LIBRECHAT_INDEX:-/app/client/dist/index.html}
 LIGHT_MARKER=klai-force-light
 FOOTER_MARKER=klai-hide-librechat-footer-v1
 KB_DISCLOSURE_MARKER=klai-kb-disclosure-v8

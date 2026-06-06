@@ -92,6 +92,7 @@ def _generate_librechat_env(
     client_secret: str,
     litellm_api_key: str,
     mongo_password: str,
+    meili_api_key: str,
     zitadel_org_id: str = "",
     mcp_servers: dict | None = None,
 ) -> str:
@@ -103,6 +104,8 @@ def _generate_librechat_env(
     session_secret = secrets.token_hex(32)
     creds_key = secrets.token_hex(32)
     creds_iv = secrets.token_hex(8)
+    if not meili_api_key or not meili_api_key.strip():
+        raise ValueError("meili_api_key is required; never write the Meili master key into tenant envs")
 
     # Build MCP server env vars (decrypted from DB; REQ-N-001: no secrets in logs)
     mcp_env_lines: list[str] = []
@@ -186,7 +189,12 @@ REFRESH_TOKEN_EXPIRY=2592000000
 
 # Search
 MEILI_HOST=http://meilisearch:7700
-MEILI_MASTER_KEY={settings.meili_master_key}
+MEILI_MASTER_KEY={meili_api_key}
+MEILI_MESSAGES_INDEX={slug}_messages
+MEILI_CONVOS_INDEX={slug}_convos
+MEILI_NO_SYNC=true
+# SEARCH is intentionally not enabled by provisioning. Enable it per tenant
+# only after the tenant-scoped Meili indexes have been migrated/verified.
 
 # Redis (session persistence across container restarts)
 REDIS_URI=redis://:{quote(settings.redis_password, safe="")}@redis:6379
