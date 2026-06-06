@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -34,7 +35,7 @@ class KbTaxonomyDecision:
     skip_reason: str | None = None
 
 
-def resolve_kb_feature_gate(feature: dict) -> KbFeatureGateDecision:
+def resolve_kb_feature_gate(feature: Mapping[str, object]) -> KbFeatureGateDecision:
     """Resolve whether the feature-level gate should continue into retrieval."""
     kb_narrow = bool(feature.get("kb_narrow", False))
     if not feature.get("enabled", False):
@@ -52,7 +53,7 @@ def resolve_kb_feature_gate(feature: dict) -> KbFeatureGateDecision:
     return KbFeatureGateDecision(action="continue", kb_narrow=kb_narrow)
 
 
-def resolve_kb_retrieval_scope(feature: dict) -> KbRetrievalScopeDecision:
+def resolve_kb_retrieval_scope(feature: Mapping[str, object]) -> KbRetrievalScopeDecision:
     """Translate portal KB preferences into retrieval-api scope fields.
 
     ``kb_slugs_filter`` is tri-state:

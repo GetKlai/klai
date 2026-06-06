@@ -183,6 +183,7 @@ def test_retrieval_failure_notice_keeps_strict_closed_and_open_broad():
     assert "Answer using your general knowledge" in open_notice
     assert "technical reason: ReadTimeout" in open_notice
     assert "not based on their own documentation" in open_notice
+    assert "refresh or try again later" in open_notice
     assert "selected Strict mode" not in open_notice
 
 
