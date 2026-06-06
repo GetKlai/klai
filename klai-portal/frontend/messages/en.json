@@ -1584,6 +1584,7 @@
   "admin_api_keys_perm_knowledge_append": "Add knowledge",
   "admin_api_keys_perm_knowledge_append_description": "Add new knowledge to knowledge bases.",
   "admin_shared_kb_name": "Knowledge base",
+  "admin_api_keys_kb_type": "Type",
   "admin_api_keys_kb_none": "None",
   "admin_shared_kb_read": "Read",
   "admin_api_keys_kb_read_write": "Write",

@@ -21,7 +21,7 @@ function kb(id: number, name: string, ownerType: string): OrgKnowledgeBase {
 }
 
 describe('KbAccessEditor', () => {
-  it('shows knowledge base scope and keeps organization knowledge bases above personal ones', () => {
+  it('shows type as a table column and keeps personal knowledge bases above organization ones', () => {
     useOrgKnowledgeBasesMock.mockReturnValue({
       isLoading: false,
       data: {
@@ -41,13 +41,17 @@ describe('KbAccessEditor', () => {
       />,
     )
 
+    expect(screen.getByRole('columnheader', { name: /type/i })).toBeTruthy()
     const rows = screen.getAllByRole('row').slice(1)
+    const firstCells = within(rows[0]).getAllByRole('cell')
+    const secondCells = within(rows[1]).getAllByRole('cell')
+    const thirdCells = within(rows[2]).getAllByRole('cell')
 
-    expect(within(rows[0]).getByText('Org handbook')).toBeTruthy()
-    expect(within(rows[0]).getByText(/organisatie|organization/i)).toBeTruthy()
-    expect(within(rows[1]).getByText('Org policies')).toBeTruthy()
-    expect(within(rows[1]).getByText(/organisatie|organization/i)).toBeTruthy()
-    expect(within(rows[2]).getByText('My private KB')).toBeTruthy()
-    expect(within(rows[2]).getByText(/persoonlijk|personal/i)).toBeTruthy()
+    expect(firstCells[0].textContent).toBe('My private KB')
+    expect(firstCells[1].textContent).toMatch(/persoonlijk|personal/i)
+    expect(secondCells[0].textContent).toBe('Org handbook')
+    expect(secondCells[1].textContent).toMatch(/organisatie|organization/i)
+    expect(thirdCells[0].textContent).toBe('Org policies')
+    expect(thirdCells[1].textContent).toMatch(/organisatie|organization/i)
   })
 })
