@@ -2324,6 +2324,65 @@ class TestTokenRouterKB010:
         assert context_meta["pre_router_meta"]["active_tool_results_normalized"] == 1
 
     @pytest.mark.asyncio
+    async def test_knowledge_hook_and_router_repair_tool_call_result_parity(
+        self, monkeypatch
+    ):
+        """Production callback order keeps Mistral tool_call/tool parity valid."""
+        litellm_mod = sys.modules["litellm"]
+        litellm_mod.token_counter = MagicMock(return_value=1)
+        klai_knowledge = _load_hook(monkeypatch)
+        sys.modules.pop("custom_router", None)
+        import custom_router
+
+        importlib.reload(custom_router)
+
+        data = {
+            "model": "klai-large",
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Zoek naar Zurich."},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "call_1", "function": {"name": "search_knowledge"}},
+                        {"id": "call_2", "function": {"name": "search_knowledge"}},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": "Alleen resultaat A.",
+                },
+            ],
+        }
+
+        hook = klai_knowledge.KlaiKnowledgeHook()
+        after_hook = await hook.async_pre_call_hook(
+            _make_user_api_key(org_id=None), _make_cache(feature_enabled=True), data, "completion"
+        )
+        result = await custom_router.TokenRouter().async_pre_call_hook(
+            MagicMock(), None, after_hook, "completion"
+        )
+
+        provider_messages = [
+            message for message in result["messages"] if isinstance(message, dict)
+        ]
+        assert [message["role"] for message in provider_messages][-3:] == [
+            "user",
+            "assistant",
+            "tool",
+        ]
+        assistant = provider_messages[-2]
+        assert [tool_call["id"] for tool_call in assistant["tool_calls"]] == ["call_1"]
+        assert provider_messages[-1]["tool_call_id"] == "call_1"
+        context_meta = result["metadata"]["_klai_context_meta"]
+        assert context_meta["dropped_unmatched_tool_calls"] == 1
+        assert context_meta["dropped_orphan_tool_results"] == 0
+        assert context_meta["pre_router_meta"]["dropped_unmatched_tool_calls"] == 1
+        assert "mistral_tool_call_parity_repaired" in context_meta["reason_codes"]
+
+    @pytest.mark.asyncio
     async def test_router_provider_context_assembly_fails_open(
         self, monkeypatch
     ):

@@ -314,6 +314,157 @@ def test_orchestrator_preserves_multiple_active_tool_results(monkeypatch):
     assert result.meta["active_tool_result_trust"] == {"unknown_tool": 2}
 
 
+def test_orchestrator_drops_unmatched_active_tool_calls_for_mistral(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search twice."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_1", "function": {"name": "search_knowledge"}},
+                    {"id": "call_2", "function": {"name": "search_knowledge"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "Only first result."},
+        ],
+        requested_model="klai-large",
+    )
+
+    provider_messages = [
+        message for message in result.messages if isinstance(message, dict)
+    ]
+    assert [message["role"] for message in provider_messages] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assistant = provider_messages[-2]
+    assert [tool_call["id"] for tool_call in assistant["tool_calls"]] == ["call_1"]
+    assert provider_messages[-1]["tool_call_id"] == "call_1"
+    assert result.meta["dropped_unmatched_tool_calls"] == 1
+    assert result.meta["dropped_orphan_tool_results"] == 0
+    assert "mistral_tool_call_parity_repaired" in result.meta["reason_codes"]
+
+
+def test_orchestrator_drops_orphan_active_tool_results_for_mistral(monkeypatch):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search once."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_1", "function": {"name": "search_knowledge"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "First result."},
+            {"role": "tool", "tool_call_id": "call_2", "content": "Orphan result."},
+        ],
+        requested_model="klai-large",
+    )
+
+    provider_messages = [
+        message for message in result.messages if isinstance(message, dict)
+    ]
+    assert [message["role"] for message in provider_messages] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert provider_messages[-1]["tool_call_id"] == "call_1"
+    assert "Orphan result." not in "\n".join(
+        str(message.get("content", "")) for message in provider_messages
+    )
+    assert result.meta["dropped_unmatched_tool_calls"] == 0
+    assert result.meta["dropped_orphan_tool_results"] == 1
+    assert "mistral_tool_call_parity_repaired" in result.meta["reason_codes"]
+
+
+def test_orchestrator_prefers_tool_call_assistant_when_repairing_assistant_run(
+    monkeypatch,
+):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Search malformed."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_1", "function": {"name": "search_knowledge"}},
+                ],
+            },
+            {"role": "assistant", "content": "Intermediate text without tool call."},
+            {"role": "tool", "tool_call_id": "call_1", "content": "Recovered result."},
+        ],
+        requested_model="klai-large",
+    )
+
+    provider_messages = [
+        message for message in result.messages if isinstance(message, dict)
+    ]
+    assert [message["role"] for message in provider_messages] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert provider_messages[-2]["tool_calls"][0]["id"] == "call_1"
+    assert provider_messages[-1]["tool_call_id"] == "call_1"
+    assert "Intermediate text without tool call." not in "\n".join(
+        str(message.get("content", "")) for message in provider_messages
+    )
+    assert result.meta["dropped_unmatched_tool_calls"] == 0
+    assert result.meta["dropped_orphan_tool_results"] == 0
+
+
+def test_orchestrator_keeps_latest_text_assistant_run_without_following_tool(
+    monkeypatch,
+):
+    mod = _load_context(monkeypatch)
+    orchestrator = mod.KlaiContextOrchestrator()
+
+    result = orchestrator.assemble(
+        [
+            {"role": "user", "content": "Continue after malformed assistant run."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_1", "function": {"name": "search_knowledge"}},
+                ],
+            },
+            {"role": "assistant", "content": "Usable final text."},
+            {"role": "user", "content": "Next question."},
+        ],
+        requested_model="klai-large",
+    )
+
+    provider_messages = [
+        message for message in result.messages if isinstance(message, dict)
+    ]
+    assert [message["role"] for message in provider_messages] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert provider_messages[1]["content"] == "Usable final text."
+    assert "tool_calls" not in provider_messages[1]
+    assert result.meta["dropped_unmatched_tool_calls"] == 0
+    assert result.meta["dropped_orphan_tool_results"] == 0
+
+
 def test_orchestrator_classifies_known_tool_result_trust(monkeypatch):
     mod = _load_context(monkeypatch)
     orchestrator = mod.KlaiContextOrchestrator()

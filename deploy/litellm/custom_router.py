@@ -123,6 +123,8 @@ def _merge_context_meta(
         "truncated_active_tool_result_chars",
         "tool_data_boundary_added",
         "trailing_assistant_repaired",
+        "dropped_unmatched_tool_calls",
+        "dropped_orphan_tool_results",
     ):
         merged[counter] = max(
             int(previous.get(counter) or 0),
