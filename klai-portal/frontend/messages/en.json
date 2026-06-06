@@ -2130,6 +2130,7 @@
   "platform_inactive": "Inactive",
   "platform_danger_zone": "Danger zone",
   "platform_danger_description": "Delete the entire tenant: all users, bots, knowledge bases, containers, and the Zitadel organization are permanently cleaned up. This cannot be undone.",
+  "platform_tenant_features_empty": "No features configured.",
   "platform_delete_tenant": "Delete tenant",
   "platform_confirm_slug_prefix": "Type the slug",
   "platform_confirm_slug_suffix": "to confirm",

@@ -14,6 +14,7 @@ import type {
   PlatformFeedbackResolveResult,
   PlatformFeedbackSubmission,
   PlatformOrgDetail,
+  PlatformUnlocksResponse,
   PlatformKB,
   PlatformSubdomainItem,
   PlatformTemplate,
@@ -94,6 +95,38 @@ export function usePlatformOrgDetail(orgId: string) {
         `/api/admin/platform/organizations/${orgId}`,
       ),
     enabled: auth.isAuthenticated && !!orgId,
+  })
+}
+
+export function usePlatformUnlocks(slug: string | undefined) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-unlocks', slug],
+    queryFn: async () =>
+      apiFetch<PlatformUnlocksResponse>(
+        `/api/admin/orgs/${encodeURIComponent(slug ?? '')}/platform-unlocks`,
+      ),
+    enabled: auth.isAuthenticated && !!slug,
+  })
+}
+
+export function usePlatformUpdateUnlocks(orgId: string, slug: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (enabledFeatures: string[]) =>
+      apiFetch<PlatformUnlocksResponse>(
+        `/api/admin/orgs/${encodeURIComponent(slug)}/platform-unlocks`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ platform_unlocked_features: enabledFeatures }),
+        },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['platform-unlocks', slug] })
+      void qc.invalidateQueries({ queryKey: ['platform-org-detail', orgId] })
+      void qc.invalidateQueries({ queryKey: ['platform-orgs'] })
+      void qc.invalidateQueries({ queryKey: ['me'] })
+    },
   })
 }
 

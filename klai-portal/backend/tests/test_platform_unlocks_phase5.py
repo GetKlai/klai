@@ -385,6 +385,10 @@ class TestPlatformUnlocksEndpoints:
 
         assert result.slug == "customer-org"
         assert set(result.platform_unlocked_features) == {"partner_api", "widgets"}
+        features = {feature.key: feature for feature in result.features}
+        assert features["partner_api"].enabled is True
+        assert features["widgets"].enabled is True
+        assert features["custom_mcps"].enabled is False
 
     @pytest.mark.asyncio
     async def test_get_returns_empty_list_when_none_unlocked(self) -> None:
@@ -399,6 +403,8 @@ class TestPlatformUnlocksEndpoints:
         result = await get_platform_unlocks(slug="customer-org", perms=perms, db=db)
 
         assert result.platform_unlocked_features == []
+        assert result.features
+        assert all(feature.enabled is False for feature in result.features)
 
     @pytest.mark.asyncio
     async def test_get_404_when_org_not_found(self) -> None:
@@ -447,6 +453,9 @@ class TestPlatformUnlocksEndpoints:
 
         assert result.slug == "customer-org"
         assert set(result.platform_unlocked_features) == {"partner_api", "widgets"}
+        features = {feature.key: feature for feature in result.features}
+        assert features["partner_api"].enabled is True
+        assert features["widgets"].enabled is True
         db.commit.assert_awaited_once()
 
         # Audit event must be emitted

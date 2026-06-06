@@ -2130,6 +2130,7 @@
   "platform_inactive": "Inactief",
   "platform_danger_zone": "Danger zone",
   "platform_danger_description": "Verwijder de hele tenant: alle gebruikers, bots, kennisbanken, containers en Zitadel-org worden definitief opgeruimd. Onomkeerbaar.",
+  "platform_tenant_features_empty": "Geen functies geconfigureerd.",
   "platform_delete_tenant": "Tenant verwijderen",
   "platform_confirm_slug_prefix": "Typ de slug",
   "platform_confirm_slug_suffix": "om te bevestigen",

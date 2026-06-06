@@ -40,6 +40,7 @@ export interface PlatformOrg {
   name: string
   slug: string
   plan: string
+  platform_unlocked_features: string[]
   billing_status: string
   billing_cycle: string
   seats: number
@@ -213,6 +214,18 @@ export interface PlatformOrgDetail {
   bots: PlatformBot[]
   knowledge_bases: PlatformKB[]
   templates: PlatformTemplate[]
+}
+
+export interface PlatformUnlockFeature {
+  key: string
+  enabled: boolean
+  requires_profile: string | null
+}
+
+export interface PlatformUnlocksResponse {
+  slug: string
+  platform_unlocked_features: string[]
+  features: PlatformUnlockFeature[]
 }
 
 export interface CreateTenantPayload {

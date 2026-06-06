@@ -1,9 +1,10 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Loader2, Plus, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   DataTable,
   DataTableBody,
@@ -27,10 +28,13 @@ import {
   usePlatformDeleteUser,
   usePlatformDeprovisionTenant,
   usePlatformInvite,
+  usePlatformUnlocks,
+  usePlatformUpdateUnlocks,
   usePlatformRetryDeleteUser,
   usePlatformSuspend,
 } from '../-hooks'
 import { StatCard } from '@/components/ui/stat-card'
+import { extensionDescription, extensionLabel } from '@/lib/extensions-i18n'
 import type {
   PlatformBot,
   PlatformKB,
@@ -73,6 +77,136 @@ export function OrgSummaryStats({
         value={org.billing_status}
       />
     </div>
+  )
+}
+
+export function TenantFeaturesSection({
+  orgId,
+  org,
+}: {
+  orgId: string
+  org: PlatformOrg
+}) {
+  const unlocks = usePlatformUnlocks(org.slug)
+  const updateUnlocks = usePlatformUpdateUnlocks(orgId, org.slug)
+  const [stagedFeatures, setStagedFeatures] = useState<Set<string>>(
+    () => new Set(org.platform_unlocked_features ?? []),
+  )
+  const [savedFeatures, setSavedFeatures] = useState(false)
+
+  useEffect(() => {
+    if (unlocks.data) {
+      setStagedFeatures(new Set(unlocks.data.platform_unlocked_features))
+    }
+  }, [unlocks.data])
+
+  const saved = new Set(
+    unlocks.data?.platform_unlocked_features ?? org.platform_unlocked_features ?? [],
+  )
+  const dirty =
+    stagedFeatures.size !== saved.size ||
+    [...stagedFeatures].some((key) => !saved.has(key))
+
+  function stageFeature(key: string, enabled: boolean) {
+    setStagedFeatures((prev) => {
+      const next = new Set(prev)
+      if (enabled) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }
+
+  function saveFeatures() {
+    updateUnlocks.mutate([...stagedFeatures].sort(), {
+      onSuccess: () => {
+        setSavedFeatures(true)
+        setTimeout(() => setSavedFeatures(false), 2500)
+        toast.success(m.admin_settings_saved())
+      },
+      onError: (err) =>
+        toast.error(
+          err instanceof Error ? err.message : m.admin_settings_error_save(),
+        ),
+    })
+  }
+
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
+            {m.admin_settings_extensions_title()}
+          </h2>
+          <p className="mt-1 text-sm text-gray-500">
+            {m.admin_settings_extensions_description_platform()}
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          onClick={saveFeatures}
+          disabled={
+            updateUnlocks.isPending ||
+            unlocks.isLoading ||
+            savedFeatures ||
+            !dirty
+          }
+        >
+          {updateUnlocks.isPending && (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          )}
+          {savedFeatures
+            ? m.admin_settings_saved()
+            : updateUnlocks.isPending
+              ? m.admin_settings_saving()
+              : m.admin_settings_save()}
+        </Button>
+      </div>
+
+      {unlocks.isLoading ? (
+        <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+      ) : unlocks.error ? (
+        <p className="text-sm text-[var(--color-destructive)]">
+          {m.admin_settings_error_fetch()}
+        </p>
+      ) : unlocks.data?.features.length ? (
+        <ul className="divide-y divide-gray-200 border-t border-b border-gray-200">
+          {unlocks.data.features.map((feature) => {
+            const staged = stagedFeatures.has(feature.key)
+            return (
+              <li
+                key={feature.key}
+                className="flex items-center justify-between gap-4 px-2 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px] font-display text-gray-900">
+                    {extensionLabel(feature.key)}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {extensionDescription(feature.key)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <Badge variant={staged ? 'success' : 'outline'}>
+                    {staged
+                      ? m.admin_settings_extensions_status_on()
+                      : m.admin_settings_extensions_status_off()}
+                  </Badge>
+                  <Checkbox
+                    checked={staged}
+                    onChange={(e) => stageFeature(feature.key, e.target.checked)}
+                    disabled={updateUnlocks.isPending}
+                    label=""
+                  />
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
+        <ListEmptyState title={m.platform_tenant_features_empty()} />
+      )}
+    </section>
   )
 }
 
