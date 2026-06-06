@@ -1,4 +1,9 @@
-"""Request and message-context helpers for LiteLLM KB retrieval."""
+"""Request and message-context helpers for LiteLLM KB retrieval.
+
+Environment-derived constants in this module are boot-time configuration:
+production imports the LiteLLM hook once per process, and runtime env toggles
+take effect on process restart.
+"""
 
 from __future__ import annotations
 

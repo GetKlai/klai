@@ -14,6 +14,8 @@ import types
 
 import pytest
 
+from tests.klai_module_reset import reset_klai_kb_modules
+
 
 @pytest.fixture(autouse=True)
 def _mock_litellm(monkeypatch):
@@ -44,11 +46,13 @@ def _mock_litellm(monkeypatch):
 
     yield
 
-    for mod_name in ("litellm", "litellm.integrations", "litellm.integrations.custom_logger"):
+    for mod_name in (
+        "litellm",
+        "litellm.integrations",
+        "litellm.integrations.custom_logger",
+    ):
         sys.modules.pop(mod_name, None)
-    sys.modules.pop("klai_kb_answer_policy", None)
-    sys.modules.pop("klai_kb_render_policy", None)
-    sys.modules.pop("klai_knowledge", None)
+    reset_klai_kb_modules()
 
 
 def _kk():
@@ -119,7 +123,9 @@ def test_to_kb_meta_key_set_is_identical_across_every_state():
     """No branch may drop or add a key — the shape is one contract."""
     for state in _ALL_STATES:
         meta = _policy(state).to_kb_meta(org_id="o", user_id="u", retrieval_ms=1)
-        assert set(meta) == _EXPECTED_KEYS, f"state={state} diverged: {set(meta) ^ _EXPECTED_KEYS}"
+        assert set(meta) == _EXPECTED_KEYS, (
+            f"state={state} diverged: {set(meta) ^ _EXPECTED_KEYS}"
+        )
 
 
 def test_policy_module_declares_every_pre_call_answer_state():
@@ -143,7 +149,8 @@ def test_answer_policy_matrix_is_independent_of_renderer_state():
                     assert policy.suppress_kb_citations is (
                         user_content
                         and low_confidence
-                        and state in policy_module.KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES
+                        and state
+                        in policy_module.KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES
                     )
                     meta = policy.to_kb_meta(
                         org_id="o",
@@ -187,6 +194,21 @@ def test_retrieval_failure_notice_keeps_strict_closed_and_open_broad():
     assert "selected Strict mode" not in open_notice
 
 
+def test_strict_kb_unavailable_message_lives_with_answer_policy():
+    policy_module = _policy_module()
+
+    assert (
+        policy_module.strict_kb_unavailable_message("wat is de status?")
+        == "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
+        "betrouwbaar beantwoorden op basis van je kennisbronnen."
+    )
+    assert (
+        policy_module.strict_kb_unavailable_message("what is the status?")
+        == "The knowledge base is temporarily unavailable, so I cannot answer this "
+        "reliably from your knowledge sources."
+    )
+
+
 def test_zero_chunks_notice_keeps_strict_closed_and_open_broad():
     policy_module = _policy_module()
 
@@ -199,7 +221,10 @@ def test_zero_chunks_notice_keeps_strict_closed_and_open_broad():
     open_notice = policy_module.kb_zero_chunks_notice(False)
     assert "zero results for this query" in open_notice
     assert "You may answer from your general knowledge" in open_notice
-    assert "Dit staat niet in jouw kennisbank, maar hier is een algemeen antwoord" in open_notice
+    assert (
+        "Dit staat niet in jouw kennisbank, maar hier is een algemeen antwoord"
+        in open_notice
+    )
     assert "Do not answer from general knowledge" not in open_notice
 
 
@@ -229,7 +254,12 @@ def test_user_content_detection_requires_attachment_or_explicit_reference():
     )
     assert (
         policy_module.has_user_provided_content_context(
-            [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}],
+            [
+                {
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": "x"}}],
+                }
+            ],
             "Wat zie je?",
         )
         is True
@@ -238,6 +268,28 @@ def test_user_content_detection_requires_attachment_or_explicit_reference():
         policy_module.has_user_provided_content_context(
             [{"role": "user", "content": "Leg dit uit"}],
             "Wat staat in deze screenshot?",
+        )
+        is False
+    )
+    assert (
+        policy_module.has_user_provided_content_context(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Wat staat in deze screenshot?"},
+                        {"type": "image_url", "image_url": {"url": "x"}},
+                    ],
+                }
+            ],
+            "Wat staat in deze screenshot?",
+        )
+        is True
+    )
+    assert (
+        policy_module.has_user_provided_content_context(
+            [{"role": "user", "content": "Mijn project heet Atlas."}],
+            "Wat zei ik hierboven?",
         )
         is True
     )
@@ -268,21 +320,37 @@ def test_allow_uncited_user_content_tracks_user_provided_context():
 
 def test_suppress_kb_citations_only_on_low_conf_chunk_states():
     # Requires BOTH user content AND low-confidence injection AND a chunk state.
-    assert _policy("chunks_present", upc=True, low_conf=True).suppress_kb_citations is True
+    assert (
+        _policy("chunks_present", upc=True, low_conf=True).suppress_kb_citations is True
+    )
     assert _policy("zero_chunks", upc=True, low_conf=True).suppress_kb_citations is True
     # Not on non-chunk states even with the same flags.
-    assert _policy("retrieval_failure", upc=True, low_conf=True).suppress_kb_citations is False
-    assert _policy("gate_bypassed", upc=True, low_conf=True).suppress_kb_citations is False
-    assert _policy("missing_evidence_pack", upc=True, low_conf=True).suppress_kb_citations is False
+    assert (
+        _policy("retrieval_failure", upc=True, low_conf=True).suppress_kb_citations
+        is False
+    )
+    assert (
+        _policy("gate_bypassed", upc=True, low_conf=True).suppress_kb_citations is False
+    )
+    assert (
+        _policy("missing_evidence_pack", upc=True, low_conf=True).suppress_kb_citations
+        is False
+    )
     # Needs both flags.
-    assert _policy("chunks_present", upc=True, low_conf=False).suppress_kb_citations is False
-    assert _policy("chunks_present", upc=False, low_conf=True).suppress_kb_citations is False
+    assert (
+        _policy("chunks_present", upc=True, low_conf=False).suppress_kb_citations
+        is False
+    )
+    assert (
+        _policy("chunks_present", upc=False, low_conf=True).suppress_kb_citations
+        is False
+    )
 
 
 def test_to_kb_meta_propagates_policy_flags_into_metadata():
-    meta = _policy("chunks_present", kb_narrow=True, upc=True, low_conf=True).to_kb_meta(
-        org_id="o", user_id="u", retrieval_ms=1
-    )
+    meta = _policy(
+        "chunks_present", kb_narrow=True, upc=True, low_conf=True
+    ).to_kb_meta(org_id="o", user_id="u", retrieval_ms=1)
     assert meta["answer_policy_state"] == "chunks_present"
     assert meta["answer_policy_mode"] == "strict"
     assert meta["kb_narrow"] is True

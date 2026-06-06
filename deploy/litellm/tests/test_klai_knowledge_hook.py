@@ -2,6 +2,7 @@
 
 litellm is not installed locally (runs in Docker), so we mock the import.
 """
+
 import importlib
 import sys
 import types
@@ -11,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse, urlunparse
 
 import pytest
+
+from tests.klai_module_reset import reset_klai_kb_modules
 
 
 @pytest.fixture(autouse=True)
@@ -23,10 +26,13 @@ def _mock_litellm():
     class CustomLogger:
         async def async_pre_call_hook(self, *args, **kwargs):
             pass
+
         async def async_post_call_success_hook(self, *args, **kwargs):
             pass
+
         async def async_post_call_streaming_iterator_hook(self, *args, **kwargs):
             pass
+
         async def async_post_call_failure_hook(self, *args, **kwargs):
             pass
 
@@ -40,11 +46,13 @@ def _mock_litellm():
 
     yield
 
-    for mod_name in ["litellm", "litellm.integrations", "litellm.integrations.custom_logger"]:
+    for mod_name in [
+        "litellm",
+        "litellm.integrations",
+        "litellm.integrations.custom_logger",
+    ]:
         sys.modules.pop(mod_name, None)
-    sys.modules.pop("klai_knowledge", None)
-
-
+    reset_klai_kb_modules()
 
 
 def _load_hook(monkeypatch, extra_env=None, *, mock_fire_and_forget=True):
@@ -79,9 +87,9 @@ def _load_hook(monkeypatch, extra_env=None, *, mock_fire_and_forget=True):
     for k, v in env.items():
         monkeypatch.setenv(k, v)
 
-    sys.modules.pop("klai_knowledge", None)
-    sys.modules.pop("klai_kb_request_context", None)
+    reset_klai_kb_modules()
     import klai_knowledge
+
     importlib.reload(klai_knowledge)
     if mock_fire_and_forget:
         monkeypatch.setattr(klai_knowledge, "_fire_gap_event", MagicMock())
@@ -178,7 +186,9 @@ def _normalise_test_url(url: str) -> str:
     netloc = parsed.netloc.lower()
     if netloc.startswith("www."):
         netloc = netloc[4:]
-    return urlunparse((parsed.scheme.lower(), netloc, parsed.path or "/", "", parsed.query, ""))
+    return urlunparse(
+        (parsed.scheme.lower(), netloc, parsed.path or "/", "", parsed.query, "")
+    )
 
 
 def _chunk_source_url(chunk: dict) -> str | None:
@@ -272,7 +282,9 @@ def _with_default_evidence_pack(json_data: dict) -> dict:
     return with_pack
 
 
-def _make_resp(json_data: dict, status_code: int = 200, *, default_evidence_pack: bool = True):
+def _make_resp(
+    json_data: dict, status_code: int = 200, *, default_evidence_pack: bool = True
+):
     resp = MagicMock()
     resp.status_code = status_code
     resp.json.return_value = (
@@ -285,6 +297,7 @@ def _make_resp(json_data: dict, status_code: int = 200, *, default_evidence_pack
 @contextmanager
 def _patch_http(monkeypatch, portal_resp=None, retrieval_resp=None):
     """Patch httpx.AsyncClient.get and .post for portal and retrieval calls."""
+
     async def _async_get(url, **kwargs):
         return portal_resp or _make_resp({"enabled": True})
 
@@ -302,6 +315,7 @@ def _patch_http(monkeypatch, portal_resp=None, retrieval_resp=None):
 
 
 # ─── Legacy tests (preserved, updated for new hook) ─────────────────────────
+
 
 class TestKlaiKnowledgeHookLegacy:
     def test_strips_backend_footer_from_assistant_history_text(self, monkeypatch):
@@ -364,7 +378,9 @@ class TestKlaiKnowledgeHookLegacy:
         result = klai_context.KlaiContextOrchestrator().assemble(messages)
 
         assert result.meta["normalized_user_text_part_messages"] == 2
-        assert result.messages[0]["content"] == mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER
+        assert (
+            result.messages[0]["content"] == mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER
+        )
         assert result.messages[1] is messages[1]
         assert result.messages[2]["content"] == latest_question
 
@@ -381,9 +397,10 @@ class TestKlaiKnowledgeHookLegacy:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the team policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the team policies?"}],
+        }
 
         mock_resp = _make_resp({"chunks": []})
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
@@ -394,7 +411,9 @@ class TestKlaiKnowledgeHookLegacy:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             post_call = mc.post.call_args
             headers = post_call.kwargs.get("headers") or {}
@@ -409,9 +428,15 @@ class TestKlaiKnowledgeHookLegacy:
         # Cache says enabled=True so we skip the portal HTTP call
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the team guidelines and policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What are the team guidelines and policies?",
+                }
+            ],
+        }
 
         mock_resp = _make_resp({"chunks": []})
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
@@ -421,7 +446,9 @@ class TestKlaiKnowledgeHookLegacy:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             post_call = mc.post.call_args
             if post_call:
@@ -429,33 +456,43 @@ class TestKlaiKnowledgeHookLegacy:
                 assert "X-Internal-Secret" not in headers
 
     @pytest.mark.asyncio
-    async def test_no_kb_branch_strips_assistant_footer_from_provider_input(self, monkeypatch):
+    async def test_no_kb_branch_strips_assistant_footer_from_provider_input(
+        self, monkeypatch
+    ):
         """Even non-retrieval branches must not feed old footers to the model."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=False)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat is het budget?"},
-            {
-                "role": "assistant",
-                "content": (
-                    "Het budget is 100k.\n\n"
-                    "**Agent activiteit**\n"
-                    "- Modus: Strict, alleen kennisbank."
-                ),
-            },
-            {"role": "user", "content": "En wie beheert het?"},
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is het budget?"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Het budget is 100k.\n\n"
+                        "**Agent activiteit**\n"
+                        "- Modus: Strict, alleen kennisbank."
+                    ),
+                },
+                {"role": "user", "content": "En wie beheert het?"},
+            ],
+        }
 
-        result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+        result = await hook.async_pre_call_hook(
+            _make_user_api_key(), cache, data, "completion"
+        )
 
-        assistant = next(message for message in result["messages"] if message["role"] == "assistant")
+        assistant = next(
+            message for message in result["messages"] if message["role"] == "assistant"
+        )
         assert assistant["content"] == "Het budget is 100k."
         assert "**Agent activiteit**" not in assistant["content"]
 
 
 # ─── SPEC-SEC-SERVICE-AUTH-001 Phase C-1 — dual-auth tests ──────────────────
+
 
 class TestKlaiKnowledgeHookDualAuth:
     """Phase C-1 (REQ-5 safe rollout): caller prefers JWT, falls back to
@@ -481,9 +518,10 @@ class TestKlaiKnowledgeHookDualAuth:
 
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the policies?"}],
+        }
 
         mock_resp = _make_resp({"chunks": []})
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
@@ -494,7 +532,9 @@ class TestKlaiKnowledgeHookDualAuth:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             assert mc.post.call_count == 1
             headers = mc.post.call_args.kwargs.get("headers") or {}
@@ -513,9 +553,10 @@ class TestKlaiKnowledgeHookDualAuth:
 
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the policies?"}],
+        }
 
         mock_resp = _make_resp({"chunks": []})
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
@@ -526,7 +567,9 @@ class TestKlaiKnowledgeHookDualAuth:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             assert mc.post.call_count == 1
             headers = mc.post.call_args.kwargs.get("headers") or {}
@@ -535,7 +578,9 @@ class TestKlaiKnowledgeHookDualAuth:
             assert "Authorization" not in headers
 
     @pytest.mark.asyncio
-    async def test_jwt_401_from_receiver_retries_with_internal_secret(self, monkeypatch):
+    async def test_jwt_401_from_receiver_retries_with_internal_secret(
+        self, monkeypatch
+    ):
         """Token mints fine but receiver 401s (audience mismatch) → retry once."""
         mod = _load_hook(monkeypatch)
 
@@ -545,9 +590,10 @@ class TestKlaiKnowledgeHookDualAuth:
 
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the policies?"}],
+        }
 
         jwt_reject = _make_resp({"error": "unauthorized"}, status_code=401)
         legacy_ok = _make_resp({"chunks": []}, status_code=200)
@@ -559,7 +605,9 @@ class TestKlaiKnowledgeHookDualAuth:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             assert mc.post.call_count == 2
             first_headers = mc.post.call_args_list[0].kwargs.get("headers") or {}
@@ -571,7 +619,9 @@ class TestKlaiKnowledgeHookDualAuth:
             assert "Authorization" not in second_headers
 
     @pytest.mark.asyncio
-    async def test_jwt_403_from_receiver_retries_with_internal_secret(self, monkeypatch):
+    async def test_jwt_403_from_receiver_retries_with_internal_secret(
+        self, monkeypatch
+    ):
         """Receiver 403 insufficient_scope → same retry path as 401."""
         mod = _load_hook(monkeypatch)
 
@@ -581,9 +631,10 @@ class TestKlaiKnowledgeHookDualAuth:
 
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the policies?"}],
+        }
 
         jwt_reject = _make_resp({"error": "insufficient_scope"}, status_code=403)
         legacy_ok = _make_resp({"chunks": []}, status_code=200)
@@ -595,7 +646,9 @@ class TestKlaiKnowledgeHookDualAuth:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             assert mc.post.call_count == 2
 
@@ -607,9 +660,10 @@ class TestKlaiKnowledgeHookDualAuth:
 
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the policies?"}],
+        }
 
         mock_resp = _make_resp({"chunks": []})
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
@@ -620,7 +674,9 @@ class TestKlaiKnowledgeHookDualAuth:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             assert mc.post.call_count == 1
             headers = mc.post.call_args.kwargs.get("headers") or {}
@@ -662,9 +718,10 @@ class TestKlaiKnowledgeHookIdentityMapping:
             }
         )
         librechat_objectid = "aabbcc112233445566778899"
-        data = {"user": librechat_objectid, "messages": [
-            {"role": "user", "content": "What are the team policies?"}
-        ]}
+        data = {
+            "user": librechat_objectid,
+            "messages": [{"role": "user", "content": "What are the team policies?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -674,7 +731,9 @@ class TestKlaiKnowledgeHookIdentityMapping:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             assert mc.post.call_count == 1
             body = mc.post.call_args.kwargs["json"]
@@ -699,9 +758,10 @@ class TestKlaiKnowledgeHookIdentityMapping:
                 "zitadel_user_id": None,
             }
         )
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the team policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the team policies?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -711,7 +771,9 @@ class TestKlaiKnowledgeHookIdentityMapping:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             assert mc.post.call_count == 0
             system_msg = next(
@@ -756,9 +818,10 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "zitadel_user_id": "300000000000000002",
             }
         )
-        data = {"user": "u1" * 12, "messages": [
-            {"role": "user", "content": "What about that thing?"}
-        ]}
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "What about that thing?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -768,7 +831,9 @@ class TestKlaiKnowledgeHookSlugsTriState:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             # No /retrieve call — user opted out of every scope.
             assert mc.post.call_count == 0, (
@@ -802,9 +867,10 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "zitadel_user_id": "300000000000000002",
             }
         )
-        data = {"user": "u1" * 12, "messages": [
-            {"role": "user", "content": "What about that thing?"}
-        ]}
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "What about that thing?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -818,9 +884,7 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 _make_user_api_key(), cache, data, "completion"
             )
 
-        system_msg = next(
-            (m for m in data["messages"] if m["role"] == "system"), None
-        )
+        system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
         assert system_msg is not None, (
             "Hook MUST inject a system prompt even on the no-KB branch — "
             "the language-detection contract still applies."
@@ -964,9 +1028,15 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "zitadel_user_id": "300000000000000002",
             }
         )
-        data = {"user": "u1" * 12, "messages": [
-            {"role": "user", "content": "Wat staat er in mijn persoonlijke kennisbank?"}
-        ]}
+        data = {
+            "user": "u1" * 12,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Wat staat er in mijn persoonlijke kennisbank?",
+                }
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -976,7 +1046,9 @@ class TestKlaiKnowledgeHookSlugsTriState:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
         assert mc.post.call_count >= 1
         body = mc.post.call_args.kwargs["json"]
@@ -1002,9 +1074,10 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "zitadel_user_id": "300000000000000002",
             }
         )
-        data = {"user": "u1" * 12, "messages": [
-            {"role": "user", "content": "What about that thing?"}
-        ]}
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "What about that thing?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1014,7 +1087,9 @@ class TestKlaiKnowledgeHookSlugsTriState:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             body = mc.post.call_args.kwargs["json"]
             assert body["scope"] == "both"
@@ -1022,7 +1097,9 @@ class TestKlaiKnowledgeHookSlugsTriState:
             assert body["kb_narrow"] is False
 
     @pytest.mark.asyncio
-    async def test_null_slugs_sets_all_collections_private_include_flag(self, monkeypatch):
+    async def test_null_slugs_sets_all_collections_private_include_flag(
+        self, monkeypatch
+    ):
         """None + personal=True means all org KBs plus caller-owned private KBs.
 
         The hook must not expand all org or private KBs into long slug lists.
@@ -1042,9 +1119,12 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 "zitadel_user_id": "300000000000000002",
             }
         )
-        data = {"user": "u1" * 12, "messages": [
-            {"role": "user", "content": "Wat staat er in alle kennisbanken?"}
-        ]}
+        data = {
+            "user": "u1" * 12,
+            "messages": [
+                {"role": "user", "content": "Wat staat er in alle kennisbanken?"}
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1054,7 +1134,9 @@ class TestKlaiKnowledgeHookSlugsTriState:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
         body = mc.post.call_args.kwargs["json"]
         assert body["scope"] == "both"
@@ -1085,9 +1167,10 @@ class TestKlaiKnowledgeHookFailLoud:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the team policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the team policies?"}],
+        }
 
         # Build a MagicMock that raises HTTPStatusError like a real 400 would.
         bad_resp = _make_resp(
@@ -1108,7 +1191,9 @@ class TestKlaiKnowledgeHookFailLoud:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             # System prompt must contain a user-visible "KB unreachable" notice.
             system_msg = next(
@@ -1134,9 +1219,10 @@ class TestKlaiKnowledgeHookFailLoud:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What are the team policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the team policies?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1146,7 +1232,9 @@ class TestKlaiKnowledgeHookFailLoud:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             system_msg = next(
                 (m for m in data["messages"] if m["role"] == "system"), None
@@ -1168,9 +1256,10 @@ class TestKlaiKnowledgeHookFailLoud:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature={"kb_narrow": True})
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat zijn onze team policies?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat zijn onze team policies?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1180,7 +1269,9 @@ class TestKlaiKnowledgeHookFailLoud:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
         system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
         assert system_msg is not None
@@ -1193,7 +1284,11 @@ class TestKlaiKnowledgeHookFailLoud:
         assert kb_meta["no_citable_reason"] == "retrieval_failure"
 
         response = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="A model fallback answer"))]
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="A model fallback answer")
+                )
+            ]
         )
         await hook.async_post_call_success_hook(data, None, response)
         assert response.choices[0].message.content.startswith(
@@ -1206,9 +1301,12 @@ class TestKlaiKnowledgeHookFailLoud:
 
 # ─── KB-010 new tests ────────────────────────────────────────────────────────
 
+
 class TestKlaiKnowledgeHookKB010:
     @pytest.mark.asyncio
-    async def test_litellm_safety_shadow_records_direct_prompt_injection(self, monkeypatch):
+    async def test_litellm_safety_shadow_records_direct_prompt_injection(
+        self, monkeypatch
+    ):
         mod = _load_hook(monkeypatch, {"LLM_SAFETY_LITELLM_MODE": "shadow"})
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=False)
@@ -1223,7 +1321,9 @@ class TestKlaiKnowledgeHookKB010:
             ],
         }
 
-        result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+        result = await hook.async_pre_call_hook(
+            _make_user_api_key(), cache, data, "completion"
+        )
 
         safety = result["metadata"]["_klai_safety"]
         assert safety[0]["mode"] == "shadow"
@@ -1232,7 +1332,9 @@ class TestKlaiKnowledgeHookKB010:
         assert safety[0]["reason"] == "prompt_injection_pattern"
 
     @pytest.mark.asyncio
-    async def test_litellm_safety_enforce_blocks_direct_prompt_injection(self, monkeypatch):
+    async def test_litellm_safety_enforce_blocks_direct_prompt_injection(
+        self, monkeypatch
+    ):
         mod = _load_hook(monkeypatch, {"LLM_SAFETY_LITELLM_MODE": "enforce"})
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=False)
@@ -1247,7 +1349,9 @@ class TestKlaiKnowledgeHookKB010:
             ],
         }
 
-        result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+        result = await hook.async_pre_call_hook(
+            _make_user_api_key(), cache, data, "completion"
+        )
 
         # The hook short-circuits via LiteLLM's ``mock_response`` so the proxy
         # synthesises a normal assistant ``ModelResponse`` (no upstream LLM
@@ -1285,7 +1389,9 @@ class TestKlaiKnowledgeHookKB010:
             ],
         }
 
-        result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+        result = await hook.async_pre_call_hook(
+            _make_user_api_key(), cache, data, "completion"
+        )
 
         # Must NOT short-circuit: no mock_response refusal injected.
         assert "mock_response" not in result
@@ -1294,7 +1400,9 @@ class TestKlaiKnowledgeHookKB010:
         assert safety[0]["allowed"] is True
 
     @pytest.mark.asyncio
-    async def test_litellm_safety_enforce_blocks_indirect_context_injection(self, monkeypatch):
+    async def test_litellm_safety_enforce_blocks_indirect_context_injection(
+        self, monkeypatch
+    ):
         mod = _load_hook(monkeypatch, {"LLM_SAFETY_LITELLM_MODE": "enforce"})
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
@@ -1316,7 +1424,9 @@ class TestKlaiKnowledgeHookKB010:
         )
 
         with _patch_http(monkeypatch, retrieval_resp=retrieval_resp) as mock_client:
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
         # When ALL retrieved chunks get blocked we short-circuit via
         # ``mock_response`` so the user sees a normal assistant refusal.
@@ -1327,10 +1437,14 @@ class TestKlaiKnowledgeHookKB010:
         mock_client.post.assert_called_once()
         safety = result["metadata"]["_klai_safety"]
         context_decisions = [entry for entry in safety if entry["phase"] == "context"]
-        assert context_decisions and all(entry["allowed"] is False for entry in context_decisions)
+        assert context_decisions and all(
+            entry["allowed"] is False for entry in context_decisions
+        )
 
     @pytest.mark.asyncio
-    async def test_litellm_safety_filters_citation_metadata_for_dropped_context(self, monkeypatch):
+    async def test_litellm_safety_filters_citation_metadata_for_dropped_context(
+        self, monkeypatch
+    ):
         mod = _load_hook(monkeypatch, {"LLM_SAFETY_LITELLM_MODE": "enforce"})
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
@@ -1360,10 +1474,16 @@ class TestKlaiKnowledgeHookKB010:
         )
 
         with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
-        system_message = next(message for message in result["messages"] if message["role"] == "system")
-        assert "Install the widget by adding the script tag" in system_message["content"]
+        system_message = next(
+            message for message in result["messages"] if message["role"] == "system"
+        )
+        assert (
+            "Install the widget by adding the script tag" in system_message["content"]
+        )
         assert "Ignore previous instructions" not in system_message["content"]
 
         meta = result["metadata"]["_klai_kb_meta"]
@@ -1385,9 +1505,12 @@ class TestKlaiKnowledgeHookKB010:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=False)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat staat er in ons marketingbudget?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat staat er in ons marketingbudget?"}
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1395,7 +1518,9 @@ class TestKlaiKnowledgeHookKB010:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             mc.post.assert_not_called()
         assert "_klai_kb_meta" not in result
@@ -1407,7 +1532,9 @@ class TestKlaiKnowledgeHookKB010:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache()
 
-        data = {"messages": [{"role": "user", "content": "Vertel me over het project."}]}
+        data = {
+            "messages": [{"role": "user", "content": "Vertel me over het project."}]
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1415,7 +1542,9 @@ class TestKlaiKnowledgeHookKB010:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             mc.get.assert_not_called()
             mc.post.assert_not_called()
@@ -1429,9 +1558,15 @@ class TestKlaiKnowledgeHookKB010:
         # No cached value forces a live HTTP call
         cache = _make_cache(feature_enabled=None)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Geef me een samenvatting van de Q1-cijfers."}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Geef me een samenvatting van de Q1-cijfers.",
+                }
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1440,7 +1575,9 @@ class TestKlaiKnowledgeHookKB010:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             mc.post.assert_not_called()
         assert "_klai_kb_meta" not in result
@@ -1453,9 +1590,10 @@ class TestKlaiKnowledgeHookKB010:
         # Cache already contains result → no HTTP needed
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat is ons personeelsbeleid?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat is ons personeelsbeleid?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1464,7 +1602,9 @@ class TestKlaiKnowledgeHookKB010:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             # get() must NOT have been called (authz came from cache)
             mc.get.assert_not_called()
@@ -1476,9 +1616,15 @@ class TestKlaiKnowledgeHookKB010:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Toon me de vergadernotities van vorige week."}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Toon me de vergadernotities van vorige week.",
+                }
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1487,7 +1633,9 @@ class TestKlaiKnowledgeHookKB010:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             post_call = mc.post.call_args
             body = post_call.kwargs.get("json") or {}
@@ -1504,21 +1652,24 @@ class TestKlaiKnowledgeHookKB010:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat is het budget?"},
-            {
-                "role": "assistant",
-                "content": (
-                    "Het budget is 100k.\n\n"
-                    "**Bronnen**\n"
-                    "- [Budgetplan](https://docs.example/budget)\n\n"
-                    "**Agent activiteit**\n"
-                    "- Modus: Strict, alleen kennisbank.\n"
-                    "- Kennisbank geraadpleegd: 12 fragmenten opgehaald in 804 ms."
-                ),
-            },
-            {"role": "user", "content": "Wie heeft dat besloten?"},
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is het budget?"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Het budget is 100k.\n\n"
+                        "**Bronnen**\n"
+                        "- [Budgetplan](https://docs.example/budget)\n\n"
+                        "**Agent activiteit**\n"
+                        "- Modus: Strict, alleen kennisbank.\n"
+                        "- Kennisbank geraadpleegd: 12 fragmenten opgehaald in 804 ms."
+                    ),
+                },
+                {"role": "user", "content": "Wie heeft dat besloten?"},
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1527,7 +1678,9 @@ class TestKlaiKnowledgeHookKB010:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             body = mc.post.call_args.kwargs.get("json") or {}
             history = body.get("conversation_history", [])
@@ -1537,7 +1690,11 @@ class TestKlaiKnowledgeHookKB010:
             assert history[1]["content"] == "Het budget is 100k."
             assert "**Bronnen**" not in history[1]["content"]
             assert "**Agent activiteit**" not in history[1]["content"]
-            assistant = next(message for message in data["messages"] if message["role"] == "assistant")
+            assistant = next(
+                message
+                for message in data["messages"]
+                if message["role"] == "assistant"
+            )
             assert assistant["content"] == "Het budget is 100k."
 
     @pytest.mark.asyncio
@@ -1556,7 +1713,10 @@ class TestKlaiKnowledgeHookKB010:
             "messages": [
                 {"role": "user", "content": [{"type": "text", "text": uploaded_doc}]},
                 {"role": "assistant", "content": "Deze opdracht kost te veel tokens."},
-                {"role": "user", "content": [{"type": "text", "text": latest_question}]},
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": latest_question}],
+                },
             ],
         }
 
@@ -1581,7 +1741,9 @@ class TestKlaiKnowledgeHookKB010:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
         body = mc.post.call_args.kwargs.get("json") or {}
         history = body.get("conversation_history") or []
@@ -1611,19 +1773,22 @@ class TestKlaiKnowledgeHookProviderContext:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
         latest = "What does the uploaded policy say about approvals?"
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Attached document(s): policy.pdf\n\nFull extracted text",
-                    }
-                ],
-            },
-            {"role": "assistant", "content": "I can help with that document."},
-            {"role": "user", "content": latest},
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Attached document(s): policy.pdf\n\nFull extracted text",
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "I can help with that document."},
+                {"role": "user", "content": latest},
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1644,7 +1809,9 @@ class TestKlaiKnowledgeHookProviderContext:
             if m.get("role") in ("user", "assistant")
         )
         provider_text = "\n".join(
-            m.get("content", "") for m in provider_messages if isinstance(m.get("content"), str)
+            m.get("content", "")
+            for m in provider_messages
+            if isinstance(m.get("content"), str)
         )
         assert "Attached document(s):" not in provider_text
         assert mod._STALE_ATTACHMENT_CONTEXT_PLACEHOLDER in provider_text
@@ -1653,9 +1820,7 @@ class TestKlaiKnowledgeHookProviderContext:
         assert meta["stale_attachment_placeholders"] == 1
 
     @pytest.mark.asyncio
-    async def test_provider_context_defers_history_budget_to_router(
-        self, monkeypatch
-    ):
+    async def test_provider_context_defers_history_budget_to_router(self, monkeypatch):
         mod = _load_hook(
             monkeypatch,
             {"KLAI_CONTEXT_HISTORY_BUDGET_CHARS": "40"},
@@ -1663,11 +1828,14 @@ class TestKlaiKnowledgeHookProviderContext:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
         latest = "Please answer this exact latest question."
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "old user " + ("x" * 80)},
-            {"role": "assistant", "content": "old assistant " + ("y" * 80)},
-            {"role": "user", "content": latest},
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "old user " + ("x" * 80)},
+                {"role": "assistant", "content": "old assistant " + ("y" * 80)},
+                {"role": "user", "content": latest},
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1683,7 +1851,9 @@ class TestKlaiKnowledgeHookProviderContext:
         provider_messages = result["messages"]
         assert provider_messages[-1] == {"role": "user", "content": latest}
         provider_text = "\n".join(
-            m.get("content", "") for m in provider_messages if isinstance(m.get("content"), str)
+            m.get("content", "")
+            for m in provider_messages
+            if isinstance(m.get("content"), str)
         )
         assert "old user" in provider_text
         assert "old assistant" in provider_text
@@ -1693,27 +1863,30 @@ class TestKlaiKnowledgeHookProviderContext:
         assert meta["omitted_history_messages"] == 0
 
     @pytest.mark.asyncio
-    async def test_provider_context_budget_waits_for_librechat_scope(
-        self, monkeypatch
-    ):
+    async def test_provider_context_budget_waits_for_librechat_scope(self, monkeypatch):
         mod = _load_hook(
             monkeypatch,
             {"KLAI_CONTEXT_HISTORY_BUDGET_CHARS": "40"},
         )
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "old user " + ("x" * 80)},
-            {"role": "assistant", "content": "old assistant " + ("y" * 80)},
-            {"role": "user", "content": "Latest question remains."},
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "old user " + ("x" * 80)},
+                {"role": "assistant", "content": "old assistant " + ("y" * 80)},
+                {"role": "user", "content": "Latest question remains."},
+            ],
+        }
 
         result = await hook.async_pre_call_hook(
             _make_user_api_key(org_id=None), cache, data, "completion"
         )
 
         provider_text = "\n".join(
-            m.get("content", "") for m in result["messages"] if isinstance(m.get("content"), str)
+            m.get("content", "")
+            for m in result["messages"]
+            if isinstance(m.get("content"), str)
         )
         assert "old user" in provider_text
         assert "old assistant" in provider_text
@@ -1754,16 +1927,22 @@ class TestKlaiKnowledgeHookProviderContext:
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Attached document(s): stale.pdf\nbody"}
-                ],
-            },
-            {"role": "assistant", "content": "Earlier answer."},
-            {"role": "user", "content": "What did we decide after that?"},
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Attached document(s): stale.pdf\nbody",
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "Earlier answer."},
+                {"role": "user", "content": "What did we decide after that?"},
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1772,7 +1951,9 @@ class TestKlaiKnowledgeHookProviderContext:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
         body = mc.post.call_args.kwargs.get("json") or {}
         history_text = "\n".join(
@@ -1792,36 +1973,39 @@ class TestKlaiKnowledgeHookProviderContext:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
         long_answer = "Intro " + ("x" * 9000) + " outro"
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": "Earlier KB answer."},
-                    {
-                        "type": "tool_call",
-                        "tool_call": {
-                            "id": "call_1",
-                            "name": "search_knowledge_mcp_klai-knowledge",
-                            "args": '{"query":"Klai"}',
-                            "output": '{"internal":"result"}',
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Earlier KB answer."},
+                        {
+                            "type": "tool_call",
+                            "tool_call": {
+                                "id": "call_1",
+                                "name": "search_knowledge_mcp_klai-knowledge",
+                                "args": '{"query":"Klai"}',
+                                "output": '{"internal":"result"}',
+                            },
                         },
-                    },
-                ],
-                "tool_calls": [{"id": "call_1", "function": {"name": "search"}}],
-            },
-            {
-                "role": "tool",
-                "name": "search_knowledge_mcp_klai-knowledge",
-                "tool_call_id": "call_1",
-                "content": '{"internal":"result"}',
-            },
-            {"role": "user", "content": "Maak een uitgebreide handleiding."},
-            {"role": "assistant", "content": long_answer},
-            {
-                "role": "user",
-                "content": "Ga verder met deel twee en gebruik dezelfde brontrouw.",
-            },
-        ]}
+                    ],
+                    "tool_calls": [{"id": "call_1", "function": {"name": "search"}}],
+                },
+                {
+                    "role": "tool",
+                    "name": "search_knowledge_mcp_klai-knowledge",
+                    "tool_call_id": "call_1",
+                    "content": '{"internal":"result"}',
+                },
+                {"role": "user", "content": "Maak een uitgebreide handleiding."},
+                {"role": "assistant", "content": long_answer},
+                {
+                    "role": "user",
+                    "content": "Ga verder met deel twee en gebruik dezelfde brontrouw.",
+                },
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -1882,9 +2066,10 @@ class TestKlaiKnowledgeHookProviderContext:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat zijn onze bedrijfswaarden?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat zijn onze bedrijfswaarden?"}],
+        }
 
         retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": True})
 
@@ -1895,14 +2080,21 @@ class TestKlaiKnowledgeHookProviderContext:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
-        system_msgs = [m for m in result.get("messages", []) if m.get("role") == "system"]
+        system_msgs = [
+            m for m in result.get("messages", []) if m.get("role") == "system"
+        ]
         assert len(system_msgs) == 1, "multilingual foundation must be prepended"
         sys_content = system_msgs[0]["content"]
         # GROUNDED_CHAT_SYSTEM_PROMPT signature line — its presence proves the
         # multilingual contract is in effect on the bypassed path too.
-        assert "Detect the language of the user's most recent SUBSTANTIVE message" in sys_content
+        assert (
+            "Detect the language of the user's most recent SUBSTANTIVE message"
+            in sys_content
+        )
         # No KB context block was injected (the bypassed branch is the whole point).
         assert "Klai Knowledge Base" not in sys_content
         assert "[End knowledge base context]" not in sys_content
@@ -1922,9 +2114,12 @@ class TestKlaiKnowledgeHookProviderContext:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat is de status van project Alpha?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is de status van project Alpha?"}
+            ],
+        }
 
         chunks = [
             {
@@ -1951,7 +2146,9 @@ class TestKlaiKnowledgeHookProviderContext:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
         system_content = result["messages"][0]["content"]
         assert "[org]" in system_content
@@ -1964,9 +2161,12 @@ class TestKlaiKnowledgeHookProviderContext:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Geef een overzicht van de Q2-resultaten."}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Geef een overzicht van de Q2-resultaten."}
+            ],
+        }
 
         chunks = [
             {
@@ -1986,7 +2186,9 @@ class TestKlaiKnowledgeHookProviderContext:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
         # _klai_kb_meta lives under data["metadata"] for downstream hooks.
         meta = result.get("metadata", {}).get("_klai_kb_meta")
@@ -2000,6 +2202,7 @@ class TestKlaiKnowledgeHookProviderContext:
 
 
 # ─── Token router test ────────────────────────────────────────────────────────
+
 
 class TestTokenRouterKB010:
     @pytest.mark.asyncio
@@ -2137,11 +2340,15 @@ class TestTokenRouterKB010:
 
         router = custom_router.TokenRouter()
         latest = "latest stays exact"
-        data = {"model": "klai-large", "user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "old user"},
-            {"role": "assistant", "content": "old assistant"},
-            {"role": "user", "content": latest},
-        ]}
+        data = {
+            "model": "klai-large",
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "old user"},
+                {"role": "assistant", "content": "old assistant"},
+                {"role": "user", "content": latest},
+            ],
+        }
 
         result = await router.async_pre_call_hook(MagicMock(), None, data, "completion")
 
@@ -2188,7 +2395,9 @@ class TestTokenRouterKB010:
 
         assert result["model"] == "klai-large"
         assert result["messages"] == messages
-        assert result["metadata"]["_klai_router_meta"]["provider_context_applied"] is False
+        assert (
+            result["metadata"]["_klai_router_meta"]["provider_context_applied"] is False
+        )
         assert "_klai_context_meta" not in result["metadata"]
 
     @pytest.mark.asyncio
@@ -2259,7 +2468,9 @@ class TestTokenRouterKB010:
             message for message in provider_messages if message["role"] == "assistant"
         )
         assert assistant_message["tool_calls"][0]["id"] == "call_1"
-        assert result["metadata"]["_klai_router_meta"]["provider_context_applied"] is True
+        assert (
+            result["metadata"]["_klai_router_meta"]["provider_context_applied"] is True
+        )
         context_meta = result["metadata"]["_klai_context_meta"]
         assert context_meta["model_profile"] == "klai-large"
         assert context_meta["active_tool_results_preserved"] == 1
@@ -2303,7 +2514,10 @@ class TestTokenRouterKB010:
 
         hook = klai_knowledge.KlaiKnowledgeHook()
         after_hook = await hook.async_pre_call_hook(
-            _make_user_api_key(org_id=None), _make_cache(feature_enabled=True), data, "completion"
+            _make_user_api_key(org_id=None),
+            _make_cache(feature_enabled=True),
+            data,
+            "completion",
         )
         result = await custom_router.TokenRouter().async_pre_call_hook(
             MagicMock(), None, after_hook, "completion"
@@ -2360,7 +2574,10 @@ class TestTokenRouterKB010:
 
         hook = klai_knowledge.KlaiKnowledgeHook()
         after_hook = await hook.async_pre_call_hook(
-            _make_user_api_key(org_id=None), _make_cache(feature_enabled=True), data, "completion"
+            _make_user_api_key(org_id=None),
+            _make_cache(feature_enabled=True),
+            data,
+            "completion",
         )
         result = await custom_router.TokenRouter().async_pre_call_hook(
             MagicMock(), None, after_hook, "completion"
@@ -2384,9 +2601,7 @@ class TestTokenRouterKB010:
         assert "mistral_tool_call_parity_repaired" in context_meta["reason_codes"]
 
     @pytest.mark.asyncio
-    async def test_router_provider_context_assembly_fails_open(
-        self, monkeypatch
-    ):
+    async def test_router_provider_context_assembly_fails_open(self, monkeypatch):
         litellm_mod = sys.modules["litellm"]
         litellm_mod.token_counter = MagicMock(return_value=1)
 
@@ -2399,7 +2614,9 @@ class TestTokenRouterKB010:
             def assemble(self, *_, **__):
                 raise RuntimeError("boom")
 
-        monkeypatch.setattr(custom_router, "_KLAI_CONTEXT_ORCHESTRATOR", BrokenOrchestrator())
+        monkeypatch.setattr(
+            custom_router, "_KLAI_CONTEXT_ORCHESTRATOR", BrokenOrchestrator()
+        )
         router = custom_router.TokenRouter()
         messages = [{"role": "user", "content": "hello"}]
         data = {
@@ -2572,7 +2789,9 @@ class TestFireGapEvent:
 
         mod = _load_hook(monkeypatch, mock_fire_and_forget=False)
 
-        with patch.object(_asyncio, "get_running_loop", side_effect=RuntimeError("no event loop")):
+        with patch.object(
+            _asyncio, "get_running_loop", side_effect=RuntimeError("no event loop")
+        ):
             # Should not raise
             mod._fire_gap_event(
                 org_id="42",
@@ -2594,9 +2813,12 @@ class TestGapIntegration:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What is the company vacation policy?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "What is the company vacation policy?"}
+            ],
+        }
 
         retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
 
@@ -2608,10 +2830,15 @@ class TestGapIntegration:
             cls.return_value = mc
 
             with patch.object(mod, "_fire_gap_event") as mock_fire:
-                await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+                await hook.async_pre_call_hook(
+                    _make_user_api_key(), cache, data, "completion"
+                )
                 mock_fire.assert_called_once()
                 call_kwargs = mock_fire.call_args
-                assert call_kwargs.kwargs.get("gap_type") == "hard" or call_kwargs[1].get("gap_type") == "hard"
+                assert (
+                    call_kwargs.kwargs.get("gap_type") == "hard"
+                    or call_kwargs[1].get("gap_type") == "hard"
+                )
 
     @pytest.mark.asyncio
     async def test_soft_gap_fires_event(self, monkeypatch):
@@ -2620,12 +2847,21 @@ class TestGapIntegration:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "How do I configure the advanced settings?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "How do I configure the advanced settings?"}
+            ],
+        }
 
         chunks = [
-            {"text": "Some text.", "reranker_score": 0.1, "score": 0.2, "scope": "org", "metadata": {"title": "Settings", "kb_slug": "docs"}},
+            {
+                "text": "Some text.",
+                "reranker_score": 0.1,
+                "score": 0.2,
+                "scope": "org",
+                "metadata": {"title": "Settings", "kb_slug": "docs"},
+            },
         ]
         retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
 
@@ -2637,10 +2873,15 @@ class TestGapIntegration:
             cls.return_value = mc
 
             with patch.object(mod, "_fire_gap_event") as mock_fire:
-                await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+                await hook.async_pre_call_hook(
+                    _make_user_api_key(), cache, data, "completion"
+                )
                 mock_fire.assert_called_once()
                 call_kwargs = mock_fire.call_args
-                assert call_kwargs.kwargs.get("gap_type") == "soft" or call_kwargs[1].get("gap_type") == "soft"
+                assert (
+                    call_kwargs.kwargs.get("gap_type") == "soft"
+                    or call_kwargs[1].get("gap_type") == "soft"
+                )
 
     @pytest.mark.asyncio
     async def test_success_does_not_fire_event(self, monkeypatch):
@@ -2649,12 +2890,19 @@ class TestGapIntegration:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What is our leave policy?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What is our leave policy?"}],
+        }
 
         chunks = [
-            {"text": "Leave policy info.", "reranker_score": 0.9, "score": 0.8, "scope": "org", "metadata": {"title": "Leave"}},
+            {
+                "text": "Leave policy info.",
+                "reranker_score": 0.9,
+                "score": 0.8,
+                "scope": "org",
+                "metadata": {"title": "Leave"},
+            },
         ]
         retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
 
@@ -2666,7 +2914,9 @@ class TestGapIntegration:
             cls.return_value = mc
 
             with patch.object(mod, "_fire_gap_event") as mock_fire:
-                await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+                await hook.async_pre_call_hook(
+                    _make_user_api_key(), cache, data, "completion"
+                )
                 mock_fire.assert_not_called()
 
     @pytest.mark.asyncio
@@ -2677,9 +2927,7 @@ class TestGapIntegration:
         cache = _make_cache(feature_enabled=True)
 
         # No "user" key in data
-        data = {"messages": [
-            {"role": "user", "content": "What is our leave policy?"}
-        ]}
+        data = {"messages": [{"role": "user", "content": "What is our leave policy?"}]}
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2688,7 +2936,9 @@ class TestGapIntegration:
             cls.return_value = mc
 
             with patch.object(mod, "_fire_gap_event") as mock_fire:
-                await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+                await hook.async_pre_call_hook(
+                    _make_user_api_key(), cache, data, "completion"
+                )
                 mock_fire.assert_not_called()
 
     @pytest.mark.asyncio
@@ -2698,9 +2948,10 @@ class TestGapIntegration:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "What is our leave policy?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What is our leave policy?"}],
+        }
 
         uak = MagicMock()
         uak.metadata = {}  # no org_id
@@ -2727,17 +2978,20 @@ class TestKlaiKnowledgeHookKB013:
         """REQ-E4: kb_retrieval_enabled=False → no retrieval-api call, no injection."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature={
-            "enabled": True,
-            "kb_retrieval_enabled": False,
-            "kb_personal_enabled": True,
-            "kb_slugs_filter": None,
-            "version": 0,
-        })
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": False,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "version": 0,
+            }
+        )
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat is ons personeelsbeleid?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat is ons personeelsbeleid?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2745,7 +2999,9 @@ class TestKlaiKnowledgeHookKB013:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             mc.post.assert_not_called()
         assert "_klai_kb_meta" not in result
@@ -2755,17 +3011,22 @@ class TestKlaiKnowledgeHookKB013:
         """REQ-E5: kb_personal_enabled=False → scope='org' in retrieval request."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature={
-            "enabled": True,
-            "kb_retrieval_enabled": True,
-            "kb_personal_enabled": False,
-            "kb_slugs_filter": None,
-            "version": 0,
-        })
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": None,
+                "version": 0,
+            }
+        )
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Toon me de organisatiestructuur."}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Toon me de organisatiestructuur."}
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2774,7 +3035,9 @@ class TestKlaiKnowledgeHookKB013:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             body = mc.post.call_args.kwargs.get("json") or {}
             assert body.get("scope") == "org"
@@ -2784,17 +3047,20 @@ class TestKlaiKnowledgeHookKB013:
         """REQ-E6: kb_personal_enabled=True → scope='both' in retrieval request."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature={
-            "enabled": True,
-            "kb_retrieval_enabled": True,
-            "kb_personal_enabled": True,
-            "kb_slugs_filter": None,
-            "version": 0,
-        })
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "version": 0,
+            }
+        )
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat is het budget voor Q3?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat is het budget voor Q3?"}],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2803,7 +3069,9 @@ class TestKlaiKnowledgeHookKB013:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             body = mc.post.call_args.kwargs.get("json") or {}
             assert body.get("scope") == "both"
@@ -2813,17 +3081,22 @@ class TestKlaiKnowledgeHookKB013:
         """REQ-E7: kb_slugs_filter set → kb_slugs forwarded to retrieval-api."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature={
-            "enabled": True,
-            "kb_retrieval_enabled": True,
-            "kb_personal_enabled": True,
-            "kb_slugs_filter": ["engineering", "product"],
-            "version": 0,
-        })
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": ["engineering", "product"],
+                "version": 0,
+            }
+        )
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Hoe werkt de deployment pipeline?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Hoe werkt de deployment pipeline?"}
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2832,7 +3105,9 @@ class TestKlaiKnowledgeHookKB013:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             body = mc.post.call_args.kwargs.get("json") or {}
             assert body.get("kb_slugs") == ["engineering", "product"]
@@ -2842,17 +3117,22 @@ class TestKlaiKnowledgeHookKB013:
         """When kb_slugs_filter=None, kb_slugs key absent from retrieval request."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature={
-            "enabled": True,
-            "kb_retrieval_enabled": True,
-            "kb_personal_enabled": True,
-            "kb_slugs_filter": None,
-            "version": 0,
-        })
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "version": 0,
+            }
+        )
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Geef me een overzicht van de roadmap."}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Geef me een overzicht van de roadmap."}
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2861,7 +3141,9 @@ class TestKlaiKnowledgeHookKB013:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             body = mc.post.call_args.kwargs.get("json") or {}
             assert "kb_slugs" not in body
@@ -2871,17 +3153,22 @@ class TestKlaiKnowledgeHookKB013:
         """Two-level cache hit: version pointer + feature dict both warm → no portal GET."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature={
-            "enabled": True,
-            "kb_retrieval_enabled": True,
-            "kb_personal_enabled": True,
-            "kb_slugs_filter": None,
-            "version": 5,
-        })
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "version": 5,
+            }
+        )
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat zijn de KPIs voor dit kwartaal?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat zijn de KPIs voor dit kwartaal?"}
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2890,7 +3177,9 @@ class TestKlaiKnowledgeHookKB013:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             mc.get.assert_not_called()
 
@@ -2902,9 +3191,10 @@ class TestKlaiKnowledgeHookKB013:
         # Cache miss — forces live portal call
         cache = _make_cache(feature_enabled=None)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat is de winstmarge van Q2?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat is de winstmarge van Q2?"}],
+        }
 
         # "Old-format" portal response: only the enabled flag and the
         # resolved zitadel_user_id, missing the optional KB-pref fields
@@ -2923,7 +3213,9 @@ class TestKlaiKnowledgeHookKB013:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             # kb_retrieval_enabled defaults to True → retrieval call is made
             mc.post.assert_called_once()
@@ -2938,9 +3230,12 @@ class TestKlaiKnowledgeHookKB013:
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=None)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat is de status van de migratie?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is de status van de migratie?"}
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2949,7 +3244,9 @@ class TestKlaiKnowledgeHookKB013:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             mc.post.assert_not_called()
         assert "_klai_kb_meta" not in result
@@ -2985,9 +3282,12 @@ class TestKlaiKnowledgeHookKB013:
 
         cache.async_get_cache = AsyncMock(side_effect=_get)
 
-        data = {"user": "aabbcc112233445566778899", "messages": [
-            {"role": "user", "content": "Wat is de status van de migratie?"}
-        ]}
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is de status van de migratie?"}
+            ],
+        }
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -2997,7 +3297,9 @@ class TestKlaiKnowledgeHookKB013:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
 
             mc.post.assert_called_once()
         body = mc.post.call_args.kwargs.get("json") or {}
@@ -3096,12 +3398,12 @@ class TestKlaiKnowledgeHookMultilingualPhase4:
         assert "ANSWER FORMAT — always follow this" in sys_content
         # Old NL anchors must not regress (they were canonical pre-Phase 4).
         assert "ANTWOORDFORMAAT — volg dit ALTIJD" not in sys_content
-        assert "Klai Kennisbank — gebruik dit als aanvullende context" not in sys_content
+        assert (
+            "Klai Kennisbank — gebruik dit als aanvullende context" not in sys_content
+        )
 
     @pytest.mark.asyncio
-    async def test_kb_header_broad_uses_english_anchor(
-        self, monkeypatch, _kb_chunks
-    ):
+    async def test_kb_header_broad_uses_english_anchor(self, monkeypatch, _kb_chunks):
         """REQ-10: broad-mode (default) header is the English Phase 4 anchor."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
@@ -3134,9 +3436,7 @@ class TestKlaiKnowledgeHookMultilingualPhase4:
         )
 
     @pytest.mark.asyncio
-    async def test_kb_header_narrow_uses_english_anchor(
-        self, monkeypatch, _kb_chunks
-    ):
+    async def test_kb_header_narrow_uses_english_anchor(self, monkeypatch, _kb_chunks):
         """REQ-10: narrow-mode header is the English Phase 4 anchor when
         ``kb_narrow=True``.
         """
@@ -3532,7 +3832,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         data = {
             "user": "aabbcc112233445566778899",
             "messages": [
-                {"role": "user", "content": "Heej hoe voeg ik een nieuwe gebruiker toe?"}
+                {
+                    "role": "user",
+                    "content": "Heej hoe voeg ik een nieuwe gebruiker toe?",
+                }
             ],
         }
         chunks = [
@@ -3630,7 +3933,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert "NEVER invent or write a URL" in format_section
         assert "The application adds citations after generation" in format_section
-        assert "NEVER create, guess, search for, or suggest an image URL" in format_section
+        assert (
+            "NEVER create, guess, search for, or suggest an image URL" in format_section
+        )
         assert "no explicit image tag is present" in format_section
         assert "image from the knowledge base" in format_section
         assert "no knowledge-base image is available" in format_section
@@ -3664,9 +3969,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         data = {
             "user": "aabbcc112233445566778899",
             "stream": True,
-            "messages": [
-                {"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}
-            ],
+            "messages": [{"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}],
         }
         chunks = [
             {
@@ -3698,7 +4001,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert kb_meta["citable_sources_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_explicit_deterministic_mode_does_not_override_streaming_calls(self, monkeypatch):
+    async def test_explicit_deterministic_mode_does_not_override_streaming_calls(
+        self, monkeypatch
+    ):
         """The opt-in non-streaming mode must not break callers that already requested streaming."""
         mod = _load_hook(
             monkeypatch,
@@ -3710,9 +4015,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         data = {
             "user": "aabbcc112233445566778899",
             "stream": True,
-            "messages": [
-                {"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}
-            ],
+            "messages": [{"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}],
         }
         chunks = [
             {
@@ -3742,7 +4045,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert kb_meta["original_stream"] is True
         assert kb_meta["render_mode"] == "streaming_guard"
 
-    def test_legacy_stream_guard_env_alias_resolves_to_streaming_guard(self, monkeypatch):
+    def test_legacy_stream_guard_env_alias_resolves_to_streaming_guard(
+        self, monkeypatch
+    ):
         """The old env value remains accepted but no longer leaks into new metadata."""
         mod = _load_hook(
             monkeypatch,
@@ -3752,7 +4057,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert mod.KLAI_KB_CHAT_RENDER_MODE == "streaming_guard"
 
     @pytest.mark.asyncio
-    async def test_explicit_deterministic_mode_for_non_streaming_calls(self, monkeypatch):
+    async def test_explicit_deterministic_mode_for_non_streaming_calls(
+        self, monkeypatch
+    ):
         """Non-streaming deterministic mode remains an explicit opt-in for compatible callers."""
         mod = _load_hook(
             monkeypatch,
@@ -3763,9 +4070,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}
-            ],
+            "messages": [{"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}],
         }
         chunks = [
             {
@@ -3831,7 +4136,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             )
 
         sys_content = self._system_msg(result)
-        assert "Only include image markdown if a chunk below already contains" in sys_content
+        assert (
+            "Only include image markdown if a chunk below already contains"
+            in sys_content
+        )
         assert (
             "![afbeelding 1](https://getklai.getklai.com/kb-images/org/images/support/diagram.png)"
             in sys_content
@@ -3915,7 +4223,11 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             "2": "https://getklai.com/docs/company/steward-ownership",
             "3": "https://getklai.com/docs/company/mission",
         }
-        assert [chunk["chunk_id"] for chunk in kb_meta["citation_chunks"]] == ["c1", "c2", "c3"]
+        assert [chunk["chunk_id"] for chunk in kb_meta["citation_chunks"]] == [
+            "c1",
+            "c2",
+            "c3",
+        ]
         assert [chunk["source_url"] for chunk in kb_meta["citation_chunks"]] == [
             "https://getklai.com/docs/company/steward-ownership",
             "https://getklai.com/docs/company/steward-ownership",
@@ -3923,7 +4235,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_composes_deterministic_sources(self, monkeypatch, caplog):
+    async def test_post_call_guard_composes_deterministic_sources(
+        self, monkeypatch, caplog
+    ):
         """The proxy post-call hook replaces model links with retrieved sources."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
@@ -4247,7 +4561,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert returned is response
         message = response.choices[0].message
-        assert message.content == "Op de screenshot staat een foutmelding over inloggen."
+        assert (
+            message.content == "Op de screenshot staat een foutmelding over inloggen."
+        )
         assert "**Bronnen**" not in message.content
         assert "Screenshot handleiding" not in message.content
         assert getattr(message, "sources", []) == []
@@ -4337,9 +4653,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         caplog.set_level("WARNING", logger="klai_knowledge")
         response = SimpleNamespace(
             choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(content="Klai is open source.")
-                )
+                SimpleNamespace(message=SimpleNamespace(content="Klai is open source."))
             ]
         )
         data = {
@@ -4474,7 +4788,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "**Bronnen**" not in content
         assert "Gebruikte bronnen" not in content
         assert "**Agent activiteit**" in content
-        assert "- Kennisbank geraadpleegd: 20 fragmenten opgehaald in 416 ms." in content
+        assert (
+            "- Kennisbank geraadpleegd: 20 fragmenten opgehaald in 416 ms." in content
+        )
         assert "- Bronselectie: 0 bronnen gekoppeld" in content
         assert "- Retrieval score: low." in content
         assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
@@ -4498,11 +4814,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         caplog.set_level("WARNING", logger="klai_knowledge")
         original_answer = "Klai is open source."
         response = SimpleNamespace(
-            choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(content=original_answer)
-                )
-            ]
+            choices=[SimpleNamespace(message=SimpleNamespace(content=original_answer))]
         )
         data = {
             "metadata": {
@@ -4533,14 +4845,18 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert response.choices[0].message.content == original_answer
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_refuses_empty_evidence_pack_in_narrow_mode(self, monkeypatch):
+    async def test_post_call_guard_refuses_empty_evidence_pack_in_narrow_mode(
+        self, monkeypatch
+    ):
         """Narrow mode: empty evidence pack still triggers the canned refuse."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         response = SimpleNamespace(
             choices=[
                 SimpleNamespace(
-                    message=SimpleNamespace(content="Je kunt dit via het admin-scherm doen.")
+                    message=SimpleNamespace(
+                        content="Je kunt dit via het admin-scherm doen."
+                    )
                 )
             ]
         )
@@ -4629,7 +4945,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert returned is response
         content = response.choices[0].message.content
-        assert content.startswith("Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen.")
+        assert content.startswith(
+            "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+        )
         assert "**Bronnen**" not in content
         assert "**Agent activiteit**" in content
         assert "add-sources" not in content
@@ -4638,7 +4956,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "kb_citations_no_citable_sources" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_streaming_post_call_buffers_until_deterministic_sources(self, monkeypatch):
+    async def test_streaming_post_call_buffers_until_deterministic_sources(
+        self, monkeypatch
+    ):
         """Streaming chunks must not leak model-authored links before final composition."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
@@ -4671,11 +4991,27 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             }
         }
 
-        first = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="Zie diagram [fake]("), finish_reason=None)])
-        second = SimpleNamespace(
-            choices=[SimpleNamespace(delta=SimpleNamespace(content="https://bad.example)."), finish_reason=None)]
+        first = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content="Zie diagram [fake]("),
+                    finish_reason=None,
+                )
+            ]
         )
-        final = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=""), finish_reason="stop")])
+        second = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content="https://bad.example)."),
+                    finish_reason=None,
+                )
+            ]
+        )
+        final = SimpleNamespace(
+            choices=[
+                SimpleNamespace(delta=SimpleNamespace(content=""), finish_reason="stop")
+            ]
+        )
 
         async def stream():
             for item in (first, second, final):
@@ -4683,7 +5019,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         streamed = [
             item
-            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
         ]
 
         assert len(streamed) == 4
@@ -4697,7 +5035,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "https://bad.example" not in footer.choices[0].delta.content
         assert "fake." in footer.choices[0].delta.content
         assert "**Bronnen**" in footer.choices[0].delta.content
-        assert "- [Diagram](https://docs.getklai.com/diagram)" in footer.choices[0].delta.content
+        assert (
+            "- [Diagram](https://docs.getklai.com/diagram)"
+            in footer.choices[0].delta.content
+        )
         assert "**Agent activiteit**" in footer.choices[0].delta.content
         assert footer.choices[0].delta.sources == [
             {
@@ -4711,7 +5052,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert not hasattr(final.choices[0].delta, "sources")
 
     @pytest.mark.asyncio
-    async def test_streaming_post_call_without_trusted_sources_fails_closed(self, monkeypatch):
+    async def test_streaming_post_call_without_trusted_sources_fails_closed(
+        self, monkeypatch
+    ):
         """Strict streaming post-call never reconstructs citations from raw chunks."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
@@ -4738,14 +5081,18 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             }
         }
 
-        only = {"choices": [{"delta": {"content": "Zie diagram."}, "finish_reason": None}]}
+        only = {
+            "choices": [{"delta": {"content": "Zie diagram."}, "finish_reason": None}]
+        }
 
         async def stream():
             yield only
 
         streamed = [
             item
-            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
         ]
 
         assert streamed == [only]
@@ -4757,7 +5104,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "**Bronnen**" not in content
 
     @pytest.mark.asyncio
-    async def test_streaming_post_call_flushes_when_iterator_closes_without_finish_reason(self, monkeypatch):
+    async def test_streaming_post_call_flushes_when_iterator_closes_without_finish_reason(
+        self, monkeypatch
+    ):
         """Provider streams should still render citations if no explicit final chunk is sent."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
@@ -4789,14 +5138,18 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             }
         }
 
-        only = {"choices": [{"delta": {"content": "Zie diagram."}, "finish_reason": None}]}
+        only = {
+            "choices": [{"delta": {"content": "Zie diagram."}, "finish_reason": None}]
+        }
 
         async def stream():
             yield only
 
         streamed = [
             item
-            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
         ]
 
         assert streamed == [only]
@@ -4859,7 +5212,11 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             }
         }
 
-        first = {"choices": [{"delta": {"content": "Frank Wolters is "}, "finish_reason": None}]}
+        first = {
+            "choices": [
+                {"delta": {"content": "Frank Wolters is "}, "finish_reason": None}
+            ]
+        }
         final = {
             "choices": [
                 {
@@ -4875,7 +5232,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         streamed = [
             item
-            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
         ]
 
         assert len(streamed) == 3
@@ -4891,7 +5250,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "- CV_Jantine_Doornbos.pdf" in footer_delta["content"]
         assert "**Agent activiteit**" in footer_delta["content"]
         assert "- Modus: Strict, alleen kennisbank." in footer_delta["content"]
-        assert "- Retrieval score: low; bronfragmenten gekoppeld." in footer_delta["content"]
+        assert (
+            "- Retrieval score: low; bronfragmenten gekoppeld."
+            in footer_delta["content"]
+        )
         assert footer_delta["sources"] == [
             {
                 "label": "1",
@@ -4965,7 +5327,11 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
             }
         }
 
-        first = {"choices": [{"delta": {"content": "Frank Wolters is "}, "finish_reason": None}]}
+        first = {
+            "choices": [
+                {"delta": {"content": "Frank Wolters is "}, "finish_reason": None}
+            ]
+        }
         final = {
             "choices": [
                 {
@@ -4981,7 +5347,9 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         streamed = [
             item
-            async for item in hook.async_post_call_streaming_iterator_hook(None, stream(), data)
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
         ]
 
         assert len(streamed) == 3
@@ -4990,7 +5358,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         footer_delta = streamed[1]["choices"][0]["delta"]
         assert streamed[1]["choices"][0]["finish_reason"] is None
         assert "- Verantwoordelijkheden per bouwblok.pdf" in footer_delta["content"]
-        assert footer_delta["sources"][0]["title"] == "Verantwoordelijkheden per bouwblok.pdf"
+        assert (
+            footer_delta["sources"][0]["title"]
+            == "Verantwoordelijkheden per bouwblok.pdf"
+        )
         assert footer_delta["sources"][0]["artifact_id"] == "artifact-responsibilities"
         assert final["choices"][0]["finish_reason"] == "stop"
         assert final["choices"][0]["delta"] == {"content": ""}
@@ -5008,12 +5379,16 @@ class TestKlaiKnowledgeHookOpenMode:
     def _assert_open_kb_foundation(self, sys_content: str) -> None:
         assert "knowledge assistant in Open mode" in sys_content
         assert "Open mode is not KB-only" in sys_content
-        assert "Don't guess. Don't fill the gap with general knowledge." not in sys_content
+        assert (
+            "Don't guess. Don't fill the gap with general knowledge." not in sys_content
+        )
 
     def _assert_general_foundation(self, sys_content: str) -> None:
         assert "general-purpose assistant" in sys_content
         assert "Do NOT add [n] citations" in sys_content
-        assert "Don't guess. Don't fill the gap with general knowledge." not in sys_content
+        assert (
+            "Don't guess. Don't fill the gap with general knowledge." not in sys_content
+        )
 
     def _assert_strict_no_kb_refusal(self, sys_content: str, reason: str) -> None:
         assert "You are Klai AI, a knowledge assistant" in sys_content
@@ -5036,7 +5411,9 @@ class TestKlaiKnowledgeHookOpenMode:
         ]
 
     @pytest.mark.asyncio
-    async def test_open_with_kb_hits_uses_open_kb_foundation(self, monkeypatch, _kb_chunks):
+    async def test_open_with_kb_hits_uses_open_kb_foundation(
+        self, monkeypatch, _kb_chunks
+    ):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
@@ -5046,7 +5423,11 @@ class TestKlaiKnowledgeHookOpenMode:
             "messages": [{"role": "user", "content": "Hoe werkt privacy in Klai?"}],
         }
         retrieval_resp = _make_resp(
-            {"chunks": _kb_chunks, "retrieval_bypassed": False, "confidence_band": "high"}
+            {
+                "chunks": _kb_chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "high",
+            }
         )
 
         with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
@@ -5090,7 +5471,9 @@ class TestKlaiKnowledgeHookOpenMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+            "messages": [
+                {"role": "user", "content": "Maak een implementatiehandleiding."}
+            ],
         }
 
         result = await hook.async_pre_call_hook(
@@ -5100,31 +5483,41 @@ class TestKlaiKnowledgeHookOpenMode:
         self._assert_general_foundation(self._system_msg(result))
 
     @pytest.mark.asyncio
-    async def test_strict_no_entitlement_refuses_instead_of_becoming_open(self, monkeypatch):
+    async def test_strict_no_entitlement_refuses_instead_of_becoming_open(
+        self, monkeypatch
+    ):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature={"enabled": False, "kb_narrow": True})
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+            "messages": [
+                {"role": "user", "content": "Maak een implementatiehandleiding."}
+            ],
         }
 
         result = await hook.async_pre_call_hook(
             _make_user_api_key(), cache, data, "completion"
         )
 
-        self._assert_strict_no_kb_refusal(self._system_msg(result), "kb-feature-disabled")
+        self._assert_strict_no_kb_refusal(
+            self._system_msg(result), "kb-feature-disabled"
+        )
 
     @pytest.mark.asyncio
-    async def test_kb_retrieval_disabled_uses_general_prompt_not_grounded(self, monkeypatch):
+    async def test_kb_retrieval_disabled_uses_general_prompt_not_grounded(
+        self, monkeypatch
+    ):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature={"kb_retrieval_enabled": False})
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+            "messages": [
+                {"role": "user", "content": "Maak een implementatiehandleiding."}
+            ],
         }
 
         with _patch_http(monkeypatch, retrieval_resp=_make_resp({})) as mock_client:
@@ -5136,14 +5529,18 @@ class TestKlaiKnowledgeHookOpenMode:
         mock_client.post.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_strict_retrieval_disabled_refuses_without_retrieving(self, monkeypatch):
+    async def test_strict_retrieval_disabled_refuses_without_retrieving(
+        self, monkeypatch
+    ):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature={"kb_retrieval_enabled": False, "kb_narrow": True})
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+            "messages": [
+                {"role": "user", "content": "Maak een implementatiehandleiding."}
+            ],
         }
 
         with _patch_http(monkeypatch, retrieval_resp=_make_resp({})) as mock_client:
@@ -5151,11 +5548,15 @@ class TestKlaiKnowledgeHookOpenMode:
                 _make_user_api_key(), cache, data, "completion"
             )
 
-        self._assert_strict_no_kb_refusal(self._system_msg(result), "kb-retrieval-disabled")
+        self._assert_strict_no_kb_refusal(
+            self._system_msg(result), "kb-retrieval-disabled"
+        )
         mock_client.post.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_strict_all_scopes_disabled_refuses_without_retrieving(self, monkeypatch):
+    async def test_strict_all_scopes_disabled_refuses_without_retrieving(
+        self, monkeypatch
+    ):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(
@@ -5168,7 +5569,9 @@ class TestKlaiKnowledgeHookOpenMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+            "messages": [
+                {"role": "user", "content": "Maak een implementatiehandleiding."}
+            ],
         }
 
         with _patch_http(monkeypatch, retrieval_resp=_make_resp({})) as mock_client:
@@ -5176,11 +5579,15 @@ class TestKlaiKnowledgeHookOpenMode:
                 _make_user_api_key(), cache, data, "completion"
             )
 
-        self._assert_strict_no_kb_refusal(self._system_msg(result), "kb-scopes-disabled")
+        self._assert_strict_no_kb_refusal(
+            self._system_msg(result), "kb-scopes-disabled"
+        )
         mock_client.post.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_open_zero_chunks_after_kb_use_allows_general_follow_up(self, monkeypatch):
+    async def test_open_zero_chunks_after_kb_use_allows_general_follow_up(
+        self, monkeypatch
+    ):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
@@ -5193,7 +5600,10 @@ class TestKlaiKnowledgeHookOpenMode:
                     "role": "assistant",
                     "content": "De kennisbank noemt bewaartermijnen.\n\n**Bronnen**\n- Privacybeleid",
                 },
-                {"role": "user", "content": "Maak nu een algemene implementatiehandleiding."},
+                {
+                    "role": "user",
+                    "content": "Maak nu een algemene implementatiehandleiding.",
+                },
             ],
         }
         retrieval_resp = _make_resp(
@@ -5213,17 +5623,25 @@ class TestKlaiKnowledgeHookOpenMode:
         assert result["metadata"]["_klai_kb_meta"]["no_citable_sources"] is False
 
     @pytest.mark.asyncio
-    async def test_open_low_confidence_injection_stays_open(self, monkeypatch, _kb_chunks):
+    async def test_open_low_confidence_injection_stays_open(
+        self, monkeypatch, _kb_chunks
+    ):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+            "messages": [
+                {"role": "user", "content": "Maak een implementatiehandleiding."}
+            ],
         }
         retrieval_resp = _make_resp(
-            {"chunks": _kb_chunks, "retrieval_bypassed": False, "confidence_band": "low"}
+            {
+                "chunks": _kb_chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "low",
+            }
         )
 
         with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
@@ -5235,7 +5653,10 @@ class TestKlaiKnowledgeHookOpenMode:
         assert "lage relevantie in Open modus" in sys_content
         assert "Open mode blijft actief" in sys_content
         assert "weiger niet alleen omdat KB-bewijs zwak" in sys_content
-        assert "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext" in sys_content
+        assert (
+            "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext"
+            in sys_content
+        )
         assert "alleen een algemeen antwoord wanneer dat veilig kan" not in sys_content
         assert "Citeer alleen wat letterlijk in de chunks staat" not in sys_content
         self._assert_open_kb_foundation(sys_content)
@@ -5301,7 +5722,10 @@ class TestKlaiKnowledgeHookOpenMode:
         assert "[User-provided content]" in sys_content
         assert "you may read and reason about" in sys_content
         assert "Open mode blijft actief" in sys_content
-        assert "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext" in sys_content
+        assert (
+            "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext"
+            in sys_content
+        )
         assert "no image is available in the knowledge base" not in sys_content
         meta = result["metadata"]["_klai_kb_meta"]
         assert meta["kb_narrow"] is False
@@ -5322,10 +5746,16 @@ class TestKlaiKnowledgeHookOpenMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "Maak een implementatiehandleiding."}],
+            "messages": [
+                {"role": "user", "content": "Maak een implementatiehandleiding."}
+            ],
         }
         retrieval_resp = _make_resp(
-            {"chunks": _kb_chunks, "retrieval_bypassed": False, "confidence_band": "low"}
+            {
+                "chunks": _kb_chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "low",
+            }
         )
 
         with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
@@ -5366,7 +5796,11 @@ class TestKlaiKnowledgeHookOpenMode:
             "messages": [{"role": "user", "content": "Wat staat hierop?"}],
         }
         retrieval_resp = _make_resp(
-            {"chunks": _kb_chunks, "retrieval_bypassed": False, "confidence_band": "high"}
+            {
+                "chunks": _kb_chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "high",
+            }
         )
 
         with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
@@ -5379,7 +5813,10 @@ class TestKlaiKnowledgeHookOpenMode:
         assert "never present their contents as knowledge-base facts" in sys_content
         assert "directly observable or user-provided information" in sys_content
         assert "do not add general-world explanations" in sys_content
-        assert "it never blocks the user's own attachments or visible conversation" in sys_content
+        assert (
+            "it never blocks the user's own attachments or visible conversation"
+            in sys_content
+        )
         # Mode still differentiates KB grounding, not attachment access.
         if kb_narrow:
             assert "answer strictly using only the sources below" in sys_content
@@ -5387,14 +5824,60 @@ class TestKlaiKnowledgeHookOpenMode:
             assert "use this as supplementary context" in sys_content
 
     @pytest.mark.asyncio
-    async def test_strict_zero_chunks_still_allows_user_attachment(
-        self, monkeypatch
-    ):
+    async def test_strict_zero_chunks_still_allows_user_attachment(self, monkeypatch):
         """Strict + zero KB results: the model must still be told it may read
         the user's attachment. Previously the attachment instruction only
         existed on the chunks-present path, so Strict + zero chunks gave no
         guidance and risked refusing to look at the user's own screenshot.
         """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Wat staat op deze screenshot?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.test/screenshot.png"},
+                        },
+                    ],
+                }
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False, "confidence_band": "unknown"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        # Strict zero-chunks refusal header is present...
+        assert "zero results for this query" in sys_content
+        # ...and the user-attachment clause is STILL there.
+        assert "[User-provided content]" in sys_content
+        assert (
+            "even when the" in sys_content
+        )  # "...even when the knowledge base has zero..."
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["answer_policy_state"] == "zero_chunks"
+        assert meta["answer_policy_mode"] == "strict"
+        assert meta["user_provided_content_context"] is True
+        assert meta["no_citable_sources"] is True
+        assert meta["allow_uncited_user_content"] is True
+
+    @pytest.mark.asyncio
+    async def test_strict_zero_chunks_screenshot_word_without_attachment_still_refuses(
+        self, monkeypatch
+    ):
+        """Attachment keywords alone must not bypass Strict deterministic refusal."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature={"kb_narrow": True})
@@ -5413,17 +5896,14 @@ class TestKlaiKnowledgeHookOpenMode:
             )
 
         sys_content = self._system_msg(result)
-        # Strict zero-chunks refusal header is present...
         assert "zero results for this query" in sys_content
-        # ...and the user-attachment clause is STILL there.
-        assert "[User-provided content]" in sys_content
-        assert "even when the" in sys_content  # "...even when the knowledge base has zero..."
+        assert "Do not answer from general knowledge" in sys_content
         meta = result["metadata"]["_klai_kb_meta"]
         assert meta["answer_policy_state"] == "zero_chunks"
         assert meta["answer_policy_mode"] == "strict"
-        assert meta["user_provided_content_context"] is True
+        assert meta["user_provided_content_context"] is False
         assert meta["no_citable_sources"] is True
-        assert meta["allow_uncited_user_content"] is True
+        assert meta["allow_uncited_user_content"] is False
 
     @pytest.mark.asyncio
     async def test_strict_zero_chunks_still_allows_visible_conversation(
@@ -5513,9 +5993,7 @@ class TestKlaiKnowledgeHookZeroChunksMode:
 
     def _system_msg(self, result: dict) -> str:
         msgs = [m for m in result["messages"] if m["role"] == "system"]
-        assert len(msgs) == 1, (
-            f"expected exactly one system message, got {len(msgs)}"
-        )
+        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
         return msgs[0]["content"]
 
     @pytest.mark.asyncio
@@ -5530,13 +6008,9 @@ class TestKlaiKnowledgeHookZeroChunksMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Wat is ons retourbeleid?"}
-            ],
+            "messages": [{"role": "user", "content": "Wat is ons retourbeleid?"}],
         }
-        retrieval_resp = _make_resp(
-            {"chunks": [], "retrieval_bypassed": False}
-        )
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -5563,10 +6037,7 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         assert "do not answer from general knowledge" in sys_content.lower()
         # Must NOT carry the Open/Broad fallback wording — that would
         # mean the modes got crossed.
-        assert (
-            "may answer from your general knowledge"
-            not in sys_content.lower()
-        )
+        assert "may answer from your general knowledge" not in sys_content.lower()
 
     @pytest.mark.asyncio
     async def test_zero_chunks_open_allows_general_knowledge_with_disclaimer(
@@ -5583,13 +6054,9 @@ class TestKlaiKnowledgeHookZeroChunksMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Hoe werkt fotosynthese?"}
-            ],
+            "messages": [{"role": "user", "content": "Hoe werkt fotosynthese?"}],
         }
-        retrieval_resp = _make_resp(
-            {"chunks": [], "retrieval_bypassed": False}
-        )
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -5609,9 +6076,7 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         )
         # Open-mode binding: explicit license to answer from general
         # knowledge, with a disclaimer up front.
-        assert (
-            "may answer from your general knowledge" in sys_content.lower()
-        )
+        assert "may answer from your general knowledge" in sys_content.lower()
         # Disclaimer instruction: model must tell the user the answer is
         # NOT from their KB. Either phrasing is acceptable.
         assert (
@@ -5620,10 +6085,7 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         )
         # Must NOT carry the Strict refusal wording — that would mean
         # the modes got crossed.
-        assert (
-            "do not answer from general knowledge"
-            not in sys_content.lower()
-        )
+        assert "do not answer from general knowledge" not in sys_content.lower()
 
     @pytest.mark.asyncio
     async def test_zero_chunks_metadata_records_mode_strict(self, monkeypatch):
@@ -5639,13 +6101,9 @@ class TestKlaiKnowledgeHookZeroChunksMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Iets specifieks"}
-            ],
+            "messages": [{"role": "user", "content": "Iets specifieks"}],
         }
-        retrieval_resp = _make_resp(
-            {"chunks": [], "retrieval_bypassed": False}
-        )
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -5659,9 +6117,7 @@ class TestKlaiKnowledgeHookZeroChunksMode:
             )
 
         meta = result.get("metadata", {}).get("_klai_kb_meta")
-        assert meta is not None, (
-            "zero-chunks branch must set _klai_kb_meta"
-        )
+        assert meta is not None, "zero-chunks branch must set _klai_kb_meta"
         assert meta["chunks_injected"] == 0
         assert meta["kb_narrow"] is True
         assert meta["answer_policy_state"] == "zero_chunks"
@@ -5679,13 +6135,9 @@ class TestKlaiKnowledgeHookZeroChunksMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Iets generieks"}
-            ],
+            "messages": [{"role": "user", "content": "Iets generieks"}],
         }
-        retrieval_resp = _make_resp(
-            {"chunks": [], "retrieval_bypassed": False}
-        )
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -5722,13 +6174,9 @@ class TestKlaiKnowledgeHookZeroChunksMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Wie is Jantine?"}
-            ],
+            "messages": [{"role": "user", "content": "Wie is Jantine?"}],
         }
-        retrieval_resp = _make_resp(
-            {"chunks": [], "retrieval_bypassed": False}
-        )
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
@@ -5767,13 +6215,9 @@ class TestKlaiKnowledgeHookZeroChunksMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Iets algemeens"}
-            ],
+            "messages": [{"role": "user", "content": "Iets algemeens"}],
         }
-        retrieval_resp = _make_resp(
-            {"chunks": [], "retrieval_bypassed": False}
-        )
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()

@@ -11,6 +11,8 @@ import types
 import httpx
 import pytest
 
+from tests.klai_module_reset import reset_klai_kb_modules
+
 
 @pytest.fixture(autouse=True)
 def _mock_litellm():
@@ -47,8 +49,7 @@ def _load_hook(monkeypatch, extra_env=None):
     for k, v in env.items():
         monkeypatch.setenv(k, v)
 
-    sys.modules.pop("klai_knowledge", None)
-    sys.modules.pop("klai_kb_query_rewrite", None)
+    reset_klai_kb_modules()
     import klai_knowledge
 
     importlib.reload(klai_knowledge)
