@@ -12,6 +12,7 @@ import {
   Link as LinkIcon,
   Loader2,
   LogOut,
+  MessageCircle,
   MoreHorizontal,
   Pencil,
   Play,
@@ -43,6 +44,7 @@ const rowActionToneByAction = {
   copy: 'neutral',
   reauth: 'neutral',
   send: 'primary',
+  message: 'primary',
   view: 'neutral',
   download: 'neutral',
   upload: 'neutral',
@@ -73,6 +75,7 @@ const rowActionIcons = {
   copy: Copy,
   reauth: LinkIcon,
   send: Send,
+  message: MessageCircle,
   view: Eye,
   download: Download,
   upload: Upload,
@@ -208,7 +211,7 @@ const BorderedRowActionIconButton = React.forwardRef<HTMLButtonElement, RowActio
     <RowActionIconButton
       ref={ref}
       className={cn(
-        'h-8 w-8 border border-gray-200 bg-transparent hover:border-current hover:bg-[var(--color-hover)] [&_svg]:h-3.5 [&_svg]:w-3.5',
+        'h-8 w-8 border border-current bg-transparent hover:bg-[var(--color-hover)] [&_svg]:h-3.5 [&_svg]:w-3.5',
         className,
       )}
       {...props}

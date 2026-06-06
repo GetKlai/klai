@@ -409,6 +409,7 @@ def _account_thread_select():
         .where(PlatformMessage.thread_id == PlatformMessageThread.id)
         .order_by(PlatformMessage.created_at.desc(), PlatformMessage.id.desc())
         .limit(1)
+        .correlate(PlatformMessageThread)
         .scalar_subquery()
     )
     latest_sender_type = (
@@ -416,6 +417,7 @@ def _account_thread_select():
         .where(PlatformMessage.thread_id == PlatformMessageThread.id)
         .order_by(PlatformMessage.created_at.desc(), PlatformMessage.id.desc())
         .limit(1)
+        .correlate(PlatformMessageThread)
         .scalar_subquery()
     )
     latest_admin_at = (
@@ -424,6 +426,7 @@ def _account_thread_select():
             PlatformMessage.thread_id == PlatformMessageThread.id,
             PlatformMessage.sender_type.in_(("platform_admin", "system")),
         )
+        .correlate(PlatformMessageThread)
         .scalar_subquery()
     )
     return (
@@ -537,7 +540,7 @@ async def reply_to_platform_message_thread(
         )
     except PlatformMessageThreadNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found") from exc
-    return AccountPlatformMessageReplyOut(
+    result = AccountPlatformMessageReplyOut(
         message=AccountPlatformMessageOut(
             id=message.id,
             sender_type=message.sender_type,
@@ -546,6 +549,8 @@ async def reply_to_platform_message_thread(
             created_at=message.created_at,
         )
     )
+    await db.commit()
+    return result
 
 
 @router.post("/messages/{thread_id}/read", response_model=AccountPlatformMessageReadResponse)
@@ -563,6 +568,7 @@ async def mark_platform_message_read(
         )
     except PlatformMessageThreadNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found") from exc
+    await db.commit()
     return AccountPlatformMessageReadResponse(thread_id=thread_id, read_at=read_at)
 
 

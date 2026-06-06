@@ -220,6 +220,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     from app.core.database import (
         assert_partner_api_keys_rls_ready,
+        assert_platform_messages_rls_ready,
         assert_portal_users_rls_ready,
         engine,
     )
@@ -236,6 +237,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the post-deploy SQL step gets a fail-loud message naming the file.
     await assert_partner_api_keys_rls_ready()
     logger.info("partner_api_keys RLS policy checked: ENABLE+FORCE present")
+
+    await assert_platform_messages_rls_ready()
+    logger.info("platform messaging RLS policies checked: ENABLE+FORCE and required policies present")
 
     await assert_portal_users_rls_ready()
     logger.info("portal_users RLS policy checked: IS NULL branch present")
