@@ -72,7 +72,7 @@ jobs:
             secret = os.environ["INTERNAL_SECRET"]
             try:
                 r = httpx.post(
-                    "http://localhost:8010/internal/librechat/regenerate",
+                    "http://localhost:8010/internal/librechat/regenerate?recreate_containers=true",
                     headers={
                         "Authorization": f"Bearer {secret}",
                         "Content-Type": "application/json",
