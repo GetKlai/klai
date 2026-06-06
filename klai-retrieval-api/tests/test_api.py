@@ -55,7 +55,7 @@ class TestRetrieveEndpoint:
                 "retrieval_api.api.retrieve.coreference.resolve",
                 new_callable=AsyncMock,
                 return_value="resolved query",
-            ),
+            ) as mock_coref,
             patch(
                 "retrieval_api.api.retrieve.embed_single",
                 new_callable=AsyncMock,
@@ -145,18 +145,24 @@ class TestRetrieveEndpoint:
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
             mock_settings.link_expand_score_boost = 1.00
-            request = {**sample_retrieve_request, "raw_query": "original user query"}
+            # raw_query == query → NOT caller-pre-resolved → retrieval-side
+            # coreference runs (this test is the coref-runs canary).
+            request = {
+                **sample_retrieve_request,
+                "raw_query": sample_retrieve_request["query"],
+            }
             resp = client.post("/retrieve", json=request)
 
         assert resp.status_code == 200
         data = resp.json()
+        mock_coref.assert_awaited_once()
         assert data["query_resolved"] == "resolved query"
         assert data["retrieval_bypassed"] is False
         assert len(data["chunks"]) == 1
         assert data["chunks"][0]["chunk_id"] == "c1"
         assert data["chunks"][0]["reranker_score"] == 0.95
         assert mock_evidence_pack.call_args.kwargs["query"] == (
-            "original user query\nresolved query"
+            "What is the refund policy?\nresolved query"
         )
         assert data["metadata"]["candidates_retrieved"] == 1
         assert data["metadata"]["retrieval_ms"] > 0
@@ -177,6 +183,72 @@ class TestRetrieveEndpoint:
         assert "https://docs.getklai.com/refunds" in decision_attrs
         assert "Refund policy" in decision_attrs
         assert "top_item_chunk_ids" in decision_attrs
+
+    def test_retrieve_skips_coreference_when_caller_pre_resolved(
+        self, client, sample_retrieve_request
+    ):
+        """raw_query != query → caller pre-resolved → retrieval-api does NOT
+        run a second coreference rewrite (kills the double rewrite), responds
+        200, and uses the caller's query verbatim as query_resolved.
+
+        Regression: the skip branch previously left ``coref_ms`` unbound,
+        crashing every pre-resolved request with UnboundLocalError.
+        """
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="SHOULD NOT BE USED",
+            ) as mock_coref,
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2, 0.3],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(False, 0.05),
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.reranker.rerank",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.reranker_enabled = True
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_candidates = 20
+            mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = False
+            mock_settings.router_enabled = False
+            mock_settings.source_quota_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            mock_settings.link_expand_score_boost = 1.00
+            request = {
+                **sample_retrieve_request,
+                "raw_query": "totally different pre-rewrite text",
+            }
+            resp = client.post("/retrieve", json=request)
+
+        assert resp.status_code == 200
+        mock_coref.assert_not_awaited()
+        data = resp.json()
+        # query_resolved is the caller's query verbatim — NOT the coref mock value.
+        assert data["query_resolved"] == sample_retrieve_request["query"]
 
 
 class TestConfidenceBandEndToEnd:
