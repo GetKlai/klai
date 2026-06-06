@@ -6,9 +6,7 @@ import {
   ChevronRight,
   Copy,
   Loader2,
-  Pencil,
   Save,
-  Trash2,
   X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -19,6 +17,7 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { StepIndicator, type StepItem } from "@/components/ui/step-indicator"
 import { Textarea } from "@/components/ui/textarea"
+import { RowActionGroup, RowActionIconButton } from "@/components/ui/row-action"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -274,26 +273,18 @@ function FeedbackItemDetailForm({
               {feedbackItemStatusLabel(status)}
             </Badge>
             {!isEditing && (
-              <>
-                <button
-                  type="button"
+              <RowActionGroup className="ml-1">
+                <RowActionIconButton
+                  action="edit"
+                  label={m.platform_feedback_edit_item_title()}
                   onClick={() => setIsEditing(true)}
-                  aria-label={m.platform_feedback_edit_item_title()}
-                  title={m.platform_feedback_edit_item_title()}
-                  className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
+                />
+                <RowActionIconButton
+                  action="delete"
+                  label={m.platform_feedback_delete_item()}
                   onClick={() => setConfirmDeleteOpen(true)}
-                  aria-label={m.platform_feedback_delete_item()}
-                  title={m.platform_feedback_delete_item()}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </>
+                />
+              </RowActionGroup>
             )}
           </div>
         </div>
