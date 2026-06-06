@@ -1670,7 +1670,14 @@ Verified 2026-05-13 against
 ("Each project gets a separate profile automatically based on the workspace")
 and [microsoft/playwright-mcp#1294](https://github.com/microsoft/playwright-mcp/issues/1294).
 
-**Storage-state seed (`~/.claude/mcp-storageState.json`) is now optional.**
+**Storage-state routing is now explicit.**
+The launcher preloads the repo-local Voys state
+`klai-portal/frontend/e2e/prod-tenant/_config/storageState.voys.json`
+when it exists. That file is the source of truth for Voys/real-user MCP
+sessions and for `npm run test:e2e:prod:voys`. If it is missing or stale,
+run `npm run e2e:capture-session` and complete Google SSO once.
+
+The generic `~/.claude/mcp-storageState.json` remains a fallback only.
 With the persistent default the workspace profile auto-saves login, so
 the ~3-week refresh cadence is dead. The seed file is still useful as a
 first-boot preload for brand-new workspaces, and for isolated sessions
@@ -1679,6 +1686,18 @@ calling `page.context().storageState({ path })` — there is **no**
 separate `browser_storage_state` MCP tool (earlier drafts of this rule
 referenced one that does not exist; the functionality lives in the
 generic `browser_run_code_unsafe` tool).
+
+Do not confuse the two Klai browser-test realities:
+
+- "test end-to-end", "test e2e", "testomgeving" → isolated tenant:
+  `cd klai-portal/frontend && set -a; source .env.local; set +a; npm run test:e2e:prod`.
+- "test in Voys", "test in voice" in browser/auth context, "real user" →
+  Voys attached mode:
+  `cd klai-portal/frontend && npm run e2e:verify-voys-session && npm run test:e2e:prod:voys`.
+
+If isolated e2e credentials fail, report that credential blocker. Do NOT
+fall back to Voys. If Voys state fails, recapture Voys. Do NOT test
+`e2e.getklai.com` and call it Voys.
 
 **Anti-patterns — do NOT propose any of these without re-reading this entry:**
 
@@ -1742,10 +1761,13 @@ generic `browser_run_code_unsafe` tool).
 
 - Primary `playwright` server in `.mcp.json` invokes
   `.claude/scripts/playwright-launcher.mjs`, which spawns:
-  `npx @playwright/mcp@latest --browser chrome` (headed) and adds
-  `--storage-state ~/.claude/mcp-storageState.json` when the seed file
-  exists. With `PLAYWRIGHT_ISOLATED=1` set in the environment, the
-  launcher additionally passes `--isolated` for that one session.
+  `npx @playwright/mcp@latest --browser chrome` (headed). It adds
+  `--storage-state klai-portal/frontend/e2e/prod-tenant/_config/storageState.voys.json`
+  when that file exists; otherwise it falls back to
+  `~/.claude/mcp-storageState.json` when present. Override with
+  `KLAI_PLAYWRIGHT_STORAGE_STATE=none|voys|global|/absolute/path`. With
+  `PLAYWRIGHT_ISOLATED=1` set in the environment, the launcher
+  additionally passes `--isolated` for that one session.
 - No secondary MCP server. For unauthenticated work: `browser_tabs(new)`
   in the existing browser, or `PLAYWRIGHT_ISOLATED=1` for a fresh session.
 - Login per workspace: open a Playwright session, navigate to a login
@@ -1769,6 +1791,8 @@ generic `browser_run_code_unsafe` tool).
 | `--browser chromium` rejected on launch | `@playwright/mcp >= 0.0.74` dropped `chromium` as a valid value. Use `--browser chrome`. | Pin back to `@0.0.70` (loses `browser_run_code_unsafe`). |
 | Need to test the login flow itself | Set `PLAYWRIGHT_ISOLATED=1` for that session — ephemeral profile, starts logged-out. Workspace profile is untouched. | Click Log out in the persistent browser (anti-pattern 8). |
 | Storage state file is hand-edited / non-standard | Delete it; with persistent profile you don't need it. Optionally re-seed via `browser_run_code_unsafe` after a fresh login. | Hand-edit JSON in storageState. |
+| User asks for Voys/voice testing and MCP opens Google login | Run `npm run e2e:verify-voys-session`. If missing/stale, run `npm run e2e:capture-session` and complete Google SSO. Restart MCP so launcher preloads `_config/storageState.voys.json`. | Keep clicking Google in an empty workspace profile and call the result "tested". |
+| User asks for e2e/testomgeving and bot login returns 401 | Report stale `E2E_USER_PASSWORD` / missing `E2E_TOTP_SECRET` as blocker. Rotate/update `.env.local` and GitHub secrets. | Fall back to Voys because it is logged in. |
 
 **History:** between April and May 2026 we cycled through `--user-data-dir`,
 `--isolated`, `--isolated + storage-state`, codegen-seeded storage state,

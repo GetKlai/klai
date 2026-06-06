@@ -31,6 +31,11 @@ cd klai-portal/frontend
 npm run test:e2e:prod
 ```
 
+Use this mode when the request says "test end-to-end", "test e2e", or
+"test in de testomgeving". It is the synthetic but full-stack tenant: bot user,
+email/password/TOTP login, and cleanup-safe e2e artifacts. If credentials fail,
+fix the credentials; do not fall back to Voys and call that an e2e test.
+
 ### TOTP secret setup
 
 The e2e runner needs the raw Base32 TOTP seed in `E2E_TOTP_SECRET`.
@@ -48,6 +53,20 @@ confirming the setup, then update local `.env.local` and GitHub Secrets.
 ## Run locally - voys-attached mode
 
 For testing inside the Voys tenant (Google SSO, no bot user available).
+Use this mode when the request says "Voys", "voice" in browser/auth context,
+"real user", or production-tenant behavior. It uses a captured real Google SSO
+session and can expose behavior the isolated e2e tenant does not simulate.
+
+First verify that the saved Voys state is usable:
+
+```bash
+cd klai-portal/frontend
+npm run e2e:verify-voys-session
+```
+
+Expected output includes `ok: true`, `mode: "voys-attached"`, and
+`apiMeStatus: 200`.
+
 **One-time** capture the browser session:
 
 ```bash
@@ -67,6 +86,11 @@ npm run test:e2e:prod:voys
 
 Storage-state lives in `_config/storageState.voys.json` (gitignored).
 If the session expires re-run the capture step.
+
+Playwright MCP also preloads `_config/storageState.voys.json` when it exists, so
+interactive MCP browser sessions start from the same Voys real-user state. Use
+`KLAI_PLAYWRIGHT_STORAGE_STATE=none` only when you intentionally need a fresh or
+logged-out MCP session.
 
 ### Run in CI (voys-attached)
 

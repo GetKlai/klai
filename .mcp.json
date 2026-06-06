@@ -16,7 +16,7 @@
       "env": {}
     },
     "playwright": {
-      "$comment": "Headed Chrome with `--isolated --storage-state ~/.claude/mcp-storageState.json`. Parallel-safe (every session gets its own ephemeral profile) and all sessions start authenticated by preloading the storage-state file. Seed by calling `browser_run_code_unsafe` from a logged-in session with `await page.context().storageState({path: '~/.claude/mcp-storageState.json'})` — verified working 2026-05-07. NOT via external `npx playwright codegen` (flaky on macOS, the PR #354 trap). There is no separate `browser_storage_state` MCP tool. See docs/setup/mcp-servers.md Section 3 for the full flow.",
+      "$comment": "Headed Chrome via @playwright/mcp@latest. Default persistent workspace-hashed profile; no --isolated unless PLAYWRIGHT_ISOLATED=1. Launcher preloads klai-portal/frontend/e2e/prod-tenant/_config/storageState.voys.json when present, then falls back to ~/.claude/mcp-storageState.json. Voys/voice/real-user testing: npm run e2e:verify-voys-session then npm run test:e2e:prod:voys. Isolated e2e/testomgeving: source .env.local then npm run test:e2e:prod. See docs/setup/mcp-servers.md Section 3.",
       "type": "stdio",
       "command": "node",
       "args": [".claude/scripts/playwright-launcher.mjs"],

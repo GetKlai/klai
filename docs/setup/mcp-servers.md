@@ -188,12 +188,75 @@ Set the env var in your shell or `.mcp.json` env block for the session
 that needs it. The launcher reads `process.env.PLAYWRIGHT_ISOLATED` at
 spawn time.
 
-### Storage-state seed (optional first-boot preload)
+### Klai storage-state routing
 
-The launcher also passes `--storage-state ~/.claude/mcp-storageState.json`
-when that file exists. With the persistent default this is mostly
-**redundant** — the profile auto-saves login on first hand-login and keeps
-it forever. The seed file is still useful for:
+The launcher passes a storage-state seed when one is available. Precedence:
+
+1. `KLAI_PLAYWRIGHT_STORAGE_STATE=none` → pass no storage-state.
+2. `KLAI_PLAYWRIGHT_STORAGE_STATE=voys` → require the repo-local Voys state:
+   `klai-portal/frontend/e2e/prod-tenant/_config/storageState.voys.json`.
+3. `KLAI_PLAYWRIGHT_STORAGE_STATE=global` → use `~/.claude/mcp-storageState.json`.
+4. `KLAI_PLAYWRIGHT_STORAGE_STATE=/absolute/path.json` → use that exact file.
+5. Default: use repo-local `storageState.voys.json` if it exists, otherwise
+   `~/.claude/mcp-storageState.json` if it exists.
+
+This makes Playwright MCP start with the captured Voys real-user session once
+the Voys state has been captured. It also prevents the recurring failure where
+a fresh workspace-hashed MCP profile opens but has no Google SSO history.
+
+Important distinction:
+
+- **Voys / "voice" / real-user testing** uses
+  `_config/storageState.voys.json` and `npm run test:e2e:prod:voys`.
+- **Isolated e2e/testomgeving testing** does not use MCP storage-state. It runs
+  `npm run test:e2e:prod`, logs in with `E2E_USER_EMAIL`,
+  `E2E_USER_PASSWORD`, and `E2E_TOTP_SECRET`, and writes
+  `_config/storageState.json` for the remaining specs.
+
+Agents MUST NOT swap those environments silently. If e2e credentials fail,
+report the credential blocker. If Voys storage-state is stale, recapture Voys;
+do not test `e2e.getklai.com` and call that Voys.
+
+### Voys attached-session capture and verification
+
+Use Voys when the request says "Voys", "voice" in browser/auth context,
+"real user", or "production tenant". First verify the saved state:
+
+```bash
+cd klai-portal/frontend
+npm run e2e:verify-voys-session
+```
+
+Expected output is JSON with `ok: true`, `mode: "voys-attached"`,
+`url: "https://voys.getklai.com/app"`, and `apiMeStatus: 200`.
+
+If the verifier fails because the file is missing or stale, recapture:
+
+```bash
+cd klai-portal/frontend
+npm run e2e:capture-session
+# Headed Chrome opens at https://voys.getklai.com.
+# Log in via Google SSO.
+# The script writes e2e/prod-tenant/_config/storageState.voys.json after /app loads.
+```
+
+Then run:
+
+```bash
+npm run test:e2e:prod:voys
+```
+
+The captured state is gitignored. Do not commit it. It can be copied into a new
+workspace through Conductor Files to copy or recaptured from an existing
+Playwright profile if necessary, but do not copy live Chrome cookie databases
+between profiles.
+
+### Generic storage-state seed (optional first-boot preload)
+
+The generic `~/.claude/mcp-storageState.json` fallback is still supported.
+With the persistent default this is mostly **redundant** — the profile
+auto-saves login on first hand-login and keeps it forever. The seed file is
+still useful for:
 
 - Bootstrapping a brand-new workspace with cookies you already have.
 - Isolated sessions (`PLAYWRIGHT_ISOLATED=1`) that need to start
@@ -514,10 +577,10 @@ uvx mcp-grafana --help
 3. **MCP timeout** — Serena takes too long to index. Check `.serena/project.yml` for overly broad
    file patterns.
 4. **Playwright launcher fails to start** — `node` not on PATH or the launcher script missing. Fix: verify `node --version` works in your shell and `.claude/scripts/playwright-launcher.mjs` exists. Restart Claude Code.
-5. **Playwright sessions start logged-out in a workspace** — the workspace's persistent profile was never logged in (new workspace, or you deleted the profile dir). Fix: `browser_navigate` to a login URL and log in by hand once; the profile remembers it. Optional: seed the shared `~/.claude/mcp-storageState.json` via the snippet in Section 3 so future new workspaces start authenticated.
+5. **Playwright sessions start logged-out in a workspace** — first decide which environment was requested. For Voys/voice/real-user work, run `cd klai-portal/frontend && npm run e2e:verify-voys-session`; if it fails, run `npm run e2e:capture-session` and complete Google SSO once, then restart the MCP session so the launcher preloads `_config/storageState.voys.json`. For isolated login-flow testing, use `PLAYWRIGHT_ISOLATED=1`. Do not click Log out in the persistent profile.
 6. **Playwright fails with `Browser is already in use`** — two MCP clients inside the same workspace are trying to open the same persistent profile. Fix: set `PLAYWRIGHT_ISOLATED=1` on the second instance (ephemeral profile, no lock). A leftover Chromium process from a previous crash can be killed with `taskkill /F /IM chrome.exe` (Windows) or `pkill -f playwright` (Mac/Linux).
 7. **Playwright window opens but immediately closes** — corrupt profile directory or corrupt storage-state file. Fix: nuke the workspace's profile (`rm -rf ~/Library/Caches/ms-playwright/mcp-chrome-*` on macOS — see Section 3 "Starting from scratch") and, if used, the storage-state file. Restart Claude Code.
-8. **Login state visible in one site but missing in another** — only applies to the storage-state seed: it captured cookies from the sites you visited before calling `browser_run_code_unsafe`. With the persistent default this is rarely the right diagnosis; just log into the missing site once and the workspace profile keeps it. If you DO maintain a storage-state seed, re-seed after visiting + logging into every site you need.
+8. **Login state visible in one profile but missing in this MCP workspace** — workspace-hashed profiles are separate. Do not copy live Chrome cookie databases between profiles. For Voys, capture a portable storage-state with `npm run e2e:capture-session` or recover it from a known-good profile by launching that profile and calling `context.storageState({ path: '.../storageState.voys.json' })`; then verify with `npm run e2e:verify-voys-session`.
 9. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
 10. **CodeIndex stale index** — In Conductor, first run `scripts/codeindex-health.sh`. If the shared base index is stale, fix with `scripts/codeindex-health.sh --repair`. If health is clean but MCP context still reports stale, the registered checkout or current worktree differs from the shared main index; treat CodeIndex as advisory and verify branch-local files directly.
 11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
