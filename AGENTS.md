@@ -93,12 +93,27 @@ This project is indexed by CodeIndex as **klai** (16280 symbols, 20581 relations
 
 ## Rules (MUST follow)
 
-- **Before ANY code modification**: call `impact` on the symbol(s) you will change
-- **Before searching code**: try `query` first — only use Grep/Glob if CodeIndex returns nothing useful
-- **"How does X work?" questions**: use `query` or `context` — do NOT start with Grep
-- **Skip CodeIndex only for**: non-code conversations, config edits, or single known-file changes
+Use CodeIndex when it adds graph value; do not use it as a reflexive wrapper
+around ordinary source inspection.
 
-## Always Start Here
+- **Required before high-blast-radius code changes**: call `impact` before
+  editing shared helpers, exported/public APIs, cross-module contracts,
+  auth/RLS/Zitadel/streaming/caching/retrieval helpers, or doing a rename /
+  extraction / refactor. Backend auth/invite/delete/offboard/suspend/IdP work
+  still follows the stricter gate in `klai-portal/backend/AGENTS.md`.
+- **Required for architecture/debugging questions**: use `query` or `context`
+  for "How does X work?", "What breaks if X changes?", unfamiliar flows, or
+  multi-hop caller/callee questions.
+- **Prefer local source search first** for known-file edits, single-file UI
+  work, literal text/CSS/component searches, config/docs/scripts, and direct
+  "where is this string/symbol?" lookups. Use `git grep`/`rg`/IDE/Serena, then
+  escalate to CodeIndex only if graph context changes the decision.
+- **If CodeIndex MCP is unavailable** (`Transport closed`, missing lazy-loaded
+  tool, stale advisory while health is green), do not block routine work. Use
+  local source + git history, state the residual risk, and run
+  `scripts/codeindex-health.sh` only when graph accuracy matters.
+
+## For Tasks That Need CodeIndex
 
 1. **Read `codeindex://repo/{name}/context`** — codebase overview + check index freshness
 2. **Match your task to a skill below** and **read that skill file**

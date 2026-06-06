@@ -20,11 +20,21 @@ Serena and CodeIndex serve different purposes. Using the wrong tool wastes time.
 - Enrichment queries (git hotspots, SPEC links, test coverage, PageRank)
 
 **Decision tree:**
-1. Editing code? → Serena
-2. "What calls X?" (direct callers only) → Serena `find_referencing_symbols`
-3. "What breaks if I change X?" (full impact) → CodeIndex `impact`
-4. "How does X work?" (architecture) → CodeIndex `query`
-5. "Is X tested / how often does it change / which SPEC?" → CodeIndex cypher
+1. Known file, literal string, CSS/UI component, docs/config/script lookup? →
+   local search first (`rg`/`git grep`/IDE); no CodeIndex needed unless graph
+   context would change the decision.
+2. Editing a local symbol in real-time? → Serena / IDE source tools.
+3. "What calls X?" (direct callers only) → Serena `find_referencing_symbols`.
+4. "What breaks if I change X?" (full impact) → CodeIndex `impact`.
+5. "How does X work?" (architecture / unfamiliar flow) → CodeIndex `query`.
+6. "Is X tested / how often does it change / which SPEC?" → CodeIndex cypher.
+
+If CodeIndex MCP reports `Transport closed`, do not retry in a loop. Run
+`scripts/codeindex-health.sh` only if the task needs graph accuracy. For routine
+single-file work, continue with source + git history and report the residual
+risk. If existing agents are stuck after a repair, use
+`scripts/codeindex-health.sh --repair --restart-mcp` and restart affected
+sessions.
 
 ## Enrichment Queries
 
@@ -74,12 +84,17 @@ base index is healthy, treat the warning as advisory and verify branch-local
 code via local diffs/source files. This can happen when the registered canonical
 checkout is not currently on main.
 
-## Hooks (project-local)
+## Hooks
 
-Defined in `.claude/settings.local.json` (not committed, Klai-only):
-- **PreToolUse** (Grep|Glob|Bash): augments search results with graph context
-- **UserPromptSubmit**: injects project stats and memory context
-- **SessionStart**: checks index freshness
+CodeIndex setup may install global Claude hooks in `~/.claude/settings.json`.
+Those hooks can inject CodeIndex context on every prompt, augment Grep/Glob/Bash
+searches, and warn agents to run `codeindex update`. In Conductor worktrees that
+generic advice can be wrong: prefer `scripts/codeindex-health.sh`, and only run
+`--repair` when it reports the shared base index is stale.
+
+Codex/Conductor does not run Claude hooks. It starts CodeIndex through
+`.claude/scripts/codeindex-mcp-launcher.sh`, which performs an advisory health
+check only and must not rebuild or restart MCP during stdio startup.
 
 ## Setup for New Team Members
 
