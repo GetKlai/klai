@@ -48,18 +48,18 @@ class PortalOrg(Base):
     # @MX:DEPRECATED — SPEC-PORTAL-PRICING-PER-USER-001 Phase 6 (2026-05-12).
     # ``plan`` is no longer the capability-intersection axis (Phase 4 moved
     # that to ``portal_users.seat_type``) and no longer gates role assignment
-    # (Phase 3 removed ``assert_role_allowed_for_plan``). The column stays
-    # for the legacy Moneybird billing path (``app/api/billing.py`` +
-    # webhooks.py) until Phase 5b ships the real per-seat-type Moneybird
-    # migration. Phase 6 dropped the ``portal_orgs_plan_check`` constraint
-    # so the column is now free-form.
+    # (Phase 3 removed ``assert_role_allowed_for_plan``). The old tenant
+    # billing endpoints no longer use this column; keep it until the Phase 5b
+    # Moneybird schema/data migration explicitly drops or repurposes it.
+    # Phase 6 dropped the ``portal_orgs_plan_check`` constraint so the column
+    # is now free-form.
     plan: Mapped[str] = mapped_column(Text, nullable=False, default="chat", server_default="chat")
     billing_cycle: Mapped[str] = mapped_column(Text, nullable=False, default="monthly", server_default="monthly")
     # @MX:DEPRECATED — SPEC-PORTAL-PRICING-PER-USER-001 Phase 6 (2026-05-12).
     # The hard ``portal_orgs.seats`` cap on invite was removed in Phase 3.
-    # Phase 5b's follow-up SPEC drops this column after the real per-seat-
-    # type Moneybird migration ships. Until then ``seats`` is still read by
-    # the legacy billing path.
+    # The old tenant billing endpoints no longer expose or mutate this value.
+    # Keep the column until the Phase 5b Moneybird schema/data migration
+    # explicitly drops or repurposes it.
     seats: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
     # SPEC-PORTAL-PRICING-PER-USER-001 Phase 5 (light, 2026-05-12) — per-
     # tenant opt-in for the future Moneybird per-seat-type billing path.
