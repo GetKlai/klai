@@ -391,7 +391,7 @@ mounts:
     kind: bind
     host: ./librechat/getklai/images
     container_path: /app/client/public/images
-    image: ghcr.io/danny-avila/librechat:v0.8.5-rc1
+    image: ghcr.io/danny-avila/librechat:v0.8.6
     category: config
     data_path_source: brand asset directory, source-controlled
     pii: false

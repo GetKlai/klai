@@ -10,6 +10,7 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 MANIFEST="$ROOT_DIR/deploy/librechat/patch-manifest.txt"
+GETKLAI_MANIFEST="$ROOT_DIR/deploy/librechat/getklai/patch-manifest.txt"
 LIBRECHAT_IMAGE="${LIBRECHAT_IMAGE:-ghcr.io/danny-avila/librechat:v0.8.5-rc1}"
 FAIL=0
 
@@ -19,23 +20,25 @@ COMPOSE_IMAGE=$(awk '
   in_service && $1 ~ /^[a-zA-Z0-9_-]+:/ { exit }
 ' "$ROOT_DIR/deploy/docker-compose.yml")
 
-if [ "$COMPOSE_IMAGE" != "$LIBRECHAT_IMAGE" ]; then
-  echo "ERROR: deploy/docker-compose.yml uses $COMPOSE_IMAGE but patch drift check expects $LIBRECHAT_IMAGE" >&2
-  FAIL=1
-fi
-
 if ! grep -q "librechat_image: str = \"$LIBRECHAT_IMAGE\"" \
   "$ROOT_DIR/klai-portal/backend/app/core/config.py"; then
   echo "ERROR: portal-api default librechat_image is not pinned to $LIBRECHAT_IMAGE" >&2
   FAIL=1
 fi
 
-if printf '%s\n' "$LIBRECHAT_IMAGE" | grep -Eq ':(latest|dev|staging)$'; then
-  echo "ERROR: LibreChat image must be explicitly pinned, got $LIBRECHAT_IMAGE" >&2
-  FAIL=1
-fi
+validate_image_pin() {
+  local image="$1"
+  local label="$2"
+  if printf '%s\n' "$image" | grep -Eq ':(latest|dev|staging)$'; then
+    echo "ERROR: $label image must be explicitly pinned, got $image" >&2
+    FAIL=1
+  fi
+}
 
-while IFS='|' read -r local_patch upstream_path expected_sha _reason; do
+validate_manifest() {
+  local manifest="$1"
+  local image="$2"
+  while IFS='|' read -r local_patch upstream_path expected_sha _reason; do
   case "$local_patch" in
     ""|\#*) continue ;;
   esac
@@ -53,24 +56,33 @@ while IFS='|' read -r local_patch upstream_path expected_sha _reason; do
   esac
 
   actual_sha=$(
-    docker run --rm --entrypoint sh "$LIBRECHAT_IMAGE" \
+    docker run --rm --entrypoint sh "$image" \
       -c "sha256sum '$upstream_path'" 2>/dev/null | awk '{ print $1 }'
   )
   if [ -z "$actual_sha" ]; then
-    echo "ERROR: could not read $upstream_path from $LIBRECHAT_IMAGE" >&2
+    echo "ERROR: could not read $upstream_path from $image" >&2
     FAIL=1
     continue
   fi
 
   if [ "$actual_sha" != "$expected_sha" ]; then
     echo "ERROR: upstream drift for $local_patch" >&2
-    echo "       image:    $LIBRECHAT_IMAGE" >&2
+    echo "       image:    $image" >&2
     echo "       upstream: $upstream_path" >&2
     echo "       expected: $expected_sha" >&2
     echo "       actual:   $actual_sha" >&2
     FAIL=1
   fi
-done < "$MANIFEST"
+  done < "$manifest"
+}
+
+validate_image_pin "$LIBRECHAT_IMAGE" "Provisioned LibreChat"
+validate_image_pin "$COMPOSE_IMAGE" "librechat-getklai"
+validate_manifest "$MANIFEST" "$LIBRECHAT_IMAGE"
+
+if [ -f "$GETKLAI_MANIFEST" ]; then
+  validate_manifest "$GETKLAI_MANIFEST" "$COMPOSE_IMAGE"
+fi
 
 if [ "$FAIL" -ne 0 ]; then
   echo "" >&2
@@ -78,4 +90,4 @@ if [ "$FAIL" -ne 0 ]; then
   exit 1
 fi
 
-echo "OK: LibreChat image pin and mounted patch upstream hashes match $LIBRECHAT_IMAGE."
+echo "OK: LibreChat image pins and mounted patch upstream hashes match provisioning=$LIBRECHAT_IMAGE getklai=$COMPOSE_IMAGE."
