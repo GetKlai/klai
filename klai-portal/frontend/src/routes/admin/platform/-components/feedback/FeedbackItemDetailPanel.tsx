@@ -53,6 +53,8 @@ import {
   feedbackSubmissionReporterLabel,
 } from "./-feedback-helpers"
 
+const FEEDBACK_UPDATE_CREATED_STATES = new Set(['sent', 'queued'])
+
 export function FeedbackItemDetailPanel({
   itemId,
   fmtDate,
@@ -126,6 +128,9 @@ function FeedbackItemDetailForm({
   const [resolveNotice, setResolveNotice] = useState<string | null>(null)
   const [resolveError, setResolveError] = useState<string | null>(null)
   const [copyNotice, setCopyNotice] = useState<string | null>(null)
+  const [hasCreatedUpdate, setHasCreatedUpdate] = useState(
+    FEEDBACK_UPDATE_CREATED_STATES.has(item.notification_state ?? ''),
+  )
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [itemStep, setItemStep] = useState<'understand' | 'debug' | 'message'>(
@@ -190,6 +195,9 @@ function FeedbackItemDetailForm({
         onSuccess: (result) => {
           setStatus(result.item.status)
           setResolutionSummary(result.item.resolution_summary ?? '')
+          setHasCreatedUpdate(
+            FEEDBACK_UPDATE_CREATED_STATES.has(result.item.notification_state ?? ''),
+          )
           setResolveNotice(
             m.platform_feedback_update_created({
               count: String(result.recipient_count),
@@ -472,7 +480,7 @@ function FeedbackItemDetailForm({
               ? m.admin_shared_save()
               : resolveItem.isPending
                 ? m.platform_feedback_resolving()
-                : isClosed
+                : isClosed && hasCreatedUpdate
                   ? m.platform_feedback_resend_update()
                   : resolveLabel.button}
           </Button>
