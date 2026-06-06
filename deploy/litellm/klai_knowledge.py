@@ -26,7 +26,6 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -56,7 +55,6 @@ from klai_context import (
 from klai_citations import (
     compose_answer_with_trusted_sources,
     evidence_pack_items_as_chunks,
-    render_evidence_context,
     trusted_sources_from_evidence_pack,
 )
 from klai_kb_answer_policy import (
@@ -72,6 +70,11 @@ from klai_kb_answer_policy import (
     kb_retrieval_failure_notice as _kb_retrieval_failure_notice,
     kb_zero_chunks_notice as _kb_zero_chunks_notice,
     strict_no_kb_scope_notice as _strict_no_kb_scope_notice,
+)
+from klai_kb_context_prompt import (
+    build_kb_context_prompt as _build_kb_context_prompt,
+    chunk_source_url as _chunk_source_url,
+    normalise_guard_url as _normalise_guard_url,
 )
 from klai_kb_render_policy import (
     KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING as _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING,
@@ -357,7 +360,6 @@ def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrat
         original_stream,
         configured_mode=KLAI_KB_CHAT_RENDER_MODE,
     )
-_SENTINEL_URLS = {"undefined", "null", "none", "n/a", "na", "-", "#"}
 _KLAI_CONTEXT_ORCHESTRATOR = KlaiContextOrchestrator()
 
 # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2 — anti-hallucination injection
@@ -1672,62 +1674,6 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def _normalise_guard_url(url: object) -> str:
-    if not isinstance(url, str):
-        return ""
-    value = url.strip().strip("<>")
-    if not value or value.lower() in _SENTINEL_URLS:
-        return ""
-    if value.startswith("/"):
-        return value
-
-    parsed = urlparse(value)
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-        return ""
-
-    netloc = parsed.netloc.lower()
-    if netloc.startswith("www."):
-        netloc = netloc[4:]
-    path = parsed.path or "/"
-    return urlunparse((parsed.scheme.lower(), netloc, path, "", parsed.query, ""))
-
-
-def _chunk_source_url(chunk: dict[str, Any]) -> str:
-    candidates: list[object] = [
-        chunk.get("source_url"),
-        chunk.get("sourceUrl"),
-        chunk.get("canonical_url"),
-        chunk.get("page_url"),
-        chunk.get("url"),
-    ]
-    metadata = chunk.get("metadata")
-    if isinstance(metadata, dict):
-        candidates.extend(
-            [
-                metadata.get("source_url"),
-                metadata.get("sourceUrl"),
-                metadata.get("canonical_url"),
-                metadata.get("page_url"),
-                metadata.get("url"),
-            ]
-        )
-    source = chunk.get("source")
-    if isinstance(source, dict):
-        candidates.extend(
-            [
-                source.get("source_url"),
-                source.get("url"),
-                source.get("href"),
-            ]
-        )
-
-    for candidate in candidates:
-        normalised = _normalise_guard_url(candidate)
-        if normalised and not normalised.startswith("/"):
-            return normalised
-    return ""
-
-
 def _filter_trusted_sources_for_chunks(
     trusted_sources: list[dict[str, Any]],
     chunks: list[dict[str, Any]],
@@ -1826,17 +1772,6 @@ def _chunk_title(chunk: dict[str, Any]) -> str:
     if isinstance(title, str) and title.strip():
         return title.strip()
     return "Source"
-
-
-def _absolute_image_url(url: object) -> str:
-    normalised = _normalise_guard_url(url)
-    if not normalised:
-        return ""
-    return (
-        f"{KB_IMAGES_BASE_URL}{normalised}"
-        if normalised.startswith("/")
-        else normalised
-    )
 
 
 def _get_choice_message(choice: object, key: str) -> object:
@@ -3394,122 +3329,18 @@ class KlaiKnowledgeHook(CustomLogger):
         # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English instructions
         # to the model. The user-facing answer is in the user's detected
         # language via GROUNDED_CHAT_SYSTEM_PROMPT prepended at the call site.
-        # Build context block with provenance labels per chunk.
-        # Narrow: model must answer strictly from KB chunks only.
-        # Broad (default): KB as additional context, general knowledge allowed.
-        header = _kb_chunks_present_header(kb_narrow)
-        source_link_instruction = (
-            "[ANSWER FORMAT — always follow this, EXCEPT where an "
-            "active Klai Template (see block below) directs a "
-            "different tone, structure, opening, wording, numbering, "
-            "or whitespace:\n"
-            "1. Default opening is a short TL;DR (2-3 sentences) of "
-            "the answer. Write it as normal prose, not as a Markdown "
-            "heading. Use the standard short-summary label in the "
-            "SAME LANGUAGE as the user's question — NOT the language "
-            "of the source documents. 'TL;DR' is universally "
-            "understood and is a safe default in any language. SKIP "
-            "this opening when an active template asks for a "
-            "creative / narrative / story-style answer (e.g. 'Creatief') "
-            "or for a fixed output form / specific opening.\n"
-            "2. Do not write source lists, URLs, Markdown links, footnotes, "
-            "or citation numbers. The application adds citations after "
-            "generation from retrieved metadata.\n"
-            "3. Do not preserve source-list step numbers when a retrieved "
-            "chunk starts mid-procedure; rewrite steps into a clean sequence. "
-            "This does not apply to numbering required by an active template.\n"
-            "4. If needed for a clear explanation, or if the user asks for "
-            "more detail, follow with an extended answer with inline "
-            "explanation.\n"
-            "   Be concise but complete. No walls of text — write as if you "
-            "are helping a colleague.\n\n"
-            "STRICT:\n"
-            "- NEVER invent or write a URL. No notion.so, no portal.voys.nl, "
-            "no guessed documentation paths.\n"
-            "- NEVER use placeholder, example, or documentation-only domains.\n"
-            "- Never use a title as URL target.\n\n"
-            "IMAGES:\n"
-            "- Only include image markdown if a chunk below already contains "
-            "an explicit ![...](...) image tag.\n"
-            "- Change NOTHING about the image URL. Copy the entire "
-            "![...](https://...) tag exactly.\n"
-            "- NEVER create, guess, search for, or suggest an image URL.\n"
-            "- NEVER use placeholder, example, or documentation-only image URLs.\n"
-            "- If the user asks for an image from the knowledge base and no "
-            "explicit image tag is present in the chunks, say plainly that "
-            "no knowledge-base image is available.\n"
-            "- Knowledge-base images only: these image markdown rules apply "
-            "only to images retrieved from knowledge-base chunks. They do "
-            "not define how user-provided attachments may be used — see the "
-            "[User-provided content] note above.\n"
-            "- Do NOT add images in the TL;DR (section 1).]\n"
+        context_prompt = _build_kb_context_prompt(
+            kb_narrow=kb_narrow,
+            context_chunks=context_chunks,
+            trusted_sources=trusted_sources,
+            templates_block=templates_block,
+            images_base_url=KB_IMAGES_BASE_URL,
+            low_confidence_inject=low_confidence_inject,
+            low_confidence_injection_disabled=_LOW_CONFIDENCE_INJECTION_DISABLED,
+            low_confidence_strict_text=_LOW_CONFIDENCE_INJECTION_TEXT,
+            low_confidence_open_text=_LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
         )
-        lines = [header, source_link_instruction]
-        # SPEC-CHAT-TEMPLATES-001 follow-up 2026-05-27: surface the
-        # active Klai-templates block AFTER the [ANSWER FORMAT] rules
-        # so the model treats template tone/style/opening directives
-        # as the most-recent (and therefore highest-attention)
-        # instruction layer before the chunks themselves. Previously
-        # the template block sat between GROUNDED_CHAT_SYSTEM_PROMPT
-        # and the KB context (composed via _compose_libre_chat_prefix
-        # at the bottom), which placed templates earlier than the
-        # hardcoded "Begin with TL;DR" rule. The model then followed
-        # the more-recent format rule and ignored the template — e.g.
-        # the "Creatief" template returned a clipped TL;DR every time.
-        # Keeping the block here (still inside the system prompt,
-        # before chunks) keeps every existing chunks-present test path
-        # working while flipping the relative ordering.
-        if templates_block:
-            lines.append(templates_block)
-        citation_source_urls: dict[int, str] = {}
-        for chunk_index, chunk in enumerate(context_chunks, 1):
-            source_url = _chunk_source_url(chunk)
-            if source_url:
-                citation_source_urls[chunk_index] = source_url
-        allowed_source_urls: set[str] = {
-            source["url"] for source in trusted_sources if isinstance(source.get("url"), str)
-        }
-        allowed_image_urls: set[str] = set()
-
-        context_block = render_evidence_context(context_chunks, include_source_urls=False)
-        if context_block:
-            lines.append(context_block)
-
-        for chunk in context_chunks:
-            absolute_urls = [
-                url
-                for url in (
-                    _absolute_image_url(u) for u in chunk.get("image_urls") or []
-                )
-                if url
-            ]
-            allowed_image_urls.update(absolute_urls)
-            for i, img_url in enumerate(absolute_urls, 1):
-                lines.append(f"![afbeelding {i}]({img_url})")
-            lines.append("")
-        lines.append("[End knowledge base context]")
-        # SPEC-RAG-MULTILINGUAL-CHAT-001: KB content is often in a different
-        # language than the user's question. Re-affirm the language contract
-        # AFTER the KB block so the most-recent instruction wins when Mistral
-        # is anchored on the dominant language of the source documents.
-        lines.append(
-            "[LANGUAGE REMINDER] The knowledge-base chunks above may be in a "
-            "different language than the user's question. Always respond in "
-            "the language of the user's most recent substantive question, "
-            "NOT the language of the source documents. Translate cited "
-            "content into the user's language without translator disclaimers."
-        )
-        # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2: anti-hallucination layer.
-        # Fires when retrieval-api signals confidence_band ∈ {low, unknown}.
-        # Most-recent-instruction wins, so it goes AFTER the language reminder.
-        # Disabled when KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION=1 (rollback
-        # escape hatch — toggle off without redeploying retrieval-api).
-        if low_confidence_inject and not _LOW_CONFIDENCE_INJECTION_DISABLED:
-            lines.append(
-                _LOW_CONFIDENCE_INJECTION_TEXT
-                if kb_narrow
-                else _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT
-            )
+        if context_prompt.low_confidence_injection_applied:
             # NOTE: warning-level (not info) is deliberate. The litellm
             # container's root logger filters info-level emits from
             # non-uvicorn modules (verified 2026-05-08 via VictoriaLogs:
@@ -3527,20 +3358,16 @@ class KlaiKnowledgeHook(CustomLogger):
                 confidence_band,
                 len(context_chunks),
             )
-        context_block = "\n".join(lines)
+        context_block = context_prompt.context_block
 
         # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-E1: templates → KB → existing.
         # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): GROUNDED_CHAT_SYSTEM_PROMPT
         # leads — same contract as paths B (partner_chat) and C (retrieval-api /chat).
         #
-        # Note 2026-05-27: ``templates_block`` is now appended INSIDE
-        # ``lines`` (after ``source_link_instruction``) so the templates
-        # show up AFTER the [ANSWER FORMAT] rules — see comment at the
-        # ``lines.append(templates_block)`` site above. We therefore do
-        # NOT pass templates_block to ``_compose_libre_chat_prefix`` here
-        # any more; doing so would duplicate the block in the system
-        # prompt, once high (between GROUNDED and the KB header) and
-        # once low (right before the chunks).
+        # Note 2026-05-27: ``templates_block`` is appended inside the context
+        # builder after [ANSWER FORMAT] and before chunks. We therefore pass
+        # only the built context block to the mode prefix here; passing
+        # templates_block again would duplicate it.
         prefix = _compose_kb_mode_chat_prefix(kb_narrow, context_block)
         _prepend_system_prefix(messages, prefix)
         data["messages"] = messages
@@ -3563,11 +3390,9 @@ class KlaiKnowledgeHook(CustomLogger):
             retrieval_ms=retrieval_ms,
             chunks_injected=len(context_chunks),
             chunk_ids=[c.get("chunk_id") for c in context_chunks if c.get("chunk_id")],
-            allowed_source_urls=sorted(allowed_source_urls),
-            allowed_image_urls=sorted(allowed_image_urls),
-            citation_source_urls={
-                str(index): url for index, url in citation_source_urls.items()
-            },
+            allowed_source_urls=context_prompt.allowed_source_urls,
+            allowed_image_urls=context_prompt.allowed_image_urls,
+            citation_source_urls=context_prompt.citation_source_urls,
             citation_chunks=context_chunks,
             trusted_sources=trusted_sources,
             evidence_pack=evidence_pack if isinstance(evidence_pack, dict) else None,
