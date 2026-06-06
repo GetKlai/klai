@@ -5,7 +5,7 @@ export type AccessLevel = 'none' | 'read' | 'read_write'
 export interface KbAccess {
   kb_id: number
   kb_name: string
-  kb_slug: string
+  kb_slug: string | null
   access_level: AccessLevel
 }
 
