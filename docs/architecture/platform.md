@@ -719,14 +719,14 @@ Legend: ✅ confirmed compatible | ⚠️ attention point | ❌ correction neede
 
 ### Summary: critical actions
 
-*Last verified: 2026-03-22*
+*Last verified: 2026-06-06*
 
 | Status | Component | Action / Decision |
 |---|---|---|
 | ✅ Done | LibreChat database | MongoDB as shared server, separate database per tenant via `MONGO_URI`. Silo model. |
 | ✅ Done | vLLM gpu-memory-utilization | Corrected: ~0.55 (32B) + ~0.40 (8B). Original (0.41 + 0.12) was incorrect. |
 | ✅ Done | Caddy wildcard TLS | `caddy-hetzner:latest` deployed. xcaddy + `github.com/caddy-dns/hetzner`. DNS on Hetzner DNS. |
-| ⚠️ Canary only | Meilisearch | Shared instance exists. `getklai` uses tenant-scoped indexes and a scoped runtime key; broad LibreChat search is blocked until migration/backfill is proven per tenant. |
+| ✅ Done | Meilisearch | Shared instance with tenant-scoped LibreChat search indexes. All ready tenants use `{slug}_messages` and `{slug}_convos` with scoped runtime keys; Mongo remains source of truth. |
 | ✅ Done | Grafana VictoriaLogs plugin | Required (`victoriametrics-logs-datasource`). LogsQL != LogQL, generic Loki does not work. |
 | ✅ Done | LibreChat provisioning | portal-api provisioning service live (Phase 1 complete). Template logic: `provisioning.py`. |
 | ✅ Done | LiteLLM `drop_params` | `drop_params: true` in `litellm/config.yaml`. |
