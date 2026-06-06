@@ -5,7 +5,7 @@ SPEC-SEC-SERVICE-AUTH-001 Phase C-1.
 Why a vendored copy
 -------------------
 
-The LiteLLM container (``ghcr.io/berriai/litellm:v1.83.7-stable``) is a stock
+The LiteLLM container (``ghcr.io/berriai/litellm:v1.87.1``) is a stock
 upstream image; klai mounts ``klai_knowledge.py`` and ``custom_router.py`` as
 files into ``/app/`` (which is on PYTHONPATH). There is no ``pyproject.toml``
 inside the container, no ``pip install`` step, and no klai-libs path-dep

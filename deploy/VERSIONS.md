@@ -8,7 +8,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 
 **Exception — local builds:** `klai/retrieval-api:local` and `ghcr.io/mendableai/firecrawl:latest` are built on-host from source and not pullable from a registry. Their "versions" are tracked by git SHAs recorded in docker-compose.yml comments.
 
-**Exception — Vexa stack (upstream v0.10.6.2, 2026-05-20):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot` are currently on `0.10.6.2` — pulled directly from Docker Hub (since v0.10.4 upstream publishes pre-built images). `deploy/check-image-tags.sh` enforces upstream version or timestamped-version tag form (no `:latest` / `:dev` / `:staging`). Upgrade cadence: track upstream stable tags; bump for material fixes (chunk-leak, OOM, security). See `https://github.com/Vexa-ai/vexa/releases` for changelog. **Exception within the exception**: `vexaai/transcription-service` is NOT published to Docker Hub — it stays locally-built on gpu-01 from upstream source (CUDA + faster-whisper). Currently `0.10.6.2-local-260524-1610` (built from upstream `v0.10.6.2` tag, 2026-05-24). The `<semver>-local-YYMMDD-HHMM` convention is whitelisted by `deploy/check-image-pullable.sh` (no registry manifest exists). Bumping runbook: `docs/runbooks/transcription-service-bump.md`.
+**Exception — Vexa stack (upstream v0.10.6.3, 2026-06-06):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot` are currently on `0.10.6.3` — pulled directly from Docker Hub (since v0.10.4 upstream publishes pre-built images). `deploy/check-image-tags.sh` enforces upstream version or timestamped-version tag form (no `:latest` / `:dev` / `:staging`). Upgrade cadence: track upstream stable tags; bump for material fixes (chunk-leak, OOM, security). See `https://github.com/Vexa-ai/vexa/releases` for changelog. **Exception within the exception**: `vexaai/transcription-service` is NOT published to Docker Hub — it stays locally-built on gpu-01 from upstream source (CUDA + faster-whisper). Currently `0.10.6.2-local-260524-1610` (built from upstream `v0.10.6.2` tag, 2026-05-24). The `<semver>-local-YYMMDD-HHMM` convention is whitelisted by `deploy/check-image-pullable.sh` (no registry manifest exists). Bumping runbook: `docs/runbooks/transcription-service-bump.md`.
 
 ---
 
@@ -24,27 +24,27 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 | `mongodb` | `mongo:8.2.7` | MongoDB 8 is the current stable major. LibreChat tenants depend on this. Major upgrades require replica-set-aware migration. |
 | `redis` | `redis:8-alpine` | Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. Previously on `redis:alpine` which silently rolled to 8 anyway — now explicit. |
 | `vexa-redis` | `redis:8-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
-| `qdrant` | `qdrant/qdrant:v1.17.1` | Vector store for Klai Knowledge. Binary-incompatible on major bumps — pin explicitly. |
-| `falkordb` | `falkordb/falkordb:v4.18.1` | Knowledge graph (Graphiti backend). v4.x has stable RediSearch + graph engine integration. |
+| `qdrant` | `qdrant/qdrant:v1.18.2` | Vector store for Klai Knowledge. Binary-incompatible on major bumps — pin explicitly. |
+| `falkordb` | `falkordb/falkordb:v4.18.9` | Knowledge graph (Graphiti backend). v4.x has stable RediSearch + graph engine integration. |
 
 ### Auth + monitoring
 
 | Service | Image | Rationale |
 |---|---|---|
-| `zitadel` | `ghcr.io/zitadel/zitadel:v4.13.1` | OIDC IdP. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
+| `zitadel` | `ghcr.io/zitadel/zitadel:v4.15.0` | OIDC IdP. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
 | `victoriametrics` | `victoriametrics/victoria-metrics:v1.140.0` | Metrics TSDB. |
 | `victorialogs` | `victoriametrics/victoria-logs:v1.50.0` | Log aggregation (replaces Loki). LogsQL syntax differs from LogQL. |
-| `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.55.1` | Container metrics. **Upstream is stagnant** (last release Dec 2024). Acceptable; no alternative has equivalent Docker metric granularity. |
-| `alloy` | `grafana/alloy:v1.15.1` | Log and metric collection. Config format stable on minor bumps. |
-| `grafana` | `grafana/grafana:13.0.1` | Dashboard UI. v12 → v13 had breaking dashboard JSON changes — verify dashboards after any major bump. |
-| `glitchtip-web`, `glitchtip-worker`, `glitchtip-migrate` | `glitchtip/glitchtip:6.1.6` | Error tracking. All three share the same image (different commands). |
+| `cadvisor` | `ghcr.io/google/cadvisor:v0.57.0` | Container metrics. Registry moved from `gcr.io` to `ghcr.io`; verify dashboards that depend on container start/creation timestamps after this bump. |
+| `alloy` | `grafana/alloy:v1.16.2` | Log and metric collection. Config format stable on minor bumps. |
+| `grafana` | `grafana/grafana:13.0.2` | Dashboard UI. v12 → v13 had breaking dashboard JSON changes — verify dashboards after any major bump. |
+| `glitchtip-web`, `glitchtip-worker`, `glitchtip-migrate` | `glitchtip/glitchtip:6.1.8` | Error tracking. All three share the same image (different commands). |
 
 ### Inference + AI
 
 | Service | Image | Rationale |
 |---|---|---|
-| `litellm` | `ghcr.io/berriai/litellm:v1.83.7-stable` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). v1.83.x fixes CVE-2026-35030 (OIDC userinfo cache key collision — auth bypass). Re-assess monthly; LiteLLM ships stable tags ~weekly. |
-| `ollama` | `ollama/ollama:0.21.0` | CPU fallback for LLM inference. |
+| `litellm` | `ghcr.io/berriai/litellm:v1.87.1` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). Re-assess monthly; LiteLLM ships stable tags frequently. |
+| `ollama` | `ollama/ollama:0.30.6` | CPU fallback for LLM inference. |
 | `librechat-getklai` | `ghcr.io/danny-avila/librechat:v0.8.6` | GetKlai canary chat UI. Provisioning-managed tenant LibreChat containers remain on the `LIBRECHAT_IMAGE` default until the canary is proven. Mounted canary patches live under `deploy/librechat/getklai/patches/` and are checked against `deploy/librechat/getklai/patch-manifest.txt`; tenant patches remain under `deploy/librechat/patches/`. |
 
 ### Document + search
@@ -52,10 +52,10 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 | Service | Image | Rationale |
 |---|---|---|
 | `meilisearch` | `getmeili/meilisearch:v1.45.2` | Search index for LibreChat conversations. **Data migration required on minor bumps** — v1.42.1 refused to boot directly on v1.45.2 and required dump/import. Pin explicitly and keep `MEILI_DB_PATH=/meili_data`; v1.45.2 otherwise starts on `./data.ms` and ignores the mounted volume. |
-| `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.16.1` | Document parsing (PDF, DOCX → structured). |
-| `searxng` | `searxng/searxng:2026.4.17-e8299a4c3` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
-| `gitea` | `gitea/gitea:1.26.0` | Self-hosted git for klai-docs. |
-| `crawl4ai` | `unclecode/crawl4ai:0.8.6` | Web crawler for klai-connector. |
+| `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.21.0` | Document parsing (PDF, DOCX → structured). |
+| `searxng` | `searxng/searxng:2026.6.5-37187dc2d` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
+| `gitea` | `gitea/gitea:1.26.2` | Self-hosted git for klai-docs. |
+| `crawl4ai` | `unclecode/crawl4ai:0.8.9` | Web crawler for klai-connector. Hooks are explicitly disabled in compose; Klai uses crawl request config, not Crawl4AI server hooks. |
 
 ### Ops
 
@@ -95,7 +95,7 @@ Uses the same versions as production core-01 to catch version-related issues loc
 | `redis` | `redis:8-alpine` | Aligned with prod (was `redis:alpine`). |
 | `mongodb` | `mongo:8.2.7` | Same as prod. |
 | `meilisearch` | `getmeili/meilisearch:v1.45.2` | Aligned with prod; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
-| `litellm` | `ghcr.io/berriai/litellm:main-stable` | Same rolling tag as prod. |
+| `litellm` | `ghcr.io/berriai/litellm:v1.87.1` | Same as prod. |
 
 ---
 
@@ -136,4 +136,4 @@ See `docs/runbooks/version-management.md` §9 for the full CVE detection stack.
 
 ---
 
-*Last verified: 2026-04-19 — all images in core-01 `docker ps` match this file.*
+*Last repo pin sync: 2026-06-06 — Meilisearch and LibreChat intentionally left on their existing repo pins for the separate migration sessions.*
