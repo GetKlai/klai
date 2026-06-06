@@ -1,14 +1,16 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bug, CheckCheck, Download, Lightbulb, Loader2, MessageSquare, Send, Settings, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, Bug, CheckCheck, Download, Inbox, Lightbulb, Loader2, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
+import { ConversationComposer, ConversationTimeline, type ConversationEntry } from '@/components/ui/conversation'
 import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
@@ -102,11 +104,9 @@ function AccountPage() {
   const { locale, switchLocale } = useLocale()
   const search = Route.useSearch()
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
 
   const [saved, setSaved] = useState(false)
   const [selectedLang, setSelectedLang] = useState<'nl' | 'en'>(locale)
-  const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null)
   const activeTab: TabId = search.tab ?? 'settings'
 
   // Fetch current user's preferred language from the portal DB
@@ -132,12 +132,6 @@ function AccountPage() {
     queryKey: ['account-platform-messages'],
     queryFn: () => apiFetch<AccountPlatformMessagesResponse>('/api/app/account/messages'),
     enabled: auth.isAuthenticated,
-  })
-
-  const selectedThreadQuery = useQuery({
-    queryKey: ['account-platform-message-thread', selectedThreadId],
-    queryFn: () => apiFetch<AccountPlatformMessageThreadDetail>(`/api/app/account/messages/${selectedThreadId}`),
-    enabled: auth.isAuthenticated && selectedThreadId !== null,
   })
 
   useEffect(() => {
@@ -179,57 +173,6 @@ function AccountPage() {
     },
   })
 
-  const markFeedbackReadMutation = useMutation({
-    mutationFn: async (notificationId: number) => {
-      return apiFetch(`/api/app/account/feedback-updates/${notificationId}/read`, { method: 'POST' })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['account-feedback-updates'] })
-    },
-  })
-
-  const markAllFeedbackReadMutation = useMutation({
-    mutationFn: async () => {
-      return apiFetch('/api/app/account/feedback-updates/read-all', { method: 'POST' })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['account-feedback-updates'] })
-    },
-  })
-
-  const markMessageReadMutation = useMutation({
-    mutationFn: async (threadId: number) => {
-      return apiFetch(`/api/app/account/messages/${threadId}/read`, { method: 'POST' })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
-      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
-    },
-  })
-
-  const markAllMessagesReadMutation = useMutation({
-    mutationFn: async () => {
-      return apiFetch('/api/app/account/messages/read-all', { method: 'POST' })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
-      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
-    },
-  })
-
-  const replyMessageMutation = useMutation({
-    mutationFn: async (vars: { threadId: number; body: string }) => {
-      return apiFetch(`/api/app/account/messages/${vars.threadId}/reply`, {
-        method: 'POST',
-        body: JSON.stringify({ body: vars.body }),
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
-      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
-    },
-  })
-
   // Name and email come from /api/me (sourced server-side from the Zitadel
   // userinfo claims). The BFF session only carries `sub`, so reading from
   // auth.user.profile here would always be empty.
@@ -238,12 +181,6 @@ function AccountPage() {
   const hasProfileInfo = Boolean(name || email)
   const feedbackUnreadCount = feedbackUpdates?.unread_count ?? 0
   const messageUnreadCount = platformMessages?.unread_count ?? 0
-
-  useEffect(() => {
-    if (activeTab === 'messages' && selectedThreadId === null && platformMessages?.items.length) {
-      setSelectedThreadId(platformMessages.items[0].id)
-    }
-  }, [activeTab, platformMessages?.items, selectedThreadId])
 
   const tabs: TabItem<TabId>[] = [
     { id: 'settings', label: m.account_tab_settings(), icon: Settings },
@@ -257,7 +194,7 @@ function AccountPage() {
     {
       id: 'feedback',
       label: m.account_tab_feedback(),
-      icon: MessageSquare,
+      icon: Inbox,
       notificationCount: feedbackUnreadCount,
       notificationLabel: m.account_feedback_unread(),
     },
@@ -271,10 +208,8 @@ function AccountPage() {
     })
   }
 
-  const wideLayout = activeTab === 'messages' || activeTab === 'feedback'
-
   return (
-    <div className={`mx-auto ${wideLayout ? 'max-w-5xl' : 'max-w-2xl'} px-6 pt-4 pb-10 space-y-8`}>
+    <div className="mx-auto max-w-2xl px-6 pt-4 pb-10 space-y-8">
       <div className="space-y-1">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.account_heading()}
@@ -355,34 +290,16 @@ function AccountPage() {
           error={feedbackError}
           locale={locale}
           unreadCount={feedbackUnreadCount}
-          onMarkRead={(notificationId) => markFeedbackReadMutation.mutate(notificationId)}
-          onMarkAllRead={() => markAllFeedbackReadMutation.mutate()}
-          isMarkingAllRead={markAllFeedbackReadMutation.isPending}
         />
       )}
 
       {activeTab === 'messages' && (
         <AccountMessagesPanel
           items={platformMessages?.items ?? []}
-          detail={selectedThreadQuery.data ?? null}
-          selectedThreadId={selectedThreadId}
           isLoading={messagesLoading}
-          detailLoading={selectedThreadQuery.isLoading}
           error={messagesError}
           locale={locale}
           unreadCount={messageUnreadCount}
-          onMarkAllRead={() => markAllMessagesReadMutation.mutate()}
-          onSelect={(thread) => {
-            setSelectedThreadId(thread.id)
-            if (thread.unread) markMessageReadMutation.mutate(thread.id)
-          }}
-          onReply={(body) => {
-            if (selectedThreadId !== null) {
-              replyMessageMutation.mutate({ threadId: selectedThreadId, body })
-            }
-          }}
-          isReplying={replyMessageMutation.isPending}
-          isMarkingAllRead={markAllMessagesReadMutation.isPending}
         />
       )}
 
@@ -416,43 +333,109 @@ function AccountPage() {
   )
 }
 
+// --- Berichten (direct platform-admin messages) ----------------------------
+
 function AccountMessagesPanel({
   items,
-  detail,
-  selectedThreadId,
   isLoading,
-  detailLoading,
   error,
   locale,
   unreadCount,
-  onMarkAllRead,
-  onSelect,
-  onReply,
-  isReplying,
-  isMarkingAllRead,
 }: {
   items: AccountPlatformMessageThread[]
-  detail: AccountPlatformMessageThreadDetail | null
-  selectedThreadId: number | null
   isLoading: boolean
-  detailLoading: boolean
   error: unknown
   locale: 'nl' | 'en'
   unreadCount: number
-  onMarkAllRead: () => void
-  onSelect: (thread: AccountPlatformMessageThread) => void
-  onReply: (body: string) => void
-  isReplying: boolean
-  isMarkingAllRead: boolean
 }) {
+  const queryClient = useQueryClient()
+  const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null)
   const [replyBody, setReplyBody] = useState('')
   const hasError = error != null
 
+  const detailQuery = useQuery({
+    queryKey: ['account-platform-message-thread', selectedThreadId],
+    queryFn: () => apiFetch<AccountPlatformMessageThreadDetail>(`/api/app/account/messages/${selectedThreadId}`),
+    enabled: selectedThreadId !== null,
+  })
+
+  const markReadMutation = useMutation({
+    mutationFn: (threadId: number) => apiFetch(`/api/app/account/messages/${threadId}/read`, { method: 'POST' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
+    },
+  })
+
+  const markAllReadMutation = useMutation({
+    mutationFn: () => apiFetch('/api/app/account/messages/read-all', { method: 'POST' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
+    },
+  })
+
+  const replyMutation = useMutation({
+    mutationFn: (vars: { threadId: number; body: string }) =>
+      apiFetch(`/api/app/account/messages/${vars.threadId}/reply`, {
+        method: 'POST',
+        body: JSON.stringify({ body: vars.body }),
+      }),
+    onSuccess: () => {
+      setReplyBody('')
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
+      void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
+    },
+    onError: () => toast.error(m.account_messages_error()),
+  })
+
+  function openThread(thread: AccountPlatformMessageThread) {
+    setSelectedThreadId(thread.id)
+    setReplyBody('')
+    if (thread.unread) markReadMutation.mutate(thread.id)
+  }
+
+  function back() {
+    setSelectedThreadId(null)
+    setReplyBody('')
+  }
+
   function submitReply() {
     const trimmed = replyBody.trim()
-    if (!trimmed) return
-    onReply(trimmed)
-    setReplyBody('')
+    if (!trimmed || selectedThreadId === null) return
+    replyMutation.mutate({ threadId: selectedThreadId, body: trimmed })
+  }
+
+  if (selectedThreadId !== null) {
+    const detail = detailQuery.data ?? null
+    const entries: ConversationEntry[] = (detail?.messages ?? []).map((message) => ({
+      id: message.id,
+      side: message.sender_type === 'user' ? 'me' : 'them',
+      author: message.sender_type === 'user' ? m.account_messages_you() : m.account_messages_platform_admin(),
+      body: message.body,
+      at: message.created_at,
+    }))
+
+    return (
+      <ConversationDetail
+        title={detail?.thread.subject ?? ''}
+        subtitle={
+          detail
+            ? `${m.account_messages_started()} ${formatFeedbackDate(detail.thread.created_at, locale)}`
+            : undefined
+        }
+        entries={entries}
+        loading={detailQuery.isLoading}
+        locale={locale}
+        replyBody={replyBody}
+        onReplyBodyChange={setReplyBody}
+        onSubmitReply={submitReply}
+        isReplying={replyMutation.isPending}
+        replyPlaceholder={m.account_messages_reply_placeholder()}
+        sendLabel={m.account_messages_send()}
+        onBack={back}
+      />
+    )
   }
 
   return (
@@ -462,194 +445,39 @@ function AccountMessagesPanel({
         description={m.account_messages_description()}
         unreadCount={unreadCount}
         markAllLabel={m.account_messages_mark_all_read()}
-        onMarkAllRead={onMarkAllRead}
-        isMarkingAllRead={isMarkingAllRead}
+        onMarkAllRead={() => markAllReadMutation.mutate()}
+        isMarkingAllRead={markAllReadMutation.isPending}
       />
 
-      {isLoading && <SplitLoadingState detailPreview />}
-
-      {!isLoading && hasError && (
+      {isLoading ? (
+        <ListLoadingState label={m.admin_shared_loading()} />
+      ) : hasError ? (
         <p className="text-sm text-[var(--color-destructive)]">{m.account_messages_error()}</p>
-      )}
-
-      {!isLoading && !hasError && items.length === 0 && (
-        <EmptyState
+      ) : items.length === 0 ? (
+        <ListEmptyState
           title={m.account_messages_empty_title()}
           description={m.account_messages_empty_description()}
         />
-      )}
-
-      {!isLoading && !hasError && items.length > 0 && (
-        <div className="grid min-h-[560px] border-y border-gray-200 lg:grid-cols-[minmax(240px,320px)_1fr]">
-          <div className="divide-y divide-gray-100 lg:border-r lg:border-gray-200">
-            {items.map((thread) => {
-              const selected = thread.id === selectedThreadId
-              return (
-                <button
-                  key={thread.id}
-                  type="button"
-                  onClick={() => onSelect(thread)}
-                  className={`flex w-full gap-3 px-3 py-4 text-left transition-colors hover:bg-gray-50 ${selected ? 'bg-gray-50' : ''}`}
-                >
-                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500">
-                    <MessageSquare className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      {thread.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-success)]" />}
-                      <h3 className="truncate text-sm font-medium text-gray-900">{thread.subject}</h3>
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-sm text-gray-500">{thread.latest_message_body}</p>
-                    <p className="mt-2 text-xs text-gray-400">
-                      {formatFeedbackDate(thread.latest_message_at, locale)}
-                    </p>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-
-          <div className="min-w-0 p-4">
-            {selectedThreadId === null ? (
-              <ThreadSelectEmpty label={m.account_messages_select_thread()} />
-            ) : (
-              <ConversationThread
-                detail={detail}
-                detailLoading={detailLoading}
-                locale={locale}
-                replyBody={replyBody}
-                onReplyBodyChange={setReplyBody}
-                onSubmitReply={submitReply}
-                isReplying={isReplying}
-                textareaId="account-message-reply"
-                replyLabel={m.account_messages_reply()}
-                sendLabel={m.account_messages_send()}
-              />
-            )}
-          </div>
+      ) : (
+        <div className="border-y border-gray-200 divide-y divide-gray-100">
+          {items.map((thread) => (
+            <FeedRow
+              key={thread.id}
+              icon={<MessageSquare className="h-4 w-4" />}
+              unread={thread.unread}
+              title={thread.subject}
+              snippet={thread.latest_message_body}
+              date={formatFeedbackDate(thread.latest_message_at, locale)}
+              onOpen={() => openThread(thread)}
+            />
+          ))}
         </div>
       )}
     </div>
   )
 }
 
-function ConversationThread({
-  detail,
-  detailLoading,
-  locale,
-  replyBody,
-  onReplyBodyChange,
-  onSubmitReply,
-  isReplying,
-  textareaId,
-  replyLabel,
-  sendLabel,
-}: {
-  detail: AccountPlatformMessageThreadDetail | null
-  detailLoading: boolean
-  locale: 'nl' | 'en'
-  replyBody: string
-  onReplyBodyChange: (value: string) => void
-  onSubmitReply: () => void
-  isReplying: boolean
-  textareaId: string
-  replyLabel: string
-  sendLabel: string
-}) {
-  if (detailLoading || !detail) {
-    return (
-      <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-gray-500">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        {m.admin_shared_loading()}
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex h-full min-h-[520px] flex-col">
-      <div className="border-b border-gray-200 pb-4">
-        <h3 className="text-base font-display-bold text-gray-900">{detail.thread.subject}</h3>
-        <p className="mt-1 text-xs text-gray-400">
-          {m.account_messages_started()} {formatFeedbackDate(detail.thread.created_at, locale)}
-        </p>
-      </div>
-
-      <div className="min-h-[260px] flex-1 overflow-y-auto py-4">
-        <div className="space-y-3">
-          {detail.messages.map((message) => {
-            const isUser = message.sender_type === 'user'
-            return (
-              <article key={message.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-                <div className="max-w-[78%]">
-                  <p className={`mb-1 text-xs ${isUser ? 'text-right text-gray-400' : 'text-gray-400'}`}>
-                    {isUser ? m.account_messages_you() : m.account_messages_platform_admin()} ·{' '}
-                    {formatFeedbackDate(message.created_at, locale)}
-                  </p>
-                  <div className={`rounded-lg px-3 py-2 text-sm leading-6 ${isUser ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-900'}`}>
-                    <p className="whitespace-pre-wrap">{message.body}</p>
-                  </div>
-                </div>
-              </article>
-            )
-          })}
-        </div>
-      </div>
-
-      <ReplyComposer
-        textareaId={textareaId}
-        label={replyLabel}
-        buttonLabel={sendLabel}
-        value={replyBody}
-        onChange={onReplyBodyChange}
-        onSubmit={onSubmitReply}
-        isSubmitting={isReplying}
-      />
-    </div>
-  )
-}
-
-function ReplyComposer({
-  textareaId,
-  label,
-  buttonLabel,
-  value,
-  onChange,
-  onSubmit,
-  isSubmitting,
-}: {
-  textareaId: string
-  label: string
-  buttonLabel: string
-  value: string
-  onChange: (value: string) => void
-  onSubmit: () => void
-  isSubmitting: boolean
-}) {
-  return (
-    <div className="space-y-2 border-t border-gray-200 pt-4">
-      <Label htmlFor={textareaId}>{label}</Label>
-      <Textarea
-        id={textareaId}
-        rows={4}
-        value={value}
-        maxLength={4000}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      <Button
-        type="button"
-        disabled={value.trim().length === 0 || isSubmitting}
-        onClick={onSubmit}
-      >
-        {isSubmitting ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Send className="h-4 w-4" />
-        )}
-        {buttonLabel}
-      </Button>
-    </div>
-  )
-}
+// --- Mijn meldingen (feedback) + conversation ------------------------------
 
 function FeedbackUpdatesPanel({
   items,
@@ -657,75 +485,96 @@ function FeedbackUpdatesPanel({
   error,
   locale,
   unreadCount,
-  onMarkRead,
-  onMarkAllRead,
-  isMarkingAllRead,
 }: {
   items: AccountFeedbackUpdate[]
   isLoading: boolean
   error: unknown
   locale: 'nl' | 'en'
   unreadCount: number
-  onMarkRead: (notificationId: number) => void
-  onMarkAllRead: () => void
-  isMarkingAllRead: boolean
 }) {
   const queryClient = useQueryClient()
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(null)
   const [replyBody, setReplyBody] = useState('')
   const [createdThreadIds, setCreatedThreadIds] = useState<Record<number, number>>({})
   const hasError = error != null
+
   const selectedItem = items.find((item) => item.submission_id === selectedSubmissionId) ?? null
   const selectedThreadId = selectedItem
     ? createdThreadIds[selectedItem.submission_id] ?? selectedItem.message_thread_id ?? null
     : null
 
-  useEffect(() => {
-    if (items.length === 0) {
-      setSelectedSubmissionId(null)
-      return
-    }
-    if (selectedSubmissionId === null || !items.some((item) => item.submission_id === selectedSubmissionId)) {
-      setSelectedSubmissionId(items[0].submission_id)
-    }
-  }, [items, selectedSubmissionId])
-
-  const selectedFeedbackThreadQuery = useQuery({
+  const threadQuery = useQuery({
     queryKey: ['account-platform-message-thread', selectedThreadId],
     queryFn: () => apiFetch<AccountPlatformMessageThreadDetail>(`/api/app/account/messages/${selectedThreadId}`),
     enabled: selectedThreadId !== null,
   })
 
-  const feedbackReplyMutation = useMutation({
-    mutationFn: async (vars: { submissionId: number; body: string }) => {
-      return apiFetch<AccountPlatformMessageThreadDetail>(`/api/app/account/feedback-updates/${vars.submissionId}/reply`, {
+  const markReadMutation = useMutation({
+    mutationFn: (notificationId: number) =>
+      apiFetch(`/api/app/account/feedback-updates/${notificationId}/read`, { method: 'POST' }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['account-feedback-updates'] }),
+  })
+
+  const markAllReadMutation = useMutation({
+    mutationFn: () => apiFetch('/api/app/account/feedback-updates/read-all', { method: 'POST' }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['account-feedback-updates'] }),
+  })
+
+  const replyMutation = useMutation({
+    mutationFn: (vars: { submissionId: number; body: string }) =>
+      apiFetch<AccountPlatformMessageThreadDetail>(`/api/app/account/feedback-updates/${vars.submissionId}/reply`, {
         method: 'POST',
         body: JSON.stringify({ body: vars.body }),
-      })
-    },
+      }),
     onSuccess: (detail, vars) => {
-      setCreatedThreadIds((previous) => ({
-        ...previous,
-        [vars.submissionId]: detail.thread.id,
-      }))
+      setCreatedThreadIds((previous) => ({ ...previous, [vars.submissionId]: detail.thread.id }))
       setReplyBody('')
       void queryClient.invalidateQueries({ queryKey: ['account-feedback-updates'] })
       void queryClient.invalidateQueries({ queryKey: ['account-platform-messages'] })
       void queryClient.invalidateQueries({ queryKey: ['account-platform-message-thread'] })
     },
+    onError: () => toast.error(m.account_feedback_error()),
   })
 
-  function selectItem(item: AccountFeedbackUpdate) {
+  function openItem(item: AccountFeedbackUpdate) {
     setSelectedSubmissionId(item.submission_id)
-    if (item.unread && item.notification_id !== null && item.notification_id !== undefined) {
-      onMarkRead(item.notification_id)
-    }
+    setReplyBody('')
+    if (item.unread && item.notification_id != null) markReadMutation.mutate(item.notification_id)
   }
 
-  function submitFeedbackReply() {
+  function back() {
+    setSelectedSubmissionId(null)
+    setReplyBody('')
+  }
+
+  function submitReply() {
     const trimmed = replyBody.trim()
     if (!trimmed || selectedItem === null) return
-    feedbackReplyMutation.mutate({ submissionId: selectedItem.submission_id, body: trimmed })
+    replyMutation.mutate({ submissionId: selectedItem.submission_id, body: trimmed })
+  }
+
+  if (selectedItem !== null) {
+    const status = feedbackStatusLabel(selectedItem)
+    const title = selectedItem.item_title || truncateText(selectedItem.raw_text, 88)
+    const entries = buildFeedbackEntries(selectedItem, threadQuery.data ?? null)
+
+    return (
+      <ConversationDetail
+        title={title}
+        subtitle={`${m.account_feedback_reported()} ${formatFeedbackDate(selectedItem.created_at, locale)}`}
+        badge={<Badge variant={status.variant}>{status.label}</Badge>}
+        entries={entries}
+        loading={selectedThreadId !== null && threadQuery.isLoading}
+        locale={locale}
+        replyBody={replyBody}
+        onReplyBodyChange={setReplyBody}
+        onSubmitReply={submitReply}
+        isReplying={replyMutation.isPending}
+        replyPlaceholder={m.account_feedback_reply_placeholder()}
+        sendLabel={m.account_feedback_send()}
+        onBack={back}
+      />
+    )
   }
 
   return (
@@ -735,193 +584,217 @@ function FeedbackUpdatesPanel({
         description={m.account_feedback_description()}
         unreadCount={unreadCount}
         markAllLabel={m.account_feedback_mark_all_read()}
-        onMarkAllRead={onMarkAllRead}
-        isMarkingAllRead={isMarkingAllRead}
+        onMarkAllRead={() => markAllReadMutation.mutate()}
+        isMarkingAllRead={markAllReadMutation.isPending}
       />
 
-      {isLoading && <SplitLoadingState />}
-
-      {!isLoading && hasError && (
+      {isLoading ? (
+        <ListLoadingState label={m.admin_shared_loading()} />
+      ) : hasError ? (
         <p className="text-sm text-[var(--color-destructive)]">{m.account_feedback_error()}</p>
-      )}
-
-      {!isLoading && !hasError && items.length === 0 && (
-        <EmptyState
+      ) : items.length === 0 ? (
+        <ListEmptyState
           title={m.account_feedback_empty_title()}
           description={m.account_feedback_empty_description()}
         />
-      )}
-
-      {!isLoading && !hasError && items.length > 0 && (
-        <div className="grid min-h-[620px] border-y border-gray-200 lg:grid-cols-[minmax(260px,360px)_1fr]">
-          <div className="divide-y divide-gray-100 lg:border-r lg:border-gray-200">
-            {items.map((item) => (
-              <FeedbackUpdateRow
-                key={item.submission_id}
-                item={item}
-                locale={locale}
-                selected={item.submission_id === selectedSubmissionId}
-                onSelect={() => selectItem(item)}
-              />
-            ))}
-          </div>
-          <div className="min-w-0 p-4">
-            {selectedItem === null ? (
-              <ThreadSelectEmpty label={m.account_feedback_select_report()} />
-            ) : (
-              <FeedbackConversationPanel
-                item={selectedItem}
-                threadDetail={selectedFeedbackThreadQuery.data ?? null}
-                threadLoading={selectedThreadId !== null && selectedFeedbackThreadQuery.isLoading}
-                hasThread={selectedThreadId !== null}
-                locale={locale}
-                replyBody={replyBody}
-                onReplyBodyChange={setReplyBody}
-                onSubmitReply={submitFeedbackReply}
-                isReplying={feedbackReplyMutation.isPending}
-              />
-            )}
-          </div>
+      ) : (
+        <div className="border-y border-gray-200 divide-y divide-gray-100">
+          {items.map((item) => (
+            <FeedbackFeedRow key={item.submission_id} item={item} locale={locale} onOpen={() => openItem(item)} />
+          ))}
         </div>
       )}
     </div>
   )
 }
 
-function FeedbackConversationPanel({
-  item,
-  threadDetail,
-  threadLoading,
-  hasThread,
+/** Synthesize one chronological timeline: the report, the Klai resolution, and any thread replies. */
+function buildFeedbackEntries(
+  item: AccountFeedbackUpdate,
+  thread: AccountPlatformMessageThreadDetail | null,
+): ConversationEntry[] {
+  const entries: ConversationEntry[] = [
+    {
+      id: `report-${item.submission_id}`,
+      side: 'me',
+      author: m.account_messages_you(),
+      body: item.raw_text,
+      at: item.created_at,
+    },
+  ]
+
+  if (item.notification_body) {
+    const at = item.item_updated_at ?? item.updated_at
+    entries.push({
+      id: `resolution-${item.submission_id}`,
+      side: 'them',
+      author: m.account_messages_platform_admin(),
+      body: item.notification_body,
+      at,
+    })
+    if ((item.item_status ?? item.submission_status) === 'resolved') {
+      entries.push({ type: 'system', id: `resolved-${item.submission_id}`, label: m.account_feedback_marked_resolved(), at })
+    }
+  }
+
+  if (thread) {
+    for (const message of thread.messages) {
+      entries.push({
+        id: message.id,
+        side: message.sender_type === 'user' ? 'me' : 'them',
+        author: message.sender_type === 'user' ? m.account_messages_you() : m.account_messages_platform_admin(),
+        body: message.body,
+        at: message.created_at,
+      })
+    }
+  }
+
+  // Avoid double-printing the user's first reply if the backend later seeds the
+  // report into the thread: de-dupe identical (side, body) pairs by keeping the
+  // earliest occurrence.
+  const seen = new Set<string>()
+  return entries.filter((entry) => {
+    if (entry.type === 'system') return true
+    const key = `${entry.side}|${entry.body}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+// --- Shared conversation detail (back + header + timeline + composer) -------
+
+function ConversationDetail({
+  title,
+  subtitle,
+  badge,
+  entries,
+  loading,
   locale,
   replyBody,
   onReplyBodyChange,
   onSubmitReply,
   isReplying,
+  replyPlaceholder,
+  sendLabel,
+  onBack,
 }: {
-  item: AccountFeedbackUpdate
-  threadDetail: AccountPlatformMessageThreadDetail | null
-  threadLoading: boolean
-  hasThread: boolean
+  title: string
+  subtitle?: string
+  badge?: ReactNode
+  entries: ConversationEntry[]
+  loading: boolean
   locale: 'nl' | 'en'
   replyBody: string
   onReplyBodyChange: (value: string) => void
   onSubmitReply: () => void
   isReplying: boolean
+  replyPlaceholder: string
+  sendLabel: string
+  onBack: () => void
 }) {
-  const title = item.item_title || truncateText(item.raw_text, 88)
-  const status = feedbackStatusLabel(item)
-
   return (
-    <div className="flex h-full min-h-[580px] flex-col">
-      <div className="border-b border-gray-200 pb-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h3 className="text-base font-display-bold text-gray-900">{title}</h3>
-            <p className="mt-1 text-xs text-gray-400">
-              {m.account_feedback_reported()} {formatFeedbackDate(item.created_at, locale)}
-            </p>
-          </div>
-          <Badge variant={status.variant} className="w-fit shrink-0">
-            {status.label}
-          </Badge>
-        </div>
+    <div className="space-y-5">
+      <div className="flex items-start gap-3">
+        <Button type="button" variant="ghost" size="sm" className="-ml-2 shrink-0" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          {m.account_conversation_back()}
+        </Button>
       </div>
 
-      <div className="border-b border-gray-200 py-4">
-        <p className="text-xs font-medium text-gray-400">{m.account_feedback_original_report()}</p>
-        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-900">{item.raw_text}</p>
-        {item.notification_body && (
-          <p className="mt-3 border-l-2 border-gray-200 pl-3 text-sm leading-6 text-gray-600">
-            {item.notification_body}
-          </p>
-        )}
+      <div className="flex items-start justify-between gap-3 border-b border-gray-200 pb-4">
+        <h2 className="min-w-0 text-base font-display-bold text-gray-900">{title}</h2>
+        {badge}
       </div>
+      {subtitle && <p className="-mt-2 text-xs text-gray-400">{subtitle}</p>}
 
-      {hasThread ? (
-        <div className="min-h-0 flex-1 pt-4">
-          <ConversationThread
-            detail={threadDetail}
-            detailLoading={threadLoading}
-            locale={locale}
-            replyBody={replyBody}
-            onReplyBodyChange={onReplyBodyChange}
-            onSubmitReply={onSubmitReply}
-            isReplying={isReplying}
-            textareaId={`account-feedback-reply-${item.submission_id}`}
-            replyLabel={m.account_feedback_reply()}
-            sendLabel={m.account_feedback_send()}
-          />
-        </div>
-      ) : (
-        <div className="flex flex-1 flex-col justify-between pt-4">
-          <p className="text-sm text-gray-400">{m.account_feedback_no_thread()}</p>
-          <ReplyComposer
-            textareaId={`account-feedback-reply-${item.submission_id}`}
-            label={m.account_feedback_reply()}
-            buttonLabel={m.account_feedback_send()}
-            value={replyBody}
-            onChange={onReplyBodyChange}
-            onSubmit={onSubmitReply}
-            isSubmitting={isReplying}
-          />
-        </div>
-      )}
+      <ConversationTimeline entries={entries} locale={locale} loading={loading} />
+
+      <ConversationComposer
+        value={replyBody}
+        onChange={onReplyBodyChange}
+        onSubmit={onSubmitReply}
+        isSubmitting={isReplying}
+        placeholder={replyPlaceholder}
+        sendLabel={sendLabel}
+      />
     </div>
   )
 }
 
-function FeedbackUpdateRow({
-  item,
-  locale,
-  selected,
-  onSelect,
-}: {
-  item: AccountFeedbackUpdate
-  locale: 'nl' | 'en'
-  selected: boolean
-  onSelect: () => void
-}) {
-  const title = item.item_title || truncateText(item.raw_text, 88)
-  const status = feedbackStatusLabel(item)
-  const updatedAt = formatFeedbackDate(item.latest_update_at, locale)
-  const createdAt = formatFeedbackDate(item.created_at, locale)
+// --- Feed rows -------------------------------------------------------------
 
+function FeedRow({
+  icon,
+  unread,
+  title,
+  snippet,
+  date,
+  onOpen,
+}: {
+  icon: ReactNode
+  unread: boolean
+  title: string
+  snippet: string
+  date: string
+  onOpen: () => void
+}) {
   return (
     <button
       type="button"
-      className={`flex w-full gap-3 px-3 py-4 text-left transition-colors hover:bg-gray-50 ${selected ? 'bg-gray-50' : ''}`}
-      onClick={onSelect}
+      onClick={onOpen}
+      className="flex w-full gap-3 px-2 py-4 text-left klai-hover"
     >
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          {unread && <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-success)]" />}
+          <h3 className="truncate text-sm font-medium text-gray-900">{title}</h3>
+        </div>
+        <p className="mt-1 line-clamp-1 text-sm text-gray-500">{snippet}</p>
+        <p className="mt-1 text-xs text-gray-400">{date}</p>
+      </div>
+    </button>
+  )
+}
+
+function FeedbackFeedRow({
+  item,
+  locale,
+  onOpen,
+}: {
+  item: AccountFeedbackUpdate
+  locale: 'nl' | 'en'
+  onOpen: () => void
+}) {
+  const title = item.item_title || truncateText(item.raw_text, 88)
+  const status = feedbackStatusLabel(item)
+
+  return (
+    <button type="button" onClick={onOpen} className="flex w-full gap-3 px-2 py-4 text-left klai-hover">
       <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500">
         {item.source === 'assistant_problem' ? <Bug className="h-4 w-4" /> : <Lightbulb className="h-4 w-4" />}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              {item.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-success)]" />}
-              <h3 className="text-sm font-medium text-gray-900">{title}</h3>
-            </div>
-            {item.notification_body && (
-              <p className="mt-1 text-sm text-gray-900">{item.notification_body}</p>
-            )}
-            <p className="mt-1 line-clamp-2 text-sm text-gray-500">{item.raw_text}</p>
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            {item.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-success)]" />}
+            <h3 className="truncate text-sm font-medium text-gray-900">{title}</h3>
           </div>
           <Badge variant={status.variant} className="shrink-0">
             {status.label}
           </Badge>
         </div>
-        <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
-          <div className="flex gap-1">
-            <dt>{m.account_feedback_reported()}</dt>
-            <dd>{createdAt}</dd>
-          </div>
-          <div className="flex gap-1">
-            <dt>{m.account_feedback_updated()}</dt>
-            <dd>{updatedAt}</dd>
-          </div>
-        </dl>
+        {item.notification_body ? (
+          <p className="mt-1 line-clamp-1 text-sm text-gray-900">{item.notification_body}</p>
+        ) : (
+          <p className="mt-1 line-clamp-1 text-sm text-gray-500">{item.raw_text}</p>
+        )}
+        <p className="mt-1 text-xs text-gray-400">
+          {m.account_feedback_updated()} {formatFeedbackDate(item.latest_update_at, locale)}
+        </p>
       </div>
     </button>
   )
@@ -961,51 +834,6 @@ function PanelHeader({
           {markAllLabel}
         </Button>
       )}
-    </div>
-  )
-}
-
-function SplitLoadingState({ detailPreview = false }: { detailPreview?: boolean }) {
-  return (
-    <div className="grid border-y border-gray-200 lg:grid-cols-[minmax(260px,360px)_1fr]">
-      <div className="divide-y divide-gray-100 lg:border-r lg:border-gray-200">
-        {[0, 1, 2].map((index) => (
-          <div key={index} className="flex gap-3 px-3 py-4">
-            <div className="mt-0.5 h-8 w-8 shrink-0 rounded-full bg-gray-100" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="h-4 w-2/3 rounded bg-gray-100" />
-              <div className="h-3 w-full rounded bg-gray-100" />
-              <div className="h-3 w-1/3 rounded bg-gray-100" />
-            </div>
-          </div>
-        ))}
-      </div>
-      {detailPreview && (
-        <div className="hidden p-4 lg:block">
-          <div className="h-4 w-1/2 rounded bg-gray-100" />
-          <div className="mt-6 space-y-3">
-            <div className="h-16 w-2/3 rounded-lg bg-gray-100" />
-            <div className="ml-auto h-16 w-2/3 rounded-lg bg-gray-100" />
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="border-y border-gray-200 py-8">
-      <p className="text-sm font-medium text-gray-900">{title}</p>
-      <p className="mt-1 text-sm text-gray-400">{description}</p>
-    </div>
-  )
-}
-
-function ThreadSelectEmpty({ label }: { label: string }) {
-  return (
-    <div className="flex h-full min-h-[320px] items-center justify-center text-sm text-gray-400">
-      {label}
     </div>
   )
 }
