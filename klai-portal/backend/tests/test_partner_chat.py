@@ -252,9 +252,7 @@ async def test_retrieval_http_status_error_returns_502():
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
         )
     assert exc_info.value.status_code == 502
-    assert exc_info.value.detail == {
-        "error": {"type": "upstream_error", "message": "Retrieval service error"}
-    }
+    assert exc_info.value.detail == {"error": {"type": "upstream_error", "message": "Retrieval service error"}}
 
 
 @pytest.mark.asyncio
@@ -284,9 +282,7 @@ async def test_retrieval_request_error_returns_502():
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
         )
     assert exc_info.value.status_code == 502
-    assert exc_info.value.detail == {
-        "error": {"type": "upstream_error", "message": "Retrieval service unavailable"}
-    }
+    assert exc_info.value.detail == {"error": {"type": "upstream_error", "message": "Retrieval service unavailable"}}
 
 
 @pytest.mark.asyncio
