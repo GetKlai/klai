@@ -29,9 +29,9 @@ from app.services.litellm_cache import (
 
 # klai_knowledge.py lives at <repo-root>/deploy/litellm/ — three parents up
 # from this test file (tests -> backend -> klai-portal -> repo-root).
-_HOOK_SOURCE = (
-    Path(__file__).resolve().parents[3] / "deploy" / "litellm" / "klai_knowledge.py"
-).read_text(encoding="utf-8")
+_HOOK_SOURCE = (Path(__file__).resolve().parents[3] / "deploy" / "litellm" / "klai_knowledge.py").read_text(
+    encoding="utf-8"
+)
 
 
 @pytest.fixture

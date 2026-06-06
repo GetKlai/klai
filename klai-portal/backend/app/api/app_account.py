@@ -841,13 +841,9 @@ async def patch_kb_preference(
     await db.commit()
 
     if user.librechat_user_id:
-        asyncio.get_running_loop().create_task(
-            invalidate_kb_cache(perms.zitadel_org_id, user.librechat_user_id)
-        )
+        asyncio.get_running_loop().create_task(invalidate_kb_cache(perms.zitadel_org_id, user.librechat_user_id))
         if active_templates_changed:
-            asyncio.get_running_loop().create_task(
-                invalidate_templates(perms.zitadel_org_id, user.librechat_user_id)
-            )
+            asyncio.get_running_loop().create_task(invalidate_templates(perms.zitadel_org_id, user.librechat_user_id))
 
     return KBPreferenceOut(
         kb_retrieval_enabled=user.kb_retrieval_enabled,
