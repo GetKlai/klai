@@ -196,9 +196,7 @@ def test_defaults_constant_has_non_empty_prompt_text():
 
 
 def test_post_deploy_backfill_syncs_all_tenant_defaults_by_language():
-    sql = Path(
-        "alembic/versions/post_deploy_c7cfe1d2_default_instruction_templates_all_tenants.sql"
-    ).read_text()
+    sql = Path("alembic/versions/post_deploy_c7cfe1d2_default_instruction_templates_all_tenants.sql").read_text()
 
     assert "default_instruction_templates_all_tenants_sync" in sql
     assert "portal_orgs AS o" in sql
