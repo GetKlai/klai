@@ -50,39 +50,46 @@ export function SecuritySettingsSection({
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : (
           <>
-            <div className="space-y-1.5">
-              <Label htmlFor="settings-mfa">
-                {m.admin_settings_mfa_label()}
-              </Label>
-              <Select
-                id="settings-mfa"
-                value={selectedMfa}
-                onChange={(e) => setSelectedMfa(e.target.value as OrgSettings['mfa_policy'])}
-                className="max-w-xs"
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Label htmlFor="settings-mfa">
+                  {m.admin_settings_mfa_label()}
+                </Label>
+                <Select
+                  id="settings-mfa"
+                  value={selectedMfa}
+                  onChange={(e) => setSelectedMfa(e.target.value as OrgSettings['mfa_policy'])}
+                  className="max-w-xs"
+                >
+                  <option value="optional">{m.admin_settings_mfa_optional()}</option>
+                  <option value="recommended">{m.admin_settings_mfa_recommended()}</option>
+                  <option value="required">{m.admin_settings_mfa_required()}</option>
+                </Select>
+                <p className="text-xs text-gray-400">
+                  {selectedMfa === 'optional' && m.admin_settings_mfa_optional_hint()}
+                  {selectedMfa === 'recommended' && m.admin_settings_mfa_recommended_hint()}
+                  {selectedMfa === 'required' && m.admin_settings_mfa_required_hint()}
+                </p>
+              </div>
+              <Button
+                className="w-fit"
+                onClick={() => mfaMutation.mutate(selectedMfa)}
+                disabled={
+                  mfaMutation.isPending ||
+                  savedMfa ||
+                  selectedMfa === settings?.mfa_policy
+                }
               >
-                <option value="optional">{m.admin_settings_mfa_optional()}</option>
-                <option value="recommended">{m.admin_settings_mfa_recommended()}</option>
-                <option value="required">{m.admin_settings_mfa_required()}</option>
-              </Select>
-              <p className="text-xs text-gray-400">
-                {selectedMfa === 'optional' && m.admin_settings_mfa_optional_hint()}
-                {selectedMfa === 'recommended' && m.admin_settings_mfa_recommended_hint()}
-                {selectedMfa === 'required' && m.admin_settings_mfa_required_hint()}
-              </p>
+                {savedMfa
+                  ? m.admin_settings_saved()
+                  : mfaMutation.isPending
+                    ? m.admin_settings_saving()
+                    : m.admin_settings_save()}
+              </Button>
             </div>
             {mfaMutation.error && (
               <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
             )}
-            <Button
-              onClick={() => mfaMutation.mutate(selectedMfa)}
-              disabled={mfaMutation.isPending || savedMfa}
-            >
-              {savedMfa
-                ? m.admin_settings_saved()
-                : mfaMutation.isPending
-                  ? m.admin_settings_saving()
-                  : m.admin_settings_save()}
-            </Button>
 
             {settings?.primary_domain && (
               <div className="border-t pt-4 space-y-1.5">

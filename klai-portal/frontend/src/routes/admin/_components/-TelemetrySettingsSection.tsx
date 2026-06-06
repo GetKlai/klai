@@ -59,43 +59,46 @@ export function TelemetrySettingsSection({
                       : m.admin_settings_telemetry_shadow_name(),
               })}
             </p>
-            <div className="space-y-1.5">
-              <Label htmlFor="settings-telemetry-level">
-                {m.admin_settings_telemetry_label()}
-              </Label>
-              <Select
-                id="settings-telemetry-level"
-                value={selectedTelemetry}
-                onChange={(e) => setSelectedTelemetry(e.target.value as TelemetryLevel)}
-                className="max-w-xs"
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Label htmlFor="settings-telemetry-level">
+                  {m.admin_settings_telemetry_label()}
+                </Label>
+                <Select
+                  id="settings-telemetry-level"
+                  value={selectedTelemetry}
+                  onChange={(e) => setSelectedTelemetry(e.target.value as TelemetryLevel)}
+                  className="max-w-xs"
+                >
+                  <option value="off">{m.admin_settings_telemetry_off_name()}</option>
+                  <option value="shadow">{m.admin_settings_telemetry_shadow_name()}</option>
+                  <option value="full">{m.admin_settings_telemetry_full_name()}</option>
+                </Select>
+                <p className="text-xs text-gray-400">
+                  {selectedTelemetry === 'off' && m.admin_settings_telemetry_off_hint()}
+                  {selectedTelemetry === 'shadow' && m.admin_settings_telemetry_shadow_hint()}
+                  {selectedTelemetry === 'full' && m.admin_settings_telemetry_full_hint()}
+                </p>
+              </div>
+              <Button
+                className="w-fit"
+                onClick={() => telemetryMutation.mutate(selectedTelemetry)}
+                disabled={
+                  telemetryMutation.isPending ||
+                  savedTelemetry ||
+                  selectedTelemetry === settings?.telemetry_level
+                }
               >
-                <option value="off">{m.admin_settings_telemetry_off_name()}</option>
-                <option value="shadow">{m.admin_settings_telemetry_shadow_name()}</option>
-                <option value="full">{m.admin_settings_telemetry_full_name()}</option>
-              </Select>
-              <p className="text-xs text-gray-400">
-                {selectedTelemetry === 'off' && m.admin_settings_telemetry_off_hint()}
-                {selectedTelemetry === 'shadow' && m.admin_settings_telemetry_shadow_hint()}
-                {selectedTelemetry === 'full' && m.admin_settings_telemetry_full_hint()}
-              </p>
+                {savedTelemetry
+                  ? m.admin_settings_saved()
+                  : telemetryMutation.isPending
+                    ? m.admin_settings_saving()
+                    : m.admin_settings_save()}
+              </Button>
             </div>
             {telemetryMutation.error && (
               <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
             )}
-            <Button
-              onClick={() => telemetryMutation.mutate(selectedTelemetry)}
-              disabled={
-                telemetryMutation.isPending ||
-                savedTelemetry ||
-                selectedTelemetry === settings?.telemetry_level
-              }
-            >
-              {savedTelemetry
-                ? m.admin_settings_saved()
-                : telemetryMutation.isPending
-                  ? m.admin_settings_saving()
-                  : m.admin_settings_save()}
-            </Button>
             <p className="text-xs text-gray-400">
               <a href="/privacy" className="underline">
                 {m.admin_settings_telemetry_privacy_link()}
