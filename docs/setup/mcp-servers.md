@@ -204,6 +204,15 @@ This makes Playwright MCP start with the captured Voys real-user session once
 the Voys state has been captured. It also prevents the recurring failure where
 a fresh workspace-hashed MCP profile opens but has no Google SSO history.
 
+Important runtime detail: Playwright MCP reads the selected storage-state only
+when the MCP server starts. If `~/.claude/mcp-storageState.json` or
+`_config/storageState.voys.json` is created or refreshed after the MCP process
+is already running, the active browser context will keep its old in-memory
+cookies. In that case either restart the Playwright MCP session so the launcher
+preloads the new file, or run CLI Playwright tests directly against the
+repo-local `_config/storageState.voys.json`. Do not open a fresh capture/login
+flow just because a stale already-running MCP browser lands on Google login.
+
 Important distinction:
 
 - **Voys / "voice" / real-user testing** uses
