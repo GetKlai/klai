@@ -263,32 +263,48 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             resolve();
             return;
           }
+          let parsed:
+            | {
+                error?: { message?: string };
+                choices?: Array<{
+                  delta?: { content?: string; sources?: unknown; activity?: unknown };
+                  finish_reason?: string;
+                }>;
+              }
+            | undefined;
           try {
-            const parsed = JSON.parse(event.data) as {
+            parsed = JSON.parse(event.data) as {
+              error?: { message?: string };
               choices?: Array<{
                 delta?: { content?: string; sources?: unknown; activity?: unknown };
                 finish_reason?: string;
               }>;
             };
-            const delta = parsed.choices?.[0]?.delta;
-            const content = delta?.content;
-            if (content) {
-              callbacks.onToken(content);
-            }
-            const sources = normalizeMessageSources(delta?.sources);
-            if (sources.length > 0) {
-              callbacks.onSources?.(sources);
-            }
-            const activity = normalizeAgentActivity(delta?.activity);
-            if (activity.length > 0) {
-              callbacks.onActivity?.(activity);
-            }
-            if (parsed.choices?.[0]?.finish_reason === "stop") {
-              callbacks.onDone();
-              resolve();
-            }
           } catch {
             // Non-JSON data or empty event — skip
+            return;
+          }
+          if (parsed.error) {
+            const error = new FatalError(parsed.error.message ?? "Stream error");
+            reject(error);
+            throw error;
+          }
+          const delta = parsed.choices?.[0]?.delta;
+          const content = delta?.content;
+          if (content) {
+            callbacks.onToken(content);
+          }
+          const sources = normalizeMessageSources(delta?.sources);
+          if (sources.length > 0) {
+            callbacks.onSources?.(sources);
+          }
+          const activity = normalizeAgentActivity(delta?.activity);
+          if (activity.length > 0) {
+            callbacks.onActivity?.(activity);
+          }
+          if (parsed.choices?.[0]?.finish_reason === "stop") {
+            callbacks.onDone();
+            resolve();
           }
         },
         onerror: (error) => {
