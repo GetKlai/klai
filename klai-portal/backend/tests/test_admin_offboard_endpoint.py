@@ -318,7 +318,9 @@ class TestDeleteUserEndpoint:
         with (
             patch(
                 "app.api.admin.users.get_user_membership_summary",
-                AsyncMock(return_value=UserMembershipSummary(total_count=1, remaining_count=0, is_platform_admin=False)),
+                AsyncMock(
+                    return_value=UserMembershipSummary(total_count=1, remaining_count=0, is_platform_admin=False)
+                ),
             ),
             patch("app.api.admin.users.compute_user_delete_preview", AsyncMock(return_value=preview)),
             patch("app.api.admin.users.delete_user_with_state_machine", state_machine),
