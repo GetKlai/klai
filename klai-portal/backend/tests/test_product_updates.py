@@ -67,7 +67,8 @@ class _MarkAllSession:
 
 
 class _CreateSession:
-    def __init__(self):
+    def __init__(self, existing=None):
+        self.existing = existing
         self.added = []
         self.commits = 0
 
@@ -80,11 +81,16 @@ class _CreateSession:
     def add(self, row):
         self.added.append(row)
 
+    async def scalar(self, _query):
+        return self.existing
+
     async def flush(self):
         for row in self.added:
             if isinstance(row, ProductUpdate):
                 row.id = 123
-                row.created_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+                if row.created_at is None:
+                    row.created_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+                row.published_at = datetime(2026, 6, 6, 10, 1, tzinfo=UTC)
 
     async def commit(self):
         self.commits += 1
@@ -97,6 +103,23 @@ def test_normalize_commit_shas_dedupes_and_lowercases():
 def test_normalize_commit_shas_rejects_non_sha_values():
     with pytest.raises(service.ProductUpdateValidationError):
         service.normalize_commit_shas(["not-a-sha"])
+
+
+def test_normalize_dedupe_key_allows_operator_safe_keys():
+    assert service.normalize_dedupe_key("  release:2026-06-06:sources  ") == "release:2026-06-06:sources"
+
+
+def test_normalize_dedupe_key_rejects_unsafe_values():
+    with pytest.raises(service.ProductUpdateValidationError):
+        service.normalize_dedupe_key("not a key")
+
+
+def test_generated_dedupe_key_is_stable_for_same_payload():
+    first = service.generated_dedupe_key(title="Title", body="Body", commit_shas=["abc1234"])
+    second = service.generated_dedupe_key(title="Title", body="Body", commit_shas=["abc1234"])
+
+    assert first == second
+    assert first.startswith("sha256:")
 
 
 @pytest.mark.asyncio
@@ -177,16 +200,50 @@ async def test_app_product_updates_can_mark_all_unread_updates_read():
 async def test_platform_admin_can_create_product_update(monkeypatch):
     session = _CreateSession()
     monkeypatch.setattr(platform_product_updates, "cross_org_session", lambda: session)
+    released_at = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
 
     result = await platform_product_updates.create_product_update_endpoint(
         platform_product_updates.ProductUpdateCreateIn(
             title="Feedback updates are easier to follow",
             body="You can now see what happened with a report directly from your account menu.",
             commit_shas=["ABC1234", "abc1234"],
+            created_at=released_at,
+            dedupe_key="release:feedback",
         ),
         _perms=SimpleNamespace(user_id="admin", org_id=1),
     )
 
     assert result.id == 123
     assert result.commit_shas == ["abc1234"]
+    assert result.created_at == released_at
+    assert result.created_by_user_id == "admin"
+    assert result.dedupe_key == "release:feedback"
     assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_create_product_update_is_idempotent_by_dedupe_key():
+    existing = ProductUpdate(
+        id=77,
+        title="Existing update",
+        body="Already published.",
+        commit_shas=["abc1234"],
+        dedupe_key="release:existing",
+        created_by_user_id="admin",
+        published_via="admin_api",
+    )
+    existing.created_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    existing.published_at = datetime(2026, 6, 6, 10, 1, tzinfo=UTC)
+    session = _CreateSession(existing=existing)
+
+    result = await service.create_product_update(
+        session,
+        title="Ignored duplicate",
+        body="Ignored duplicate body.",
+        commit_shas=["def5678"],
+        dedupe_key="release:existing",
+        created_by_user_id="other-admin",
+    )
+
+    assert result is existing
+    assert session.added == []

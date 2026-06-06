@@ -4,7 +4,6 @@ import { ArrowLeft, CheckCheck, Loader2, Megaphone } from 'lucide-react'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
 import { useAuth } from '@/lib/auth'
 import { useLocale } from '@/lib/locale'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   ListFrame,
@@ -222,19 +221,6 @@ function ProductUpdateDetail({
       </div>
 
       <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-gray-700">{update.body}</p>
-
-      {update.commit_shas.length > 0 && (
-        <div className="mt-5">
-          <h3 className="text-xs font-medium text-gray-400">{m.product_updates_commits()}</h3>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {update.commit_shas.map((sha) => (
-              <Badge key={sha} variant="outline" className="font-mono text-[11px] font-normal text-gray-500">
-                {sha}
-              </Badge>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
