@@ -79,6 +79,12 @@ from klai_kb_render_policy import (
     resolve_kb_render_mode as _resolve_kb_render_mode,
     select_kb_render_strategy as _select_kb_render_strategy_for_mode,
 )
+from klai_kb_scope_policy import (
+    build_retrieve_body as _build_retrieve_body,
+    resolve_kb_feature_gate as _resolve_kb_feature_gate,
+    resolve_kb_retrieval_scope as _resolve_kb_retrieval_scope,
+    resolve_kb_taxonomy_decision as _resolve_kb_taxonomy_decision,
+)
 from klai_llm_safety import SafetyDecision, SafetyPhase, SafetyRequest, SafetySurface, check_text, refusal_message
 
 # SPEC-MCP-RETRIEVAL-001 Phase 1: telemetry helpers moved out of this file
@@ -2880,45 +2886,22 @@ class KlaiKnowledgeHook(CustomLogger):
 
         # Feature gate + KB scope preference (version-based cache, 30s propagation)
         feature = await _get_kb_feature(librechat_user_id, org_id, cache)
-        feature_kb_narrow = bool(feature.get("kb_narrow", False))
-        if not feature["enabled"]:
-            # Open/default has no KB in scope, so use GENERAL. Strict preserves
-            # the user's KB-only contract and refuses instead of becoming open.
-            if feature_kb_narrow:
-                _prepend_system_prefix(
-                    messages,
-                    _compose_kb_mode_chat_prefix(
-                        True,
-                        templates_block,
-                        _strict_no_kb_scope_notice("kb-feature-disabled"),
-                    ),
-                )
-                data["messages"] = messages
-                return data
+        feature_gate = _resolve_kb_feature_gate(feature)
+        feature_kb_narrow = feature_gate.kb_narrow
+        if feature_gate.action == "strict_no_kb":
+            if feature_gate.strict_no_kb_reason is None:
+                raise RuntimeError("strict KB feature gate decision has no reason")
             _prepend_system_prefix(
                 messages,
-                _compose_general_chat_prefix(
-                    _general_runtime_capabilities_block(data),
+                _compose_kb_mode_chat_prefix(
+                    True,
                     templates_block,
+                    _strict_no_kb_scope_notice(feature_gate.strict_no_kb_reason),
                 ),
             )
             data["messages"] = messages
             return data
-
-        if not feature["kb_retrieval_enabled"]:
-            # Open/default has no chunks for this turn, so use GENERAL. Strict
-            # remains KB-only and refuses because retrieval is disabled.
-            if feature_kb_narrow:
-                _prepend_system_prefix(
-                    messages,
-                    _compose_kb_mode_chat_prefix(
-                        True,
-                        templates_block,
-                        _strict_no_kb_scope_notice("kb-retrieval-disabled"),
-                    ),
-                )
-                data["messages"] = messages
-                return data
+        if feature_gate.action == "general":
             _prepend_system_prefix(
                 messages,
                 _compose_general_chat_prefix(
@@ -2982,37 +2965,22 @@ class KlaiKnowledgeHook(CustomLogger):
             data["messages"] = messages
             return data
 
-        # Determine retrieval scope, KB slug filter, and answer mode.
-        #
-        # `kb_slugs_filter` tri-state contract (matches portal-api +
-        # ChatConfigBar dropdown):
-        #   None   = "all org KBs" (default)
-        #   []     = "no org KBs"  (user turned every collection off)
-        #   [...]  = explicit subset
-        #
-        # Combined with `kb_personal_enabled`, this gives 6 reachable
-        # states. The historic `if kb_slugs:` branch treated `[]` and
-        # `None` identically, so a user who turned EVERY org collection
-        # off (and personal too) silently still got every org chunk
-        # injected — exact opposite of intent.
-        kb_personal = feature.get("kb_personal_enabled", True)
-        kb_slugs = feature.get("kb_slugs_filter")
-        kb_narrow = feature_kb_narrow
-
-        # User explicitly opted out of every scope. Open/default becomes
-        # "Algemene AI"; Strict refuses because there is no KB evidence.
-        if not kb_personal and kb_slugs == []:
-            if kb_narrow:
-                _prepend_system_prefix(
-                    messages,
-                    _compose_kb_mode_chat_prefix(
-                        True,
-                        templates_block,
-                        _strict_no_kb_scope_notice("kb-scopes-disabled"),
-                    ),
-                )
-                data["messages"] = messages
-                return data
+        scope_decision = _resolve_kb_retrieval_scope(feature)
+        kb_narrow = scope_decision.kb_narrow
+        if scope_decision.action == "strict_no_kb":
+            if scope_decision.strict_no_kb_reason is None:
+                raise RuntimeError("strict KB scope decision has no reason")
+            _prepend_system_prefix(
+                messages,
+                _compose_kb_mode_chat_prefix(
+                    True,
+                    templates_block,
+                    _strict_no_kb_scope_notice(scope_decision.strict_no_kb_reason),
+                ),
+            )
+            data["messages"] = messages
+            return data
+        if scope_decision.action == "general":
             _prepend_system_prefix(
                 messages,
                 _compose_general_chat_prefix(
@@ -3023,21 +2991,9 @@ class KlaiKnowledgeHook(CustomLogger):
             data["messages"] = messages
             return data
 
-        # Translate (kb_personal, kb_slugs) → retrieval-api `scope` + optional
-        # `kb_slugs` filter.
-        #
-        # When the user picked "Persoonlijk" alone (kb_personal=True,
-        # kb_slugs=[]), we ship scope=personal with no kb_slug filter.
-        # Retrieval-api enforces canonical Persoonlijk-KB narrowing
-        # server-side (SPEC-RAG-PERSONAL-SCOPE-001 REQ-2) so this client
-        # does not need to compute or pass the slug — the lookup is
-        # authoritative on the server.
-        if kb_personal and kb_slugs == []:
-            scope = "personal"
-            kb_slugs_for_request: list[str] | None = None
-        else:
-            scope = "both" if kb_personal else "org"
-            kb_slugs_for_request = kb_slugs if kb_slugs else None
+        scope = scope_decision.scope
+        if scope is None:
+            raise RuntimeError("KB scope decision continued without retrieval scope")
 
         conversation_history = _build_conversation_history(messages)
 
@@ -3048,13 +3004,12 @@ class KlaiKnowledgeHook(CustomLogger):
         # the KBs that *do* have a curated taxonomy.
         #
         # Scope rules:
-        #   * `kb_slugs_for_request is None` → "all org KBs". We don't know the
-        #     full set client-side, so taxonomy is skipped (no_kbs_in_scope).
-        #     Fail-open: retrieval-api still applies its org/scope filters.
+        #   * `scope_decision.kbs_in_scope == []` means either "all org KBs" or
+        #     personal-only. In both cases the client does not know an explicit
+        #     org-KB set, so taxonomy is skipped (no_kbs_in_scope). Fail-open:
+        #     retrieval-api still applies its org/scope filters.
         #   * personal-only scope ("personal") → no org KBs → skip taxonomy.
-        kbs_in_scope: list[str] = (
-            list(kb_slugs_for_request) if kb_slugs_for_request else []
-        )
+        kbs_in_scope: list[str] = scope_decision.kbs_in_scope or []
         taxonomy_trees: dict[str, list[dict]] = {}
         taxonomy_coverage_map: dict[str, float] = {}
         if kbs_in_scope and TAXONOMY_ENABLED and scope in ("org", "both"):
@@ -3122,18 +3077,12 @@ class KlaiKnowledgeHook(CustomLogger):
         # one in-scope KB has coverage AND the classifier returned >= 1 valid
         # node ID. node IDs are globally unique across portal_taxonomy_nodes,
         # so retrieval-api's ANY-of filter is collision-free across KBs.
-        taxonomy_applied = False
-        taxonomy_skip_reason: str | None = None
-        if not TAXONOMY_ENABLED:
-            taxonomy_skip_reason = "disabled"
-        elif not kbs_in_scope:
-            taxonomy_skip_reason = "no_kbs_in_scope"
-        elif not kbs_with_coverage:
-            taxonomy_skip_reason = "all_kbs_low_coverage"
-        elif not classified_node_ids:
-            taxonomy_skip_reason = "empty_classify"
-        else:
-            taxonomy_applied = True
+        taxonomy_decision = _resolve_kb_taxonomy_decision(
+            taxonomy_enabled=TAXONOMY_ENABLED,
+            kbs_in_scope=kbs_in_scope,
+            kbs_with_coverage=kbs_with_coverage,
+            classified_node_ids=classified_node_ids,
+        )
 
         # REQ-7: log taxonomy_classify event on every classify invocation.
         if TAXONOMY_ENABLED and kbs_in_scope:
@@ -3151,45 +3100,24 @@ class KlaiKnowledgeHook(CustomLogger):
                     coverage_repr,
                     ",".join(kbs_with_coverage),
                     classified_node_ids,
-                    taxonomy_applied,
-                    taxonomy_skip_reason,
+                    taxonomy_decision.applied,
+                    taxonomy_decision.skip_reason,
                 )
             except Exception:
                 pass
 
-        retrieve_body: dict = {
-            "query": rewritten_query,
-            "raw_query": query,
-            "org_id": org_id,
-            # Zitadel sub — matches PortalUser.zitadel_user_id (identity-verify)
-            # AND owner_user_id on personal-KB qdrant chunks
-            # (klai-portal/backend/app/api/knowledge.py:172-204).
-            "user_id": user_id,
-            "scope": scope,
-            "top_k": RETRIEVE_TOP_K,
-            "conversation_history": conversation_history,
-            # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: forward the per-tenant
-            # telemetry mode so retrieval-api can gate its content emission
-            # + shadow-store INSERT accordingly. Default 'shadow' on cache
-            # miss + portal outage (fail-open per REQ-4).
-            "telemetry_level": telemetry_level,
-            # Strict/Open mode is a retrieval concern too: Strict must not be
-            # gate-bypassed before evidence is attempted.
-            "kb_narrow": kb_narrow,
-        }
-        if kb_slugs_for_request:
-            retrieve_body["kb_slugs"] = kb_slugs_for_request
-        elif scope == "both" and kb_slugs is None:
-            # "All collections" means all org KBs plus every private KB owned
-            # by the caller. This is intentionally a boolean, not an expanded
-            # slug list: large workspaces stay small on the wire, and retrieval
-            # still enforces private ownership by user_id.
-            retrieve_body["include_owned_private_kbs"] = True
-        # REQ-3: inject taxonomy_node_ids only when coverage is sufficient
-        # and the classifier produced valid IDs. The org/kb scoping filters
-        # are NEVER weakened — they run in addition to this filter.
-        if taxonomy_applied:
-            retrieve_body["taxonomy_node_ids"] = classified_node_ids
+        retrieve_body = _build_retrieve_body(
+            rewritten_query=rewritten_query,
+            raw_query=query,
+            org_id=org_id,
+            user_id=user_id,
+            top_k=RETRIEVE_TOP_K,
+            conversation_history=conversation_history,
+            telemetry_level=telemetry_level,
+            scope_decision=scope_decision,
+            taxonomy_applied=taxonomy_decision.applied,
+            classified_node_ids=classified_node_ids,
+        )
 
         # SPEC-SEC-SERVICE-AUTH-001 Phase C-1: prefer JWT auth, fall back to
         # legacy X-Internal-Secret on either mint failure OR receiver-side
