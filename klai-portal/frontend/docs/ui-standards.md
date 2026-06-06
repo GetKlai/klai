@@ -709,9 +709,11 @@ Use `components/ui/` controls for every form field and pair fields with
 </Select>
 ```
 
-Use `Switch` for binary on/off settings. The switch itself only stages the
-state when the setting has a save action; persist through the paired save
-button so external mutations do not happen merely by toggling the control.
+Use `Checkbox` for staged boolean choices inside a saved form, especially when
+the row label and helper text carry the meaning. Use `Switch` only when the
+control is best understood as a direct on/off setting; if that switch belongs
+to a saved form, it still only stages state and persists through the paired
+save button.
 
 ## Chat Disclosure Rows
 

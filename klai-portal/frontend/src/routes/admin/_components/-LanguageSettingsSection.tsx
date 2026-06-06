@@ -35,14 +35,11 @@ export function LanguageSettingsSection({
   }
 
   return (
-    <section className="space-y-4">
-      <div className="space-y-1">
+    <section className="space-y-3">
+      <div>
         <h2 className="text-base font-display-bold text-gray-900">
           {m.admin_settings_language_title()}
         </h2>
-        <p className="text-sm text-gray-400">
-          {m.admin_settings_language_description()}
-        </p>
       </div>
       <form onSubmit={handleSubmit} className="space-y-4">
         {isLoading ? (

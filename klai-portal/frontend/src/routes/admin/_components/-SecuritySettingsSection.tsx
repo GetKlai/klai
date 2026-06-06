@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import * as m from '@/paraglide/messages'
 import {
   useSecuritySettingsMutation,
@@ -50,13 +50,10 @@ export function SecuritySettingsSection({
 
   return (
     <section className="space-y-6">
-      <div className="space-y-1">
+      <div>
         <h2 className="text-base font-display-bold text-gray-900">
           {m.admin_settings_security_title()}
         </h2>
-        <p className="text-sm text-gray-400">
-          {m.admin_settings_security_description()}
-        </p>
       </div>
       <form onSubmit={handleSubmit} className="space-y-6">
         {isLoading ? (
@@ -87,23 +84,19 @@ export function SecuritySettingsSection({
             </div>
 
             {settings?.primary_domain && (
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  <Label htmlFor="settings-auto-accept" className="cursor-pointer">
-                    {m.admin_settings_auto_accept_label({ domain: settings.primary_domain })}
-                  </Label>
-                  <p className="text-xs text-gray-400">
-                    {autoAcceptSameDomain
-                      ? m.admin_settings_auto_accept_hint_on()
-                      : m.admin_settings_auto_accept_hint_off()}
-                  </p>
-                </div>
-                <Switch
+              <div className="space-y-1">
+                <Checkbox
                   id="settings-auto-accept"
                   checked={autoAcceptSameDomain}
                   disabled={securityMutation.isPending}
-                  onCheckedChange={setAutoAcceptSameDomain}
+                  onChange={(event) => setAutoAcceptSameDomain(event.target.checked)}
+                  label={m.admin_settings_auto_accept_label({ domain: settings.primary_domain })}
                 />
+                <p className="pl-7 text-xs text-gray-400">
+                  {autoAcceptSameDomain
+                    ? m.admin_settings_auto_accept_hint_on()
+                    : m.admin_settings_auto_accept_hint_off()}
+                </p>
               </div>
             )}
             {securityMutation.error && (

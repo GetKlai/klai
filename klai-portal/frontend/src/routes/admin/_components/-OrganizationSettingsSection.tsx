@@ -13,14 +13,11 @@ export function OrganizationSettingsSection({
   error,
 }: OrganizationSettingsSectionProps) {
   return (
-    <section className="space-y-4">
-      <div className="space-y-1">
+    <section className="space-y-3">
+      <div>
         <h2 className="text-base font-display-bold text-gray-900">
           {m.admin_settings_org_title()}
         </h2>
-        <p className="text-sm text-gray-400">
-          {m.admin_settings_org_description()}
-        </p>
       </div>
       <div>
         {isLoading ? (
