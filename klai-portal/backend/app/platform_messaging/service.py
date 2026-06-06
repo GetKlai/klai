@@ -33,6 +33,7 @@ async def create_platform_message_thread(
     subject: str,
     body: str,
     created_by: str,
+    sender_display_name: str | None = None,
     feedback_submission_id: int | None = None,
     feedback_item_id: int | None = None,
 ) -> PlatformMessageThread:
@@ -102,6 +103,7 @@ async def create_platform_message_thread(
             org_id=org_id,
             sender_type="platform_admin",
             sender_user_id=created_by,
+            sender_display_name=sender_display_name,
             body=body,
             created_at=now,
         )
@@ -118,6 +120,7 @@ async def add_platform_message_reply(
     sender_type: str,
     sender_user_id: str,
     body: str,
+    sender_display_name: str | None = None,
 ) -> PlatformMessage:
     thread = await get_platform_message_thread(db, thread_id)
     if thread.org_id != org_id:
@@ -128,6 +131,7 @@ async def add_platform_message_reply(
         org_id=org_id,
         sender_type=sender_type,
         sender_user_id=sender_user_id,
+        sender_display_name=sender_display_name,
         body=body,
         created_at=now,
     )

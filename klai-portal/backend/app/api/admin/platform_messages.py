@@ -11,7 +11,7 @@ from sqlalchemy import bindparam, func, or_, select
 
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
-from app.models.portal import PortalOrg
+from app.models.portal import PortalOrg, PortalUser
 from app.platform_messaging.models import PlatformMessage, PlatformMessageParticipant, PlatformMessageThread
 from app.platform_messaging.service import (
     PlatformMessageRecipientError,
@@ -37,6 +37,7 @@ class PlatformMessageOut(BaseModel):
     id: int
     sender_type: str
     sender_user_id: str | None
+    sender_display_name: str | None = None
     body: str
     created_at: datetime
 
@@ -256,6 +257,7 @@ async def _load_thread_detail(db, thread_id: int) -> PlatformMessageThreadDetail
                 id=message.id,
                 sender_type=message.sender_type,
                 sender_user_id=message.sender_user_id,
+                sender_display_name=message.sender_display_name,
                 body=message.body,
                 created_at=message.created_at,
             )
@@ -310,6 +312,11 @@ async def platform_message_thread_detail(
             raise HTTPException(status_code=404, detail="Message thread not found") from exc
 
 
+async def _resolve_admin_display_name(db, user_id: str) -> str | None:
+    """Snapshot the sending admin's display name (cross-org; Klai staff org)."""
+    return await db.scalar(select(PortalUser.display_name).where(PortalUser.zitadel_user_id == user_id))
+
+
 @router.post("/threads", response_model=PlatformMessageThreadDetailOut, status_code=status.HTTP_201_CREATED)
 async def platform_message_thread_create(
     body: PlatformMessageThreadCreateIn,
@@ -325,6 +332,7 @@ async def platform_message_thread_create(
                 subject=body.subject,
                 body=body.body,
                 created_by=perms.user_id,
+                sender_display_name=await _resolve_admin_display_name(db, perms.user_id),
                 feedback_submission_id=body.feedback_submission_id,
                 feedback_item_id=body.feedback_item_id,
             )
@@ -352,6 +360,7 @@ async def platform_message_thread_reply(
                 sender_type="platform_admin",
                 sender_user_id=perms.user_id,
                 body=body.body,
+                sender_display_name=await _resolve_admin_display_name(db, perms.user_id),
             )
             detail = await _load_thread_detail(db, thread_id)
             await db.commit()
@@ -374,6 +383,34 @@ async def platform_message_thread_mark_read(
             return detail
         except PlatformMessageThreadNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Message thread not found") from exc
+
+
+@router.patch("/threads/{thread_id}/messages/{message_id}", response_model=PlatformMessageThreadDetailOut)
+async def platform_message_edit(
+    thread_id: int,
+    message_id: int,
+    body: PlatformMessageReplyIn,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> PlatformMessageThreadDetailOut:
+    """Edit a Klai-team message the calling admin sent themselves."""
+    await _audit(perms, "edit", str(thread_id))
+    async with cross_org_session() as db:
+        message = (
+            await db.execute(
+                select(PlatformMessage).where(
+                    PlatformMessage.id == message_id,
+                    PlatformMessage.thread_id == thread_id,
+                    PlatformMessage.sender_user_id == perms.user_id,
+                    PlatformMessage.sender_type.in_(("platform_admin", "system")),
+                )
+            )
+        ).scalar_one_or_none()
+        if message is None:
+            raise HTTPException(status_code=404, detail="Message not found")
+        message.body = body.body
+        detail = await _load_thread_detail(db, thread_id)
+        await db.commit()
+        return detail
 
 
 @router.patch("/threads/{thread_id}/status", response_model=PlatformMessageThreadDetailOut)
