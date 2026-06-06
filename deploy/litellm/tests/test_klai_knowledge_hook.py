@@ -4548,7 +4548,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                 "_klai_kb_meta": {
                     "org_id": "org123",
                     "user_id": "user123",
-                    "user_query": "Wie is waarvoor verantwoordelijk?",
+                    "user_query": "Wat staat er over budget in het organogram?",
                     "kb_narrow": True,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
@@ -4559,7 +4559,13 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                             "evidence_id": "E1",
                             "title": "Organogram",
                             "source_url": "https://kb.getklai.test/organogram.pdf",
-                            "text": "Budget planning and office locations.",
+                            "text": "Frank Wolters trekt Data Readiness.",
+                        },
+                        {
+                            "evidence_id": "E2",
+                            "title": "Budget planning",
+                            "source_url": "https://kb.getklai.test/budget.pdf",
+                            "text": "Budget planning gebeurt per kwartaal.",
                         }
                     ],
                     # Deliberately no evidence_ids/source text match for the
@@ -4570,6 +4576,12 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                             "title": "Organogram",
                             "url": "https://kb.getklai.test/organogram.pdf",
                             "evidence_ids": ["different-evidence-id"],
+                        },
+                        {
+                            "label": "2",
+                            "title": "Budget planning",
+                            "url": "https://kb.getklai.test/budget.pdf",
+                            "evidence_ids": ["also-different"],
                         }
                     ],
                 }
@@ -4583,15 +4595,22 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "Frank Wolters trekt Data Readiness" in content
         assert "**Bronnen**" in content
         assert "- [Organogram](https://kb.getklai.test/organogram.pdf)" in content
+        assert "- [Budget planning](https://kb.getklai.test/budget.pdf)" in content
         assert "**Agent activiteit**" in content
-        assert "- Gebruikte bronnen: Organogram." in content
+        assert "- Gebruikte bronnen: Organogram, Budget planning." in content
         assert response.choices[0].message.sources == [
             {
                 "label": "1",
                 "title": "Organogram",
                 "url": "https://kb.getklai.test/organogram.pdf",
                 "evidence_ids": ["different-evidence-id"],
-            }
+            },
+            {
+                "label": "2",
+                "title": "Budget planning",
+                "url": "https://kb.getklai.test/budget.pdf",
+                "evidence_ids": ["also-different"],
+            },
         ]
         assert "selector_rejected_all_sources_fallback" in caplog.text
 
@@ -5244,6 +5263,225 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert final.choices[0].finish_reason == "stop"
         assert final.choices[0].delta.content == ""
         assert not hasattr(final.choices[0].delta, "sources")
+
+    @pytest.mark.asyncio
+    async def test_streaming_strict_short_unsupported_answer_gets_activity_not_sources(
+        self, monkeypatch
+    ):
+        """A terse status answer cannot support document-level source fallback.
+
+        Live regression 2026-06-06: "Werk je weer?" streamed "Ja." while the
+        selector rejected every trusted source with answer_not_supported, but
+        strict document-level fallback still rendered three KB sources.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Werk je weer?",
+                    "kb_narrow": True,
+                    "chunks_injected": 12,
+                    "retrieval_ms": 80,
+                    "gate_bypassed": False,
+                    "render_mode": "streaming_guard",
+                    "allowed_image_urls": [],
+                    "kbs_with_results": ["klai-help"],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Home",
+                            "url": "https://getklai.getklai.com/docs/klai-help/home",
+                            "relevance_score": 0.206,
+                        },
+                        {
+                            "label": "2",
+                            "title": "Ask a question",
+                            "url": "https://getklai.getklai.com/docs/klai-help/ask-a-question",
+                            "relevance_score": 0.129,
+                        },
+                    ],
+                    "citation_chunks": [
+                        {
+                            "title": "Home",
+                            "source_url": "https://getklai.getklai.com/docs/klai-help/home",
+                            "text": "Klai helpt teams vragen stellen over hun kennisbank.",
+                        },
+                        {
+                            "title": "Ask a question",
+                            "source_url": "https://getklai.getklai.com/docs/klai-help/ask-a-question",
+                            "text": "Stel een vraag aan Klai over je organisatiekennis.",
+                        },
+                    ],
+                }
+            }
+        }
+
+        only = {
+            "choices": [{"delta": {"content": "Ja."}, "finish_reason": "stop"}]
+        }
+
+        async def stream():
+            yield only
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
+        ]
+
+        assert len(streamed) == 2
+        footer = streamed[0]
+        content = footer["choices"][0]["delta"]["content"]
+        assert content.startswith("Ja.")
+        assert "**Agent activiteit**" in content
+        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
+        assert "**Bronnen**" not in content
+        assert not footer["choices"][0]["delta"].get("sources")
+        assert streamed[1] is only
+
+    @pytest.mark.asyncio
+    async def test_streaming_strict_long_unsupported_answer_gets_activity_not_sources(
+        self, monkeypatch
+    ):
+        """Unsupported document fallback is selector-driven, not length-driven."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Werk je weer?",
+                    "kb_narrow": True,
+                    "chunks_injected": 12,
+                    "retrieval_ms": 80,
+                    "gate_bypassed": False,
+                    "render_mode": "streaming_guard",
+                    "allowed_image_urls": [],
+                    "kbs_with_results": ["klai-help"],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Home",
+                            "url": "https://getklai.getklai.com/docs/klai-help/home",
+                            "relevance_score": 0.206,
+                        },
+                        {
+                            "label": "2",
+                            "title": "Ask a question",
+                            "url": "https://getklai.getklai.com/docs/klai-help/ask-a-question",
+                            "relevance_score": 0.129,
+                        },
+                    ],
+                    "citation_chunks": [
+                        {
+                            "title": "Home",
+                            "source_url": "https://getklai.getklai.com/docs/klai-help/home",
+                            "text": "Klai helpt teams vragen stellen over hun kennisbank.",
+                        },
+                        {
+                            "title": "Ask a question",
+                            "source_url": "https://getklai.getklai.com/docs/klai-help/ask-a-question",
+                            "text": "Stel een vraag aan Klai over je organisatiekennis.",
+                        },
+                    ],
+                }
+            }
+        }
+
+        only = {
+            "choices": [
+                {
+                    "delta": {
+                        "content": (
+                            "Sorry, daar kan ik je helaas niet goed mee helpen."
+                        )
+                    },
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+
+        async def stream():
+            yield only
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
+        ]
+
+        assert len(streamed) == 2
+        footer = streamed[0]
+        content = footer["choices"][0]["delta"]["content"]
+        assert content.startswith("Sorry, daar kan ik je helaas niet")
+        assert "**Agent activiteit**" in content
+        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
+        assert "**Bronnen**" not in content
+        assert not footer["choices"][0]["delta"].get("sources")
+        assert streamed[1] is only
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_strict_unsupported_answer_gets_activity_not_sources(
+        self, monkeypatch
+    ):
+        """Non-streaming uses the same no-answer-support fallback guard."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="Sorry, daar kan ik je helaas niet goed mee helpen."
+                    )
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Werk je weer?",
+                    "kb_narrow": True,
+                    "chunks_injected": 12,
+                    "retrieval_ms": 80,
+                    "gate_bypassed": False,
+                    "allowed_image_urls": [],
+                    "kbs_with_results": ["klai-help"],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Home",
+                            "url": "https://getklai.getklai.com/docs/klai-help/home",
+                            "relevance_score": 0.206,
+                        }
+                    ],
+                    "citation_chunks": [
+                        {
+                            "title": "Home",
+                            "source_url": "https://getklai.getklai.com/docs/klai-help/home",
+                            "text": "Klai helpt teams vragen stellen over hun kennisbank.",
+                        }
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        content = response.choices[0].message.content
+        assert content.startswith("Sorry, daar kan ik je helaas niet")
+        assert "**Agent activiteit**" in content
+        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
+        assert "**Bronnen**" not in content
+        assert getattr(response.choices[0].message, "sources", []) == []
 
     @pytest.mark.asyncio
     async def test_streaming_post_call_without_trusted_sources_fails_closed(
