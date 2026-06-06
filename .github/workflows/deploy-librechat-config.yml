@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'deploy/librechat/librechat.yaml'
+      - 'deploy/librechat/klai-entrypoint.sh'
       - 'deploy/librechat/mcp_catalog.yaml'
       - 'deploy/librechat/patches/**'
       - '.github/workflows/deploy-librechat-config.yml'
@@ -41,6 +42,7 @@ jobs:
 
             # Sync base config (template for all tenants)
             cp deploy/librechat/librechat.yaml /opt/klai/librechat/librechat.yaml
+            cp deploy/librechat/klai-entrypoint.sh /opt/klai/librechat/klai-entrypoint.sh
             cp deploy/librechat/mcp_catalog.yaml /opt/klai/librechat/mcp_catalog.yaml
 
             # Sync patches (entrypoint, format.cjs, etc.)
