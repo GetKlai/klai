@@ -103,6 +103,21 @@ mcpSettings:
 
 # Disable built-in endpoints; all AI goes through LiteLLM
 endpoints:
+  # Agent capabilities are explicit so Klai can disable Skills while preserving
+  # the other LibreChat agent defaults we rely on.
+  agents:
+    capabilities:
+      - deferred_tools
+      - execute_code
+      - file_search
+      - web_search
+      - artifacts
+      - subagents
+      - actions
+      - context
+      - tools
+      - chain
+      - ocr
   openAI:
     disabled: true
   assistants:
