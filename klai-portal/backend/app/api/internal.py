@@ -1614,7 +1614,8 @@ async def regenerate_librechat_configs(
                 if recreate_containers:
                     from app.services.provisioning.infrastructure import _start_librechat_container
 
-                    _start_librechat_container(slug, org.mcp_servers or [])
+                    env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
+                    _start_librechat_container(slug, env_file_host_path, org.mcp_servers or None)
                     logger.info("Recreated container %s", container_name)
                 else:
                     assert client is not None
