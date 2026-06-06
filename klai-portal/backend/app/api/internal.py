@@ -1624,7 +1624,7 @@ async def regenerate_librechat_configs(
                     logger.info("Restarted container %s", container_name)
             except Exception as exc:
                 apply_errors.append(f"{slug}: {exc}")
-                logger.warning("LibreChat container apply failed for %s: %s", container_name, exc)
+                logger.warning("LibreChat container apply failed for %s: %s", container_name, exc, exc_info=True)
         return apply_errors
 
     orgs_to_apply = [org for org in tenants if org.slug in set(slugs_to_restart)]
