@@ -7,6 +7,7 @@ import {
   DataTableHead,
   DataTableCell,
 } from '@/components/ui/data-table'
+import { Badge } from '@/components/ui/badge'
 import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
 import { useOrgKnowledgeBases } from '../-hooks'
 import type { AccessLevel, OrgKnowledgeBase } from '../-types'
@@ -51,6 +52,16 @@ function setAccessLevel(
   return [...rows, { kb_id: kbId, access_level: level }]
 }
 
+function kbScopeRank(kb: OrgKnowledgeBase): number {
+  return kb.owner_type === 'user' ? 1 : 0
+}
+
+function kbScopeLabel(kb: OrgKnowledgeBase): string {
+  return kb.owner_type === 'user'
+    ? m.admin_api_keys_kb_scope_personal()
+    : m.admin_api_keys_kb_scope_org()
+}
+
 export function KbAccessEditor({
   value,
   onChange,
@@ -59,7 +70,9 @@ export function KbAccessEditor({
   hideReadWrite = false,
 }: KbAccessEditorProps) {
   const { data: kbsData, isLoading } = useOrgKnowledgeBases()
-  const kbs: OrgKnowledgeBase[] = kbsData?.knowledge_bases ?? []
+  const kbs: OrgKnowledgeBase[] = [...(kbsData?.knowledge_bases ?? [])].sort(
+    (a, b) => kbScopeRank(a) - kbScopeRank(b),
+  )
 
   if (isLoading) {
     return <ListLoadingState label={m.admin_shared_loading()} />
@@ -96,7 +109,14 @@ export function KbAccessEditor({
           const currentLevel = getAccessLevel(value, kb.id)
           return (
             <DataTableRow key={kb.id}>
-              <DataTableCell>{kb.name}</DataTableCell>
+              <DataTableCell>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>{kb.name}</span>
+                  <Badge variant={kb.owner_type === 'user' ? 'info' : 'secondary'}>
+                    {kbScopeLabel(kb)}
+                  </Badge>
+                </div>
+              </DataTableCell>
               <DataTableCell align="center">
                 <input
                   type="radio"
