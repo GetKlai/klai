@@ -536,8 +536,7 @@ async def platform_stats(
                          WHERE status = 'new') AS new_feedback_count,
                       (SELECT COUNT(*)
                          FROM platform_message_threads thread
-                        WHERE thread.status = 'open'
-                          AND (
+                        WHERE (
                             SELECT MAX(msg.created_at)
                               FROM platform_messages msg
                              WHERE msg.thread_id = thread.id

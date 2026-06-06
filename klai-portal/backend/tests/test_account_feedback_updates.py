@@ -162,7 +162,6 @@ async def test_account_feedback_updates_reply_creates_feedback_message_thread(mo
         thread=app_account.AccountPlatformMessageThreadOut(
             id=987,
             subject="Accountpagina laadt niet",
-            status="open",
             origin_type="feedback_submission",
             feedback_submission_id=123,
             feedback_item_id=456,
@@ -229,7 +228,6 @@ async def test_account_feedback_reply_works_without_linked_item(monkeypatch):
         thread=app_account.AccountPlatformMessageThreadOut(
             id=987,
             subject="Knop reageert niet.",
-            status="open",
             origin_type="feedback_submission",
             feedback_submission_id=321,
             feedback_item_id=None,
@@ -280,7 +278,6 @@ async def test_account_platform_messages_returns_only_current_user_threads():
             SimpleNamespace(
                 id=99,
                 subject="Vraag over je feedback",
-                status="open",
                 origin_type="direct",
                 feedback_submission_id=None,
                 feedback_item_id=None,
