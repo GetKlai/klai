@@ -1,7 +1,7 @@
 """add lightweight product updates
 
 Revision ID: p1r2o3d4u5p6
-Revises: n2o3p4q5r6s7
+Revises: a7f3c1d9e2b4
 Create Date: 2026-06-06
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "p1r2o3d4u5p6"
-down_revision: Union[str, Sequence[str], None] = "n2o3p4q5r6s7"
+down_revision: Union[str, Sequence[str], None] = "a7f3c1d9e2b4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
