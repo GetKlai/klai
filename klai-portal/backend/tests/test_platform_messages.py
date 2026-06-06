@@ -41,7 +41,6 @@ def _detail(thread_id=99):
             org_name="Acme",
             org_slug="acme",
             subject="Vraag over je feedback",
-            status="open",
             origin_type="direct",
             feedback_submission_id=None,
             feedback_item_id=None,
@@ -159,7 +158,6 @@ def test_platform_message_thread_out_marks_user_replies_unread_for_admin():
             org_name="Acme",
             org_slug="acme",
             subject="Vraag over je feedback",
-            status="open",
             origin_type="direct",
             feedback_submission_id=None,
             feedback_item_id=None,
@@ -188,7 +186,6 @@ def test_platform_message_thread_out_clears_unread_after_admin_reply():
             org_name="Acme",
             org_slug="acme",
             subject="Vraag over je feedback",
-            status="open",
             origin_type="direct",
             feedback_submission_id=None,
             feedback_item_id=None,
@@ -219,7 +216,6 @@ def test_platform_message_thread_out_clears_unread_after_admin_opens_thread():
             org_name="Acme",
             org_slug="acme",
             subject="Vraag over je feedback",
-            status="open",
             origin_type="direct",
             feedback_submission_id=None,
             feedback_item_id=None,
@@ -250,7 +246,6 @@ def test_platform_message_thread_out_unread_when_user_replies_after_admin_read()
             org_name="Acme",
             org_slug="acme",
             subject="Vraag over je feedback",
-            status="open",
             origin_type="direct",
             feedback_submission_id=None,
             feedback_item_id=None,
@@ -395,43 +390,6 @@ async def test_platform_message_edit_404_when_not_own(monkeypatch):
     assert exc.value.status_code == 404
 
 
-@pytest.mark.asyncio
-async def test_platform_message_thread_status_loads_detail_before_commit(monkeypatch):
-    session = _Session()
-    calls = {}
-
-    async def fake_audit(*_args, **_kwargs):
-        return None
-
-    async def fake_get_thread(db, thread_id):
-        assert db is session
-        assert thread_id == 99
-        thread = SimpleNamespace(id=99, status="open")
-        calls["thread"] = thread
-        return thread
-
-    async def fake_detail(db, thread_id):
-        assert db is session
-        assert thread_id == 99
-        assert calls["thread"].status == "closed"
-        assert session.commits == 0
-        return _detail(thread_id)
-
-    monkeypatch.setattr(platform_messages, "_audit", fake_audit)
-    monkeypatch.setattr(platform_messages, "cross_org_session", lambda: session)
-    monkeypatch.setattr(platform_messages, "get_platform_message_thread", fake_get_thread)
-    monkeypatch.setattr(platform_messages, "_load_thread_detail", fake_detail)
-
-    result = await platform_messages.platform_message_thread_status(
-        99,
-        platform_messages.PlatformMessageStatusIn(status="closed"),
-        perms=SimpleNamespace(org_id=1, user_id="staff"),
-    )
-
-    assert result.thread.id == 99
-    assert session.commits == 1
-
-
 class _ServiceResult:
     def __init__(self, row):
         self.row = row
@@ -462,7 +420,7 @@ class _ServiceSession:
 
 @pytest.mark.asyncio
 async def test_add_platform_message_reply_flushes_without_committing():
-    thread = SimpleNamespace(id=99, org_id=42, status="closed", last_message_at=None)
+    thread = SimpleNamespace(id=99, org_id=42, last_message_at=None)
     session = _ServiceSession(thread)
 
     message = await messaging_service.add_platform_message_reply(
@@ -475,7 +433,6 @@ async def test_add_platform_message_reply_flushes_without_committing():
     )
 
     assert message in session.added
-    assert thread.status == "open"
     assert thread.last_message_at == message.created_at
     assert session.flushes == 1
     assert session.commits == 0

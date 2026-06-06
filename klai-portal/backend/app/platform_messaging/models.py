@@ -9,19 +9,17 @@ from app.models.base import Base
 class PlatformMessageThread(Base):
     __tablename__ = "platform_message_threads"
     __table_args__ = (
-        CheckConstraint("status IN ('open', 'closed')", name="ck_platform_message_threads_status"),
         CheckConstraint(
             "origin_type IN ('direct', 'feedback_submission', 'feedback_item')",
             name="ck_platform_message_threads_origin_type",
         ),
-        Index("ix_platform_message_threads_org_status", "org_id", "status", "last_message_at"),
+        Index("ix_platform_message_threads_org_last_message", "org_id", "last_message_at"),
         Index("ix_platform_message_threads_last_message", "last_message_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     org_id: Mapped[int] = mapped_column(Integer, ForeignKey("portal_orgs.id", ondelete="CASCADE"), nullable=False)
     subject: Mapped[str] = mapped_column(String(256), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'open'"))
     origin_type: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'direct'"))
     feedback_submission_id: Mapped[int | None] = mapped_column(
         BigInteger,

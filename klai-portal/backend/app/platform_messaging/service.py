@@ -135,7 +135,6 @@ async def add_platform_message_reply(
         body=body,
         created_at=now,
     )
-    thread.status = "open"
     thread.last_message_at = now
     db.add(message)
     await db.flush()

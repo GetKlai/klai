@@ -123,7 +123,6 @@ class AccountFeedbackReadAllResponse(BaseModel):
 class AccountPlatformMessageThreadOut(BaseModel):
     id: int
     subject: str
-    status: str
     origin_type: str
     feedback_submission_id: int | None = None
     feedback_item_id: int | None = None
@@ -506,7 +505,6 @@ def _thread_out(row, latest_admin_at: datetime | None = None) -> AccountPlatform
     return AccountPlatformMessageThreadOut(
         id=row.id,
         subject=row.subject,
-        status=row.status,
         origin_type=row.origin_type,
         feedback_submission_id=row.feedback_submission_id,
         feedback_item_id=row.feedback_item_id,
@@ -595,7 +593,6 @@ def _account_thread_select():
         select(
             PlatformMessageThread.id.label("id"),
             PlatformMessageThread.subject.label("subject"),
-            PlatformMessageThread.status.label("status"),
             PlatformMessageThread.origin_type.label("origin_type"),
             PlatformMessageThread.feedback_submission_id.label("feedback_submission_id"),
             PlatformMessageThread.feedback_item_id.label("feedback_item_id"),

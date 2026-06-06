@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,7 +47,6 @@ class PlatformMessageThreadOut(BaseModel):
     org_name: str | None
     org_slug: str | None
     subject: str
-    status: str
     origin_type: str
     feedback_submission_id: int | None = None
     feedback_item_id: int | None = None
@@ -84,10 +82,6 @@ class PlatformMessageReplyIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     body: str = Field(..., min_length=1, max_length=4000)
-
-
-class PlatformMessageStatusIn(BaseModel):
-    status: Literal["open", "closed"]
 
 
 async def _audit(perms: UserPermissions, action: str, resource_id: str | None = None) -> None:
@@ -165,7 +159,6 @@ def _thread_select():
             PortalOrg.name.label("org_name"),
             PortalOrg.slug.label("org_slug"),
             PlatformMessageThread.subject.label("subject"),
-            PlatformMessageThread.status.label("status"),
             PlatformMessageThread.origin_type.label("origin_type"),
             PlatformMessageThread.feedback_submission_id.label("feedback_submission_id"),
             PlatformMessageThread.feedback_item_id.label("feedback_item_id"),
@@ -199,7 +192,6 @@ def _thread_out(row) -> PlatformMessageThreadOut:
         org_name=row.org_name,
         org_slug=row.org_slug,
         subject=row.subject,
-        status=row.status,
         origin_type=row.origin_type,
         feedback_submission_id=row.feedback_submission_id,
         feedback_item_id=row.feedback_item_id,
@@ -269,7 +261,6 @@ async def _load_thread_detail(db, thread_id: int) -> PlatformMessageThreadDetail
 @router.get("/threads", response_model=list[PlatformMessageThreadOut])
 async def platform_message_threads(
     search: str | None = Query(default=None),
-    status_filter: Literal["open", "closed"] | None = Query(default=None, alias="status"),
     limit: int = Query(default=100, ge=1, le=200),
     perms: UserPermissions = Depends(require_platform_admin()),
 ) -> list[PlatformMessageThreadOut]:
@@ -291,9 +282,6 @@ async def platform_message_threads(
                 PlatformMessageParticipant.recipient_display_name.ilike(q),
             )
         )
-    if status_filter:
-        params["status"] = status_filter
-        query = query.where(PlatformMessageThread.status == bindparam("status"))
     async with cross_org_session() as db:
         rows = (await db.execute(query, params)).all()
     return [_thread_out(row) for row in rows]
@@ -408,24 +396,6 @@ async def platform_message_edit(
         if message is None:
             raise HTTPException(status_code=404, detail="Message not found")
         message.body = body.body
-        detail = await _load_thread_detail(db, thread_id)
-        await db.commit()
-        return detail
-
-
-@router.patch("/threads/{thread_id}/status", response_model=PlatformMessageThreadDetailOut)
-async def platform_message_thread_status(
-    thread_id: int,
-    body: PlatformMessageStatusIn,
-    perms: UserPermissions = Depends(require_platform_admin()),
-) -> PlatformMessageThreadDetailOut:
-    await _audit(perms, "status", str(thread_id))
-    async with cross_org_session() as db:
-        try:
-            thread = await get_platform_message_thread(db, thread_id)
-        except PlatformMessageThreadNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Message thread not found") from exc
-        thread.status = body.status
         detail = await _load_thread_detail(db, thread_id)
         await db.commit()
         return detail
