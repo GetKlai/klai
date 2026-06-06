@@ -33,7 +33,7 @@ async def test_single_user_invalidation_calls_delete_exactly_once(mock_redis_poo
     from app.services.litellm_cache import invalidate_templates
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=42, librechat_user_id="507f1f77bcf86cd799439011")
+        await invalidate_templates(zitadel_org_id="42", librechat_user_id="507f1f77bcf86cd799439011")
 
     mock_redis_pool.delete.assert_awaited_once_with("templates:42:507f1f77bcf86cd799439011")
     mock_redis_pool.scan_iter.assert_not_called()
@@ -53,7 +53,7 @@ async def test_org_wide_invalidation_scans_and_deletes(mock_redis_pool: MagicMoc
     mock_redis_pool.scan_iter = MagicMock(side_effect=_scan_with_keys)
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=42)
+        await invalidate_templates(zitadel_org_id="42")
 
     assert mock_redis_pool.delete.await_count == 3
     mock_redis_pool.delete.assert_any_await("templates:42:user-a")
@@ -76,7 +76,7 @@ async def test_org_wide_invalidation_passes_correct_pattern(mock_redis_pool: Mag
     mock_redis_pool.scan_iter = MagicMock(side_effect=_capture_scan)
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=7)
+        await invalidate_templates(zitadel_org_id="7")
 
     assert captured_match == ["templates:7:*"]
 
@@ -88,8 +88,8 @@ async def test_redis_pool_none_is_no_op() -> None:
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=None)):
         # Should not raise.
-        await invalidate_templates(org_id=1, librechat_user_id="x")
-        await invalidate_templates(org_id=1)
+        await invalidate_templates(zitadel_org_id="1", librechat_user_id="x")
+        await invalidate_templates(zitadel_org_id="1")
 
 
 @pytest.mark.asyncio
@@ -102,7 +102,7 @@ async def test_redis_pool_raise_is_swallowed() -> None:
         AsyncMock(side_effect=RuntimeError("redis down")),
     ):
         # Must not raise.
-        await invalidate_templates(org_id=1, librechat_user_id="x")
+        await invalidate_templates(zitadel_org_id="1", librechat_user_id="x")
 
 
 @pytest.mark.asyncio
@@ -113,7 +113,7 @@ async def test_delete_raise_is_swallowed_single(mock_redis_pool: MagicMock) -> N
     mock_redis_pool.delete = AsyncMock(side_effect=RuntimeError("connection reset"))
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=1, librechat_user_id="x")
+        await invalidate_templates(zitadel_org_id="1", librechat_user_id="x")
 
 
 @pytest.mark.asyncio
@@ -127,4 +127,4 @@ async def test_scan_raise_is_swallowed_org_wide(mock_redis_pool: MagicMock) -> N
     mock_redis_pool.scan_iter = MagicMock(side_effect=_boom)
 
     with patch("app.services.litellm_cache.get_redis_pool", AsyncMock(return_value=mock_redis_pool)):
-        await invalidate_templates(org_id=1)
+        await invalidate_templates(zitadel_org_id="1")

@@ -99,6 +99,14 @@ class UserPermissions:
     # users at the gate. Default "active" so existing test constructors that
     # pre-date REQ-12 still build without an explicit arg.
     status: str = "active"
+    # Zitadel org-id STRING (``portal_orgs.zitadel_org_id``), distinct from
+    # the integer ``org_id`` above. The LiteLLM hook keys its Redis caches
+    # (``kb_ver:{zitadel_org_id}:{user}`` and ``templates:{zitadel_org_id}:{user}``)
+    # on this string, so every portal-side cache invalidation MUST use it —
+    # not the int ``org_id`` (see app/services/litellm_cache.py). Defaulted
+    # to "" so pre-existing test constructors still build; the resolver
+    # always passes the real value.
+    zitadel_org_id: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +215,7 @@ async def resolve_user_permissions(
     return UserPermissions(
         user_id=zitadel_user_id,
         org_id=org.id,
+        zitadel_org_id=org.zitadel_org_id,
         org_slug=org.slug,
         role=role,
         plan=plan,

@@ -25,60 +25,18 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-import redis.asyncio as aioredis
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.models.portal import PortalOrg
 from app.services.audit import log_event
+from app.services.litellm_cache import invalidate_kb_cache
 
 logger = structlog.get_logger()
 
 TelemetryLevel = Literal["off", "shadow", "full"]
 VALID_LEVELS: tuple[TelemetryLevel, ...] = ("off", "shadow", "full")
-
-
-async def _invalidate_org_kb_cache(org_id: int) -> None:
-    """Delete every ``kb_ver:{org_id}:*`` key so the LiteLLM hook re-fetches.
-
-    Fire-and-forget — Redis failures must not block the DB-write that has
-    already committed. The hook's local cache TTL (30s) acts as a safety
-    net so missing invalidation doesn't keep stale state forever.
-    """
-    pattern = f"kb_ver:{org_id}:*"
-    try:
-        r = aioredis.Redis(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            password=settings.redis_password or None,
-            socket_connect_timeout=1.0,
-        )
-        async with r:
-            cursor = 0
-            deleted = 0
-            while True:
-                cursor, keys = await r.scan(cursor=cursor, match=pattern, count=200)
-                if keys:
-                    deleted += await r.delete(*keys)
-                if cursor == 0:
-                    break
-            logger.info(
-                "telemetry_level_cache_invalidated",
-                org_id=org_id,
-                pattern=pattern,
-                keys_deleted=deleted,
-            )
-    except Exception:
-        # Single-tenant Redis blip should not turn a successful telemetry
-        # toggle into a 500. The hook will pick up fresh state within 30s
-        # via its local-cache TTL.
-        logger.warning(
-            "telemetry_level_cache_invalidation_failed",
-            org_id=org_id,
-            exc_info=True,
-        )
 
 
 async def set_telemetry_level(
@@ -132,8 +90,9 @@ async def set_telemetry_level(
         await db.commit()
 
     # Cache invalidation runs even on no-op so a stuck hook can be nudged
-    # by re-applying the same level (operator escape hatch).
-    await _invalidate_org_kb_cache(org_id)
+    # by re-applying the same level (operator escape hatch). Org-wide
+    # (librechat_user_id=None) keyed on the Zitadel org-id string the hook uses.
+    await invalidate_kb_cache(org.zitadel_org_id)
 
     # Audit log uses raw SQL via log_event's own session — survives any
     # caller transaction rollback. action='telemetry_level_changed' is
