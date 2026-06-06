@@ -72,6 +72,7 @@ def _load_hook(monkeypatch, extra_env=None):
         monkeypatch.setenv(k, v)
 
     sys.modules.pop("klai_knowledge", None)
+    sys.modules.pop("klai_kb_query_rewrite", None)
     import klai_knowledge
 
     importlib.reload(klai_knowledge)
