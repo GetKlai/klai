@@ -61,6 +61,18 @@ _REQUIRE_RETRIEVAL_SCOPE = Depends(require_scope(_RETRIEVAL_QUERY_SCOPE))
 _PAGE_CONTEXT_SCORE_BOOST = 1.08
 
 
+def _caller_pre_resolved(req: RetrieveRequest) -> bool:
+    """Whether the caller already resolved coreference for this request.
+
+    True when a non-empty ``raw_query`` is present AND differs from ``query`` —
+    the litellm hook's contract: it sends the rewritten query as ``query`` and
+    the user's pre-rewrite text as ``raw_query``. knowledge-mcp sends
+    ``raw_query == query`` (no rewrite) and partner/focus omit ``raw_query``, so
+    both fall through to retrieval-side coreference resolution.
+    """
+    return bool(req.raw_query) and req.raw_query != req.query
+
+
 def _normalise_page_context_url(raw_url: str | None) -> str:
     if not raw_url:
         return ""
@@ -313,13 +325,36 @@ async def retrieve(
     # and is emitted as retrieval_decision_record at the end of the request.
     decision_record: dict = {}
 
-    # 1. Coreference resolution
-    t_coref = time.perf_counter()
-    query_resolved = await coreference.resolve(req.query, req.conversation_history)
-    coref_ms = (time.perf_counter() - t_coref) * 1000
-    step_latency_seconds.labels(step="coref").observe(time.perf_counter() - t_coref)
-    decision_record["coreference_rewrite"] = {"original": req.query, "resolved": query_resolved}
-    decision_record["coreference_ms"] = round(coref_ms, 1)
+    # 1. Coreference resolution. Skip when the caller already resolved
+    # coreference — signalled by a distinct ``raw_query`` (the pre-rewrite
+    # original) alongside an already-rewritten ``query``. Re-resolving a
+    # caller-rewritten query is a redundant second LLM rewrite that only
+    # compounds drift and adds a round-trip. Path A (litellm hook) pre-resolves
+    # via klai_kb_query_rewrite; knowledge-mcp sends raw_query==query and
+    # partner/focus omit raw_query, so both still resolve here.
+    if _caller_pre_resolved(req):
+        query_resolved = req.query
+        # No coref LLM call ran — do NOT observe the coref latency histogram
+        # (a 0.0 sample would skew p50/p95 toward zero). coref_ms stays 0.0 for
+        # the decision_record + retrieve log.
+        coref_ms = 0.0
+        decision_record["coreference_rewrite"] = {
+            "original": req.raw_query,
+            "resolved": query_resolved,
+            "source": "caller",
+        }
+        decision_record["coreference_ms"] = 0.0
+    else:
+        t_coref = time.perf_counter()
+        query_resolved = await coreference.resolve(req.query, req.conversation_history)
+        coref_ms = (time.perf_counter() - t_coref) * 1000
+        step_latency_seconds.labels(step="coref").observe(time.perf_counter() - t_coref)
+        decision_record["coreference_rewrite"] = {
+            "original": req.query,
+            "resolved": query_resolved,
+            "source": "retrieval-api",
+        }
+        decision_record["coreference_ms"] = round(coref_ms, 1)
 
     # 2. Embed resolved query (dense + sparse in parallel). When coreference /
     # query rewrite changed the query, also embed the user's pre-rewrite
