@@ -6,6 +6,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from klai_kb_chat_mode import (
+    ChatRetrievalPromptMode,
+    prompt_mode_is_strict,
+    prompt_mode_should_retrieve,
+)
+
 KbGateAction = Literal["continue", "general", "strict_no_kb"]
 
 
@@ -35,6 +41,24 @@ class KbTaxonomyDecision:
     skip_reason: str | None = None
 
 
+@dataclass(frozen=True)
+class ChatRetrievalPolicy:
+    """Resolved gate/scope/identity decision for one LiteLLM request."""
+
+    prompt_mode: ChatRetrievalPromptMode
+    scope_decision: KbRetrievalScopeDecision | None = None
+    user_id: str | None = None
+    user_visible_failure_reason: str | None = None
+
+    @property
+    def should_retrieve(self) -> bool:
+        return prompt_mode_should_retrieve(self.prompt_mode)
+
+    @property
+    def kb_narrow(self) -> bool:
+        return prompt_mode_is_strict(self.prompt_mode)
+
+
 def resolve_kb_feature_gate(feature: Mapping[str, object]) -> KbFeatureGateDecision:
     """Resolve whether the feature-level gate should continue into retrieval."""
     kb_narrow = bool(feature.get("kb_narrow", False))
@@ -51,6 +75,51 @@ def resolve_kb_feature_gate(feature: Mapping[str, object]) -> KbFeatureGateDecis
             strict_no_kb_reason="kb-retrieval-disabled" if kb_narrow else None,
         )
     return KbFeatureGateDecision(action="continue", kb_narrow=kb_narrow)
+
+
+def resolve_chat_retrieval_policy(
+    feature: Mapping[str, object],
+) -> ChatRetrievalPolicy:
+    """Resolve feature, preference, and identity state into a hook plan."""
+    feature_gate = resolve_kb_feature_gate(feature)
+    if feature_gate.action == "general":
+        return ChatRetrievalPolicy(
+            prompt_mode="general",
+        )
+    if feature_gate.action == "strict_no_kb":
+        return ChatRetrievalPolicy(
+            prompt_mode="strict_no_kb",
+            user_visible_failure_reason=feature_gate.strict_no_kb_reason,
+        )
+
+    scope_decision = resolve_kb_retrieval_scope(feature)
+    if scope_decision.action == "general":
+        return ChatRetrievalPolicy(
+            prompt_mode="general",
+            scope_decision=scope_decision,
+        )
+    if scope_decision.action == "strict_no_kb":
+        return ChatRetrievalPolicy(
+            prompt_mode="strict_no_kb",
+            scope_decision=scope_decision,
+            user_visible_failure_reason=scope_decision.strict_no_kb_reason,
+        )
+
+    user_id = feature.get("zitadel_user_id")
+    if not user_id:
+        return ChatRetrievalPolicy(
+            prompt_mode=(
+                "strict_unavailable" if scope_decision.kb_narrow else "open_unavailable"
+            ),
+            scope_decision=scope_decision,
+            user_visible_failure_reason="identity-resolve-failed",
+        )
+
+    return ChatRetrievalPolicy(
+        prompt_mode="strict_kb" if scope_decision.kb_narrow else "open_kb",
+        scope_decision=scope_decision,
+        user_id=str(user_id),
+    )
 
 
 def resolve_kb_retrieval_scope(feature: Mapping[str, object]) -> KbRetrievalScopeDecision:

@@ -27,6 +27,11 @@ from klai_context import (
     STALE_ATTACHMENT_CONTEXT_PLACEHOLDER as _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
     STALE_LIBRECHAT_UPLOAD_PREFIX as _STALE_LIBRECHAT_UPLOAD_PREFIX,
 )
+from klai_kb_chat_mode import (
+    ChatRetrievalPromptMode,
+    prompt_mode_answer_mode,
+    prompt_mode_is_strict,
+)
 
 KB_ANSWER_POLICY_STATES = (
     "retrieval_failure",
@@ -156,13 +161,17 @@ class KbAnswerPolicy:
     """Single source of truth for prompt/post-call answer policy flags."""
 
     state: str
-    kb_narrow: bool
+    prompt_mode: ChatRetrievalPromptMode
     user_provided_content_context: bool
     low_confidence_inject: bool = False
 
     @property
+    def kb_narrow(self) -> bool:
+        return prompt_mode_is_strict(self.prompt_mode)
+
+    @property
     def mode(self) -> str:
-        return "strict" if self.kb_narrow else "open"
+        return prompt_mode_answer_mode(self.prompt_mode)
 
     @property
     def allow_uncited_user_content(self) -> bool:
@@ -179,6 +188,7 @@ class KbAnswerPolicy:
     def metadata(self) -> dict[str, bool | str]:
         return {
             "answer_policy_state": self.state,
+            "chat_retrieval_prompt_mode": self.prompt_mode,
             "answer_policy_mode": self.mode,
             "user_provided_content_context": self.user_provided_content_context,
             "low_confidence_inject": self.low_confidence_inject,

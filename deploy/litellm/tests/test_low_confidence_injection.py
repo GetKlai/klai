@@ -154,7 +154,7 @@ def test_kb_answer_policy_matrix_user_content_citation_suppression(monkeypatch) 
     for state in ("zero_chunks", "chunks_present"):
         policy = klai_knowledge.KbAnswerPolicy(
             state=state,
-            kb_narrow=False,
+            prompt_mode="open_kb",
             user_provided_content_context=True,
             low_confidence_inject=True,
         )
@@ -168,7 +168,7 @@ def test_kb_answer_policy_matrix_user_content_citation_suppression(monkeypatch) 
     for state in ("retrieval_failure", "gate_bypassed", "missing_evidence_pack"):
         policy = klai_knowledge.KbAnswerPolicy(
             state=state,
-            kb_narrow=True,
+            prompt_mode="strict_kb",
             user_provided_content_context=True,
             low_confidence_inject=True,
         )
@@ -181,7 +181,7 @@ def test_kb_answer_policy_matrix_user_content_citation_suppression(monkeypatch) 
 
     policy = klai_knowledge.KbAnswerPolicy(
         state="chunks_present",
-        kb_narrow=True,
+        prompt_mode="strict_kb",
         user_provided_content_context=False,
         low_confidence_inject=True,
     )

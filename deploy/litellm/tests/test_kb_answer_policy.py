@@ -106,6 +106,7 @@ _EXPECTED_KEYS = {
     "kbs_used_as_sources",
     # policy-derived
     "answer_policy_state",
+    "chat_retrieval_prompt_mode",
     "answer_policy_mode",
     "user_provided_content_context",
     "low_confidence_inject",
@@ -117,7 +118,7 @@ _EXPECTED_KEYS = {
 def _policy(state: str, **kw):
     return _kk().KbAnswerPolicy(
         state=state,
-        kb_narrow=kw.get("kb_narrow", False),
+        prompt_mode=kw.get("prompt_mode", "open_kb"),
         user_provided_content_context=kw.get("upc", False),
         low_confidence_inject=kw.get("low_conf", False),
     )
@@ -139,16 +140,18 @@ def test_policy_module_declares_every_pre_call_answer_state():
 def test_answer_policy_matrix_is_independent_of_renderer_state():
     policy_module = _policy_module()
     for state in policy_module.KB_ANSWER_POLICY_STATES:
-        for kb_narrow in (False, True):
+        for prompt_mode in ("open_kb", "strict_kb"):
             for user_content in (False, True):
                 for low_confidence in (False, True):
                     policy = policy_module.KbAnswerPolicy(
                         state=state,
-                        kb_narrow=kb_narrow,
+                        prompt_mode=prompt_mode,
                         user_provided_content_context=user_content,
                         low_confidence_inject=low_confidence,
                     )
-                    assert policy.mode == ("strict" if kb_narrow else "open")
+                    assert policy.mode == (
+                        "strict" if prompt_mode == "strict_kb" else "open"
+                    )
                     assert policy.allow_uncited_user_content is user_content
                     assert policy.suppress_kb_citations is (
                         user_content
@@ -163,6 +166,7 @@ def test_answer_policy_matrix_is_independent_of_renderer_state():
                         render_mode="deterministic_non_streaming",
                     )
                     assert meta["answer_policy_mode"] == policy.mode
+                    assert meta["chat_retrieval_prompt_mode"] == prompt_mode
                     assert meta["allow_uncited_user_content"] is user_content
                     assert meta["render_mode"] == "deterministic_non_streaming"
 
@@ -316,9 +320,11 @@ def test_to_kb_meta_minimal_call_defaults_are_safe():
     assert meta["kbs_used_as_sources"] == []
 
 
-def test_mode_follows_kb_narrow():
-    assert _policy("chunks_present", kb_narrow=True).mode == "strict"
-    assert _policy("chunks_present", kb_narrow=False).mode == "open"
+def test_mode_follows_prompt_mode():
+    assert _policy("chunks_present", prompt_mode="strict_kb").mode == "strict"
+    assert _policy("chunks_present", prompt_mode="strict_unavailable").mode == "strict"
+    assert _policy("chunks_present", prompt_mode="open_kb").mode == "open"
+    assert _policy("chunks_present", prompt_mode="open_unavailable").mode == "open"
 
 
 def test_allow_uncited_user_content_tracks_user_provided_context():
@@ -357,9 +363,10 @@ def test_suppress_kb_citations_only_on_low_conf_chunk_states():
 
 def test_to_kb_meta_propagates_policy_flags_into_metadata():
     meta = _policy(
-        "chunks_present", kb_narrow=True, upc=True, low_conf=True
+        "chunks_present", prompt_mode="strict_kb", upc=True, low_conf=True
     ).to_kb_meta(org_id="o", user_id="u", retrieval_ms=1)
     assert meta["answer_policy_state"] == "chunks_present"
+    assert meta["chat_retrieval_prompt_mode"] == "strict_kb"
     assert meta["answer_policy_mode"] == "strict"
     assert meta["kb_narrow"] is True
     assert meta["user_provided_content_context"] is True

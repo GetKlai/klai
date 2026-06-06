@@ -12,6 +12,7 @@ from typing import Any
 from klai_chat_prompts import no_citable_sources_message
 from klai_citations import compose_answer_with_trusted_sources
 from klai_kb_answer_policy import strict_kb_unavailable_message
+from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
 from klai_litellm_response import (
@@ -115,6 +116,13 @@ def _citation_render_inputs(
         )
     ]
     return allowed_image_urls, citation_chunks, trusted_sources
+
+
+def _kb_meta_is_strict(kb_meta: dict[str, Any]) -> bool:
+    prompt_mode = kb_meta.get("chat_retrieval_prompt_mode")
+    if prompt_mode_is_known(prompt_mode):
+        return prompt_mode_is_strict(prompt_mode)
+    return bool(kb_meta.get("kb_narrow", False))
 
 
 def _render_kb_citation_content(
@@ -508,7 +516,7 @@ def _has_visible_agent_activity(kb_meta: dict[str, Any] | None) -> bool:
     if has_kb_trace_labels:
         return True
     if isinstance(kb_meta.get("chunks_injected"), int):
-        return bool(kb_meta.get("kb_narrow")) or bool(kb_meta.get("no_citable_reason"))
+        return _kb_meta_is_strict(kb_meta) or bool(kb_meta.get("no_citable_reason"))
     return False
 
 
@@ -532,7 +540,7 @@ def _format_visible_agent_activity(
     retrieval_ms = kb_meta.get("retrieval_ms")
     citable_sources_count = kb_meta.get("citable_sources_count")
     no_citable_reason = kb_meta.get("no_citable_reason")
-    kb_narrow = bool(kb_meta.get("kb_narrow", False))
+    kb_narrow = _kb_meta_is_strict(kb_meta)
     confidence_band = kb_meta.get("confidence_band")
 
     lines: list[str] = []
@@ -761,7 +769,7 @@ def compose_non_streaming_kb_response(
                     user_query=kb_meta.get("user_query"),
                     trusted_sources=trusted_sources,
                     evidence_chunks=citation_chunks,
-                    kb_narrow=bool(kb_meta.get("kb_narrow", False)),
+                    kb_narrow=_kb_meta_is_strict(kb_meta),
                     retrieval_confidence_band=kb_meta.get("confidence_band"),
                     allow_uncited_user_content=allow_uncited_user_content,
                     suppress_citations_for_user_content=suppress_user_content_citations,
@@ -819,7 +827,7 @@ def compose_streaming_kb_response(
     if kb_meta.get("_citation_stream_sources_appended"):
         return stats
 
-    kb_narrow = bool(kb_meta.get("kb_narrow", False))
+    kb_narrow = _kb_meta_is_strict(kb_meta)
     allow_uncited_user_content, suppress_user_content_citations = (
         _citation_user_content_flags(kb_meta)
     )

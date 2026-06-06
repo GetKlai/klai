@@ -6,6 +6,128 @@ import klai_kb_scope_policy as policy
 
 
 @pytest.mark.parametrize(
+    (
+        "kb_narrow",
+        "kb_personal_enabled",
+        "kb_slugs_filter",
+        "should_retrieve",
+        "prompt_mode",
+        "scope",
+        "failure_reason",
+    ),
+    [
+        (
+            False,
+            False,
+            [],
+            False,
+            "general",
+            None,
+            None,
+        ),
+        (
+            True,
+            False,
+            [],
+            False,
+            "strict_no_kb",
+            None,
+            "kb-scopes-disabled",
+        ),
+        (
+            False,
+            False,
+            ["engineering"],
+            True,
+            "open_kb",
+            "org",
+            None,
+        ),
+        (
+            True,
+            False,
+            ["engineering"],
+            True,
+            "strict_kb",
+            "org",
+            None,
+        ),
+    ],
+)
+def test_chat_retrieval_policy_prompt_scope_matrix(
+    kb_narrow,
+    kb_personal_enabled,
+    kb_slugs_filter,
+    should_retrieve,
+    prompt_mode,
+    scope,
+    failure_reason,
+):
+    plan = policy.resolve_chat_retrieval_policy(
+        {
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": kb_personal_enabled,
+            "kb_slugs_filter": kb_slugs_filter,
+            "kb_narrow": kb_narrow,
+            "zitadel_user_id": "user-sub",
+        }
+    )
+
+    assert plan.should_retrieve is should_retrieve
+    assert plan.prompt_mode == prompt_mode
+    assert plan.user_visible_failure_reason == failure_reason
+    if should_retrieve:
+        assert plan.user_id == "user-sub"
+        assert plan.scope_decision is not None
+        assert plan.scope_decision.scope == scope
+    else:
+        assert plan.user_id is None
+
+
+def test_chat_retrieval_policy_missing_user_id_is_unavailable_only_with_kb_scope():
+    no_kb = policy.resolve_chat_retrieval_policy(
+        {
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": False,
+            "kb_slugs_filter": [],
+            "kb_narrow": True,
+        }
+    )
+    strict_with_kb = policy.resolve_chat_retrieval_policy(
+        {
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": False,
+            "kb_slugs_filter": ["engineering"],
+            "kb_narrow": True,
+        }
+    )
+    open_with_kb = policy.resolve_chat_retrieval_policy(
+        {
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": False,
+            "kb_slugs_filter": ["engineering"],
+            "kb_narrow": False,
+        }
+    )
+
+    assert no_kb.prompt_mode == "strict_no_kb"
+    assert no_kb.kb_narrow is True
+    assert no_kb.user_visible_failure_reason == "kb-scopes-disabled"
+    assert strict_with_kb.prompt_mode == "strict_unavailable"
+    assert strict_with_kb.should_retrieve is False
+    assert strict_with_kb.kb_narrow is True
+    assert strict_with_kb.user_visible_failure_reason == "identity-resolve-failed"
+    assert open_with_kb.prompt_mode == "open_unavailable"
+    assert open_with_kb.should_retrieve is False
+    assert open_with_kb.kb_narrow is False
+    assert open_with_kb.user_visible_failure_reason == "identity-resolve-failed"
+
+
+@pytest.mark.parametrize(
     ("feature", "action", "reason"),
     [
         ({"enabled": False, "kb_retrieval_enabled": True, "kb_narrow": False}, "general", None),
