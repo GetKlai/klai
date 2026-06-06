@@ -51,6 +51,14 @@ from klai_citations import (
     evidence_pack_items_as_chunks,
     trusted_sources_from_evidence_pack,
 )
+from klai_kb_confidence_policy import (
+    LOW_CONFIDENCE_INJECTION_DISABLED as _LOW_CONFIDENCE_INJECTION_DISABLED,
+    LOW_CONFIDENCE_INJECTION_TEXT as _LOW_CONFIDENCE_INJECTION_TEXT,
+    LOW_CONFIDENCE_OPEN_CONTEXT_TEXT as _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
+    has_direct_evidence_for_query as _has_direct_evidence_for_query,
+    low_confidence_query_tokens as _low_confidence_query_tokens,
+    should_apply_low_confidence_injection as _should_apply_low_confidence_injection,
+)
 from klai_kb_citation_render import (
     KbCitationRenderStats as _KbCitationRenderStats,
     compose_non_streaming_kb_response as _compose_non_streaming_kb_response,
@@ -165,6 +173,12 @@ __all__ = [
     "_flatten_trees",
     "_rewrite_query",
     "_QUERY_REWRITE_AND_CLASSIFY_PROMPT",
+    "_LOW_CONFIDENCE_INJECTION_TEXT",
+    "_LOW_CONFIDENCE_OPEN_CONTEXT_TEXT",
+    "_LOW_CONFIDENCE_INJECTION_DISABLED",
+    "_low_confidence_query_tokens",
+    "_has_direct_evidence_for_query",
+    "_should_apply_low_confidence_injection",
     "klai_knowledge_hook",
 ]
 
@@ -385,106 +399,6 @@ def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrat
         configured_mode=KLAI_KB_CHAT_RENDER_MODE,
     )
 _KLAI_CONTEXT_ORCHESTRATOR = KlaiContextOrchestrator()
-
-# SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-2 — anti-hallucination injection
-# fired when retrieval-api signals confidence_band ∈ {low, unknown}. Dutch
-# baseline (Klai's primary user-facing language) — the model translates
-# into the user's detected language via the existing LANGUAGE REMINDER.
-# Tunable post-deploy by editing this constant + redeploying litellm; no
-# retrieval-api change required.
-_LOW_CONFIDENCE_INJECTION_TEXT = (
-    "[Klai retrieval — lage relevantie]\n"
-    "Het opgehaalde KB-materiaal heeft een lage relevantie-score voor "
-    "deze vraag. Citeer alleen wat letterlijk in de chunks staat. Verzin "
-    "GEEN integratie-routes, productnamen, stappen, bedragen, of "
-    "technische details die niet expliciet in de chunks voorkomen. "
-    "Sluit af met een vraag om verduidelijking aan de gebruiker als het "
-    "materiaal de vraag niet volledig dekt — dat is beter dan een "
-    "verzonnen antwoord."
-)
-_LOW_CONFIDENCE_OPEN_CONTEXT_TEXT = (
-    "[Klai retrieval — lage relevantie in Open modus]\n"
-    "Het opgehaalde KB-materiaal heeft een lage relevantie-score voor "
-    "deze vraag. Behandel de chunks als zwakke aanvullende context. "
-    "Open mode blijft actief: weiger niet alleen omdat KB-bewijs zwak, "
-    "tangentieel, of afwezig is. Antwoord vanuit algemene kennis of "
-    "zichtbare gebruikerscontext wanneer de vraag daarmee betrouwbaar te "
-    "beantwoorden is. Presenteer zulke delen expliciet als algemene kennis "
-    "of als afgeleid uit de gebruikerscontext, niet als iets dat uit de "
-    "kennisbank komt. Voor organisatie-specifieke feiten, prijzen, routes, "
-    "productnamen, stappen, of bronclaims: verzin ze niet en zeg kort dat "
-    "de kennisbank die specifieke claim niet ondersteunt."
-)
-_LOW_CONFIDENCE_INJECTION_DISABLED = (
-    os.getenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", "0") == "1"
-)
-_LOW_CONFIDENCE_QUERY_TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
-_LOW_CONFIDENCE_QUERY_STOPWORDS = {
-    "aan",
-    "als",
-    "and",
-    "are",
-    "bij",
-    "dat",
-    "een",
-    "for",
-    "het",
-    "hoe",
-    "is",
-    "met",
-    "the",
-    "tot",
-    "van",
-    "voor",
-    "wat",
-    "wie",
-    "with",
-}
-
-
-def _low_confidence_query_tokens(query: object) -> set[str]:
-    if not isinstance(query, str):
-        return set()
-    return {
-        token.lower()
-        for token in _LOW_CONFIDENCE_QUERY_TOKEN_RE.findall(query)
-        if token.lower() not in _LOW_CONFIDENCE_QUERY_STOPWORDS
-    }
-
-
-def _has_direct_evidence_for_query(query: object, chunks: list[dict]) -> bool:
-    """Return whether low-scored retrieval still has literal answer evidence.
-
-    Reranker scores for short personal-document questions can be very low
-    even when the top chunk literally contains the requested entity. In that
-    case adding the low-confidence abstention instruction makes Strict mode
-    refuse despite the knowledge being present. Keep the abstention layer for
-    weak/irrelevant retrieval, but do not override direct lexical evidence.
-    """
-    tokens = _low_confidence_query_tokens(query)
-    if not tokens:
-        return False
-    for chunk in chunks:
-        if not isinstance(chunk, dict):
-            continue
-        text = " ".join(
-            str(chunk.get(key) or "")
-            for key in ("title", "heading_path", "source_label", "text", "content")
-        ).lower()
-        if any(token in text for token in tokens):
-            return True
-    return False
-
-
-def _should_apply_low_confidence_injection(
-    confidence_band: object,
-    *,
-    user_query: object,
-    evidence_chunks: list[dict],
-) -> bool:
-    if confidence_band not in ("low", "unknown"):
-        return False
-    return not _has_direct_evidence_for_query(user_query, evidence_chunks)
 
 # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-HOOK-U2: prompt-template fetch config.
 PORTAL_TEMPLATES_URL = os.getenv(
