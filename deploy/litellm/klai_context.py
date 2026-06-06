@@ -570,6 +570,8 @@ class KlaiContextOrchestrator:
             "active_tool_result_trust": {},
             "tool_data_boundary_added": 0,
             "trailing_assistant_repaired": 0,
+            "dropped_unmatched_tool_calls": 0,
+            "dropped_orphan_tool_results": 0,
             "omitted_history_messages": 0,
             "kept_history_chars": 0,
             "kept_history_tokens_estimate": 0,
@@ -848,8 +850,21 @@ def _repair_mistral_message_sequence(
 
         if len(run) > 1:
             repaired += len(run) - 1
-        repaired_conversation.append(run[-1])
+        next_is_tool = (
+            index < len(conversation)
+            and isinstance(conversation[index], dict)
+            and conversation[index].get("role") == "tool"
+        )
+        repaired_conversation.append(
+            _select_assistant_run_survivor(run, prefer_tool_calls=next_is_tool)
+        )
         last_conversation_role = "assistant"
+
+    repaired_conversation, parity_repaired = _repair_mistral_tool_call_parity(
+        repaired_conversation,
+        meta=meta,
+    )
+    repaired += parity_repaired
 
     result: list[object] = []
     if system_contents:
@@ -866,6 +881,171 @@ def _repair_mistral_message_sequence(
         if "mistral_role_sequence_repaired" not in meta["reason_codes"]:
             meta["reason_codes"].append("mistral_role_sequence_repaired")
     return result
+
+
+def _assistant_tool_calls(message: dict[str, Any]) -> list[object]:
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        return tool_calls
+    return []
+
+
+def _select_assistant_run_survivor(
+    run: list[dict[str, Any]],
+    *,
+    prefer_tool_calls: bool,
+) -> dict[str, Any]:
+    if prefer_tool_calls:
+        for message in reversed(run):
+            if _assistant_tool_calls(message):
+                return message
+    return run[-1]
+
+
+def _tool_call_id(tool_call: object) -> str | None:
+    if not isinstance(tool_call, dict):
+        return None
+    value = tool_call.get("id") or tool_call.get("tool_call_id")
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _tool_message_call_id(message: dict[str, Any]) -> str | None:
+    value = message.get("tool_call_id")
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _assistant_without_tool_calls(message: dict[str, Any]) -> dict[str, Any]:
+    next_message = {key: value for key, value in message.items() if key != "tool_calls"}
+    if not isinstance(next_message.get("content"), str):
+        next_message["content"] = ""
+    return next_message
+
+
+def _append_tool_parity_reason(meta: dict[str, Any]) -> None:
+    if "mistral_tool_call_parity_repaired" not in meta["reason_codes"]:
+        meta["reason_codes"].append("mistral_tool_call_parity_repaired")
+
+
+def _reconcile_assistant_tool_block(
+    assistant: dict[str, Any],
+    tools: list[dict[str, Any]],
+    *,
+    meta: dict[str, Any],
+) -> tuple[list[dict[str, Any]], int]:
+    tool_calls = _assistant_tool_calls(assistant)
+    repaired = 0
+    if not tool_calls:
+        if tools:
+            meta["dropped_orphan_tool_results"] += len(tools)
+            _append_tool_parity_reason(meta)
+        return [assistant], len(tools)
+
+    unused_tool_indexes = set(range(len(tools)))
+    matched_tool_calls: list[object] = []
+    matched_tools: list[dict[str, Any]] = []
+    next_positional_index = 0
+
+    for tool_call in tool_calls:
+        call_id = _tool_call_id(tool_call)
+        matched_index: int | None = None
+        if call_id is not None:
+            for index, tool in enumerate(tools):
+                if index not in unused_tool_indexes:
+                    continue
+                if _tool_message_call_id(tool) == call_id:
+                    matched_index = index
+                    break
+        else:
+            while (
+                next_positional_index < len(tools)
+                and next_positional_index not in unused_tool_indexes
+            ):
+                next_positional_index += 1
+            if next_positional_index < len(tools):
+                matched_index = next_positional_index
+
+        if matched_index is None:
+            meta["dropped_unmatched_tool_calls"] += 1
+            repaired += 1
+            continue
+
+        unused_tool_indexes.remove(matched_index)
+        matched_tool_calls.append(tool_call)
+        matched_tools.append(tools[matched_index])
+
+    if unused_tool_indexes:
+        meta["dropped_orphan_tool_results"] += len(unused_tool_indexes)
+        repaired += len(unused_tool_indexes)
+
+    if not matched_tool_calls:
+        content = assistant.get("content")
+        if isinstance(content, str) and content.strip():
+            result = [_assistant_without_tool_calls(assistant)]
+        else:
+            result = []
+            repaired += 1
+        if repaired:
+            _append_tool_parity_reason(meta)
+        return result, repaired
+
+    next_assistant = dict(assistant)
+    next_assistant["tool_calls"] = matched_tool_calls
+    if repaired:
+        _append_tool_parity_reason(meta)
+    return [next_assistant, *matched_tools], repaired
+
+
+def _repair_mistral_tool_call_parity(
+    messages: list[object],
+    *,
+    meta: dict[str, Any],
+) -> tuple[list[object], int]:
+    repaired_messages: list[object] = []
+    repaired = 0
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if not isinstance(message, dict):
+            repaired_messages.append(message)
+            index += 1
+            continue
+
+        role = message.get("role")
+        if role == "tool":
+            meta["dropped_orphan_tool_results"] += 1
+            _append_tool_parity_reason(meta)
+            repaired += 1
+            index += 1
+            continue
+
+        if role != "assistant":
+            repaired_messages.append(message)
+            index += 1
+            continue
+
+        tools: list[dict[str, Any]] = []
+        next_index = index + 1
+        while next_index < len(messages):
+            candidate = messages[next_index]
+            if not isinstance(candidate, dict) or candidate.get("role") != "tool":
+                break
+            tools.append(candidate)
+            next_index += 1
+
+        block, block_repaired = _reconcile_assistant_tool_block(
+            message,
+            tools,
+            meta=meta,
+        )
+        repaired_messages.extend(block)
+        repaired += block_repaired
+        index = next_index
+
+    return repaired_messages, repaired
 
 
 def _merge_same_role_run(run: list[dict[str, Any]], *, role: str) -> dict[str, Any]:
