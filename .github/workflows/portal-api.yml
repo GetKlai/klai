@@ -109,7 +109,7 @@ jobs:
     # uses them. Catches regressions in either the SQL migrations or
     # the policy expectations encoded in scripts/rls-smoke-test.sql
     # BEFORE the change reaches a real database.
-    needs: quality
+    # No needs: independent of lint, runs in parallel with `quality`.
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -313,7 +313,7 @@ jobs:
     # operator/runbook action. The admin PAT deliberately comes from the same
     # core-01 env file used by production instead of a duplicate GitHub secret;
     # a missing/out-of-sync repository secret must not decide deploy safety.
-    needs: quality
+    # No needs: independent of lint, runs in parallel with `quality`.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     defaults:
@@ -369,7 +369,9 @@ jobs:
         run: uv run --with httpx python scripts/update_zitadel_password_policy.py
 
   build-push:
-    needs: [quality, rls-policy-smoke-test, zitadel-password-policy-drift]
+    # Builds in parallel with the gate jobs instead of waiting for them. The
+    # image is only ROLLED OUT by `deploy`, which still gates on every check —
+    # a failing gate never deploys; we just discard the built image. ~1 min faster.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
@@ -459,7 +461,8 @@ jobs:
     # actually blocks production deploy: if scan job exits 1 on a HIGH/CRIT
     # finding, deploy is skipped. Previously deploy only depended on
     # build-push, so a failed scan would still let the image roll out.
-    needs: [build-push, scan]
+    # Gates explicitly on every check (build-push no longer chains them):
+    needs: [quality, rls-policy-smoke-test, zitadel-password-policy-drift, build-push, scan]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
