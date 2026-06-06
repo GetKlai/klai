@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -29,6 +29,11 @@ export function LanguageSettingsSection({
     }
   }, [settings])
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    langMutation.mutate(selectedLang)
+  }
+
   return (
     <section className="space-y-4">
       <div className="space-y-1">
@@ -39,31 +44,33 @@ export function LanguageSettingsSection({
           {m.admin_settings_language_description()}
         </p>
       </div>
-      <div className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4">
         {isLoading ? (
           <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
         ) : error ? (
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : (
           <>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <Label htmlFor="settings-language">
-                  {m.admin_settings_language_label()}
-                </Label>
-                <Select
-                  id="settings-language"
-                  value={selectedLang}
-                  onChange={(e) => setSelectedLang(e.target.value as OrgSettings['default_language'])}
-                  containerClassName="max-w-xs"
-                >
-                  <option value="nl">{m.admin_settings_language_nl()}</option>
-                  <option value="en">{m.admin_settings_language_en()}</option>
-                </Select>
-              </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="settings-language">
+                {m.admin_settings_language_label()}
+              </Label>
+              <Select
+                id="settings-language"
+                value={selectedLang}
+                onChange={(e) => setSelectedLang(e.target.value as OrgSettings['default_language'])}
+                containerClassName="max-w-xs"
+              >
+                <option value="nl">{m.admin_settings_language_nl()}</option>
+                <option value="en">{m.admin_settings_language_en()}</option>
+              </Select>
+            </div>
+            {langMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
+            )}
+            <div className="pt-2">
               <Button
-                className="w-fit"
-                onClick={() => langMutation.mutate(selectedLang)}
+                type="submit"
                 disabled={
                   langMutation.isPending ||
                   savedLang ||
@@ -77,12 +84,9 @@ export function LanguageSettingsSection({
                     : m.admin_settings_save()}
               </Button>
             </div>
-            {langMutation.error && (
-              <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
-            )}
           </>
         )}
-      </div>
+      </form>
     </section>
   )
 }

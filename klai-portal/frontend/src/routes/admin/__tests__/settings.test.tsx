@@ -147,16 +147,19 @@ describe('AdminSettings page', () => {
       apiFetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH'),
     ).toBe(false)
 
-    const saveButton = screen
-      .getAllByRole('button', { name: 'Save' })
-      .find((button) => !button.hasAttribute('disabled'))
+    const saveButtons = screen.getAllByRole('button', { name: 'Save' })
+    expect(saveButtons).toHaveLength(1)
+    const saveButton = saveButtons.find((button) => !button.hasAttribute('disabled'))
     expect(saveButton).toBeTruthy()
     fireEvent.click(saveButton!)
 
     await waitFor(() => {
       expect(apiFetchMock).toHaveBeenCalledWith('/api/admin/settings', {
         method: 'PATCH',
-        body: JSON.stringify({ auto_accept_same_domain: true }),
+        body: JSON.stringify({
+          mfa_policy: 'optional',
+          auto_accept_same_domain: true,
+        }),
       })
     })
   })
