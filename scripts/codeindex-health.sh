@@ -65,6 +65,21 @@ status_output() {
   codeindex status 2>&1
 }
 
+refresh_base_ref() {
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+
+  case "$BASE_REF" in
+    origin/*)
+      local remote branch
+      remote="${BASE_REF%%/*}"
+      branch="${BASE_REF#*/}"
+      git fetch "$remote" "$branch" --quiet 2>/dev/null || true
+      ;;
+  esac
+}
+
 canonical_repo_from_status() {
   sed -n 's/^Repository: //p' | head -1
 }
@@ -148,6 +163,16 @@ ensure_base_worktree() {
   git -C "$BASE_WORKTREE" clean -fd --quiet
   git -C "$BASE_WORKTREE" fetch origin main --quiet
   git -C "$BASE_WORKTREE" checkout --detach "$BASE_REF" --quiet
+
+  local base_commit worktree_commit
+  base_commit="$(base_head)"
+  worktree_commit="$(git -C "$BASE_WORKTREE" rev-parse HEAD 2>/dev/null || true)"
+  if [ -n "$base_commit" ] && [ "$worktree_commit" != "$base_commit" ]; then
+    warn "ERROR: CodeIndex base worktree is not pinned to $BASE_REF."
+    warn "Expected: $base_commit"
+    warn "Actual:   ${worktree_commit:-unknown}"
+    return 1
+  fi
 }
 
 cleanup_base_worktree() {
@@ -159,6 +184,80 @@ cleanup_base_worktree() {
   # The dedicated base worktree is throwaway, so keep it pinned cleanly to main.
   git -C "$BASE_WORKTREE" reset --hard --quiet
   git -C "$BASE_WORKTREE" clean -fd --quiet
+}
+
+disable_claude_codeindex_hooks() {
+  local settings="$HOME/.claude/settings.json"
+  if [ ! -f "$settings" ]; then
+    return 0
+  fi
+
+  node - "$settings" <<'NODE'
+const fs = require('fs');
+const settingsPath = process.argv[2];
+const isCodeIndexHook = (hook) => {
+  const command = String(hook && hook.command ? hook.command : '');
+  return /(^|\/)codeindex-hook\.cjs(?:["'\s]|$)/.test(command) ||
+    /(^|\/)codeindex-prompt-hook\.cjs(?:["'\s]|$)/.test(command) ||
+    /(^|\/)session-start\.sh(?:["'\s]|$)/.test(command);
+};
+
+let settings;
+try {
+  settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+} catch {
+  process.exit(0);
+}
+
+if (!settings || typeof settings !== 'object' || !settings.hooks) {
+  settings = settings && typeof settings === 'object' ? settings : {};
+  settings.hooks = {};
+}
+
+for (const [eventName, entries] of Object.entries(settings.hooks)) {
+  if (!Array.isArray(entries)) continue;
+  const keptEntries = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || !Array.isArray(entry.hooks)) {
+      keptEntries.push(entry);
+      continue;
+    }
+    const keptHooks = entry.hooks.filter((hook) => !isCodeIndexHook(hook));
+    if (keptHooks.length > 0) {
+      keptEntries.push({ ...entry, hooks: keptHooks });
+    }
+  }
+  if (keptEntries.length > 0) {
+    settings.hooks[eventName] = keptEntries;
+  } else {
+    delete settings.hooks[eventName];
+  }
+}
+
+const gatedCommand = 'bash -lc \'script="${CLAUDE_PROJECT_DIR:-}/.claude/scripts/codeindex-gated-hook.cjs"; [ -f "$script" ] || exit 0; exec node "$script"\'';
+settings.hooks.PreToolUse = Array.isArray(settings.hooks.PreToolUse)
+  ? settings.hooks.PreToolUse
+  : [];
+
+const alreadyRegistered = settings.hooks.PreToolUse.some((entry) =>
+  entry && Array.isArray(entry.hooks) &&
+  entry.hooks.some((hook) => String(hook && hook.command ? hook.command : '') === gatedCommand)
+);
+
+if (!alreadyRegistered) {
+  settings.hooks.PreToolUse.push({
+    matcher: 'Grep|Bash',
+    hooks: [{
+      type: 'command',
+      command: gatedCommand,
+      timeout: 6000,
+      statusMessage: 'Checking whether CodeIndex graph context is useful...',
+    }],
+  });
+}
+
+fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+NODE
 }
 
 run_analyze_from_base() {
@@ -173,11 +272,15 @@ run_analyze_from_base() {
   local analyze_rc=0
   (cd "$BASE_WORKTREE" && codeindex analyze "$PROJECT_NAME" "$BASE_WORKTREE" --force --no-embeddings) || analyze_rc=$?
   cleanup_base_worktree || return 1
+  disable_claude_codeindex_hooks || return 1
   return "$analyze_rc"
 }
 
 main() {
   require_codeindex
+  if [ "$REPAIR" -eq 1 ]; then
+    refresh_base_ref
+  fi
 
   local status repo_dir worktree_dir current_head indexed_commit base_commit
   status="$(status_output)"
@@ -213,6 +316,7 @@ main() {
         log "CodeIndex indexed commit matches $BASE_REF ($(short_sha "$indexed_commit")); treating as healthy."
         if [ "$REPAIR" -eq 1 ]; then
           cleanup_base_worktree || exit 1
+          disable_claude_codeindex_hooks || exit 1
         fi
         if [ "$RESTART_MCP" -eq 1 ]; then
           restart_mcp_processes
