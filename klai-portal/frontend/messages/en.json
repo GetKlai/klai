@@ -1588,6 +1588,8 @@
   "admin_shared_kb_read": "Read",
   "admin_api_keys_kb_read_write": "Write",
   "admin_api_keys_kb_read_write_disabled_hint": "Enable \"Add knowledge\" above to allow write access",
+  "admin_api_keys_kb_scope_org": "Organization",
+  "admin_api_keys_kb_scope_personal": "Personal",
   "admin_shared_kb_empty": "No knowledge bases found in this organisation.",
   "admin_api_keys_key_modal_title": "API key created",
   "admin_api_keys_key_modal_warning": "This key will only be shown once. Copy it now.",

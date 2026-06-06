@@ -1588,6 +1588,8 @@
   "admin_shared_kb_read": "Lezen",
   "admin_api_keys_kb_read_write": "Schrijven",
   "admin_api_keys_kb_read_write_disabled_hint": "Schakel \"Kennis toevoegen\" hierboven in om schrijftoegang toe te staan",
+  "admin_api_keys_kb_scope_org": "Organisatie",
+  "admin_api_keys_kb_scope_personal": "Persoonlijk",
   "admin_shared_kb_empty": "Geen kennisbanken gevonden in deze organisatie.",
   "admin_api_keys_key_modal_title": "API-sleutel aangemaakt",
   "admin_api_keys_key_modal_warning": "Deze sleutel wordt slechts eenmaal getoond. Kopieer hem nu.",
