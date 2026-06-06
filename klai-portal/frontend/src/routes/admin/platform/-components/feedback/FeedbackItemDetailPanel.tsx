@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { toast } from "sonner"
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,6 +8,7 @@ import {
   Copy,
   Loader2,
   Save,
+  Send,
   X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -30,6 +32,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import * as m from "@/paraglide/messages"
 import {
+  usePlatformCreateMessageThread,
   usePlatformFeedbackDeleteItem,
   usePlatformFeedbackItem,
   usePlatformFeedbackResolveItem,
@@ -54,6 +57,26 @@ import {
 } from "./-feedback-helpers"
 
 const FEEDBACK_UPDATE_CREATED_STATES = new Set(['sent', 'queued'])
+
+interface AskReporter {
+  orgId: number
+  userId: string
+  submissionId: number
+}
+
+/** One messageable reporter per (org, user); skips anonymous submissions. */
+function dedupeReporters(submissions: PlatformFeedbackLinkedSubmission[]): AskReporter[] {
+  const seen = new Set<string>()
+  const reporters: AskReporter[] = []
+  for (const submission of submissions) {
+    if (submission.org_id == null || !submission.user_id) continue
+    const key = `${submission.org_id}:${submission.user_id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    reporters.push({ orgId: submission.org_id, userId: submission.user_id, submissionId: submission.id })
+  }
+  return reporters
+}
 
 export function FeedbackItemDetailPanel({
   itemId,
@@ -117,6 +140,9 @@ function FeedbackItemDetailForm({
   const updateItem = usePlatformFeedbackUpdateItem()
   const resolveItem = usePlatformFeedbackResolveItem()
   const deleteItem = usePlatformFeedbackDeleteItem()
+  const createThread = usePlatformCreateMessageThread()
+  const [askOpen, setAskOpen] = useState(false)
+  const [askBody, setAskBody] = useState('')
   const [status, setStatus] = useState(item.status)
   const [title, setTitle] = useState(item.title)
   const [summary, setSummary] = useState(item.summary ?? '')
@@ -159,6 +185,38 @@ function FeedbackItemDetailForm({
           button: m.platform_feedback_copy_debug_button(),
           copied: m.platform_feedback_copy_debug_copied(),
         }
+  // Distinct reporters to message: one feedback-linked thread per (org, user),
+  // carrying that reporter's submission id so the question lands UNDER their
+  // melding in "Mijn meldingen" (not only in the generic Berichten tab).
+  const reporters = dedupeReporters(submissions)
+  const sendAskInfo = async () => {
+    const body = askBody.trim()
+    if (body.length === 0) return
+    if (reporters.length === 0) {
+      toast.error(m.platform_feedback_ask_info_no_reporters())
+      return
+    }
+    const subject = (item.title || m.platform_feedback_ask_info_title()).slice(0, 256)
+    try {
+      await Promise.all(
+        reporters.map((reporter) =>
+          createThread.mutateAsync({
+            org_id: reporter.orgId,
+            user_ids: [reporter.userId],
+            subject,
+            body,
+            feedback_submission_id: reporter.submissionId,
+            feedback_item_id: item.id,
+          }),
+        ),
+      )
+      toast.success(m.platform_feedback_ask_info_sent())
+      setAskOpen(false)
+      setAskBody('')
+    } catch (error) {
+      toast.error(feedbackActionErrorMessage(error) || m.platform_feedback_ask_info_failed())
+    }
+  }
   const itemStepOrder: Array<'understand' | 'debug' | 'message'> =
     hasLlmPrompt
       ? ['understand', 'debug', 'message']
@@ -275,6 +333,11 @@ function FeedbackItemDetailForm({
             {!isEditing && (
               <RowActionGroup className="ml-1">
                 <BorderedRowActionIconButton
+                  action="message"
+                  label={m.platform_feedback_ask_info()}
+                  onClick={() => setAskOpen((open) => !open)}
+                />
+                <BorderedRowActionIconButton
                   action="edit"
                   label={m.platform_feedback_edit_item_title()}
                   onClick={() => setIsEditing(true)}
@@ -352,6 +415,44 @@ function FeedbackItemDetailForm({
           </p>
         )}
       </section>
+
+      {askOpen && (
+        <section className="space-y-3 rounded-xl border border-gray-200 bg-white px-5 py-4">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900">{m.platform_feedback_ask_info_title()}</h3>
+            <p className="mt-1 text-sm text-gray-400">{m.platform_feedback_ask_info_description()}</p>
+          </div>
+          <Textarea
+            id={`feedback-item-ask-${item.id}`}
+            value={askBody}
+            onChange={(event) => setAskBody(event.target.value)}
+            rows={3}
+            maxLength={4000}
+            placeholder={m.platform_feedback_ask_info_placeholder()}
+          />
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setAskOpen(false)
+                setAskBody('')
+              }}
+            >
+              {m.admin_users_cancel()}
+            </Button>
+            <Button
+              type="button"
+              disabled={askBody.trim().length === 0 || createThread.isPending || reporters.length === 0}
+              onClick={() => void sendAskInfo()}
+            >
+              {createThread.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {m.platform_feedback_ask_info_send()}
+            </Button>
+          </div>
+        </section>
+      )}
 
       {submissions.length === 0 ? (
         <section className="space-y-3">
