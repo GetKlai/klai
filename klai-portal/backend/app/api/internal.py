@@ -1505,7 +1505,7 @@ async def regenerate_librechat_configs(
 
     Called by CI after syncing a new base librechat.yaml to the server.
     For each tenant: re-runs _generate_librechat_yaml with the tenant's MCP servers,
-    writes the result, flushes Redis, and restarts the container.
+    writes the result, flushes Redis, and restarts or recreates the container.
     """
     await _require_internal_token(request)
 
@@ -1596,23 +1596,39 @@ async def regenerate_librechat_configs(
         )
         errors.append(f"redis-cache-invalidation: {exc}")
 
-    # Step 3: Restart all tenant containers via docker-socket-proxy.
-    # Only /containers/{id}/restart is called here — allowed by CONTAINERS=1 + POST=1.
-    def _restart_all(slugs: list[str]) -> list[str]:
-        client = docker.from_env()
-        restart_errors: list[str] = []
-        for slug in slugs:
+    recreate_containers = request.query_params.get("recreate_containers") == "true"
+
+    # Step 3: Restart or recreate all tenant containers via docker-socket-proxy.
+    # Default remains restart-only for existing callers. CI passes
+    # recreate_containers=true for LibreChat image upgrades, because restart
+    # does not change a container's image.
+    def _restart_or_recreate_all(orgs_to_apply: list[PortalOrg]) -> list[str]:
+        client = None if recreate_containers else docker.from_env()
+        apply_errors: list[str] = []
+        for org in orgs_to_apply:
+            slug = org.slug
+            if not slug:
+                continue
             container_name = validate_slug_for_provisioning(slug, domain=settings.domain).librechat_container
             try:
-                ctr = client.containers.get(container_name)
-                ctr.restart(timeout=10)
-                logger.info("Restarted container %s", container_name)
-            except docker.errors.APIError as exc:  # type: ignore[attr-defined]
-                restart_errors.append(f"{slug}: {exc}")
-                logger.warning("Restart failed for %s: %s", container_name, exc)
-        return restart_errors
+                if recreate_containers:
+                    from app.services.provisioning.infrastructure import _start_librechat_container
 
-    restart_errors = await loop.run_in_executor(None, _restart_all, slugs_to_restart)
+                    env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
+                    _start_librechat_container(slug, env_file_host_path, org.mcp_servers or None)
+                    logger.info("Recreated container %s", container_name)
+                else:
+                    assert client is not None
+                    ctr = client.containers.get(container_name)
+                    ctr.restart(timeout=10)
+                    logger.info("Restarted container %s", container_name)
+            except Exception as exc:
+                apply_errors.append(f"{slug}: {exc}")
+                logger.warning("LibreChat container apply failed for %s: %s", container_name, exc)
+        return apply_errors
+
+    orgs_to_apply = [org for org in tenants if org.slug in set(slugs_to_restart)]
+    restart_errors = await loop.run_in_executor(None, _restart_or_recreate_all, orgs_to_apply)
     errors.extend(restart_errors)
 
     await _audit_internal_call(request, org_id=0)

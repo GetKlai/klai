@@ -125,8 +125,9 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         # callers in internal.py run set_tenant upstream.
         "find_vexa_meeting_by_native_id",
         # app/api/admin_api_keys.py + admin_widgets.py — _validate_kb_ids
-        # takes org_id, is only called from admin routes under _require_admin
-        # which runs _get_caller_org.
+        # takes org_id (and for API keys user_id for personal KB ownership),
+        # and is only called from admin routes under _require_admin which runs
+        # _get_caller_org.
         "_validate_kb_ids",
         # app/api/connectors.py — takes org_id, called from connector routes
         # under _get_caller_org.

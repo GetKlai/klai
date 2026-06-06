@@ -5,6 +5,7 @@ SPEC-API-001 REQ-2.1, REQ-2.2, REQ-2.4, REQ-2.6, REQ-1.6.
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -27,6 +28,7 @@ class FakeKeyRow:
     rate_limit_rpm: int = 60
     active: bool = True
     last_used_at: datetime | None = None
+    created_by: str = "user-1"
 
     def __post_init__(self):
         if self.permissions is None:
@@ -148,8 +150,11 @@ async def test_valid_key_returns_auth_context():
         db,
         [
             FakeResult([FakeKeyRow()]),  # key lookup
-            FakeResult([FakeKbAccessRow()]),  # kb_access
             FakeResult([FakeOrg()]),  # org lookup
+            FakeResult(),  # set_tenant
+            FakeResult(
+                [(FakeKbAccessRow(), SimpleNamespace(id=10, owner_type="org", owner_user_id=None))]
+            ),  # kb_access
             FakeResult(),  # set_tenant + any further calls
         ],
     )
@@ -166,6 +171,44 @@ async def test_valid_key_returns_auth_context():
 
 
 @pytest.mark.asyncio
+async def test_valid_key_filters_other_users_personal_kb_access_at_runtime():
+    """Legacy invalid personal-KB junction rows must not enter auth.kb_access."""
+    from app.api.partner_dependencies import get_partner_key
+
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeKeyRow(created_by="user-1")]),  # key lookup
+            FakeResult([FakeOrg()]),  # org lookup
+            FakeResult(),  # set_tenant
+            FakeResult(
+                [
+                    (
+                        FakeKbAccessRow(kb_id=10, access_level="read"),
+                        SimpleNamespace(id=10, owner_type="org", owner_user_id=None),
+                    ),
+                    (
+                        FakeKbAccessRow(kb_id=20, access_level="read_write"),
+                        SimpleNamespace(id=20, owner_type="user", owner_user_id="user-1"),
+                    ),
+                ]
+            ),  # db query filters out owner_user_id != key.created_by before this result
+        ],
+    )
+
+    patches = _partner_patches()
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await get_partner_key(request=_make_request(token="pk_live_" + "a" * 40), db=db)
+
+    assert result.kb_access == {10: "read", 20: "read_write"}
+    kb_access_stmt = db.execute.call_args_list[3].args[0]
+    compiled = str(kb_access_stmt)
+    assert "portal_knowledge_bases.owner_type = :owner_type_1" in compiled
+    assert "portal_knowledge_bases.owner_user_id = :owner_user_id_1" in compiled
+
+
+@pytest.mark.asyncio
 async def test_rate_limited_returns_429():
     from app.api.partner_dependencies import get_partner_key
 
@@ -174,9 +217,9 @@ async def test_rate_limited_returns_429():
         db,
         [
             FakeResult([FakeKeyRow()]),
-            FakeResult([FakeKbAccessRow()]),
             FakeResult([FakeOrg()]),
             FakeResult(),
+            FakeResult([(FakeKbAccessRow(), SimpleNamespace(id=10, owner_type="org", owner_user_id=None))]),
         ],
     )
 
@@ -199,9 +242,9 @@ async def test_last_used_at_update_scheduled():
         db,
         [
             FakeResult([FakeKeyRow()]),
-            FakeResult([FakeKbAccessRow()]),
             FakeResult([FakeOrg()]),
             FakeResult(),
+            FakeResult([(FakeKbAccessRow(), SimpleNamespace(id=10, owner_type="org", owner_user_id=None))]),
         ],
     )
 

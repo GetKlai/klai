@@ -99,7 +99,7 @@ export function useOrgKnowledgeBases() {
   return useQuery({
     queryKey: ['app-knowledge-bases-for-api-keys'],
     queryFn: async () =>
-      apiFetch<{ knowledge_bases: OrgKnowledgeBase[] }>('/api/app/knowledge-bases?owner_type=org', ),
+      apiFetch<{ knowledge_bases: OrgKnowledgeBase[] }>('/api/app/knowledge-bases'),
     enabled: auth.isAuthenticated,
   })
 }
