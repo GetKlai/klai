@@ -208,6 +208,70 @@ async def test_account_feedback_updates_reply_creates_feedback_message_thread(mo
 
 
 @pytest.mark.asyncio
+async def test_account_feedback_reply_works_without_linked_item(monkeypatch):
+    # Regression for feedback item #18 ("send reply doet niets in Mijn meldingen"):
+    # a report with no linked feedback_item must still be repliable (no 404), with
+    # the thread subject falling back to the first line of the raw report.
+    now = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    feedback_session = _Session(
+        [
+            SimpleNamespace(
+                submission_id=321,
+                raw_text="Knop reageert niet.\nTweede regel.",
+                item_id=None,
+                item_title=None,
+            )
+        ]
+    )
+    message_session = _MessageSession([])
+    detail = app_account.AccountPlatformMessageThreadDetailOut(
+        thread=app_account.AccountPlatformMessageThreadOut(
+            id=987,
+            subject="Knop reageert niet.",
+            status="open",
+            origin_type="feedback_submission",
+            feedback_submission_id=321,
+            feedback_item_id=None,
+            latest_message_body="Hier is meer info",
+            latest_message_sender_type="user",
+            latest_message_at=now,
+            last_read_at=None,
+            unread=False,
+            created_at=now,
+        ),
+        messages=[],
+    )
+
+    async def fake_load_caller_user(*_args, **_kwargs):
+        return SimpleNamespace(email="user@example.com", display_name="User")
+
+    async def fake_load_detail(db, **_kwargs):
+        assert db is message_session
+        return detail
+
+    monkeypatch.setattr(app_account, "_load_caller_user", fake_load_caller_user)
+    monkeypatch.setattr(app_account, "cross_org_session", lambda: message_session)
+    monkeypatch.setattr(app_account, "_load_account_message_thread_detail", fake_load_detail)
+
+    result = await app_account.reply_to_feedback_update(
+        321,
+        app_account.AccountPlatformMessageReplyIn(body="Hier is meer info"),
+        perms=SimpleNamespace(org_id=42, user_id="user-9"),
+        db=feedback_session,
+    )
+
+    thread = next(row for row in message_session.added if isinstance(row, app_account.PlatformMessageThread))
+    message = next(row for row in message_session.added if isinstance(row, app_account.PlatformMessage))
+    assert thread.feedback_submission_id == 321
+    assert thread.feedback_item_id is None
+    assert thread.subject == "Knop reageert niet."
+    assert message.sender_type == "user"
+    assert message.body == "Hier is meer info"
+    assert message_session.commits == 1
+    assert result.thread.id == 987
+
+
+@pytest.mark.asyncio
 async def test_account_platform_messages_returns_only_current_user_threads():
     now = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
     session = _Session(
