@@ -227,6 +227,11 @@ const tabItemsWithCount: TabItem[] = [
   { id: 'Activiteit', label: 'Activiteit', count: 3 },
   { id: 'Instellingen', label: 'Instellingen' },
 ]
+const tabItemsWithNotifications: TabItem[] = [
+  { id: 'Details', label: 'Details' },
+  { id: 'Activiteit', label: 'Activiteit', notificationCount: 3 },
+  { id: 'Instellingen', label: 'Instellingen' },
+]
 const badgeVariants = ['default', 'secondary', 'accent', 'outline', 'info', 'success', 'warning', 'destructive'] as const
 const alertVariants = ['info', 'success', 'warning', 'destructive'] as const
 const navListItems = [
@@ -830,8 +835,12 @@ function UiCatalogPage() {
             <Tabs tabs={tabItemsWithIcons} value={activeTab} onValueChange={setActiveTab} />
           </div>
           <div className="space-y-2">
-            <p className="text-xs text-gray-400">Met count-badge</p>
+            <p className="text-xs text-gray-400">Met gewone aantallen</p>
             <Tabs tabs={tabItemsWithCount} value={activeTab} onValueChange={setActiveTab} />
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs text-gray-400">Met meldingenteller</p>
+            <Tabs tabs={tabItemsWithNotifications} value={activeTab} onValueChange={setActiveTab} />
           </div>
           <p className="text-sm text-gray-500">Actieve tab: {activeTab}</p>
         </div>

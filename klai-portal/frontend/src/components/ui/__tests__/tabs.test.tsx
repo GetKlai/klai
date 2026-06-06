@@ -32,12 +32,12 @@ describe('Tabs', () => {
     expect(onValueChange).toHaveBeenCalledWith('activity')
   })
 
-  it('shows the count badge only when count > 0, with the requested tone', () => {
+  it('shows neutral count badges only when count > 0', () => {
     const { rerender } = render(
       <Tabs
         tabs={[
           { id: 'a', label: 'A', count: 0 },
-          { id: 'b', label: 'B', count: 3, countTone: 'warning' },
+          { id: 'b', label: 'B', count: 3 },
         ]}
         value="a"
         onValueChange={() => {}}
@@ -46,7 +46,8 @@ describe('Tabs', () => {
     // count 0 → no badge; count 3 → visible
     expect(screen.queryByText('0')).toBeNull()
     const badge = screen.getByText('3')
-    expect(badge.className).toContain('bg-[var(--color-warning)]')
+    expect(badge.className).toContain('bg-gray-100')
+    expect(badge.className).toContain('text-gray-600')
 
     rerender(
       <Tabs
@@ -55,8 +56,27 @@ describe('Tabs', () => {
         onValueChange={() => {}}
       />
     )
-    // default tone is success
+    expect(screen.getByText('5').className).toContain('bg-gray-100')
+  })
+
+  it('uses success for notification badges by default and allows semantic alert tones', () => {
+    const { rerender } = render(
+      <Tabs
+        tabs={[{ id: 'a', label: 'A', notificationCount: 5 }]}
+        value="a"
+        onValueChange={() => {}}
+      />
+    )
     expect(screen.getByText('5').className).toContain('bg-[var(--color-success)]')
+
+    rerender(
+      <Tabs
+        tabs={[{ id: 'a', label: 'A', notificationCount: 2, notificationTone: 'destructive' }]}
+        value="a"
+        onValueChange={() => {}}
+      />
+    )
+    expect(screen.getByText('2').className).toContain('bg-[var(--color-destructive)]')
   })
 
   it('renders an optional leading icon', () => {
@@ -82,10 +102,10 @@ describe('Tabs', () => {
     expect(onValueChange).toHaveBeenCalledWith('activity') // wraps to last (also 'activity')
   })
 
-  it('exposes an accessible label on the count badge via countLabel', () => {
+  it('exposes an accessible label on a notification badge via notificationLabel', () => {
     render(
       <Tabs
-        tabs={[{ id: 'a', label: 'A', count: 3, countLabel: '3 unread' }]}
+        tabs={[{ id: 'a', label: 'A', notificationCount: 3, notificationLabel: '3 unread' }]}
         value="a"
         onValueChange={() => {}}
       />
