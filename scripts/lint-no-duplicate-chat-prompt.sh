@@ -32,8 +32,9 @@ GROUNDED_ANCHORS=(
     "Als de gebruiker Nederlands schrijft, antwoord je in het Nederlands"
 )
 
-# Set 2 — LiteLLM-hook prefix anchors (canonical:
-# deploy/litellm/klai_knowledge.py).
+# Set 2 — LiteLLM-hook prefix anchors (canonical homes:
+# deploy/litellm/klai_kb_answer_policy.py and
+# deploy/litellm/klai_kb_context_prompt.py).
 #
 # Phase 4 (REQ-10) rewrote these blocks from NL-only to English-prefixed
 # multilingual instructions. The model receives English instructions but
@@ -72,12 +73,12 @@ cd "$REPO_ROOT"
 GROUNDED_ALLOWED='^(klai-libs/chat-prompts/|deploy/litellm/klai_chat_prompts\.py|deploy/litellm/tests/|\.moai/specs/SPEC-RAG-MULTILINGUAL-CHAT-001/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
 
 # Allowed paths for the HOOK anchors (set 2):
-#   - the LiteLLM hook itself (canonical home)
+#   - the LiteLLM hook/policy/context-prompt files (canonical homes)
 #   - the shared library (if the v1.2 implementation moved the blocks there)
 #   - this script
 #   - SPEC + klai rules + docs (they describe what the hook says)
 #   - LiteLLM hook tests
-HOOK_ALLOWED='^(deploy/litellm/klai_knowledge\.py|deploy/litellm/test_|deploy/litellm/tests/|klai-libs/chat-prompts/|\.moai/specs/SPEC-RAG-MULTILINGUAL-CHAT-001/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
+HOOK_ALLOWED='^(deploy/litellm/klai_knowledge\.py|deploy/litellm/klai_kb_answer_policy\.py|deploy/litellm/klai_kb_context_prompt\.py|deploy/litellm/test_|deploy/litellm/tests/|klai-libs/chat-prompts/|\.moai/specs/SPEC-RAG-MULTILINGUAL-CHAT-001/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
 
 # Excludes for traversal speed + correctness. These are paths we never
 # want to scan (build artefacts, vendored deps).
