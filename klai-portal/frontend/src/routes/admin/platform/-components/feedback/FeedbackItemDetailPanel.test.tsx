@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   PlatformFeedbackItem,
@@ -10,6 +10,7 @@ const testState = vi.hoisted(() => ({
 }))
 
 const resolveMutate = vi.hoisted(() => vi.fn())
+const clipboardWriteText = vi.hoisted(() => vi.fn())
 
 vi.mock('../../-hooks', () => ({
   usePlatformFeedbackItem: () => ({
@@ -64,8 +65,14 @@ vi.mock('@/paraglide/messages', () => {
     platform_feedback_copy_debug_description: fixed('Copy debug instructions.'),
     platform_feedback_copy_debug_failed: fixed('Copy failed'),
     platform_feedback_copy_debug_title: fixed('Debug instructions'),
+    platform_feedback_copy_feature_prompt_button: fixed('Copy feature prompt for LLM'),
+    platform_feedback_copy_feature_prompt_copied: fixed('Feature prompt copied'),
+    platform_feedback_copy_feature_prompt_description: fixed('Copy feature prompt.'),
+    platform_feedback_copy_feature_prompt_title: fixed('Feature prompt'),
     platform_feedback_default_resolution_bug: ({ title }: { title?: string } = {}) =>
       `Resolved ${title ?? 'item'}`,
+    platform_feedback_default_resolution_feature: ({ title }: { title?: string } = {}) =>
+      `Feature shipped ${title ?? 'item'}`,
     platform_feedback_delete_item: fixed('Delete item'),
     platform_feedback_delete_item_description: fixed('Delete this item.'),
     platform_feedback_delete_item_title: fixed('Delete open item?'),
@@ -75,6 +82,7 @@ vi.mock('@/paraglide/messages', () => {
     platform_feedback_item_not_found: fixed('Item not found'),
     platform_feedback_item_title: fixed('Open item'),
     platform_feedback_item_kind_bug: fixed('Bug'),
+    platform_feedback_item_kind_feature: fixed('Feature'),
     platform_feedback_linked_feedback: ({ count }: { count?: string } = {}) =>
       `Linked feedback (${count ?? '0'})`,
     platform_feedback_no_description: fixed('No description'),
@@ -96,6 +104,9 @@ vi.mock('@/paraglide/messages', () => {
       'Close this item and send linked reporters an update.',
     ),
     platform_feedback_resolving: fixed('Closing'),
+    platform_feedback_resolve_feature_button: fixed('Mark as shipped and message user'),
+    platform_feedback_resolve_feature_subject: fixed('Feature available'),
+    platform_feedback_resolve_feature_title: fixed('Complete feature'),
     platform_feedback_score: ({ score }: { score?: string } = {}) =>
       `Score ${score ?? '0'}`,
     platform_feedback_short_note_placeholder: fixed('Short note'),
@@ -114,6 +125,7 @@ import { FeedbackItemDetailPanel } from './FeedbackItemDetailPanel'
 
 function itemWithNotificationState(
   notificationState: PlatformFeedbackItem['notification_state'],
+  overrides: Partial<PlatformFeedbackItem> = {},
 ): PlatformFeedbackItem {
   return {
     id: 12,
@@ -133,6 +145,7 @@ function itemWithNotificationState(
     reporter_orgs: [],
     created_at: '2026-06-01T00:00:00Z',
     updated_at: '2026-06-02T00:00:00Z',
+    ...overrides,
   }
 }
 
@@ -150,6 +163,11 @@ function renderPanel(notificationState: PlatformFeedbackItem['notification_state
 }
 
 beforeEach(() => {
+  clipboardWriteText.mockReset()
+  clipboardWriteText.mockResolvedValue(undefined)
+  Object.assign(navigator, {
+    clipboard: { writeText: clipboardWriteText },
+  })
   resolveMutate.mockReset()
   resolveMutate.mockImplementation(
     (
@@ -183,5 +201,46 @@ describe('FeedbackItemDetailPanel update button label', () => {
     renderPanel('sent')
 
     expect(screen.getByRole('button', { name: /Resend update/ })).toBeTruthy()
+  })
+})
+
+describe('FeedbackItemDetailPanel feature prompt', () => {
+  it('adds an LLM prompt step before completing a feature request', async () => {
+    testState.item = itemWithNotificationState('not_needed', {
+      kind: 'feature',
+      title: 'Allow personal KBs for API keys',
+      summary: 'Users want API keys to read personal KBs.',
+      status: 'open',
+    })
+
+    render(
+      <FeedbackItemDetailPanel
+        itemId={12}
+        fmtDate={(value) => value ?? '-'}
+        onClose={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(screen.getByRole('heading', { name: 'Feature prompt' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Copy feature prompt for LLM' }),
+    ).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy feature prompt for LLM' }))
+
+    await waitFor(() => {
+      expect(clipboardWriteText).toHaveBeenCalledWith(
+        expect.stringContaining('implementing a Klai product feature request'),
+      )
+    })
+    expect(clipboardWriteText).toHaveBeenCalledWith(
+      expect.stringContaining('Allow personal KBs for API keys'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(screen.getByRole('heading', { name: 'Complete feature' })).toBeTruthy()
   })
 })
