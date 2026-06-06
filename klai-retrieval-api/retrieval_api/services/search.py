@@ -168,11 +168,23 @@ async def _search_knowledge(
     request: RetrieveRequest,
     candidates: int,
     sparse_vector: SparseVector | None = None,
+    raw_query_vector: list[float] | None = None,
+    raw_sparse_vector: SparseVector | None = None,
 ) -> list[dict]:
     """3-leg RRF hybrid search on klai_knowledge (named vectors).
 
     Prefetch legs: vector_chunk + vector_questions (always) + vector_sparse (when available).
     Falls back to 2-leg RRF when sparse_vector is None.
+
+    When ``raw_query_vector`` is supplied (the embedding of the user's
+    pre-rewrite ``raw_query``), two extra prefetch legs are fused in: a dense
+    ``vector_chunk`` leg and, when available, a ``vector_sparse`` leg on the raw
+    query. This guarantees that a literal-term match (e.g. a product name) still
+    enters the candidate pool even when an over-eager coreference/query rewrite
+    steered the resolved query away from it. The reranker (which already scores
+    against ``raw_query`` + resolved) then promotes the genuinely relevant hit.
+    Pass ``raw_query_vector`` only when the rewrite changed the query, so the
+    no-rewrite path keeps its 2/3-leg shape and adds no extra Qdrant work.
     """
     client = _get_client()
 
@@ -229,6 +241,24 @@ async def _search_knowledge(
                 filter=query_filter,
             )
         )
+    if raw_query_vector is not None:
+        prefetch.append(
+            Prefetch(
+                query=raw_query_vector,
+                using="vector_chunk",
+                limit=prefetch_limit,
+                filter=query_filter,
+            )
+        )
+        if raw_sparse_vector is not None:
+            prefetch.append(
+                Prefetch(
+                    query=raw_sparse_vector,
+                    using="vector_sparse",
+                    limit=prefetch_limit,
+                    filter=query_filter,
+                )
+            )
 
     try:
         result = await asyncio.wait_for(
@@ -359,11 +389,23 @@ async def hybrid_search(
     request: RetrieveRequest,
     candidates: int,
     sparse_vector: SparseVector | None = None,
+    raw_query_vector: list[float] | None = None,
+    raw_sparse_vector: SparseVector | None = None,
 ) -> list[dict]:
     """Run Qdrant search appropriate for the request scope.
 
     Returns raw result dicts with text, score, and payload fields.
     sparse_vector is forwarded to _search_knowledge for 3-leg RRF.
+    raw_query_vector / raw_sparse_vector add pre-rewrite RRF legs (see
+    _search_knowledge) and should be passed only when the rewrite changed the
+    query.
     """
     # org, personal, both
-    return await _search_knowledge(query_vector, request, candidates, sparse_vector)
+    return await _search_knowledge(
+        query_vector,
+        request,
+        candidates,
+        sparse_vector,
+        raw_query_vector=raw_query_vector,
+        raw_sparse_vector=raw_sparse_vector,
+    )

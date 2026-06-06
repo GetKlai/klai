@@ -321,15 +321,25 @@ async def retrieve(
     decision_record["coreference_rewrite"] = {"original": req.query, "resolved": query_resolved}
     decision_record["coreference_ms"] = round(coref_ms, 1)
 
-    # 2. Embed resolved query (dense + sparse in parallel)
+    # 2. Embed resolved query (dense + sparse in parallel). When coreference /
+    # query rewrite changed the query, also embed the user's pre-rewrite
+    # raw_query so the search can fuse a literal-term RRF leg (see
+    # search._search_knowledge). This rescues exact matches — e.g. a product
+    # name like "Salesforce" — that an over-eager rewrite would otherwise drop
+    # from the candidate pool, where the reranker can no longer recover them.
     t_embed = time.perf_counter()
-    query_vector, sparse_vector = await asyncio.gather(
-        embed_single(query_resolved),
-        embed_sparse(query_resolved),
-    )
+    raw_query = req.raw_query if req.raw_query and req.raw_query != query_resolved else None
+    embed_coros = [embed_single(query_resolved), embed_sparse(query_resolved)]
+    if raw_query is not None:
+        embed_coros += [embed_single(raw_query), embed_sparse(raw_query)]
+    embedded = await asyncio.gather(*embed_coros)
+    query_vector, sparse_vector = embedded[0], embedded[1]
+    raw_query_vector = embedded[2] if raw_query is not None else None
+    raw_sparse_vector = embedded[3] if raw_query is not None else None
     embed_ms = (time.perf_counter() - t_embed) * 1000
     step_latency_seconds.labels(step="embed").observe(time.perf_counter() - t_embed)
     decision_record["embedding_ms"] = round(embed_ms, 1)
+    decision_record["raw_query_leg_applied"] = raw_query is not None
 
     # 3. Gate check. Strict KB mode must never skip retrieval: a wrong bypass
     # would turn "answer only from selected KBs" into a plain model answer.
@@ -406,7 +416,12 @@ async def retrieve(
         # 4. Search — Qdrant + Graphiti in parallel (AC-5)
         t_qdrant = time.perf_counter()
         qdrant_coro = search.hybrid_search(
-            query_vector, req, settings.retrieval_candidates, sparse_vector
+            query_vector,
+            req,
+            settings.retrieval_candidates,
+            sparse_vector,
+            raw_query_vector=raw_query_vector,
+            raw_sparse_vector=raw_sparse_vector,
         )
 
         graph_task: asyncio.Task[list[dict]] | None = None
