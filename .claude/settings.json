@@ -43,6 +43,15 @@
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/portal-frontend-ui-standards-reminder.py\""
           }
         ]
+      },
+      {
+        "matcher": "mcp__playwright__browser_navigate|mcp__playwright__browser_tabs",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/playwright-url-guard.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

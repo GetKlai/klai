@@ -22,9 +22,12 @@ make migrate    # runs database migrations
 make backend    # starts FastAPI on :8010 (auto-creates dev user)
 # In a second terminal:
 make frontend   # starts Vite on :5174
+scripts/local-dev-status.sh --mode local --strict
 ```
 
 Open [http://localhost:5174](http://localhost:5174) — you're logged in as a dev user. No Zitadel, no OIDC, no external auth.
+In Conductor, `make frontend` uses `CONDUCTOR_PORT` and `make backend` uses
+`CONDUCTOR_PORT+1` when that variable is set.
 
 ## How It Works
 
@@ -50,6 +53,9 @@ For core developers with access to the production Zitadel instance, two addition
 
 - **Mode A (Frontend-only)**: Only the frontend runs locally, API calls proxy to production. No Docker needed.
 - **Mode B (Full-stack + Zitadel)**: Full local stack with real OIDC authentication via `auth.getklai.com`.
+
+For agent/browser testing, see
+[docs/runbooks/agent-browser-testing.md](docs/runbooks/agent-browser-testing.md).
 
 ## Useful Commands
 

@@ -4,8 +4,11 @@
 COMPOSE := docker compose -f docker-compose.dev.yml --env-file .env.dev
 BACKEND_DIR := klai-portal/backend
 FRONTEND_DIR := klai-portal/frontend
+FRONTEND_PORT ?= $(if $(CONDUCTOR_PORT),$(CONDUCTOR_PORT),5174)
+BACKEND_PORT ?= $(if $(CONDUCTOR_PORT),$(shell expr $(CONDUCTOR_PORT) + 1),8010)
+FRONTEND_URL ?= http://localhost:$(FRONTEND_PORT)
 
-.PHONY: help setup dev-up dev-down dev-reset dev-status dev-logs seed postdeploy backend frontend migrate lint check
+.PHONY: help setup local-dev-status e2e-prod-status dev-up dev-down dev-reset dev-status dev-logs seed postdeploy backend frontend migrate lint check
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 
@@ -21,6 +24,7 @@ setup: ## First-time setup: copy env files, generate keys, install dependencies
 	@test -f $(BACKEND_DIR)/.env.example || { echo "ERROR: $(BACKEND_DIR)/.env.example not found."; exit 1; }
 	@test -f $(FRONTEND_DIR)/.env.local.example || { echo "ERROR: $(FRONTEND_DIR)/.env.local.example not found."; exit 1; }
 	@test -f .env.dev || cp .env.dev.example .env.dev
+	@test -f $(FRONTEND_DIR)/.env.development.local || cp $(FRONTEND_DIR)/.env.local.example $(FRONTEND_DIR)/.env.development.local
 	@test -f $(BACKEND_DIR)/.env || { \
 		cp $(BACKEND_DIR)/.env.example $(BACKEND_DIR)/.env && \
 		echo "  Generating encryption keys (stdlib only — no cryptography import)..." && \
@@ -33,7 +37,6 @@ setup: ## First-time setup: copy env files, generate keys, install dependencies
 		rm -f $(BACKEND_DIR)/.env.bak && \
 		echo "  Keys generated and written to $(BACKEND_DIR)/.env"; \
 	}
-	@test -f $(FRONTEND_DIR)/.env.local || cp $(FRONTEND_DIR)/.env.local.example $(FRONTEND_DIR)/.env.local
 	@echo ""
 	@echo "==> Installing backend dependencies..."
 	cd $(BACKEND_DIR) && uv sync --all-groups
@@ -53,6 +56,12 @@ setup: ## First-time setup: copy env files, generate keys, install dependencies
 	@echo "  For AI features: add ANTHROPIC_API_KEY to .env.dev"
 	@echo "  For production Zitadel: see docs/runbooks/local-dev.md"
 	@echo "============================================"
+
+local-dev-status: ## Explain and validate the local standalone dev/browser-test setup
+	@FRONTEND_PORT=$(FRONTEND_PORT) BACKEND_PORT=$(BACKEND_PORT) VITE_API_PROXY_TARGET=$${VITE_API_PROXY_TARGET:-http://localhost:$(BACKEND_PORT)} scripts/local-dev-status.sh --mode local
+
+e2e-prod-status: ## Explain and validate the production E2E setup
+	@scripts/local-dev-status.sh --mode prod-e2e
 
 # ── Docker Services ──────────────────────────────────────────────────────────
 
@@ -93,16 +102,16 @@ postdeploy: ## Apply post-deploy SQL (RLS policies + helper functions) as klai s
 
 # ── Backend ──────────────────────────────────────────────────────────────────
 
-backend: ## Start FastAPI backend with hot reload (port 8010)
-	cd $(BACKEND_DIR) && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
+backend: ## Start FastAPI backend with hot reload (default port 8010, or CONDUCTOR_PORT+1)
+	cd $(BACKEND_DIR) && FRONTEND_URL=$(FRONTEND_URL) CORS_ORIGINS=$(FRONTEND_URL) uv run uvicorn app.main:app --reload --host 0.0.0.0 --port $(BACKEND_PORT)
 
 migrate: ## Run Alembic database migrations
 	cd $(BACKEND_DIR) && uv run alembic upgrade head
 
 # ── Frontend ─────────────────────────────────────────────────────────────────
 
-frontend: ## Start Vite dev server (port 5174)
-	cd $(FRONTEND_DIR) && npm run dev
+frontend: ## Start Vite dev server (default port 5174, or CONDUCTOR_PORT)
+	cd $(FRONTEND_DIR) && VITE_API_PROXY_TARGET=$${VITE_API_PROXY_TARGET:-http://localhost:$(BACKEND_PORT)} VITE_DEV_SERVER_PORT=$(FRONTEND_PORT) npm run dev -- --host 127.0.0.1 --port $(FRONTEND_PORT) --strictPort
 
 # ── Quality ──────────────────────────────────────────────────────────────────
 

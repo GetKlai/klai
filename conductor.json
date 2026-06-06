@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "setup": "make setup",
+    "run": "make local-dev-status && make frontend"
+  },
+  "runScriptMode": "concurrent"
+}

@@ -9,7 +9,14 @@ import path from 'path'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'https://getklai.getklai.com'
+  const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || env.VITE_API_PROXY_TARGET || 'https://getklai.getklai.com'
+  const devServerPort = Number(
+    process.env.VITE_DEV_SERVER_PORT ||
+      process.env.PORT ||
+      process.env.CONDUCTOR_PORT ||
+      env.VITE_DEV_SERVER_PORT ||
+      5174,
+  )
 
   return {
     plugins: [
@@ -51,7 +58,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 5174,
+      port: devServerPort,
       strictPort: true,
       proxy: Object.fromEntries(
         // Proxy all backend paths. Default: production (for frontend-only dev).
