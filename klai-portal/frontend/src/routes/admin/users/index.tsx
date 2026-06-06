@@ -40,7 +40,7 @@ function UsersPage() {
   const navigate = useNavigate()
   const auth = useAuth()
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
-  const [confirmingOffboardId, setConfirmingOffboardId] = useState<string | null>(null)
+  const [confirmingUserDeleteId, setConfirmingUserDeleteId] = useState<string | null>(null)
   const [confirmingLeave, setConfirmingLeave] = useState(false)
 
   const usersQuery = useAdminUsers()
@@ -71,8 +71,8 @@ function UsersPage() {
     leaveWorkspaceError: leaveWorkspaceMutation.error,
   })
 
-  const offboardTarget = confirmingOffboardId
-    ? users.find((user) => user.zitadel_user_id === confirmingOffboardId)
+  const deleteTarget = confirmingUserDeleteId
+    ? users.find((user) => user.zitadel_user_id === confirmingUserDeleteId)
     : undefined
 
   return (
@@ -152,7 +152,7 @@ function UsersPage() {
                   suspendMutation={suspendMutation}
                   reactivateMutation={reactivateMutation}
                   onConfirmDelete={setConfirmingDeleteId}
-                  onConfirmOffboard={setConfirmingOffboardId}
+                  onConfirmUserDelete={setConfirmingUserDeleteId}
                   onConfirmLeave={() => setConfirmingLeave(true)}
                 />
               )}
@@ -167,14 +167,15 @@ function UsersPage() {
             />
           )}
 
-          {offboardTarget && currentUserId && (
+          {deleteTarget && currentUserId && (
             <OffboardWizard
-              userId={offboardTarget.zitadel_user_id}
-              userLabel={userDisplayName(offboardTarget)}
+              userId={deleteTarget.zitadel_user_id}
+              userLabel={userDisplayName(deleteTarget)}
               currentAdminId={currentUserId}
-              open={confirmingOffboardId !== null}
+              mode="delete"
+              open={confirmingUserDeleteId !== null}
               onOpenChange={(open) => {
-                if (!open) setConfirmingOffboardId(null)
+                if (!open) setConfirmingUserDeleteId(null)
               }}
             />
           )}

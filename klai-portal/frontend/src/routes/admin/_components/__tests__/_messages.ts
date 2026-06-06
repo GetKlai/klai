@@ -68,10 +68,34 @@ export const adminUsersMessages = {
   admin_users_action_suspend: () => 'Suspend',
   admin_users_action_reactivate: () => 'Reactivate',
   admin_users_action_offboard: () => 'Offboard',
+  admin_users_action_delete: () => 'Delete',
+  admin_users_toast_deleted: () => 'Deleted',
   admin_users_confirm_suspend_title: () => 'Suspend user?',
   admin_users_confirm_suspend_description: () => '...',
   admin_users_confirm_offboard_title: () => 'Offboard user?',
   admin_users_confirm_offboard_description: () => '...',
+  admin_users_offboard_wizard_title: ({ name }: { name: string }) => `Offboard ${name}`,
+  admin_users_offboard_wizard_description: () => 'Offboard description',
+  admin_users_delete_wizard_title: ({ name }: { name: string }) => `Delete ${name}`,
+  admin_users_delete_wizard_description: () => 'Delete description',
+  admin_users_wizard_loading: () => 'Preparing...',
+  admin_users_wizard_preview_error: ({ error }: { error: string }) => `Preview failed: ${error}`,
+  admin_users_wizard_tokens_title: () => 'Tokens',
+  admin_users_wizard_tokens_description: ({
+    apiKeys,
+    mcpTokens,
+  }: {
+    apiKeys: number
+    mcpTokens: number
+  }) => `${apiKeys} keys ${mcpTokens} tokens`,
+  admin_users_wizard_team_kbs: ({ count }: { count: number }) => `Team KBs (${count})`,
+  admin_users_wizard_personal_kbs: ({ count }: { count: number }) => `Personal KBs (${count})`,
+  admin_users_wizard_transfer: () => 'Transfer',
+  admin_users_wizard_transfer_to: () => 'to',
+  admin_users_wizard_personal_delete_hint: () => 'Personal KBs are deleted',
+  admin_users_wizard_will_be_deleted: () => 'Will be deleted',
+  admin_users_offboard_wizard_no_kbs: () => 'No KBs for offboard.',
+  admin_users_delete_wizard_no_kbs: () => 'No KBs for delete.',
   admin_settings_saved: () => 'Saved',
 } as const
 

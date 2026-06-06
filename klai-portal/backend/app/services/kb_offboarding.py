@@ -99,6 +99,20 @@ class OffboardPreview(BaseModel):
     mcp_tokens_count: int = Field(description="REQ-2.1b — active portal_mcp_tokens owned by the offboarded user.")
 
 
+class UserDeletePreview(BaseModel):
+    """Response shape for ``GET /admin/users/{id}/delete-preview``.
+
+    Delete differs from offboard: every org KB created by the user must be
+    explicitly transferred or deleted so ``created_by`` never points at a
+    hard-deleted user row. Personal KBs stay delete-only.
+    """
+
+    org_kbs_created: list[OffboardPreviewKb]
+    personal_kbs: list[OffboardPreviewKb]
+    api_keys_count: int = Field(description="Partner API keys created by the deleted user.")
+    mcp_tokens_count: int = Field(description="Active portal_mcp_tokens owned by the deleted user.")
+
+
 class KbDisposition(BaseModel):
     """One row in the admin's offboard request body.
 
@@ -170,7 +184,71 @@ async def compute_offboard_preview(
                 )
             )
 
-    # Personal KBs owned by the target user.
+    personal_kb_rows = await _personal_kb_preview_rows(target_user_id, org_id, db)
+    api_keys_count, mcp_tokens_count = await _credential_counts(target_user_id, org_id, db)
+
+    return OffboardPreview(
+        org_kbs_solely_owned=solely_owned,
+        personal_kbs=personal_kb_rows,
+        api_keys_count=api_keys_count,
+        mcp_tokens_count=mcp_tokens_count,
+    )
+
+
+async def compute_user_delete_preview(
+    target_user_id: str,
+    org_id: int,
+    db: AsyncSession,
+) -> UserDeletePreview:
+    """Build the delete-preview for a hard user delete.
+
+    Includes every org KB the user created, not only solely-owned KBs. A hard
+    delete removes the portal user row, so every ``created_by`` reference must
+    be handled explicitly.
+    """
+
+    org_kbs_result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.org_id == org_id,
+            PortalKnowledgeBase.owner_type == "org",
+            PortalKnowledgeBase.created_by == target_user_id,
+        )
+    )
+
+    org_kb_rows: list[OffboardPreviewKb] = []
+    for kb in org_kbs_result.scalars().all():
+        owner_count_result = await db.execute(
+            select(func.count(PortalUserKBAccess.id))
+            .where(PortalUserKBAccess.kb_id == kb.id)
+            .where(PortalUserKBAccess.role == "owner")
+        )
+        explicit_owner_count = owner_count_result.scalar_one() or 0
+        org_kb_rows.append(
+            OffboardPreviewKb(
+                kb_id=kb.id,
+                slug=kb.slug,
+                name=kb.name,
+                owner_type="org",
+                role_count=max(1, explicit_owner_count),
+            )
+        )
+
+    personal_kb_rows = await _personal_kb_preview_rows(target_user_id, org_id, db)
+    api_keys_count, mcp_tokens_count = await _credential_counts(target_user_id, org_id, db)
+
+    return UserDeletePreview(
+        org_kbs_created=org_kb_rows,
+        personal_kbs=personal_kb_rows,
+        api_keys_count=api_keys_count,
+        mcp_tokens_count=mcp_tokens_count,
+    )
+
+
+async def _personal_kb_preview_rows(
+    target_user_id: str,
+    org_id: int,
+    db: AsyncSession,
+) -> list[OffboardPreviewKb]:
     personal_kbs_result = await db.execute(
         select(PortalKnowledgeBase).where(
             PortalKnowledgeBase.org_id == org_id,
@@ -178,7 +256,7 @@ async def compute_offboard_preview(
             PortalKnowledgeBase.owner_user_id == target_user_id,
         )
     )
-    personal_kb_rows = [
+    return [
         OffboardPreviewKb(
             kb_id=kb.id,
             slug=kb.slug,
@@ -189,7 +267,12 @@ async def compute_offboard_preview(
         for kb in personal_kbs_result.scalars().all()
     ]
 
-    # Token counts (REQ-2.1b).
+
+async def _credential_counts(
+    target_user_id: str,
+    org_id: int,
+    db: AsyncSession,
+) -> tuple[int, int]:
     api_keys_count_result = await db.execute(
         select(func.count(PartnerAPIKey.id)).where(
             PartnerAPIKey.org_id == org_id,
@@ -198,8 +281,6 @@ async def compute_offboard_preview(
     )
     api_keys_count = api_keys_count_result.scalar_one() or 0
 
-    # MCP tokens use ``portal_users.id`` (int FK), not the zitadel string.
-    # Resolve it once; the count is a no-op if the user row is gone.
     user_id_result = await db.execute(
         select(PortalUser.id).where(
             PortalUser.zitadel_user_id == target_user_id,
@@ -217,12 +298,7 @@ async def compute_offboard_preview(
         )
         mcp_tokens_count = mcp_count_result.scalar_one() or 0
 
-    return OffboardPreview(
-        org_kbs_solely_owned=solely_owned,
-        personal_kbs=personal_kb_rows,
-        api_keys_count=api_keys_count,
-        mcp_tokens_count=mcp_tokens_count,
-    )
+    return api_keys_count, mcp_tokens_count
 
 
 # ---------------------------------------------------------------------------
