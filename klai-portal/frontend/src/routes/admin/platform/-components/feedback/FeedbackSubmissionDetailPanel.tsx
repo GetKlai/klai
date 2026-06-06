@@ -134,7 +134,7 @@ export function FeedbackSubmissionDetailPanel({
   const linkToItem = (itemId: number) =>
     linkItem.mutate(
       { submissionId: item.id, item_id: itemId, link_type: linkType },
-      { onSuccess: onClose },
+      { onSuccess: (res) => openItem(res.item_id) },
     )
   const createProductItem = () =>
     createItem.mutate(
