@@ -183,12 +183,15 @@ class TestPartnerAPIGate:
         key_row.rate_limit_rpm = 60
         key_row.key_hash = "deadbeef" * 8
         key_row.permissions = {"chat": True, "feedback": False, "knowledge_append": False}
+        key_row.created_by = "uid-test"
+        kb_access_result = MagicMock()
+        kb_access_result.__iter__.return_value = iter([])
 
         db.execute = AsyncMock(
             side_effect=[
                 _make_scalar_result(key_row),
                 _make_scalar_result(org),
-                _make_scalars_result([]),
+                kb_access_result,
                 # Any further execute calls would trigger AsyncMock default
             ]
         )
