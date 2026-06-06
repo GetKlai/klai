@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.extensions_registry import KNOWN_FEATURES
+from app.core.features import FEATURE_MIN_PROFILE
 from app.core.permissions import UserPermissions, require_platform_admin
 from app.models.portal import PortalOrg
 from app.services.audit.tenant_lifecycle import emit_lifecycle_event
@@ -34,9 +35,16 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
+class PlatformUnlockFeature(BaseModel):
+    key: str
+    enabled: bool
+    requires_profile: str | None
+
+
 class PlatformUnlocksResponse(BaseModel):
     slug: str
     platform_unlocked_features: list[str]
+    features: list[PlatformUnlockFeature] = Field(default_factory=list)
 
 
 class PatchPlatformUnlocksRequest(BaseModel):
@@ -55,6 +63,22 @@ async def _get_org_by_slug(slug: str, db: AsyncSession) -> PortalOrg:
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
     return org
+
+
+def _build_unlocks_response(org: PortalOrg) -> PlatformUnlocksResponse:
+    unlocked = set(org.platform_unlocked_features or [])
+    return PlatformUnlocksResponse(
+        slug=org.slug,
+        platform_unlocked_features=sorted(unlocked),
+        features=[
+            PlatformUnlockFeature(
+                key=key,
+                enabled=key in unlocked,
+                requires_profile=FEATURE_MIN_PROFILE.get(key),
+            )
+            for key in sorted(KNOWN_FEATURES)
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +104,7 @@ async def get_platform_unlocks(
         features=features,
         actor_user_id=perms.user_id,
     )
-    return PlatformUnlocksResponse(slug=slug, platform_unlocked_features=features)
+    return _build_unlocks_response(org)
 
 
 # ---------------------------------------------------------------------------
@@ -145,4 +169,4 @@ async def patch_platform_unlocks(
         new=new_features,
         actor_user_id=perms.user_id,
     )
-    return PlatformUnlocksResponse(slug=slug, platform_unlocked_features=new_features)
+    return _build_unlocks_response(org)

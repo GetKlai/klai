@@ -12,6 +12,7 @@ import {
   KnowledgeBasesSection,
   OrgSummaryStats,
   TemplatesSection,
+  TenantFeaturesSection,
   TenantDangerZone,
   UsersSection,
 } from './-components/OrgDetailSections'
@@ -93,6 +94,7 @@ function PlatformOrgDetailPage() {
             org={data.org}
             templateCount={data.templates.length}
           />
+          <TenantFeaturesSection orgId={orgId} org={data.org} />
           <UsersSection orgId={orgId} users={data.users} />
           <BotsSection bots={data.bots} fmtDate={fmtDate} />
           <KnowledgeBasesSection

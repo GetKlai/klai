@@ -146,6 +146,7 @@ async def test_platform_org_detail_exposes_delete_failure_state() -> None:
                         name="Yoobi",
                         slug="yoobi",
                         plan="knowledge",
+                        platform_unlocked_features=["partner_api"],
                         billing_status="active",
                         billing_cycle="monthly",
                         seats=10,
@@ -186,6 +187,7 @@ async def test_platform_org_detail_exposes_delete_failure_state() -> None:
         response = await platform_org_detail(org_id=42, perms=_platform_perms())
 
     assert len(response.users) == 1
+    assert response.org.platform_unlocked_features == ["partner_api"]
     user = response.users[0]
     assert user.deletion_status == "failed_partial"
     assert user.deletion_failure_reason == {"step": "external_kb_delete", "error": "docs-app down"}
