@@ -104,7 +104,7 @@ async def test_post_scope_org_as_kb_manager_allowed(monkeypatch):
     out = await app_templates.create_template(body=body, perms=perms, db=db)
 
     assert out.scope == "org"
-    app_templates.invalidate_templates.assert_awaited_once_with(42)
+    app_templates.invalidate_templates.assert_awaited_once_with("zitadel-org-42")
 
 
 @pytest.mark.asyncio
@@ -148,7 +148,7 @@ async def test_post_scope_personal_as_non_admin_allowed(monkeypatch):
     assert db.refresh.await_count == 1
     assert db.commit.await_count == 1
     # Personal write → single-user invalidation, not org-wide.
-    app_templates.invalidate_templates.assert_awaited_once_with(42, "lc-1")
+    app_templates.invalidate_templates.assert_awaited_once_with("zitadel-org-42", "lc-1")
 
 
 @pytest.mark.asyncio
@@ -179,8 +179,8 @@ async def test_post_scope_org_as_admin_triggers_org_wide_invalidate(monkeypatch)
     body = app_templates.TemplateCreate(name="X", prompt_text="y", scope="org")
     await app_templates.create_template(body=body, perms=perms, db=db)
 
-    # Org-wide invalidation: called with just org_id (second arg defaults to None).
-    app_templates.invalidate_templates.assert_awaited_once_with(42)
+    # Org-wide invalidation: called with just the Zitadel org-id string (second arg defaults to None).
+    app_templates.invalidate_templates.assert_awaited_once_with("zitadel-org-42")
 
 
 # ---------------------------------------------------------------------------
