@@ -103,6 +103,46 @@ def test_injection_text_constant_exists(monkeypatch) -> None:
     assert "verduidelijking" in text.lower()
 
 
+def test_open_low_confidence_text_preserves_open_contract(monkeypatch) -> None:
+    """Open mode's low-confidence guard must not collapse back to KB-only.
+
+    The strict low-confidence block is intentionally conservative. The Open
+    block is a different contract: weak KB chunks should stop unsupported
+    KB claims, not stop general-knowledge or user-context answers.
+    """
+    klai_knowledge = _load_hook(monkeypatch)
+    text = klai_knowledge._LOW_CONFIDENCE_OPEN_CONTEXT_TEXT
+
+    assert "Open mode blijft actief" in text
+    assert "weiger niet alleen omdat KB-bewijs zwak" in text
+    assert "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext" in text
+    assert "de kennisbank die specifieke claim niet ondersteunt" in text
+    assert "Citeer alleen wat letterlijk in de chunks staat" not in text
+    assert "alleen een algemeen antwoord wanneer dat veilig kan" not in text
+    # Attachment policy is a cross-cutting, mode-independent concern; it lives
+    # in the foundation-layer _USER_PROVIDED_CONTENT_SCOPE clause, not here.
+    # Keep this block NL-only (no mid-paragraph English sentence).
+    assert "User-provided image attachments" not in text
+
+
+def test_user_provided_content_scope_clause(monkeypatch) -> None:
+    """Attachment policy: standalone user content, mode-independent, never a KB
+    source. Pins the contract Mark described 2026-06-06: a screenshot held up
+    against the KB is usable in any mode.
+    """
+    klai_knowledge = _load_hook(monkeypatch)
+    text = klai_knowledge._USER_PROVIDED_CONTENT_SCOPE
+
+    assert "[User-provided content]" in text
+    assert "independent of Strict/Open mode" in text
+    assert "even in Strict mode" in text
+    assert "directly observable or user-provided information" in text
+    assert "do not add general-world explanations" in text
+    assert "NOT knowledge-base sources" in text
+    assert "never cite them as numbered sources" in text
+    assert "it never blocks the user's own attachments or visible conversation" in text
+
+
 def test_injection_disabled_flag_default_false(monkeypatch) -> None:
     """KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION default = '0' → False."""
     monkeypatch.delenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", raising=False)
