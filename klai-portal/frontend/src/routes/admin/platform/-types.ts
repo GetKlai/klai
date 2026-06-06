@@ -208,6 +208,46 @@ export interface PlatformFeedbackResolveResult {
   recipient_count: number
 }
 
+export interface PlatformMessageThread {
+  id: number
+  org_id: number
+  org_name: string | null
+  org_slug: string | null
+  subject: string
+  status: string
+  origin_type: string
+  feedback_submission_id: number | null
+  feedback_item_id: number | null
+  recipient_count: number
+  latest_message_body: string
+  latest_message_sender_type: string
+  latest_message_at: string
+  latest_user_message_at: string | null
+  created_by: string
+  created_at: string
+}
+
+export interface PlatformMessageRecipient {
+  user_id: string
+  email: string | null
+  display_name: string | null
+  last_read_at: string | null
+}
+
+export interface PlatformMessage {
+  id: number
+  sender_type: string
+  sender_user_id: string | null
+  body: string
+  created_at: string
+}
+
+export interface PlatformMessageThreadDetail {
+  thread: PlatformMessageThread
+  recipients: PlatformMessageRecipient[]
+  messages: PlatformMessage[]
+}
+
 export interface PlatformOrgDetail {
   org: PlatformOrg
   users: PlatformUser[]
@@ -246,6 +286,7 @@ export interface CreateTenantResult {
 export type PlatformTab =
   | 'users'
   | 'organizations'
+  | 'messages'
   | 'knowledge-bases'
   | 'templates'
   | 'subscriptions'

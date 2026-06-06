@@ -18,6 +18,10 @@ interface AccountFeedbackUpdatesResponse {
   unread_count: number
 }
 
+interface AccountPlatformMessagesResponse {
+  unread_count: number
+}
+
 // Initials avatar is the dominant SaaS fallback when there is no profile photo
 // (Google, Atlassian, Notion). Falls back to a neutral user icon when no name
 // is known. Swap the `{initials || <User .../>}` line for just `<User .../>`
@@ -39,10 +43,17 @@ export function AccountMenu() {
     queryFn: () => apiFetch<AccountFeedbackUpdatesResponse>('/api/app/account/feedback-updates'),
     enabled: auth.isAuthenticated,
   })
+  const { data: platformMessages } = useQuery({
+    queryKey: ['account-platform-messages'],
+    queryFn: () => apiFetch<AccountPlatformMessagesResponse>('/api/app/account/messages'),
+    enabled: auth.isAuthenticated,
+  })
 
   const inAdmin = location.pathname.startsWith('/admin')
   const isAdmin = inAdmin || user?.isAdmin === true
   const feedbackUnreadCount = feedbackUpdates?.unread_count ?? 0
+  const messageUnreadCount = platformMessages?.unread_count ?? 0
+  const unreadCount = feedbackUnreadCount + messageUnreadCount
 
   const name = auth.user?.profile.name ?? auth.user?.profile.preferred_username ?? null
   const email = auth.user?.profile.email ?? null
@@ -58,10 +69,10 @@ export function AccountMenu() {
           className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-rl-dark)] text-[11px] font-medium text-white outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--color-rl-accent)]"
         >
           {initials || <User className="h-4 w-4" strokeWidth={1.75} />}
-          {feedbackUnreadCount > 0 && (
+          {unreadCount > 0 && (
             <span
               className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[var(--color-success)] ring-2 ring-[var(--color-sidebar)]"
-              aria-label={m.account_feedback_unread()}
+              aria-label={m.account_unread_items()}
             />
           )}
         </button>
@@ -91,9 +102,9 @@ export function AccountMenu() {
           <Link to="/app/account" className="cursor-pointer">
             <UserCircle className="h-4 w-4" />
             {m.sidebar_account()}
-            {feedbackUnreadCount > 0 && (
+          {unreadCount > 0 && (
               <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-success)] px-1.5 text-[11px] font-medium leading-5 text-white">
-                {feedbackUnreadCount}
+                {unreadCount}
               </span>
             )}
           </Link>

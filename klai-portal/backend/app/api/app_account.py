@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -25,6 +25,13 @@ from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackNot
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalUser
 from app.models.templates import PortalTemplate
+from app.platform_messaging.models import PlatformMessage, PlatformMessageParticipant, PlatformMessageThread
+from app.platform_messaging.service import (
+    PlatformMessageThreadNotFoundError,
+    add_platform_message_reply,
+    mark_platform_message_thread_read,
+    user_can_access_thread,
+)
 from app.services.litellm_cache import invalidate_templates
 
 logger = logging.getLogger(__name__)
@@ -133,6 +140,54 @@ class AccountFeedbackReadResponse(BaseModel):
 class AccountFeedbackReadAllResponse(BaseModel):
     ok: bool = True
     read_count: int
+    read_at: datetime
+
+
+class AccountPlatformMessageThreadOut(BaseModel):
+    id: int
+    subject: str
+    status: str
+    origin_type: str
+    feedback_submission_id: int | None = None
+    feedback_item_id: int | None = None
+    latest_message_body: str
+    latest_message_sender_type: str
+    latest_message_at: datetime
+    last_read_at: datetime | None = None
+    unread: bool = False
+    created_at: datetime
+
+
+class AccountPlatformMessageOut(BaseModel):
+    id: int
+    sender_type: str
+    sender_user_id: str | None = None
+    body: str
+    created_at: datetime
+
+
+class AccountPlatformMessageThreadDetailOut(BaseModel):
+    thread: AccountPlatformMessageThreadOut
+    messages: list[AccountPlatformMessageOut]
+
+
+class AccountPlatformMessagesResponse(BaseModel):
+    items: list[AccountPlatformMessageThreadOut]
+    unread_count: int = 0
+
+
+class AccountPlatformMessageReplyIn(BaseModel):
+    body: str
+
+
+class AccountPlatformMessageReplyOut(BaseModel):
+    ok: bool = True
+    message: AccountPlatformMessageOut
+
+
+class AccountPlatformMessageReadResponse(BaseModel):
+    ok: bool = True
+    thread_id: int
     read_at: datetime
 
 
@@ -327,6 +382,188 @@ async def mark_all_feedback_updates_read(
     if notifications:
         await db.commit()
     return AccountFeedbackReadAllResponse(read_count=len(notifications), read_at=read_at)
+
+
+def _thread_out(row, latest_admin_at: datetime | None = None) -> AccountPlatformMessageThreadOut:
+    last_read_at = row.last_read_at
+    unread = latest_admin_at is not None and (last_read_at is None or latest_admin_at > last_read_at)
+    return AccountPlatformMessageThreadOut(
+        id=row.id,
+        subject=row.subject,
+        status=row.status,
+        origin_type=row.origin_type,
+        feedback_submission_id=row.feedback_submission_id,
+        feedback_item_id=row.feedback_item_id,
+        latest_message_body=row.latest_message_body,
+        latest_message_sender_type=row.latest_message_sender_type,
+        latest_message_at=row.latest_message_at,
+        last_read_at=last_read_at,
+        unread=unread,
+        created_at=row.created_at,
+    )
+
+
+def _account_thread_select():
+    latest_body = (
+        select(PlatformMessage.body)
+        .where(PlatformMessage.thread_id == PlatformMessageThread.id)
+        .order_by(PlatformMessage.created_at.desc(), PlatformMessage.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    latest_sender_type = (
+        select(PlatformMessage.sender_type)
+        .where(PlatformMessage.thread_id == PlatformMessageThread.id)
+        .order_by(PlatformMessage.created_at.desc(), PlatformMessage.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    latest_admin_at = (
+        select(func.max(PlatformMessage.created_at))
+        .where(
+            PlatformMessage.thread_id == PlatformMessageThread.id,
+            PlatformMessage.sender_type.in_(("platform_admin", "system")),
+        )
+        .scalar_subquery()
+    )
+    return (
+        select(
+            PlatformMessageThread.id.label("id"),
+            PlatformMessageThread.subject.label("subject"),
+            PlatformMessageThread.status.label("status"),
+            PlatformMessageThread.origin_type.label("origin_type"),
+            PlatformMessageThread.feedback_submission_id.label("feedback_submission_id"),
+            PlatformMessageThread.feedback_item_id.label("feedback_item_id"),
+            PlatformMessageThread.last_message_at.label("latest_message_at"),
+            PlatformMessageThread.created_at.label("created_at"),
+            PlatformMessageParticipant.last_read_at.label("last_read_at"),
+            latest_body.label("latest_message_body"),
+            latest_sender_type.label("latest_message_sender_type"),
+            latest_admin_at.label("latest_admin_at"),
+        )
+        .select_from(PlatformMessageParticipant)
+        .join(PlatformMessageThread, PlatformMessageThread.id == PlatformMessageParticipant.thread_id)
+    )
+
+
+@router.get("/messages", response_model=AccountPlatformMessagesResponse)
+async def get_platform_messages(
+    limit: int = 50,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountPlatformMessagesResponse:
+    safe_limit = max(1, min(limit, 100))
+    rows = (
+        await db.execute(
+            _account_thread_select()
+            .where(
+                PlatformMessageParticipant.org_id == perms.org_id,
+                PlatformMessageParticipant.user_id == perms.user_id,
+            )
+            .order_by(PlatformMessageThread.last_message_at.desc())
+            .limit(safe_limit)
+        )
+    ).all()
+    items = [_thread_out(row, row.latest_admin_at) for row in rows]
+    return AccountPlatformMessagesResponse(items=items, unread_count=sum(1 for item in items if item.unread))
+
+
+@router.get("/messages/{thread_id}", response_model=AccountPlatformMessageThreadDetailOut)
+async def get_platform_message_thread(
+    thread_id: int,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountPlatformMessageThreadDetailOut:
+    if not await user_can_access_thread(db, thread_id=thread_id, org_id=perms.org_id, user_id=perms.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found")
+    row = (
+        await db.execute(
+            _account_thread_select().where(
+                PlatformMessageParticipant.org_id == perms.org_id,
+                PlatformMessageParticipant.user_id == perms.user_id,
+                PlatformMessageThread.id == thread_id,
+            )
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found")
+    thread = _thread_out(row, row.latest_admin_at)
+    messages = (
+        (
+            await db.execute(
+                select(PlatformMessage)
+                .where(PlatformMessage.thread_id == thread_id, PlatformMessage.org_id == perms.org_id)
+                .order_by(PlatformMessage.created_at.asc(), PlatformMessage.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return AccountPlatformMessageThreadDetailOut(
+        thread=thread,
+        messages=[
+            AccountPlatformMessageOut(
+                id=message.id,
+                sender_type=message.sender_type,
+                sender_user_id=message.sender_user_id,
+                body=message.body,
+                created_at=message.created_at,
+            )
+            for message in messages
+        ],
+    )
+
+
+@router.post("/messages/{thread_id}/reply", response_model=AccountPlatformMessageReplyOut)
+async def reply_to_platform_message_thread(
+    thread_id: int,
+    body: AccountPlatformMessageReplyIn,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountPlatformMessageReplyOut:
+    text = body.body.strip()
+    if len(text) < 1 or len(text) > 4000:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message body must be 1-4000 characters")
+    if not await user_can_access_thread(db, thread_id=thread_id, org_id=perms.org_id, user_id=perms.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found")
+    try:
+        message = await add_platform_message_reply(
+            db,
+            thread_id=thread_id,
+            org_id=perms.org_id,
+            sender_type="user",
+            sender_user_id=perms.user_id,
+            body=text,
+        )
+    except PlatformMessageThreadNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found") from exc
+    return AccountPlatformMessageReplyOut(
+        message=AccountPlatformMessageOut(
+            id=message.id,
+            sender_type=message.sender_type,
+            sender_user_id=message.sender_user_id,
+            body=message.body,
+            created_at=message.created_at,
+        )
+    )
+
+
+@router.post("/messages/{thread_id}/read", response_model=AccountPlatformMessageReadResponse)
+async def mark_platform_message_read(
+    thread_id: int,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> AccountPlatformMessageReadResponse:
+    try:
+        read_at = await mark_platform_message_thread_read(
+            db,
+            thread_id=thread_id,
+            org_id=perms.org_id,
+            user_id=perms.user_id,
+        )
+    except PlatformMessageThreadNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message thread not found") from exc
+    return AccountPlatformMessageReadResponse(thread_id=thread_id, read_at=read_at)
 
 
 @router.patch("/kb-preference", response_model=KBPreferenceOut)
