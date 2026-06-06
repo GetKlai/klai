@@ -853,6 +853,10 @@ services:
     command:
       - -port=8080
       - -docker_only=true
+      - -housekeeping_interval=60s
+      - -max_housekeeping_interval=2m
+      - -storage_duration=2m
+      - -disable_metrics=advtcp,cpu_topology,cpuset,disk,diskIO,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp
     networks:
       - monitoring
 
