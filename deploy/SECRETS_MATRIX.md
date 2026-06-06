@@ -79,6 +79,7 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 | `LITELLM_MASTER_KEY` | portal-api | Master key for the LiteLLM gateway — portal writes this when provisioning per-tenant LibreChat containers. |
 | `LITELLM_MASTER_KEY` | retrieval-api | Bearer token for the LiteLLM gateway (re-exposed as `LITELLM_API_KEY` in-container). |
 | `LITELLM_MASTER_KEY` | scribe-api | Bearer token for the LiteLLM gateway (AI summarization of transcripts). |
+| `GETKLAI_MEILI_API_KEY` | librechat-getklai | Meilisearch API key scoped to `getklai_messages` and `getklai_convos`. Do not use `MEILI_MASTER_KEY` in LibreChat containers. |
 | `MEILI_MASTER_KEY` | portal-api | Meilisearch master key — portal provisions Meili indexes per tenant. |
 | `MONEYBIRD_WEBHOOK_TOKEN` | portal-api | Signs Moneybird billing webhooks; portal's config validator fails closed on empty/whitespace (SPEC-SEC-WEBHOOK-001 REQ-3). |
 | `MAILER_PORTAL_API_URL` | klai-mailer | Portal API base URL for locale lookup. Falls back to code default http://portal-api:8010 when unset. Mapped to `PORTAL_API_URL` in-container. |

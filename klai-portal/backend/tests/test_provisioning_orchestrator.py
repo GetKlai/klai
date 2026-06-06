@@ -53,6 +53,9 @@ def mock_orchestrator_env(tmp_path, monkeypatch):
     patches["litellm_key_post"] = MagicMock()
     patches["litellm_key_post"].raise_for_status = MagicMock()
     patches["litellm_key_post"].json = MagicMock(return_value={"key": "sk-test"})
+    patches["meili_key_post"] = MagicMock()
+    patches["meili_key_post"].raise_for_status = MagicMock()
+    patches["meili_key_post"].json = MagicMock(return_value={"key": "meili-tenant-key"})
 
     class _FakeClient:
         async def __aenter__(self):
@@ -68,6 +71,8 @@ def mock_orchestrator_env(tmp_path, monkeypatch):
                 return patches["litellm_key_post"]
             if "/team/delete" in path:
                 return MagicMock()
+            if path == "/keys":
+                return patches["meili_key_post"]
             # SPEC-PORTAL-UNIFY-KB-001: core plan now includes knowledge, so
             # the orchestrator may POST to /api/orgs/<slug>/kbs when provisioning
             # default KBs. Accept any /kbs path with a generic OK response.
@@ -259,6 +264,8 @@ async def test_litellm_key_generate_uses_real_model_aliases(mock_orchestrator_en
                 return mock_orchestrator_env["litellm_key_post"]
             if "/team/delete" in path:
                 return MagicMock()
+            if path == "/keys":
+                return mock_orchestrator_env["meili_key_post"]
             if "/kbs" in path:
                 ok = MagicMock()
                 ok.status_code = 200

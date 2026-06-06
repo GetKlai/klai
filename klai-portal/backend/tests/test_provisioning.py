@@ -6,11 +6,14 @@ structural changes (adding parameters, new env vars) can be verified
 against the existing output format.
 """
 
+import json
 import re
 import textwrap
 from unittest.mock import patch
 
+import httpx
 import pytest
+import respx
 import yaml
 
 
@@ -51,6 +54,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_secret="csec-456",
             litellm_api_key="test-litellm-master",
             mongo_password="test-tenant-pw",
+            meili_api_key="tenant-meili-key",
         )
 
         # MongoDB section
@@ -81,7 +85,12 @@ class TestCharacterizeGenerateLibrechatEnv:
 
         # Search
         assert "MEILI_HOST=http://meilisearch:7700" in result
-        assert "MEILI_MASTER_KEY=test-meili-key" in result
+        assert "MEILI_MASTER_KEY=tenant-meili-key" in result
+        assert "MEILI_MASTER_KEY=test-meili-key" not in result
+        assert "MEILI_MESSAGES_INDEX=acme_messages" in result
+        assert "MEILI_CONVOS_INDEX=acme_convos" in result
+        assert "MEILI_NO_SYNC=true" in result
+        assert "SEARCH=true" not in result
 
         # Redis
         assert "REDIS_URI=redis://:test-redis-pw@redis:6379" in result
@@ -99,10 +108,54 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_secret="csec",
             litellm_api_key="sk-team-key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
         )
 
         assert "LITELLM_API_KEY=sk-team-key" in result
         assert "test-litellm-master" not in result
+
+    def test_meili_tenant_key_overrides_master_key_value(self):
+        """Provisioning must write the tenant-scoped Meili key, not the master key."""
+        from app.services.provisioning import _generate_librechat_env
+
+        result = _generate_librechat_env(
+            slug="acme",
+            client_id="cid",
+            client_secret="csec",
+            litellm_api_key="key",
+            mongo_password="pw",
+            meili_api_key="tenant-meili-key",
+        )
+
+        assert "MEILI_MASTER_KEY=tenant-meili-key" in result
+        assert "MEILI_MASTER_KEY=test-meili-key" not in result
+
+    def test_missing_meili_key_fails_closed(self):
+        """Direct/manual env generation must not fall back to the Meili master key."""
+        from app.services.provisioning import _generate_librechat_env
+
+        with pytest.raises(TypeError):
+            _generate_librechat_env(
+                slug="acme",
+                client_id="cid",
+                client_secret="csec",
+                litellm_api_key="key",
+                mongo_password="pw",
+            )
+
+    def test_empty_meili_key_fails_closed(self):
+        """Blank runtime keys are rejected instead of writing a tenant env."""
+        from app.services.provisioning import _generate_librechat_env
+
+        with pytest.raises(ValueError, match="meili_api_key is required"):
+            _generate_librechat_env(
+                slug="acme",
+                client_id="cid",
+                client_secret="csec",
+                litellm_api_key="key",
+                mongo_password="pw",
+                meili_api_key=" ",
+            )
 
     def test_characterize_slug_appears_in_mongo_and_domain(self):
         """The slug is used consistently in MONGO_URI and DOMAIN_*."""
@@ -114,6 +167,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
         )
 
         assert "librechat-my-tenant" in result
@@ -129,6 +183,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
         )
 
         lines = result.strip().split("\n")
@@ -145,6 +200,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
         )
 
         for line in result.strip().split("\n"):
@@ -165,6 +221,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
         )
 
         env = {}
@@ -188,6 +245,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
         )
 
         assert isinstance(result, str)
@@ -206,6 +264,7 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
             zitadel_org_id="200000000000000001",
         )
 
@@ -221,6 +280,7 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
             zitadel_org_id="123",
         )
 
@@ -236,6 +296,7 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
         )
 
         assert "KLAI_ZITADEL_ORG_ID=" in result
@@ -251,6 +312,7 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             client_secret="csec-456",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
             zitadel_org_id="org-id-789",
         )
 
@@ -276,9 +338,61 @@ class TestGenerateLibrechatEnvKnowledgeIngestSecret:
             client_secret="csec",
             litellm_api_key="key",
             mongo_password="pw",
+            meili_api_key="tenant-meili-key",
         )
 
         assert "KNOWLEDGE_INGEST_SECRET=test-knowledge-secret" in result
+
+
+class TestMeiliTenantApiKeyProvisioning:
+    """Regression tests for tenant-scoped Meili runtime keys."""
+
+    @pytest.mark.asyncio
+    async def test_create_meili_key_is_scoped_to_tenant_indexes(self):
+        """Meili key payload must not grant all-index access."""
+        with patch("app.services.provisioning.orchestrator.settings") as mock_settings:
+            mock_settings.meili_master_key = "master-key"
+            with respx.mock(base_url="http://meilisearch:7700", assert_all_called=True) as router:
+                route = router.post("/keys").mock(return_value=httpx.Response(201, json={"key": "tenant-key"}))
+
+                from app.services.provisioning.orchestrator import _create_meili_tenant_api_key
+
+                result = await _create_meili_tenant_api_key("acme")
+
+        payload = json.loads(route.calls[0].request.content)
+        assert result == "tenant-key"
+        assert route.calls[0].request.headers["authorization"] == "Bearer master-key"
+        assert payload["name"] == "librechat-acme-meili"
+        assert payload["indexes"] == ["acme_messages", "acme_convos"]
+        assert "*" not in payload["indexes"]
+        assert "documents.*" in payload["actions"]
+        assert "search" in payload["actions"]
+
+    @pytest.mark.asyncio
+    async def test_delete_meili_tenant_keys_deletes_only_matching_name(self):
+        """Rollback/deprovisioning key cleanup must match by generated tenant key name."""
+        with patch("app.services.provisioning.orchestrator.settings") as mock_settings:
+            mock_settings.meili_master_key = "master-key"
+            with respx.mock(base_url="http://meilisearch:7700", assert_all_called=True) as router:
+                router.get("/keys").mock(
+                    return_value=httpx.Response(
+                        200,
+                        json={
+                            "results": [
+                                {"uid": "keep", "name": "librechat-other-meili"},
+                                {"uid": "delete", "name": "librechat-acme-meili"},
+                            ]
+                        },
+                    )
+                )
+                deleted = router.delete("/keys/delete").mock(return_value=httpx.Response(204))
+
+                from app.services.provisioning.orchestrator import _delete_meili_tenant_api_keys
+
+                result = await _delete_meili_tenant_api_keys("acme")
+
+        assert result == 1
+        assert deleted.called
 
 
 # ── _generate_librechat_yaml tests ─────────────────────────────────────────

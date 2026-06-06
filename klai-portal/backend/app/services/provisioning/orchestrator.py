@@ -81,6 +81,7 @@ class _ProvisionState:
     caddy_written: bool = False
     mongo_user_created: bool = False
     mongo_user_slug: str = ""
+    meili_key_created: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +137,78 @@ async def _compensate_env_file(state: _ProvisionState) -> None:
         shutil.rmtree(str(tenant_dir), ignore_errors=True)
     except Exception as exc:
         logger.warning("rollback_filesystem_failed", slug=state.slug, error=str(exc), exc_info=True)
+
+
+def _meili_tenant_key_name(slug: str) -> str:
+    return f"librechat-{slug}-meili"
+
+
+async def _delete_meili_tenant_api_keys(slug: str) -> int:
+    """Delete all Meili API keys created for one tenant slug."""
+    key_name = _meili_tenant_key_name(slug)
+    deleted = 0
+    async with httpx.AsyncClient(
+        base_url="http://meilisearch:7700",
+        headers={"Authorization": f"Bearer {settings.meili_master_key}"},
+        timeout=15.0,
+    ) as client:
+        resp = await client.get("/keys", params={"limit": 1000})
+        resp.raise_for_status()
+        for key in resp.json().get("results", []):
+            if key.get("name") != key_name:
+                continue
+            uid = key.get("uid")
+            if not uid:
+                continue
+            delete_resp = await client.delete(f"/keys/{uid}")
+            if delete_resp.status_code == 404:
+                continue
+            delete_resp.raise_for_status()
+            deleted += 1
+    return deleted
+
+
+async def _compensate_meili_tenant_api_key(state: _ProvisionState) -> None:
+    if not state.meili_key_created or not state.slug:
+        return
+    try:
+        deleted = await _delete_meili_tenant_api_keys(state.slug)
+        logger.info("rollback_meili_tenant_api_key_deleted", slug=state.slug, deleted=deleted)
+    except Exception as exc:
+        logger.warning("rollback_meili_tenant_api_key_failed", slug=state.slug, error=str(exc), exc_info=True)
+
+
+async def _create_meili_tenant_api_key(slug: str) -> str:
+    """Create a Meili API key restricted to one tenant's LibreChat indexes."""
+    index_names = [f"{slug}_messages", f"{slug}_convos"]
+    async with httpx.AsyncClient(
+        base_url="http://meilisearch:7700",
+        headers={"Authorization": f"Bearer {settings.meili_master_key}"},
+        timeout=15.0,
+    ) as client:
+        resp = await client.post(
+            "/keys",
+            json={
+                "name": _meili_tenant_key_name(slug),
+                "description": f"LibreChat search for tenant {slug}",
+                "actions": [
+                    "search",
+                    "documents.*",
+                    "indexes.create",
+                    "indexes.get",
+                    "indexes.update",
+                    "settings.*",
+                    "tasks.get",
+                ],
+                "indexes": index_names,
+                "expiresAt": None,
+            },
+        )
+        resp.raise_for_status()
+        key = resp.json().get("key")
+        if not key:
+            raise RuntimeError(f"Meilisearch did not return a runtime key for tenant {slug}")
+        return str(key)
 
 
 async def _compensate_container(state: _ProvisionState) -> None:
@@ -389,6 +462,12 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             stack.push_async_callback(_compensate_mongo_user, state)
             logger.info("mongodb_user_created", slug=slug)
 
+            # --- step 3b: Meili tenant runtime key ------------------------
+            meili_runtime_key = await _create_meili_tenant_api_key(slug)
+            state.meili_key_created = True
+            stack.push_async_callback(_compensate_meili_tenant_api_key, state)
+            logger.info("meili_tenant_api_key_created", slug=slug)
+
             # --- step 4: .env file ----------------------------------------
             mark_step_start(org_id, "env_file")
             await transition_state(
@@ -406,6 +485,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
                 client_secret,
                 litellm_api_key=litellm_team_key,
                 mongo_password=mongo_tenant_password,
+                meili_api_key=meili_runtime_key,
                 zitadel_org_id=zitadel_org_id,
                 mcp_servers=mcp_servers,
             )

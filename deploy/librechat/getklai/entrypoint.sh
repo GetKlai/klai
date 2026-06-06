@@ -37,6 +37,138 @@
 
 set -e
 
+case "${SEARCH:-}" in
+  true|TRUE|True|1|yes|YES|on|ON)
+    if [ -z "${MEILI_MESSAGES_INDEX:-}" ] || [ -z "${MEILI_CONVOS_INDEX:-}" ]; then
+      echo "[klai-entrypoint] SEARCH=true requires MEILI_MESSAGES_INDEX and MEILI_CONVOS_INDEX; refusing unsafe global Meili indexes" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+if [ -n "${MEILI_MESSAGES_INDEX:-}" ] || [ -n "${MEILI_CONVOS_INDEX:-}" ]; then
+  if [ -z "${MEILI_MESSAGES_INDEX:-}" ] || [ -z "${MEILI_CONVOS_INDEX:-}" ]; then
+    echo "[klai-entrypoint] both MEILI_MESSAGES_INDEX and MEILI_CONVOS_INDEX are required for tenant-scoped search" >&2
+    exit 1
+  fi
+
+  node <<'NODE'
+const { existsSync, readFileSync, writeFileSync } = require('fs');
+
+const messageIndexExpr = "process.env.MEILI_MESSAGES_INDEX || 'messages'";
+const convoIndexExpr = "process.env.MEILI_CONVOS_INDEX || 'convos'";
+
+const files = [
+  {
+    path: '/app/packages/data-schemas/dist/models/message.cjs',
+    required: true,
+    forbidden: [{ label: 'global messages model indexName', pattern: /indexName:\s*['"]messages['"]/ }],
+    replacements: [
+      {
+        label: 'message model indexName',
+        search: /indexName:\s*['"]messages['"]/,
+        replacement: `indexName: ${messageIndexExpr}`,
+        already: new RegExp(`indexName:\\s*${escapeRegExp(messageIndexExpr)}`),
+      },
+    ],
+  },
+  {
+    path: '/app/packages/data-schemas/dist/models/convo.cjs',
+    required: true,
+    forbidden: [{ label: 'global convos model indexName', pattern: /indexName:\s*['"]convos['"]/ }],
+    replacements: [
+      {
+        label: 'conversation model indexName',
+        search: /indexName:\s*['"]convos['"]/,
+        replacement: `indexName: ${convoIndexExpr}`,
+        already: new RegExp(`indexName:\\s*${escapeRegExp(convoIndexExpr)}`),
+      },
+    ],
+  },
+  {
+    path: '/app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs',
+    required: true,
+    forbidden: [
+      { label: 'global messages client index', pattern: /client\.index\(['"]messages['"]\)/ },
+      { label: 'global convos client index', pattern: /client\.index\(['"]convos['"]\)/ },
+    ],
+    replacements: [
+      {
+        label: 'mongoMeili hard-coded messages index',
+        search: /client\.index\(['"]messages['"]\)/g,
+        replacement: `client.index(${messageIndexExpr})`,
+        already: new RegExp(`client\\.index\\(${escapeRegExp(messageIndexExpr)}\\)`),
+      },
+      {
+        label: 'mongoMeili hard-coded convos index',
+        search: /client\.index\(['"]convos['"]\)/g,
+        replacement: `client.index(${convoIndexExpr})`,
+        already: new RegExp(`client\\.index\\(${escapeRegExp(convoIndexExpr)}\\)`),
+      },
+    ],
+  },
+  {
+    path: '/app/api/db/indexSync.js',
+    required: true,
+    forbidden: [
+      { label: 'global messages client index', pattern: /client\.index\(['"]messages['"]\)/ },
+      { label: 'global convos client index', pattern: /client\.index\(['"]convos['"]\)/ },
+    ],
+    replacements: [
+      {
+        label: 'indexSync hard-coded messages index',
+        search: /client\.index\(['"]messages['"]\)/g,
+        replacement: `client.index(${messageIndexExpr})`,
+        already: new RegExp(`client\\.index\\(${escapeRegExp(messageIndexExpr)}\\)`),
+      },
+      {
+        label: 'indexSync hard-coded convos index',
+        search: /client\.index\(['"]convos['"]\)/g,
+        replacement: `client.index(${convoIndexExpr})`,
+        already: new RegExp(`client\\.index\\(${escapeRegExp(convoIndexExpr)}\\)`),
+      },
+    ],
+  },
+];
+
+for (const file of files) {
+  if (!existsSync(file.path)) {
+    if (file.required) {
+      throw new Error(`[klai-entrypoint] required LibreChat Meili patch target is missing: ${file.path}`);
+    }
+    continue;
+  }
+
+  let content = readFileSync(file.path, 'utf8');
+  let changed = false;
+  for (const replacement of file.replacements) {
+    if (replacement.already.test(content)) {
+      continue;
+    }
+    if (!replacement.search.test(content)) {
+      throw new Error(`[klai-entrypoint] could not apply ${replacement.label} in ${file.path}`);
+    }
+    content = content.replace(replacement.search, replacement.replacement);
+    changed = true;
+  }
+  if (changed) {
+    writeFileSync(file.path, content);
+    process.stdout.write(`[klai-entrypoint] tenant-scoped Meili patch applied: ${file.path}\n`);
+  }
+  for (const forbidden of file.forbidden || []) {
+    if (forbidden.pattern.test(content)) {
+      throw new Error(`[klai-entrypoint] unsafe global Meili reference remains in ${file.path}: ${forbidden.label}`);
+    }
+  }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+NODE
+fi
+
+
 INDEX=/app/client/dist/index.html
 LIGHT_MARKER=klai-force-light
 FOOTER_MARKER=klai-hide-librechat-footer-v1
