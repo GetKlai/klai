@@ -125,6 +125,7 @@ def _render_kb_citation_content(
     trusted_sources: list[dict[str, Any]],
     evidence_chunks: list[dict],
     kb_narrow: bool,
+    retrieval_confidence_band: object = None,
     allow_uncited_user_content: bool = False,
     suppress_citations_for_user_content: bool = False,
     no_citable_message: object = None,
@@ -229,6 +230,7 @@ def _render_kb_citation_content(
         query_text=user_query if isinstance(user_query, str) else "",
         allowed_image_urls=allowed_image_urls,
         evidence_chunks=evidence_chunks,
+        retrieval_confidence_band=retrieval_confidence_band,
     )
     if not composed.content or not composed.sources:
         decision = dict(composed.decision)
@@ -760,6 +762,7 @@ def compose_non_streaming_kb_response(
                     trusted_sources=trusted_sources,
                     evidence_chunks=citation_chunks,
                     kb_narrow=bool(kb_meta.get("kb_narrow", False)),
+                    retrieval_confidence_band=kb_meta.get("confidence_band"),
                     allow_uncited_user_content=allow_uncited_user_content,
                     suppress_citations_for_user_content=suppress_user_content_citations,
                     no_citable_message=kb_meta.get("no_citable_message"),
@@ -851,6 +854,7 @@ def compose_streaming_kb_response(
                     trusted_sources=trusted_sources,
                     evidence_chunks=citation_chunks,
                     kb_narrow=kb_narrow,
+                    retrieval_confidence_band=kb_meta.get("confidence_band"),
                     allow_uncited_user_content=allow_uncited_user_content,
                     suppress_citations_for_user_content=suppress_user_content_citations,
                     no_citable_message=kb_meta.get("no_citable_message"),
@@ -912,6 +916,7 @@ def compose_streaming_kb_response(
                 trusted_sources=trusted_sources,
                 evidence_chunks=citation_chunks,
                 kb_narrow=kb_narrow,
+                retrieval_confidence_band=kb_meta.get("confidence_band"),
                 allow_uncited_user_content=allow_uncited_user_content,
                 suppress_citations_for_user_content=suppress_user_content_citations,
                 no_citable_message=kb_meta.get("no_citable_message"),

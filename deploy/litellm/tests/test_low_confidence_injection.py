@@ -318,6 +318,31 @@ def test_low_confidence_injection_still_applies_without_direct_evidence(
     )
 
 
+def test_low_confidence_injection_does_not_skip_on_substring_overlap(monkeypatch) -> None:
+    """`over` in the query must not match the title `Overige problemen`."""
+    klai_knowledge = _load_hook(monkeypatch)
+
+    assert (
+        klai_knowledge._should_apply_low_confidence_injection(
+            "low",
+            user_query=(
+                "Leg kort uit wat een eSIM is en vermeld alleen Voys-bronnen "
+                "als onze kennisbank daar iets over zegt."
+            ),
+            evidence_chunks=[
+                {
+                    "title": "Overige problemen",
+                    "text": (
+                        "Je hoort dit bericht als je gespreksbevestiging hebt "
+                        "ingeschakeld voor je mobiele telefoon."
+                    ),
+                }
+            ],
+        )
+        is True
+    )
+
+
 # ---------------------------------------------------------------------------
 # Smoke: importing the hook with the new fields does not raise
 # ---------------------------------------------------------------------------

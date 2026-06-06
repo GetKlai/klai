@@ -73,27 +73,55 @@ _COMPLEX_ANSWER_SOURCE_TOKEN_LIMIT = 30
 _EXTRA_SOURCE_KEEP_RATIO = 0.85
 _MAX_SOURCE_EVIDENCE_ITEMS = 3
 _MAX_SOURCE_EVIDENCE_TEXT_CHARS = 320
+_LOW_RETRIEVAL_QUERY_SUPPORT_THRESHOLD = 0.4
+_LOW_RETRIEVAL_CONFIDENCE_BANDS = {"low", "unknown"}
 _SOURCE_RELEVANCE_STOPWORDS = {
     "aan",
     "als",
+    "alleen",
     "and",
     "are",
     "bij",
+    "bron",
+    "bronnen",
     "but",
+    "daar",
     "dat",
+    "deze",
+    "dit",
     "een",
     "for",
+    "geef",
+    "graag",
     "hoe",
     "ik",
+    "in",
+    "is",
+    "iets",
+    "je",
+    "jij",
+    "kennisbank",
     "klai",
+    "kort",
+    "leg",
     "het",
     "met",
     "not",
+    "of",
+    "onze",
+    "ons",
+    "over",
     "the",
     "tot",
+    "uit",
     "van",
+    "vermeld",
     "voor",
+    "waar",
+    "wat",
+    "wie",
     "with",
+    "zegt",
     "you",
 }
 
@@ -493,8 +521,19 @@ def _tokens(text: str) -> set[str]:
     return {
         token.lower()
         for token in _TOKEN_RE.findall(text)
-        if not token.isdigit() and token.lower() not in _SOURCE_RELEVANCE_STOPWORDS
+        if not token.isdigit() and not _is_ignored_token(token.lower())
     }
+
+
+def _is_ignored_token(token: str) -> bool:
+    if token in _SOURCE_RELEVANCE_STOPWORDS:
+        return True
+    return token.endswith(("-bron", "-bronnen", "-source", "-sources"))
+
+
+def extract_salient_query_tokens(text: str | None) -> set[str]:
+    """Return query tokens that can legitimately anchor a visible citation."""
+    return _tokens(text or "")
 
 
 def _source_relevance_score(answer_tokens: set[str], source: CitationSource) -> int:
@@ -520,7 +559,7 @@ def _source_title_set(sources: list[CitationSource]) -> set[str]:
 
 
 def _query_support_tokens(query_text: str | None, sources: list[CitationSource]) -> set[str]:
-    query_tokens = _tokens(query_text or "")
+    query_tokens = extract_salient_query_tokens(query_text)
     if not query_tokens:
         return set()
     supported_tokens: set[str] = set()
@@ -540,20 +579,20 @@ def _effective_max_sources(cleaned_answer: str, max_sources: int | None) -> int 
 
 
 def _split_selected_by_quality(
-    scored: list[tuple[float, int, int, int, CitationSource]],
+    scored: list[tuple[float, int, int, int, int, CitationSource]],
     max_sources: int | None,
 ) -> tuple[
-    list[tuple[float, int, int, int, CitationSource]],
-    list[tuple[float, int, int, int, CitationSource]],
+    list[tuple[float, int, int, int, int, CitationSource]],
+    list[tuple[float, int, int, int, int, CitationSource]],
 ]:
     if max_sources is None:
         return scored, []
-    selected: list[tuple[float, int, int, int, CitationSource]] = []
-    overflow: list[tuple[float, int, int, int, CitationSource]] = []
+    selected: list[tuple[float, int, int, int, int, CitationSource]] = []
+    overflow: list[tuple[float, int, int, int, int, CitationSource]] = []
     best_retrieval_score = scored[0][0] if scored else 0.0
     has_retrieval_scores = any(source.retrieval_score is not None for *_rest, source in scored)
     for item in scored:
-        retrieval_score, answer_score, query_score, _index, _source = item
+        retrieval_score, answer_score, query_score, _required_query_score, _index, _source = item
         if len(selected) >= max_sources:
             overflow.append(item)
             continue
@@ -618,6 +657,7 @@ def _source_decision_entry(
     reason: str,
     query_score: int,
     answer_score: int,
+    required_query_score: int,
 ) -> dict[str, Any]:
     return {
         "title": source.title,
@@ -627,7 +667,30 @@ def _source_decision_entry(
         "retrieval_score": source.retrieval_score,
         "query_score": query_score,
         "answer_score": answer_score,
+        "required_query_score": required_query_score,
     }
+
+
+def _normalise_retrieval_confidence_band(value: object) -> str:
+    return value.strip().lower() if isinstance(value, str) and value.strip() else ""
+
+
+def _required_query_score_for_source(
+    source: CitationSource,
+    *,
+    salient_query_tokens: set[str],
+    query_support_tokens: set[str],
+    retrieval_confidence_band: str,
+) -> int:
+    if not salient_query_tokens:
+        return 0
+    if retrieval_confidence_band in _LOW_RETRIEVAL_CONFIDENCE_BANDS:
+        return 1
+    if source.retrieval_score is None:
+        return min(2, len(query_support_tokens)) if query_support_tokens else 0
+    if source.retrieval_score < _LOW_RETRIEVAL_QUERY_SUPPORT_THRESHOLD:
+        return 1
+    return 0
 
 
 def _select_supported_sources_with_decision(
@@ -636,12 +699,15 @@ def _select_supported_sources_with_decision(
     *,
     query_text: str | None,
     max_sources: int | None,
+    retrieval_confidence_band: object = None,
 ) -> tuple[list[CitationSource], dict[str, Any]]:
+    confidence_band = _normalise_retrieval_confidence_band(retrieval_confidence_band)
     decision: dict[str, Any] = {
         "mode": "document_level_supported_sources",
         "candidate_count": len(sources),
         "selected": [],
         "rejected": [],
+        "retrieval_confidence_band": confidence_band or None,
     }
     if max_sources is not None and max_sources <= 0:
         decision["rejected"] = [
@@ -651,26 +717,28 @@ def _select_supported_sources_with_decision(
                 reason="max_sources_zero",
                 query_score=0,
                 answer_score=0,
+                required_query_score=0,
             )
             for source in sources
         ]
         return [], decision
     answer_tokens = _tokens(cleaned_answer)
-    query_tokens = _tokens(query_text or "")
+    salient_query_tokens = extract_salient_query_tokens(query_text)
     query_support_tokens = _query_support_tokens(query_text, sources)
-    min_query_overlap = min(2, len(query_support_tokens)) if query_support_tokens else 0
+    decision["salient_query_tokens"] = sorted(salient_query_tokens)
     decision["query_support_tokens"] = sorted(query_support_tokens)
-    decision["min_query_overlap"] = min_query_overlap
-    scored: list[tuple[float, int, int, int, CitationSource]] = []
+    scored: list[tuple[float, int, int, int, int, CitationSource]] = []
     for index, source in enumerate(sources):
         support_tokens = _source_support_tokens(source)
-        query_score = (
-            len(query_support_tokens & support_tokens)
-            if query_support_tokens
-            else len(query_tokens & support_tokens) if query_tokens else 0
+        query_score = len(salient_query_tokens & support_tokens)
+        required_query_score = _required_query_score_for_source(
+            source,
+            salient_query_tokens=salient_query_tokens,
+            query_support_tokens=query_support_tokens,
+            retrieval_confidence_band=confidence_band,
         )
         answer_score = _source_relevance_score(answer_tokens, source)
-        if query_support_tokens and query_score < min_query_overlap:
+        if required_query_score and query_score < required_query_score:
             decision["rejected"].append(
                 _source_decision_entry(
                     source,
@@ -678,6 +746,7 @@ def _select_supported_sources_with_decision(
                     reason="query_not_supported",
                     query_score=query_score,
                     answer_score=answer_score,
+                    required_query_score=required_query_score,
                 )
             )
             continue
@@ -689,15 +758,16 @@ def _select_supported_sources_with_decision(
                     reason="answer_not_supported",
                     query_score=query_score,
                     answer_score=answer_score,
+                    required_query_score=required_query_score,
                 )
             )
             continue
         retrieval_score = source.retrieval_score if source.retrieval_score is not None else 0.0
-        scored.append((retrieval_score, answer_score, query_score, index, source))
-    scored.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
+        scored.append((retrieval_score, answer_score, query_score, required_query_score, index, source))
+    scored.sort(key=lambda item: (-item[0], -item[1], -item[2], item[4]))
     effective_max_sources = _effective_max_sources(cleaned_answer, max_sources)
     selected_scored, overflow_scored = _split_selected_by_quality(scored, effective_max_sources)
-    for _, answer_score, query_score, _, source in selected_scored:
+    for _, answer_score, query_score, required_query_score, _, source in selected_scored:
         decision["selected"].append(
             _source_decision_entry(
                 source,
@@ -705,9 +775,10 @@ def _select_supported_sources_with_decision(
                 reason="supported",
                 query_score=query_score,
                 answer_score=answer_score,
+                required_query_score=required_query_score,
             )
         )
-    for _, answer_score, query_score, _, source in overflow_scored:
+    for _, answer_score, query_score, required_query_score, _, source in overflow_scored:
         decision["rejected"].append(
             _source_decision_entry(
                 source,
@@ -715,9 +786,10 @@ def _select_supported_sources_with_decision(
                 reason="max_sources_exceeded",
                 query_score=query_score,
                 answer_score=answer_score,
+                required_query_score=required_query_score,
             )
         )
-    selected = [source for _, _, _, _, source in selected_scored]
+    selected = [source for _, _, _, _, _, source in selected_scored]
     return selected, decision
 
 
@@ -727,12 +799,14 @@ def _select_supported_sources(
     *,
     query_text: str | None,
     max_sources: int | None,
+    retrieval_confidence_band: object = None,
 ) -> list[CitationSource]:
     selected, _ = _select_supported_sources_with_decision(
         cleaned_answer,
         sources,
         query_text=query_text,
         max_sources=max_sources,
+        retrieval_confidence_band=retrieval_confidence_band,
     )
     return selected
 
@@ -1076,6 +1150,7 @@ def compose_answer_with_trusted_sources(
     allowed_image_urls: set[str] | None = None,
     evidence_chunks: list[dict[str, Any]] | None = None,
     max_sources: int | None = _DEFAULT_MAX_SOURCES,
+    retrieval_confidence_band: object = None,
 ) -> ComposedCitations:
     """Clean model text and attach already-selected document sources.
 
@@ -1096,6 +1171,7 @@ def compose_answer_with_trusted_sources(
         candidate_sources,
         query_text=query_text,
         max_sources=max_sources,
+        retrieval_confidence_band=retrieval_confidence_band,
     )
     sources = render_structured_sources(CitationRegistry(sources=selected), max_sources=None)
     return ComposedCitations(content=cleaned, sources=sources, decision=decision)
@@ -1176,6 +1252,7 @@ __all__ = [
     "compose_citations",
     "evidence_chunks_from_chunks",
     "evidence_pack_items_as_chunks",
+    "extract_salient_query_tokens",
     "format_sources_markdown",
     "normalise_source_url",
     "render_evidence_context",

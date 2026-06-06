@@ -8,7 +8,8 @@ take effect on process restart.
 from __future__ import annotations
 
 import os
-import re
+
+from klai_citations import extract_salient_query_tokens
 
 LOW_CONFIDENCE_INJECTION_TEXT = (
     "[Klai retrieval — lage relevantie]\n"
@@ -36,40 +37,11 @@ LOW_CONFIDENCE_OPEN_CONTEXT_TEXT = (
 LOW_CONFIDENCE_INJECTION_DISABLED = (
     os.getenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", "0") == "1"
 )
-_LOW_CONFIDENCE_QUERY_TOKEN_RE = re.compile(
-    r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE
-)
-_LOW_CONFIDENCE_QUERY_STOPWORDS = {
-    "aan",
-    "als",
-    "and",
-    "are",
-    "bij",
-    "dat",
-    "een",
-    "for",
-    "het",
-    "hoe",
-    "is",
-    "met",
-    "the",
-    "tot",
-    "van",
-    "voor",
-    "wat",
-    "wie",
-    "with",
-}
-
 
 def low_confidence_query_tokens(query: object) -> set[str]:
     if not isinstance(query, str):
         return set()
-    return {
-        token.lower()
-        for token in _LOW_CONFIDENCE_QUERY_TOKEN_RE.findall(query)
-        if token.lower() not in _LOW_CONFIDENCE_QUERY_STOPWORDS
-    }
+    return extract_salient_query_tokens(query)
 
 
 def has_direct_evidence_for_query(query: object, chunks: list[dict]) -> bool:
@@ -80,11 +52,13 @@ def has_direct_evidence_for_query(query: object, chunks: list[dict]) -> bool:
     for chunk in chunks:
         if not isinstance(chunk, dict):
             continue
-        text = " ".join(
-            str(chunk.get(key) or "")
-            for key in ("title", "heading_path", "source_label", "text", "content")
-        ).lower()
-        if any(token in text for token in tokens):
+        chunk_tokens = extract_salient_query_tokens(
+            " ".join(
+                str(chunk.get(key) or "")
+                for key in ("title", "heading_path", "source_label", "text", "content")
+            )
+        )
+        if tokens & chunk_tokens:
             return True
     return False
 
