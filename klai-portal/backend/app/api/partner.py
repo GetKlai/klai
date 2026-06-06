@@ -681,7 +681,7 @@ async def _maybe_apply_web_search(
 
 
 @router.post("/chat/completions")
-async def chat_completions(
+async def chat_completions(  # noqa: C901
     request: ChatCompletionsRequest,
     http_request: Request,
     auth: PartnerAuthContext = Depends(get_partner_key),
