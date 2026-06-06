@@ -252,6 +252,18 @@ export function usePlatformMarkMessageThreadRead() {
   })
 }
 
+export function usePlatformEditMessage() {
+  const opts = usePlatformMessageMutation()
+  return useMutation({
+    mutationFn: async (vars: { threadId: number; messageId: number; body: string }) =>
+      apiFetch<PlatformMessageThreadDetail>(
+        `/api/admin/platform/messages/threads/${vars.threadId}/messages/${vars.messageId}`,
+        { method: 'PATCH', body: JSON.stringify({ body: vars.body }) },
+      ),
+    onSuccess: opts.onSuccess,
+  })
+}
+
 export function usePlatformUpdateMessageThreadStatus() {
   const opts = usePlatformMessageMutation()
   return useMutation({

@@ -1,5 +1,8 @@
 import { useNavigate } from "@tanstack/react-router"
+import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
+import { useAuth } from "@/lib/auth"
+import { fetchMe } from "@/lib/api-me"
 import { Activity, Bug, ExternalLink } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -19,6 +22,7 @@ import {
   usePlatformBots,
   usePlatformChatErrors,
   usePlatformKnowledgeBases,
+  usePlatformEditMessage,
   usePlatformMarkMessageThreadRead,
   usePlatformMessageThread,
   usePlatformMessageThreads,
@@ -354,6 +358,14 @@ export function MessagesTab({
   const reply = usePlatformReplyMessageThread()
   const updateStatus = usePlatformUpdateMessageThreadStatus()
   const markRead = usePlatformMarkMessageThreadRead()
+  const editMessage = usePlatformEditMessage()
+  const auth = useAuth()
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: auth.isAuthenticated,
+  })
+  const myUserId = meQuery.data?.user_id
   const [replyBody, setReplyBody] = useState('')
 
   function openThread(thread: { id: number; unread_for_admin: boolean }) {
@@ -384,9 +396,10 @@ export function MessagesTab({
       author:
         message.sender_type === 'user'
           ? m.platform_messages_sender_user()
-          : m.platform_messages_sender_admin(),
+          : message.sender_display_name || m.platform_messages_sender_admin(),
       body: message.body,
       at: message.created_at,
+      editable: message.sender_user_id != null && message.sender_user_id === myUserId,
     }))
     const recipients = detail
       ? detail.recipients.map((r) => r.display_name || r.email || r.user_id).join(', ')
@@ -430,6 +443,12 @@ export function MessagesTab({
         isSending={reply.isPending}
         placeholder={m.platform_messages_reply()}
         sendLabel={m.platform_messages_send()}
+        onEditMessage={
+          selectedThreadId !== null
+            ? (id, body) =>
+                editMessage.mutate({ threadId: selectedThreadId, messageId: Number(id), body })
+            : undefined
+        }
         onBack={backToList}
       />
     )

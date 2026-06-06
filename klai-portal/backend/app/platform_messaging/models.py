@@ -94,5 +94,8 @@ class PlatformMessage(Base):
     org_id: Mapped[int] = mapped_column(Integer, ForeignKey("portal_orgs.id", ondelete="CASCADE"), nullable=False)
     sender_type: Mapped[str] = mapped_column(String(32), nullable=False)
     sender_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Point-in-time snapshot of the sender's display name (e.g. the Klai team
+    # member who replied), so historical attribution survives renames/offboarding.
+    sender_display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
