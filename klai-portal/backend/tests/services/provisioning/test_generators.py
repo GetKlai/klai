@@ -132,6 +132,7 @@ class TestCharacterizeGenerateLibrechatYaml:
               klai-knowledge:
                 type: streamable-http
                 url: http://klai-knowledge-mcp:8080/mcp
+                requiresOAuth: false
                 headers:
                   X-User-ID: "{{LIBRECHAT_USER_OPENIDID}}"
             modelSpecs:
@@ -155,6 +156,7 @@ class TestCharacterizeGenerateLibrechatYaml:
         assert "klai-knowledge" in parsed["mcpServers"]
         assert len(parsed["mcpServers"]) == 1
         assert parsed["mcpServers"]["klai-knowledge"]["headers"]["X-User-ID"] == "{{LIBRECHAT_USER_OPENIDID}}"
+        assert parsed["mcpServers"]["klai-knowledge"]["requiresOAuth"] is False
 
     def test_returns_string(self, base_yaml_file):
         from app.services.provisioning import _generate_librechat_yaml
