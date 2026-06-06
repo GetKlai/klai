@@ -62,6 +62,7 @@ ENV PATH="/repo/klai-portal/backend/.venv/bin:${PATH}" \
 
 # Application code
 COPY klai-portal/backend/app app
+COPY klai-portal/backend/scripts scripts
 COPY klai-portal/backend/alembic alembic
 COPY klai-portal/backend/alembic.ini alembic.ini
 COPY klai-portal/backend/entrypoint.sh /entrypoint.sh

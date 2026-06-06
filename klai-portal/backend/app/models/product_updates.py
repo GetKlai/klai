@@ -39,7 +39,7 @@ class ProductUpdate(Base):
     )
     dedupe_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_by_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    published_via: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'admin_api'"))
+    published_via: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'operator_script'"))
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

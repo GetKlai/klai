@@ -126,10 +126,17 @@ Propagate locale through OAuth/redirect flows via query parameter, not browser s
 
 **Rule:** OAuth callback endpoints must not rely on session state or browser cookies for locale — it must travel through the redirect URL as a validated query parameter.
 
-## portal-api scripts/ not in Docker image (MED)
-`klai-portal/backend/scripts/` is NOT copied into the container (no `COPY scripts/` in Dockerfile).
-Data migration scripts in `scripts/` cannot be run via `docker exec portal-api python scripts/foo.py`.
-Workaround: pass inline via `docker exec portal-api python3 -c "$(cat scripts/foo.py)"` or add `COPY scripts/ scripts/` to the Dockerfile.
+## portal-api operator scripts in Docker image
+`klai-portal/backend/scripts/` is copied into the container under
+`/repo/klai-portal/backend/scripts`. Trusted operator scripts, such as product
+update publishing, can run via:
+
+```bash
+docker exec -w /repo/klai-portal/backend klai-core-portal-api-1 python scripts/foo.py
+```
+
+Keep scripts operator-only. Do not expose script-only mutations through weaker
+HTTP endpoints just to make them easier to run.
 
 ## Provisioning state machine (SPEC-PROV-001)
 
@@ -303,4 +310,3 @@ a confusing one.
 Frontend pattern (the modal): only attach the header when the user has gone
 through the typed-confirmation gate. Never attach by default. Test for
 header-absence in `data-test-id` assertions on the owner pad.
-
