@@ -77,4 +77,42 @@ describe('ConversationTimeline', () => {
     render(<ConversationTimeline entries={[]} locale="nl" emptyLabel="Nog geen gesprek" />)
     expect(screen.getByText('Nog geen gesprek')).toBeTruthy()
   })
+
+  it('edits an editable own message via the inline editor (Cmd+Enter saves)', () => {
+    const onEditMessage = vi.fn()
+    const { container } = render(
+      <ConversationTimeline
+        entries={[{ id: 5, side: 'me', author: 'Jij', body: 'Hallo', at: '2026-06-05T11:20:00Z', editable: true }]}
+        locale="nl"
+        onEditMessage={onEditMessage}
+      />,
+    )
+    expect(container.querySelector('textarea')).toBeNull()
+    fireEvent.click(screen.getByRole('button'))
+    const textarea = container.querySelector('textarea')!
+    fireEvent.change(textarea, { target: { value: 'Aangepast bericht' } })
+    fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true })
+    expect(onEditMessage).toHaveBeenCalledWith(5, 'Aangepast bericht')
+  })
+
+  it('shows no edit affordance without onEditMessage', () => {
+    const { container } = render(
+      <ConversationTimeline
+        entries={[{ id: 6, side: 'me', author: 'Jij', body: 'x', at: '2026-06-05T11:20:00Z', editable: true }]}
+        locale="nl"
+      />,
+    )
+    expect(container.querySelector('button')).toBeNull()
+  })
+
+  it('shows no edit affordance for the other party', () => {
+    const { container } = render(
+      <ConversationTimeline
+        entries={[{ id: 7, side: 'them', author: 'Klai team', body: 'x', at: '2026-06-05T11:20:00Z', editable: true }]}
+        locale="nl"
+        onEditMessage={() => {}}
+      />,
+    )
+    expect(container.querySelector('button')).toBeNull()
+  })
 })
