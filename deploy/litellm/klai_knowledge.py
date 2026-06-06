@@ -68,6 +68,9 @@ from klai_kb_answer_policy import (
     compose_meta_chat_prefix as _compose_meta_chat_prefix,
     compose_open_kb_chat_prefix as _compose_open_kb_chat_prefix,
     has_user_provided_content_context as _has_user_provided_content_context,
+    kb_chunks_present_header as _kb_chunks_present_header,
+    kb_retrieval_failure_notice as _kb_retrieval_failure_notice,
+    kb_zero_chunks_notice as _kb_zero_chunks_notice,
     strict_no_kb_scope_notice as _strict_no_kb_scope_notice,
 )
 from klai_kb_render_policy import (
@@ -123,6 +126,9 @@ __all__ = [
     "_compose_meta_chat_prefix",
     "_compose_kb_mode_chat_prefix",
     "_has_user_provided_content_context",
+    "_kb_chunks_present_header",
+    "_kb_retrieval_failure_notice",
+    "_kb_zero_chunks_notice",
     "_strict_no_kb_scope_notice",
     "_KB_RENDER_MODE_STREAMING_GUARD",
     "_KB_RENDER_MODE_LEGACY_STREAMING_GUARD",
@@ -2938,26 +2944,10 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             # The warning the model emits is in the user's detected language
             # thanks to the mode-specific chat foundation.
-            if feature_kb_narrow:
-                kb_unavailable_notice = (
-                    "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. The user "
-                    "selected Strict mode, so do not answer from general "
-                    "knowledge. Tell the user in their detected language that "
-                    "the knowledge base is temporarily unavailable and you "
-                    "cannot answer reliably from their knowledge sources right "
-                    "now (technical reason: identity-resolve-failed).]\n"
-                )
-            else:
-                kb_unavailable_notice = (
-                    "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. Answer using "
-                    "your general knowledge. Begin your answer with a warning to "
-                    "the user, written in the language you detected from their "
-                    "most recent substantive message: tell them you could not "
-                    "reach the knowledge base (technical reason: "
-                    "identity-resolve-failed), this answer is therefore not "
-                    "based on their own documentation, and they should try "
-                    "again later.]\n"
-                )
+            kb_unavailable_notice = _kb_retrieval_failure_notice(
+                feature_kb_narrow,
+                "identity-resolve-failed",
+            )
             prefix = _compose_kb_mode_chat_prefix(
                 feature_kb_narrow, templates_block, kb_unavailable_notice
             )
@@ -3158,25 +3148,7 @@ class KlaiKnowledgeHook(CustomLogger):
             # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English
             # instruction to the model; the warning the model emits is in the
             # user's detected language thanks to GROUNDED_CHAT_SYSTEM_PROMPT.
-            if kb_narrow:
-                kb_unavailable_notice = (
-                    "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. The user "
-                    "selected Strict mode, so do not answer from general "
-                    "knowledge. Tell the user in their detected language that "
-                    "the knowledge base is temporarily unavailable and you "
-                    "cannot answer reliably from their knowledge sources right "
-                    f"now (technical reason: {retrieval_failure}).]\n"
-                )
-            else:
-                kb_unavailable_notice = (
-                    "[Klai Knowledge Base — TEMPORARILY UNAVAILABLE. Answer using "
-                    "your general knowledge. Begin your answer with a warning to "
-                    "the user, written in the language you detected from their "
-                    "most recent substantive message: tell them you could not "
-                    f"reach the knowledge base (technical reason: {retrieval_failure}), "
-                    "this answer is therefore not based on their own documentation, "
-                    "and they should refresh or try again later.]\n"
-                )
+            kb_unavailable_notice = _kb_retrieval_failure_notice(kb_narrow, retrieval_failure)
             prefix = _compose_kb_mode_chat_prefix(
                 kb_narrow, templates_block, kb_unavailable_notice
             )
@@ -3371,32 +3343,7 @@ class KlaiKnowledgeHook(CustomLogger):
             # The per-mode header below makes the two paths deterministic.
             # See ``TestKlaiKnowledgeHookZeroChunksMode`` for the contract.
             # Multilingual foundation still applies — REQ-10.
-            if kb_narrow:
-                empty_kb_header = (
-                    "[Klai Knowledge Base — zero results for this query. "
-                    "Tell the user in their detected language that the "
-                    "answer is not in their knowledge base (e.g. "
-                    "'I cannot find this in the knowledge base' / "
-                    "'Dat staat niet in de kennisbank' / "
-                    "'Das steht nicht in der Wissensdatenbank'). "
-                    "Do not answer from general knowledge. "
-                    "Suggest the user rephrase the question or add "
-                    "documents to the knowledge base.]\n"
-                )
-            else:
-                empty_kb_header = (
-                    "[Klai Knowledge Base — zero results for this query. "
-                    "You may answer from your general knowledge instead. "
-                    "Begin your answer with a brief note in the user's "
-                    "detected language that nothing was found in their "
-                    "knowledge base (e.g. 'I couldn't find this in your "
-                    "knowledge base, but here is a general answer:' / "
-                    "'Dit staat niet in jouw kennisbank, maar hier is "
-                    "een algemeen antwoord:' / "
-                    "'Ich konnte dies nicht in Ihrer Wissensdatenbank "
-                    "finden, aber hier ist eine allgemeine Antwort:'), "
-                    "then answer normally.]\n"
-                )
+            empty_kb_header = _kb_zero_chunks_notice(kb_narrow)
             _prepend_system_prefix(
                 messages,
                 _compose_kb_mode_chat_prefix(kb_narrow, templates_block, empty_kb_header),
@@ -3450,21 +3397,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # Build context block with provenance labels per chunk.
         # Narrow: model must answer strictly from KB chunks only.
         # Broad (default): KB as additional context, general knowledge allowed.
-        if kb_narrow:
-            header = (
-                "[Klai Knowledge Base — answer strictly using only the sources "
-                "below. Do not use general knowledge beyond these sources. "
-                "If the answer is not present, say so plainly in the user's "
-                "detected language (e.g. 'I cannot find this in the knowledge "
-                "base' / 'Dat staat niet in de kennisbank' / 'Das steht nicht "
-                "in der Wissensdatenbank').]\n"
-            )
-        else:
-            header = (
-                "[Klai Knowledge Base — use this as supplementary context for "
-                "your answer. You may complement it with your general "
-                "knowledge.]\n"
-            )
+        header = _kb_chunks_present_header(kb_narrow)
         source_link_instruction = (
             "[ANSWER FORMAT — always follow this, EXCEPT where an "
             "active Klai Template (see block below) directs a "
