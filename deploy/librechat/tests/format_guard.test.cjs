@@ -62,10 +62,21 @@ const sandbox = {
           REASONING_CONTENT: 'reasoning_content',
           ERROR: 'error',
           AGENT_UPDATE: 'agent_update',
+          IMAGE_URL: 'image_url',
+          SUMMARY: 'summary',
         },
         Constants: {
           TOOL_SEARCH: 'tool_search',
         },
+      };
+    }
+    if (id === '../utils/events.cjs') {
+      return { emitAgentLog() {} };
+    }
+    if (id === './langchain.cjs') {
+      return {
+        toLangChainContent: (parts) => parts,
+        toLangChainMessageFields: (message) => message,
       };
     }
     throw new Error(`Unexpected require: ${id}`);

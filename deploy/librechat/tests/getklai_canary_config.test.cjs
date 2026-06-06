@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const { execFileSync } = require('node:child_process');
 
 const repoRoot = path.resolve(__dirname, '../../..');
@@ -9,6 +10,7 @@ const patcher = path.join(repoRoot, 'deploy/librechat/getklai/apply-canary-confi
 const compose = fs.readFileSync(path.join(repoRoot, 'deploy/docker-compose.yml'), 'utf8');
 const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/deploy-compose.yml'), 'utf8');
 const entrypoint = fs.readFileSync(path.join(repoRoot, 'deploy/librechat/getklai/entrypoint.sh'), 'utf8');
+const globalEntrypoint = fs.readFileSync(path.join(repoRoot, 'deploy/librechat/klai-entrypoint.sh'), 'utf8');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'getklai-librechat-'));
 const configPath = path.join(tmp, 'librechat.yaml');
@@ -57,7 +59,69 @@ assert.match(workflow, /deploy\/librechat\/getklai\/entrypoint\.sh/);
 assert.match(workflow, /apply-canary-config\.py \/opt\/klai\/librechat\/getklai\/librechat\.yaml/);
 assert.match(workflow, /clear_librechat_config_cache "configs:\*"/);
 assert.match(workflow, /force-recreating librechat-getklai/);
-assert.match(entrypoint, /klai-hide-librechat-footer-v1/);
-assert.match(entrypoint, /\[role="contentinfo"\]\{display:none!important\}/);
 
-console.log('OK: getklai LibreChat canary config disables risky v0.8.6 capabilities and hides footer.');
+class Element {
+  constructor(tagName = 'DIV') {
+    this.tagName = tagName;
+    this.dataset = {};
+    this.classList = { contains: () => false };
+    this.nextElementSibling = null;
+    this.style = {};
+    this.textContent = '';
+  }
+
+  querySelectorAll() {
+    return [];
+  }
+
+  querySelector() {
+    return null;
+  }
+
+  closest() {
+    return null;
+  }
+
+  replaceWith() {}
+  appendChild() {}
+  append() {}
+}
+
+function assertEntrypointIsNullSafe(fileName, source) {
+  assert.match(source, /KB_DISCLOSURE_MARKER=klai-kb-disclosure-v8/, fileName);
+  assert.doesNotMatch(source, /klai-kb-disclosure-v7/, fileName);
+  assert.doesNotMatch(source, /root\.querySelectorAll\?\./, fileName);
+  assert.match(source, /klai-hide-librechat-footer-v1/, fileName);
+  assert.match(source, /\[role="contentinfo"\]\{display:none!important\}/, fileName);
+
+  const match = source.match(
+    /<script id="klai-kb-disclosure-script">\/\*klai-kb-disclosure-v8\*\/\n([\s\S]*?)<\/script>/,
+  );
+  assert.ok(match, `${fileName}: disclosure script not found`);
+
+  assert.doesNotThrow(() => {
+    vm.runInNewContext(match[1], {
+      HTMLElement: Element,
+      MutationObserver: class {
+        observe() {}
+      },
+      document: {
+        body: null,
+        documentElement: new Element('HTML'),
+        readyState: 'complete',
+        createElement: (tagName) => new Element(tagName.toUpperCase()),
+        addEventListener() {},
+      },
+      window: {
+        queueMicrotask(fn) {
+          fn();
+        },
+      },
+    });
+  }, `${fileName}: disclosure script must tolerate document.body === null`);
+}
+
+assertEntrypointIsNullSafe('deploy/librechat/getklai/entrypoint.sh', entrypoint);
+assertEntrypointIsNullSafe('deploy/librechat/klai-entrypoint.sh', globalEntrypoint);
+
+console.log('OK: LibreChat config disables risky v0.8.6 capabilities and entrypoint injection is null-safe.');

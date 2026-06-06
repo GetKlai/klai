@@ -6,6 +6,7 @@ on:
     paths:
       - 'deploy/librechat/librechat.yaml'
       - 'deploy/librechat/mcp_catalog.yaml'
+      - 'deploy/librechat/klai-entrypoint.sh'
       - 'deploy/librechat/patches/**'
       - '.github/workflows/deploy-librechat-config.yml'
   workflow_dispatch:
@@ -42,8 +43,9 @@ jobs:
             # Sync base config (template for all tenants)
             cp deploy/librechat/librechat.yaml /opt/klai/librechat/librechat.yaml
             cp deploy/librechat/mcp_catalog.yaml /opt/klai/librechat/mcp_catalog.yaml
+            cp deploy/librechat/klai-entrypoint.sh /opt/klai/librechat/klai-entrypoint.sh
 
-            # Sync patches (entrypoint, format.cjs, etc.)
+            # Sync mounted LibreChat patches (format.cjs, stream.cjs, etc.)
             rsync -a --delete deploy/librechat/patches/ /opt/klai/librechat/patches/
 
             rm -rf /tmp/klai-librechat-sync
