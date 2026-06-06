@@ -1584,6 +1584,7 @@
   "admin_api_keys_perm_knowledge_append": "Kennis toevoegen",
   "admin_api_keys_perm_knowledge_append_description": "Voeg nieuwe kennis toe aan kennisbanken.",
   "admin_shared_kb_name": "Kennisbank",
+  "admin_api_keys_kb_type": "Type",
   "admin_api_keys_kb_none": "Geen",
   "admin_shared_kb_read": "Lezen",
   "admin_api_keys_kb_read_write": "Schrijven",
