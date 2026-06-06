@@ -12,6 +12,7 @@ from typing import Any
 from klai_chat_prompts import no_citable_sources_message
 from klai_citations import compose_answer_with_trusted_sources
 from klai_kb_answer_policy import strict_kb_unavailable_message
+from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
 from klai_litellm_response import (
     get_choice_finish_reason,
@@ -141,19 +142,6 @@ def _render_kb_citation_content(
         else no_citable_sources_message(user_query)
     )
     if not trusted_sources:
-        if allow_uncited_user_content:
-            return (
-                text,
-                [],
-                False,
-                {
-                    "mode": "document_level_supported_sources",
-                    "candidate_count": 0,
-                    "selected": [],
-                    "rejected": [],
-                    "no_citable_reason": "user_provided_content_passthrough",
-                },
-            )
         if kb_narrow:
             return (
                 strict_refusal,
@@ -165,6 +153,19 @@ def _render_kb_citation_content(
                     "selected": [],
                     "rejected": [],
                     "no_citable_reason": "no_trusted_sources",
+                },
+            )
+        if allow_uncited_user_content:
+            return (
+                text,
+                [],
+                False,
+                {
+                    "mode": "document_level_supported_sources",
+                    "candidate_count": 0,
+                    "selected": [],
+                    "rejected": [],
+                    "no_citable_reason": "user_provided_content_passthrough",
                 },
             )
         # Broad mode: keep model's answer, no citations appended.
@@ -397,6 +398,33 @@ def _plural_nl(count: int, singular: str, plural: str) -> str:
     return singular if count == 1 else plural
 
 
+def _format_limited_label_list(values: object, *, max_items: int = 5) -> str:
+    if not isinstance(values, list):
+        return ""
+    labels = dedupe_strings(values)
+    if not labels:
+        return ""
+    visible = labels[:max_items]
+    suffix = f", +{len(labels) - max_items} meer" if len(labels) > max_items else ""
+    return ", ".join(visible) + suffix
+
+
+def _format_kb_scope_text(kb_meta: dict[str, Any]) -> str:
+    scope_mode = kb_meta.get("kb_scope_mode")
+    labels_text = _format_limited_label_list(kb_meta.get("kbs_in_scope"))
+    if labels_text:
+        if scope_mode == "explicit_org_and_personal":
+            return f"{labels_text} + persoonlijke kennisbank"
+        return labels_text
+    if scope_mode == "all_org_and_personal":
+        return "alle organisatiekennisbanken + persoonlijke kennisbank"
+    if scope_mode == "all_org":
+        return "alle organisatiekennisbanken"
+    if scope_mode == "personal":
+        return "persoonlijke kennisbank"
+    return ""
+
+
 def _format_visible_sources_markdown(sources: list[dict[str, Any]]) -> str:
     """Render source links or URL-less upload labels for the visible chat footer."""
     lines: list[str] = []
@@ -429,7 +457,9 @@ def _append_visible_sources_section(
         and isinstance(kb_meta.get("no_citable_reason"), str)
         and bool(kb_meta.get("no_citable_reason"))
     )
-    if kb_meta is not None and (sources or has_no_citable_reason):
+    if kb_meta is not None and (
+        sources or has_no_citable_reason or _has_visible_agent_activity(kb_meta)
+    ):
         activity = _format_visible_agent_activity(kb_meta, sources)
         if activity:
             sections.append(f"**Agent activiteit**\n{activity}")
@@ -440,6 +470,23 @@ def _append_visible_sources_section(
     if not sections:
         return content
     return f"{content.rstrip()}\n\n" + "\n\n".join(sections)
+
+
+def _has_visible_agent_activity(kb_meta: dict[str, Any] | None) -> bool:
+    if not isinstance(kb_meta, dict) or kb_meta.get("gate_bypassed"):
+        return False
+    has_kb_trace_labels = bool(
+        _format_kb_scope_text(kb_meta)
+        or _format_limited_label_list(kb_meta.get("kbs_with_results"))
+        or _format_limited_label_list(kb_meta.get("kbs_used_as_sources"))
+    )
+    if bool(kb_meta.get("allow_uncited_user_content")):
+        return bool(_format_limited_label_list(kb_meta.get("kbs_used_as_sources")))
+    if has_kb_trace_labels:
+        return True
+    if isinstance(kb_meta.get("chunks_injected"), int):
+        return bool(kb_meta.get("kb_narrow")) or bool(kb_meta.get("no_citable_reason"))
+    return False
 
 
 def _format_sources_metadata_marker(sources: list[dict[str, Any]]) -> str:
@@ -485,6 +532,18 @@ def _format_visible_agent_activity(
             lines.append(
                 f"- Kennisbank geraadpleegd: {chunks_injected} {chunk_label} opgehaald."
             )
+
+    kb_scope_text = _format_kb_scope_text(kb_meta)
+    if kb_scope_text:
+        lines.append(f"- Kennisbanken in scope: {kb_scope_text}.")
+
+    kbs_with_results = _format_limited_label_list(kb_meta.get("kbs_with_results"))
+    if kbs_with_results:
+        lines.append(f"- Kennisbanken met resultaat: {kbs_with_results}.")
+
+    kbs_used_as_sources = _format_limited_label_list(kb_meta.get("kbs_used_as_sources"))
+    if kbs_used_as_sources:
+        lines.append(f"- Kennisbanken gebruikt als bron: {kbs_used_as_sources}.")
 
     if isinstance(citable_sources_count, int):
         candidate_label = _plural_nl(
@@ -654,7 +713,13 @@ def compose_non_streaming_kb_response(
         kb_meta
     )
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
-    if not citation_chunks and not trusted_sources and not force_no_citable:
+    has_visible_activity = _has_visible_agent_activity(kb_meta)
+    if (
+        not citation_chunks
+        and not trusted_sources
+        and not force_no_citable
+        and not has_visible_activity
+    ):
         return stats
     allow_uncited_user_content, suppress_user_content_citations = (
         _citation_user_content_flags(kb_meta)
@@ -679,7 +744,12 @@ def compose_non_streaming_kb_response(
                     no_citable_message=kb_meta.get("no_citable_message"),
                 )
             )
-            if rendered_content != content or sources or no_citable_sources:
+            if (
+                rendered_content != content
+                or sources
+                or no_citable_sources
+                or has_visible_activity
+            ):
                 _remember_citation_decision(
                     kb_meta,
                     decision,
@@ -714,7 +784,13 @@ def compose_streaming_kb_response(
         kb_meta
     )
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
-    if not citation_chunks and not trusted_sources and not force_no_citable:
+    has_visible_activity = _has_visible_agent_activity(kb_meta)
+    if (
+        not citation_chunks
+        and not trusted_sources
+        and not force_no_citable
+        and not has_visible_activity
+    ):
         return stats
     if kb_meta.get("_citation_stream_sources_appended"):
         return stats
@@ -726,9 +802,8 @@ def compose_streaming_kb_response(
     strict_no_sources = (
         not trusted_sources
         and (force_no_citable or kb_narrow)
-        and not allow_uncited_user_content
     )
-    if not trusted_sources and not strict_no_sources:
+    if not trusted_sources and not strict_no_sources and not has_visible_activity:
         return stats
 
     should_flush = flush_stream

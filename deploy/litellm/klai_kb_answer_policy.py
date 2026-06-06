@@ -210,6 +210,10 @@ class KbAnswerPolicy:
         render_mode: object = None,
         gate_bypassed: bool = False,
         retrieval_failure: object = False,
+        kb_scope_mode: object = None,
+        kbs_in_scope: list | None = None,
+        kbs_with_results: list | None = None,
+        kbs_used_as_sources: list | None = None,
     ) -> dict[str, Any]:
         """Build the COMPLETE ``_klai_kb_meta`` dict for any branch."""
         return {
@@ -241,6 +245,12 @@ class KbAnswerPolicy:
             "retrieval_ms": retrieval_ms,
             "gate_bypassed": gate_bypassed,
             "retrieval_failure": retrieval_failure,
+            "kb_scope_mode": kb_scope_mode,
+            "kbs_in_scope": kbs_in_scope if kbs_in_scope is not None else [],
+            "kbs_with_results": kbs_with_results if kbs_with_results is not None else [],
+            "kbs_used_as_sources": (
+                kbs_used_as_sources if kbs_used_as_sources is not None else []
+            ),
             **self.metadata(),
         }
 

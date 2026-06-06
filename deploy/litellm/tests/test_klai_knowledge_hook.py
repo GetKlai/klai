@@ -3113,6 +3113,155 @@ class TestKlaiKnowledgeHookKB013:
             assert body.get("kb_slugs") == ["engineering", "product"]
 
     @pytest.mark.asyncio
+    async def test_kb_meta_records_scope_and_result_kbs(self, monkeypatch):
+        """Agent activity needs KB provenance separate from citation sources."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": ["engineering", "product"],
+                "version": 0,
+            }
+        )
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Hoe werkt de deployment pipeline?"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [
+                    {
+                        "text": "Deployments lopen via de release pipeline.",
+                        "scope": "org",
+                        "metadata": {"title": "Deployments", "kb_slug": "engineering"},
+                        "source_url": "https://docs.example/deployments",
+                        "chunk_id": "eng-1",
+                        "reranker_score": 0.91,
+                    },
+                    {
+                        "text": "Product releases worden in roadmap reviews besproken.",
+                        "scope": "org",
+                        "metadata": {"title": "Roadmap", "kb_slug": "product"},
+                        "source_url": "https://docs.example/roadmap",
+                        "chunk_id": "prod-1",
+                        "reranker_score": 0.82,
+                    },
+                ],
+                "retrieval_bypassed": False,
+                "confidence_band": "medium",
+            }
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["kb_scope_mode"] == "explicit_org_and_personal"
+        assert meta["kbs_in_scope"] == ["engineering", "product"]
+        assert meta["kbs_with_results"] == ["engineering", "product"]
+        assert meta["kbs_used_as_sources"] == ["engineering", "product"]
+
+    @pytest.mark.asyncio
+    async def test_kb_meta_used_sources_follow_evidence_ids_not_same_url_raw_chunks(
+        self, monkeypatch
+    ):
+        """Same-URL raw candidates from other KBs must not be marked as used."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": ["engineering", "product"],
+                "version": 0,
+            }
+        )
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Hoe werkt de deployment pipeline?"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [
+                    {
+                        "text": "Deployments lopen via de release pipeline.",
+                        "scope": "org",
+                        "metadata": {"title": "Deployments", "kb_slug": "engineering"},
+                        "source_url": "https://docs.example/shared",
+                        "chunk_id": "eng-1",
+                        "reranker_score": 0.91,
+                    },
+                    {
+                        "text": "Product releases worden in roadmap reviews besproken.",
+                        "scope": "org",
+                        "metadata": {"title": "Roadmap", "kb_slug": "product"},
+                        "source_url": "https://docs.example/shared",
+                        "chunk_id": "prod-1",
+                        "reranker_score": 0.82,
+                    },
+                ],
+                "evidence_pack": {
+                    "items": [
+                        {
+                            "evidence_id": "E1",
+                            "chunk_id": "eng-1",
+                            "text": "Deployments lopen via de release pipeline.",
+                            "title": "Deployments",
+                            "source_url": "https://docs.example/shared",
+                            "reranker_score": 0.91,
+                        }
+                    ],
+                    "sources": [
+                        {
+                            "source_id": "S1",
+                            "title": "Deployments",
+                            "source_url": "https://docs.example/shared",
+                            "evidence_ids": ["E1"],
+                            "relevance_score": 0.91,
+                        }
+                    ],
+                    "no_citable_reason": None,
+                },
+                "retrieval_bypassed": False,
+                "confidence_band": "medium",
+            },
+            default_evidence_pack=False,
+        )
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["kbs_with_results"] == ["engineering", "product"]
+        assert meta["kbs_used_as_sources"] == ["engineering"]
+
+    @pytest.mark.asyncio
     async def test_no_kb_slugs_key_when_filter_none(self, monkeypatch):
         """When kb_slugs_filter=None, kb_slugs key absent from retrieval request."""
         mod = _load_hook(monkeypatch)
@@ -4690,12 +4839,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert "kb_citations_no_citable_sources" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_strict_no_citable_user_attachment_answer_is_not_replaced(
+    async def test_strict_no_citable_user_attachment_answer_is_replaced(
         self, monkeypatch
     ):
-        """Strict still refuses KB-unsupported KB claims, but not standalone
-        answers about the user's own visible attachment.
-        """
+        """Strict still refuses when no trusted KB source supports the answer."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         original_answer = "Op de screenshot staat de tekst: Modus Open."
@@ -4729,9 +4876,13 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert returned is response
         message = response.choices[0].message
-        assert message.content == original_answer
-        assert "Ik kan dit niet betrouwbaar beantwoorden" not in message.content
+        assert message.content.startswith(
+            "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+        )
+        assert original_answer not in message.content
         assert "**Bronnen**" not in message.content
+        assert "**Agent activiteit**" in message.content
+        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in message.content
         assert getattr(message, "sources", []) == []
 
     @pytest.mark.asyncio
@@ -4843,6 +4994,49 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         # Model's original answer survives — the canned refusal is NOT
         # substituted in broad mode.
         assert response.choices[0].message.content == original_answer
+
+    @pytest.mark.asyncio
+    async def test_open_user_content_without_used_kb_source_does_not_show_agent_activity(
+        self, monkeypatch
+    ):
+        """Generic KB scope alone must not make an upload answer look KB-backed."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        original_answer = "Op de screenshot staat een foutmelding over inloggen."
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=original_answer))]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Wat staat op deze screenshot?",
+                    "kb_narrow": False,
+                    "chunks_injected": 0,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "kb_scope_mode": "all_org",
+                    "kbs_in_scope": ["engineering", "product"],
+                    "kbs_with_results": [],
+                    "kbs_used_as_sources": [],
+                    "allowed_image_urls": [],
+                    "citation_chunks": [],
+                    "trusted_sources": [],
+                    "user_provided_content_context": True,
+                    "allow_uncited_user_content": True,
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        message = response.choices[0].message
+        assert message.content == original_answer
+        assert "**Bronnen**" not in message.content
+        assert "**Agent activiteit**" not in message.content
+        assert getattr(message, "sources", []) == []
 
     @pytest.mark.asyncio
     async def test_post_call_guard_refuses_empty_evidence_pack_in_narrow_mode(
@@ -5069,6 +5263,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
                     "render_mode": "legacy_stream_guard",
+                    "user_provided_content_context": True,
+                    "allow_uncited_user_content": True,
                     "allowed_image_urls": [],
                     "citation_chunks": [
                         {
