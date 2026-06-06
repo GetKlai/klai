@@ -274,6 +274,33 @@ class TestRestartIsolation:
         redis_client.flushall.assert_not_called()
 
 
+class TestRecreateMode:
+    @pytest.mark.asyncio
+    async def test_recreate_mode_recreates_without_restart(self):
+        from app.api import internal as internal_mod
+
+        orgs = [_org("getklai", 1), _org("voys", 2)]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+
+        async with _regenerate_setup(orgs, redis_client, docker_client) as request:
+            request.query_params = {"recreate_containers": "true"}
+            with patch(
+                "app.services.provisioning.infrastructure._start_librechat_container",
+                MagicMock(return_value=None),
+            ) as start_librechat:
+                resp = await internal_mod.regenerate_librechat_configs(request=request, db=db)
+
+        assert sorted(resp.tenants_updated) == ["getklai", "voys"]
+        assert resp.errors == []
+        assert start_librechat.call_count == 2
+        start_librechat.assert_any_call("getklai", [])
+        start_librechat.assert_any_call("voys", [])
+        docker_client.containers.get.assert_not_called()
+        redis_client.flushall.assert_not_called()
+
+
 class TestEmptyTenantList:
     @pytest.mark.asyncio
     async def test_empty_tenant_list_skips_invalidation_and_restart(self):
