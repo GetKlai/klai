@@ -47,17 +47,10 @@ import httpx
 # ``/opt/klai/scripts/compose-up.sh litellm`` (= ``docker compose up -d
 # --remove-orphans litellm``) so new mounts are picked up automatically —
 # matching every other klai service deploy.
-from klai_chat_prompts import (
-    GENERAL_CHAT_SYSTEM_PROMPT,
-    GROUNDED_CHAT_SYSTEM_PROMPT,
-    META_CHAT_SYSTEM_PROMPT,
-    OPEN_KB_CHAT_SYSTEM_PROMPT,
-    no_citable_sources_message as _no_citable_sources_message,
-)
+from klai_chat_prompts import no_citable_sources_message as _no_citable_sources_message
 from klai_context import (
     HISTORY_BUDGET_CONTEXT_PLACEHOLDER as _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
     KlaiContextOrchestrator,
-    STALE_LIBRECHAT_UPLOAD_PREFIX as _STALE_LIBRECHAT_UPLOAD_PREFIX,
     STALE_ATTACHMENT_CONTEXT_PLACEHOLDER as _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
 )
 from klai_citations import (
@@ -65,6 +58,26 @@ from klai_citations import (
     evidence_pack_items_as_chunks,
     render_evidence_context,
     trusted_sources_from_evidence_pack,
+)
+from klai_kb_answer_policy import (
+    KbAnswerPolicy,
+    USER_PROVIDED_CONTENT_SCOPE as _USER_PROVIDED_CONTENT_SCOPE,
+    compose_general_chat_prefix as _compose_general_chat_prefix,
+    compose_kb_mode_chat_prefix as _compose_kb_mode_chat_prefix,
+    compose_libre_chat_prefix as _compose_libre_chat_prefix,
+    compose_meta_chat_prefix as _compose_meta_chat_prefix,
+    compose_open_kb_chat_prefix as _compose_open_kb_chat_prefix,
+    has_user_provided_content_context as _has_user_provided_content_context,
+    strict_no_kb_scope_notice as _strict_no_kb_scope_notice,
+)
+from klai_kb_render_policy import (
+    KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING as _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING,
+    KB_RENDER_MODE_LEGACY_STREAMING_GUARD as _KB_RENDER_MODE_LEGACY_STREAMING_GUARD,
+    KB_RENDER_MODE_STREAMING_GUARD as _KB_RENDER_MODE_STREAMING_GUARD,
+    KbCitationRenderStrategy,
+    is_streaming_kb_render_mode as _is_streaming_kb_render_mode,
+    resolve_kb_render_mode as _resolve_kb_render_mode,
+    select_kb_render_strategy as _select_kb_render_strategy_for_mode,
 )
 from klai_llm_safety import SafetyDecision, SafetyPhase, SafetyRequest, SafetySurface, check_text, refusal_message
 
@@ -92,6 +105,29 @@ from klai_retrieval_telemetry import (
 from litellm.integrations.custom_logger import CustomLogger
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "KbAnswerPolicy",
+    "_USER_PROVIDED_CONTENT_SCOPE",
+    "_HISTORY_BUDGET_CONTEXT_PLACEHOLDER",
+    "_STALE_ATTACHMENT_CONTEXT_PLACEHOLDER",
+    "_compose_libre_chat_prefix",
+    "_compose_open_kb_chat_prefix",
+    "_compose_general_chat_prefix",
+    "_compose_meta_chat_prefix",
+    "_compose_kb_mode_chat_prefix",
+    "_has_user_provided_content_context",
+    "_strict_no_kb_scope_notice",
+    "_KB_RENDER_MODE_STREAMING_GUARD",
+    "_KB_RENDER_MODE_LEGACY_STREAMING_GUARD",
+    "_KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING",
+    "KLAI_KB_CHAT_RENDER_MODE",
+    "KbCitationRenderStrategy",
+    "_resolve_kb_render_mode",
+    "_is_streaming_kb_render_mode",
+    "_select_kb_render_strategy",
+    "klai_knowledge_hook",
+]
 
 KNOWLEDGE_RETRIEVE_URL = os.getenv("KNOWLEDGE_RETRIEVE_URL")
 if not KNOWLEDGE_RETRIEVE_URL:
@@ -300,51 +336,15 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
 )
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
-_KB_RENDER_MODE_STREAMING_GUARD = "streaming_guard"
-_KB_RENDER_MODE_LEGACY_STREAMING_GUARD = "legacy_stream_guard"
-_KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING = "deterministic_non_streaming"
-_KB_STREAMING_RENDER_MODES = {
-    _KB_RENDER_MODE_STREAMING_GUARD,
-    _KB_RENDER_MODE_LEGACY_STREAMING_GUARD,
-}
 _STREAM_LINK_GUARD_TAIL_CHARS = 16
-
-
-@dataclass(frozen=True)
-class KbCitationRenderStrategy:
-    mode: str
-    force_non_streaming: bool = False
-
-
-def _resolve_kb_render_mode(value: object) -> str:
-    """Resolve the configured citation rendering strategy.
-
-    Streaming is the safe default for LibreChat/LangGraph. The old
-    ``legacy_stream_guard`` value is accepted as an alias, but new metadata
-    should use ``streaming_guard``.
-    """
-    requested = value.strip().lower() if isinstance(value, str) else ""
-    if requested == _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING:
-        return _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING
-    return _KB_RENDER_MODE_STREAMING_GUARD
-
-
-def _is_streaming_kb_render_mode(value: object) -> bool:
-    return value in _KB_STREAMING_RENDER_MODES
+KLAI_KB_CHAT_RENDER_MODE = _resolve_kb_render_mode(os.getenv("KLAI_KB_CHAT_RENDER_MODE"))
 
 
 def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrategy:
-    if original_stream is True:
-        return KbCitationRenderStrategy(mode=_KB_RENDER_MODE_STREAMING_GUARD)
-    if KLAI_KB_CHAT_RENDER_MODE == _KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING:
-        return KbCitationRenderStrategy(
-            mode=_KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING,
-            force_non_streaming=True,
-        )
-    return KbCitationRenderStrategy(mode=_KB_RENDER_MODE_STREAMING_GUARD)
-
-
-KLAI_KB_CHAT_RENDER_MODE = _resolve_kb_render_mode(os.getenv("KLAI_KB_CHAT_RENDER_MODE"))
+    return _select_kb_render_strategy_for_mode(
+        original_stream,
+        configured_mode=KLAI_KB_CHAT_RENDER_MODE,
+    )
 _SENTINEL_URLS = {"undefined", "null", "none", "n/a", "na", "-", "#"}
 _KLAI_CONTEXT_ORCHESTRATOR = KlaiContextOrchestrator()
 
@@ -697,174 +697,6 @@ def _last_user_message(messages: list[dict]) -> str | None:
                     p.get("text", "") for p in content if p.get("type") == "text"
                 )
     return None
-
-
-_USER_ATTACHMENT_PART_TYPES = frozenset({
-    "file",
-    "image",
-    "image_url",
-    "input_file",
-    "input_image",
-})
-_USER_PROVIDED_CONTENT_QUERY_RE = re.compile(
-    r"\b(afbeelding|bijlage|foto|geupload(?:e|de)?|image|pasted|plak(?:te)?|"
-    r"screenshot|upload(?:ed)?)\b"
-    r"|"
-    r"\b(deze|dit|onderstaande|bovenstaande|meegegeven|geplakte)\s+"
-    r"(bestand|document|file|tekst)\b"
-    r"|"
-    r"\b(wat\s+(zei|schreef)\s+ik|wat\s+staat\s+(hierboven|daarboven)|"
-    r"(vorige|eerdere)\s+(bericht|vraag)|dit\s+gesprek|deze\s+"
-    r"(chat|conversatie)|chatgeschiedenis|conversation\s+history)\b",
-    re.IGNORECASE,
-)
-_OMITTED_USER_CONTENT_PLACEHOLDERS = frozenset({
-    _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
-    _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
-})
-
-
-def _has_user_provided_content_context(messages: list[dict], query: object) -> bool:
-    """Return whether the current turn can be answered from user-owned content.
-
-    Ordinary chat text is intentionally not enough: treating every latest user
-    message as "user-provided content" would make Strict+zero-results pass
-    through general-knowledge answers. We only unlock the post-call exception
-    for concrete attachment/file/image shapes or queries that explicitly ask
-    about pasted/attached content.
-    """
-    if isinstance(query, str) and _USER_PROVIDED_CONTENT_QUERY_RE.search(query):
-        return True
-
-    for msg in messages:
-        if not isinstance(msg, dict) or msg.get("role") != "user":
-            continue
-        content = msg.get("content")
-        if isinstance(content, str):
-            stripped = content.lstrip()
-            if stripped in _OMITTED_USER_CONTENT_PLACEHOLDERS:
-                continue
-            if stripped.startswith(_STALE_LIBRECHAT_UPLOAD_PREFIX):
-                return True
-            continue
-        if not isinstance(content, list):
-            continue
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            part_type = part.get("type")
-            if part_type in _USER_ATTACHMENT_PART_TYPES:
-                return True
-            if (
-                part_type == "text"
-                and isinstance(part.get("text"), str)
-                and part["text"].lstrip().startswith(_STALE_LIBRECHAT_UPLOAD_PREFIX)
-            ):
-                return True
-    return False
-
-
-_KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES = frozenset({
-    "zero_chunks",
-    "chunks_present",
-})
-
-
-@dataclass(frozen=True)
-class KbAnswerPolicy:
-    """Single source of truth for prompt/post-call answer policy flags."""
-
-    state: str
-    kb_narrow: bool
-    user_provided_content_context: bool
-    low_confidence_inject: bool = False
-
-    @property
-    def mode(self) -> str:
-        return "strict" if self.kb_narrow else "open"
-
-    @property
-    def allow_uncited_user_content(self) -> bool:
-        return self.user_provided_content_context
-
-    @property
-    def suppress_kb_citations(self) -> bool:
-        return (
-            self.user_provided_content_context
-            and self.low_confidence_inject
-            and self.state in _KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES
-        )
-
-    def metadata(self) -> dict[str, bool | str]:
-        return {
-            "answer_policy_state": self.state,
-            "answer_policy_mode": self.mode,
-            "user_provided_content_context": self.user_provided_content_context,
-            "low_confidence_inject": self.low_confidence_inject,
-            "allow_uncited_user_content": self.allow_uncited_user_content,
-            "suppress_kb_citations": self.suppress_kb_citations,
-        }
-
-    def to_kb_meta(
-        self,
-        *,
-        org_id: object,
-        user_id: object,
-        retrieval_ms: int,
-        user_query: object = None,
-        chunks_injected: int = 0,
-        chunk_ids: list | None = None,
-        allowed_source_urls: list | None = None,
-        allowed_image_urls: list | None = None,
-        citation_source_urls: dict | None = None,
-        citation_chunks: list | None = None,
-        trusted_sources: list | None = None,
-        evidence_pack: dict | None = None,
-        citable_sources_count: int = 0,
-        confidence_band: object = None,
-        no_citable_sources: bool = False,
-        no_citable_reason: object = None,
-        no_citable_message: object = None,
-        original_stream: object = None,
-        render_mode: object = None,
-        gate_bypassed: bool = False,
-        retrieval_failure: bool = False,
-    ) -> dict[str, Any]:
-        """Build the COMPLETE ``_klai_kb_meta`` dict for any branch.
-
-        Single source of truth for the metadata contract shape: every
-        pre-call return branch builds its ``_klai_kb_meta`` through this one
-        method, so the ~27-key shape can never drift between branches (the
-        old code hand-copied the dict 5×, and a fix had to touch all 5). The
-        policy-derived keys come from ``self`` / ``metadata()``; everything
-        else is a per-branch input with a safe default, so a branch only
-        passes what it actually knows.
-        """
-        return {
-            "org_id": org_id,
-            "user_id": user_id,
-            "user_query": user_query,
-            "kb_narrow": self.kb_narrow,
-            "chunks_injected": chunks_injected,
-            "chunk_ids": chunk_ids if chunk_ids is not None else [],
-            "allowed_source_urls": allowed_source_urls if allowed_source_urls is not None else [],
-            "allowed_image_urls": allowed_image_urls if allowed_image_urls is not None else [],
-            "citation_source_urls": citation_source_urls if citation_source_urls is not None else {},
-            "citation_chunks": citation_chunks if citation_chunks is not None else [],
-            "trusted_sources": trusted_sources if trusted_sources is not None else [],
-            "evidence_pack": evidence_pack,
-            "citable_sources_count": citable_sources_count,
-            "confidence_band": confidence_band,
-            "no_citable_sources": no_citable_sources,
-            "no_citable_reason": no_citable_reason,
-            "no_citable_message": no_citable_message,
-            "original_stream": original_stream,
-            "render_mode": render_mode,
-            "retrieval_ms": retrieval_ms,
-            "gate_bypassed": gate_bypassed,
-            "retrieval_failure": retrieval_failure,
-            **self.metadata(),
-        }
 
 
 def _llm_safety_enabled() -> bool:
@@ -1826,87 +1658,6 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
         parts.append(f"[{name}]\n{text}")
     parts.append("[End templates]")
     return "\n\n".join(parts)
-
-
-# A user-provided attachment is the user's OWN input, not a knowledge-base
-# source. It must always be usable standalone content, in every mode and on
-# every branch — a screenshot held up against the KB is a legitimate Strict
-# use case. Strict/Open governs KB-grounding and general-knowledge fallback,
-# NOT whether the model may look at what the user attached. Injected by the
-# path-A prefix composers below so it applies on every branch (chunks-present,
-# zero chunks, bypass, retrieval failure, no-scope, general). Paths B/C never
-# carry user attachments, so this deliberately stays out of the shared
-# ``klai_chat_prompts`` foundation constants.
-_USER_PROVIDED_CONTENT_SCOPE = (
-    "[User-provided content]\n"
-    "Any images, screenshots, files, or text the user attached or pasted in "
-    "this conversation, and the visible conversation itself, are the user's "
-    "own input. Always inspect and use them to understand and answer the "
-    "request. This is independent of Strict/Open mode and of whether the "
-    "knowledge base returned results: even in Strict mode, and even when the "
-    "knowledge base has zero or weak results, you may read and reason about "
-    "what the user gave you. In Strict mode this permission only covers "
-    "directly observable or user-provided information: do not add general-world "
-    "explanations, organization-specific facts, prices, routes, product names, "
-    "steps, or source claims unless the knowledge-base evidence below supports "
-    "them. They are NOT knowledge-base sources — never cite them as numbered "
-    "sources and never present their contents as knowledge-base facts. "
-    "Strict/Open only controls how you use the knowledge base and whether you "
-    "may add general knowledge; it never blocks the user's own attachments or "
-    "visible conversation."
-)
-
-
-def _compose_libre_chat_prefix(*blocks: str) -> str:
-    """Compose the system-prompt prefix for path A (LibreChat → LiteLLM).
-
-    SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10). Leads with
-    ``GROUNDED_CHAT_SYSTEM_PROMPT`` so language detection / 3-guard switch
-    semantics apply, AND so the model defaults to KB-grounded behaviour on
-    every branch where a KB scope is in play — even when retrieval returned
-    zero chunks or failed loud. The mode-independent
-    ``_USER_PROVIDED_CONTENT_SCOPE`` clause follows the foundation so user
-    attachments stay usable on every Strict branch. Empty blocks are
-    filtered out.
-
-    Used by every code path downstream of ``if not librechat_user_id:
-    return data`` EXCEPT the explicit "user opted out of every KB scope"
-    branch, which calls :func:`_compose_general_chat_prefix` instead.
-    Paths B (partner_chat) and C (retrieval-api /chat) construct their
-    own prompts via the canonical ``klai_chat_prompts`` library — they do
-    NOT route through this helper.
-    """
-    return "\n\n".join(
-        b
-        for b in (GROUNDED_CHAT_SYSTEM_PROMPT, _USER_PROVIDED_CONTENT_SCOPE, *blocks)
-        if b
-    )
-
-
-def _compose_open_kb_chat_prefix(*blocks: str) -> str:
-    """Compose the system-prompt prefix for Open mode with KB scope."""
-    return "\n\n".join(
-        b
-        for b in (OPEN_KB_CHAT_SYSTEM_PROMPT, _USER_PROVIDED_CONTENT_SCOPE, *blocks)
-        if b
-    )
-
-
-def _compose_kb_mode_chat_prefix(kb_narrow: bool, *blocks: str) -> str:
-    if kb_narrow:
-        return _compose_libre_chat_prefix(*blocks)
-    return _compose_open_kb_chat_prefix(*blocks)
-
-
-def _strict_no_kb_scope_notice(reason: str) -> str:
-    """Strict-mode notice for branches where retrieval cannot produce KB chunks."""
-    return (
-        "[Klai Knowledge Base — no knowledge base evidence is available for "
-        "this request. The user selected Strict mode, so do not answer from "
-        "general knowledge. Tell the user in their detected language that you "
-        "cannot answer reliably from their knowledge sources for this request "
-        f"(technical reason: {reason}).]\n"
-    )
 
 
 def _normalise_guard_url(url: object) -> str:
@@ -2974,67 +2725,6 @@ def _compose_streaming_kb_response(
         stats.citation_decisions.append(decision)
         return stats
     return stats
-
-
-def _compose_general_chat_prefix(*blocks: str) -> str:
-    """Compose the system-prompt prefix for path A when the user has
-    explicitly opted out of every KB scope (``kb_personal_enabled=False``
-    AND ``kb_slugs_filter=[]``).
-
-    This is the "Algemene AI" branch the chat-config dropdown surfaces.
-    Same language-detection contract as
-    :func:`_compose_libre_chat_prefix`, but the KB-grounding rules are
-    swapped for general-assistant rules so the model:
-
-    * does NOT emit [n] citations,
-    * does NOT say 'Dat staat niet in de kennisbank' for every question,
-    * answers from general knowledge without pretending to have sources.
-
-    Templates (active per-user/per-org template instructions) still
-    apply on this branch — they are user-controlled prompt fragments
-    independent of KB scope.
-
-    Reachable only from the no-KB branch in
-    :class:`KlaiKnowledgeHook.async_pre_call_hook`. All other branches
-    (no-entitlement, kb_retrieval disabled, retrieval failed, zero
-    chunks) keep using :func:`_compose_libre_chat_prefix` so the model
-    still acts as a KB assistant when a KB scope was intended but data
-    was unavailable.
-    """
-    return "\n\n".join(
-        b
-        for b in (GENERAL_CHAT_SYSTEM_PROMPT, _USER_PROVIDED_CONTENT_SCOPE, *blocks)
-        if b
-    )
-
-
-def _compose_meta_chat_prefix(*blocks: str) -> str:
-    """Compose the system-prompt prefix for path A when the user is asking
-    a META question about Klai itself ("what is Klai", "what can I do
-    here", "how does this chat work") rather than a content question.
-
-    Triggered by :func:`_is_meta_query` matching the latest user message.
-    Same language-detection contract as the other two prefixes, but the
-    KB-grounding rules are swapped for capability-explanation rules so
-    the model:
-
-    * does NOT emit [n] citations (no chunks in scope),
-    * does NOT pull or quote any KB content (the user didn't ask for any),
-    * describes Klai at the level of "what kind of thing it is", not a
-      fabricated feature list.
-
-    Templates still apply on this branch — admins may want to override
-    or extend the canned capability description per org. Reachable only
-    from the meta-query branch in
-    :class:`KlaiKnowledgeHook.async_pre_call_hook` (path A only). Paths
-    B and C are server-to-server and never see meta-questions.
-
-    Background: 2026-05-12 Voys "Meldingen" incident. Without this
-    early-return path, a vague meta-question ("wat kan ik hier?") fell
-    through to retrieval, matched a tangential KB chunk on common
-    words, and the model defended that match as the answer.
-    """
-    return "\n\n".join(b for b in (META_CHAT_SYSTEM_PROMPT, *blocks) if b)
 
 
 def _should_assemble_provider_context(data: dict[str, Any]) -> bool:
