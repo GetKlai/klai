@@ -143,6 +143,51 @@ def test_user_provided_content_scope_clause(monkeypatch) -> None:
     assert "it never blocks the user's own attachments or visible conversation" in text
 
 
+def test_kb_answer_policy_matrix_user_content_citation_suppression(monkeypatch) -> None:
+    """Only retrieval states with actual candidate evidence may suppress weak
+    KB citations on user-content answers.
+    """
+    klai_knowledge = _load_hook(monkeypatch)
+
+    for state in ("zero_chunks", "chunks_present"):
+        policy = klai_knowledge.KbAnswerPolicy(
+            state=state,
+            kb_narrow=False,
+            user_provided_content_context=True,
+            low_confidence_inject=True,
+        )
+        meta = policy.metadata()
+
+        assert meta["answer_policy_state"] == state
+        assert meta["answer_policy_mode"] == "open"
+        assert meta["allow_uncited_user_content"] is True
+        assert meta["suppress_kb_citations"] is True
+
+    for state in ("retrieval_failure", "gate_bypassed", "missing_evidence_pack"):
+        policy = klai_knowledge.KbAnswerPolicy(
+            state=state,
+            kb_narrow=True,
+            user_provided_content_context=True,
+            low_confidence_inject=True,
+        )
+        meta = policy.metadata()
+
+        assert meta["answer_policy_state"] == state
+        assert meta["answer_policy_mode"] == "strict"
+        assert meta["allow_uncited_user_content"] is True
+        assert meta["suppress_kb_citations"] is False
+
+    policy = klai_knowledge.KbAnswerPolicy(
+        state="chunks_present",
+        kb_narrow=True,
+        user_provided_content_context=False,
+        low_confidence_inject=True,
+    )
+    meta = policy.metadata()
+    assert meta["allow_uncited_user_content"] is False
+    assert meta["suppress_kb_citations"] is False
+
+
 def test_injection_disabled_flag_default_false(monkeypatch) -> None:
     """KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION default = '0' → False."""
     monkeypatch.delenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", raising=False)

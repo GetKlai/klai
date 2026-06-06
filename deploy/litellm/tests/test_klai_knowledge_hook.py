@@ -5303,6 +5303,8 @@ class TestKlaiKnowledgeHookOpenMode:
         assert "no image is available in the knowledge base" not in sys_content
         meta = result["metadata"]["_klai_kb_meta"]
         assert meta["kb_narrow"] is False
+        assert meta["answer_policy_state"] == "chunks_present"
+        assert meta["answer_policy_mode"] == "open"
         assert meta["user_provided_content_context"] is True
         assert meta["low_confidence_inject"] is True
         assert meta["allow_uncited_user_content"] is True
@@ -5415,6 +5417,8 @@ class TestKlaiKnowledgeHookOpenMode:
         assert "[User-provided content]" in sys_content
         assert "even when the" in sys_content  # "...even when the knowledge base has zero..."
         meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["answer_policy_state"] == "zero_chunks"
+        assert meta["answer_policy_mode"] == "strict"
         assert meta["user_provided_content_context"] is True
         assert meta["no_citable_sources"] is True
         assert meta["allow_uncited_user_content"] is True
@@ -5453,6 +5457,8 @@ class TestKlaiKnowledgeHookOpenMode:
         assert "zero results for this query" in sys_content
         assert "Do not answer from general knowledge" in sys_content
         meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["answer_policy_state"] == "zero_chunks"
+        assert meta["answer_policy_mode"] == "strict"
         assert meta["user_provided_content_context"] is True
         assert meta["no_citable_sources"] is True
         assert meta["allow_uncited_user_content"] is True
@@ -5656,6 +5662,8 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         )
         assert meta["chunks_injected"] == 0
         assert meta["kb_narrow"] is True
+        assert meta["answer_policy_state"] == "zero_chunks"
+        assert meta["answer_policy_mode"] == "strict"
         assert meta["user_provided_content_context"] is False
         assert meta["allow_uncited_user_content"] is False
 
