@@ -6,7 +6,7 @@ import {
   Pause,
   Play,
   ShieldCheck,
-  UserX,
+  Trash2,
 } from 'lucide-react'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
@@ -40,7 +40,7 @@ interface UserActionsProps {
   suspendMutation: UserMutation<string>
   reactivateMutation: UserMutation<string>
   onConfirmDelete: (userId: string | null) => void
-  onConfirmOffboard: (userId: string) => void
+  onConfirmUserDelete: (userId: string) => void
   onConfirmLeave: () => void
 }
 
@@ -54,7 +54,7 @@ export function UserActions({
   suspendMutation,
   reactivateMutation,
   onConfirmDelete,
-  onConfirmOffboard,
+  onConfirmUserDelete,
   onConfirmLeave,
 }: UserActionsProps) {
   const navigate = useNavigate()
@@ -68,7 +68,7 @@ export function UserActions({
     deleteMutation.variables?.zitadel_user_id === user.zitadel_user_id
   const canResendInvite =
     user.invite_pending || user.status === 'active' || user.status === 'offboarded'
-  const canOffboard = user.status === 'active' || user.status === 'suspended'
+  const canDeleteUser = !user.invite_pending
 
   return (
     <InlineDeleteConfirm
@@ -172,15 +172,15 @@ export function UserActions({
                       {m.admin_users_action_reactivate()}
                     </DropdownMenuItem>
                   )}
-                  {canOffboard && (
+                  {canDeleteUser && (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
-                        onClick={() => onConfirmOffboard(user.zitadel_user_id)}
+                        onClick={() => onConfirmUserDelete(user.zitadel_user_id)}
                         className="text-[var(--color-destructive)]"
                       >
-                        <UserX className="mr-2 h-4 w-4" />
-                        {m.admin_users_action_offboard()}
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        {m.admin_users_action_delete()}
                       </DropdownMenuItem>
                     </>
                   )}

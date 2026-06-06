@@ -80,7 +80,10 @@ class _UserDeletionState:
     # Progress flags updated as steps complete.
     zitadel_identity_deleted: bool = False
     kbs_deleted_externally: int = 0
+    group_memberships_deleted: int = 0
     db_user_deleted: bool = False
+    success_audit_action: str = "platform_admin.user_deleted"
+    partial_failure_audit_action: str = "platform_admin.user_delete_partial_failure"
 
 
 async def _mark_user_delete_failed(
@@ -160,7 +163,7 @@ async def _run_user_deletion(
                 await log_event(
                     org_id=state.org_id,
                     actor=state.actor_user_id,
-                    action="platform_admin.user_delete_partial_failure",
+                    action=state.partial_failure_audit_action,
                     resource_type="user",
                     resource_id=state.zitadel_user_id,
                     details={
@@ -169,6 +172,7 @@ async def _run_user_deletion(
                         "kbs_deleted_externally": state.kbs_deleted_externally,
                         "api_keys_revoked": state.api_keys_count,
                         "mcp_tokens_revoked": state.mcp_tokens_count,
+                        "group_memberships_deleted": state.group_memberships_deleted,
                         "zitadel_identity_deleted": state.zitadel_identity_deleted,
                         "db_user_deleted": state.db_user_deleted,
                     },
@@ -179,7 +183,7 @@ async def _run_user_deletion(
     await log_event(
         org_id=state.org_id,
         actor=state.actor_user_id,
-        action="platform_admin.user_deleted",
+        action=state.success_audit_action,
         resource_type="user",
         resource_id=state.zitadel_user_id,
         details={
@@ -187,6 +191,7 @@ async def _run_user_deletion(
             "kbs_deleted": state.kbs_deleted_externally,
             "api_keys_revoked": state.api_keys_count,
             "mcp_tokens_revoked": state.mcp_tokens_count,
+            "group_memberships_deleted": state.group_memberships_deleted,
             "global_identity_deleted": state.zitadel_identity_deleted,
             "zitadel_identity_deleted": state.zitadel_identity_deleted,
             "db_user_deleted": state.db_user_deleted,
@@ -206,6 +211,8 @@ async def delete_user_with_state_machine(
     org: Any,
     portal_user: Any,
     db: AsyncSession,
+    success_audit_action: str = "platform_admin.user_deleted",
+    partial_failure_audit_action: str = "platform_admin.user_delete_partial_failure",
 ) -> bool:
     """Entry point called by the endpoint handler.
 
@@ -222,6 +229,8 @@ async def delete_user_with_state_machine(
         mcp_tokens_count=mcp_tokens_count,
         org=org,
         portal_user=portal_user,
+        success_audit_action=success_audit_action,
+        partial_failure_audit_action=partial_failure_audit_action,
     )
     await _run_user_deletion(state, db)
     return state.db_user_deleted

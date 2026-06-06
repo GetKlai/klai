@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import structlog
+from sqlalchemy import delete, select
 
 if TYPE_CHECKING:
     from app.services.user_deletion_orchestrator import _UserDeletionState
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.groups import PortalGroup, PortalGroupMembership
 from app.services.zitadel import zitadel
 
 logger = structlog.get_logger()
@@ -133,6 +135,14 @@ async def step_portal_db_delete(state: _UserDeletionState) -> None:
     assert state.db_for_steps is not None, "db_for_steps must be set before step_portal_db_delete"
     db: AsyncSession = state.db_for_steps
 
+    membership_delete_result = await db.execute(
+        delete(PortalGroupMembership).where(
+            PortalGroupMembership.zitadel_user_id == state.zitadel_user_id,
+            PortalGroupMembership.group_id.in_(select(PortalGroup.id).where(PortalGroup.org_id == state.org_id)),
+        )
+    )
+    state.group_memberships_deleted = getattr(membership_delete_result, "rowcount", 0) or 0
+
     await db.delete(state.portal_user)
     # Flush so the DELETE is in the session before commit.
     await db.flush()
@@ -141,4 +151,5 @@ async def step_portal_db_delete(state: _UserDeletionState) -> None:
         "user_deletion.portal_user_deleted",
         zitadel_user_id=state.zitadel_user_id,
         org_id=state.org_id,
+        group_memberships_deleted=state.group_memberships_deleted,
     )

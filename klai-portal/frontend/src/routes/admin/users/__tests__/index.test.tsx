@@ -31,10 +31,12 @@ vi.mock('@/lib/auth', () => ({
 vi.mock('@/hooks/useUserLifecycle', () => ({
   useSuspendUser: () => ({ mutate: vi.fn(), isPending: false }),
   useReactivateUser: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteUserWithDispositions: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
+const offboardWizardMock = vi.fn((_props: unknown) => null)
 vi.mock('@/components/admin/offboard-wizard', () => ({
-  OffboardWizard: () => null,
+  OffboardWizard: (props: unknown) => offboardWizardMock(props),
 }))
 
 vi.mock('@/paraglide/runtime', () => ({
@@ -72,6 +74,7 @@ vi.mock('@/paraglide/messages', () => ({
   admin_users_confirm_leave_description: () => 'You will leave this workspace.',
   admin_users_action_leave_workspace: () => 'Leave workspace',
   admin_users_action_change_profile: () => 'Change profile',
+  admin_users_action_delete: () => 'Delete',
 }))
 
 import { Route as RouteCfg } from '../index'
@@ -138,6 +141,7 @@ function renderUsersPage() {
 
 beforeEach(() => {
   navigate.mockReset()
+  offboardWizardMock.mockClear()
   apiFetchMock.mockReset()
   apiFetchMock.mockImplementation((url: string, options?: { method?: string }) => {
     if (url === '/api/admin/users' && !options?.method) return Promise.resolve(usersResponse)
@@ -147,7 +151,7 @@ beforeEach(() => {
 })
 
 describe('Admin users index', () => {
-  it('renders users and filters client-side by name or email', async () => {
+  it('renders users', async () => {
     renderUsersPage()
 
     await waitFor(() => {
@@ -156,14 +160,9 @@ describe('Admin users index', () => {
 
     expect(screen.getByText('Bob Builder')).toBeTruthy()
     expect(screen.getByText('Cleo Offboarded')).toBeTruthy()
-    expect(screen.getByText('3 users')).toBeTruthy()
+    expect(screen.getByText('(3)')).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('Search users'), {
-      target: { value: 'bob@' },
-    })
-
-    expect(screen.queryByText('Ada Lovelace')).toBeNull()
-    expect(screen.getByText('Bob Builder')).toBeTruthy()
+    expect(screen.queryByLabelText('Search users')).toBeNull()
   })
 
   it('allows resending invites for active and offboarded users', async () => {
@@ -197,7 +196,7 @@ describe('Admin users index', () => {
     })
   })
 
-  it('keeps delete available only for pending invites and calls the delete endpoint after confirmation', async () => {
+  it('keeps inline delete only for pending invites and calls the old delete endpoint after confirmation', async () => {
     renderUsersPage()
 
     await waitFor(() => {
@@ -218,4 +217,5 @@ describe('Admin users index', () => {
       ).toBe(true)
     })
   })
+
 })

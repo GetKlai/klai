@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from app.services.kb_offboarding import (
     KbDisposition,
     apply_dispositions,
+    compute_user_delete_preview,
     revoke_user_credentials,
 )
 
@@ -60,6 +61,12 @@ def _scalar_result(value: object) -> MagicMock:
     return r
 
 
+def _scalars_result(values: list[object]) -> MagicMock:
+    r = MagicMock()
+    r.scalars.return_value.all.return_value = values
+    return r
+
+
 class TestKbDispositionValidation:
     """REQ-2.x body schema enforces the transfer/delete invariants."""
 
@@ -78,6 +85,34 @@ class TestKbDispositionValidation:
     def test_delete_without_transfer_to_accepted(self) -> None:
         d = KbDisposition(kb_id=1, action="delete")
         assert d.transfer_to is None
+
+
+class TestUserDeletePreview:
+    """Delete preview includes every org KB created by the user, not only sole-owner KBs."""
+
+    @pytest.mark.asyncio
+    async def test_delete_preview_lists_all_created_org_kbs(self) -> None:
+        owned = _make_kb(kb_id=7, owner_type="org", created_by="uid-leaving", slug="owned")
+        co_owned = _make_kb(kb_id=8, owner_type="org", created_by="uid-leaving", slug="co-owned")
+        personal = _make_kb(kb_id=11, owner_type="user", created_by="uid-leaving", slug="personal")
+
+        db = AsyncMock()
+        db.execute.side_effect = [
+            _scalars_result([owned, co_owned]),
+            _scalar_result(1),
+            _scalar_result(2),
+            _scalars_result([personal]),
+            _scalar_result(4),
+            _scalar_result(99),
+            _scalar_result(5),
+        ]
+
+        preview = await compute_user_delete_preview("uid-leaving", 101, db)
+
+        assert [kb.slug for kb in preview.org_kbs_created] == ["owned", "co-owned"]
+        assert [kb.slug for kb in preview.personal_kbs] == ["personal"]
+        assert preview.api_keys_count == 4
+        assert preview.mcp_tokens_count == 5
 
 
 class TestApplyDispositionsTransfer:

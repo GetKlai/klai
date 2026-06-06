@@ -33,6 +33,7 @@ vi.mock('@/hooks/useUserLifecycle', () => ({
   useSuspendUser: () => ({ mutate: vi.fn(), isPending: false }),
   useReactivateUser: () => ({ mutate: vi.fn(), isPending: false }),
   useOffboardUser: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteUserWithDispositions: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/useCurrentUser', () => ({

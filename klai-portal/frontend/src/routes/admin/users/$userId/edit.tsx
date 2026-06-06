@@ -21,7 +21,11 @@ import {
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
-import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
+import {
+  useDeleteUserWithDispositions,
+  useReactivateUser,
+  useSuspendUser,
+} from '@/hooks/useUserLifecycle'
 import { OffboardWizard } from '@/components/admin/offboard-wizard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
@@ -84,8 +88,8 @@ function EditUserPage() {
 
   const suspendMutation = useSuspendUser()
   const reactivateMutation = useReactivateUser()
-  const offboardMutation = useOffboardUser()
-  const [offboardWizardOpen, setOffboardWizardOpen] = useState(false)
+  const deleteMutation = useDeleteUserWithDispositions()
+  const [deleteWizardOpen, setDeleteWizardOpen] = useState(false)
 
   // SPEC-PORTAL-ADMIN-UI-001 v0.3.0 REQ-12: ÉÉN form, ÉÉN save. Submit-handler
   // stuurt PATCH /users/<id> voor naam/taal en - alleen als profile gewijzigd
@@ -247,19 +251,20 @@ function EditUserPage() {
             <>
               <Button
                 variant="destructive"
-                disabled={offboardMutation.isPending}
-                onClick={() => setOffboardWizardOpen(true)}
+                disabled={deleteMutation.isPending}
+                onClick={() => setDeleteWizardOpen(true)}
               >
-                {offboardMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                {m.admin_users_action_offboard()}
+                {deleteMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {m.admin_users_action_delete()}
               </Button>
               {currentUser?.user_id && (
                 <OffboardWizard
                   userId={userId}
                   userLabel={`${user.first_name} ${user.last_name}`.trim() || user.email}
                   currentAdminId={currentUser.user_id}
-                  open={offboardWizardOpen}
-                  onOpenChange={setOffboardWizardOpen}
+                  mode="delete"
+                  open={deleteWizardOpen}
+                  onOpenChange={setDeleteWizardOpen}
                 />
               )}
             </>

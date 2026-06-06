@@ -69,3 +69,23 @@ export function useOffboardUser() {
     },
   })
 }
+
+export function useDeleteUserWithDispositions() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ userId, kb_dispositions }: OffboardArgs) => {
+      await apiFetch(`/api/admin/users/${userId}/delete`, {
+        method: 'POST',
+        body: JSON.stringify({ kb_dispositions }),
+        headers: { 'Content-Type': 'application/json' },
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      toast.success(m.admin_users_toast_deleted())
+    },
+    onError: (error: Error) => {
+      toast.error(error.message)
+    },
+  })
+}

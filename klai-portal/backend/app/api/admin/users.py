@@ -36,11 +36,14 @@ from app.services.github import remove_github_org_member
 from app.services.kb_offboarding import (
     KbDisposition,
     OffboardPreview,
+    UserDeletePreview,
     apply_dispositions,
     compute_offboard_preview,
+    compute_user_delete_preview,
     revoke_user_credentials,
 )
 from app.services.mcp_role_notifier import fire_role_change_notification
+from app.services.user_deletion_orchestrator import delete_user_with_state_machine
 from app.services.user_memberships import get_user_membership_summary
 from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 from app.services.zitadel_identity_recovery import (
@@ -1093,6 +1096,30 @@ class OffboardRequest(BaseModel):
     kb_dispositions: list[KbDisposition] = []
 
 
+class DeleteUserRequest(BaseModel):
+    """Body for ``POST /api/admin/users/{id}/delete``.
+
+    Every KB returned by ``delete-preview`` must have an explicit disposition.
+    Org KBs may be transferred or deleted; personal KBs remain delete-only.
+    """
+
+    kb_dispositions: list[KbDisposition] = []
+
+
+def _missing_disposition_slugs(
+    *,
+    expected_kbs: list,
+    dispositions: list[KbDisposition],
+) -> list[str]:
+    expected_ids = {kb.kb_id for kb in expected_kbs}
+    provided_ids = {d.kb_id for d in dispositions}
+    missing = expected_ids - provided_ids
+    if not missing:
+        return []
+    kb_lookup: dict[int, str] = {kb.kb_id: kb.slug for kb in expected_kbs}
+    return sorted(kb_lookup[kb_id] for kb_id in missing)
+
+
 @router.post("/users/{zitadel_user_id}/offboard", response_model=MessageResponse)
 async def offboard_user(
     zitadel_user_id: str,
@@ -1145,14 +1172,13 @@ async def offboard_user(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Organisation not found")
 
     preview = await compute_offboard_preview(zitadel_user_id, perms.org_id, db)
-    expected_kb_ids = {kb.kb_id for kb in preview.org_kbs_solely_owned} | {kb.kb_id for kb in preview.personal_kbs}
-    provided_kb_ids = {d.kb_id for d in body.kb_dispositions}
-    missing = expected_kb_ids - provided_kb_ids
-    if missing:
+    missing_slugs = _missing_disposition_slugs(
+        expected_kbs=[*preview.org_kbs_solely_owned, *preview.personal_kbs],
+        dispositions=body.kb_dispositions,
+    )
+    if missing_slugs:
         # Build a stable, human-readable list (slug-based) so the admin
         # can click straight to the affected KBs in the wizard.
-        kb_lookup: dict[int, str] = {kb.kb_id: kb.slug for kb in (*preview.org_kbs_solely_owned, *preview.personal_kbs)}
-        missing_slugs = sorted(kb_lookup[kb_id] for kb_id in missing)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -1234,6 +1260,110 @@ async def offboard_user(
     else:
         logger.info("GitHub offboarding skipped for %s: no github_username linked", zitadel_user_id)
     return MessageResponse(message=f"User {zitadel_user_id} offboarded.")
+
+
+@router.get("/users/{zitadel_user_id}/delete-preview", response_model=UserDeletePreview)
+async def delete_user_preview(
+    zitadel_user_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> UserDeletePreview:
+    """Preview the KB and credential cleanup required before hard-deleting a user."""
+
+    user_result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == perms.org_id,
+        )
+    )
+    if user_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return await compute_user_delete_preview(zitadel_user_id, perms.org_id, db)
+
+
+@router.post("/users/{zitadel_user_id}/delete", response_model=MessageResponse)
+async def delete_user_with_dispositions(
+    zitadel_user_id: str,
+    body: DeleteUserRequest | None = None,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Hard-delete a user after explicit KB transfer/delete dispositions."""
+
+    body = body or DeleteUserRequest()
+    if zitadel_user_id == perms.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use leave workspace instead of deleting your own account.",
+        )
+
+    user_result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == perms.org_id,
+        )
+    )
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Organisation not found")
+
+    membership_summary = await get_user_membership_summary(
+        zitadel_user_id,
+        excluding_org_id=perms.org_id,
+    )
+    if membership_summary.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Platform-admin identities cannot be deleted from a tenant admin surface.",
+        )
+    delete_global_identity = membership_summary.remaining_count == 0
+
+    preview = await compute_user_delete_preview(zitadel_user_id, perms.org_id, db)
+    missing_slugs = _missing_disposition_slugs(
+        expected_kbs=[*preview.org_kbs_created, *preview.personal_kbs],
+        dispositions=body.kb_dispositions,
+    )
+    if missing_slugs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "missing_kb_dispositions",
+                "missing": missing_slugs,
+                "message": f"Missing dispositions for: [{', '.join(missing_slugs)}]",
+            },
+        )
+
+    success = await delete_user_with_state_machine(
+        org_id=perms.org_id,
+        zitadel_user_id=zitadel_user_id,
+        actor_user_id=perms.user_id,
+        delete_global_identity=delete_global_identity,
+        kb_dispositions=body.kb_dispositions,
+        api_keys_count=0,
+        mcp_tokens_count=0,
+        org=org,
+        portal_user=user,
+        db=db,
+        success_audit_action="user.deleted",
+        partial_failure_audit_action="user.delete_partial_failure",
+    )
+    if success:
+        await db.commit()
+
+    fire_role_change_notification(zitadel_user_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="User deletion partially failed. Retry the delete action to complete cleanup.",
+        )
+
+    message = "User deleted." if delete_global_identity else "User removed from organization."
+    return MessageResponse(message=message)
 
 
 # ---------------------------------------------------------------------------
