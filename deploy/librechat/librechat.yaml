@@ -91,6 +91,10 @@ mcpServers:
   klai-knowledge:
     type: streamable-http
     url: http://klai-knowledge-mcp:8080/mcp
+    # LibreChat reaches this managed Klai server over the Docker network with
+    # X-Internal-Secret. Public MCP clients use OAuth via mcp.getklai.com, but
+    # this internal server entry must not trigger LibreChat's per-user OAuth flow.
+    requiresOAuth: false
     headers:
       X-User-ID: "{{LIBRECHAT_USER_OPENIDID}}"
       X-Org-ID: "${KLAI_ZITADEL_ORG_ID}"
