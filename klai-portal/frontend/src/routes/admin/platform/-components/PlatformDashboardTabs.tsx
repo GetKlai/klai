@@ -587,7 +587,6 @@ export function SubsTab({ search }: { search: string }) {
           <DataTableHead>{m.platform_col_organization()}</DataTableHead>
           <DataTableHead>{m.platform_col_plan()}</DataTableHead>
           <DataTableHead>{m.platform_col_cycle()}</DataTableHead>
-          <DataTableHead>{m.platform_col_seats()}</DataTableHead>
           <DataTableHead>{m.platform_col_billing_status()}</DataTableHead>
         </DataTableRow>
       </DataTableHeader>
@@ -601,7 +600,6 @@ export function SubsTab({ search }: { search: string }) {
               <Badge variant="outline">{o.plan}</Badge>
             </DataTableCell>
             <DataTableCell>{o.billing_cycle}</DataTableCell>
-            <DataTableCell className="tabular-nums">{o.seats}</DataTableCell>
             <DataTableCell>
               <Badge
                 variant={

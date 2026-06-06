@@ -61,7 +61,7 @@ export function OrgSummaryStats({
   templateCount: number
 }) {
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-6">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
       <StatCard size="sm" label={m.platform_stat_users()} value={org.user_count} />
       <StatCard size="sm" label={m.platform_stat_bots()} value={org.bot_count} />
       <StatCard size="sm"
@@ -72,7 +72,6 @@ export function OrgSummaryStats({
         label={m.platform_stat_templates()}
         value={templateCount}
       />
-      <StatCard size="sm" label={m.platform_col_seats()} value={org.seats} />
       <StatCard size="sm"
         label={m.platform_col_billing_status()}
         value={org.billing_status}
