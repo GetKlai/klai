@@ -415,7 +415,7 @@ export function UsersSection({
                     ) : null}
                   </DataTableCell>
                   <DataTableCell align="right">
-                    <div className="flex items-center justify-end gap-3">
+                    <div className="flex items-center justify-end gap-1">
                       <PlatformMessageComposer user={u} />
                       <InlineDeleteConfirm
                         isConfirming={isConfirmingDelete}

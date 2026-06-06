@@ -30,7 +30,11 @@ import {
   usePortalHealth,
 } from "../-hooks"
 import type { PlatformSubdomainItem } from "../-types"
-import { PlatformMessageComposer } from "./PlatformMessageComposer"
+import {
+  PlatformMessageComposer,
+  PlatformMessageComposerPanel,
+  type PlatformMessageComposeTarget,
+} from "./PlatformMessageComposer"
 
 // --- Subdomains overview ---------------------------------------------------
 //
@@ -321,7 +325,7 @@ export function UsersTab({
             <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
               {fmtDate(u.created_at)}
             </DataTableCell>
-            <DataTableCell>
+            <DataTableCell align="right">
               <PlatformMessageComposer user={u} />
             </DataTableCell>
           </DataTableRow>
@@ -334,9 +338,13 @@ export function UsersTab({
 export function MessagesTab({
   search,
   fmtDate,
+  composeTarget,
+  onClearComposeTarget,
 }: {
   search: string
   fmtDate: (s: string | null) => string
+  composeTarget: PlatformMessageComposeTarget | null
+  onClearComposeTarget: () => void
 }) {
   const { data, isLoading } = usePlatformMessageThreads(search)
   const rows = data ?? []
@@ -356,6 +364,13 @@ export function MessagesTab({
 
   return (
     <div className="space-y-6">
+      {composeTarget && (
+        <PlatformMessageComposerPanel
+          target={composeTarget}
+          onCancel={onClearComposeTarget}
+        />
+      )}
+
       {isLoading ? (
         <ListLoadingState label={m.admin_shared_loading()} />
       ) : rows.length === 0 ? (
