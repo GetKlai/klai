@@ -137,6 +137,29 @@ assert.equal(
   'Klai typt zichtbaar. Bij compleet antwoord blijft dit staan.',
 );
 
+const multiPartFinalDeltaAggregator = createContentAggregator();
+multiPartFinalDeltaAggregator.aggregateContent({
+  event: 'on_run_step',
+  data: { id: 'step-multipart', index: 0, stepDetails: { type: 'message_creation' } },
+});
+multiPartFinalDeltaAggregator.aggregateContent({
+  event: 'on_message_delta',
+  data: {
+    id: 'step-multipart',
+    delta: {
+      content: [
+        { type: 'text', text: '' },
+        { type: 'text', text: 'Final text from the same completed delta.' },
+      ],
+    },
+  },
+});
+
+assert.equal(
+  multiPartFinalDeltaAggregator.contentParts[0].text,
+  'Final text from the same completed delta.',
+);
+
 const toolAggregator = createContentAggregator();
 toolAggregator.aggregateContent({
   event: 'on_run_step',

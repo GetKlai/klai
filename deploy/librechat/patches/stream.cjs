@@ -565,10 +565,14 @@ function createContentAggregator() {
                 return;
             }
             if (messageDelta.delta.content) {
-                const contentPart = Array.isArray(messageDelta.delta.content)
-                    ? messageDelta.delta.content[0]
-                    : messageDelta.delta.content;
-                updateContent(runStep.index, contentPart);
+                const deltaContent = Array.isArray(messageDelta.delta.content)
+                    ? messageDelta.delta.content
+                    : [messageDelta.delta.content];
+                for (const contentPart of deltaContent) {
+                    if (contentPart) {
+                        updateContent(runStep.index, contentPart);
+                    }
+                }
             }
         }
         else if (event === _enum.GraphEvents.ON_AGENT_UPDATE &&
@@ -587,10 +591,14 @@ function createContentAggregator() {
                 return;
             }
             if (reasoningDelta.delta.content) {
-                const contentPart = Array.isArray(reasoningDelta.delta.content)
-                    ? reasoningDelta.delta.content[0]
-                    : reasoningDelta.delta.content;
-                updateContent(runStep.index, contentPart);
+                const deltaContent = Array.isArray(reasoningDelta.delta.content)
+                    ? reasoningDelta.delta.content
+                    : [reasoningDelta.delta.content];
+                for (const contentPart of deltaContent) {
+                    if (contentPart) {
+                        updateContent(runStep.index, contentPart);
+                    }
+                }
             }
         }
         else if (event === _enum.GraphEvents.ON_RUN_STEP_DELTA) {
