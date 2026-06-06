@@ -4,6 +4,7 @@ from klai_citations import (
     compose_citations,
     evidence_chunks_from_chunks,
     evidence_pack_items_as_chunks,
+    extract_salient_query_tokens,
     format_sources_markdown,
     render_evidence_context,
     render_markdown_answer,
@@ -672,6 +673,111 @@ def test_trusted_source_composition_derives_query_support_from_candidates() -> N
     assert composed.decision["query_support_tokens"] == ["policy", "privacy"]
     assert composed.decision["rejected"][0]["title"] == "Billing policy"
     assert composed.decision["rejected"][0]["reason"] == "query_not_supported"
+
+
+def test_salient_query_tokens_drop_chat_instruction_words() -> None:
+    tokens = extract_salient_query_tokens(
+        "Leg kort uit wat een eSIM is en vermeld alleen Voys-bronnen als onze kennisbank daar iets over zegt."
+    )
+
+    assert tokens == {"esim"}
+
+
+def test_salient_query_tokens_keep_tenant_entity_names() -> None:
+    assert extract_salient_query_tokens("Wat is Voys?") == {"voys"}
+
+
+def test_trusted_source_composition_does_not_cite_generic_voys_page_for_esim_answer() -> None:
+    composed = compose_answer_with_trusted_sources(
+        (
+            "Een eSIM is een digitale simkaart die direct in je toestel is "
+            "ingebouwd en niet fysiek wisselt. Je activeert een mobiel "
+            "abonnement erop via software op je mobiele telefoon."
+        ),
+        [
+            {
+                "label": "1",
+                "title": "Overige problemen",
+                "url": "https://help.voys.nl/overige-problemen",
+                "evidence_ids": ["E1"],
+                "relevance_score": 0.2509,
+            },
+        ],
+        query_text=(
+            "Leg kort uit wat een eSIM is en vermeld alleen Voys-bronnen "
+            "als onze kennisbank daar iets over zegt."
+        ),
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "source_url": "https://help.voys.nl/overige-problemen",
+                "title": "Overige problemen",
+                "text": (
+                    "Je hoort dit bericht als je gespreksbevestiging hebt "
+                    "ingeschakeld voor je mobiele telefoon. Zo voorkom je dat "
+                    "je klant op je mobiele voicemail belandt."
+                ),
+                "reranker_score": 0.2509,
+            }
+        ],
+        retrieval_confidence_band="low",
+    )
+
+    assert composed.sources == []
+    assert composed.decision["retrieval_confidence_band"] == "low"
+    assert composed.decision["salient_query_tokens"] == ["esim"]
+    assert composed.decision["query_support_tokens"] == []
+    assert composed.decision["rejected"][0]["title"] == "Overige problemen"
+    assert composed.decision["rejected"][0]["reason"] == "query_not_supported"
+
+
+def test_trusted_source_composition_keeps_high_score_cross_language_source() -> None:
+    composed = compose_answer_with_trusted_sources(
+        "Open Admin > Users, click Invite, enter the work email, and pick a starting role.",
+        [
+            {
+                "label": "1",
+                "title": "Invite and remove people",
+                "url": "https://docs.getklai.com/invite-and-remove-people",
+                "evidence_ids": ["E1"],
+                "relevance_score": 0.92,
+            },
+            {
+                "label": "2",
+                "title": "Gebruiker toevoegen",
+                "url": "https://docs.getklai.com/gebruiker-toevoegen",
+                "evidence_ids": ["E2"],
+                "relevance_score": 0.21,
+            },
+        ],
+        query_text="Hoe voeg ik een nieuwe gebruiker toe?",
+        evidence_chunks=[
+            {
+                "evidence_id": "E1",
+                "source_url": "https://docs.getklai.com/invite-and-remove-people",
+                "text": "Open Admin > Users, click Invite, enter an email, and choose a role.",
+                "reranker_score": 0.92,
+            },
+            {
+                "evidence_id": "E2",
+                "source_url": "https://docs.getklai.com/gebruiker-toevoegen",
+                "text": "Een gebruiker toevoegen kan via beheerdersinstellingen.",
+                "reranker_score": 0.21,
+            },
+        ],
+    )
+
+    assert composed.sources == [
+        {
+            "label": "1",
+            "title": "Invite and remove people",
+            "url": "https://docs.getklai.com/invite-and-remove-people",
+        }
+    ]
+    assert composed.decision["selected"][0]["query_score"] == 0
+    assert composed.decision["selected"][0]["required_query_score"] == 0
+    rejected = {item["title"]: item["reason"] for item in composed.decision["rejected"]}
+    assert rejected["Gebruiker toevoegen"] == "answer_not_supported"
 
 
 def test_trusted_source_composition_keeps_simple_answers_to_best_source() -> None:
