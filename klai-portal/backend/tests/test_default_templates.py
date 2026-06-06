@@ -195,15 +195,17 @@ def test_defaults_constant_has_non_empty_prompt_text():
         assert len(tpl["prompt_text"]) <= 8000
 
 
-def test_post_deploy_backfill_is_explicit_and_exact_match_only():
-    sql = Path("alembic/versions/post_deploy_c7cfe1d2_default_instruction_templates_v2.sql").read_text()
+def test_post_deploy_backfill_syncs_all_tenant_defaults_by_language():
+    sql = Path(
+        "alembic/versions/post_deploy_c7cfe1d2_default_instruction_templates_all_tenants.sql"
+    ).read_text()
 
-    assert "default_instruction_templates_v2_backfill" in sql
-    assert "t.name = d.old_name" in sql
-    assert "t.description = d.old_description" in sql
-    assert "t.prompt_text = d.old_prompt_text" in sql
-    assert "t.created_by = 'system'" in sql
-    assert "Your task is to summarize" not in sql
+    assert "default_instruction_templates_all_tenants_sync" in sql
+    assert "portal_orgs AS o" in sql
+    assert "d.language = COALESCE(NULLIF(o.default_language, ''), 'nl')" in sql
+    assert "t.slug IN ('klantenservice', 'formeel', 'creatief', 'samenvatter')" in sql
+    assert "created_by = 'system'" in sql
+    assert "Your task is to summarize" in sql
     assert "Je taak is samenvatten, niet herschrijven of aanvullen." in sql
 
 
