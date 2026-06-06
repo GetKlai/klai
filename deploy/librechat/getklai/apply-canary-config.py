@@ -4,7 +4,7 @@
 This intentionally does not replace the whole file: the getklai tenant has
 host-local model specs and labels. The canary only needs to pin the v0.8.6
 config schema version and set an explicit non-default agent capability
-allowlist so Skills/Subagents/Code/Artifacts cannot fall back to upstream
+allowlist so Skills/Subagents/Code cannot fall back to upstream
 defaults.
 """
 
@@ -20,6 +20,8 @@ CAPABILITY_BLOCK = [
     "    capabilities:\n",
     "      - 'deferred_tools'\n",
     "      - 'web_search'\n",
+    "      - 'artifacts'\n",
+    "      - 'ocr'\n",
     "      - 'tools'\n",
 ]
 

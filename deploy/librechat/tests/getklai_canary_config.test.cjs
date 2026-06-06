@@ -39,12 +39,12 @@ const patched = fs.readFileSync(configPath, 'utf8');
 assert.match(patched, /^version: 1\.3\.12$/m);
 assert.match(
   patched,
-  /endpoints:\n  openAI:\n    disabled: true\n  agents:\n    capabilities:\n      - 'deferred_tools'\n      - 'web_search'\n      - 'tools'\n  custom:/,
+  /endpoints:\n  openAI:\n    disabled: true\n  agents:\n    capabilities:\n      - 'deferred_tools'\n      - 'web_search'\n      - 'artifacts'\n      - 'ocr'\n      - 'tools'\n  custom:/,
 );
 const capabilitiesBlock = patched.match(/  agents:\n    capabilities:\n(?:      - .+\n)+/)?.[0] ?? '';
 assert.doesNotMatch(
   capabilitiesBlock,
-  /execute_code|artifacts|skills|subagents|file_search|context|chain|ocr/,
+  /execute_code|skills|subagents|file_search|context|chain/,
 );
 assert.equal(execFileSync('python3', [patcher, configPath], { encoding: 'utf8' }).trim(), 'unchanged');
 
