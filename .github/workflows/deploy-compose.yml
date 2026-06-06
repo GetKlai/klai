@@ -11,6 +11,8 @@ on:
       - 'deploy/searxng/settings.yml'             # SPEC-INFRA-CONFIG-SYNC-001 R3 — searxng search config
       - 'deploy/vexa/profiles.yaml'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — vexa runtime-api meeting-bot profiles
       - 'deploy/librechat/klai-entrypoint.sh'     # force light theme — synced before librechat-getklai recreate
+      - 'deploy/librechat/getklai/entrypoint.sh'  # getklai-only LibreChat client polish canary
+      - 'deploy/librechat/getklai/apply-canary-config.py'
       - 'deploy/librechat/getklai/patches/**'     # getklai-only LibreChat canary patches
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
       - 'deploy/scripts/**'                       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — deploy scripts synced to /opt/klai/scripts
@@ -70,7 +72,7 @@ jobs:
               deploy/searxng/settings.yml \
               deploy/vexa/profiles.yaml \
               deploy/librechat/klai-entrypoint.sh \
-              deploy/librechat/getklai/patches \
+              deploy/librechat/getklai \
               deploy/grafana/provisioning \
               deploy/scripts \
               deploy/systemd \
@@ -101,6 +103,8 @@ jobs:
 
             mkdir -p /opt/klai/librechat/getklai/patches
             rsync -a --delete deploy/librechat/getklai/patches/ /opt/klai/librechat/getklai/patches/
+            getklai_config_status=$(python3 deploy/librechat/getklai/apply-canary-config.py /opt/klai/librechat/getklai/librechat.yaml)
+            echo "getklai LibreChat config patch: $getklai_config_status"
 
             # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-5 + REQ-6: sync systemd
             # units. Activation requires sudo and is one-time per host —
@@ -221,7 +225,12 @@ jobs:
             # so the bind-mount source exists before (re)create — no empty-dir
             # race. Per-tenant (provisioning-managed) containers pick it up on
             # their next recreate via _start_librechat_container.
-            sync_and_recreate librechat-getklai deploy/librechat/klai-entrypoint.sh /opt/klai/librechat/klai-entrypoint.sh
+            sync_and_recreate librechat-getklai deploy/librechat/getklai/entrypoint.sh /opt/klai/librechat/getklai/entrypoint.sh
+
+            if [ "$getklai_config_status" = "changed" ]; then
+              echo "getklai LibreChat config changed; force-recreating librechat-getklai"
+              docker compose --project-directory /opt/klai up -d --force-recreate librechat-getklai
+            fi
 
             # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
             # git clone on a Linux runner usually preserves the execute bit,

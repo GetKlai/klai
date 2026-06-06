@@ -337,10 +337,11 @@ services:
     environment:
       REDIS_URI: ${REDIS_URI}
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      CUSTOM_FOOTER: ""
     volumes:
       - ./librechat/getklai/librechat.yaml:/app/librechat.yaml:ro
       - ./librechat/getklai/images:/app/client/public/images
-      - ./librechat/klai-entrypoint.sh:/klai-entrypoint.sh:ro
+      - ./librechat/getklai/entrypoint.sh:/klai-entrypoint.sh:ro
       # Persistent patches - survive image updates until fixed upstream
       - ./librechat/getklai/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
       - ./librechat/getklai/patches/share.js:/app/api/server/routes/share.js:ro
