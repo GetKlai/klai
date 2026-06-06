@@ -55,6 +55,8 @@ assert.match(
 assert.match(compose, /CUSTOM_FOOTER: ""/);
 assert.match(workflow, /deploy\/librechat\/getklai\/entrypoint\.sh/);
 assert.match(workflow, /apply-canary-config\.py \/opt\/klai\/librechat\/getklai\/librechat\.yaml/);
+assert.match(workflow, /clear_librechat_config_cache "configs:\*"/);
+assert.match(workflow, /force-recreating librechat-getklai/);
 assert.match(entrypoint, /klai-hide-librechat-footer-v1/);
 assert.match(entrypoint, /\[role="contentinfo"\]\{display:none!important\}/);
 
