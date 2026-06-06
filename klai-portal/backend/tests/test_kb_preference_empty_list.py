@@ -72,7 +72,7 @@ async def test_empty_kb_slugs_filter_round_trips_as_empty_list(monkeypatch):
     )
     # Skip the fire-and-forget Redis cache invalidation in tests.
     monkeypatch.setattr(
-        "app.api.app_account._invalidate_litellm_kb_cache",
+        "app.api.app_account.invalidate_kb_cache",
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(
@@ -112,7 +112,7 @@ async def test_null_kb_slugs_filter_remains_null(monkeypatch):
         AsyncMock(return_value=fake_user),
     )
     monkeypatch.setattr(
-        "app.api.app_account._invalidate_litellm_kb_cache",
+        "app.api.app_account.invalidate_kb_cache",
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(

@@ -12,13 +12,11 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
-import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.database import cross_org_session, get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackNotification, FeedbackSubmission
@@ -32,7 +30,7 @@ from app.platform_messaging.service import (
     mark_platform_message_thread_read,
     user_can_access_thread,
 )
-from app.services.litellm_cache import invalidate_templates
+from app.services.litellm_cache import invalidate_kb_cache, invalidate_templates
 
 logger = logging.getLogger(__name__)
 
@@ -58,29 +56,6 @@ async def _load_caller_user(perms: UserPermissions, db: AsyncSession) -> PortalU
             detail="Caller user not found",
         )
     return user
-
-
-async def _invalidate_litellm_kb_cache(org_id: int, librechat_user_id: str) -> None:
-    """Delete the LiteLLM version pointer key so the next LLM call fetches fresh KB prefs.
-
-    Fire-and-forget — failures are logged but never bubble up to the caller.
-    Key format mirrors klai_knowledge.py: kb_ver:{org_id}:{user_id}.
-    """
-    try:
-        r = aioredis.Redis(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            password=settings.redis_password or None,
-            socket_connect_timeout=1.0,
-        )
-        async with r:
-            await r.delete(f"kb_ver:{org_id}:{librechat_user_id}")
-    except Exception as exc:
-        logger.warning(
-            "KB pref: Redis cache invalidation failed (%s) — hook picks up within 30s",
-            exc,
-            exc_info=True,
-        )
 
 
 # -- Pydantic schemas ---------------------------------------------------------
@@ -866,9 +841,13 @@ async def patch_kb_preference(
     await db.commit()
 
     if user.librechat_user_id:
-        asyncio.get_running_loop().create_task(_invalidate_litellm_kb_cache(perms.org_id, user.librechat_user_id))
+        asyncio.get_running_loop().create_task(
+            invalidate_kb_cache(perms.zitadel_org_id, user.librechat_user_id)
+        )
         if active_templates_changed:
-            asyncio.get_running_loop().create_task(invalidate_templates(perms.org_id, user.librechat_user_id))
+            asyncio.get_running_loop().create_task(
+                invalidate_templates(perms.zitadel_org_id, user.librechat_user_id)
+            )
 
     return KBPreferenceOut(
         kb_retrieval_enabled=user.kb_retrieval_enabled,

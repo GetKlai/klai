@@ -273,13 +273,13 @@ async def create_template(
 
     # Cache invalidation.
     if template.scope == "org":
-        await invalidate_templates(perms.org_id)
+        await invalidate_templates(perms.zitadel_org_id)
     else:
         # Personal: only the creator's cache needs dropping.
         portal_user = await _load_portal_user_or_none(db, perms.user_id, perms.org_id)
         lc_uid = _librechat_user_id_or_none(portal_user)
         if lc_uid:
-            await invalidate_templates(perms.org_id, lc_uid)
+            await invalidate_templates(perms.zitadel_org_id, lc_uid)
 
     return _template_out(template)
 
@@ -371,12 +371,12 @@ async def update_template(
 
     # Any scope change, or an org-scope write, affects the whole org.
     if template.scope == "org" or previous_scope == "org":
-        await invalidate_templates(perms.org_id)
+        await invalidate_templates(perms.zitadel_org_id)
     else:
         portal_user = await _load_portal_user_or_none(db, perms.user_id, perms.org_id)
         lc_uid = _librechat_user_id_or_none(portal_user)
         if lc_uid:
-            await invalidate_templates(perms.org_id, lc_uid)
+            await invalidate_templates(perms.zitadel_org_id, lc_uid)
 
     return _template_out(template)
 
@@ -406,9 +406,9 @@ async def delete_template(
     )
 
     if scope == "org":
-        await invalidate_templates(perms.org_id)
+        await invalidate_templates(perms.zitadel_org_id)
     else:
         portal_user = await _load_portal_user_or_none(db, perms.user_id, perms.org_id)
         lc_uid = _librechat_user_id_or_none(portal_user)
         if lc_uid:
-            await invalidate_templates(perms.org_id, lc_uid)
+            await invalidate_templates(perms.zitadel_org_id, lc_uid)

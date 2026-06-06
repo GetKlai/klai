@@ -232,6 +232,7 @@ def make_perms(
     role: object = "admin",
     user_id: str = "uid-test",
     org_id: int = 101,
+    zitadel_org_id: str | None = None,
     org_slug: str = "voys",
     plan: str = "knowledge",
     seat_type: str | None = None,
@@ -285,6 +286,7 @@ def make_perms(
     return UserPermissions(
         user_id=user_id,
         org_id=org_id,
+        zitadel_org_id=(zitadel_org_id if zitadel_org_id is not None else f"zitadel-org-{org_id}"),
         org_slug=org_slug,
         role=role_enum,
         plan=plan,
