@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -87,5 +87,63 @@ describe('ChatConfigBar', () => {
     await waitFor(() => expect(screen.getByRole('radiogroup', { name: 'Mode' })).toBeTruthy())
     expect(screen.getByRole('radio', { name: 'Open' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'Strict' })).toBeTruthy()
+  })
+
+  it('does not show a mode change until the preference save returns', async () => {
+    let resolvePatch: (value: unknown) => void = () => {}
+    const patchDone = new Promise((resolve) => {
+      resolvePatch = resolve
+    })
+
+    apiFetchMock.mockImplementation((path: string, init?: { method?: string }) => {
+      if (path === '/api/app/account/kb-preference' && init?.method === 'PATCH') {
+        return patchDone
+      }
+      if (path === '/api/app/account/kb-preference') {
+        return Promise.resolve({
+          kb_retrieval_enabled: true,
+          kb_personal_enabled: true,
+          kb_slugs_filter: null,
+          kb_narrow: true,
+          kb_pref_version: 1,
+          active_template_ids: null,
+        })
+      }
+      if (path === '/api/app/knowledge-bases') {
+        return Promise.resolve({ knowledge_bases: [{ slug: 'klai-help', name: 'Klai Help' }] })
+      }
+      if (path === '/api/app/templates') return Promise.resolve([])
+      return Promise.reject(new Error(`Unexpected apiFetch: ${path}`))
+    })
+
+    render(
+      <Wrapper>
+        <ChatConfigBar />
+      </Wrapper>,
+    )
+
+    const open = await screen.findByRole('radio', { name: 'Open' })
+    const strict = screen.getByRole('radio', { name: 'Strict' })
+    expect(open.getAttribute('aria-checked')).toBe('false')
+    expect(strict.getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.click(open)
+
+    expect(open.getAttribute('aria-checked')).toBe('false')
+    expect(strict.getAttribute('aria-checked')).toBe('true')
+    await waitFor(() => expect((open as HTMLButtonElement).disabled).toBe(true))
+    expect((strict as HTMLButtonElement).disabled).toBe(true)
+
+    resolvePatch({
+      kb_retrieval_enabled: true,
+      kb_personal_enabled: true,
+      kb_slugs_filter: null,
+      kb_narrow: false,
+      kb_pref_version: 2,
+      active_template_ids: null,
+    })
+
+    await waitFor(() => expect(open.getAttribute('aria-checked')).toBe('true'))
+    expect(strict.getAttribute('aria-checked')).toBe('false')
   })
 })

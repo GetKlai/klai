@@ -78,16 +78,7 @@ export function ChatConfigBar() {
         method: 'PATCH',
         body: JSON.stringify(patch),
       }),
-    onMutate: async (patch) => {
-      await queryClient.cancelQueries({ queryKey: ['kb-preference'] })
-      const prev = queryClient.getQueryData<KBPref>(['kb-preference'])
-      if (prev) queryClient.setQueryData<KBPref>(['kb-preference'], { ...prev, ...patch })
-      return { prev }
-    },
     onSuccess: (data) => queryClient.setQueryData(['kb-preference'], data),
-    onError: (_e, _p, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData(['kb-preference'], ctx.prev)
-    },
   })
 
   function toggleSlug(slug: string) {
@@ -253,11 +244,13 @@ export function ChatConfigBar() {
         <div
           role="radiogroup"
           aria-label={m.chatbar_mode_label()}
-          className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-0.5"
+          aria-busy={mutation.isPending}
+          className={`inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-0.5 ${mutation.isPending ? 'opacity-70' : ''}`}
         >
           <button
             type="button"
             onClick={() => { if (pref.kb_narrow) mutation.mutate({ kb_narrow: false }) }}
+            disabled={mutation.isPending}
             role="radio"
             aria-checked={!pref.kb_narrow}
             className={
@@ -271,6 +264,7 @@ export function ChatConfigBar() {
           <button
             type="button"
             onClick={() => { if (!pref.kb_narrow) mutation.mutate({ kb_narrow: true }) }}
+            disabled={mutation.isPending}
             role="radio"
             aria-checked={pref.kb_narrow}
             className={
