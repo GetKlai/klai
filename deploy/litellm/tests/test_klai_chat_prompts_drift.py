@@ -6,10 +6,9 @@ because the LiteLLM container is a stock upstream image without a path-dep
 mechanism. This test fails when the canonical library changes but the
 vendored copy isn't updated to match.
 
-Same rationale as ``test_klai_service_auth_drift.py``. The plan to remove
-the vendored copy entirely is the same: build a custom litellm Dockerfile
-that ``pip install``s ``klai-chat-prompts`` and delete this test along with
-``klai_chat_prompts.py``.
+The plan to remove the vendored copy entirely: build a custom litellm
+Dockerfile that ``pip install``s ``klai-chat-prompts`` and delete this test
+along with ``klai_chat_prompts.py``.
 
 Implementation note
 -------------------
