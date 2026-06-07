@@ -696,16 +696,6 @@ def _build_template_instructions_block(instructions: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def _chunk_title(chunk: dict[str, Any]) -> str:
-    metadata = chunk.get("metadata")
-    title = chunk.get("title")
-    if not title and isinstance(metadata, dict):
-        title = metadata.get("title")
-    if isinstance(title, str) and title.strip():
-        return title.strip()
-    return "Source"
-
-
 def _split_if_rendered_stop_item(
     item: object, stats: "_KbCitationRenderStats"
 ) -> object | None:
