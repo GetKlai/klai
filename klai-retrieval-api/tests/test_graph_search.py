@@ -69,6 +69,25 @@ async def test_search_success():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["q", "中", "café"])
+async def test_search_allows_unicode_alnum_queries(query):
+    """Valid one-token and non-ASCII queries must still reach Graphiti."""
+    mock_graphiti = AsyncMock()
+    mock_graphiti.search = AsyncMock(return_value=[])
+
+    with (
+        patch("retrieval_api.services.graph_search.settings") as mock_settings,
+        patch("retrieval_api.services.graph_search._get_graphiti", return_value=mock_graphiti),
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graph_search_timeout = 5.0
+        result = await graph_search.search(query, "org-1", top_k=10)
+
+    assert result == []
+    mock_graphiti.search.assert_called_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("query", ["", "   ", "?!()"])
 async def test_search_skips_queries_without_searchable_text(query):
     """Graphiti can turn empty text into invalid FalkorDB full-text syntax."""
@@ -81,6 +100,27 @@ async def test_search_skips_queries_without_searchable_text(query):
 
     assert result == []
     mock_get_graphiti.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_search_skips_graphiti_empty_fulltext_syntax_error():
+    mock_graphiti = AsyncMock()
+    mock_graphiti.search = AsyncMock(
+        side_effect=RuntimeError('RediSearch syntax error near "(@group_id:\\"org-1\\") ()"')
+    )
+
+    with (
+        patch("retrieval_api.services.graph_search.settings") as mock_settings,
+        patch("retrieval_api.services.graph_search._get_graphiti", return_value=mock_graphiti),
+        patch("retrieval_api.services.graph_search.logger") as mock_logger,
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graph_search_timeout = 5.0
+        result = await graph_search.search("①②", "org-1")
+
+    assert result == []
+    mock_logger.info.assert_called_once_with("graph_search_skipped_empty_query", org_id="org-1")
+    mock_logger.warning.assert_not_called()
 
 
 @pytest.mark.asyncio

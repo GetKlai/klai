@@ -85,7 +85,10 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
             timeout_s=settings.graph_search_timeout,
         )
         return []
-    except Exception:
+    except Exception as exc:
+        if _is_empty_fulltext_query_error(exc):
+            logger.info("graph_search_skipped_empty_query", org_id=org_id)
+            return []
         # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
         # traceback that the previous `error=str(exc)` dropped (TRY401).
         logger.warning("graph_search_failed", org_id=org_id, exc_info=True)
@@ -94,6 +97,11 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
 
 def _has_searchable_text(query: str) -> bool:
     return any(ch.isalnum() for ch in query)
+
+
+def _is_empty_fulltext_query_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "()" in message and "syntax" in message.lower()
 
 
 def _convert_results(results: list, top_k: int) -> list[dict]:
