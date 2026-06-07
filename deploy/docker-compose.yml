@@ -246,11 +246,14 @@ services:
       - ./litellm/klai_kb_citation_render.py:/app/klai_kb_citation_render.py:ro
       - ./litellm/klai_kb_confidence_policy.py:/app/klai_kb_confidence_policy.py:ro
       - ./litellm/klai_kb_context_prompt.py:/app/klai_kb_context_prompt.py:ro
+      - ./litellm/klai_kb_llm_safety.py:/app/klai_kb_llm_safety.py:ro
+      - ./litellm/klai_kb_portal_client.py:/app/klai_kb_portal_client.py:ro
       - ./litellm/klai_kb_query_rewrite.py:/app/klai_kb_query_rewrite.py:ro
       - ./litellm/klai_kb_render_policy.py:/app/klai_kb_render_policy.py:ro
       - ./litellm/klai_kb_request_context.py:/app/klai_kb_request_context.py:ro
       - ./litellm/klai_kb_safety_filter.py:/app/klai_kb_safety_filter.py:ro
       - ./litellm/klai_kb_scope_policy.py:/app/klai_kb_scope_policy.py:ro
+      - ./litellm/klai_kb_system_prompt.py:/app/klai_kb_system_prompt.py:ro
       - ./litellm/klai_kb_traceability.py:/app/klai_kb_traceability.py:ro
       - ./litellm/klai_kb_urls.py:/app/klai_kb_urls.py:ro
       - ./litellm/klai_litellm_response.py:/app/klai_litellm_response.py:ro
