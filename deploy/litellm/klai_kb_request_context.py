@@ -160,6 +160,16 @@ def tool_description(tool: object) -> str:
     return " ".join(str(description) for description in descriptions if description)
 
 
+def is_web_search_tool(tool: object) -> bool:
+    """Return True when a single tool entry advertises web search."""
+    name = tool_name(tool)
+    if name and WEB_SEARCH_TOOL_RE.search(name):
+        return True
+    if name.strip().lower() == "search" and "web" in tool_description(tool).lower():
+        return True
+    return False
+
+
 def request_has_web_search(data: dict[str, Any]) -> bool:
     """Return True when this LiteLLM request advertises Web Search."""
     metadata = request_metadata(data)
@@ -178,13 +188,46 @@ def request_has_web_search(data: dict[str, Any]) -> bool:
     tools = data.get("tools")
     if not isinstance(tools, list):
         return False
-    for tool in tools:
-        name = tool_name(tool)
-        if name and WEB_SEARCH_TOOL_RE.search(name):
-            return True
-        if name.strip().lower() == "search" and "web" in tool_description(tool).lower():
-            return True
-    return False
+    return any(is_web_search_tool(tool) for tool in tools)
+
+
+def strip_web_search_tools(data: dict[str, Any]) -> int:
+    """Remove web-search affordances from a LiteLLM request in place.
+
+    Strict KB mode (``kb_narrow=True``) promises answers grounded ONLY in the
+    knowledge base. The web-search tool is a LibreChat surface the KB hook does
+    not otherwise gate; leaving it in ``data["tools"]`` lets the model call it
+    and fold live web results into a Strict answer. That made "web is not an
+    answer source in Strict" depend on the model obeying a prompt — prompt-hope,
+    not enforcement. Removing the tool (and the OpenAI-style
+    ``web_search_options``) makes it deterministic for the tool-calling path.
+
+    NOTE: web results that LibreChat injects as plain message *content* (not as
+    a tool the model calls) are NOT removed here — that is a LibreChat-side
+    concern and must be gated at the frontend (do not offer Web while Strict is
+    selected). See ``custom_router`` for the content-injection signal.
+
+    Returns the number of web affordances removed (0 when none were present).
+    """
+    removed = 0
+
+    tools = data.get("tools")
+    if isinstance(tools, list):
+        kept = [tool for tool in tools if not is_web_search_tool(tool)]
+        if len(kept) != len(tools):
+            removed += len(tools) - len(kept)
+            if kept:
+                data["tools"] = kept
+            else:
+                # An empty ``tools`` list is rejected by some providers; drop
+                # the key entirely so no tools are advertised.
+                data.pop("tools", None)
+
+    if isinstance(data.get("web_search_options"), dict):
+        data.pop("web_search_options", None)
+        removed += 1
+
+    return removed
 
 
 def general_runtime_capabilities_block(data: dict[str, Any]) -> str:

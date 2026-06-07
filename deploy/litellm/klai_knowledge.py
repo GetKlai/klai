@@ -79,6 +79,9 @@ from klai_kb_answer_policy import (
     strict_no_kb_scope_notice as _strict_no_kb_scope_notice,
     strict_kb_unavailable_message as _strict_kb_unavailable_message,
 )
+from klai_chat_prompts import (
+    no_citable_sources_message as _no_citable_sources_message,
+)
 from klai_kb_context_prompt import (
     build_kb_context_prompt as _build_kb_context_prompt,
 )
@@ -115,6 +118,7 @@ from klai_kb_request_context import (
     request_metadata as _request_metadata,
     sanitize_assistant_history_messages as _sanitize_assistant_history_messages,
     strip_klai_backend_footer_from_text as _strip_klai_backend_footer_from_text,
+    strip_web_search_tools as _strip_web_search_tools,
     truthy as _truthy,
 )
 from klai_kb_urls import (
@@ -1072,20 +1076,38 @@ class KlaiKnowledgeHook(CustomLogger):
         # Feature, KB scope, identity, and request-mode policy.
         feature = await _get_kb_feature(librechat_user_id, org_id, cache)
         chat_retrieval_policy = _resolve_chat_retrieval_policy(feature)
+
+        # Strict mode (kb_narrow=True) is KB-only. The web-search tool is a
+        # LibreChat affordance the KB hook does not otherwise gate; strip it
+        # here so "web is not an answer source in Strict" is code-enforced
+        # rather than left to the model obeying a prompt notice. (Web results
+        # LibreChat injects as plain message content are a separate,
+        # frontend-gated concern — see strip_web_search_tools.)
+        if chat_retrieval_policy.kb_narrow:
+            web_tools_removed = _strip_web_search_tools(data)
+            if web_tools_removed:
+                logger.info(
+                    "strict_mode_web_tools_stripped org_id=%s user_id=%s removed=%d",
+                    org_id,
+                    librechat_user_id,
+                    web_tools_removed,
+                )
+
         if chat_retrieval_policy.prompt_mode == "strict_no_kb":
             if chat_retrieval_policy.user_visible_failure_reason is None:
                 raise RuntimeError("strict KB chat retrieval policy has no reason")
-            _prepend_system_prefix(
-                messages,
-                _compose_kb_mode_chat_prefix(
-                    True,
-                    templates_block,
-                    _strict_no_kb_scope_notice(
-                        chat_retrieval_policy.user_visible_failure_reason
-                    ),
-                ),
+            # Deterministic refusal. Strict mode with no KB in scope has nothing
+            # to ground on, so bypass the model entirely via ``mock_response``
+            # instead of injecting a prompt notice and trusting the model to
+            # refuse. A prompt-only notice let a non-compliant model answer from
+            # general knowledge — exactly the Strict-KB-only leak this prevents.
+            logger.info(
+                "strict_no_kb_deterministic_refusal org_id=%s user_id=%s reason=%s",
+                org_id,
+                librechat_user_id,
+                chat_retrieval_policy.user_visible_failure_reason,
             )
-            data["messages"] = messages
+            data["mock_response"] = _no_citable_sources_message(query)
             return data
         if chat_retrieval_policy.prompt_mode == "general":
             _prepend_system_prefix(
@@ -1108,12 +1130,28 @@ class KlaiKnowledgeHook(CustomLogger):
                     librechat_user_id,
                     org_id,
                 )
+            if chat_retrieval_policy.kb_narrow:
+                # Strict + KB unavailable: deterministic refusal, model
+                # bypassed. Do NOT inject a prompt notice and trust the model to
+                # refuse — return the canned strict-unavailable message directly.
+                logger.info(
+                    "strict_unavailable_deterministic_refusal "
+                    "org_id=%s user_id=%s reason=%s",
+                    org_id,
+                    librechat_user_id,
+                    failure_reason,
+                )
+                data["mock_response"] = _strict_kb_unavailable_message(query)
+                return data
+            # Open + KB unavailable: keep the prompt notice so the model answers
+            # from general knowledge WITH an explicit warning — that is the Open
+            # contract, not a leak.
             kb_unavailable_notice = _kb_retrieval_failure_notice(
-                chat_retrieval_policy.kb_narrow,
+                False,
                 failure_reason,
             )
             prefix = _compose_kb_mode_chat_prefix(
-                chat_retrieval_policy.kb_narrow,
+                False,
                 templates_block,
                 kb_unavailable_notice,
             )

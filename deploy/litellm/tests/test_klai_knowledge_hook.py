@@ -1052,13 +1052,14 @@ class TestKlaiKnowledgeHookSlugsTriState:
                 _make_user_api_key(), cache, data, "completion"
             )
 
-        system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
-        assert system_msg is not None
+        # Strict + no KB scope now refuses DETERMINISTICALLY (model bypassed via
+        # mock_response) rather than injecting a prompt-only notice that a
+        # non-compliant model could ignore and answer from general knowledge.
         assert mc.post.call_count == 0
-        assert "no knowledge base evidence is available" in system_msg["content"]
-        assert "technical reason: kb-scopes-disabled" in system_msg["content"]
-        assert "TEMPORARILY UNAVAILABLE" not in system_msg["content"]
-        assert "identity-resolve-failed" not in system_msg["content"]
+        assert data.get("mock_response")
+        assert isinstance(data["mock_response"], str)
+        system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
+        assert system_msg is None
 
     def test_search_knowledge_tool_is_not_treated_as_web_search(self, monkeypatch):
         """KB/MCP search tools must not trip the web-search runtime override."""
@@ -5909,12 +5910,19 @@ class TestKlaiKnowledgeHookOpenMode:
             "Don't guess. Don't fill the gap with general knowledge." not in sys_content
         )
 
-    def _assert_strict_no_kb_refusal(self, sys_content: str, reason: str) -> None:
-        assert "You are Klai AI, a knowledge assistant" in sys_content
-        assert "The user selected Strict mode" in sys_content
-        assert "do not answer from general knowledge" in sys_content
-        assert reason in sys_content
-        assert "general-purpose assistant" not in sys_content
+    def _assert_strict_no_kb_refusal(self, result: dict, reason: str) -> None:
+        # Strict + no KB scope refuses DETERMINISTICALLY: the model is bypassed
+        # via mock_response (code-enforced), not via a prompt notice the model
+        # could ignore. ``reason`` is recorded in logs, not in user output.
+        assert result.get("mock_response"), (
+            f"expected a deterministic mock_response refusal (reason={reason})"
+        )
+        assert isinstance(result["mock_response"], str)
+        assert result["mock_response"].strip()
+        # No general-knowledge / general-purpose prompt leaked into the turn.
+        for msg in result.get("messages", []):
+            if msg.get("role") == "system":
+                assert "general-purpose assistant" not in msg.get("content", "")
 
     @pytest.fixture
     def _kb_chunks(self) -> list[dict]:
@@ -6061,9 +6069,7 @@ class TestKlaiKnowledgeHookOpenMode:
             _make_user_api_key(), cache, data, "completion"
         )
 
-        self._assert_strict_no_kb_refusal(
-            self._system_msg(result), "kb-feature-disabled"
-        )
+        self._assert_strict_no_kb_refusal(result, "kb-feature-disabled")
 
     @pytest.mark.asyncio
     async def test_kb_retrieval_disabled_uses_general_prompt_not_grounded(
@@ -6108,9 +6114,7 @@ class TestKlaiKnowledgeHookOpenMode:
                 _make_user_api_key(), cache, data, "completion"
             )
 
-        self._assert_strict_no_kb_refusal(
-            self._system_msg(result), "kb-retrieval-disabled"
-        )
+        self._assert_strict_no_kb_refusal(result, "kb-retrieval-disabled")
         mock_client.post.assert_not_called()
 
     @pytest.mark.asyncio
@@ -6139,9 +6143,7 @@ class TestKlaiKnowledgeHookOpenMode:
                 _make_user_api_key(), cache, data, "completion"
             )
 
-        self._assert_strict_no_kb_refusal(
-            self._system_msg(result), "kb-scopes-disabled"
-        )
+        self._assert_strict_no_kb_refusal(result, "kb-scopes-disabled")
         mock_client.post.assert_not_called()
 
     @pytest.mark.asyncio
@@ -6793,3 +6795,246 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         meta = result.get("metadata", {}).get("_klai_kb_meta")
         assert meta is not None
         assert meta["no_citable_sources"] is False
+
+
+class TestStrictModeCodeEnforcement:
+    """Strict mode (kb_narrow) must enforce KB-only in CODE, not via prompt-hope.
+
+    Pins the "code > prompt" contract for the two Strict branches that used to
+    rely on the model obeying a system-prompt notice:
+      * strict_no_kb / strict_unavailable -> deterministic ``mock_response``
+        refusal (model bypassed entirely, so a general-knowledge answer can
+        never leak through).
+      * Open-mode unavailable keeps its general-knowledge fallback prompt.
+    And the Strict web-search firewall:
+      * Strict strips the web-search tool so the web cannot become an answer
+        source; Open keeps it.
+    """
+
+    def test_strip_web_search_tools_removes_web_keeps_others(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        data = {
+            "tools": [
+                {"type": "function", "function": {"name": "web_search"}},
+                {"type": "function", "function": {"name": "search_knowledge"}},
+            ],
+            "web_search_options": {"foo": 1},
+        }
+        removed = mod._strip_web_search_tools(data)
+        assert removed >= 1
+        names = [t["function"]["name"] for t in data["tools"]]
+        assert names == ["search_knowledge"]
+        assert "web_search_options" not in data
+
+    def test_strip_web_search_tools_noop_when_no_web(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        data = {
+            "tools": [{"type": "function", "function": {"name": "search_knowledge"}}]
+        }
+        assert mod._strip_web_search_tools(data) == 0
+        assert len(data["tools"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_strict_no_kb_uses_deterministic_mock_response(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+                "kb_narrow": True,
+                "version": 0,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "Wat zegt de kennisbank?"}],
+        }
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+        assert mc.post.call_count == 0  # no retrieval when no KB in scope
+        assert result["mock_response"]  # model bypassed -> deterministic refusal
+        assert isinstance(result["mock_response"], str)
+        system_msg = next(
+            (m for m in data["messages"] if m.get("role") == "system"), None
+        )
+        # No prompt-only notice that a non-compliant model could ignore.
+        assert (
+            system_msg is None
+            or "general knowledge" not in system_msg.get("content", "").lower()
+        )
+
+    @pytest.mark.asyncio
+    async def test_strict_unavailable_identity_fail_uses_deterministic_mock_response(
+        self, monkeypatch
+    ):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": True,
+                "version": 0,
+                "zitadel_user_id": None,
+            }
+        )
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "What do our policies say?"}],
+        }
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+        assert mc.post.call_count == 0  # identity unresolved -> no retrieval
+        assert result["mock_response"]
+        assert "knowledge" in result["mock_response"].lower()
+
+    @pytest.mark.asyncio
+    async def test_open_unavailable_identity_fail_keeps_general_fallback(
+        self, monkeypatch
+    ):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": False,
+                "version": 0,
+                "zitadel_user_id": None,
+            }
+        )
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "What do our policies say?"}],
+        }
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+        # Open mode must NOT hard-refuse: it keeps the general-knowledge prompt.
+        assert "mock_response" not in result
+        system_msg = next(
+            (m for m in data["messages"] if m.get("role") == "system"), None
+        )
+        assert system_msg is not None
+        assert "Answer using your general knowledge" in system_msg["content"]
+
+    @pytest.mark.asyncio
+    async def test_strict_mode_strips_web_search_tool_end_to_end(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+                "kb_narrow": True,
+                "version": 0,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "Wat zegt de kennisbank?"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the live web.",
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search_knowledge",
+                        "description": "Search KB chunks.",
+                    },
+                },
+            ],
+        }
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+        names = [t.get("function", {}).get("name") for t in data.get("tools", [])]
+        assert "web_search" not in names  # Strict: web cannot be a source
+        assert "search_knowledge" in names  # KB/MCP tools preserved
+
+    @pytest.mark.asyncio
+    async def test_open_mode_keeps_web_search_tool(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+                "kb_narrow": False,
+                "version": 0,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "Wat doet https://example.com?"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the live web.",
+                    },
+                }
+            ],
+        }
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+        names = [t.get("function", {}).get("name") for t in data.get("tools", [])]
+        assert "web_search" in names  # Open mode keeps web available
