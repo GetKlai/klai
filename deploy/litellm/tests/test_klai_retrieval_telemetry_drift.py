@@ -3,7 +3,7 @@ and the canonical ``klai-libs/retrieval-telemetry/klai_retrieval_telemetry/_emit
 
 SPEC-MCP-RETRIEVAL-001 Phase 1. The vendored copy exists because the LiteLLM
 container is a stock upstream image without a path-dep mechanism, mirroring
-the pattern from ``klai_chat_prompts.py`` and ``klai_service_auth.py``.
+the pattern from ``klai_chat_prompts.py``.
 
 Phase D plan: replace the vendored file with a proper ``pip install`` of
 ``klai-retrieval-telemetry`` in a custom litellm Dockerfile, and delete this
