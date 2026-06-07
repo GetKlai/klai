@@ -44,6 +44,15 @@ from app.services.partner_chat import (
     widget_input_safety_violation,
 )
 from app.services.partner_rate_limit import check_rate_limit
+from app.services.partner_sse import (
+    _extract_assistant_text_and_sources,
+    _parse_audit_sse_chunk,
+)
+from app.services.partner_support import (
+    _mapping,
+    _message_payload,
+    _session_payload,
+)
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.retrieval_log import find_correlated_log, write_retrieval_log
@@ -60,6 +69,7 @@ from app.services.widget_handoff import (
     send_handoff_visitor_message,
     start_hubspot_handoff,
 )
+from app.services.widget_theme import _merge_css_variables
 
 logger = structlog.get_logger()
 
@@ -370,109 +380,10 @@ async def _audit_streaming_wrapper(
             task.add_done_callback(_pending.discard)
 
 
-def _parse_audit_sse_chunk(chunk: bytes) -> tuple[str | None, list[dict] | None]:
-    """Pull ``delta.content`` text and ``delta.sources`` list out of one
-    SSE ``data: …\\n\\n`` block. Returns (text, sources) — either side
-    may be None when the chunk doesn't carry that field."""
-    text_part: str | None = None
-    src_part: list[dict] | None = None
-    for raw in chunk.split(b"\n"):
-        if not raw.startswith(b"data: "):
-            continue
-        payload = raw[6:].strip()
-        if payload in (b"", b"[DONE]"):
-            continue
-        try:
-            event = json.loads(payload)
-        except json.JSONDecodeError:
-            continue
-        delta = (event.get("choices") or [{}])[0].get("delta") or {}
-        if isinstance(delta.get("content"), str):
-            text_part = (text_part or "") + delta["content"]
-        srcs = delta.get("sources")
-        if isinstance(srcs, list):
-            src_part = [s for s in srcs if isinstance(s, dict)]
-    return text_part, src_part
-
-
-def _extract_assistant_text_and_sources(
-    result: Any,
-) -> tuple[str, list[dict] | None]:
-    """Pull the assistant message + sources out of a non-streaming
-    chat-completions result (a dict or Pydantic-shaped object)."""
-    payload: dict[str, Any]
-    if hasattr(result, "model_dump"):
-        payload = result.model_dump()
-    elif isinstance(result, dict):
-        payload = result
-    else:
-        return "", None
-    choices = payload.get("choices") or []
-    if not choices:
-        return "", None
-    message = choices[0].get("message") or {}
-    content = str(message.get("content") or "")
-    sources_raw = message.get("sources")
-    sources = [s for s in sources_raw if isinstance(s, dict)] if isinstance(sources_raw, list) else None
-    return content, sources
-
-
 def _support_user_hash(auth: PartnerAuthContext, hubspot_user_id: str | None) -> str:
     """Stable private key for one support rep inside one integration session."""
     raw_user = hubspot_user_id or "unknown"
     return hash_audit_value(f"{auth.org_id}:{auth.key_id}:hubspot:{raw_user}") or "unknown"
-
-
-def _mapping(row: Any) -> dict[str, Any]:
-    if row is None:
-        return {}
-    if isinstance(row, dict):
-        return row
-    if hasattr(row, "_mapping"):
-        return dict(row._mapping)
-    try:
-        return dict(row)
-    except (TypeError, ValueError):
-        return {}
-
-
-def _isoformat(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value.isoformat())
-
-
-def _message_payload(row: Any) -> dict[str, Any]:
-    data = _mapping(row)
-    return {
-        "id": str(data.get("id")),
-        "role": data.get("role"),
-        "content": data.get("content"),
-        "draft_body": data.get("draft_body"),
-        "sources": data.get("sources") or [],
-        "model_alias": data.get("model_alias"),
-        "completion_id": data.get("completion_id"),
-        "sequence": data.get("sequence"),
-        "created_at": _isoformat(data.get("created_at")),
-    }
-
-
-def _session_payload(row: Any, messages: list[dict[str, Any]]) -> dict[str, Any]:
-    data = _mapping(row)
-    return {
-        "id": str(data.get("id")),
-        "integration_type": data.get("integration_type"),
-        "hubspot_portal_id": data.get("hubspot_portal_id"),
-        "hubspot_ticket_id": data.get("hubspot_ticket_id"),
-        "contact_id": data.get("contact_id"),
-        "subject": data.get("subject_snapshot"),
-        "status": data.get("status"),
-        "message_count": data.get("message_count") or len(messages),
-        "created_at": _isoformat(data.get("created_at")),
-        "updated_at": _isoformat(data.get("updated_at")),
-        "last_message_at": _isoformat(data.get("last_message_at")),
-        "messages": messages,
-    }
 
 
 async def _fetch_support_messages(
@@ -1437,89 +1348,6 @@ async def append_knowledge(
 # helper centralises this contract so the GET and OPTIONS handlers can
 # never drift apart.
 # ---------------------------------------------------------------------------
-
-
-_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-
-
-def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-    """Convert ``#RRGGBB`` or ``#RGB`` to an (r, g, b) tuple of 0-255 ints."""
-    h = hex_color.lstrip("#")
-    if len(h) == 3:
-        h = "".join(c * 2 for c in h)
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
-def _readable_text_color(primary_hex: str) -> str:
-    """Return ``#191918`` for light primaries and ``#ffffff`` for dark
-    ones using the WCAG-relative-luminance formula.
-
-    Picked thresholds match the WCAG 2.x AA cutoff (~0.179): primaries
-    brighter than that get the dark Klai foreground; darker primaries
-    get pure white. Without this the bubble icon, send-arrow, and user
-    message text inherit ``--klai-primary-text-color: var(--klai-text-color)``
-    (dark) on every brand colour — illegible the moment an admin picks a
-    dark hex like #2b32fd or any deep brown.
-    """
-
-    def _channel(c: int) -> float:
-        s = c / 255
-        return s / 12.92 if s <= 0.03928 else ((s + 0.055) / 1.055) ** 2.4
-
-    r, g, b = _hex_to_rgb(primary_hex)
-    lum = 0.2126 * _channel(r) + 0.7152 * _channel(g) + 0.0722 * _channel(b)
-    return "#191918" if lum > 0.179 else "#ffffff"
-
-
-def _merge_css_variables(widget_config: dict) -> dict[str, str]:
-    """Translate stored widget-config fields into CSS custom properties
-    the embed script (klai-chat.js) applies inside its Shadow DOM.
-
-    The admin "Brand kleur" field is stored as ``primary_color`` (a hex
-    string). The widget script only reads ``css_variables`` for per-widget
-    overrides — without this translation step the configured brand colour
-    silently never reaches the widget. Any keys already in
-    ``css_variables`` win over the derived ones so a power-user can still
-    override granularly.
-
-    Beside the colour itself we derive ``--klai-primary-text-color`` from
-    its luminance so the icon / arrow / user-message text rendered on top
-    of the primary surface stays legible on any brand hex the admin picks.
-
-    Validation: ``primary_color`` must match ``#RRGGBB`` or ``#RGB``.
-    Anything else (empty, invalid, attempted CSS injection) is dropped
-    silently so a malformed admin field can never poison the stylesheet.
-    """
-    css_vars: dict[str, str] = {}
-    if widget_config.get("theme") == "dark":
-        css_vars.update(
-            {
-                "--klai-text-color": "#fffef2",
-                "--klai-text-muted": "#fffef299",
-                "--klai-background-color": "#191918",
-                "--klai-card-color": "#27251f",
-                "--klai-border-color": "#3a3831",
-            }
-        )
-
-    if widget_config.get("widget_position") == "left":
-        css_vars["--klai-widget-left"] = "20px"
-        css_vars["--klai-widget-right"] = "auto"
-    elif widget_config.get("widget_position") == "right":
-        css_vars["--klai-widget-left"] = "auto"
-        css_vars["--klai-widget-right"] = "20px"
-
-    primary = widget_config.get("primary_color")
-    if isinstance(primary, str) and _HEX_COLOR_RE.match(primary):
-        css_vars["--klai-primary-color"] = primary
-        css_vars["--klai-primary-text-color"] = _readable_text_color(primary)
-
-    overrides = widget_config.get("css_variables") or {}
-    if isinstance(overrides, dict):
-        for key, value in overrides.items():
-            if isinstance(key, str) and isinstance(value, str):
-                css_vars[key] = value
-    return css_vars
 
 
 def _widget_cors_headers(origin: str, *, preflight: bool) -> dict[str, str]:
