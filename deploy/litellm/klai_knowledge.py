@@ -1350,6 +1350,47 @@ class KlaiKnowledgeHook(CustomLogger):
 
         retrieval_ms = int((time.monotonic() - t0) * 1000)
 
+        if kb_narrow and result.get("retrieval_bypassed"):
+            logger.error(
+                "KlaiKnowledgeHook: strict KB retrieval returned retrieval_bypassed=True "
+                "org_id=%s user_id=%s — failing closed",
+                org_id,
+                user_id,
+            )
+            strict_bypass_failure = "strict_retrieval_bypassed"
+            kb_unavailable_notice = _kb_retrieval_failure_notice(
+                kb_narrow, strict_bypass_failure
+            )
+            prefix = _compose_kb_mode_chat_prefix(
+                kb_narrow, templates_block, kb_unavailable_notice
+            )
+            _prepend_system_prefix(messages, prefix)
+            data["messages"] = messages
+            original_stream = data.get("stream")
+            render_strategy = _select_kb_render_strategy(original_stream)
+            if render_strategy.force_non_streaming:
+                data["stream"] = False
+            answer_policy = KbAnswerPolicy(
+                state="retrieval_failure",
+                prompt_mode=chat_retrieval_policy.prompt_mode,
+                user_provided_content_context=user_provided_content_context,
+            )
+            data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
+                org_id=org_id,
+                user_id=user_id,
+                user_query=query,
+                retrieval_ms=retrieval_ms,
+                no_citable_sources=True,
+                no_citable_reason=strict_bypass_failure,
+                no_citable_message=_strict_kb_unavailable_message(query),
+                original_stream=original_stream,
+                render_mode=render_strategy.mode,
+                retrieval_failure=strict_bypass_failure,
+                kb_scope_mode=kb_scope_mode,
+                kbs_in_scope=kbs_in_scope,
+            )
+            return data
+
         # If the retrieval-gate determined no KB context is needed, skip injection.
         # Multilingual foundation still applies — REQ-10.
         if result.get("retrieval_bypassed"):

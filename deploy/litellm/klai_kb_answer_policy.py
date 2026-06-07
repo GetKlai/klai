@@ -40,6 +40,12 @@ KB_ANSWER_POLICY_STATES = (
     "zero_chunks",
     "chunks_present",
 )
+KB_ANSWER_POLICY_PROMPT_MODES = frozenset(
+    {
+        "open_kb",
+        "strict_kb",
+    }
+)
 KB_ANSWER_POLICY_SUPPRESS_CITATION_STATES = frozenset(
     {
         "zero_chunks",
@@ -164,6 +170,15 @@ class KbAnswerPolicy:
     prompt_mode: ChatRetrievalPromptMode
     user_provided_content_context: bool
     low_confidence_inject: bool = False
+
+    def __post_init__(self) -> None:
+        if self.state not in KB_ANSWER_POLICY_STATES:
+            raise ValueError(f"unknown KB answer policy state: {self.state!r}")
+        if self.prompt_mode not in KB_ANSWER_POLICY_PROMPT_MODES:
+            raise ValueError(
+                "KbAnswerPolicy requires a retrieval prompt mode; "
+                f"got {self.prompt_mode!r}"
+            )
 
     @property
     def kb_narrow(self) -> bool:
