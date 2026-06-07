@@ -20,6 +20,7 @@ logger = structlog.get_logger()
 
 # Mutable holder so tests can reset the singleton
 _pool_holder: dict = {"pool": None}
+REDIS_SOCKET_TIMEOUT_SECONDS = 2.0
 
 
 def _safe_redis_url(url: str) -> str:
@@ -54,6 +55,8 @@ async def get_redis_pool() -> redis.Redis | None:
     _pool_holder["pool"] = redis.from_url(
         _safe_redis_url(settings.redis_url),
         decode_responses=True,
+        socket_connect_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
     )
     logger.info("redis_pool_initialized", url=settings.redis_url.split("@")[-1])
     return _pool_holder["pool"]

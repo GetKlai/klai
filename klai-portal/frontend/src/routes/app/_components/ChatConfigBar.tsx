@@ -33,6 +33,12 @@ interface Instruction {
   scope: string
 }
 
+type KBPrefPatch = Partial<Omit<KBPref, 'kb_pref_version'>>
+
+function patchChangesMode(patch: KBPrefPatch) {
+  return Object.prototype.hasOwnProperty.call(patch, 'kb_narrow')
+}
+
 export function ChatConfigBar() {
   const queryClient = useQueryClient()
   const [collOpen, setCollOpen] = useState(false)
@@ -72,13 +78,27 @@ export function ChatConfigBar() {
     return pref.kb_slugs_filter.filter((s) => allSlugSet.has(s))
   }, [allSlugSet, allSlugs, pref])
 
-  const mutation = useMutation({
-    mutationFn: async (patch: Partial<Omit<KBPref, 'kb_pref_version'>>) =>
+  const mutation = useMutation<KBPref, Error, KBPrefPatch, { prev?: KBPref; optimistic: boolean }>({
+    mutationFn: async (patch) =>
       apiFetch<KBPref>('/api/app/account/kb-preference', {
         method: 'PATCH',
         body: JSON.stringify(patch),
       }),
+    onMutate: async (patch) => {
+      await queryClient.cancelQueries({ queryKey: ['kb-preference'] })
+      const prev = queryClient.getQueryData<KBPref>(['kb-preference'])
+      if (prev && !patchChangesMode(patch)) {
+        queryClient.setQueryData<KBPref>(['kb-preference'], { ...prev, ...patch })
+        return { prev, optimistic: true }
+      }
+      return { prev, optimistic: false }
+    },
     onSuccess: (data) => queryClient.setQueryData(['kb-preference'], data),
+    onError: (_e, _p, ctx) => {
+      if (ctx?.optimistic && ctx.prev) {
+        queryClient.setQueryData(['kb-preference'], ctx.prev)
+      }
+    },
   })
 
   function toggleSlug(slug: string) {

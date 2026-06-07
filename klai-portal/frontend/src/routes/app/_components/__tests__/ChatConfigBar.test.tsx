@@ -146,4 +146,50 @@ describe('ChatConfigBar', () => {
     await waitFor(() => expect(open.getAttribute('aria-checked')).toBe('true'))
     expect(strict.getAttribute('aria-checked')).toBe('false')
   })
+
+  it('keeps non-mode preference changes optimistic while the save is pending', async () => {
+    const patchDone = new Promise(() => {})
+
+    apiFetchMock.mockImplementation((path: string, init?: { method?: string }) => {
+      if (path === '/api/app/account/kb-preference' && init?.method === 'PATCH') {
+        return patchDone
+      }
+      if (path === '/api/app/account/kb-preference') {
+        return Promise.resolve({
+          kb_retrieval_enabled: true,
+          kb_personal_enabled: true,
+          kb_slugs_filter: null,
+          kb_narrow: false,
+          kb_pref_version: 1,
+          active_template_ids: null,
+        })
+      }
+      if (path === '/api/app/knowledge-bases') {
+        return Promise.resolve({ knowledge_bases: [{ slug: 'klai-help', name: 'Klai Help' }] })
+      }
+      if (path === '/api/app/templates') return Promise.resolve([])
+      return Promise.reject(new Error(`Unexpected apiFetch: ${path}`))
+    })
+
+    render(
+      <Wrapper>
+        <ChatConfigBar />
+      </Wrapper>,
+    )
+
+    const collectionsButton = await screen.findByRole('button', { name: 'Personal, Klai Help' })
+    fireEvent.click(collectionsButton)
+    fireEvent.click(screen.getByRole('button', { name: 'Klai Help' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Personal, Klai Help' })).toBeNull()
+    })
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/app/account/kb-preference',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ kb_slugs_filter: [] }),
+      }),
+    )
+  })
 })
