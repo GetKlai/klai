@@ -2492,9 +2492,13 @@ async def verify_mcp_token(
         )
 
     # Verified: emit audit + return 200.
-    # result.org_id is str (zitadel-id-style); _audit_internal_call expects int.
-    audit_org_id = int(result.org_id) if result.org_id and result.org_id.isdigit() else 0
-    await _audit_internal_call(request, org_id=audit_org_id)
+    # result.org_id is the Zitadel resourceowner id (18-digit string) — it does NOT
+    # fit the int4 portal_audit_log.org_id column and is NOT an internal
+    # portal_orgs.id. Audit with 0 (no internal tenant resolved), like the deny
+    # paths above; the real org id is captured in the mcp_token_verify_decision
+    # structlog event below. Casting it to int overflowed int32 and raised
+    # internal_audit_write_failed on every MCP-using tenant.
+    await _audit_internal_call(request, org_id=0)
     structlog_logger.info(
         "mcp_token_verify_decision",
         caller_service=body.caller_service,
