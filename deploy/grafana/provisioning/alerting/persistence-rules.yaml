@@ -95,7 +95,7 @@ groups:
                  threshold for that service.
               3. If smoke FAIL, the mount is wrong or the service is
                  writing to the container's ephemeral layer. See
-                 docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md.
+                 klai-infra/docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md.
 
       # ── B. Missing file ─────────────────────────────────────────────────────
       - uid: spec-infra-005-persistence-missing

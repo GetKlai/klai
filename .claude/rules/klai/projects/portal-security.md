@@ -86,7 +86,7 @@ explicit and auditable.
 
 Every RLS-enabled table falls in one of four categories. Policy shape
 derives from the category. **Do not move a table between categories
-without the pre-flight audit described in `docs/runbooks/rls-upgrade.md`.**
+without the pre-flight audit described in `klai-infra/docs/runbooks/rls-upgrade.md`.**
 
 | Cat | Policy pattern | When to use | Tables |
 |---|---|---|---|
@@ -177,7 +177,7 @@ rowcount=0 DML on those tables at ERROR level; in tests,
 its target state when it starts. Running the SQL before the Python
 deploy breaks any request still relying on the old policy behaviour.
 
-See the full runbook: `docs/runbooks/rls-upgrade.md`.
+See the full runbook: `klai-infra/docs/runbooks/rls-upgrade.md`.
 
 ## Rules for agents
 

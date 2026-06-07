@@ -78,7 +78,7 @@ landing it in a provisioning file.
 2. After deploy-compose lands on main: `ssh core-01 "docker compose up -d grafana"`.
 3. Grafana UI → Alerting → Rules: rule shows status "Normal" or "Firing" (not "Error").
 4. Trigger the condition (real event, drill, or force via log injection — see
-   the relevant runbook section in `docs/runbooks/platform-recovery.md`).
+   the relevant runbook section in `klai-infra/docs/runbooks/platform-recovery.md`).
 5. Within the rule's evaluation interval + policy's `group_wait`: email arrives
    at the recipient list for the matching `spec` label.
 

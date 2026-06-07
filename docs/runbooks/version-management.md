@@ -346,7 +346,7 @@ docker image inspect <image> --format '{{range .Config.Env}}{{println .}}{{end}}
 ```
 Grep for `_DATA_PATH`, `_HOME`, `PGDATA`, `GF_PATHS_DATA`. Compare with the mount target. CI blocks mismatches automatically via `scripts/audit-compose-volumes.sh` — it is a required status check on any compose or inventory change.
 
-**Post-mortem:** `docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md`.
+**Post-mortem:** `klai-infra/docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md`.
 **Structural response:** SPEC-INFRA-005 (stateful persistence hardening).
 
 ### 7.9 LibreChat patches are mount-point-specific

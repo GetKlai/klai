@@ -82,7 +82,7 @@ groups:
           service_group: portal-events
         annotations:
           summary: 'portal-api Redis FLUSHALL failed — tenant config likely stale'
-          runbook_url: 'docs/runbooks/platform-recovery.md#librechat-stale-config-recovery'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#librechat-stale-config-recovery'
           description: |
             One or more `event:redis_flushall_failed` log lines appeared in
             VictoriaLogs from portal-api in the last 30 seconds. This means
