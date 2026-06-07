@@ -12,6 +12,8 @@ on:
       - 'klai-libs/chat-prompts/**'
       - 'klai-libs/kb-slugs/**'
       - 'klai-libs/citations/**'
+      - 'klai-libs/service-auth/**'
+      - 'klai-libs/llm-safety/**'
       - '.github/workflows/retrieval-api.yml'
   pull_request:
     branches: [main]
@@ -21,6 +23,8 @@ on:
       - 'klai-libs/chat-prompts/**'
       - 'klai-libs/kb-slugs/**'
       - 'klai-libs/citations/**'
+      - 'klai-libs/service-auth/**'
+      - 'klai-libs/llm-safety/**'
       - '.github/workflows/retrieval-api.yml'
   workflow_dispatch:
 
@@ -34,6 +38,26 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  # retrieval-api had NO automated test gate: its ~520 pytest tests only ran
+  # locally, so changes (incl. security-critical middleware/auth.py) merged
+  # without CI ever running them. This job closes that gap. It does not gate on
+  # `quality` (that required check is path-scoped to klai-portal/backend); it
+  # provides the missing retrieval-api pytest gate directly. All external
+  # services (Redis/Qdrant/TEI/FalkorDB/portal) are mocked, so no service
+  # containers are needed.
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-retrieval-api
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - name: Test (pytest)
+        run: uv run --extra dev pytest -q --tb=short
+
   build-push:
     runs-on: ubuntu-latest
 
