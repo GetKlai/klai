@@ -58,9 +58,11 @@ class _FakeCache:
 @pytest.fixture(autouse=True)
 def _set_secret(monkeypatch):
     _install_litellm_stub()
-    import klai_knowledge
+    import klai_kb_portal_client
 
-    monkeypatch.setattr(klai_knowledge, "PORTAL_INTERNAL_SECRET", "test-secret")
+    # _get_kb_feature / _get_templates moved to klai_kb_portal_client; they read
+    # PORTAL_INTERNAL_SECRET from that module's namespace, so patch it there.
+    monkeypatch.setattr(klai_kb_portal_client, "PORTAL_INTERNAL_SECRET", "test-secret")
 
 
 # ---------------------------------------------------------------------------
@@ -204,15 +206,24 @@ def test_build_block_skips_empty_text_entries():
 
 @pytest.mark.asyncio
 async def test_get_templates_fail_closed_without_secret(monkeypatch):
-    """No PORTAL_INTERNAL_SECRET → empty list (can't authenticate)."""
-    import klai_knowledge as k
+    """No PORTAL_INTERNAL_SECRET → empty list WITHOUT any portal HTTP call.
 
-    monkeypatch.setattr(k, "PORTAL_INTERNAL_SECRET", "")
+    Asserting only ``result == []`` is vacuous: the fail-open ``except`` also
+    returns [] when a real httpx call fails (there is no portal-api in the test
+    env). Patch httpx and assert it is never constructed, so the secret guard —
+    not the fail-open path — is proven to be what produced the empty list.
+    """
+    import klai_knowledge as k
+    import klai_kb_portal_client
+
+    monkeypatch.setattr(klai_kb_portal_client, "PORTAL_INTERNAL_SECRET", "")
     cache = _FakeCache()
 
-    result = await k._get_templates("org-1", "user-1", cache)
+    with patch("klai_knowledge.httpx.AsyncClient") as cls:
+        result = await k._get_templates("org-1", "user-1", cache)
 
     assert result == []
+    cls.assert_not_called()  # secret guard must short-circuit before any portal HTTP
 
 
 @pytest.mark.asyncio
