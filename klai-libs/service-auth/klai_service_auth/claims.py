@@ -19,8 +19,8 @@ _ROLES_CLAIM_PREFIX = "urn:zitadel:iam:org:project:"
 _ROLES_CLAIM_SUFFIX = ":roles"
 
 
-def project_role_scopes(payload: dict[str, Any]) -> set[str]:
-    """Return granted project-role keys from a Zitadel access-token payload.
+def project_role_scopes(payload: dict[str, Any], project_id: str) -> set[str]:
+    """Return granted role keys for ``project_id`` from a Zitadel token payload.
 
     Zitadel emits granted roles in claims of shape
     ``urn:zitadel:iam:org:project:<projectId>:roles`` — a dict whose KEYS are
@@ -30,15 +30,18 @@ def project_role_scopes(payload: dict[str, Any]) -> set[str]:
     ``urn:zitadel:iam:org:projects:roles`` scope; the standard ``scope`` claim
     stays empty.
 
-    Matches any project's roles claim, so a receiver need not know its own
-    projectId. Verified against a live ``svc-litellm`` token (2026-06-07).
+    PINNED to a single project (SPEC-SEC-SERVICE-AUTH-002 hardening): a token
+    can carry roles claims for EVERY project the holder is granted on, so an
+    agnostic match would let a role key from an unrelated project inject a
+    scope here. We read ONLY ``urn:zitadel:iam:org:project:{project_id}:roles``,
+    where ``project_id`` is the receiver's own audience (== its
+    ``ZITADEL_API_AUDIENCE``). Returns an empty set when ``project_id`` is
+    falsy (JWT disabled) or the pinned claim is absent. Verified against a live
+    ``svc-litellm`` token (2026-06-07).
     """
-    scopes: set[str] = set()
-    for key, value in payload.items():
-        if (
-            key.startswith(_ROLES_CLAIM_PREFIX)
-            and key.endswith(_ROLES_CLAIM_SUFFIX)
-            and isinstance(value, dict)
-        ):
-            scopes.update(str(role_key) for role_key in value)
-    return scopes
+    if not project_id:
+        return set()
+    claim = payload.get(f"{_ROLES_CLAIM_PREFIX}{project_id}{_ROLES_CLAIM_SUFFIX}")
+    if not isinstance(claim, dict):
+        return set()
+    return {str(role_key) for role_key in claim}
