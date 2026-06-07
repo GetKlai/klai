@@ -34,7 +34,6 @@ worse answer than they expected.
    |---|---|---|
    | `HTTP 400` body contains `missing_caller_service` | Caller stopped sending `X-Caller-Service` header (or a new caller was added without it). | See pitfalls → `retrieve-caller-service-header-mismatch`. Add the header in the caller; redeploy. |
    | `HTTP 400` body contains `unknown_caller_service` | Caller sent a `X-Caller-Service` value not in `klai_identity_assert.KNOWN_CALLER_SERVICES`. | Add the new service name to the lib + portal-api `identity_verifier.KNOWN_CALLER_SERVICES`. The contract test in portal-api will lock the two lists together. |
-   | `HTTP 401` `invalid_jwt_audience` | Zitadel project / audience config drifted (Phase C-1 JWT path). Hook falls back to legacy `X-Internal-Secret` automatically. | If the fallback also fails: Zitadel project for retrieval-api is misconfigured. Re-check `KLAI_LITELLM_CLIENT_*` in SOPS. |
    | `HTTP 401` `invalid_internal_secret` | `RETRIEVAL_API_INTERNAL_SECRET` divergence between caller and receiver. | Compare SOPS env vars on both ends. Rotate secret if needed. |
    | `ConnectError` / `TimeoutError` | retrieval-api is down or networking blip. | Check `service:retrieval-api` health, `docker ps`, and the rate-limit / Redis pool errors (separate latent bug). |
 
@@ -72,15 +71,6 @@ worse answer than they expected.
 - **Network blip**: usually self-healing. If retrieval-api is in a
   restart loop, `docker logs klai-core-retrieval-api-1 --tail 100` and
   fix the underlying cause (env var, image version, port).
-
-## Excluded from this alert by design
-
-The log line `KlaiKnowledgeHook: jwt rejected by receiver (HTTP 401) —
-retrying with legacy auth header` is filtered out of the LogsQL query.
-It is the EXPECTED Phase C-1 fallback path while Zitadel audience
-config is rolled out per-receiver. The actual outcome (success or
-failure of the legacy retry) is logged separately and IS caught by
-this alert.
 
 ## Background
 
