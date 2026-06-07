@@ -1,9 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Users, FolderKanban, CreditCard, Settings, Key, MessageSquare, Puzzle, ChevronRight } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { useAuth } from '@/lib/auth'
-import { fetchMe, type MeResponse } from '@/lib/api-me'
+import { fetchMe } from '@/lib/api-me'
+import { useProtectedRoute } from '@/hooks/useProtectedRoute'
+import { ADMIN_NAV_ITEMS, adminNavItemIsVisible } from './-nav'
 
 export const Route = createFileRoute('/admin/')({
   component: AdminHome,
@@ -11,10 +13,10 @@ export const Route = createFileRoute('/admin/')({
 
 function AdminHome() {
   const auth = useAuth()
-  // SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 4: tile-filter per tenant.
-  // Tiles for features behind platform-unlock (api-keys, widgets, mcps) are
-  // hidden when the caller's org does not have the feature unlocked, unless
-  // the caller is a platform-admin (Klai staff sees everything).
+  const { user } = useProtectedRoute({
+    requireMinRole: 'kb_manager',
+    noRoleFallback: '/app',
+  })
   const { data: me } = useQuery({
     queryKey: ['me'],
     queryFn: ({ signal }) => fetchMe(signal),
@@ -22,53 +24,11 @@ function AdminHome() {
   })
 
   // SPEC-PORTAL-UI-CONSISTENCY-001 REQ-4 / REQ-5: rows, not cards.
-  const adminSections = [
-    {
-      title: m.admin_section_users_title(),
-      description: m.admin_section_users_description(),
-      icon: Users,
-      href: '/admin/users',
-    },
-    {
-      title: m.admin_section_groups_title(),
-      description: m.admin_section_groups_description(),
-      icon: FolderKanban,
-      href: '/admin/groups',
-    },
-    {
-      title: m.admin_section_api_keys_title(),
-      description: m.admin_section_api_keys_description(),
-      icon: Key,
-      href: '/admin/api-keys',
-      requiresFeature: 'partner_api',
-    },
-    {
-      title: m.admin_section_widgets_title(),
-      description: m.admin_section_widgets_description(),
-      icon: MessageSquare,
-      href: '/admin/widgets',
-      requiresFeature: 'widgets',
-    },
-    {
-      title: m.admin_section_mcps_title(),
-      description: m.admin_section_mcps_description(),
-      icon: Puzzle,
-      href: '/admin/mcps',
-      requiresFeature: 'custom_mcps',
-    },
-    {
-      title: m.admin_section_billing_title(),
-      description: m.admin_section_billing_description(),
-      icon: CreditCard,
-      href: '/admin/billing',
-    },
-    {
-      title: m.admin_section_settings_title(),
-      description: m.admin_section_settings_description(),
-      icon: Settings,
-      href: '/admin/settings',
-    },
-  ].filter((section) => sectionIsVisible(section, me))
+  const adminSections = ADMIN_NAV_ITEMS.filter((item) =>
+    item.to !== '/admin' &&
+    item.overviewDescription &&
+    adminNavItemIsVisible(item, user?.effective_role, me),
+  )
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
@@ -84,8 +44,8 @@ function AdminHome() {
       <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
         {adminSections.map((section) => (
           <a
-            key={section.title}
-            href={section.href}
+            key={section.to}
+            href={section.to}
             className="group flex items-center gap-3 px-2 py-3.5 klai-hover"
           >
             <div className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-400">
@@ -93,10 +53,10 @@ function AdminHome() {
             </div>
             <div className="min-w-0 flex-1">
               <span className="text-[15px] font-display text-gray-900">
-                {section.title}
+                {section.label}
               </span>
               <p className="text-xs text-gray-400 mt-0.5">
-                {section.description}
+                {section.overviewDescription}
               </p>
             </div>
             <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
@@ -105,18 +65,4 @@ function AdminHome() {
       </div>
     </div>
   )
-}
-
-function sectionIsVisible(
-  section: { requiresFeature?: string },
-  me: MeResponse | undefined,
-): boolean {
-  if (!section.requiresFeature) return true
-  // Show all tiles while /api/me is still loading - avoids a flash of
-  // "no tiles" before the first response lands. Both tenant-admin and
-  // platform-admin see exactly what their own tenant has unlocked
-  // (emulation view). Cross-tenant management uses the tenant-picker on
-  // /admin/settings, not the platform-admin's own sidebar/tegels.
-  if (!me) return true
-  return (me.platform_unlocked_features ?? []).includes(section.requiresFeature)
 }
