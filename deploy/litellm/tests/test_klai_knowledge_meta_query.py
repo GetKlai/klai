@@ -303,7 +303,7 @@ async def test_meta_query_is_not_triggered_by_content_question(monkeypatch):
         "enabled": True,
         "kb_retrieval_enabled": True,
         "kb_personal_enabled": True,
-        "kb_slugs_filter": None,
+        "kb_slugs_filter": [],
         "version": 0,
         "zitadel_user_id": "300000000000000002",
     }
@@ -326,15 +326,28 @@ async def test_meta_query_is_not_triggered_by_content_question(monkeypatch):
         "messages": [{"role": "user", "content": "hoe werkt onze prijsstrategie?"}],
     }
 
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = {"chunks": [], "retrieval_bypassed": False}
-    resp.raise_for_status = MagicMock()
+    feature_resp = MagicMock()
+    feature_resp.status_code = 200
+    feature_resp.json.return_value = {
+        "enabled": True,
+        "kb_retrieval_enabled": True,
+        "kb_personal_enabled": True,
+        "kb_slugs_filter": [],
+        "kb_narrow": False,
+        "kb_pref_version": 0,
+        "zitadel_user_id": "300000000000000002",
+    }
+    feature_resp.raise_for_status = MagicMock()
+
+    retrieval_resp = MagicMock()
+    retrieval_resp.status_code = 200
+    retrieval_resp.json.return_value = {"chunks": [], "retrieval_bypassed": False}
+    retrieval_resp.raise_for_status = MagicMock()
 
     with patch("klai_knowledge.httpx.AsyncClient") as cls:
         mc = AsyncMock()
-        mc.get = AsyncMock(return_value=resp)
-        mc.post = AsyncMock(return_value=resp)
+        mc.get = AsyncMock(return_value=feature_resp)
+        mc.post = AsyncMock(return_value=retrieval_resp)
         mc.__aenter__ = AsyncMock(return_value=mc)
         mc.__aexit__ = AsyncMock(return_value=None)
         cls.return_value = mc
