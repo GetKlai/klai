@@ -337,17 +337,6 @@ def compose_meta_chat_prefix(*blocks: str) -> str:
     return "\n\n".join(b for b in (META_CHAT_SYSTEM_PROMPT, *blocks) if b)
 
 
-def strict_no_kb_scope_notice(reason: str) -> str:
-    """Strict-mode notice for branches where retrieval cannot produce KB chunks."""
-    return (
-        "[Klai Knowledge Base — no knowledge base evidence is available for "
-        "this request. The user selected Strict mode, so do not answer from "
-        "general knowledge. Tell the user in their detected language that you "
-        "cannot answer reliably from their knowledge sources for this request "
-        f"(technical reason: {reason}).]\n"
-    )
-
-
 def kb_retrieval_failure_notice(kb_narrow: bool, retrieval_failure: object) -> str:
     """Mode-aware notice when retrieval-api is temporarily unavailable."""
     if kb_narrow:
