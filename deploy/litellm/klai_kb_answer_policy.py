@@ -384,6 +384,27 @@ def strict_kb_unavailable_message(user_query: object) -> str:
     )
 
 
+def settings_unavailable_message(user_query: object) -> str:
+    """Deterministic refusal when the user's chat settings cannot be loaded.
+
+    Used only on the truly-cold path: portal-api is unreachable AND there is no
+    cached setting to fall back on (the user has not chatted in the last 24h, so
+    the last-known-settings cache is empty). We do not know their mode
+    (Strict/Open), so we refuse honestly instead of silently defaulting to a
+    general-knowledge answer — which would break a Strict user's KB-only promise.
+    """
+    baseline = no_citable_sources_message(user_query)
+    if baseline.startswith("Ik "):
+        return (
+            "Ik kan je chat-instellingen op dit moment niet bereiken, dus ik "
+            "kan dit nu niet betrouwbaar beantwoorden. Probeer het zo opnieuw."
+        )
+    return (
+        "I can't reach your chat settings right now, so I can't answer this "
+        "reliably at the moment. Please try again shortly."
+    )
+
+
 def kb_zero_chunks_notice(kb_narrow: bool) -> str:
     """Mode-aware notice when retrieval succeeded but returned no usable chunks."""
     if kb_narrow:

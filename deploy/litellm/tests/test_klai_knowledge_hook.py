@@ -7038,3 +7038,45 @@ class TestStrictModeCodeEnforcement:
             )
         names = [t.get("function", {}).get("name") for t in data.get("tools", [])]
         assert "web_search" in names  # Open mode keeps web available
+
+    @pytest.mark.asyncio
+    async def test_cold_cache_settings_unreachable_refuses_deterministically(
+        self, monkeypatch
+    ):
+        """Portal unreachable AND no cached settings (truly cold) -> honest refusal.
+
+        We do not know the user's mode (Strict/Open) here, so silently giving a
+        general-knowledge answer would break a Strict user's KB-only promise.
+        (The common case — portal blip but settings cached within 24h — keeps
+        the last-known mode automatically and is unaffected.)
+        """
+        import httpx as _httpx
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()  # cache miss -> forces a portal feature fetch
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "Wat zijn onze policies?"}],
+        }
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(side_effect=_httpx.ConnectError("portal down"))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+        assert mc.post.call_count == 0  # refused before any retrieval
+        assert result["mock_response"]  # honest deterministic refusal
+        assert isinstance(result["mock_response"], str)
+        # Not silently answering from general knowledge.
+        system_msg = next(
+            (m for m in data["messages"] if m.get("role") == "system"), None
+        )
+        assert (
+            system_msg is None
+            or "general-purpose assistant" not in system_msg.get("content", "")
+        )

@@ -78,6 +78,7 @@ from klai_kb_answer_policy import (
     kb_zero_chunks_notice as _kb_zero_chunks_notice,
     strict_no_kb_scope_notice as _strict_no_kb_scope_notice,
     strict_kb_unavailable_message as _strict_kb_unavailable_message,
+    settings_unavailable_message as _settings_unavailable_message,
 )
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
@@ -573,6 +574,10 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_narrow": False,
             "version": 0,
             "zitadel_user_id": None,
+            # No portal secret AND no cached settings: we cannot know the user's
+            # mode. The hook refuses honestly rather than silently defaulting to
+            # a general answer (which would break a Strict user's KB-only promise).
+            "settings_unavailable": True,
             # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: fail-open to 'shadow', never 'off'.
             "telemetry_level": "shadow",
         }
@@ -618,6 +623,11 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_narrow": False,
             "version": 0,
             "zitadel_user_id": None,
+            # Portal unreachable AND no cached settings to fall back on (the
+            # stale-cache branch above already handles the common case). We
+            # cannot know the user's mode, so the hook refuses honestly rather
+            # than silently defaulting to a general answer.
+            "settings_unavailable": True,
             # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: fail-open to 'shadow', never 'off'.
             # Silent telemetry is the wrong default during outages.
             "telemetry_level": "shadow",
@@ -1075,6 +1085,22 @@ class KlaiKnowledgeHook(CustomLogger):
 
         # Feature, KB scope, identity, and request-mode policy.
         feature = await _get_kb_feature(librechat_user_id, org_id, cache)
+
+        if feature.get("settings_unavailable"):
+            # Truly-cold path: portal unreachable AND no cached settings, so we
+            # don't know the user's mode (Strict/Open). Refuse deterministically
+            # via mock_response (model bypassed) instead of silently giving a
+            # general answer that would break a Strict user's KB-only promise.
+            # Rare in practice: the last-known-settings cache (24h) covers the
+            # common portal-blip case and preserves the real mode automatically.
+            logger.warning(
+                "kb_settings_unavailable_refusal org_id=%s user_id=%s",
+                org_id,
+                librechat_user_id,
+            )
+            data["mock_response"] = _settings_unavailable_message(query)
+            return data
+
         chat_retrieval_policy = _resolve_chat_retrieval_policy(feature)
 
         # Strict mode (kb_narrow=True) is KB-only. The web-search tool is a
