@@ -850,13 +850,9 @@ async def patch_kb_preference(
     await db.commit()
 
     if user.librechat_user_id:
-        invalidations = [
-            invalidate_kb_cache(perms.zitadel_org_id, user.librechat_user_id)
-        ]
+        invalidations = [invalidate_kb_cache(perms.zitadel_org_id, user.librechat_user_id)]
         if active_templates_changed:
-            invalidations.append(
-                invalidate_templates(perms.zitadel_org_id, user.librechat_user_id)
-            )
+            invalidations.append(invalidate_templates(perms.zitadel_org_id, user.librechat_user_id))
         await asyncio.gather(*invalidations)
 
     return KBPreferenceOut(
