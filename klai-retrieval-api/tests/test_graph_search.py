@@ -69,6 +69,21 @@ async def test_search_success():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["", "   ", "?!()"])
+async def test_search_skips_queries_without_searchable_text(query):
+    """Graphiti can turn empty text into invalid FalkorDB full-text syntax."""
+    with (
+        patch("retrieval_api.services.graph_search.settings") as mock_settings,
+        patch("retrieval_api.services.graph_search._get_graphiti") as mock_get_graphiti,
+    ):
+        mock_settings.graphiti_enabled = True
+        result = await graph_search.search(query, "org-1")
+
+    assert result == []
+    mock_get_graphiti.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_search_timeout():
     """Returns empty list on timeout — graceful degradation (AC-7)."""
     mock_graphiti = AsyncMock()

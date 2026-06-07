@@ -68,6 +68,8 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
     """
     if not settings.graphiti_enabled:
         return []
+    if not _has_searchable_text(query):
+        return []
 
     graphiti = _get_graphiti()
     try:
@@ -88,6 +90,10 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
         # traceback that the previous `error=str(exc)` dropped (TRY401).
         logger.warning("graph_search_failed", org_id=org_id, exc_info=True)
         return []
+
+
+def _has_searchable_text(query: str) -> bool:
+    return any(ch.isalnum() for ch in query)
 
 
 def _convert_results(results: list, top_k: int) -> list[dict]:
