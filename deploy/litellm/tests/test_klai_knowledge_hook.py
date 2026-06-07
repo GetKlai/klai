@@ -494,27 +494,20 @@ class TestKlaiKnowledgeHookLegacy:
 # ─── SPEC-SEC-SERVICE-AUTH-001 Phase C-1 — dual-auth tests ──────────────────
 
 
-class TestKlaiKnowledgeHookDualAuth:
-    """Phase C-1 (REQ-5 safe rollout): caller prefers JWT, falls back to
-    X-Internal-Secret on either mint failure or receiver-side 401/403.
+class TestKlaiKnowledgeHookRetrieveAuth:
+    """SPEC-SEC-SERVICE-AUTH-002 (a per-service Zitadel JWT for /retrieve) was
+    dropped as disproportionate for the internal mesh. litellm authenticates the
+    /retrieve call with the shared X-Internal-Secret + X-Caller-Service only; the
+    end-user identity in the body is verified by retrieval-api against portal.
 
-    The receive-side fallback exists because the SPEC's Phase A operator
-    runbook assumes the receiver's Zitadel project + audience + role grant
-    is set up — but during the migration window that setup may lag the
-    code rollout. Without the retry, knowledge retrieval breaks entirely
-    until the IdP catches up. With it, the legacy path remains live for
-    the full soak window, and Phase D removes the retry once the IdP
-    config holds zero ``jwt_rejected`` events for 7 days.
+    These pin that there is exactly ONE POST, with the internal-secret headers,
+    and never an Authorization: Bearer.
     """
 
     @pytest.mark.asyncio
-    async def test_jwt_path_used_when_token_client_returns_token(self, monkeypatch):
-        """Token client mints → request goes out with Authorization: Bearer …"""
+    async def test_retrieve_uses_internal_secret_headers(self, monkeypatch):
+        """One POST → X-Internal-Secret + X-Caller-Service, no Bearer."""
         mod = _load_hook(monkeypatch)
-
-        token_client = MagicMock()
-        token_client.get_token = AsyncMock(return_value="fake.jwt.token")
-        monkeypatch.setattr(mod, "_get_token_client", lambda: token_client)
 
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature_enabled=True)
@@ -523,153 +516,10 @@ class TestKlaiKnowledgeHookDualAuth:
             "messages": [{"role": "user", "content": "What are the policies?"}],
         }
 
-        mock_resp = _make_resp({"chunks": []})
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             mc = AsyncMock()
             mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
-            mc.post = AsyncMock(return_value=mock_resp)
-            mc.__aenter__ = AsyncMock(return_value=mc)
-            mc.__aexit__ = AsyncMock(return_value=None)
-            cls.return_value = mc
-
-            await hook.async_pre_call_hook(
-                _make_user_api_key(), cache, data, "completion"
-            )
-
-            assert mc.post.call_count == 1
-            headers = mc.post.call_args.kwargs.get("headers") or {}
-            assert headers.get("Authorization") == "Bearer fake.jwt.token"
-            assert headers.get("X-Caller-Service") == "litellm"
-            assert "X-Internal-Secret" not in headers
-
-    @pytest.mark.asyncio
-    async def test_jwt_mint_failure_falls_back_to_internal_secret(self, monkeypatch):
-        """Token client raises → exactly one request, with X-Internal-Secret."""
-        mod = _load_hook(monkeypatch)
-
-        token_client = MagicMock()
-        token_client.get_token = AsyncMock(side_effect=RuntimeError("zitadel down"))
-        monkeypatch.setattr(mod, "_get_token_client", lambda: token_client)
-
-        hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature_enabled=True)
-        data = {
-            "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "What are the policies?"}],
-        }
-
-        mock_resp = _make_resp({"chunks": []})
-        with patch("klai_knowledge.httpx.AsyncClient") as cls:
-            mc = AsyncMock()
-            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
-            mc.post = AsyncMock(return_value=mock_resp)
-            mc.__aenter__ = AsyncMock(return_value=mc)
-            mc.__aexit__ = AsyncMock(return_value=None)
-            cls.return_value = mc
-
-            await hook.async_pre_call_hook(
-                _make_user_api_key(), cache, data, "completion"
-            )
-
-            assert mc.post.call_count == 1
-            headers = mc.post.call_args.kwargs.get("headers") or {}
-            assert headers.get("X-Internal-Secret") == "test-retrieval-secret"
-            assert headers.get("X-Caller-Service") == "litellm"
-            assert "Authorization" not in headers
-
-    @pytest.mark.asyncio
-    async def test_jwt_401_from_receiver_retries_with_internal_secret(
-        self, monkeypatch
-    ):
-        """Token mints fine but receiver 401s (audience mismatch) → retry once."""
-        mod = _load_hook(monkeypatch)
-
-        token_client = MagicMock()
-        token_client.get_token = AsyncMock(return_value="fake.jwt.token")
-        monkeypatch.setattr(mod, "_get_token_client", lambda: token_client)
-
-        hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature_enabled=True)
-        data = {
-            "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "What are the policies?"}],
-        }
-
-        jwt_reject = _make_resp({"error": "unauthorized"}, status_code=401)
-        legacy_ok = _make_resp({"chunks": []}, status_code=200)
-        with patch("klai_knowledge.httpx.AsyncClient") as cls:
-            mc = AsyncMock()
-            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
-            mc.post = AsyncMock(side_effect=[jwt_reject, legacy_ok])
-            mc.__aenter__ = AsyncMock(return_value=mc)
-            mc.__aexit__ = AsyncMock(return_value=None)
-            cls.return_value = mc
-
-            await hook.async_pre_call_hook(
-                _make_user_api_key(), cache, data, "completion"
-            )
-
-            assert mc.post.call_count == 2
-            first_headers = mc.post.call_args_list[0].kwargs.get("headers") or {}
-            second_headers = mc.post.call_args_list[1].kwargs.get("headers") or {}
-            assert first_headers.get("Authorization") == "Bearer fake.jwt.token"
-            assert first_headers.get("X-Caller-Service") == "litellm"
-            assert second_headers.get("X-Internal-Secret") == "test-retrieval-secret"
-            assert second_headers.get("X-Caller-Service") == "litellm"
-            assert "Authorization" not in second_headers
-
-    @pytest.mark.asyncio
-    async def test_jwt_403_from_receiver_retries_with_internal_secret(
-        self, monkeypatch
-    ):
-        """Receiver 403 insufficient_scope → same retry path as 401."""
-        mod = _load_hook(monkeypatch)
-
-        token_client = MagicMock()
-        token_client.get_token = AsyncMock(return_value="fake.jwt.token")
-        monkeypatch.setattr(mod, "_get_token_client", lambda: token_client)
-
-        hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature_enabled=True)
-        data = {
-            "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "What are the policies?"}],
-        }
-
-        jwt_reject = _make_resp({"error": "insufficient_scope"}, status_code=403)
-        legacy_ok = _make_resp({"chunks": []}, status_code=200)
-        with patch("klai_knowledge.httpx.AsyncClient") as cls:
-            mc = AsyncMock()
-            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
-            mc.post = AsyncMock(side_effect=[jwt_reject, legacy_ok])
-            mc.__aenter__ = AsyncMock(return_value=mc)
-            mc.__aexit__ = AsyncMock(return_value=None)
-            cls.return_value = mc
-
-            await hook.async_pre_call_hook(
-                _make_user_api_key(), cache, data, "completion"
-            )
-
-            assert mc.post.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_no_token_client_uses_internal_secret_directly(self, monkeypatch):
-        """No token client configured → single request with X-Internal-Secret."""
-        mod = _load_hook(monkeypatch)
-        monkeypatch.setattr(mod, "_get_token_client", lambda: None)
-
-        hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature_enabled=True)
-        data = {
-            "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "What are the policies?"}],
-        }
-
-        mock_resp = _make_resp({"chunks": []})
-        with patch("klai_knowledge.httpx.AsyncClient") as cls:
-            mc = AsyncMock()
-            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
-            mc.post = AsyncMock(return_value=mock_resp)
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
             mc.__aenter__ = AsyncMock(return_value=mc)
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
