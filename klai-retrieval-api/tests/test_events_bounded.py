@@ -46,7 +46,13 @@ async def clean_events(monkeypatch):
         if not task.done():
             task.cancel()
     events._pending.clear()
-    monkeypatch.setattr(events, "_last_cap_log_time", 0.0, raising=False)
+    # Reset the cap-hit rate-limiter so the next cap-hit ALWAYS logs. NOT 0.0:
+    # the emit guard is ``time.monotonic() - _last_cap_log_time >= 60`` and
+    # ``time.monotonic()`` is "seconds since an arbitrary point" — on a freshly
+    # booted CI runner (uptime < 60s) ``now`` itself is < 60, so ``now - 0.0``
+    # is < 60 and the cap-hit log is suppressed → flaky "found none" failures.
+    # A large negative makes ``now - (-1e9)`` exceed the window for any ``now``.
+    monkeypatch.setattr(events, "_last_cap_log_time", -1e9, raising=False)
     yield events
     # Same teardown to be polite to the next test.
     for task in list(events._pending):
