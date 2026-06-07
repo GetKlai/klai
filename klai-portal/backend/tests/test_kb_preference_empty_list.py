@@ -170,7 +170,5 @@ async def test_patch_kb_preference_waits_for_cache_invalidation(monkeypatch):
     )
 
     assert result.kb_narrow is True
-    invalidate_kb_cache.assert_awaited_once_with(
-        "zitadel-org-42", "librechat-user-1"
-    )
+    invalidate_kb_cache.assert_awaited_once_with("zitadel-org-42", "librechat-user-1")
     invalidate_templates.assert_not_awaited()
