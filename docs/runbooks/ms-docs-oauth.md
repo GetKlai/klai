@@ -214,4 +214,4 @@ No operator action needed for RT rotation — only client-secret rotation.
 - [Microsoft Graph permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)
 - [driveItem: delta](https://learn.microsoft.com/en-us/graph/api/driveitem-delta)
 - [Refresh tokens in Microsoft identity platform](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens)
-- Klai runbooks: [credential-rotation.md](./credential-rotation.md), [platform-recovery.md](./platform-recovery.md)
+- Klai infra runbooks: [credential-rotation.md](../../klai-infra/docs/runbooks/credential-rotation.md), [platform-recovery.md](../../klai-infra/docs/runbooks/platform-recovery.md)

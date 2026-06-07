@@ -4,7 +4,7 @@
 > Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-05-06 for SPEC-INGEST-RECONCILE-001 — discovery/fetch separation, fetch_outcomes JSONB, skip_reasons JSONB).
 >
 > For the research backing these design decisions, see
-> [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
+> [knowledge-system-fundamentals.md](../research/knowledge-system-fundamentals.md).
 > For evidence-weighted scoring and assertion mode weights research, see
 > [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md).
 
