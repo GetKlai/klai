@@ -6,10 +6,10 @@ templates) — extracted from ``klai_knowledge.py`` into one cohesive I/O module
 so the orchestrator is left with policy/assembly, not transport.
 
 These functions own their fail-open / fail-closed conventions and the Redis
-cache-key shapes (``kb_ver`` / ``kb_feature`` / ``kb_feature_latest`` /
-``templates``), which are an implicit cross-file contract mirrored in
-klai-portal's ``app/services/litellm_cache.py`` — the literal f-string shapes
-are kept verbatim (pitfall url-shape-multi-file-drift). The
+cache-key shapes (``templates`` plus the ``kb_ver`` / ``kb_feature`` feature
+cache keys), which are an implicit cross-file contract mirrored in klai-portal's
+``app/services/litellm_cache.py`` — the literal f-string shapes are kept
+verbatim (pitfall url-shape-multi-file-drift). The
 ``X-Caller-Service: litellm`` header is likewise contract-bearing
 (SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2) and preserved byte-for-byte.
 
@@ -23,11 +23,17 @@ sites are unchanged; ``retrieve_headers`` stays an internal detail.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
 
 import httpx
+
+try:
+    import redis.asyncio as aioredis
+except Exception:  # pragma: no cover - optional in the lightweight unit env
+    aioredis = None
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +62,85 @@ PORTAL_TEMPLATES_URL = os.getenv(
     "PORTAL_TEMPLATES_URL", f"{PORTAL_API_URL}/internal/templates/effective"
 )
 TEMPLATES_TIMEOUT = float(os.getenv("TEMPLATES_TIMEOUT", "2.0"))
+KB_FEATURE_REDIS_TTL_SECONDS = int(
+    os.getenv("KLAI_KB_FEATURE_REDIS_TTL_SECONDS", "5")
+)
+KB_FEATURE_REDIS_TIMEOUT_SECONDS = float(
+    os.getenv("KLAI_KB_FEATURE_REDIS_TIMEOUT_SECONDS", "0.2")
+)
+
+_redis_client: Any | None = None
+
+
+def _redis_url() -> str:
+    return os.getenv("REDIS_URL", "")
+
+
+def _redis_pool():
+    """Return a Redis-only client, never LiteLLM DualCache/in-process cache."""
+    global _redis_client
+    if aioredis is None:
+        return None
+    url = _redis_url()
+    if not url:
+        return None
+    if _redis_client is None:
+        _redis_client = aioredis.from_url(
+            url,
+            decode_responses=True,
+            socket_connect_timeout=KB_FEATURE_REDIS_TIMEOUT_SECONDS,
+            socket_timeout=KB_FEATURE_REDIS_TIMEOUT_SECONDS,
+        )
+    return _redis_client
+
+
+def _feature_version_key(org_id: str, user_id: str) -> str:
+    return f"kb_ver:{org_id}:{user_id}"
+
+
+def _feature_key(org_id: str, user_id: str, version: object) -> str:
+    return f"kb_feature:{org_id}:{user_id}:{version}"
+
+
+async def _get_kb_feature_redis(user_id: str, org_id: str) -> dict | None:
+    redis_client = _redis_pool()
+    if redis_client is None:
+        return None
+    try:
+        cached_version = await redis_client.get(_feature_version_key(org_id, user_id))
+        if cached_version is None:
+            return None
+        raw = await redis_client.get(_feature_key(org_id, user_id, cached_version))
+        if not raw:
+            return None
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except Exception as exc:
+        logger.warning(
+            "KlaiKnowledgeHook: redis feature cache read failed (%s)", exc
+        )
+        return None
+
+
+async def _set_kb_feature_redis(user_id: str, org_id: str, feature: dict) -> None:
+    redis_client = _redis_pool()
+    if redis_client is None:
+        return
+    version = feature.get("version", 0)
+    ttl = max(1, KB_FEATURE_REDIS_TTL_SECONDS)
+    try:
+        await redis_client.set(
+            _feature_version_key(org_id, user_id), str(version), ex=ttl
+        )
+        await redis_client.set(
+            _feature_key(org_id, user_id, version),
+            json.dumps(feature, separators=(",", ":"), ensure_ascii=False),
+            ex=ttl,
+        )
+    except Exception as exc:
+        logger.warning(
+            "KlaiKnowledgeHook: redis feature cache write failed (%s)", exc
+        )
 
 
 def retrieve_headers() -> dict[str, str]:
@@ -101,10 +186,10 @@ async def retrieve(http: httpx.AsyncClient, body: dict[str, Any]) -> httpx.Respo
 async def get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     """Return the user's KB feature state including entitlement and scope preference.
 
-    Two-level cache strategy:
-    - Version pointer (kb_ver:...) — 30s TTL. Expires when kb_pref_version increments,
-      forcing a fresh portal fetch within 30s of a preference change.
-    - Feature data (kb_feature:...:version) — 300s TTL.
+    Feature state is cached only in Redis with a short TTL. Do not use
+    LiteLLM DualCache here: it can include process-local state that portal-api
+    cannot invalidate, which can keep an old Strict/Open mode after the UI saved
+    a new preference.
 
     Fail-closed for entitlement: portal errors return enabled=False.
     Fail-open for retrieval preference: portal errors leave kb_retrieval_enabled=True
@@ -112,21 +197,13 @@ async def get_kb_feature(user_id: str, org_id: str, cache) -> dict:
 
     Backward compatible: handles old {"enabled": bool} portal responses gracefully.
     """
+    cached = await _get_kb_feature_redis(user_id, org_id)
+    if isinstance(cached, dict):
+        return cached
+
     if not PORTAL_INTERNAL_SECRET:
-        # We cannot reach portal-api — but a recent successful fetch may still
-        # be cached (kb_feature_latest, 24h). Prefer the user's last-known
-        # settings (which preserve their Strict/Open mode) over a hard refusal,
-        # exactly like the portal-fetch-failure path below. Only refuse when
-        # there is genuinely nothing cached to fall back on.
-        stale = await cache.async_get_cache(f"kb_feature_latest:{org_id}:{user_id}")
-        if isinstance(stale, dict):
-            logger.warning(
-                "KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — using stale "
-                "feature cache"
-            )
-            return stale
         logger.warning(
-            "KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set and no cached "
+            "KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set and no redis-cached "
             "settings — fail-closed"
         )
         return {
@@ -145,19 +222,7 @@ async def get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "telemetry_level": "shadow",
         }
 
-    # Step 1: check version pointer (short-lived — invalidated by preference changes)
-    version_key = f"kb_ver:{org_id}:{user_id}"
-    cached_version = await cache.async_get_cache(version_key)
-
-    if cached_version is not None:
-        feature_key = f"kb_feature:{org_id}:{user_id}:{cached_version}"
-        cached = await cache.async_get_cache(feature_key)
-        if cached is not None:
-            return cached
-
-    latest_feature_key = f"kb_feature_latest:{org_id}:{user_id}"
-
-    # Cache miss — fetch fresh from portal
+    # Redis cache miss — fetch fresh from portal.
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get(
@@ -168,13 +233,6 @@ async def get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             resp.raise_for_status()
             data = resp.json()
     except Exception as exc:
-        stale = await cache.async_get_cache(latest_feature_key)
-        if isinstance(stale, dict):
-            logger.warning(
-                "KlaiKnowledgeHook: portal feature fetch failed (%s) — using stale feature cache",
-                exc,
-            )
-            return stale
         logger.warning(
             "KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc
         )
@@ -216,12 +274,7 @@ async def get_kb_feature(user_id: str, org_id: str, cache) -> dict:
         "telemetry_level": data.get("telemetry_level", "shadow"),
     }
 
-    # Store version pointer (30s) and feature data (300s) separately
-    await cache.async_set_cache(version_key, str(version), ttl=30)
-    await cache.async_set_cache(
-        f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300
-    )
-    await cache.async_set_cache(latest_feature_key, result, ttl=86400)
+    await _set_kb_feature_redis(user_id, org_id, result)
     return result
 
 

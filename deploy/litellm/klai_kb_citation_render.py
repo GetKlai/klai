@@ -73,22 +73,6 @@ def _is_strict_refusal_answer(text: object, *, user_query: object) -> bool:
     }
 
 
-def _selector_rejected_all_without_answer_support(decision: dict[str, Any]) -> bool:
-    selected = decision.get("selected")
-    rejected = decision.get("rejected")
-    if selected:
-        return False
-    if not isinstance(rejected, list) or not rejected:
-        return False
-    for item in rejected:
-        if not isinstance(item, dict):
-            return False
-        answer_score = item.get("answer_score")
-        if isinstance(answer_score, int | float) and answer_score > 0:
-            return False
-    return True
-
-
 def _citation_render_inputs(
     kb_meta: dict[str, Any],
 ) -> tuple[set[str], list[dict], list[dict[str, Any]]]:
@@ -248,18 +232,8 @@ def _render_kb_citation_content(
         ):
             decision["no_citable_reason"] = "strict_refusal_no_supported_sources"
             return strict_refusal, [], True, decision
-        fallback_sources = _trusted_sources_visible_fallback(trusted_sources)
-        if kb_narrow and fallback_sources:
-            if _selector_rejected_all_without_answer_support(decision):
-                decision["no_citable_reason"] = (
-                    "selector_rejected_all_sources_without_answer_support"
-                )
-                return composed.content or text, [], True, decision
-            decision["fallback"] = "document_level_trusted_sources"
-            decision["no_citable_reason"] = "selector_rejected_all_sources_fallback"
-            return composed.content or text, fallback_sources, False, decision
         if kb_narrow:
-            decision["no_citable_reason"] = "selector_rejected_all_sources"
+            decision["no_citable_reason"] = "strict_no_sentence_level_support"
             return strict_refusal, [], True, decision
         # Broad mode: pass model's answer through even when no trusted
         # document-level source can be rendered — general knowledge is valid.
@@ -394,35 +368,6 @@ def _prepend_primary_upload_source(
         updated["label"] = str(index)
         relabelled.append(updated)
     return relabelled
-
-
-def _trusted_sources_visible_fallback(
-    trusted_sources: list[dict[str, Any]],
-    *,
-    max_sources: int = 3,
-) -> list[dict[str, Any]]:
-    """Render document-level sources when answer/source text matching is too strict."""
-    sources: list[dict[str, Any]] = []
-    seen_keys: set[str] = set()
-    for source in trusted_sources:
-        url = normalise_guard_url(source.get("url"))
-        key = (
-            url
-            or str(
-                source.get("artifact_id")
-                or source.get("source_id")
-                or source.get("title")
-                or source.get("source_label")
-                or ""
-            ).strip()
-        )
-        if not key or key in seen_keys:
-            continue
-        seen_keys.add(key)
-        sources.append(_source_with_metadata(source, label=str(len(sources) + 1)))
-        if len(sources) >= max_sources:
-            break
-    return sources
 
 
 def _plural_nl(count: int, singular: str, plural: str) -> str:

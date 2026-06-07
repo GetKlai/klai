@@ -1,10 +1,9 @@
 """Redis cache invalidation helpers for LiteLLM pre-call hook entries.
 
-The LiteLLM hook (``deploy/litellm/klai_knowledge.py``) caches two per-user
-lookups in shared Redis:
+The LiteLLM hook caches two per-user lookups in Redis:
 
-- the KB feature/scope preference — version pointer ``kb_ver:{zitadel_org_id}:{user}``
-  (``_get_kb_feature``)
+- the KB feature/scope preference — short-lived Redis-only version pointer
+  ``kb_ver:{zitadel_org_id}:{user}`` (``_get_kb_feature``)
 - prompt templates — ``templates:{zitadel_org_id}:{user}`` (``_get_templates``)
 
 When portal-api writes change the effective state, we pre-emptively drop the
@@ -21,8 +20,9 @@ int-keyed DELETE silently misses and the "immediate invalidation" becomes a
 no-op (only the 30s TTL saves it).
 
 All helpers are fire-and-forget: on any Redis error they emit a
-structured warning and return — callers must never depend on cache
-invalidation for correctness (30s TTL is the fallback).
+structured warning and return — callers must never depend on cache invalidation
+for correctness (the feature cache has a very short TTL and never uses
+LiteLLM's process-local DualCache tier).
 
 Related: SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-CACHE.
 
@@ -143,10 +143,12 @@ async def invalidate_kb_cache(
 ) -> None:
     """Drop the LiteLLM KB feature/scope version pointer (``kb_ver:{zitadel_org_id}:...``).
 
-    Dropping the version pointer forces the hook to re-fetch the user's KB
-    preference from portal-api on the next chat turn; the version-keyed
-    feature blob (``kb_feature:{org}:{user}:{version}``) then becomes
-    unreachable and expires on its own TTL.
+    Dropping the Redis-only version pointer forces the hook to re-fetch the
+    user's KB preference from portal-api on the next chat turn; the version-keyed
+    feature blob (``kb_feature:{org}:{user}:{version}``) then becomes unreachable
+    and expires on its own short TTL. This intentionally does not involve
+    LiteLLM DualCache because its process-local tier cannot be invalidated from
+    portal-api.
 
     - ``librechat_user_id`` set -> single user (kb-preference PATCH).
     - ``librechat_user_id=None`` -> org-wide (telemetry-level toggle).

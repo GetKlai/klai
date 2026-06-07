@@ -55,7 +55,13 @@ def _mock_litellm():
     reset_klai_kb_modules()
 
 
-def _load_hook(monkeypatch, extra_env=None, *, mock_fire_and_forget=True):
+def _load_hook(
+    monkeypatch,
+    extra_env=None,
+    *,
+    mock_fire_and_forget=True,
+    mock_feature_state=True,
+):
     """Import and reload klai_knowledge with the given env vars.
 
     By default also silences the fire-and-forget producers
@@ -94,7 +100,58 @@ def _load_hook(monkeypatch, extra_env=None, *, mock_fire_and_forget=True):
     if mock_fire_and_forget:
         monkeypatch.setattr(klai_knowledge, "_fire_gap_event", MagicMock())
         monkeypatch.setattr(klai_knowledge, "_fire_retrieval_log", MagicMock())
+    if mock_feature_state:
+        monkeypatch.setattr(klai_knowledge, "_get_kb_feature", _test_get_kb_feature)
     return klai_knowledge
+
+
+async def _test_get_kb_feature(user_id: str, org_id: str, cache):
+    """Unit-test feature resolver backed by the existing _make_cache helper.
+
+    Most hook tests exercise retrieval/prompt/render policy, not portal-client
+    I/O. Dedicated feature-client tests opt out with mock_feature_state=False.
+    """
+    cached_version = await cache.async_get_cache(f"kb_ver:{org_id}:{user_id}")
+    if cached_version is not None:
+        cached = await cache.async_get_cache(
+            f"kb_feature:{org_id}:{user_id}:{cached_version}"
+        )
+        if isinstance(cached, dict):
+            return cached
+
+    try:
+        async_client = sys.modules["klai_knowledge"].httpx.AsyncClient
+        async with async_client(timeout=2.0) as client:
+            resp = await client.get(
+                f"http://portal-api:8000/internal/v1/users/{user_id}/feature/knowledge",
+                params={"org_id": org_id},
+                headers={"Authorization": "Bearer test-portal-secret"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        return {
+            "enabled": False,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": None,
+            "kb_narrow": False,
+            "version": 0,
+            "zitadel_user_id": None,
+            "settings_unavailable": True,
+            "telemetry_level": "shadow",
+        }
+
+    return {
+        "enabled": data.get("enabled", False),
+        "kb_retrieval_enabled": data.get("kb_retrieval_enabled", True),
+        "kb_personal_enabled": data.get("kb_personal_enabled", True),
+        "kb_slugs_filter": data.get("kb_slugs_filter"),
+        "kb_narrow": data.get("kb_narrow", False),
+        "version": data.get("kb_pref_version", 0),
+        "zitadel_user_id": data.get("zitadel_user_id"),
+        "telemetry_level": data.get("telemetry_level", "shadow"),
+    }
 
 
 def _make_cache(feature_enabled: bool | None = None, feature: dict | None = None):
@@ -411,7 +468,7 @@ class TestKlaiKnowledgeHookLegacy:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(
+            result = await hook.async_pre_call_hook(
                 _make_user_api_key(), cache, data, "completion"
             )
 
@@ -421,8 +478,8 @@ class TestKlaiKnowledgeHookLegacy:
             assert headers.get("X-Caller-Service") == "litellm"
 
     @pytest.mark.asyncio
-    async def test_no_secret_no_header(self, monkeypatch):
-        """When PORTAL_INTERNAL_SECRET is empty, no auth header sent to retrieval."""
+    async def test_missing_portal_secret_still_sends_retrieval_secret(self, monkeypatch):
+        """Retrieval auth is independent from portal-api auth."""
         mod = _load_hook(monkeypatch, extra_env={"PORTAL_INTERNAL_SECRET": ""})
         hook = mod.KlaiKnowledgeHook()
         # Cache says enabled=True so we skip the portal HTTP call
@@ -446,14 +503,15 @@ class TestKlaiKnowledgeHookLegacy:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(
+            result = await hook.async_pre_call_hook(
                 _make_user_api_key(), cache, data, "completion"
             )
 
             post_call = mc.post.call_args
             if post_call:
                 headers = post_call.kwargs.get("headers") or {}
-                assert "X-Internal-Secret" not in headers
+                assert headers.get("X-Internal-Secret") == "test-retrieval-secret"
+                assert headers.get("X-Caller-Service") == "litellm"
 
     @pytest.mark.asyncio
     async def test_no_kb_branch_strips_assistant_footer_from_provider_input(
@@ -524,7 +582,7 @@ class TestKlaiKnowledgeHookRetrieveAuth:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(
+            result = await hook.async_pre_call_hook(
                 _make_user_api_key(), cache, data, "completion"
             )
 
@@ -1168,7 +1226,7 @@ class TestKlaiKnowledgeHookFailLoud:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(
+            result = await hook.async_pre_call_hook(
                 _make_user_api_key(), cache, data, "completion"
             )
 
@@ -1205,7 +1263,7 @@ class TestKlaiKnowledgeHookFailLoud:
             mc.__aexit__ = AsyncMock(return_value=None)
             cls.return_value = mc
 
-            await hook.async_pre_call_hook(
+            result = await hook.async_pre_call_hook(
                 _make_user_api_key(), cache, data, "completion"
             )
 
@@ -1218,21 +1276,10 @@ class TestKlaiKnowledgeHookFailLoud:
         assert kb_meta["kb_narrow"] is True
         assert kb_meta["no_citable_sources"] is True
         assert kb_meta["no_citable_reason"] == "retrieval_failure"
-
-        response = SimpleNamespace(
-            choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(content="A model fallback answer")
-                )
-            ]
-        )
-        await hook.async_post_call_success_hook(data, None, response)
-        assert response.choices[0].message.content.startswith(
+        assert result["mock_response"].startswith(
             "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
             "betrouwbaar beantwoorden op basis van je kennisbronnen."
         )
-        assert "**Agent activiteit**" in response.choices[0].message.content
-        assert "**Bronnen**" not in response.choices[0].message.content
 
 
 # ─── KB-010 new tests ────────────────────────────────────────────────────────
@@ -1544,6 +1591,73 @@ class TestKlaiKnowledgeHookKB010:
 
             # get() must NOT have been called (authz came from cache)
             mc.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_feature_check_default_ignores_stale_mode_cache(self, monkeypatch):
+        """Default production path treats portal as source of truth for mode.
+
+        A stale LiteLLM cache saying Strict must not override a fresh portal
+        response saying Open. This is the strict/open toggle latency contract.
+        """
+        mod = _load_hook(monkeypatch, mock_feature_state=False)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+        redis_get = AsyncMock(return_value=None)
+        redis_set = AsyncMock()
+        monkeypatch.setattr(
+            "klai_kb_portal_client._get_kb_feature_redis", redis_get
+        )
+        monkeypatch.setattr(
+            "klai_kb_portal_client._set_kb_feature_redis", redis_set
+        )
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat is TCP IP?"}],
+        }
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": ["klai-help"],
+                "kb_narrow": False,
+                "kb_pref_version": 193,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [
+                    {
+                        "text": "Klai has an MCP endpoint for external AI tools.",
+                        "scope": "org",
+                        "metadata": {"title": "Use Klai through MCP"},
+                        "source_url": "https://docs.example/use-klai-through-mcp",
+                        "chunk_id": "weak-1",
+                        "reranker_score": 0.0004,
+                    }
+                ],
+                "retrieval_bypassed": False,
+                "confidence_band": "low",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ) as mock_client:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        mock_client.get.assert_called()
+        redis_get.assert_awaited_once_with("aabbcc112233445566778899", "org123")
+        redis_set.assert_awaited_once()
+        assert "mock_response" not in result
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["kb_narrow"] is False
+        assert meta["answer_policy_mode"] == "open"
+        cache.async_set_cache.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_both_scope_and_user_id_in_request(self, monkeypatch):
@@ -3337,11 +3451,11 @@ class TestKlaiKnowledgeHookKB013:
         assert "_klai_kb_meta" not in result
 
     @pytest.mark.asyncio
-    async def test_portal_fail_uses_stale_feature_cache(self, monkeypatch):
-        """Portal outage after a prior success → use stale feature cache and retrieve."""
-        mod = _load_hook(monkeypatch)
+    async def test_portal_fail_uses_short_lived_redis_feature_cache(self, monkeypatch):
+        """Portal outage after a prior success uses Redis-only feature cache."""
+        mod = _load_hook(monkeypatch, mock_feature_state=False)
         hook = mod.KlaiKnowledgeHook()
-        stale_feature = {
+        cached_feature = {
             "enabled": True,
             "kb_retrieval_enabled": True,
             "kb_personal_enabled": True,
@@ -3351,21 +3465,12 @@ class TestKlaiKnowledgeHookKB013:
             "zitadel_user_id": "300000000000000002",
             "telemetry_level": "shadow",
         }
-        cache = MagicMock()
-        cache.async_set_cache = AsyncMock()
-
-        async def _get(key: str) -> object:
-            if key.startswith("templates:"):
-                return []
-            if key.startswith("tax_trees:"):
-                return {}
-            if key.startswith("tax_coverage:"):
-                return {}
-            if key.startswith("kb_feature_latest:"):
-                return stale_feature
-            return None
-
-        cache.async_get_cache = AsyncMock(side_effect=_get)
+        cache = _make_cache()
+        redis_get = AsyncMock(return_value=cached_feature)
+        redis_set = AsyncMock()
+        portal_client = sys.modules["klai_kb_portal_client"]
+        monkeypatch.setattr(portal_client, "_get_kb_feature_redis", redis_get)
+        monkeypatch.setattr(portal_client, "_set_kb_feature_redis", redis_set)
 
         data = {
             "user": "aabbcc112233445566778899",
@@ -3387,6 +3492,8 @@ class TestKlaiKnowledgeHookKB013:
             )
 
             mc.post.assert_called_once()
+            mc.get.assert_not_called()
+            redis_set.assert_not_called()
         body = mc.post.call_args.kwargs.get("json") or {}
         assert body.get("scope") == "personal"
         assert body.get("user_id") == "300000000000000002"
@@ -4461,10 +4568,10 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         ]
 
     @pytest.mark.asyncio
-    async def test_post_call_guard_falls_back_to_document_sources_in_narrow_mode_when_selector_rejects(
+    async def test_post_call_guard_refuses_in_strict_mode_when_selector_rejects(
         self, monkeypatch, caplog
     ):
-        """Strict mode may render document-level provenance when source matching is too strict."""
+        """Strict mode must not cite documents when no source supports the answer."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         caplog.set_level("WARNING", logger="klai_knowledge")
@@ -4505,7 +4612,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                         }
                     ],
                     # Deliberately no evidence_ids/source text match for the
-                    # selector. The fallback must still show the trusted doc.
+                    # selector. Strict must refuse, not show document-level
+                    # provenance for an unsupported model answer.
                     "trusted_sources": [
                         {
                             "label": "1",
@@ -4528,27 +4636,110 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert returned is response
         content = response.choices[0].message.content
-        assert "Frank Wolters trekt Data Readiness" in content
-        assert "**Bronnen**" in content
-        assert "- [Organogram](https://kb.getklai.test/organogram.pdf)" in content
-        assert "- [Budget planning](https://kb.getklai.test/budget.pdf)" in content
+        assert "Frank Wolters trekt Data Readiness" not in content
+        assert "niet betrouwbaar beantwoorden" in content
+        assert "**Bronnen**" not in content
         assert "**Agent activiteit**" in content
-        assert "- Gebruikte bronnen: Organogram, Budget planning." in content
-        assert response.choices[0].message.sources == [
-            {
-                "label": "1",
-                "title": "Organogram",
-                "url": "https://kb.getklai.test/organogram.pdf",
-                "evidence_ids": ["different-evidence-id"],
-            },
-            {
-                "label": "2",
-                "title": "Budget planning",
-                "url": "https://kb.getklai.test/budget.pdf",
-                "evidence_ids": ["also-different"],
-            },
-        ]
-        assert "selector_rejected_all_sources_fallback" in caplog.text
+        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
+        assert response.choices[0].message.sources == []
+        assert "strict_no_sentence_level_support" in caplog.text
+        assert "selector_rejected_all_sources_fallback" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_post_call_guard_refuses_strict_tcp_ip_answer_with_weak_klai_sources(
+        self, monkeypatch, caplog
+    ):
+        """Regression for 2026-06 incident: Strict must not cite weak Klai docs
+        under a general TCP/IP answer when the selector rejects source support.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        caplog.set_level("WARNING", logger="klai_knowledge")
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=(
+                            "TCP/IP is het standaard protocol voor datacommunicatie "
+                            "op het internet. TCP zorgt voor betrouwbare verbindingen; "
+                            "IP regelt adressering en routing."
+                        )
+                    )
+                )
+            ]
+        )
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "user_query": "Wat is de TCP-poort van onze API gateway?",
+                    "chat_retrieval_prompt_mode": "strict_kb",
+                    "kb_narrow": True,
+                    "chunks_injected": 3,
+                    "retrieval_ms": 360,
+                    "gate_bypassed": False,
+                    "confidence_band": "medium",
+                    "allowed_image_urls": [],
+                    "citable_sources_count": 3,
+                    "citation_chunks": [
+                        {
+                            "evidence_id": "E1",
+                            "title": "Use Klai through MCP",
+                            "source_url": "https://getklai.test/docs/use-klai-through-mcp",
+                            "text": "Klai has an MCP endpoint for external AI tools.",
+                        },
+                        {
+                            "evidence_id": "E2",
+                            "title": "Use the Klai API",
+                            "source_url": "https://getklai.test/docs/use-the-api",
+                            "text": "Search the live web. Set web_search to true.",
+                        },
+                        {
+                            "evidence_id": "E3",
+                            "title": "Home",
+                            "source_url": "https://getklai.test/docs/home",
+                            "text": "Klai is a private AI platform for European teams.",
+                        },
+                    ],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "Use Klai through MCP",
+                            "url": "https://getklai.test/docs/use-klai-through-mcp",
+                            "evidence_ids": ["E1"],
+                            "relevance_score": 0.001,
+                        },
+                        {
+                            "label": "2",
+                            "title": "Use the Klai API",
+                            "url": "https://getklai.test/docs/use-the-api",
+                            "evidence_ids": ["E2"],
+                            "relevance_score": 0.0004,
+                        },
+                        {
+                            "label": "3",
+                            "title": "Home",
+                            "url": "https://getklai.test/docs/home",
+                            "evidence_ids": ["E3"],
+                            "relevance_score": 0.0001,
+                        },
+                    ],
+                }
+            }
+        }
+
+        returned = await hook.async_post_call_success_hook(data, None, response)
+
+        assert returned is response
+        message = response.choices[0].message
+        assert "TCP/IP is het standaard protocol" not in message.content
+        assert "niet betrouwbaar beantwoorden" in message.content
+        assert "**Bronnen**" not in message.content
+        assert "Use Klai through MCP" not in message.content
+        assert "Use the Klai API" not in message.content
+        assert getattr(message, "sources", []) == []
+        assert "strict_no_sentence_level_support" in caplog.text
 
     @pytest.mark.asyncio
     async def test_post_call_guard_does_not_attach_rejected_document_sources_in_open_mode(
@@ -5272,7 +5463,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert len(streamed) == 2
         footer = streamed[0]
         content = footer["choices"][0]["delta"]["content"]
-        assert content.startswith("Ja.")
+        assert content.startswith("Ik kan dit niet betrouwbaar beantwoorden")
+        assert "Ja." not in content
         assert "**Agent activiteit**" in content
         assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
         assert "**Bronnen**" not in content
@@ -5355,7 +5547,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert len(streamed) == 2
         footer = streamed[0]
         content = footer["choices"][0]["delta"]["content"]
-        assert content.startswith("Sorry, daar kan ik je helaas niet")
+        assert content.startswith("Ik kan dit niet betrouwbaar beantwoorden")
+        assert "Sorry, daar kan ik je helaas niet" not in content
         assert "**Agent activiteit**" in content
         assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
         assert "**Bronnen**" not in content
@@ -5413,7 +5606,8 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
         assert returned is response
         content = response.choices[0].message.content
-        assert content.startswith("Sorry, daar kan ik je helaas niet")
+        assert content.startswith("Ik kan dit niet betrouwbaar beantwoorden")
+        assert "Sorry, daar kan ik je helaas niet" not in content
         assert "**Agent activiteit**" in content
         assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
         assert "**Bronnen**" not in content
@@ -5870,13 +6064,7 @@ class TestKlaiKnowledgeHookOpenMode:
         assert kb_meta["answer_policy_state"] == "retrieval_failure"
         assert kb_meta["chat_retrieval_prompt_mode"] == "strict_kb"
 
-        response = SimpleNamespace(
-            choices=[
-                SimpleNamespace(message=SimpleNamespace(content="A model fallback answer"))
-            ]
-        )
-        await hook.async_post_call_success_hook(result, None, response)
-        assert response.choices[0].message.content.startswith(
+        assert result["mock_response"].startswith(
             "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
             "betrouwbaar beantwoorden op basis van je kennisbronnen."
         )
@@ -6149,12 +6337,12 @@ class TestKlaiKnowledgeHookOpenMode:
         assert meta["suppress_kb_citations"] is True
 
     @pytest.mark.asyncio
-    async def test_strict_low_confidence_injection_remains_strict(
+    async def test_strict_low_confidence_refuses_before_model(
         self, monkeypatch, _kb_chunks
     ):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature={"kb_narrow": True})
+        cache = _make_cache()
 
         data = {
             "user": "aabbcc112233445566778899",
@@ -6169,24 +6357,36 @@ class TestKlaiKnowledgeHookOpenMode:
                 "confidence_band": "low",
             }
         )
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": True,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
 
-        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ) as mock_client:
             result = await hook.async_pre_call_hook(
                 _make_user_api_key(), cache, data, "completion"
             )
 
-        sys_content = self._system_msg(result)
-        assert "Klai retrieval — lage relevantie" in sys_content
-        assert "Citeer alleen wat letterlijk in de chunks staat" in sys_content
-        assert "lage relevantie in Open modus" not in sys_content
-        assert "Open mode blijft actief" not in sys_content
-        # Strict keeps the KB-only grounding contract...
-        assert "answer strictly using only the sources below" in sys_content
-        # ...but a user-provided attachment is still standalone content the
-        # model may inspect, even in Strict. The clause is mode-independent.
-        assert "[User-provided content]" in sys_content
-        assert "even in Strict mode" in sys_content
-        assert "Strict mode: user-provided image attachments" not in sys_content
+        assert result.get("mock_response")
+        assert "niet betrouwbaar beantwoorden" in result["mock_response"]
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["answer_policy_state"] == "chunks_present"
+        assert meta["no_citable_sources"] is True
+        assert meta["no_citable_reason"] == "strict_low_confidence_no_direct_evidence"
+        assert meta["confidence_band"] == "low"
+        assert "messages" in result
+        assert all(m.get("role") != "system" for m in result["messages"])
+        assert mock_client.post.call_count == 1
+        cache.async_set_cache.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kb_narrow", [False, True])
@@ -6571,15 +6771,7 @@ class TestKlaiKnowledgeHookZeroChunksMode:
     async def test_zero_chunks_strict_metadata_forces_deterministic_refusal(
         self, monkeypatch
     ):
-        """Strict + zero chunks MUST force the post-call renderer to refuse.
-
-        Without ``no_citable_sources=True`` the contract degrades from
-        "deterministic refusal" to "model is asked nicely to refuse via
-        its system prompt", which Mistral hallucinates around. The
-        post-call renderer reads this flag as ``force_no_citable`` and
-        replaces the model output with the language-aware canned refusal
-        from ``klai_chat_prompts.no_citable_sources_message``.
-        """
+        """Strict + zero chunks MUST bypass the model and refuse deterministically."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature={"kb_narrow": True})
@@ -6606,12 +6798,12 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         assert meta["chunks_injected"] == 0
         assert meta["trusted_sources"] == []
         assert meta["citation_chunks"] == []
-        # Strict mode MUST force the canned refusal to ship — the model
-        # cannot be trusted to refuse on its own.
         assert meta["no_citable_sources"] is True, (
             "Strict + zero chunks must set no_citable_sources=True so the "
-            "post-call renderer ships the deterministic refusal."
+            "strict refusal is observable in telemetry."
         )
+        assert result.get("mock_response")
+        assert "niet betrouwbaar beantwoorden" in result["mock_response"]
 
     @pytest.mark.asyncio
     async def test_zero_chunks_open_metadata_lets_post_call_short_circuit(
@@ -6932,18 +7124,20 @@ class TestStrictModeCodeEnforcement:
         )
 
 
-class TestMissingSecretStaleCache:
-    """Bug D regression: when PORTAL_INTERNAL_SECRET is absent, the hook must
-    still honour the user's last-known settings from the 24h stale cache
-    (preserving their Strict/Open mode) instead of hard-refusing. It may only
-    refuse when there is genuinely nothing cached to fall back on."""
+class TestMissingSecretRedisFeatureCache:
+    """When portal auth is unavailable, only short-lived Redis feature state
+    may preserve mode. LiteLLM DualCache/stale latest-cache is not trusted."""
 
     @pytest.mark.asyncio
-    async def test_missing_secret_uses_stale_cache_instead_of_refusing(
+    async def test_missing_secret_uses_redis_cached_settings_instead_of_refusing(
         self, monkeypatch
     ):
-        mod = _load_hook(monkeypatch, extra_env={"PORTAL_INTERNAL_SECRET": ""})
-        stale_feature = {
+        mod = _load_hook(
+            monkeypatch,
+            extra_env={"PORTAL_INTERNAL_SECRET": ""},
+            mock_feature_state=False,
+        )
+        cached_feature = {
             "enabled": True,
             "kb_retrieval_enabled": True,
             "kb_personal_enabled": True,
@@ -6953,39 +7147,39 @@ class TestMissingSecretStaleCache:
             "zitadel_user_id": "300000000000000002",
             "telemetry_level": "shadow",
         }
+        redis_get = AsyncMock(return_value=cached_feature)
+        monkeypatch.setattr("klai_kb_portal_client._get_kb_feature_redis", redis_get)
+        monkeypatch.setattr(
+            "klai_kb_portal_client._set_kb_feature_redis", AsyncMock()
+        )
         cache = MagicMock()
-        cache.async_set_cache = AsyncMock()
-
-        async def _get(key: str) -> object:
-            if key == "kb_feature_latest:org1:user1":
-                return stale_feature
-            return None
-
-        cache.async_get_cache = AsyncMock(side_effect=_get)
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             feature = await mod._get_kb_feature("user1", "org1", cache)
-        # Not refused — last-known settings used, Strict mode preserved.
+        # Not refused — short-lived Redis settings used, Strict mode preserved.
         assert feature.get("settings_unavailable") is not True
         assert feature["kb_narrow"] is True
-        assert feature is stale_feature
-        # The missing-secret guard must short-circuit BEFORE any portal HTTP.
-        # Asserting only `is stale_feature` is vacuous: without the guard the
-        # same object is reached via the fail-open `except` after a failed
-        # network call, masking a regression. Pin that no HTTP was attempted.
+        assert feature is cached_feature
+        redis_get.assert_awaited_once_with("user1", "org1")
         cls.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_missing_secret_no_cache_still_refuses(self, monkeypatch):
-        mod = _load_hook(monkeypatch, extra_env={"PORTAL_INTERNAL_SECRET": ""})
+        mod = _load_hook(
+            monkeypatch,
+            extra_env={"PORTAL_INTERNAL_SECRET": ""},
+            mock_feature_state=False,
+        )
+        redis_get = AsyncMock(return_value=None)
+        monkeypatch.setattr("klai_kb_portal_client._get_kb_feature_redis", redis_get)
+        monkeypatch.setattr(
+            "klai_kb_portal_client._set_kb_feature_redis", AsyncMock()
+        )
         cache = MagicMock()
-        cache.async_set_cache = AsyncMock()
-        cache.async_get_cache = AsyncMock(return_value=None)
 
         with patch("klai_knowledge.httpx.AsyncClient") as cls:
             feature = await mod._get_kb_feature("user1", "org1", cache)
         # Truly cold: nothing to fall back on -> deterministic refusal stands.
         assert feature["settings_unavailable"] is True
-        # Same vacuous-coverage guard as the sibling test: the missing-secret
-        # branch must short-circuit before any portal HTTP.
+        redis_get.assert_awaited_once_with("user1", "org1")
         cls.assert_not_called()
