@@ -12,9 +12,8 @@ checks apply via :func:`verify_body_identity`). When neither is present, the
 request is rejected with HTTP 401.
 
 Internal-secret callers are trusted service principals (portal-api, LiteLLM
-knowledge hook). REQ-3.3 intentionally skips cross-user / cross-org checks for
-this path — those callers have already resolved the caller's identity out of
-band (portal-api via ``_get_caller_org``; LiteLLM via team-key metadata).
+knowledge hook). Their body identity claims are verified via portal-api before
+downstream handlers may use them for product events or retrieval decisions.
 
 Rate limiting (REQ-4) runs after auth succeeds. Identity key:
 
@@ -532,12 +531,15 @@ async def verify_body_identity(
     if auth.method == "jwt":
         if auth.role == "admin":
             # Admin bypass (REQ-3.1/3.2): admins legitimately act on other
-            # users' tenants. We pin claim values rather than JWT values
-            # so emit_event reflects the intended target tenant.
+            # users' tenants. We pin claim values rather than JWT values so
+            # emit_event reflects the intended target tenant. Org-scope admin
+            # calls may omit user_id; those pin a tenant-only identity.
             if body_user_id is not None:
                 request.state.verified_caller = VerifiedCaller(
                     user_id=str(body_user_id), org_id=str(body_org_id)
                 )
+            else:
+                request.state.verified_tenant = VerifiedTenant(org_id=str(body_org_id))
             return
 
         if body_user_id is not None and auth.sub is not None and str(body_user_id) != str(auth.sub):
