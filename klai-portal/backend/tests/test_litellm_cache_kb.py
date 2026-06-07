@@ -9,7 +9,7 @@ backend until the 30s TTL lapsed.
 These tests lock:
 1. invalidate_kb_cache single/org-wide DEL behaviour + fire-and-forget.
 2. The key SHAPES the portal builds match the literal f-strings in
-   deploy/litellm/klai_knowledge.py (url-shape-multi-file-drift guard).
+   deploy/litellm/klai_kb_portal_client.py (url-shape-multi-file-drift guard).
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ from app.services.litellm_cache import (
     invalidate_kb_cache,
 )
 
-# klai_knowledge.py lives at <repo-root>/deploy/litellm/ — three parents up
+# klai_kb_portal_client.py lives at <repo-root>/deploy/litellm/ — three parents up
 # from this test file (tests -> backend -> klai-portal -> repo-root).
-_HOOK_SOURCE = (Path(__file__).resolve().parents[3] / "deploy" / "litellm" / "klai_knowledge.py").read_text(
-    encoding="utf-8"
-)
+_PORTAL_CLIENT_SOURCE = (
+    Path(__file__).resolve().parents[3] / "deploy" / "litellm" / "klai_kb_portal_client.py"
+).read_text(encoding="utf-8")
 
 
 @pytest.fixture
@@ -61,13 +61,13 @@ def test_kb_version_org_pattern_shape() -> None:
 def test_portal_key_shapes_match_hook_literals() -> None:
     """The portal builders MUST mirror the hook's f-string key format.
 
-    If klai_knowledge.py changes its cache-key shape, this fails loudly so the
-    two homes can't drift (the bug was: hook used the Zitadel string, portal
-    used the int).
+    If klai_kb_portal_client.py changes its cache-key shape, this fails loudly
+    so the two homes can't drift (the bug was: hook used the Zitadel string,
+    portal used the int).
     """
-    # Hook constructs these verbatim (klai_knowledge.py _get_kb_feature / _get_templates).
-    assert 'f"kb_ver:{org_id}:{user_id}"' in _HOOK_SOURCE
-    assert 'f"templates:{org_id}:{user_id}"' in _HOOK_SOURCE
+    # LiteLLM portal client constructs these verbatim (get_kb_feature / get_templates).
+    assert 'f"kb_ver:{org_id}:{user_id}"' in _PORTAL_CLIENT_SOURCE
+    assert 'f"templates:{org_id}:{user_id}"' in _PORTAL_CLIENT_SOURCE
     # And the hook's org_id is the Zitadel string (query param resolved via
     # PortalOrg.zitadel_org_id), so the portal builders take the same string.
     assert _kb_version_user_key("Z", "U") == "kb_ver:Z:U"
