@@ -1,6 +1,6 @@
 # Klai Platform: Technical Decisions
 
-*Last updated: 2026-04-19. For the Knowledge product specification, see [klai-knowledge-architecture.md](../klai-knowledge-architecture.md).*
+*Last updated: 2026-04-19. For the Knowledge product specification, see [klai-knowledge-architecture.md](klai-knowledge-architecture.md).*
 
 ## Stack
 
@@ -149,7 +149,7 @@ Principle: public-01 and core-01 share no ports and no machines. monitor-01 rece
 
 **Phase 0 LiteLLM failover:** primary Mistral API, fallback Ollama on core-01. Automatic via LiteLLM fallback configuration.
 
-**Dev environment (`dev.getklai.com`):** parallel stack on core-01 with its own isolated LibreChat + LiteLLM containers, own dev database, Caddy routes `/api/*` via a dedicated `route` block. Inter-service infra secrets are reused from prod (KB / connector CRUD work without duplicating SOPS). Runbook in [`docs/dev.md`](../dev.md).
+**Dev environment (`dev.getklai.com`):** parallel stack on core-01 with its own isolated LibreChat + LiteLLM containers, own dev database, Caddy routes `/api/*` via a dedicated `route` block. Inter-service infra secrets are reused from prod (KB / connector CRUD work without duplicating SOPS). There is no dedicated `docs/dev.md` runbook in this checkout; local standalone setup is covered in [local-dev.md](../runbooks/local-dev.md).
 
 **Phase 3+ networking (when self-hosting AI):** core-01 (Hetzner HEL) and ai-01 (Nebius HEL) are in the same city — latency 5-15 ms RTT. Connected via WireGuard tunnel. LiteLLM calls vLLM via private WireGuard IP. Failover to Scaleway Paris (H100) or RunPod EU if Nebius goes down. Nebius SLA: 99.9%, has official OpenTofu provider.
 

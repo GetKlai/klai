@@ -216,6 +216,10 @@ dist-ssr/
 .playwright-mcp/
 klai-portal/frontend/public/widget/klai-chat.js
 
+# Generated visual-regression screenshots. Keep specs/scripts, not bitmap output.
+.moai/specs/*/baseline/*.png
+.moai/specs/*/current/*.png
+
 # CodeIndex source — lives in dedicated repo (sinterqlaas2/codeindex).
 # Do not vendor into this monorepo.
 codeindex-src/
