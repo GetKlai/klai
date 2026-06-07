@@ -45,6 +45,13 @@ def test_mapping_non_convertible_is_empty():
     assert _mapping(5) == {}
 
 
+def test_mapping_value_error_branch_is_empty():
+    # dict(["abc"]) raises ValueError ("length 3; 2 is required") — the other arm
+    # of `except (TypeError, ValueError)`. _mapping(5) above only covers the
+    # TypeError arm (an int is not iterable).
+    assert _mapping(["abc"]) == {}
+
+
 # --- _isoformat ---------------------------------------------------------------
 
 
