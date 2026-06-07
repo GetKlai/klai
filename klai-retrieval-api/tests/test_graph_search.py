@@ -124,6 +124,29 @@ async def test_search_skips_graphiti_empty_fulltext_syntax_error():
 
 
 @pytest.mark.asyncio
+async def test_search_warns_on_non_empty_fulltext_syntax_error():
+    mock_graphiti = AsyncMock()
+    mock_graphiti.search = AsyncMock(
+        side_effect=RuntimeError(
+            'RediSearch syntax error near "(@group_id:\\"org-1\\") (hello)"'
+        )
+    )
+
+    with (
+        patch("retrieval_api.services.graph_search.settings") as mock_settings,
+        patch("retrieval_api.services.graph_search._get_graphiti", return_value=mock_graphiti),
+        patch("retrieval_api.services.graph_search.logger") as mock_logger,
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graph_search_timeout = 5.0
+        result = await graph_search.search("hello", "org-1")
+
+    assert result == []
+    mock_logger.info.assert_not_called()
+    mock_logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_search_timeout():
     """Returns empty list on timeout — graceful degradation (AC-7)."""
     mock_graphiti = AsyncMock()

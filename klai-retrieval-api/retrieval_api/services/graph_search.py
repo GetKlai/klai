@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 
 import structlog
 from graphiti_core import Graphiti
@@ -25,6 +26,7 @@ from retrieval_api.config import settings
 logger = structlog.get_logger()
 
 _graphiti_client: Graphiti | None = None
+_EMPTY_FULLTEXT_QUERY_RE = re.compile(r"\(@group_id:[^)]*\)\s+\(\s*\)(?:\s|['\"]|$)")
 
 
 def _get_graphiti() -> Graphiti:
@@ -101,7 +103,7 @@ def _has_searchable_text(query: str) -> bool:
 
 def _is_empty_fulltext_query_error(exc: Exception) -> bool:
     message = str(exc)
-    return "()" in message and "syntax" in message.lower()
+    return "syntax" in message.lower() and _EMPTY_FULLTEXT_QUERY_RE.search(message) is not None
 
 
 def _convert_results(results: list, top_k: int) -> list[dict]:
