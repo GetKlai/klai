@@ -93,7 +93,7 @@ groups:
           service_group: caddy
         annotations:
           summary: 'Caddy p95 request duration above 2s for 5m'
-          runbook_url: 'docs/runbooks/platform-recovery.md#caddy-p95-latency-high'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#caddy-p95-latency-high'
           description: |
             The 95th percentile of Caddy request durations exceeded 2 seconds
             over the last 5 minutes. Slow-but-not-erroring requests are often
@@ -209,7 +209,7 @@ groups:
           service_group: caddy
         annotations:
           summary: 'Caddy traffic dropped to <20% of hourly baseline (sustained 10m)'
-          runbook_url: 'docs/runbooks/platform-recovery.md#caddy-traffic-drop'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#caddy-traffic-drop'
           description: |
             Caddy request rate over the last 5 minutes is less than 20% of
             the rolling 1-hour baseline, AND the baseline shows a meaningful

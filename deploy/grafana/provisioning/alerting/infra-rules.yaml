@@ -82,7 +82,7 @@ groups:
           service_group: infra-containers
         annotations:
           summary: 'Container {{ $labels.name }} has not been seen for >7 min'
-          runbook_url: 'docs/runbooks/platform-recovery.md#container-down'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#container-down'
           description: |
             cAdvisor stopped seeing {{ $labels.name }} more than 2 minutes ago.
             Either the container has exited, the Docker daemon is unresponsive,
@@ -144,7 +144,7 @@ groups:
           service_group: infra-containers
         annotations:
           summary: 'Container {{ $labels.name }} is in a restart loop ({{ $value }} restarts in 15m, sustained 15m)'
-          runbook_url: 'docs/runbooks/platform-recovery.md#container-restart-loop'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#container-restart-loop'
           description: |
             {{ $labels.name }} has restarted {{ $value }} times in the last 15
             minutes, and this has been sustained for at least 15 consecutive
@@ -214,7 +214,7 @@ groups:
           service_group: infra-host
         annotations:
           summary: 'core-01 root disk under 15% free for >30m'
-          runbook_url: 'docs/runbooks/platform-recovery.md#core01-disk-usage-high'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#core01-disk-usage-high'
           description: |
             The host root filesystem on core-01 (/dev/md2) has been below 15%
             free for at least 30 minutes.

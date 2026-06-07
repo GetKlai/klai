@@ -73,7 +73,7 @@ groups:
           service_group: ingest
         annotations:
           summary: 'knowledge-ingest emitted >10 errors in the last 10 min'
-          runbook_url: 'docs/runbooks/platform-recovery.md#knowledge-ingest-error-surge'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#knowledge-ingest-error-surge'
           description: |
             knowledge-ingest is emitting more than 10 error-level log lines
             per 10 minutes. Common causes: an upstream connector (Confluence,

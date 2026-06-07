@@ -71,5 +71,5 @@ groups:
           alert_type: heartbeat
         annotations:
           summary: 'alerter heartbeat tick'
-          runbook_url: 'docs/runbooks/platform-recovery.md#alerter-down-recovery'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#alerter-down-recovery'
           description: 'Synthetic always-firing rule. Each evaluation triggers a webhook GET to Uptime Kuma. If this stops, the alerter itself is down — see runbook alerter-down-recovery.'

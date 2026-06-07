@@ -79,6 +79,19 @@ for yaml_file in "${YAML_FILES[@]}"; do
       continue
     fi
 
+    # External URLs (http/https) point at a runbook in another repo. The
+    # ops-only platform-recovery runbook now lives in the private klai-infra
+    # repo (SPEC-REPO-SANITIZE-001: "ops-only, zero relevance for app
+    # developers"). We cannot resolve a cross-repo path from this checkout,
+    # so accept external URLs as-is — on-call ergonomics beats a check we
+    # physically cannot perform here. Local repo-relative paths stay strictly
+    # validated below (file existence + anchor slug-match).
+    case "$url" in
+      http://* | https://*)
+        continue
+        ;;
+    esac
+
     # Split on #.
     path="${url%%#*}"
     anchor=""
