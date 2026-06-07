@@ -246,6 +246,7 @@ services:
       - ./litellm/klai_kb_citation_render.py:/app/klai_kb_citation_render.py:ro
       - ./litellm/klai_kb_confidence_policy.py:/app/klai_kb_confidence_policy.py:ro
       - ./litellm/klai_kb_context_prompt.py:/app/klai_kb_context_prompt.py:ro
+      - ./litellm/klai_kb_llm_safety.py:/app/klai_kb_llm_safety.py:ro
       - ./litellm/klai_kb_query_rewrite.py:/app/klai_kb_query_rewrite.py:ro
       - ./litellm/klai_kb_render_policy.py:/app/klai_kb_render_policy.py:ro
       - ./litellm/klai_kb_request_context.py:/app/klai_kb_request_context.py:ro

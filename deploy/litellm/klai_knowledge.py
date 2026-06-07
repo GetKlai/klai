@@ -154,10 +154,14 @@ from klai_kb_traceability import (
 from klai_llm_safety import (
     SafetyDecision,
     SafetyPhase,
-    SafetyRequest,
-    SafetySurface,
-    check_text,
-    refusal_message,
+)
+from klai_kb_llm_safety import (
+    LLM_SAFETY_LITELLM_MODE,
+    check_llm_safety as _check_llm_safety,
+    chunk_safety_text as _chunk_safety_text,
+    llm_safety_enabled as _llm_safety_enabled,
+    llm_safety_enforces as _llm_safety_enforces,
+    llm_safety_short_circuit as _llm_safety_short_circuit,
 )
 
 # SPEC-MCP-RETRIEVAL-001 Phase 1: telemetry helpers moved out of this file
@@ -259,10 +263,6 @@ RETRIEVAL_INTERNAL_SECRET = (
     os.getenv("RETRIEVAL_INTERNAL_SECRET", "") or PORTAL_INTERNAL_SECRET
 )
 
-LLM_SAFETY_LITELLM_MODE = (
-    os.getenv("LLM_SAFETY_LITELLM_MODE", "enforce").strip().lower()
-)
-
 
 def _retrieve_headers() -> dict[str, str]:
     """Internal-secret + caller-service headers for the /retrieve call.
@@ -338,93 +338,6 @@ PORTAL_TEMPLATES_URL = os.getenv(
     "PORTAL_TEMPLATES_URL", f"{PORTAL_API_URL}/internal/templates/effective"
 )
 TEMPLATES_TIMEOUT = float(os.getenv("TEMPLATES_TIMEOUT", "2.0"))
-
-
-def _llm_safety_enabled() -> bool:
-    return LLM_SAFETY_LITELLM_MODE not in {"", "off", "disabled", "0", "false"}
-
-
-def _llm_safety_enforces() -> bool:
-    return LLM_SAFETY_LITELLM_MODE in {"enforce", "block", "on", "true", "1"}
-
-
-def _chunk_safety_text(chunk: dict[str, Any]) -> str:
-    values: list[str] = []
-    for key in ("title", "heading_path", "source_label", "text"):
-        value = chunk.get(key)
-        if isinstance(value, str):
-            values.append(value)
-        elif isinstance(value, list):
-            values.extend(item for item in value if isinstance(item, str))
-    return "\n".join(values)
-
-
-def _check_llm_safety(
-    *,
-    phase: SafetyPhase,
-    text: str,
-    query: str,
-    org_id: object,
-    user_id: object,
-    metadata: dict[str, Any],
-    chunk_id: object | None = None,
-) -> SafetyDecision | None:
-    if not _llm_safety_enabled() or not text:
-        return None
-    decision = check_text(
-        SafetyRequest(
-            text=text,
-            phase=phase,
-            surface=SafetySurface.LIBRECHAT,
-            locale_hint=query,
-            org_id=str(org_id) if org_id is not None else None,
-        )
-    )
-    metadata.setdefault("_klai_safety", []).append(
-        {
-            "mode": LLM_SAFETY_LITELLM_MODE,
-            "phase": phase.value,
-            "allowed": decision.allowed,
-            "reason": decision.reason,
-            "categories": [category.value for category in decision.categories],
-            "chunk_id": chunk_id,
-        }
-    )
-    if decision.allowed:
-        return decision
-    logger.warning(
-        "llm_safety_litellm_decision mode=%s phase=%s org_id=%s user_id=%s reason=%s categories=%s chunk_id=%s",
-        LLM_SAFETY_LITELLM_MODE,
-        phase.value,
-        org_id,
-        user_id,
-        decision.reason,
-        ",".join(category.value for category in decision.categories),
-        chunk_id,
-    )
-    return decision
-
-
-def _llm_safety_refusal_text(query: str, decision: SafetyDecision | None) -> str:
-    reason = decision.reason if decision is not None else "safety_block"
-    return refusal_message(query, reason)
-
-
-def _llm_safety_short_circuit(
-    data: dict[str, Any],
-    *,
-    query: str,
-    decision: SafetyDecision | None,
-) -> dict[str, Any]:
-    """Return ``data`` mutated so LiteLLM skips the provider and emits a refusal.
-
-    LiteLLM honours ``mock_response`` by short-circuiting the upstream LLM
-    call and synthesising a normal assistant ``ModelResponse`` (works for both
-    streaming and non-streaming). This keeps the refusal surface as a regular
-    chat turn instead of a 400 error.
-    """
-    data["mock_response"] = _llm_safety_refusal_text(query, decision)
-    return data
 
 
 async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:

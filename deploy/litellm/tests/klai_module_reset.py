@@ -11,6 +11,7 @@ KLAI_KB_MODULES = (
     "klai_kb_citation_render",
     "klai_kb_confidence_policy",
     "klai_kb_context_prompt",
+    "klai_kb_llm_safety",
     "klai_kb_query_rewrite",
     "klai_kb_render_policy",
     "klai_kb_request_context",
