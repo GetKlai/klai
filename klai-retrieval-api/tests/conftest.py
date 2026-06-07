@@ -90,6 +90,20 @@ def _auto_allow_identity_assert(monkeypatch):
                 evidence="membership",
             )
 
+        async def verify_tenant(
+            self,
+            *,
+            caller_service: str,
+            claimed_org_id: str,
+            claimed_org_slug: str | None = None,
+            request_headers: dict | None = None,
+            **_unused,
+        ) -> VerifyResult:
+            return VerifyResult.allow_tenant(
+                org_id=claimed_org_id,
+                org_slug=claimed_org_slug or "test-slug",
+            )
+
     monkeypatch.setattr(
         "retrieval_api.middleware.auth._get_asserter",
         lambda: _StubAsserter(),

@@ -101,6 +101,22 @@ class TestCallerServiceHeaderRequired:
         assert resp.status_code == 400
         assert resp.json()["detail"] == {"error": "unknown_caller_service"}
 
+    def test_missing_caller_service_header_400_for_tenant_only_org_retrieve(self, app_client):
+        # Org-only retrieval has no end-user claim, but it still carries a
+        # tenant claim. It must use the tenant-only identity verifier, never an
+        # unaudited internal-secret bypass.
+        resp = app_client.post(
+            "/retrieve",
+            json={
+                "query": "q",
+                "org_id": "any_org",
+                "scope": "org",
+            },
+            headers={"X-Internal-Secret": "test-internal-secret-do-not-use-in-prod"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == {"error": "missing_caller_service"}
+
 
 # ---------------------------------------------------------------------------
 # REQ-4.4: portal deny → 403 identity_assertion_failed (reason in logs only)
@@ -329,6 +345,78 @@ class TestEmitEventUsesVerifiedTuple:
 
         assert resp.status_code == 403
         assert emit_calls == [], "emit_event must not run when REQ-4 rejects the call"
+
+    def test_org_only_retrieve_uses_verified_tenant_for_product_event(
+        self, monkeypatch, app_client
+    ):
+        verify_calls: list[dict] = []
+
+        class _TenantOnlyAsserter:
+            async def verify(self, **_kw) -> VerifyResult:
+                raise AssertionError("org-only retrieve must not use user-bound verify")
+
+            async def verify_tenant(self, **kw) -> VerifyResult:
+                verify_calls.append(kw)
+                return VerifyResult.allow_tenant(
+                    org_id="org-canonical",
+                    org_slug="acme",
+                )
+
+        monkeypatch.setattr(
+            "retrieval_api.middleware.auth._get_asserter",
+            lambda: _TenantOnlyAsserter(),
+        )
+
+        emit_calls: list[dict] = []
+
+        def _capture_emit(event_type, *, tenant_id, user_id, properties):
+            emit_calls.append(
+                {
+                    "event_type": event_type,
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "properties": properties,
+                }
+            )
+
+        monkeypatch.setattr("retrieval_api.api.retrieve.emit_event", _capture_emit)
+
+        with (
+            _patch_retrieval_pipeline_to_bypass()[0],
+            _patch_retrieval_pipeline_to_bypass()[1],
+            _patch_retrieval_pipeline_to_bypass()[2],
+            _patch_retrieval_pipeline_to_bypass()[3],
+        ):
+            resp = app_client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "org-body",
+                    "scope": "org",
+                },
+                headers={
+                    "X-Internal-Secret": "test-internal-secret-do-not-use-in-prod",
+                    "X-Caller-Service": "litellm",
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert len(verify_calls) == 1
+        assert verify_calls[0]["caller_service"] == "litellm"
+        assert verify_calls[0]["claimed_org_id"] == "org-body"
+        assert emit_calls == [
+            {
+                "event_type": "knowledge.queried",
+                "tenant_id": "org-canonical",
+                "user_id": None,
+                "properties": {
+                    "scope": "org",
+                    "kb_slugs": [],
+                    "had_results": False,
+                    "result_count": 0,
+                },
+            }
+        ]
 
 
 # ---------------------------------------------------------------------------
