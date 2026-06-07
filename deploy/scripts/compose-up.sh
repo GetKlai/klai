@@ -30,8 +30,7 @@
 #   FILE CONTENT changes are invisible to compose. For services that
 #   import bind-mounted Python files at module load (e.g. litellm with
 #   klai_knowledge.py / klai_context.py / klai_chat_prompts.py
-#   / klai_retrieval_telemetry.py / klai_service_auth.py
-#   / custom_router.py vendored on /app/), a
+#   / klai_retrieval_telemetry.py / custom_router.py vendored on /app/), a
 #   bind-mount-content rsync followed by `up -d` is a no-op: Python keeps
 #   the cached module from the previous boot and the new code never runs.
 #   --force-recreate forces a fresh container, which drops the cache and
