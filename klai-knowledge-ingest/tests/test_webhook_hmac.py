@@ -58,15 +58,11 @@ def hmac_client():
                     False,
                 ),
             ):
-                import os
-
                 from fastapi.testclient import TestClient
 
                 from knowledge_ingest.app import app
 
                 with TestClient(app, raise_server_exceptions=False) as c:
-                    # SPEC-SEC-011: middleware now requires the header.
-                    c.headers.update({"X-Internal-Secret": os.environ["KNOWLEDGE_INGEST_SECRET"]})
                     yield c
 
 
