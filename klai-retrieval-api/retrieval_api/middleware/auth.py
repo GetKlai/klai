@@ -362,7 +362,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             scopes_claim = payload.get("scope") or ""
             scopes = frozenset(
                 {s for s in str(scopes_claim).split() if s}
-                | project_role_scopes(payload)
+                | project_role_scopes(payload, settings.zitadel_api_audience)
             )
             # SPEC-SEC-IDENTITY-ASSERT-003 REQ-1.1: do NOT lift
             # `urn:zitadel:iam:user:resourceowner:id` from the JWT — the
