@@ -232,6 +232,30 @@ groups:
 YAML
 run_verify_pass "verify-V4: missing runbook_url is warning not error" "${F}"
 
+# --- Scenario V5: external https runbook_url → PASS (un-validatable) --------
+# Ops-only runbooks (e.g. platform-recovery.md) live in the private klai-infra
+# repo per SPEC-REPO-SANITIZE-001. Their runbook_url is a full GitHub URL that
+# this checkout cannot resolve cross-repo, so the verify script accepts any
+# http(s):// URL as-is. This fixture has NO local docs/runbooks file — it must
+# still PASS, proving external URLs bypass the file/anchor check by design.
+F="${FIXTURE_ROOT}/verify-v5-external-url"
+mkdir -p "${F}/deploy/grafana/provisioning/alerting"
+cat > "${F}/deploy/grafana/provisioning/alerting/external.yaml" <<'YAML'
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: external-group
+    rules:
+      - uid: external-rule
+        title: external_rule
+        annotations:
+          summary: 'ok'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#some-anchor'
+        labels:
+          severity: warning
+YAML
+run_verify_pass "verify-V5: external https runbook_url accepted (cross-repo)" "${F}"
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════════════════════════════

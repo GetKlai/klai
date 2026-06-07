@@ -83,7 +83,7 @@ groups:
           service_group: librechat
         annotations:
           summary: 'librechat: >5 health-fail log lines in last 10 min'
-          runbook_url: 'docs/runbooks/platform-recovery.md#librechat-health-failed-elevated'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#librechat-health-failed-elevated'
           description: |
             More than 5 LibreChat container log lines mentioning both "health"
             and "fail" appeared in the last 10 minutes. Either upstream LLM

@@ -189,7 +189,7 @@ If `confidence_band=unknown` is dominating (not `band=low`), the reranker has li
 docker exec klai-core-klai-retrieval-api-1 printenv | grep -i rerank
 ```
 
-**Resolution:** if retrieval-api or the reranker is degraded, follow the standard infrastructure incident runbook at `docs/runbooks/platform-recovery.md`. The alert auto-resolves once the reranker resumes producing valid scores and the 1h window clears.
+**Resolution:** if retrieval-api or the reranker is degraded, follow the standard infrastructure incident runbook at `klai-infra/docs/runbooks/platform-recovery.md`. The alert auto-resolves once the reranker resumes producing valid scores and the 1h window clears.
 
 ---
 

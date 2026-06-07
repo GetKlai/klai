@@ -116,7 +116,7 @@ groups:
           service_group: mailer
         annotations:
           summary: 'Zitadel cannot deliver notifications to klai-mailer (>5 failures in 5m)'
-          runbook_url: 'docs/runbooks/platform-recovery.md#mailer-zitadel-webhook-failed'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#mailer-zitadel-webhook-failed'
           description: |
             Zitadel logged more than 5 `sending notification failed` events
             targeting klai-mailer in the last 5 minutes. This means at
@@ -218,7 +218,7 @@ groups:
           service_group: mailer
         annotations:
           summary: 'klai-mailer returned >5 5xx on POST /notify in 5 min'
-          runbook_url: 'docs/runbooks/platform-recovery.md#mailer-zitadel-webhook-failed'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#mailer-zitadel-webhook-failed'
           description: |
             More than 5 mailer access-log lines for `POST /notify` with
             a 5xx status in the last 5 minutes. Same operational meaning

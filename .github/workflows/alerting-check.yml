@@ -9,7 +9,6 @@ on:
       - 'scripts/audit-alert-uid-length.sh'
       - 'scripts/verify-alert-runbooks.sh'
       - 'scripts/test-alerting-guards.sh'
-      - 'docs/runbooks/platform-recovery.md'
       - '.github/workflows/alerting-check.yml'
   push:
     branches: [main]

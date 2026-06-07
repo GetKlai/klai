@@ -103,7 +103,7 @@ groups:
           service_group: caddy
         annotations:
           summary: 'Caddy returned >10 5xx responses over the last 5 min'
-          runbook_url: 'docs/runbooks/platform-recovery.md#caddy-5xx-surge'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#caddy-5xx-surge'
           description: |
             More than 10 Caddy responses in the last 5 minutes returned a
             5xx status code. This catches errors from any upstream behind
