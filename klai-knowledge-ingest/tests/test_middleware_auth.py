@@ -234,6 +234,7 @@ class TestMiddlewareEnforcement:
                 "/ingest/v1/document",
                 json={
                     "org_id": "org1",
+                    "user_id": "user1",
                     "kb_slug": "test",
                     "path": "test.md",
                     "content": "hello",
