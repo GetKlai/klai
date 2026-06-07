@@ -53,6 +53,7 @@ fi
 
 cd /opt/klai
 
+POSTGRES_CONTAINER="${KLAI_POSTGRES_CONTAINER:-klai-core-postgres-1}"
 NO_DEPS_FLAG=""
 FORCE_RECREATE_FLAG=""
 SERVICE=""
@@ -78,6 +79,59 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+litellm_prisma_migrate_enabled() {
+    grep -Eq 'USE_PRISMA_MIGRATE:[[:space:]]*"?True"?' /opt/klai/docker-compose.yml
+}
+
+check_litellm_prisma_migration_baseline() {
+    if ! litellm_prisma_migrate_enabled; then
+        return 0
+    fi
+
+    echo "Checking LiteLLM Prisma migration baseline before recreate..."
+    if ! docker ps --format '{{.Names}}' | grep -qx "$POSTGRES_CONTAINER"; then
+        echo "ERROR: $POSTGRES_CONTAINER is not running; refusing to recreate litellm with USE_PRISMA_MIGRATE=True" >&2
+        exit 1
+    fi
+
+    local migration_table
+    if ! migration_table="$(
+        docker exec "$POSTGRES_CONTAINER" \
+            psql -U litellm -d litellm -v ON_ERROR_STOP=1 -tAc \
+            "SELECT to_regclass('public._prisma_migrations')"
+    )"; then
+        echo "ERROR: cannot inspect LiteLLM _prisma_migrations table; refusing to recreate litellm" >&2
+        exit 1
+    fi
+    migration_table="$(echo "$migration_table" | tr -d '[:space:]')"
+    if [[ "$migration_table" != "public._prisma_migrations" && "$migration_table" != "_prisma_migrations" ]]; then
+        echo "ERROR: LiteLLM USE_PRISMA_MIGRATE=True but public._prisma_migrations is missing." >&2
+        echo "Refusing to recreate litellm; baseline the DB first or remove USE_PRISMA_MIGRATE to rollback." >&2
+        exit 1
+    fi
+
+    local migration_count
+    if ! migration_count="$(
+        docker exec "$POSTGRES_CONTAINER" \
+            psql -U litellm -d litellm -v ON_ERROR_STOP=1 -tAc \
+            "SELECT count(*) FROM public._prisma_migrations"
+    )"; then
+        echo "ERROR: cannot count LiteLLM Prisma migrations; refusing to recreate litellm" >&2
+        exit 1
+    fi
+    migration_count="$(echo "$migration_count" | tr -d '[:space:]')"
+    if ! [[ "$migration_count" =~ ^[0-9]+$ ]] || (( migration_count < 1 )); then
+        echo "ERROR: LiteLLM public._prisma_migrations is empty; prisma migrate deploy may fail on a non-empty schema." >&2
+        echo "Refusing to recreate litellm; baseline the DB first or remove USE_PRISMA_MIGRATE to rollback." >&2
+        exit 1
+    fi
+    echo "LiteLLM Prisma migration baseline OK ($migration_count applied migrations)"
+}
+
+if [[ -z "$SERVICE" || "$SERVICE" == "litellm" ]]; then
+    check_litellm_prisma_migration_baseline
+fi
 
 if [[ -n "$SERVICE" ]]; then
     echo "Pulling $SERVICE..."

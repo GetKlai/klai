@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'deploy/litellm/**'
+      - 'deploy/scripts/compose-up.sh'
       - 'klai-libs/citations/klai_citations/**'
       - '.github/workflows/litellm-hook-deploy.yml'
 
@@ -31,6 +32,8 @@ jobs:
           ssh klai@${{ secrets.CORE01_HOST }} 'rm -f /opt/klai/litellm/klai_service_auth.py'
           rsync -av --delete klai-libs/citations/klai_citations/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/klai_citations/
           rsync -av deploy/docker-compose.yml klai@${{ secrets.CORE01_HOST }}:/opt/klai/docker-compose.yml
+          rsync -av deploy/scripts/compose-up.sh klai@${{ secrets.CORE01_HOST }}:/opt/klai/scripts/compose-up.sh
+          ssh klai@${{ secrets.CORE01_HOST }} "chmod 0755 /opt/klai/scripts/compose-up.sh"
 
       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — use the canonical
       # compose-up wrapper (already used by caddy, klai-connector,
