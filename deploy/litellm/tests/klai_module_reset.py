@@ -14,6 +14,7 @@ KLAI_KB_MODULES = (
     "klai_kb_query_rewrite",
     "klai_kb_render_policy",
     "klai_kb_request_context",
+    "klai_kb_safety_filter",
     "klai_kb_scope_policy",
     "klai_kb_traceability",
     "klai_kb_urls",
