@@ -28,6 +28,8 @@ async def test_get_redis_pool_returns_client_when_configured():
         mock_redis_mod.from_url.assert_called_once_with(
             "redis://localhost:6379",
             decode_responses=True,
+            socket_connect_timeout=2.0,
+            socket_timeout=2.0,
         )
 
 
