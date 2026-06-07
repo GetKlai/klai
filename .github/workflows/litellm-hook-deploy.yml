@@ -26,6 +26,9 @@ jobs:
       - name: Sync hook files to core-01
         run: |
           rsync -av deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/
+          # SPEC-SEC-SERVICE-AUTH-002 removed the vendored ZitadelTokenClient;
+          # the rsync above has no --delete, so drop the now-orphaned host file.
+          ssh klai@${{ secrets.CORE01_HOST }} 'rm -f /opt/klai/litellm/klai_service_auth.py'
           rsync -av --delete klai-libs/citations/klai_citations/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/klai_citations/
           rsync -av deploy/docker-compose.yml klai@${{ secrets.CORE01_HOST }}:/opt/klai/docker-compose.yml
 
@@ -45,8 +48,8 @@ jobs:
       # when the compose DEFINITION diffs (volume list, env-vars, image
       # tag). It does NOT detect bind-mount FILE CONTENT changes. The
       # litellm container imports klai_knowledge.py / klai_chat_prompts.py
-      # / klai_retrieval_telemetry.py / klai_service_auth.py /
-      # klai_citations / custom_router.py at module load — without --force-recreate, an
+      # / klai_retrieval_telemetry.py / klai_citations / custom_router.py
+      # at module load — without --force-recreate, an
       # rsync of a new Python file is followed by a no-op `up -d` and
       # Python keeps the cached module from the previous boot. Net
       # effect: PR merged → CI green → live container still runs the
