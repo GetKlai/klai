@@ -501,6 +501,25 @@ async def verify_body_identity(
                 )
             return
 
+        # SPEC-SEC-SERVICE-AUTH-002 (svc-onbehalf): a CONFIGURED service
+        # principal (machine account, e.g. svc-litellm) may act ON BEHALF OF an
+        # end-user. Its ``sub`` is in the explicit allowlist and — on /retrieve
+        # — it already passed require_scope("klai:internal:retrieval:query").
+        # The end-user named in the body is verified by portal membership,
+        # exactly like the internal-secret caller path (_verify_on_behalf_of).
+        # A human-user JWT (sub NOT in the allowlist) falls through to the
+        # body==sub self-assertion below, so the broad project-wide audience
+        # cannot be used to act on behalf of others.
+        if auth.sub is not None and auth.sub in settings.service_principal_sub_set:
+            logger.info(
+                "service_principal_on_behalf_of",
+                jwt_sub_hash=_hash_sub(auth.sub),
+                caller_service=request.headers.get("x-caller-service", "").strip() or None,
+                path=request.url.path,
+            )
+            await _verify_on_behalf_of(request, body_user_id, body_org_id)
+            return
+
         if body_user_id is not None and auth.sub is not None and str(body_user_id) != str(auth.sub):
             cross_user_rejected_total.inc()
             logger.warning(
@@ -572,7 +591,31 @@ async def verify_body_identity(
         )
         return
 
-    # auth.method == "internal" — REQ-4.2 portal-side verification.
+    # auth.method == "internal" — REQ-4.2 portal-side verification. Same
+    # on-behalf-of contract as the JWT service-principal path above:
+    # X-Caller-Service + portal membership verify of the body's end-user.
+    await _verify_on_behalf_of(request, body_user_id, body_org_id)
+
+
+async def _verify_on_behalf_of(
+    request: Request, body_user_id: str | None, body_org_id: str
+) -> None:
+    """Verify an end-user identity asserted by a trusted caller, then pin it.
+
+    Shared by the two callers that act ON BEHALF OF an end-user named in the
+    request body:
+
+    * the internal-secret caller (``X-Internal-Secret``), and
+    * a configured service-principal JWT (SPEC-SEC-SERVICE-AUTH-002, e.g.
+      ``svc-litellm``).
+
+    The caller is already authenticated (shared secret or a signature- and
+    audience-verified Zitadel JWT). This step verifies the END-USER
+    ``(body_user_id, body_org_id)`` against portal-api
+    ``/internal/identity/verify`` by membership and pins the portal-returned
+    tuple on ``request.state.verified_caller``. A forged body is denied at the
+    portal, never pinned here (REQ-4.2 defense-in-depth).
+    """
     if body_user_id is None:
         # Bodies that don't carry an end-user claim (admin/diagnostic style
         # calls that future code paths might add) are out of scope for the
@@ -606,20 +649,19 @@ async def verify_body_identity(
 
     # F2 fix-forward (retrieval coupling audit 2026-05-06): synthetic
     # `partner:<key_id>` identities go through the SAME portal verify path
-    # as every other internal-secret caller. Portal-side identity_verifier
-    # has a dedicated branch that resolves the key against partner_api_keys
-    # and confirms the key's owning org matches the claim — so a forged
-    # body claiming `(partner:any-key, victim-tenant)` is denied at the
-    # portal, not pinned by retrieval-api. The earlier in-process bypass
-    # was removed because it weakened defense-in-depth: an attacker
-    # holding X-Internal-Secret could pin any (synthetic_user, any_org)
-    # tuple as verified_caller and read the org's data.
+    # as every other caller. Portal-side identity_verifier has a dedicated
+    # branch that resolves the key against partner_api_keys and confirms the
+    # key's owning org matches the claim — so a forged body claiming
+    # `(partner:any-key, victim-tenant)` is denied at the portal, not pinned
+    # by retrieval-api. The earlier in-process bypass was removed because it
+    # weakened defense-in-depth: a caller could pin any (synthetic_user,
+    # any_org) tuple as verified_caller and read the org's data.
     asserter = _get_asserter()
     result = await asserter.verify(
         caller_service=caller_service,
         claimed_user_id=str(body_user_id),
         claimed_org_id=str(body_org_id),
-        bearer_jwt=None,  # internal-secret path: no end-user JWT in the call
+        bearer_jwt=None,  # on-behalf-of path: no end-user JWT in the call
         request_headers=dict(request.headers),
     )
     if not result.verified or result.user_id is None or result.org_id is None:
