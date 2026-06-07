@@ -58,9 +58,11 @@ class _FakeCache:
 @pytest.fixture(autouse=True)
 def _set_secret(monkeypatch):
     _install_litellm_stub()
-    import klai_knowledge
+    import klai_kb_portal_client
 
-    monkeypatch.setattr(klai_knowledge, "PORTAL_INTERNAL_SECRET", "test-secret")
+    # _get_kb_feature / _get_templates moved to klai_kb_portal_client; they read
+    # PORTAL_INTERNAL_SECRET from that module's namespace, so patch it there.
+    monkeypatch.setattr(klai_kb_portal_client, "PORTAL_INTERNAL_SECRET", "test-secret")
 
 
 # ---------------------------------------------------------------------------
@@ -206,8 +208,9 @@ def test_build_block_skips_empty_text_entries():
 async def test_get_templates_fail_closed_without_secret(monkeypatch):
     """No PORTAL_INTERNAL_SECRET → empty list (can't authenticate)."""
     import klai_knowledge as k
+    import klai_kb_portal_client
 
-    monkeypatch.setattr(k, "PORTAL_INTERNAL_SECRET", "")
+    monkeypatch.setattr(klai_kb_portal_client, "PORTAL_INTERNAL_SECRET", "")
     cache = _FakeCache()
 
     result = await k._get_templates("org-1", "user-1", cache)
