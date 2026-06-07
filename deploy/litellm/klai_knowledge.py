@@ -464,8 +464,6 @@ class KlaiKnowledgeHook(CustomLogger):
             # don't know the user's mode (Strict/Open). Refuse deterministically
             # via mock_response (model bypassed) instead of silently giving a
             # general answer that would break a Strict user's KB-only promise.
-            # Rare in practice: the last-known-settings cache (24h) covers the
-            # common portal-blip case and preserves the real mode automatically.
             logger.warning(
                 "kb_settings_unavailable_refusal org_id=%s user_id=%s",
                 org_id,
@@ -982,10 +980,8 @@ class KlaiKnowledgeHook(CustomLogger):
             and low_confidence_inject
             and not user_provided_content_context
         ):
-            # Strict + weak/tangential chunks is not a prompt problem. The model
-            # may still answer from general knowledge, and the citation renderer
-            # may still attach document-level fallback sources. Bypass the model
-            # before either can happen.
+            # Strict + weak/tangential chunks is not a prompt problem. Bypass
+            # the model before it can answer from general knowledge.
             logger.warning(
                 "strict_low_confidence_deterministic_refusal "
                 "org_id=%s user_id=%s confidence_band=%s chunks_injected=%d",
@@ -995,6 +991,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 len(context_chunks),
             )
             original_stream = data.get("stream")
+            render_strategy = _select_kb_render_strategy(original_stream)
+            if render_strategy.force_non_streaming:
+                data["stream"] = False
             answer_policy = KbAnswerPolicy(
                 state="chunks_present",
                 prompt_mode=chat_retrieval_policy.prompt_mode,
@@ -1018,6 +1017,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 no_citable_sources=True,
                 no_citable_reason="strict_low_confidence_no_direct_evidence",
                 original_stream=original_stream,
+                render_mode=render_strategy.mode,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
                 kbs_with_results=kbs_with_results,
