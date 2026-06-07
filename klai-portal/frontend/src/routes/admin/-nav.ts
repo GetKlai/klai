@@ -24,6 +24,7 @@ export type AdminNavItem = {
   end?: boolean
   requiresFeature?: string
   platformAdminOnly?: boolean
+  showOnOverview?: boolean
   overviewDescription?: string
 }
 
@@ -45,6 +46,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     icon: Globe2,
     minRole: 'admin',
     platformAdminOnly: true,
+    showOnOverview: true,
     overviewDescription: m.admin_section_platform_description(),
   },
   {
@@ -52,6 +54,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     label: m.admin_section_users_title(),
     icon: Users,
     minRole: 'admin',
+    showOnOverview: true,
     overviewDescription: m.admin_section_users_description(),
   },
   // SPEC-PORTAL-ADMIN-UI-001 REQ-11: Profiles between Users and Groups.
@@ -60,6 +63,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     label: m.admin_section_profiles_title(),
     icon: ShieldCheck,
     minRole: 'admin',
+    showOnOverview: true,
     overviewDescription: m.admin_section_profiles_description(),
   },
   {
@@ -67,6 +71,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     label: m.admin_section_groups_title(),
     icon: FolderKanban,
     minRole: 'group_manager',
+    showOnOverview: true,
     overviewDescription: m.admin_section_groups_description(),
   },
   {
@@ -75,6 +80,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     icon: MessageSquare,
     minRole: 'admin',
     requiresFeature: 'widgets',
+    showOnOverview: true,
     overviewDescription: m.admin_section_widgets_description(),
   },
   {
@@ -83,6 +89,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     icon: Key,
     minRole: 'admin',
     requiresFeature: 'partner_api',
+    showOnOverview: true,
     overviewDescription: m.admin_section_api_keys_description(),
   },
   // Instructies is samengevoegd met /app/instructions (één pagina, scope-tabs,
@@ -95,6 +102,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     icon: Puzzle,
     minRole: 'admin',
     requiresFeature: 'custom_mcps',
+    showOnOverview: true,
     overviewDescription: m.admin_section_mcps_description(),
   },
   {

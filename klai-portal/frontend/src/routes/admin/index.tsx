@@ -26,6 +26,7 @@ function AdminHome() {
   // SPEC-PORTAL-UI-CONSISTENCY-001 REQ-4 / REQ-5: rows, not cards.
   const adminSections = ADMIN_NAV_ITEMS.filter((item) =>
     item.to !== '/admin' &&
+    item.showOnOverview &&
     item.overviewDescription &&
     adminNavItemIsVisible(item, user?.effective_role, me),
   )
