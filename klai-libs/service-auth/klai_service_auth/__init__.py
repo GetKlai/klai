@@ -11,14 +11,23 @@ Public API
 * ``ServiceAuthError`` — raised when token mint fails (network, IdP error,
   invalid credentials). Callers decide whether to fail-closed or fall back.
 * ``scopes`` — canonical scope-name constants for receiver-side authorization.
+* ``project_role_scopes`` — extract granted role keys from a Zitadel
+  access-token payload (the canonical receiver-side claim parser shared by
+  every Phase C receiver; see ``claims`` for why roles, not ``scope``).
 """
 
 from __future__ import annotations
 
 from klai_service_auth import scopes
+from klai_service_auth.claims import project_role_scopes
 from klai_service_auth.client import (
     ServiceAuthError,
     ZitadelTokenClient,
 )
 
-__all__ = ["ServiceAuthError", "ZitadelTokenClient", "scopes"]
+__all__ = [
+    "ServiceAuthError",
+    "ZitadelTokenClient",
+    "project_role_scopes",
+    "scopes",
+]
