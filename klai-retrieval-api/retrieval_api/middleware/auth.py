@@ -122,6 +122,19 @@ class VerifiedCaller:
     org_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedTenant:
+    """Tenant-only identity verified via portal-api.
+
+    Used for service-to-service retrieval calls that carry an org claim but no
+    end-user claim. Kept separate from ``VerifiedCaller`` so user-bound product
+    events cannot accidentally source a tenant-only decision as if it had a
+    user.
+    """
+
+    org_id: str
+
+
 def _unauthorized(reason: str) -> Response:
     """Build a 401 response for auth rejections (REQ-1.2).
 
@@ -454,6 +467,32 @@ def _identity_assertion_failed(reason: str) -> HTTPException:
     )
 
 
+def _caller_service_or_400(request: Request) -> str:
+    """Read and validate X-Caller-Service for internal-secret callers."""
+
+    caller_service = request.headers.get("x-caller-service", "").strip()
+    if not caller_service:
+        logger.warning(
+            "missing_caller_service",
+            path=request.url.path,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "missing_caller_service"},
+        )
+    if caller_service not in KNOWN_CALLER_SERVICES:
+        logger.warning(
+            "unknown_caller_service",
+            caller_service=caller_service,
+            path=request.url.path,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "unknown_caller_service"},
+        )
+    return caller_service
+
+
 async def verify_body_identity(
     request: Request, body_org_id: str, body_user_id: str | None
 ) -> None:
@@ -574,35 +613,23 @@ async def verify_body_identity(
 
     # auth.method == "internal" — REQ-4.2 portal-side verification.
     if body_user_id is None:
-        # Bodies that don't carry an end-user claim (admin/diagnostic style
-        # calls that future code paths might add) are out of scope for the
-        # verify-body-identity guard. Today every retrieve/chat caller MUST
-        # supply user_id when the scope requires it (the route validates
-        # this); hitting this branch means a different surface — leave the
-        # verified tuple unpinned and let downstream raise if it tries to
-        # read it.
+        # Tenant-only service-to-service call. This path is deliberately
+        # separate from the user-bound verify() call so a missing user_id can
+        # never silently become a user assertion.
+        caller_service = _caller_service_or_400(request)
+        asserter = _get_asserter()
+        result = await asserter.verify_tenant(
+            caller_service=caller_service,
+            claimed_org_id=str(body_org_id),
+            request_headers=dict(request.headers),
+        )
+        if not result.verified or result.org_id is None:
+            raise _identity_assertion_failed(result.reason or "unknown")
+
+        request.state.verified_tenant = VerifiedTenant(org_id=result.org_id)
         return
 
-    caller_service = request.headers.get("x-caller-service", "").strip()
-    if not caller_service:
-        logger.warning(
-            "missing_caller_service",
-            path=request.url.path,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": "missing_caller_service"},
-        )
-    if caller_service not in KNOWN_CALLER_SERVICES:
-        logger.warning(
-            "unknown_caller_service",
-            caller_service=caller_service,
-            path=request.url.path,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": "unknown_caller_service"},
-        )
+    caller_service = _caller_service_or_400(request)
 
     # F2 fix-forward (retrieval coupling audit 2026-05-06): synthetic
     # `partner:<key_id>` identities go through the SAME portal verify path

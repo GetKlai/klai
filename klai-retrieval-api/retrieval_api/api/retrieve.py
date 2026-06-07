@@ -870,16 +870,27 @@ async def retrieve(
 
     # SPEC-GRAFANA-METRICS: knowledge.queried event.
     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-6: tenant_id / user_id MUST come from
-    # the verified-caller pin set by verify_body_identity, never from the
+    # the verified identity pin set by verify_body_identity, never from the
     # request body. Body fields are caller-supplied; product_events is a
     # business-metrics contract whose integrity we cannot let any caller
-    # poison.
+    # poison. Tenant-only service calls deliberately emit user_id=None.
     verified = getattr(request.state, "verified_caller", None)
+    verified_tenant = getattr(request.state, "verified_tenant", None)
     if verified is not None:
+        event_tenant_id = verified.org_id
+        event_user_id = verified.user_id
+    elif verified_tenant is not None:
+        event_tenant_id = verified_tenant.org_id
+        event_user_id = None
+    else:
+        event_tenant_id = None
+        event_user_id = None
+
+    if event_tenant_id is not None:
         emit_event(
             "knowledge.queried",
-            tenant_id=verified.org_id,
-            user_id=verified.user_id,
+            tenant_id=event_tenant_id,
+            user_id=event_user_id,
             properties={
                 "scope": req.scope,
                 "kb_slugs": list(req.kb_slugs) if req.kb_slugs else [],
@@ -889,8 +900,9 @@ async def retrieve(
         )
     else:
         # Defense in depth: should be unreachable because verify_body_identity
-        # always pins the verified tuple on the success path. If we see this
-        # log line in production, a new code path is bypassing the guard.
+        # always pins either a verified user or verified tenant on the success
+        # path. If we see this log line in production, a new code path is
+        # bypassing the guard.
         logger.warning(
             "product_event_skipped_no_identity",
             event_type="knowledge.queried",
