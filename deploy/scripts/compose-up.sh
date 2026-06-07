@@ -129,7 +129,7 @@ check_litellm_prisma_migration_baseline() {
     echo "LiteLLM Prisma migration baseline OK ($migration_count applied migrations)"
 }
 
-if [[ -z "$SERVICE" || "$SERVICE" == "litellm" ]]; then
+if [[ "$SERVICE" == "litellm" ]]; then
     check_litellm_prisma_migration_baseline
 fi
 

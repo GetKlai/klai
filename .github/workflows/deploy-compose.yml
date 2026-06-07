@@ -282,13 +282,18 @@ jobs:
             # disk but never reaches the running container — only discovered
             # via a 401 in production (PR #493 was exactly this trap).
             #
-            # ``compose up -d`` (no service argument, no --force-recreate) is
-            # idempotent: Compose recreates only services whose declaration
-            # changed, leaves the rest untouched. Service-specific build-push
-            # workflows use the same compose-up.sh wrapper, so this is safe
-            # against parallel runs — both paths converge on the same yaml.
+            # ``compose up -d`` with the service list is idempotent: Compose
+            # recreates only services whose declaration changed, leaves the
+            # rest untouched. LiteLLM is intentionally excluded here: its
+            # docker-compose.yml changes trigger litellm-hook-deploy.yml,
+            # which recreates it through /opt/klai/scripts/compose-up.sh
+            # litellm so the Prisma migration baseline gate runs before a
+            # serving-container recreate.
             echo "::group::SPEC-MCP-RETRIEVAL-001 follow-up — compose up -d for env-drift recreate"
-            cd /opt/klai && docker compose up -d --remove-orphans 2>&1 | tail -50 || echo "compose up -d returned non-zero; check logs"
+            cd /opt/klai
+            COMPOSE_ENV_DRIFT_SERVICES="$(docker compose config --services | grep -vx 'litellm' | tr '\n' ' ')"
+            # shellcheck disable=SC2086
+            docker compose up -d --remove-orphans $COMPOSE_ENV_DRIFT_SERVICES 2>&1 | tail -50 || echo "compose up -d returned non-zero; check logs"
             echo "::endgroup::"
 
             # SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test. Prints
