@@ -157,7 +157,7 @@ mounts:
     notes: |
       Graphiti knowledge graph. Mount was previously /data (cosmetic) — bug
       caused total graph loss during image pinning on 2026-04-19; fixed in
-      commit 3c5673ea. See docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md.
+      commit 3c5673ea. See klai-infra/docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md.
 
   garage-meta:
     service: garage
