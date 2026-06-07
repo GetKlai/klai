@@ -137,6 +137,32 @@ def test_policy_module_declares_every_pre_call_answer_state():
     assert tuple(_ALL_STATES) == _policy_module().KB_ANSWER_POLICY_STATES
 
 
+def test_answer_policy_rejects_non_retrieval_prompt_modes():
+    policy_module = _policy_module()
+    for prompt_mode in (
+        "general",
+        "strict_no_kb",
+        "open_unavailable",
+        "strict_unavailable",
+    ):
+        with pytest.raises(ValueError, match="retrieval prompt mode"):
+            policy_module.KbAnswerPolicy(
+                state="chunks_present",
+                prompt_mode=prompt_mode,
+                user_provided_content_context=False,
+            )
+
+
+def test_answer_policy_rejects_unknown_state():
+    policy_module = _policy_module()
+    with pytest.raises(ValueError, match="unknown KB answer policy state"):
+        policy_module.KbAnswerPolicy(
+            state="not_a_real_state",
+            prompt_mode="open_kb",
+            user_provided_content_context=False,
+        )
+
+
 def test_answer_policy_matrix_is_independent_of_renderer_state():
     policy_module = _policy_module()
     for state in policy_module.KB_ANSWER_POLICY_STATES:
@@ -322,9 +348,7 @@ def test_to_kb_meta_minimal_call_defaults_are_safe():
 
 def test_mode_follows_prompt_mode():
     assert _policy("chunks_present", prompt_mode="strict_kb").mode == "strict"
-    assert _policy("chunks_present", prompt_mode="strict_unavailable").mode == "strict"
     assert _policy("chunks_present", prompt_mode="open_kb").mode == "open"
-    assert _policy("chunks_present", prompt_mode="open_unavailable").mode == "open"
 
 
 def test_allow_uncited_user_content_tracks_user_provided_context():

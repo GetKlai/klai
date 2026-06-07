@@ -5983,6 +5983,47 @@ class TestKlaiKnowledgeHookOpenMode:
         assert result["metadata"]["_klai_kb_meta"]["gate_bypassed"] is True
 
     @pytest.mark.asyncio
+    async def test_strict_retrieval_bypassed_fails_closed(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat zegt de kennisbank?"}],
+        }
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": True})
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        sys_content = self._system_msg(result)
+        assert "Strict mode" in sys_content
+        assert "Answer using your general knowledge" not in sys_content
+
+        kb_meta = result["metadata"]["_klai_kb_meta"]
+        assert kb_meta["kb_narrow"] is True
+        assert kb_meta["gate_bypassed"] is False
+        assert kb_meta["retrieval_failure"] == "strict_retrieval_bypassed"
+        assert kb_meta["no_citable_sources"] is True
+        assert kb_meta["no_citable_reason"] == "strict_retrieval_bypassed"
+        assert kb_meta["answer_policy_state"] == "retrieval_failure"
+        assert kb_meta["chat_retrieval_prompt_mode"] == "strict_kb"
+
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(message=SimpleNamespace(content="A model fallback answer"))
+            ]
+        )
+        await hook.async_post_call_success_hook(result, None, response)
+        assert response.choices[0].message.content.startswith(
+            "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
+            "betrouwbaar beantwoorden op basis van je kennisbronnen."
+        )
+
+    @pytest.mark.asyncio
     async def test_no_entitlement_uses_general_prompt_not_grounded(self, monkeypatch):
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
