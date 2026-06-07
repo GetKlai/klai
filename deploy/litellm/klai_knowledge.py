@@ -577,8 +577,21 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     Backward compatible: handles old {"enabled": bool} portal responses gracefully.
     """
     if not PORTAL_INTERNAL_SECRET:
+        # We cannot reach portal-api — but a recent successful fetch may still
+        # be cached (kb_feature_latest, 24h). Prefer the user's last-known
+        # settings (which preserve their Strict/Open mode) over a hard refusal,
+        # exactly like the portal-fetch-failure path below. Only refuse when
+        # there is genuinely nothing cached to fall back on.
+        stale = await cache.async_get_cache(f"kb_feature_latest:{org_id}:{user_id}")
+        if isinstance(stale, dict):
+            logger.warning(
+                "KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — using stale "
+                "feature cache"
+            )
+            return stale
         logger.warning(
-            "KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed"
+            "KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set and no cached "
+            "settings — fail-closed"
         )
         return {
             "enabled": False,

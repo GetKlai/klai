@@ -1,0 +1,41 @@
+name: litellm hook tests
+
+# deploy/litellm (the path-A LiteLLM KB chat hook) had NO automated test gate:
+# its 400+ pytest tests only ran locally, so changes merged without CI ever
+# running them. This workflow closes that gap. It does not gate on `quality`
+# (that required check is path-scoped to klai-portal/backend); it provides the
+# missing litellm pytest gate directly.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/litellm/**'
+      - 'klai-libs/citations/**'
+      - 'klai-libs/service-auth/**'
+  pull_request:
+    paths:
+      - 'deploy/litellm/**'
+      - 'klai-libs/citations/**'
+      - 'klai-libs/service-auth/**'
+
+jobs:
+  litellm-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      # deploy/litellm has no pyproject; the hook's deps + the klai-libs
+      # path-deps are supplied ad-hoc (klai-libs referenced by repo-relative
+      # path). The tests import `from tests.klai_module_reset import …`, so they
+      # must run from the deploy/litellm working directory.
+      - name: Test (pytest)
+        working-directory: deploy/litellm
+        run: >
+          uv run --no-project --python 3.13
+          --with pytest --with pytest-asyncio --with httpx --with structlog
+          --with ../../klai-libs/citations
+          --with ../../klai-libs/service-auth
+          python -m pytest tests/ -q --tb=short

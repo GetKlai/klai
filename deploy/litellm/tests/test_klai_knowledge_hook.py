@@ -7080,3 +7080,52 @@ class TestStrictModeCodeEnforcement:
             system_msg is None
             or "general-purpose assistant" not in system_msg.get("content", "")
         )
+
+
+class TestMissingSecretStaleCache:
+    """Bug D regression: when PORTAL_INTERNAL_SECRET is absent, the hook must
+    still honour the user's last-known settings from the 24h stale cache
+    (preserving their Strict/Open mode) instead of hard-refusing. It may only
+    refuse when there is genuinely nothing cached to fall back on."""
+
+    @pytest.mark.asyncio
+    async def test_missing_secret_uses_stale_cache_instead_of_refusing(
+        self, monkeypatch
+    ):
+        mod = _load_hook(monkeypatch, extra_env={"PORTAL_INTERNAL_SECRET": ""})
+        stale_feature = {
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": None,
+            "kb_narrow": True,
+            "version": 3,
+            "zitadel_user_id": "300000000000000002",
+            "telemetry_level": "shadow",
+        }
+        cache = MagicMock()
+        cache.async_set_cache = AsyncMock()
+
+        async def _get(key: str) -> object:
+            if key == "kb_feature_latest:org1:user1":
+                return stale_feature
+            return None
+
+        cache.async_get_cache = AsyncMock(side_effect=_get)
+
+        feature = await mod._get_kb_feature("user1", "org1", cache)
+        # Not refused — last-known settings used, Strict mode preserved.
+        assert feature.get("settings_unavailable") is not True
+        assert feature["kb_narrow"] is True
+        assert feature is stale_feature
+
+    @pytest.mark.asyncio
+    async def test_missing_secret_no_cache_still_refuses(self, monkeypatch):
+        mod = _load_hook(monkeypatch, extra_env={"PORTAL_INTERNAL_SECRET": ""})
+        cache = MagicMock()
+        cache.async_set_cache = AsyncMock()
+        cache.async_get_cache = AsyncMock(return_value=None)
+
+        feature = await mod._get_kb_feature("user1", "org1", cache)
+        # Truly cold: nothing to fall back on -> deterministic refusal stands.
+        assert feature["settings_unavailable"] is True
