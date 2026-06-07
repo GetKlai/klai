@@ -25,3 +25,9 @@ def test_all_litellm_top_level_python_modules_are_mounted_in_compose():
     ]
 
     assert missing == []
+
+
+def test_litellm_runs_prisma_migrations_on_startup():
+    compose_text = COMPOSE_FILE.read_text(encoding="utf-8")
+
+    assert 'USE_PRISMA_MIGRATE: "True"' in compose_text

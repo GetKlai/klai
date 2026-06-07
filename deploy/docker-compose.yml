@@ -286,6 +286,10 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD}@postgres:5432/litellm
       STORE_MODEL_IN_DB: "True"
+      # LiteLLM image upgrades can add Prisma columns used by startup jobs
+      # and model/tool sync. Run upstream's production migration path before
+      # serving so the image and Postgres schema cannot drift.
+      USE_PRISMA_MIGRATE: "True"
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
