@@ -314,3 +314,32 @@ def test_rrf_merge_deduplication():
 
     chunk_ids = [r["chunk_id"] for r in merged]
     assert chunk_ids.count("shared") == 1
+
+
+def test_rrf_merge_fused_scores_pin_denominator():
+    """Pin the exact RRF denominator ``1 / (k + rank + 1)`` with k=60.
+
+    The ordering-only assertions above survive a ``k + rank + 1 -> k + rank``
+    mutation because both forms are monotonic in rank, so the sort order is
+    unchanged and only the absolute fused scores differ. This pins those scores
+    so the constant cannot silently drift.
+    """
+    base = {
+        "text": "x",
+        "score": 0.5,
+        "artifact_id": None,
+        "content_type": None,
+        "context_prefix": None,
+        "scope": "org",
+        "valid_at": None,
+        "invalid_at": None,
+    }
+    qdrant = [{**base, "chunk_id": "shared"}, {**base, "chunk_id": "q_only"}]
+    graph = [{**base, "chunk_id": "shared"}]
+    merged = _rrf_merge(qdrant, graph)
+
+    scores = {r["chunk_id"]: r["score"] for r in merged}
+    # shared: rank 0 in qdrant AND rank 0 in graph -> 1/61 + 1/61
+    assert scores["shared"] == pytest.approx(2.0 / 61.0)
+    # q_only: rank 1 in qdrant only -> 1/62
+    assert scores["q_only"] == pytest.approx(1.0 / 62.0)
