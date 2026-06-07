@@ -76,7 +76,6 @@ from klai_kb_answer_policy import (
     kb_chunks_present_header as _kb_chunks_present_header,
     kb_retrieval_failure_notice as _kb_retrieval_failure_notice,
     kb_zero_chunks_notice as _kb_zero_chunks_notice,
-    strict_no_kb_scope_notice as _strict_no_kb_scope_notice,
     strict_kb_unavailable_message as _strict_kb_unavailable_message,
     settings_unavailable_message as _settings_unavailable_message,
 )
@@ -197,7 +196,6 @@ __all__ = [
     "_kb_chunks_present_header",
     "_kb_retrieval_failure_notice",
     "_kb_zero_chunks_notice",
-    "_strict_no_kb_scope_notice",
     "_KB_RENDER_MODE_STREAMING_GUARD",
     "_KB_RENDER_MODE_LEGACY_STREAMING_GUARD",
     "_KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING",
