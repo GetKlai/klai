@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'deploy/litellm/**'
+      - 'deploy/docker-compose.yml'
       - 'deploy/scripts/compose-up.sh'
       - 'klai-libs/citations/klai_citations/**'
       - '.github/workflows/litellm-hook-deploy.yml'
