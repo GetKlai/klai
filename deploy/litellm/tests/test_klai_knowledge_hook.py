@@ -6963,11 +6963,17 @@ class TestMissingSecretStaleCache:
 
         cache.async_get_cache = AsyncMock(side_effect=_get)
 
-        feature = await mod._get_kb_feature("user1", "org1", cache)
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            feature = await mod._get_kb_feature("user1", "org1", cache)
         # Not refused — last-known settings used, Strict mode preserved.
         assert feature.get("settings_unavailable") is not True
         assert feature["kb_narrow"] is True
         assert feature is stale_feature
+        # The missing-secret guard must short-circuit BEFORE any portal HTTP.
+        # Asserting only `is stale_feature` is vacuous: without the guard the
+        # same object is reached via the fail-open `except` after a failed
+        # network call, masking a regression. Pin that no HTTP was attempted.
+        cls.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_missing_secret_no_cache_still_refuses(self, monkeypatch):
@@ -6976,6 +6982,10 @@ class TestMissingSecretStaleCache:
         cache.async_set_cache = AsyncMock()
         cache.async_get_cache = AsyncMock(return_value=None)
 
-        feature = await mod._get_kb_feature("user1", "org1", cache)
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            feature = await mod._get_kb_feature("user1", "org1", cache)
         # Truly cold: nothing to fall back on -> deterministic refusal stands.
         assert feature["settings_unavailable"] is True
+        # Same vacuous-coverage guard as the sibling test: the missing-secret
+        # branch must short-circuit before any portal HTTP.
+        cls.assert_not_called()
