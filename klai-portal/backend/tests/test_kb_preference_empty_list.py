@@ -128,3 +128,49 @@ async def test_null_kb_slugs_filter_remains_null(monkeypatch):
 
     assert fake_user.kb_slugs_filter is None
     assert result.kb_slugs_filter is None
+
+
+@pytest.mark.asyncio
+async def test_patch_kb_preference_waits_for_cache_invalidation(monkeypatch):
+    """The response must not expose the new preference before LiteLLM cache is dropped."""
+    from app.api.app_account import KBPreferencePatch, patch_kb_preference
+
+    fake_user = _FakeUser()
+    fake_user.librechat_user_id = "librechat-user-1"
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(return_value=_empty_query_result())
+
+    invalidate_kb_cache = AsyncMock(return_value=None)
+    invalidate_templates = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.api.app_account._load_caller_user",
+        AsyncMock(return_value=fake_user),
+    )
+    monkeypatch.setattr(
+        "app.api.app_account.invalidate_kb_cache",
+        invalidate_kb_cache,
+    )
+    monkeypatch.setattr(
+        "app.api.app_account.invalidate_templates",
+        invalidate_templates,
+    )
+
+    body = KBPreferencePatch(kb_narrow=True)
+    result = await patch_kb_preference(
+        body=body,
+        perms=make_perms(
+            role="admin",
+            user_id="sub",
+            org_id=42,
+            zitadel_org_id="zitadel-org-42",
+        ),
+        db=db,
+    )
+
+    assert result.kb_narrow is True
+    invalidate_kb_cache.assert_awaited_once_with(
+        "zitadel-org-42", "librechat-user-1"
+    )
+    invalidate_templates.assert_not_awaited()
