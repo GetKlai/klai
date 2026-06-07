@@ -178,6 +178,35 @@ class TestPortalDenyRejected:
         assert resp.status_code == 403
         assert resp.json()["detail"] == {"error": "identity_assertion_failed"}
 
+    def test_tenant_only_portal_deny_returns_403(self, monkeypatch, app_client):
+        class _TenantDenyAsserter:
+            async def verify(self, **_kw) -> VerifyResult:
+                raise AssertionError("tenant-only retrieve must not use user-bound verify")
+
+            async def verify_tenant(self, **_kw) -> VerifyResult:
+                return VerifyResult.deny("tenant_not_found")
+
+        monkeypatch.setattr(
+            "retrieval_api.middleware.auth._get_asserter",
+            lambda: _TenantDenyAsserter(),
+        )
+
+        resp = app_client.post(
+            "/retrieve",
+            json={
+                "query": "q",
+                "org_id": "missing-org",
+                "scope": "org",
+            },
+            headers={
+                "X-Internal-Secret": "test-internal-secret-do-not-use-in-prod",
+                "X-Caller-Service": "portal-api",
+            },
+        )
+
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "identity_assertion_failed"}
+
 
 # ---------------------------------------------------------------------------
 # REQ-4 happy path: portal allow → request proceeds, verified_caller is pinned

@@ -899,10 +899,11 @@ async def retrieve(
             },
         )
     else:
-        # Defense in depth: should be unreachable because verify_body_identity
-        # always pins either a verified user or verified tenant on the success
-        # path. If we see this log line in production, a new code path is
-        # bypassing the guard.
+        # Defense in depth: the auth middleware should always populate
+        # request.state.auth, and verify_body_identity should pin either a
+        # verified user or verified tenant on the authenticated success path.
+        # If we see this log line in production, a new route is bypassing the
+        # guard or auth state was not installed.
         logger.warning(
             "product_event_skipped_no_identity",
             event_type="knowledge.queried",

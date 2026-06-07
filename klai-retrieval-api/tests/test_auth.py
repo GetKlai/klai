@@ -448,6 +448,75 @@ class TestCrossUserOrgGuard:
             )
         assert resp.status_code == 200
 
+    def test_admin_org_scope_without_user_emits_tenant_event(
+        self, sample_retrieve_request, monkeypatch
+    ):
+        """Admin org-scope calls without user_id still pin tenant identity for events."""
+        from retrieval_api.main import app
+
+        client = TestClient(app)
+        payload = _make_jwt_payload(sub="admin_user", resourceowner="org_admin", role="admin")
+        sample_retrieve_request["org_id"] = "other_org"
+        sample_retrieve_request.pop("user_id", None)
+
+        emit_calls: list[dict] = []
+
+        def _capture_emit(event_type, *, tenant_id, user_id, properties):
+            emit_calls.append(
+                {
+                    "event_type": event_type,
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "properties": properties,
+                }
+            )
+
+        monkeypatch.setattr("retrieval_api.api.retrieve.emit_event", _capture_emit)
+
+        with (
+            _patch_jwt(payload),
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.0],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(True, 0.5),
+            ),
+        ):
+            resp = client.post(
+                "/retrieve",
+                json=sample_retrieve_request,
+                headers={"Authorization": "Bearer admin"},
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert emit_calls == [
+            {
+                "event_type": "knowledge.queried",
+                "tenant_id": "other_org",
+                "user_id": None,
+                "properties": {
+                    "scope": "org",
+                    "kb_slugs": [],
+                    "had_results": False,
+                    "result_count": 0,
+                },
+            }
+        ]
+
     def test_non_admin_jwt_does_not_bypass_cross_org(self):
         """SPEC-SEC-TENANT-001 REQ-4.1 / REQ-5.3 / A-3 — non-admin JWT cross-org -> 403.
 
