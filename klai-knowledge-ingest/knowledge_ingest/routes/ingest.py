@@ -895,8 +895,6 @@ async def gitea_webhook(request: Request) -> dict:
 
         if settings.enrichment_enabled:
             try:
-                import datetime as _dt
-
                 from procrastinate.exceptions import AlreadyEnqueued
 
                 from knowledge_ingest import enrichment_tasks
@@ -904,7 +902,7 @@ async def gitea_webhook(request: Request) -> dict:
                 proc_app = enrichment_tasks.get_app()
                 await proc_app.ingest_from_gitea.configure(  # type: ignore[attr-defined]
                     queueing_lock=f"gitea:{org_id}:{kb_slug}:{path}",
-                    schedule_in=_dt.timedelta(seconds=settings.ingest_debounce_seconds),
+                    schedule_in={"seconds": settings.ingest_debounce_seconds},
                 ).defer_async(
                     org_id=org_id,
                     kb_slug=kb_slug,
