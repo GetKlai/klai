@@ -781,6 +781,8 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
             )
+            if kb_narrow:
+                data["mock_response"] = _strict_kb_unavailable_message(query)
             return data
 
         retrieval_ms = int((time.monotonic() - t0) * 1000)
@@ -824,6 +826,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
             )
+            data["mock_response"] = _strict_kb_unavailable_message(query)
             return data
 
         # If the retrieval-gate determined no KB context is needed, skip injection.
@@ -887,6 +890,8 @@ class KlaiKnowledgeHook(CustomLogger):
                 kbs_in_scope=kbs_in_scope,
                 kbs_with_results=kbs_with_results,
             )
+            if kb_narrow and not user_provided_content_context:
+                data["mock_response"] = _no_citable_sources_message(query)
             return data
         evidence_chunks = evidence_pack_items_as_chunks(evidence_pack)
         trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
@@ -971,6 +976,55 @@ class KlaiKnowledgeHook(CustomLogger):
         if chunk_ids and not result.get("retrieval_bypassed"):
             _fire_retrieval_log(org_id, user_id, chunk_ids, reranker_scores, query)
 
+        if (
+            context_chunks
+            and kb_narrow
+            and low_confidence_inject
+            and not user_provided_content_context
+        ):
+            # Strict + weak/tangential chunks is not a prompt problem. The model
+            # may still answer from general knowledge, and the citation renderer
+            # may still attach document-level fallback sources. Bypass the model
+            # before either can happen.
+            logger.warning(
+                "strict_low_confidence_deterministic_refusal "
+                "org_id=%s user_id=%s confidence_band=%s chunks_injected=%d",
+                org_id,
+                user_id,
+                confidence_band,
+                len(context_chunks),
+            )
+            original_stream = data.get("stream")
+            answer_policy = KbAnswerPolicy(
+                state="chunks_present",
+                prompt_mode=chat_retrieval_policy.prompt_mode,
+                user_provided_content_context=user_provided_content_context,
+                low_confidence_inject=low_confidence_inject,
+            )
+            data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
+                org_id=org_id,
+                user_id=user_id,
+                user_query=query,
+                retrieval_ms=retrieval_ms,
+                chunks_injected=len(context_chunks),
+                chunk_ids=[
+                    c.get("chunk_id") for c in context_chunks if c.get("chunk_id")
+                ],
+                citation_chunks=context_chunks,
+                trusted_sources=trusted_sources,
+                evidence_pack=evidence_pack if isinstance(evidence_pack, dict) else None,
+                citable_sources_count=len(trusted_sources),
+                confidence_band=confidence_band,
+                no_citable_sources=True,
+                no_citable_reason="strict_low_confidence_no_direct_evidence",
+                original_stream=original_stream,
+                kb_scope_mode=kb_scope_mode,
+                kbs_in_scope=kbs_in_scope,
+                kbs_with_results=kbs_with_results,
+            )
+            data["mock_response"] = _no_citable_sources_message(query)
+            return data
+
         if not context_chunks:
             # Zero chunks: inject a mode-aware "zero results" header so
             # the ChatConfigBar Modus toggle (kb_narrow) actually drives
@@ -1052,6 +1106,8 @@ class KlaiKnowledgeHook(CustomLogger):
                         kbs_with_results=kbs_with_results,
                     )
                 )
+                if kb_narrow and not user_provided_content_context:
+                    data["mock_response"] = _no_citable_sources_message(query)
             return data
 
         # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English instructions
