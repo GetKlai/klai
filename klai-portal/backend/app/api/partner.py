@@ -48,6 +48,11 @@ from app.services.partner_sse import (
     _extract_assistant_text_and_sources,
     _parse_audit_sse_chunk,
 )
+from app.services.partner_support import (
+    _mapping,
+    _message_payload,
+    _session_payload,
+)
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.retrieval_log import find_correlated_log, write_retrieval_log
@@ -378,58 +383,6 @@ def _support_user_hash(auth: PartnerAuthContext, hubspot_user_id: str | None) ->
     """Stable private key for one support rep inside one integration session."""
     raw_user = hubspot_user_id or "unknown"
     return hash_audit_value(f"{auth.org_id}:{auth.key_id}:hubspot:{raw_user}") or "unknown"
-
-
-def _mapping(row: Any) -> dict[str, Any]:
-    if row is None:
-        return {}
-    if isinstance(row, dict):
-        return row
-    if hasattr(row, "_mapping"):
-        return dict(row._mapping)
-    try:
-        return dict(row)
-    except (TypeError, ValueError):
-        return {}
-
-
-def _isoformat(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value.isoformat())
-
-
-def _message_payload(row: Any) -> dict[str, Any]:
-    data = _mapping(row)
-    return {
-        "id": str(data.get("id")),
-        "role": data.get("role"),
-        "content": data.get("content"),
-        "draft_body": data.get("draft_body"),
-        "sources": data.get("sources") or [],
-        "model_alias": data.get("model_alias"),
-        "completion_id": data.get("completion_id"),
-        "sequence": data.get("sequence"),
-        "created_at": _isoformat(data.get("created_at")),
-    }
-
-
-def _session_payload(row: Any, messages: list[dict[str, Any]]) -> dict[str, Any]:
-    data = _mapping(row)
-    return {
-        "id": str(data.get("id")),
-        "integration_type": data.get("integration_type"),
-        "hubspot_portal_id": data.get("hubspot_portal_id"),
-        "hubspot_ticket_id": data.get("hubspot_ticket_id"),
-        "contact_id": data.get("contact_id"),
-        "subject": data.get("subject_snapshot"),
-        "status": data.get("status"),
-        "message_count": data.get("message_count") or len(messages),
-        "created_at": _isoformat(data.get("created_at")),
-        "updated_at": _isoformat(data.get("updated_at")),
-        "last_message_at": _isoformat(data.get("last_message_at")),
-        "messages": messages,
-    }
 
 
 async def _fetch_support_messages(
