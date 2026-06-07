@@ -8,12 +8,18 @@ import math
 import os
 import time
 import uuid
-from urllib.parse import urlparse, urlunparse
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from klai_kb_slugs import personal_kb_slug
 
+from retrieval_api.api.decision_log import _evidence_pack_decision_sources
+from retrieval_api.api.page_context import _apply_page_context_boost
+from retrieval_api.api.ranking import (
+    _apply_link_expand_boost,
+    _compute_confidence_band,
+    _rrf_merge,
+)
 from retrieval_api.config import settings
 from retrieval_api.metrics import (
     quality_floor_filtered_total,
@@ -58,7 +64,6 @@ _RETRIEVAL_QUERY_SCOPE = "klai:internal:retrieval:query"
 # Module-level singleton — avoids ruff B008 ("Depends in default arg") and
 # is the FastAPI-recommended pattern for repeated dependencies.
 _REQUIRE_RETRIEVAL_SCOPE = Depends(require_scope(_RETRIEVAL_QUERY_SCOPE))
-_PAGE_CONTEXT_SCORE_BOOST = 1.08
 
 
 def _caller_pre_resolved(req: RetrieveRequest) -> bool:
@@ -71,181 +76,6 @@ def _caller_pre_resolved(req: RetrieveRequest) -> bool:
     both fall through to retrieval-side coreference resolution.
     """
     return bool(req.raw_query) and req.raw_query != req.query
-
-
-def _normalise_page_context_url(raw_url: str | None) -> str:
-    if not raw_url:
-        return ""
-    try:
-        parsed = urlparse(raw_url.strip())
-    except ValueError:
-        return ""
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return ""
-    path = parsed.path.rstrip("/") or "/"
-    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), path, "", "", ""))
-
-
-def _same_page_context_path(source_url: str, page_url: str) -> bool:
-    source = urlparse(source_url)
-    page = urlparse(page_url)
-    if source.scheme != page.scheme or source.netloc != page.netloc:
-        return False
-    source_path = source.path.rstrip("/") or "/"
-    page_path = page.path.rstrip("/") or "/"
-    if source_path == "/" or page_path == "/":
-        return source_path == page_path
-    return source_path.startswith(f"{page_path}/") or page_path.startswith(f"{source_path}/")
-
-
-def _apply_page_context_boost(
-    chunks: list[dict],
-    page_context: dict[str, str] | None,
-    *,
-    mark: bool = True,
-) -> tuple[list[dict], int]:
-    page_url = _normalise_page_context_url((page_context or {}).get("url"))
-    if not page_url:
-        return chunks, 0
-
-    boosted_count = 0
-    for chunk in chunks:
-        source_url = _normalise_page_context_url(chunk.get("source_url"))
-        if not source_url:
-            continue
-        if source_url != page_url and not _same_page_context_path(source_url, page_url):
-            continue
-
-        boosted_count += 1
-        score_key = (
-            "reranker_score" if isinstance(chunk.get("reranker_score"), (int, float)) else "score"
-        )
-        if isinstance(chunk.get(score_key), (int, float)):
-            boosted_score = chunk[score_key] * _PAGE_CONTEXT_SCORE_BOOST
-            chunk[score_key] = (
-                min(boosted_score, 1.0) if score_key == "reranker_score" else boosted_score
-            )
-            if mark:
-                chunk["_page_context_boosted"] = True
-
-    if boosted_count:
-        chunks.sort(
-            key=lambda c: c.get("reranker_score") or c.get("score") or 0.0,
-            reverse=True,
-        )
-    return chunks, boosted_count
-
-
-def _compute_confidence_band(
-    chunks: list[dict],
-    *,
-    high_threshold: float,
-    low_threshold: float,
-    reranker_enabled: bool,
-) -> ConfidenceBand:
-    """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: bucket the served result by
-    max(reranker_score). Driven by the litellm-hook anti-hallucination
-    injection (REQ-2).
-
-    Returns:
-        - ``unknown`` when reranker is disabled, every chunk's reranker_score
-          is None (fallback path), or the served list is empty
-        - ``high`` when max ≥ high_threshold
-        - ``low`` when max < low_threshold
-        - ``medium`` otherwise
-
-    Operates on the raw served list of dicts (post quality-floor +
-    source-aware-select + quality-boost), NOT on the ChunkResult objects —
-    boosted scores from REQ-3 must be reflected.
-    """
-    if not reranker_enabled or not chunks:
-        return "unknown"
-    scores = [c.get("reranker_score") for c in chunks]
-    valid_scores = [s for s in scores if isinstance(s, (int, float))]
-    if not valid_scores:
-        return "unknown"
-    max_score = max(valid_scores)
-    if max_score >= high_threshold:
-        return "high"
-    if max_score < low_threshold:
-        return "low"
-    return "medium"
-
-
-def _apply_link_expand_boost(
-    chunks: list[dict],
-    *,
-    boost: float,
-    enabled: bool,
-) -> list[dict]:
-    """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3: multiplicative reranker-score
-    boost (capped at 1.0) for chunks whose ``_link_expanded`` flag is set.
-
-    Applied AFTER rerank and BEFORE source-aware-select + quality-boost so
-    expanded neighbours get a fair shot at the served top-K. With
-    ``boost=1.0`` (default) this is a no-op; the SPEC ships safe and
-    operators tune via env var once the eval baseline is captured.
-
-    Mutates the input list in place (matches the surrounding pipeline's
-    style) and returns the same list for ergonomic chaining.
-    """
-    if not enabled or boost <= 1.0:
-        return chunks
-    for chunk in chunks:
-        if chunk.get("_link_expanded") and isinstance(chunk.get("reranker_score"), (int, float)):
-            boosted = chunk["reranker_score"] * boost
-            chunk["reranker_score"] = min(boosted, 1.0)
-    # Re-sort by boosted reranker_score so downstream pickers see the new order.
-    chunks.sort(
-        key=lambda c: c.get("reranker_score") or c.get("score") or 0.0,
-        reverse=True,
-    )
-    return chunks
-
-
-def _evidence_pack_decision_sources(evidence_pack: object) -> list[dict[str, object]]:
-    """Return source provenance that is safe and useful in retrieval logs."""
-    sources = getattr(evidence_pack, "sources", None)
-    if not isinstance(sources, list):
-        return []
-    decision_sources: list[dict[str, object]] = []
-    for source in sources[:5]:
-        relevance_score = getattr(source, "relevance_score", None)
-        if isinstance(relevance_score, (int, float)):
-            relevance_score = round(float(relevance_score), 4)
-        decision_sources.append(
-            {
-                "source_id": getattr(source, "source_id", None),
-                "title": getattr(source, "title", None),
-                "url": getattr(source, "source_url", None),
-                "source_label": getattr(source, "source_label", None),
-                "evidence_ids": getattr(source, "evidence_ids", None) or [],
-                "relevance_score": relevance_score,
-            }
-        )
-    return decision_sources
-
-
-def _rrf_merge(qdrant_results: list[dict], graph_results: list[dict], k: int = 60) -> list[dict]:
-    """Reciprocal Rank Fusion merge of two ranked result lists (AC-5)."""
-    scores: dict[str, float] = {}
-    items: dict[str, dict] = {}
-
-    for rank, result in enumerate(qdrant_results):
-        cid = result["chunk_id"]
-        scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
-        items[cid] = result
-
-    for rank, result in enumerate(graph_results):
-        cid = result["chunk_id"]
-        scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
-        if cid not in items:
-            items[cid] = result
-
-    merged = sorted(items.values(), key=lambda r: scores[r["chunk_id"]], reverse=True)
-    for result in merged:
-        result["score"] = scores[result["chunk_id"]]
-    return merged
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
