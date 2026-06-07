@@ -685,6 +685,145 @@ class TestKlaiKnowledgeHookDualAuth:
             assert "Authorization" not in headers
 
 
+class TestKlaiKnowledgeHookJwtFlag:
+    """SPEC-SEC-SERVICE-AUTH-002 kill-switch: KLAI_RETRIEVAL_JWT_AUTH_ENABLED.
+
+    The three Zitadel client-credentials env vars are configured in
+    production, but the receiver cannot yet accept litellm's machine-token
+    JWT (empty audience + service-principal-vs-end-user identity guard). So
+    the JWT attempt is gated OFF by default — every retrieval goes straight
+    to the legacy X-Internal-Secret path instead of minting a token the
+    receiver rejects and falling back. These tests exercise the REAL
+    ``_get_token_client`` (they do NOT monkeypatch it) so the gate itself is
+    under test, unlike the dual-auth tests above which inject a client.
+    """
+
+    # Fully-configured client creds: the env-presence check at line ~311
+    # passes, so ONLY the kill-switch decides whether a client is built.
+    _CREDS = {
+        "KLAI_OAUTH_TOKEN_URL": "https://auth.example/oauth/token",
+        "KLAI_LITELLM_CLIENT_ID": "cid",
+        "KLAI_LITELLM_CLIENT_SECRET": "csecret",
+    }
+
+    def test_flag_off_by_default_returns_no_token_client(self, monkeypatch):
+        """Creds present, flag unset → the real gate returns None."""
+        mod = _load_hook(monkeypatch, extra_env={**self._CREDS})
+        assert mod.KLAI_RETRIEVAL_JWT_AUTH_ENABLED is False
+        assert mod._get_token_client() is None
+
+    def test_flag_on_with_creds_builds_token_client(self, monkeypatch):
+        """Creds present + flag on → the real gate builds a ZitadelTokenClient."""
+        mod = _load_hook(
+            monkeypatch,
+            extra_env={**self._CREDS, "KLAI_RETRIEVAL_JWT_AUTH_ENABLED": "true"},
+        )
+        assert mod.KLAI_RETRIEVAL_JWT_AUTH_ENABLED is True
+        # __init__ is pure (validation + field assignment, no network), so a
+        # non-None return proves the flag re-enabled the mint path.
+        assert mod._get_token_client() is not None
+
+    def test_flag_on_but_creds_missing_still_returns_none(self, monkeypatch):
+        """Flag ON does NOT bypass the env-presence guard.
+
+        Phase D flips the flag ON in prod; if a cred is unset there, the gate
+        must still fall back to legacy (return None) rather than try to build a
+        client with empty creds. Drop one cred and assert None despite flag ON.
+        """
+        mod = _load_hook(
+            monkeypatch,
+            extra_env={
+                **self._CREDS,
+                "KLAI_LITELLM_CLIENT_SECRET": "",  # one cred missing
+                "KLAI_RETRIEVAL_JWT_AUTH_ENABLED": "true",
+            },
+        )
+        assert mod.KLAI_RETRIEVAL_JWT_AUTH_ENABLED is True
+        assert mod._get_token_client() is None
+
+    def test_disabled_info_logs_at_most_once_per_process(self, monkeypatch):
+        """The OFF decision is memoised — the INFO line is not per-request.
+
+        Guards the _token_client_init_attempted-before-gate ordering: a future
+        refactor that moves the memo flag below the kill-switch would turn this
+        once-per-process INFO into a per-request log, which this test catches.
+        """
+        mod = _load_hook(monkeypatch, extra_env={**self._CREDS})
+        with patch.object(mod, "logger") as mock_logger:
+            assert mod._get_token_client() is None
+            assert mod._get_token_client() is None  # second call: memoised
+            disabled = [
+                c
+                for c in mock_logger.info.call_args_list
+                if "JWT auth disabled" in str(c)
+            ]
+            assert len(disabled) == 1
+
+    @pytest.mark.parametrize(
+        ("value", "enabled"),
+        [
+            ("true", True),
+            ("1", True),
+            ("on", True),
+            ("yes", True),
+            ("enabled", True),
+            ("TRUE", True),
+            ("  True  ", True),
+            ("", False),
+            ("false", False),
+            ("0", False),
+            ("no", False),
+            ("off", False),
+            ("disabled", False),
+            ("garbage", False),
+        ],
+    )
+    def test_flag_value_parsing(self, monkeypatch, value, enabled):
+        """Only the explicit truthy set enables; everything else is OFF."""
+        mod = _load_hook(
+            monkeypatch,
+            extra_env={**self._CREDS, "KLAI_RETRIEVAL_JWT_AUTH_ENABLED": value},
+        )
+        assert mod.KLAI_RETRIEVAL_JWT_AUTH_ENABLED is enabled
+        # With creds present, the gate's None-or-not exactly tracks the flag.
+        assert (mod._get_token_client() is not None) is enabled
+
+    @pytest.mark.asyncio
+    async def test_flag_off_full_retrieve_sends_only_legacy_headers(self, monkeypatch):
+        """End-to-end: flag off → ONE /retrieve POST, legacy headers, no Bearer.
+
+        This is the regression guard for the doomed round-trip: with the flag
+        off there must be exactly one POST (no JWT attempt + fallback retry)
+        and it must carry X-Internal-Secret, never Authorization.
+        """
+        mod = _load_hook(monkeypatch, extra_env={**self._CREDS})
+
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "What are the policies?"}],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+            assert mc.post.call_count == 1
+            headers = mc.post.call_args.kwargs.get("headers") or {}
+            assert "Authorization" not in headers
+            assert headers.get("X-Internal-Secret") == "test-retrieval-secret"
+            assert headers.get("X-Caller-Service") == "litellm"
+
+
 # ─── identity mapping tests (2026-05-05 follow-up) ──────────────────────────
 
 
