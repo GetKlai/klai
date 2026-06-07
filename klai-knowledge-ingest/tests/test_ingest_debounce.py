@@ -10,7 +10,6 @@ The webhook handler must:
 
 from __future__ import annotations
 
-import datetime
 import hashlib
 import hmac
 import json
@@ -173,8 +172,7 @@ def test_webhook_defers_debounced_task(webhook_client):
     mock_task.configure.assert_called_once()
     call_kwargs = mock_task.configure.call_args.kwargs
     assert call_kwargs["queueing_lock"] == "gitea:zitadel-org-123:my-kb:docs/page.md"
-    assert isinstance(call_kwargs["schedule_in"], datetime.timedelta)
-    assert call_kwargs["schedule_in"].total_seconds() == 180
+    assert call_kwargs["schedule_in"] == {"seconds": 180}
 
     # defer_async called with correct params
     mock_configured.defer_async.assert_called_once_with(
