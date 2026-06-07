@@ -545,6 +545,165 @@ class TestCrossUserOrgGuard:
         assert resp.status_code == 200
 
 
+class TestServicePrincipalOnBehalfOf:
+    """SPEC-SEC-SERVICE-AUTH-002: a CONFIGURED service-principal JWT may act on
+    behalf of an end-user (body user_id != jwt sub), verified by portal
+    membership — the litellm -> retrieval-api activation path.
+
+    A human-user JWT (sub NOT in the allowlist) is unaffected: body==sub is
+    still enforced. The empty default allowlist keeps the path inert.
+    """
+
+    _SVC_SUB = "svc-litellm-371062520670060561"
+
+    def _allowlist(self, monkeypatch, value):
+        import retrieval_api.middleware.auth as auth_mod
+
+        monkeypatch.setattr(auth_mod.settings, "service_principal_subs", value)
+
+    def test_sub_set_parsing(self):
+        from retrieval_api.config import Settings
+
+        s = Settings(service_principal_subs=" a , b ,, c ")
+        assert s.service_principal_sub_set == frozenset({"a", "b", "c"})
+        assert Settings(service_principal_subs="").service_principal_sub_set == frozenset()
+
+    def test_service_principal_acts_on_behalf_of_end_user(
+        self, monkeypatch, sample_retrieve_request
+    ):
+        """svc sub in allowlist + body user_id != sub + X-Caller-Service ->
+        on-behalf-of path, portal-verified, 200 (NOT user_mismatch)."""
+        from retrieval_api.main import app
+
+        self._allowlist(monkeypatch, self._SVC_SUB)
+        client = TestClient(app)
+        payload = _make_jwt_payload(sub=self._SVC_SUB)
+        sample_retrieve_request["org_id"] = "org_x"
+        sample_retrieve_request["user_id"] = "end_user_b"
+        with (
+            _patch_jwt(payload),
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.0],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(True, 0.5),
+            ),
+        ):
+            resp = client.post(
+                "/retrieve",
+                json=sample_retrieve_request,
+                headers={"Authorization": "Bearer svc", "X-Caller-Service": "litellm"},
+            )
+        assert resp.status_code == 200
+
+    def test_service_principal_without_caller_service_400(self, monkeypatch):
+        """On-behalf-of requires X-Caller-Service (loud config error, not fail-open)."""
+        from retrieval_api.main import app
+
+        self._allowlist(monkeypatch, self._SVC_SUB)
+        client = TestClient(app)
+        payload = _make_jwt_payload(sub=self._SVC_SUB)
+        with _patch_jwt(payload):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "org_x",
+                    "user_id": "end_user_b",
+                    "scope": "personal",
+                },
+                headers={"Authorization": "Bearer svc"},  # no X-Caller-Service
+            )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == {"error": "missing_caller_service"}
+
+    def test_service_principal_portal_deny_403(self, monkeypatch):
+        """Portal denies the asserted end-user -> 403 identity_assertion_failed."""
+        from klai_identity_assert import VerifyResult
+
+        from retrieval_api.main import app
+
+        class _DenyAsserter:
+            async def verify(self, **_kw) -> VerifyResult:
+                return VerifyResult.deny("no_membership")
+
+        self._allowlist(monkeypatch, self._SVC_SUB)
+        monkeypatch.setattr("retrieval_api.middleware.auth._get_asserter", lambda: _DenyAsserter())
+        client = TestClient(app)
+        payload = _make_jwt_payload(sub=self._SVC_SUB)
+        with _patch_jwt(payload):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "org_x",
+                    "user_id": "end_user_b",
+                    "scope": "personal",
+                },
+                headers={"Authorization": "Bearer svc", "X-Caller-Service": "litellm"},
+            )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "identity_assertion_failed"}
+
+    def test_non_service_principal_jwt_still_user_mismatch(self, monkeypatch):
+        """Regression: a sub NOT in the allowlist still enforces body==sub,
+        even with X-Caller-Service set (human path unchanged)."""
+        from retrieval_api.main import app
+
+        self._allowlist(monkeypatch, self._SVC_SUB)
+        client = TestClient(app)
+        payload = _make_jwt_payload(sub="human_user_a")  # NOT the svc sub
+        with _patch_jwt(payload):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "org_x",
+                    "user_id": "victim_b",
+                    "scope": "personal",
+                },
+                headers={"Authorization": "Bearer human", "X-Caller-Service": "litellm"},
+            )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "user_mismatch"}
+
+    def test_empty_allowlist_keeps_svc_on_human_path(self, monkeypatch):
+        """Default empty allowlist (inert): the svc sub falls to body==sub and
+        a mismatched body user_id is rejected — no on-behalf-of power."""
+        from retrieval_api.main import app
+
+        self._allowlist(monkeypatch, "")  # inert
+        client = TestClient(app)
+        payload = _make_jwt_payload(sub=self._SVC_SUB)
+        with _patch_jwt(payload):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "q",
+                    "org_id": "org_x",
+                    "user_id": "end_user_b",
+                    "scope": "personal",
+                },
+                headers={"Authorization": "Bearer svc", "X-Caller-Service": "litellm"},
+            )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "user_mismatch"}
+
+
 # --------------------------------------------------------------------------- #
 # REQ-2 — Pydantic bounds
 # --------------------------------------------------------------------------- #

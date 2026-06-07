@@ -1045,6 +1045,12 @@ services:
       INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
       ZITADEL_ISSUER: https://auth.${DOMAIN}
       ZITADEL_API_AUDIENCE: ${RETRIEVAL_API_ZITADEL_AUDIENCE:-}
+      # SPEC-SEC-SERVICE-AUTH-002 (svc-onbehalf): comma-separated Zitadel
+      # machine-account sub ids allowed to act on behalf of end users via a
+      # service-principal JWT (e.g. svc-litellm). Empty default = inert (every
+      # JWT treated as a human user, body==sub). Add the value to klai-infra
+      # SOPS before relying on it (validator-env-parity).
+      SERVICE_PRINCIPAL_SUBS: ${RETRIEVAL_API_SERVICE_PRINCIPAL_SUBS:-}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       RATE_LIMIT_RPM: ${RETRIEVAL_API_RATE_LIMIT_RPM:-600}
       # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4: internal-secret callers'

@@ -108,6 +108,14 @@ class Settings(BaseSettings):
     # Zitadel issuer + audience for JWT validation (REQ-1.2, REQ-5.1).
     zitadel_issuer: str = ""
     zitadel_api_audience: str = ""
+    # SPEC-SEC-SERVICE-AUTH-002 (svc-onbehalf): comma-separated Zitadel
+    # machine-account ``sub`` ids that may act ON BEHALF OF an end-user via a
+    # service-principal JWT (e.g. svc-litellm). Raw string — NOT typed set[str]
+    # (pydantic-settings JSON-parses collection-typed env vars). Parsed by the
+    # ``service_principal_sub_set`` property below. Empty (default) = no service
+    # principals = the on-behalf-of JWT path is inert (every JWT is treated as a
+    # human user, body==sub). Env var: SERVICE_PRINCIPAL_SUBS.
+    service_principal_subs: str = ""
     # Sliding-window rate limit per caller identity (REQ-4.3).
     rate_limit_rpm: int = 600
     # Redis URL for the rate limiter (REQ-4.1). Fail-open when unreachable (REQ-4.5).
@@ -217,6 +225,17 @@ class Settings(BaseSettings):
             and self.zitadel_api_audience
             and self.zitadel_api_audience.strip()
         )
+
+    @property
+    def service_principal_sub_set(self) -> frozenset[str]:
+        """Set of Zitadel machine-account ``sub`` ids parsed from
+        ``service_principal_subs`` (comma-separated). Empty when unset.
+
+        Mirrors the imperative split used for the JWT ``scope`` claim in
+        ``middleware.auth`` rather than typing the field as a collection
+        (which pydantic-settings would JSON-parse).
+        """
+        return frozenset(s.strip() for s in self.service_principal_subs.split(",") if s.strip())
 
 
 settings = Settings()
