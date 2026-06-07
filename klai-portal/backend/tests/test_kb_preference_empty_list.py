@@ -16,6 +16,7 @@ auth dependency; no real DB or network involved.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -172,3 +173,85 @@ async def test_patch_kb_preference_waits_for_cache_invalidation(monkeypatch):
     assert result.kb_narrow is True
     invalidate_kb_cache.assert_awaited_once_with("zitadel-org-42", "librechat-user-1")
     invalidate_templates.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_patch_kb_preference_returns_when_cache_invalidation_hangs(monkeypatch):
+    """Redis invalidation is best-effort and must not wedge preference saves."""
+    from app.api.app_account import KBPreferencePatch, patch_kb_preference
+
+    fake_user = _FakeUser()
+    fake_user.librechat_user_id = "librechat-user-1"
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(return_value=_empty_query_result())
+
+    async def _hang(*_args, **_kwargs):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(
+        "app.api.app_account.KB_PREF_CACHE_INVALIDATION_TIMEOUT_SECONDS",
+        0.01,
+    )
+    monkeypatch.setattr(
+        "app.api.app_account._load_caller_user",
+        AsyncMock(return_value=fake_user),
+    )
+    monkeypatch.setattr("app.api.app_account.invalidate_kb_cache", _hang)
+    monkeypatch.setattr(
+        "app.api.app_account.invalidate_templates",
+        AsyncMock(return_value=None),
+    )
+
+    result = await patch_kb_preference(
+        body=KBPreferencePatch(kb_narrow=False),
+        perms=make_perms(
+            role="admin",
+            user_id="sub",
+            org_id=42,
+            zitadel_org_id="zitadel-org-42",
+        ),
+        db=db,
+    )
+
+    assert result.kb_narrow is False
+
+
+@pytest.mark.asyncio
+async def test_patch_kb_preference_returns_when_cache_invalidation_raises(monkeypatch):
+    """A future invalidation refactor must not turn Redis errors into PATCH 500s."""
+    from app.api.app_account import KBPreferencePatch, patch_kb_preference
+
+    fake_user = _FakeUser()
+    fake_user.librechat_user_id = "librechat-user-1"
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(return_value=_empty_query_result())
+
+    monkeypatch.setattr(
+        "app.api.app_account._load_caller_user",
+        AsyncMock(return_value=fake_user),
+    )
+    monkeypatch.setattr(
+        "app.api.app_account.invalidate_kb_cache",
+        AsyncMock(side_effect=RuntimeError("redis down")),
+    )
+    monkeypatch.setattr(
+        "app.api.app_account.invalidate_templates",
+        AsyncMock(return_value=None),
+    )
+
+    result = await patch_kb_preference(
+        body=KBPreferencePatch(kb_narrow=True),
+        perms=make_perms(
+            role="admin",
+            user_id="sub",
+            org_id=42,
+            zitadel_org_id="zitadel-org-42",
+        ),
+        db=db,
+    )
+
+    assert result.kb_narrow is True

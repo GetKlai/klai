@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/app/account", tags=["app-account"])
 
+KB_PREF_CACHE_INVALIDATION_TIMEOUT_SECONDS = 1.0
+
 
 async def _load_caller_user(perms: UserPermissions, db: AsyncSession) -> PortalUser:
     """Load the caller's PortalUser row for read+mutate paths.
@@ -57,6 +59,48 @@ async def _load_caller_user(perms: UserPermissions, db: AsyncSession) -> PortalU
             detail="Caller user not found",
         )
     return user
+
+
+async def _invalidate_kb_preference_cache(
+    *,
+    zitadel_org_id: str,
+    librechat_user_id: str | None,
+    active_templates_changed: bool,
+) -> None:
+    """Best-effort LiteLLM cache invalidation with a bounded request-path wait."""
+    if not librechat_user_id:
+        return
+
+    invalidations = [invalidate_kb_cache(zitadel_org_id, librechat_user_id)]
+    if active_templates_changed:
+        invalidations.append(invalidate_templates(zitadel_org_id, librechat_user_id))
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*invalidations, return_exceptions=True),
+            timeout=KB_PREF_CACHE_INVALIDATION_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "kb_preference_cache_invalidation_timeout",
+            extra={
+                "zitadel_org_id": zitadel_org_id,
+                "librechat_user_id": librechat_user_id,
+                "timeout_seconds": KB_PREF_CACHE_INVALIDATION_TIMEOUT_SECONDS,
+            },
+        )
+        return
+
+    for result in results:
+        if isinstance(result, BaseException):
+            logger.warning(
+                "kb_preference_cache_invalidation_failed",
+                extra={
+                    "zitadel_org_id": zitadel_org_id,
+                    "librechat_user_id": librechat_user_id,
+                    "error": repr(result),
+                },
+            )
 
 
 # -- Pydantic schemas ---------------------------------------------------------
@@ -849,11 +893,11 @@ async def patch_kb_preference(
     user.kb_pref_version += 1
     await db.commit()
 
-    if user.librechat_user_id:
-        invalidations = [invalidate_kb_cache(perms.zitadel_org_id, user.librechat_user_id)]
-        if active_templates_changed:
-            invalidations.append(invalidate_templates(perms.zitadel_org_id, user.librechat_user_id))
-        await asyncio.gather(*invalidations)
+    await _invalidate_kb_preference_cache(
+        zitadel_org_id=perms.zitadel_org_id,
+        librechat_user_id=user.librechat_user_id,
+        active_templates_changed=active_templates_changed,
+    )
 
     return KBPreferenceOut(
         kb_retrieval_enabled=user.kb_retrieval_enabled,
