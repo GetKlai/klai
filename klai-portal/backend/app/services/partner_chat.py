@@ -1520,6 +1520,18 @@ def _build_system_prompt(
     return f"{base}\n\n{url_guard}\nContext:\n{context_block}"
 
 
+def _is_retrieval_identity_assertion_error(exc: httpx.HTTPStatusError) -> bool:
+    response = exc.response
+    if response is None or response.status_code != status.HTTP_403_FORBIDDEN:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return isinstance(detail, dict) and detail.get("error") == "identity_assertion_failed"
+
+
 async def retrieve_context(
     org_id: int,
     zitadel_org_id: str,
@@ -1631,7 +1643,27 @@ async def retrieve_context(
                 **get_trace_headers(),
             },
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if not _is_retrieval_identity_assertion_error(exc):
+                raise
+            logger.warning(
+                "partner_chat_retrieval_identity_assertion_degraded",
+                org_id=org_id,
+                status_code=exc.response.status_code if exc.response is not None else None,
+            )
+            return (
+                [],
+                _build_system_prompt(
+                    [],
+                    original_system,
+                    widget_system_prompt=widget_system_prompt,
+                    page_context=cleaned_page_context,
+                    backend_managed_citations=backend_managed_citations,
+                ),
+                [],
+            )
         result = resp.json()
 
     evidence_pack = result.get("evidence_pack")

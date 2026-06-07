@@ -2574,6 +2574,103 @@ async def test_retrieve_context_passes_partner_user_id(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_retrieve_context_degrades_identity_assertion_403_to_no_kb(monkeypatch):
+    from app.services.partner_chat import retrieve_context
+
+    request = httpx.Request("POST", "http://retrieval-api:8040/retrieve")
+    response = httpx.Response(
+        403,
+        json={"detail": {"error": "identity_assertion_failed"}},
+        request=request,
+    )
+
+    class _MockResp:
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("forbidden", request=request, response=response)
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, *_, **__):
+            return _MockResp()
+
+    monkeypatch.setattr(
+        "app.services.partner_chat.httpx.AsyncClient",
+        lambda timeout: _MockClient(),
+    )
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    fake_settings.retrieval_api_internal_secret = "secret"
+    fake_settings.internal_secret = "fallback"
+
+    chunks, system_prompt, trusted_sources = await retrieve_context(
+        org_id=42,
+        zitadel_org_id="z-1",
+        kb_slugs=[],
+        messages=[
+            {"role": "system", "content": "Use this exact instruction."},
+            {"role": "user", "content": "hello"},
+        ],
+        settings=fake_settings,
+    )
+
+    assert chunks == []
+    assert trusted_sources == []
+    assert system_prompt.startswith("Use this exact instruction.")
+    assert "[Instruction hierarchy and safety]" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_propagates_non_identity_status_errors(monkeypatch):
+    from app.services.partner_chat import retrieve_context
+
+    request = httpx.Request("POST", "http://retrieval-api:8040/retrieve")
+    response = httpx.Response(
+        403,
+        json={"detail": {"error": "scope_forbidden"}},
+        request=request,
+    )
+
+    class _MockResp:
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("forbidden", request=request, response=response)
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, *_, **__):
+            return _MockResp()
+
+    monkeypatch.setattr(
+        "app.services.partner_chat.httpx.AsyncClient",
+        lambda timeout: _MockClient(),
+    )
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    fake_settings.retrieval_api_internal_secret = "secret"
+    fake_settings.internal_secret = "fallback"
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await retrieve_context(
+            org_id=42,
+            zitadel_org_id="z-1",
+            kb_slugs=[],
+            messages=[{"role": "user", "content": "hello"}],
+            settings=fake_settings,
+        )
+
+
+@pytest.mark.asyncio
 async def test_retrieve_context_passes_clean_page_context(monkeypatch):
     from app.services.partner_chat import retrieve_context
 
