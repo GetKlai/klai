@@ -377,8 +377,7 @@ def settings_unavailable_message(user_query: object) -> str:
     """Deterministic refusal when the user's chat settings cannot be loaded.
 
     Used only on the truly-cold path: portal-api is unreachable AND there is no
-    cached setting to fall back on (the user has not chatted in the last 24h, so
-    the last-known-settings cache is empty). We do not know their mode
+    Redis-cached setting to fall back on. We do not know their mode
     (Strict/Open), so we refuse honestly instead of silently defaulting to a
     general-knowledge answer — which would break a Strict user's KB-only promise.
     """

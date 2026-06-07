@@ -27,6 +27,7 @@ import json
 import logging
 import os
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -76,6 +77,24 @@ def _redis_url() -> str:
     return os.getenv("REDIS_URL", "")
 
 
+def _safe_redis_url(url: str) -> str:
+    """URL-encode redis:// passwords without parsing the URL first.
+
+    Base64 Redis passwords can contain "/", "+", and "=". urllib's redis URL
+    parser treats "/" as a path separator before it can parse the port, so
+    redis.from_url("redis://:a/b@redis:6379") raises during client creation.
+    """
+    prefix = "redis://:"
+    if not url.startswith(prefix):
+        return url
+    at_idx = url.rfind("@")
+    if at_idx == -1:
+        return url
+    password = url[len(prefix) : at_idx]
+    rest = url[at_idx + 1 :]
+    return f"redis://:{quote(password, safe='')}@{rest}"
+
+
 def _redis_pool():
     """Return a Redis-only client, never LiteLLM DualCache/in-process cache."""
     global _redis_client
@@ -85,12 +104,19 @@ def _redis_pool():
     if not url:
         return None
     if _redis_client is None:
-        _redis_client = aioredis.from_url(
-            url,
-            decode_responses=True,
-            socket_connect_timeout=KB_FEATURE_REDIS_TIMEOUT_SECONDS,
-            socket_timeout=KB_FEATURE_REDIS_TIMEOUT_SECONDS,
-        )
+        try:
+            _redis_client = aioredis.from_url(
+                _safe_redis_url(url),
+                decode_responses=True,
+                socket_connect_timeout=KB_FEATURE_REDIS_TIMEOUT_SECONDS,
+                socket_timeout=KB_FEATURE_REDIS_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning(
+                "KlaiKnowledgeHook: redis feature cache client init failed (%s)",
+                exc,
+            )
+            return None
     return _redis_client
 
 
@@ -244,10 +270,9 @@ async def get_kb_feature(user_id: str, org_id: str, cache) -> dict:
             "kb_narrow": False,
             "version": 0,
             "zitadel_user_id": None,
-            # Portal unreachable AND no cached settings to fall back on (the
-            # stale-cache branch above already handles the common case). We
-            # cannot know the user's mode, so the hook refuses honestly rather
-            # than silently defaulting to a general answer.
+            # Portal unreachable AND no Redis-cached settings to fall back on.
+            # We cannot know the user's mode, so the hook refuses honestly
+            # rather than silently defaulting to a general answer.
             "settings_unavailable": True,
             # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: fail-open to 'shadow', never 'off'.
             # Silent telemetry is the wrong default during outages.

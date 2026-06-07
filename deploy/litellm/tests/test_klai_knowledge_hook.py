@@ -1659,6 +1659,44 @@ class TestKlaiKnowledgeHookKB010:
         assert meta["answer_policy_mode"] == "open"
         cache.async_set_cache.assert_not_called()
 
+    def test_feature_redis_url_encodes_base64_password(self, monkeypatch):
+        """Redis feature cache must tolerate base64 passwords in REDIS_URL."""
+        _load_hook(
+            monkeypatch,
+            extra_env={"REDIS_URL": "redis://:Xy9/kLmN+opQ=@redis:6379"},
+            mock_feature_state=False,
+        )
+        portal_client = sys.modules["klai_kb_portal_client"]
+        fake_client = object()
+        fake_redis = SimpleNamespace(from_url=MagicMock(return_value=fake_client))
+        monkeypatch.setattr(portal_client, "aioredis", fake_redis)
+        monkeypatch.setattr(portal_client, "_redis_client", None)
+
+        assert portal_client._redis_pool() is fake_client
+
+        safe_url = fake_redis.from_url.call_args.args[0]
+        assert safe_url == "redis://:Xy9%2FkLmN%2BopQ%3D@redis:6379"
+        assert urlparse(safe_url).port == 6379
+
+    @pytest.mark.asyncio
+    async def test_feature_redis_client_init_failure_degrades_to_cache_miss(
+        self, monkeypatch
+    ):
+        """A malformed Redis URL must not escape from the KB pre-call hook."""
+        _load_hook(
+            monkeypatch,
+            extra_env={"REDIS_URL": "redis://:bad/password@redis:6379"},
+            mock_feature_state=False,
+        )
+        portal_client = sys.modules["klai_kb_portal_client"]
+        fake_redis = SimpleNamespace(
+            from_url=MagicMock(side_effect=ValueError("bad redis url"))
+        )
+        monkeypatch.setattr(portal_client, "aioredis", fake_redis)
+        monkeypatch.setattr(portal_client, "_redis_client", None)
+
+        assert await portal_client._get_kb_feature_redis("user123", "org123") is None
+
     @pytest.mark.asyncio
     async def test_both_scope_and_user_id_in_request(self, monkeypatch):
         """AC-010-10: retrieval request includes scope='both' and user_id."""
@@ -6389,6 +6427,79 @@ class TestKlaiKnowledgeHookOpenMode:
         cache.async_set_cache.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_strict_low_confidence_streaming_refusal_gets_activity_footer(
+        self, monkeypatch, _kb_chunks
+    ):
+        """Streaming deterministic refusals still need the Strict activity footer."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "stream": True,
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Maak een implementatiehandleiding."}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {
+                "chunks": _kb_chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "low",
+            }
+        )
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": True,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["render_mode"] == "streaming_guard"
+        assert result["stream"] is True
+
+        final_item = {
+            "choices": [
+                {
+                    "delta": {"content": result["mock_response"]},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+
+        async def stream():
+            yield final_item
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), result
+            )
+        ]
+
+        assert len(streamed) == 2
+        footer = streamed[0]["choices"][0]["delta"]["content"]
+        assert "Ik kan dit niet betrouwbaar beantwoorden" in footer
+        assert "**Agent activiteit**" in footer
+        assert "- Modus: Strict, alleen kennisbank." in footer
+        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in footer
+        assert streamed[1]["choices"][0]["delta"]["content"] == ""
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("kb_narrow", [False, True])
     async def test_user_provided_content_scope_present_in_both_modes(
         self, monkeypatch, _kb_chunks, kb_narrow
@@ -7089,8 +7200,6 @@ class TestStrictModeCodeEnforcement:
 
         We do not know the user's mode (Strict/Open) here, so silently giving a
         general-knowledge answer would break a Strict user's KB-only promise.
-        (The common case — portal blip but settings cached within 24h — keeps
-        the last-known mode automatically and is unaffected.)
         """
         import httpx as _httpx
 
