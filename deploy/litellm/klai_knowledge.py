@@ -264,6 +264,22 @@ KLAI_OAUTH_TOKEN_URL = os.getenv("KLAI_OAUTH_TOKEN_URL", "")
 KLAI_LITELLM_CLIENT_ID = os.getenv("KLAI_LITELLM_CLIENT_ID", "")
 KLAI_LITELLM_CLIENT_SECRET = os.getenv("KLAI_LITELLM_CLIENT_SECRET", "")
 
+# SPEC-SEC-SERVICE-AUTH-002 REQ-5: the /retrieve JWT must (a) carry the Klai
+# Platform project as audience and (b) surface the caller's granted project
+# roles. Zitadel does this via two RESERVED scopes — the `…:aud` binding adds
+# the project id to the `aud` claim (which retrieval-api validates against
+# ZITADEL_API_AUDIENCE), and `…:projects:roles` adds the granted-roles claim
+# that the receiver reads via klai_service_auth.project_role_scopes (REQ-4b).
+# The bare role key `klai:internal:retrieval:query` is intentionally NOT
+# requested as a scope: Zitadel ignores it (it is a role, not an OIDC scope —
+# verified against a live token 2026-06-07).
+KLAI_OAUTH_PROJECT_ID = os.getenv("KLAI_OAUTH_PROJECT_ID", "362771533686374406")
+RETRIEVAL_JWT_SCOPE = (
+    "openid "
+    f"urn:zitadel:iam:org:project:id:{KLAI_OAUTH_PROJECT_ID}:aud "
+    "urn:zitadel:iam:org:projects:roles"
+)
+
 # Lazy-built ZitadelTokenClient instance. None when env vars are missing —
 # the retrieve call site handles that by falling back to the legacy
 # X-Internal-Secret path (Phase C-1 REQ-5 safe rollout).
@@ -302,18 +318,18 @@ def _get_token_client() -> object | None:
         return None
 
     try:
-        from klai_service_auth import SCOPE_RETRIEVAL_QUERY, ZitadelTokenClient
+        from klai_service_auth import ZitadelTokenClient
 
         _token_client = ZitadelTokenClient(
             client_id=KLAI_LITELLM_CLIENT_ID,
             client_secret=KLAI_LITELLM_CLIENT_SECRET,
             token_url=KLAI_OAUTH_TOKEN_URL,
-            scope=SCOPE_RETRIEVAL_QUERY,
+            scope=RETRIEVAL_JWT_SCOPE,
         )
         # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.info(
             "KlaiKnowledgeHook: zitadel token client initialised (oauth scope=%s)",
-            SCOPE_RETRIEVAL_QUERY,
+            RETRIEVAL_JWT_SCOPE,
         )
         return _token_client
     except Exception as exc:

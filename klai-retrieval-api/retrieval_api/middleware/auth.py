@@ -39,6 +39,7 @@ import structlog
 from fastapi import HTTPException, Request, status
 from jose import ExpiredSignatureError, JWTError, jwt
 from klai_identity_assert import KNOWN_CALLER_SERVICES, IdentityAsserter
+from klai_service_auth import project_role_scopes
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
 
@@ -351,11 +352,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
             sub = payload.get("sub")
             if not sub:
                 return _unauthorized("invalid_jwt_signature")
-            # SPEC-SEC-SERVICE-AUTH-001 REQ-3: parse OAuth 2.0 scope claim
-            # (space-separated string per RFC 6749 §3.3) into a frozenset.
-            # Missing claim → empty set → endpoints with require_scope reject.
+            # SPEC-SEC-SERVICE-AUTH-001 REQ-3 + SPEC-SEC-SERVICE-AUTH-002 REQ-4b:
+            # authorization scopes come from two places. (a) The RFC 6749 §3.3
+            # space-separated ``scope`` claim. (b) Zitadel project-role claims
+            # (``urn:zitadel:iam:org:project:<projectId>:roles``) — machine
+            # tokens requesting the reserved ``…:projects:roles`` scope carry
+            # the granted role keys ONLY there, never in ``scope``.
+            # Missing both → empty set → endpoints with require_scope reject.
             scopes_claim = payload.get("scope") or ""
-            scopes = frozenset(s for s in str(scopes_claim).split() if s)
+            scopes = frozenset(
+                {s for s in str(scopes_claim).split() if s}
+                | project_role_scopes(payload)
+            )
             # SPEC-SEC-IDENTITY-ASSERT-003 REQ-1.1: do NOT lift
             # `urn:zitadel:iam:user:resourceowner:id` from the JWT — the
             # claim is unreliable per Klai's zitadel.md rule. Org-resolution

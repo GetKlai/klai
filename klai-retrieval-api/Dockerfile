@@ -22,6 +22,8 @@ COPY --chown=app:app klai-libs/kb-slugs klai-libs/kb-slugs
 COPY --chown=app:app klai-libs/citations klai-libs/citations
 # SPEC-CHAT-GUARDRAILS-001: shared LLM safety policy path-dep.
 COPY --chown=app:app klai-libs/llm-safety klai-libs/llm-safety
+# SPEC-SEC-SERVICE-AUTH-002 REQ-4b: shared Zitadel role-claim parser.
+COPY --chown=app:app klai-libs/service-auth klai-libs/service-auth
 COPY --chown=app:app klai-retrieval-api/pyproject.toml klai-retrieval-api/pyproject.toml
 
 WORKDIR /repo/klai-retrieval-api

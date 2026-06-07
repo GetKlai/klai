@@ -36,6 +36,9 @@ dependencies = [
     "klai-citations",
     # Shared deterministic LLM safety policy for prompt-injection/content rails.
     "klai-llm-safety",
+    # SPEC-SEC-SERVICE-AUTH-002 REQ-4b: canonical Zitadel project-role claim
+    # parser (project_role_scopes) shared by every Phase C JWT receiver.
+    "klai-service-auth",
 ]
 
 [tool.uv.sources]
@@ -44,6 +47,7 @@ klai-chat-prompts = { path = "../klai-libs/chat-prompts", editable = true }
 klai-kb-slugs = { path = "../klai-libs/kb-slugs", editable = true }
 klai-citations = { path = "../klai-libs/citations", editable = true }
 klai-llm-safety = { path = "../klai-libs/llm-safety", editable = true }
+klai-service-auth = { path = "../klai-libs/service-auth", editable = true }
 
 [project.optional-dependencies]
 dev = [
