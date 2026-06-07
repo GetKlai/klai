@@ -120,7 +120,13 @@ class TestStartupFail:
         )
         assert result.returncode != 0
 
-    def test_missing_zitadel_audience_fails_import(self):
+    def test_missing_zitadel_audience_disables_jwt_not_import(self):
+        """Empty ZITADEL_API_AUDIENCE DISABLES the JWT path (graceful degrade) —
+        it does NOT fail import. The config validator treats issuer+audience as
+        optional: when either is empty, ``jwt_auth_enabled`` is False and all
+        callers must use X-Internal-Secret. This is the supported state for the
+        internal mesh (SPEC-SEC-SERVICE-AUTH-002 dropped the per-service JWT).
+        """
         script = textwrap.dedent(
             """
             import os
@@ -128,7 +134,11 @@ class TestStartupFail:
             os.environ["ZITADEL_ISSUER"] = "https://auth.test.local"
             os.environ["ZITADEL_API_AUDIENCE"] = ""
             os.environ["REDIS_URL"] = "redis://localhost:6379/0"
-            import retrieval_api.config
+            os.environ["PORTAL_API_URL"] = "http://portal.test.local"
+            os.environ["PORTAL_INTERNAL_SECRET"] = "ok"
+            import retrieval_api.config as c
+            assert c.settings.jwt_auth_enabled is False, "empty audience must disable JWT"
+            print("OK import succeeded jwt disabled")
             """
         )
         result = subprocess.run(  # noqa: S603 — trusted input (test-authored script)
@@ -137,8 +147,8 @@ class TestStartupFail:
             text=True,
             check=False,
         )
-        assert result.returncode != 0
-        assert "ZITADEL_API_AUDIENCE" in (result.stderr + result.stdout)
+        assert result.returncode == 0, result.stderr
+        assert "OK import succeeded jwt disabled" in result.stdout
 
 
 # --------------------------------------------------------------------------- #
