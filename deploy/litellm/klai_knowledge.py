@@ -280,6 +280,22 @@ RETRIEVAL_JWT_SCOPE = (
     "urn:zitadel:iam:org:projects:roles"
 )
 
+# SPEC-SEC-SERVICE-AUTH-002 — explicit kill-switch for the Zitadel JWT auth
+# attempt on /retrieve. DEFAULT OFF. The three client-credentials env vars are
+# already configured in production, but the receiver cannot yet accept the
+# token: its audience is unset AND its identity guard rejects a service-
+# principal sub acting on behalf of an end-user. So an enabled JWT mint is a
+# guaranteed 401/403 that always falls back to the legacy X-Internal-Secret
+# header — a doomed extra round-trip plus a per-request WARNING on every chat
+# retrieval. Keep OFF until the receiver-side migration is genuinely finishable
+# (audience landed, identity model extended, fallback counter holds zero); then
+# flip ON to activate Phase C-1 dual-auth. Normalised like LLM_SAFETY_LITELLM_MODE
+# (strip+lower) but an EXPLICIT truthy allowlist — anything not in the set,
+# including the empty default, is OFF (opposite default-polarity of that flag).
+KLAI_RETRIEVAL_JWT_AUTH_ENABLED = os.getenv(
+    "KLAI_RETRIEVAL_JWT_AUTH_ENABLED", ""
+).strip().lower() in {"1", "true", "on", "enabled", "yes"}
+
 # Lazy-built ZitadelTokenClient instance. None when env vars are missing —
 # the retrieve call site handles that by falling back to the legacy
 # X-Internal-Secret path (Phase C-1 REQ-5 safe rollout).
@@ -299,6 +315,11 @@ def _get_token_client() -> object | None:
     expected to fall back to the legacy auth path. This is intentional:
     Phase C-1 deploys the code BEFORE the operator finishes the Zitadel
     bootstrap, so a missing-config branch must keep chat working.
+
+    Also returns ``None`` when ``KLAI_RETRIEVAL_JWT_AUTH_ENABLED`` is off
+    (the default) — the SPEC-SEC-SERVICE-AUTH-002 kill-switch that keeps the
+    JWT attempt parked while the receiver-side migration is unfinished, even
+    when all client-credentials are configured.
     """
     global _token_client, _token_client_init_attempted
 
@@ -308,6 +329,25 @@ def _get_token_client() -> object | None:
         return None
 
     _token_client_init_attempted = True
+
+    # SPEC-SEC-SERVICE-AUTH-002 kill-switch (default OFF). Even with all creds
+    # present, do not attempt the JWT path until the receiver is ready —
+    # otherwise every retrieval mints a token the receiver rejects (empty
+    # audience / service-principal identity mismatch) and falls back to legacy,
+    # a doomed round-trip. Memoised by _token_client_init_attempted above, so
+    # this INFO fires at most once per process, never per request.
+    if not KLAI_RETRIEVAL_JWT_AUTH_ENABLED:
+        # Message intentionally does NOT start with "KlaiKnowledgeHook: retrieval"
+        # — that token sequence is matched by the CRITICAL `litellm_retrieval_failed`
+        # Grafana alert (deploy/grafana/.../litellm-rules.yaml). This is an INFO,
+        # not a failure; keep it out of the alert's phrase match.
+        logger.info(
+            "KlaiKnowledgeHook: KB JWT auth disabled "
+            "(KLAI_RETRIEVAL_JWT_AUTH_ENABLED off) — using legacy "
+            "X-Internal-Secret path (SPEC-SEC-SERVICE-AUTH-002)"
+        )
+        return None
+
     if not (
         KLAI_OAUTH_TOKEN_URL and KLAI_LITELLM_CLIENT_ID and KLAI_LITELLM_CLIENT_SECRET
     ):
@@ -403,7 +443,11 @@ async def _retrieve_with_dual_auth(
 ) -> httpx.Response:
     """POST to ``/retrieve`` preferring JWT, falling back to X-Internal-Secret.
 
-    Phase C-1 dual-auth (REQ-5 safe rollout):
+    The JWT attempt only happens when ``KLAI_RETRIEVAL_JWT_AUTH_ENABLED`` is on
+    (default off, SPEC-SEC-SERVICE-AUTH-002). When off, ``_retrieve_jwt_headers``
+    returns ``None`` and this is a single legacy POST with no doomed round-trip.
+
+    Phase C-1 dual-auth (REQ-5 safe rollout), when the kill-switch is on:
 
     1. If a configured ``ZitadelTokenClient`` mints a token successfully,
        call ``/retrieve`` with ``Authorization: Bearer <jwt>``.
