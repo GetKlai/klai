@@ -47,7 +47,6 @@ class EvidenceChunk:
     source_key: str = ""
     section_path: list[str] = field(default_factory=list)
     scope: str = ""
-    chunk_type: str = ""
     starts_mid_list: bool = False
     image_urls: list[str] = field(default_factory=list)
 
@@ -326,7 +325,6 @@ def evidence_chunks_from_chunks(chunks: list[dict]) -> list[EvidenceChunk]:
                 source_key=source_url_key(source_url),
                 section_path=section_path,
                 scope=_string_value(chunk.get("scope")),
-                chunk_type=_string_value(chunk.get("chunk_type") or _metadata(chunk).get("chunk_type")),
                 starts_mid_list=_starts_mid_ordered_list(content),
                 image_urls=image_urls,
             )
@@ -348,8 +346,6 @@ def render_evidence_context(
             lines.append(f"Scope: [{item.scope}]")
         if item.section_path:
             lines.append(f"Section path: {' > '.join(item.section_path)}")
-        if item.chunk_type:
-            lines.append(f"Chunk type: {item.chunk_type}")
         if item.starts_mid_list:
             lines.append(
                 "List note: this excerpt starts mid ordered-list; do not preserve the original numbering in the answer."

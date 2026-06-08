@@ -106,8 +106,8 @@ class TestContentTypeWeight:
 
 
 class TestAssertionWeight:
-    def test_always_returns_1(self):
-        """v1: assertion weight is always 1.00 regardless of mode."""
+    def test_conservative_weights_per_mode(self):
+        """Conservative 0.10-spread profile (assertion-mode-weights.md §6.1)."""
         from retrieval_api.services.evidence_tier import (
             DEFAULT_EVIDENCE_PROFILE,
             _assertion_weight,
@@ -115,8 +115,54 @@ class TestAssertionWeight:
 
         assert _assertion_weight("factual", DEFAULT_EVIDENCE_PROFILE) == 1.00
         assert _assertion_weight("procedural", DEFAULT_EVIDENCE_PROFILE) == 1.00
-        assert _assertion_weight(None, DEFAULT_EVIDENCE_PROFILE) == 1.00
-        assert _assertion_weight("hypothesis", DEFAULT_EVIDENCE_PROFILE) == 1.00
+        assert _assertion_weight("quoted", DEFAULT_EVIDENCE_PROFILE) == 0.98
+        assert _assertion_weight("belief", DEFAULT_EVIDENCE_PROFILE) == 0.95
+        assert _assertion_weight("hypothesis", DEFAULT_EVIDENCE_PROFILE) == 0.90
+        assert _assertion_weight("unknown", DEFAULT_EVIDENCE_PROFILE) == 0.97
+
+    def test_spread_within_safe_range(self):
+        """Total spread must stay <= 0.20 (safe range for an ~85% classifier)."""
+        from retrieval_api.services.evidence_tier import DEFAULT_EVIDENCE_PROFILE
+
+        weights = DEFAULT_EVIDENCE_PROFILE["assertion_mode_weights"].values()
+        assert max(weights) - min(weights) <= 0.20
+
+    def test_none_falls_back_to_unknown(self):
+        """None gets the 'unknown' weight (benefit of the doubt, no penalty for absent metadata)."""
+        from retrieval_api.services.evidence_tier import (
+            DEFAULT_EVIDENCE_PROFILE,
+            _assertion_weight,
+        )
+
+        assert _assertion_weight(None, DEFAULT_EVIDENCE_PROFILE) == 0.97
+
+    def test_unmapped_mode_falls_back_to_unknown(self):
+        from retrieval_api.services.evidence_tier import (
+            DEFAULT_EVIDENCE_PROFILE,
+            _assertion_weight,
+        )
+
+        assert _assertion_weight("not_a_real_mode", DEFAULT_EVIDENCE_PROFILE) == 0.97
+
+    def test_feature_flag_disabled_returns_1(self):
+        from retrieval_api.services.evidence_tier import (
+            DEFAULT_EVIDENCE_PROFILE,
+            _assertion_weight,
+        )
+
+        with patch.dict(os.environ, {"EVIDENCE_ASSERTION_MODE_ENABLED": "false"}):
+            assert _assertion_weight("hypothesis", DEFAULT_EVIDENCE_PROFILE) == 1.0
+
+    def test_empty_weights_profile_returns_1(self):
+        """A profile with no assertion weights is a no-op (backward compatible)."""
+        from retrieval_api.services.evidence_tier import _assertion_weight
+
+        empty_profile = {
+            "content_type_weights": {"unknown": 0.55},
+            "assertion_mode_weights": {},
+            "temporal_decay": {"lt_30": 1.0},
+        }
+        assert _assertion_weight("hypothesis", empty_profile) == 1.0
 
 
 class TestTemporalDecay:

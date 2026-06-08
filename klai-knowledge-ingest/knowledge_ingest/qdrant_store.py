@@ -25,6 +25,8 @@ from qdrant_client.models import (  # noqa: E402
     Filter,
     Fusion,
     FusionQuery,
+    KeywordIndexParams,
+    KeywordIndexType,
     MatchAny,
     MatchValue,
     PointStruct,
@@ -79,8 +81,27 @@ async def ensure_collection() -> None:
     # This handles newly added fields (e.g. user_id) on pre-existing collections.
     collection_info = await client.get_collection(COLLECTION)
     indexed_fields = set((collection_info.payload_schema or {}).keys())
+
+    # org_id: native-multitenancy tenant index (Qdrant 1.12+). is_tenant=True
+    # makes Qdrant build a per-tenant HNSW subgraph so the mandatory org_id
+    # must-filter does not degrade recall (GAP-TENANCY-01). New collections get
+    # it from the start. EXISTING collections keep their plain keyword index
+    # until upgraded once, online, via scripts/upgrade_org_id_tenant_index.py
+    # (we deliberately do NOT auto-rebuild the index on every startup).
+    if "org_id" not in indexed_fields:
+        await client.create_payload_index(
+            COLLECTION,
+            field_name="org_id",
+            field_schema=KeywordIndexParams(type=KeywordIndexType.KEYWORD, is_tenant=True),
+        )
+        logger.info(
+            "qdrant_payload_index_created",
+            field="org_id",
+            is_tenant=True,
+            collection=COLLECTION,
+        )
+
     for field in (
-        "org_id",
         "kb_slug",
         "artifact_id",
         "content_type",
@@ -93,7 +114,6 @@ async def ensure_collection() -> None:
         "tags",
         "content_label",
         "source_label",
-        "chunk_type",
         "heading_path",
     ):
         if field not in indexed_fields:
@@ -312,13 +332,6 @@ async def upsert_enriched_chunks(
         if sparse_vec is not None:
             vectors["vector_sparse"] = sparse_vec
 
-        # @MX:NOTE: chunk_type (SPEC-KB-021) is the LLM-classified per-chunk
-        #   label (procedural/conceptual/reference/warning/example). Only set
-        #   when the enrichment LLM produced a value — absence means the
-        #   chunk went through the pre-enrichment fast path.
-        # @MX:REASON: Must not collide with base_payload['content_type'] which
-        #   carries the document-level type (kb_article/pdf_document/...) used
-        #   by retrieval_api's evidence_tier scoring.
         chunk_payload = {
             **base_payload,
             "text": ec.original_text,
@@ -327,8 +340,6 @@ async def upsert_enriched_chunks(
             "questions": ec.questions,
             "chunk_index": i,
         }
-        if getattr(ec, "chunk_type", ""):
-            chunk_payload["chunk_type"] = ec.chunk_type
         if getattr(ec, "heading_path", ""):
             chunk_payload["heading_path"] = ec.heading_path
 

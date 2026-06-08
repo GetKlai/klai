@@ -6,7 +6,9 @@ then orders chunks in U-shape for optimal LLM injection (Lost in the Middle miti
 Feature flags (environment variables):
 - EVIDENCE_CONTENT_TYPE_ENABLED (default: true)
 - EVIDENCE_TEMPORAL_DECAY_ENABLED (default: true)
-- EVIDENCE_ASSERTION_MODE_ENABLED (default: true, but always 1.00 in v1)
+- EVIDENCE_ASSERTION_MODE_ENABLED (default: true; conservative 0.10-spread weights,
+  shadow-gated — computed and logged for measurement, never changes served ordering
+  while EVIDENCE_SHADOW_MODE=true. See docs/research/assertion-modes/assertion-mode-weights.md.)
 """
 
 from __future__ import annotations
@@ -48,7 +50,20 @@ DEFAULT_EVIDENCE_PROFILE: EvidenceProfile = {
         "graph_edge": 0.70,
         "unknown": 0.55,
     },
-    "assertion_mode_weights": {},  # v1: all 1.00, resolved by _assertion_weight
+    # Conservative profile (spread 0.10, within the safe range for an ~85%
+    # classifier) per docs/research/assertion-modes/assertion-mode-weights.md §6.1.
+    # unknown=0.97 ("benefit of the doubt"; never penalize absent metadata).
+    # Shadow-gated: only affects served order once EVIDENCE_SHADOW_MODE=false,
+    # which should NOT happen until assertion_mode is LLM-derived (not author
+    # frontmatter) and the unknown-fraction is measured (research §8-9).
+    "assertion_mode_weights": {
+        "factual": 1.00,
+        "procedural": 1.00,
+        "quoted": 0.98,
+        "belief": 0.95,
+        "hypothesis": 0.90,
+        "unknown": 0.97,
+    },
     "temporal_decay": {
         "lt_30": 1.00,
         "d30_180": 0.95,
@@ -108,12 +123,26 @@ def _pagerank_weight(pagerank_max: float | None) -> float:
     return 1.0 + _PAGERANK_ALPHA * math.log1p(pagerank_max * _PAGERANK_SCALE)
 
 
-# @MX:TODO: [AUTO] assertion_mode scoring is flat 1.00 in v1 (plumbing only).
-# @MX:SPEC: SPEC-EVIDENCE-002 — activate differential weights after empirical validation.
+# @MX:NOTE: [AUTO] assertion_mode now applies the conservative weight table from
+# @MX:NOTE: DEFAULT_EVIDENCE_PROFILE, but stays shadow-gated at the retrieve.py caller
+# @MX:NOTE: (EVIDENCE_SHADOW_MODE=true) so it is measured, not served.
+# @MX:SPEC: SPEC-EVIDENCE-002 — go-live preconditions in docs/research/assertion-modes/assertion-mode-weights.md §8-9.
 def _assertion_weight(assertion_mode: str | None, profile: EvidenceProfile) -> float:
-    """Return weight for assertion_mode. v1: always 1.00 regardless of mode."""
-    # Plumbing only in v1. Activation deferred to SPEC-EVIDENCE-002.
-    return 1.00
+    """Return the multiplicative weight for a chunk's assertion_mode.
+
+    Reads the conservative profile (factual/procedural=1.00 → hypothesis=0.90,
+    unknown=0.97). Returns 1.0 (no effect) when the feature flag is disabled or
+    the profile carries no assertion weights. None / unmapped modes fall back to
+    the 'unknown' weight (benefit of the doubt — never penalize absent metadata).
+    """
+    if not _is_enabled("EVIDENCE_ASSERTION_MODE_ENABLED"):
+        return 1.0
+    weights = profile["assertion_mode_weights"]
+    if not weights:
+        return 1.0
+    if assertion_mode is None:
+        assertion_mode = "unknown"
+    return weights.get(assertion_mode, weights.get("unknown", 1.0))
 
 
 def _temporal_decay(ingested_at: int | None, profile: EvidenceProfile) -> float:

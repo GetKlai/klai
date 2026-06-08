@@ -98,6 +98,73 @@ async def test_ensure_collection_creates_incoming_link_count_index_when_missing(
 
 
 @pytest.mark.asyncio
+async def test_ensure_collection_creates_org_id_as_tenant_index_when_missing():
+    """org_id is created as a tenant index (is_tenant=True) for new collections.
+
+    GAP-TENANCY-01.
+    """
+    from qdrant_client.models import KeywordIndexParams
+
+    # org_id NOT yet indexed (fresh collection)
+    existing_fields = {"kb_slug", "artifact_id"}
+
+    with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_client.get_collections = AsyncMock(
+            return_value=MagicMock(collections=[_mock_collection_entry("klai_knowledge")])
+        )
+        mock_client.get_collection = AsyncMock(return_value=_mock_collection_info(existing_fields))
+        mock_client.create_payload_index = AsyncMock()
+
+        await ensure_collection()
+
+        calls = mock_client.create_payload_index.call_args_list
+        org_calls = [
+            c
+            for c in calls
+            if c.kwargs.get("field_name") == "org_id"
+            or (len(c.args) >= 2 and c.args[1] == "org_id")
+        ]
+        assert len(org_calls) == 1
+        schema = org_calls[0].kwargs.get("field_schema")
+        assert isinstance(schema, KeywordIndexParams)
+        assert schema.is_tenant is True
+
+
+@pytest.mark.asyncio
+async def test_ensure_collection_does_not_recreate_existing_org_id_index():
+    """When org_id is already indexed, ensure_collection must NOT recreate it.
+
+    Existing collections keep their plain keyword index; the one-off upgrade to a
+    tenant index is a deliberate operator step (scripts/upgrade_org_id_tenant_index.py),
+    not a silent rebuild on every startup.
+    """
+    existing_fields = {"org_id", "kb_slug", "artifact_id"}
+
+    with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_client.get_collections = AsyncMock(
+            return_value=MagicMock(collections=[_mock_collection_entry("klai_knowledge")])
+        )
+        mock_client.get_collection = AsyncMock(return_value=_mock_collection_info(existing_fields))
+        mock_client.create_payload_index = AsyncMock()
+        mock_client.delete_payload_index = AsyncMock()
+
+        await ensure_collection()
+
+        org_create_calls = [
+            c
+            for c in mock_client.create_payload_index.call_args_list
+            if c.kwargs.get("field_name") == "org_id"
+            or (len(c.args) >= 2 and c.args[1] == "org_id")
+        ]
+        assert org_create_calls == []
+        mock_client.delete_payload_index.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_ensure_collection_skips_indexes_when_already_present():
     """When source_url and incoming_link_count are already indexed, skip creation."""
     all_fields = {
@@ -116,7 +183,7 @@ async def test_ensure_collection_skips_indexes_when_already_present():
         "tags",
         "content_label",
         "source_label",
-        "chunk_type",
+        "heading_path",
     }
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:
