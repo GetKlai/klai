@@ -2,21 +2,21 @@
 LLM enrichment service: contextual prefix generation + HyPE question generation.
 
 Each chunk gets a single LLM call (via LiteLLM proxy) returning:
-  {"context_prefix": "...", "chunk_type": "...", "questions": ["...", ...]}
+  {"context_prefix": "...", "questions": ["...", ...]}
 
 Enriched chunk text = "{context_prefix}\n\n{original_text}"
 Questions are used for vector_questions (depth 0-1 only) and stored in payload.
-chunk_type (SPEC-KB-021) classifies each chunk as one of
-procedural/conceptual/reference/warning/example for downstream retrieval
-routing and assertion-mode filtering. This is chunk-level and distinct from
-the document-level content_type (kb_article/pdf_document/meeting_transcript/
-web_crawl/...) consumed by retrieval_api.services.evidence_tier.
+
+Note: the per-chunk ``chunk_type`` classification was removed 2026-06-08
+(docs/research/chunk-type-retrieval-value.md) — it was an LLM-classified label
+that no retrieval consumer read, and dropping it also removes the strict-Literal
+validation retry round-trip per chunk. Document-level ``content_type`` (consumed
+by retrieval_api.services.evidence_tier) is unaffected.
 """
 
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import Literal
 
 import httpx
 import structlog
@@ -45,16 +45,11 @@ Pad: {path}
 Genereer een JSON-object met:
 - "context_prefix": een zin van max 120 tokens die deze chunk plaatst binnen het document \
 (welke KB en bronsysteem, welk document/sectie, eventuele domeinspecifieke terminologie).
-- "chunk_type": classificeer de chunk als exact één van: \
-"procedural" (stap-voor-stap instructies), "conceptual" (uitleg van begrippen), \
-"reference" (naslag/specificaties), "warning" (waarschuwingen/beperkingen), \
-"example" (voorbeelden/cases).
 - "questions": 3-5 vragen die deze chunk beantwoordt. \
 {question_focus}
 
 Reply with ONLY a JSON object, no markdown, no explanation:
-{{"context_prefix": "<string>", "chunk_type": "<procedural|conceptual|reference|warning|example>", \
-"questions": ["<string>", ...]}}"""
+{{"context_prefix": "<string>", "questions": ["<string>", ...]}}"""
 
 # SPEC-RAG-CONTEXTUAL-001 — Anthropic-pattern: instead of feeding the full
 # document text on every chunk's enrichment call, feed a pre-computed 1-2
@@ -76,16 +71,11 @@ Pad: {path}
 Genereer een JSON-object met:
 - "context_prefix": een zin van max 120 tokens die deze chunk plaatst binnen het document \
 (welke KB en bronsysteem, welk document/sectie, eventuele domeinspecifieke terminologie).
-- "chunk_type": classificeer de chunk als exact één van: \
-"procedural" (stap-voor-stap instructies), "conceptual" (uitleg van begrippen), \
-"reference" (naslag/specificaties), "warning" (waarschuwingen/beperkingen), \
-"example" (voorbeelden/cases).
 - "questions": 3-5 vragen die deze chunk beantwoordt. \
 {question_focus}
 
 Reply with ONLY a JSON object, no markdown, no explanation:
-{{"context_prefix": "<string>", "chunk_type": "<procedural|conceptual|reference|warning|example>", \
-"questions": ["<string>", ...]}}"""
+{{"context_prefix": "<string>", "questions": ["<string>", ...]}}"""
 
 ENRICHMENT_PROMPT_SUMMARY_EN = """\
 Knowledge base: {kb_name}
@@ -105,25 +95,11 @@ Generate a JSON object with:
 - "context_prefix": a single sentence (max 120 tokens) that places this chunk \
 within the document (which KB and source system, which document/section, any \
 domain-specific terminology).
-- "chunk_type": classify the chunk as exactly one of: \
-"procedural" (step-by-step instructions), "conceptual" (explanation of concepts), \
-"reference" (specifications/lookup), "warning" (warnings/limitations), \
-"example" (examples/cases).
 - "questions": 3-5 questions this chunk answers. \
 {question_focus}
 
 Reply with ONLY a JSON object, no markdown, no explanation:
-{{"context_prefix": "<string>", "chunk_type": "<procedural|conceptual|reference|warning|example>", \
-"questions": ["<string>", ...]}}"""
-
-# Appended to the prompt on the retry call when chunk_type validation fails.
-# Strengthens the instruction so the LLM picks one of the five valid values.
-# SPEC-CRAWLER-005 REQ-03.2 / EC-4
-_CHUNK_TYPE_RETRY_ADDENDUM = (
-    '\n\nIMPORTANT: "chunk_type" MUST be exactly one of: '
-    '"procedural", "conceptual", "reference", "warning", "example". '
-    "No other value is accepted. Reply with ONLY a JSON object."
-)
+{{"context_prefix": "<string>", "questions": ["<string>", ...]}}"""
 
 
 class EnrichmentError(Exception):
@@ -132,7 +108,6 @@ class EnrichmentError(Exception):
 
 class EnrichmentResult(BaseModel):
     context_prefix: str
-    chunk_type: Literal["procedural", "conceptual", "reference", "warning", "example"]
     questions: list[str]
 
 
@@ -143,15 +118,10 @@ class EnrichedChunk:
     context_prefix: str
     questions: list[str]  # embedded as vector_questions for depth 0-1; stored in payload for all
     heading_path: str = ""
-    # @MX:NOTE: SPEC-KB-021 chunk-level classification (procedural/conceptual/
-    #   reference/warning/example). Distinct from the document-level content_type
-    #   field ("kb_article", "pdf_document", ...) stored on the Qdrant point
-    #   payload and consumed by retrieval_api.services.evidence_tier.
-    chunk_type: str = ""
 
 
-def _safe_reference_result() -> EnrichmentResult:
-    return EnrichmentResult(context_prefix="", chunk_type="reference", questions=[])
+def _safe_empty_result() -> EnrichmentResult:
+    return EnrichmentResult(context_prefix="", questions=[])
 
 
 def _context_safety_violation(text: str) -> str | None:
@@ -233,8 +203,8 @@ def _try_parse_result(content: str) -> EnrichmentResult | None:
     """
     Attempt to parse a JSON string into an EnrichmentResult.
 
-    Returns None when the JSON is structurally valid but chunk_type fails Pydantic
-    Literal validation (the retry/fallback path applies).
+    Returns None when the JSON is structurally valid but is missing the required
+    context_prefix / questions fields (the salvage path applies).
     Raises EnrichmentError for genuine JSON syntax errors (transport problem —
     Procrastinate should retry the whole job).
     """
@@ -269,10 +239,9 @@ async def enrich_chunk(
     Call LiteLLM proxy to generate contextual prefix + HyPE questions for one chunk.
 
     Transport/HTTP/JSON-parse failures raise EnrichmentError (Procrastinate retries).
-    Invalid chunk_type in the LLM response triggers a single retry with a strengthened
-    prompt addendum (SPEC-CRAWLER-005 REQ-03.2 / EC-4). If the retry also returns an
-    invalid chunk_type, the function falls back to chunk_type="reference" and emits a
-    structured crawl_chunk_type_drop warning log for ops monitoring.
+    A structurally valid JSON response that is missing context_prefix / questions is
+    salvaged (empty prefix / no questions) rather than retried — there is no longer a
+    strict-Literal field to validate, so the per-chunk retry round-trip is gone.
 
     Document context selection (in priority order):
 
@@ -298,7 +267,7 @@ async def enrich_chunk(
             chunk_index=chunk_index,
             reason=safety_reason,
         )
-        return _safe_reference_result()
+        return _safe_empty_result()
 
     use_summary = bool(document_summary and document_summary.strip())
     if not use_summary:
@@ -365,41 +334,27 @@ async def enrich_chunk(
     if result is not None:
         return result
 
-    # chunk_type validation failed — retry once with a strengthened addendum
-    retry_prompt = prompt + _CHUNK_TYPE_RETRY_ADDENDUM
-    retry_data = await _call_llm(retry_prompt, path)
-
+    # Structurally valid JSON but missing context_prefix / questions. Salvage what we
+    # can WITHOUT a retry round-trip: the strict-Literal chunk_type that used to force
+    # a second LLM call is gone, and context_prefix/questions are loose fields the
+    # model rarely omits. ``content`` is valid JSON here (else _try_parse_result raised).
     try:
-        retry_content = _extract_content(retry_data)
-    except (KeyError, IndexError) as exc:
-        logger.warning("enrichment_llm_unparseable", path=path, error=str(exc))
-        raise EnrichmentError(f"Unparseable LLM response for {path}: {exc}") from exc
-
-    retry_result = _try_parse_result(retry_content)
-    if retry_result is not None:
-        return retry_result
-
-    # Both calls returned invalid chunk_type — fall back to "reference" and log.
-    # Parse what we can from the raw JSON for context_prefix and questions.
-    try:
-        raw_parsed = json.loads(retry_content)
+        raw_parsed = json.loads(content)
     except (json.JSONDecodeError, ValueError):
         raw_parsed = {}
 
-    fallback = EnrichmentResult(
+    if not (raw_parsed.get("context_prefix") or raw_parsed.get("questions")):
+        logger.warning(
+            "enrichment_result_salvaged",
+            artifact_id=artifact_id,
+            chunk_index=chunk_index,
+            raw_llm_response=content[:200],
+            path=path,
+        )
+    return EnrichmentResult(
         context_prefix=raw_parsed.get("context_prefix") or "",
-        chunk_type="reference",
         questions=raw_parsed.get("questions") or [],
     )
-    logger.warning(
-        "crawl_chunk_type_drop",
-        artifact_id=artifact_id,
-        chunk_index=chunk_index,
-        raw_llm_response=retry_content[:200],
-        reason="retry_exhausted",
-        path=path,
-    )
-    return fallback
 
 
 async def enrich_chunks(
@@ -428,7 +383,7 @@ async def enrich_chunks(
     context_tokens: max tokens for the extracted context window.
     The strategy is applied per-chunk (with chunk_index) so rolling_window gets correct positioning.
     kb_name, connector_type, source_domain: source-aware enrichment fields (SPEC-KB-021).
-    artifact_id: passed through to enrich_chunk for crawl_chunk_type_drop log correlation.
+    artifact_id: passed through to enrich_chunk for enrichment-salvage log correlation.
 
     document_summary / document_language: SPEC-RAG-CONTEXTUAL-001. When a summary
     is provided, every chunk's enrichment prompt feeds the summary instead of
@@ -477,7 +432,6 @@ async def enrich_chunks(
             context_prefix=result.context_prefix,
             questions=result.questions,
             heading_path=heading_path,
-            chunk_type=result.chunk_type,
         )
 
     return await asyncio.gather(*[_enrich_one(c, i) for i, c in enumerate(chunks)])

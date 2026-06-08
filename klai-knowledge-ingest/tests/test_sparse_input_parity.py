@@ -39,7 +39,6 @@ class _FakeEnrichedChunk:
     enriched_text: str  # "{context_prefix}\n\n{original_text}"
     context_prefix: str = ""
     questions: list[str] = field(default_factory=list)
-    chunk_type: str = ""
 
 
 # ---------------------------------------------------------------------------

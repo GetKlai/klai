@@ -163,7 +163,6 @@ async def test_upsert_enriched_chunks_strips_deny_list_from_qdrant_payload():
             self.enriched_text = enriched_text
             self.context_prefix = "context"
             self.questions = ["q1", "q2"]
-            self.chunk_type = "conceptual"
 
     extra_payload = {
         "title": "Doc Title",
@@ -217,4 +216,3 @@ async def test_upsert_enriched_chunks_strips_deny_list_from_qdrant_payload():
         assert "text_enriched" in point.payload
         assert "context_prefix" in point.payload
         assert "questions" in point.payload
-        assert point.payload["chunk_type"] == "conceptual"

@@ -258,7 +258,6 @@ def test_evidence_context_preserves_heading_as_section_metadata() -> None:
                 "source_url": "https://docs.getklai.com/invite",
                 "heading_path": "Admin > Mensen",
                 "text": "Admin > Mensen\n\n4. Voer het werk-emailadres in.\n5. Selecteer een rol.",
-                "chunk_type": "procedural",
             }
         ],
         include_source_urls=False,
@@ -266,7 +265,6 @@ def test_evidence_context_preserves_heading_as_section_metadata() -> None:
 
     assert "Evidence E1" in context
     assert "Section path: Admin > Mensen" in context
-    assert "Chunk type: procedural" in context
     assert "List note: this excerpt starts mid ordered-list" in context
     assert "source_url:" not in context
     assert "Content:\n4. Voer het werk-emailadres in." in context
