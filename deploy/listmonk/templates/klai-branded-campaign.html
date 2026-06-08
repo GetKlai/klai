@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
+  <title>{{ .Campaign.Subject }}</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings>
+    <o:PixelsPerInch>96</o:PixelsPerInch>
+  </o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+  <style>
+    body, table, td, a { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+    table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; }
+    img { -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; }
+    body { margin:0 !important; padding:0 !important; width:100% !important; background-color:#fffef2; }
+    .klai-content p { margin:0 0 18px 0; }
+    .klai-content a { color:#a36404; text-decoration:underline; }
+    .klai-content strong { font-weight:600; }
+    .klai-content ul, .klai-content ol { margin:0 0 18px 22px; padding:0; }
+    .klai-content li { margin:0 0 8px 0; }
+    @media only screen and (max-width: 640px) {
+      .klai-shell { padding:24px 12px !important; }
+      .klai-card { width:100% !important; border-radius:10px !important; }
+      .klai-header { padding:28px 24px 20px !important; }
+      .klai-content { padding:28px 24px !important; }
+      .klai-footer { padding:22px 24px 26px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#fffef2;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#191918;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#fffef2;line-height:1px;">
+    {{ .Campaign.Subject }}
+    &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:#fffef2;">
+    <tr>
+      <td class="klai-shell" align="center" style="padding:40px 16px;">
+        <table role="presentation" class="klai-card" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;border:1px solid #e8e6de;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td class="klai-header" align="left" style="padding:34px 40px 24px;border-bottom:1px solid #e8e6de;background-color:#ffffff;">
+              <a href="https://getklai.com" style="text-decoration:none;">
+                <img src="https://getklai.com/logo-black.svg" alt="Klai" width="120" style="display:block;max-width:120px;height:auto;border:0;">
+              </a>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="klai-content" style="padding:34px 40px 12px;color:#191918;font-size:16px;line-height:1.65;">
+              {{ template "content" . }}
+            </td>
+          </tr>
+
+          <tr>
+            <td class="klai-footer" style="padding:24px 40px 30px;border-top:1px solid #e8e6de;background-color:#faf9f6;">
+              <p style="margin:0;color:#666666;font-size:13px;line-height:1.6;text-align:center;">
+                Klai &bull; <a href="https://getklai.com" style="color:#a36404;text-decoration:none;">getklai.com</a>
+              </p>
+              <p style="margin:10px 0 0;color:#777777;font-size:12px;line-height:1.6;text-align:center;">
+                <a href="{{ MessageURL }}" style="color:#777777;text-decoration:underline;">View online</a>
+                &nbsp;&bull;&nbsp;
+                <a href="{{ UnsubscribeURL }}" style="color:#777777;text-decoration:underline;">Unsubscribe or manage preferences</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+  {{ TrackView }}
+</body>
+</html>
