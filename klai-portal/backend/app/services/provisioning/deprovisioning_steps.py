@@ -539,7 +539,7 @@ async def _wipe_scribe_state(state: _DeprovisionState) -> None:
                 zitadel_org_id=state.zitadel_org_id,
                 slug=state.slug,
                 status=resp.status_code,
-                body=resp.text[:500],
+                body=sanitize_response_body(resp, max_len=500),
             )
         resp.raise_for_status()
         data = resp.json()

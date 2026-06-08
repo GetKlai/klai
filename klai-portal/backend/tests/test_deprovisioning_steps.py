@@ -844,6 +844,36 @@ class TestWipeScribeState:
             with pytest.raises(RuntimeError, match="scribe_api_url"):
                 await _wipe_scribe_state(state)
 
+    @pytest.mark.asyncio
+    async def test_failure_log_redacts_internal_secret(self) -> None:
+        """Scribe wipe failure logs must not include secret-bearing response bodies."""
+        state = _make_state(org_id=42, slug="acme")
+        secret = "portal-secret-123456789"
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("app.utils.response_sanitizer.settings.internal_secret", secret),
+            patch("app.services.provisioning.deprovisioning_steps.logger") as mock_logger,
+        ):
+            mock_settings.scribe_api_url = "http://scribe-api:8020"
+            mock_settings.internal_secret = secret
+            with patch("app.trace.get_trace_headers", return_value={}):
+                with respx_router(base_url="http://scribe-api:8020") as router:
+                    router.post("/internal/v1/orgs/zitadel-org-abc/wipe-state").mock(
+                        return_value=httpx.Response(
+                            500,
+                            text=f"upstream rejected X-Internal-Secret={secret}",
+                        )
+                    )
+                    from app.services.provisioning.deprovisioning_steps import _wipe_scribe_state
+
+                    with pytest.raises(httpx.HTTPStatusError):
+                        await _wipe_scribe_state(state)
+
+        body = mock_logger.error.call_args.kwargs["body"]
+        assert secret not in body
+        assert "<redacted>" in body
+
 
 # ---------------------------------------------------------------------------
 # Step 11 — _delete_scribe_artifacts
