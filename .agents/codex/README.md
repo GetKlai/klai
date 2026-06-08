@@ -39,6 +39,21 @@ before escalating — escalate for genuine uncertainty, not by default:
   `grafana`, `victorialogs`) — configured in `~/.codex/config.toml`.
 - The same model-neutral rules in the root and nested `AGENTS.md` files.
 
+## Serena under Codex
+
+Codex is configured to start Serena from the current project, but Codex does not
+see Serena's project prompt or memories until the Serena tools are loaded. For
+code exploration tasks:
+
+1. Load Serena's `initial_instructions` first when the MCP is available.
+2. Follow `.serena/project.yml` for source-code exploration and symbol edits.
+3. Use normal file reads/search for Markdown, YAML, config, env examples, and
+   other non-code files.
+
+Tracked `.serena/memories/**` files are public repo content. They may contain
+stable, contributor-safe project orientation only. Keep production operations in
+`klai-infra` and GTM/compliance/research context in `klai-private`.
+
 ## How instructions load under Codex
 
 Codex concatenates `AGENTS.md` from the repo root down to your working

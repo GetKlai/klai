@@ -62,6 +62,7 @@ ignored_paths:
 - ".workflow/**"
 - "claude-docs/specs/**"
 - "claude-docs/gtm/**"
+- "klai-infra/**"
 - "klai-private/**"
 
 # whether the project is in read-only mode
@@ -115,6 +116,12 @@ initial_prompt: |
   - "Add code at end of file" → insert_after_symbol, never Edit
   - Read full symbol bodies (include_body=True) only when you need implementation details
   - Fall back to Read/Grep only for non-code files (markdown, yaml, config, env)
+
+  Serena memories in this public repo are public documentation. Do not write
+  Klai production hostnames, SSH aliases, IPs, tunnel topology, secret values,
+  operator runbooks, business/GTM plans, compliance records, or customer context
+  to .serena/memories. Put production operations in the private klai-infra repo;
+  put business, GTM, compliance, and research context in the private klai-private repo.
 
   Do NOT call activate_project — the project is already active via --project-from-cwd.
 

@@ -43,7 +43,7 @@ routes/
 
 ### Deploy
 - GitHub Action `Build and deploy portal-frontend` runs on push to main
-- Builds Vite, rsyncs to core-01
+- Builds Vite and publishes/deploys according to the configured environment
 - Always run `gh run watch --exit-status` after push — NEVER declare deployed without this
 
 ## Website (klai-website)
@@ -53,8 +53,8 @@ routes/
 - **i18n:** Astro built-in routing (/nl/... and /en/...), fallback nl→en
 - **Brand colors:** `--purple-primary: #2D1B69`, `--purple-accent: #7C6AFF`, `--sand-light: #F5F0E8`
 - **Fonts:** Libre Baskerville (headings), Manrope (display), Inter (body)
-- **Deploy:** Coolify on public-01 (Hetzner CX42)
-- **DNS:** Cloud86 (ns1/ns2.cloud86.nl, ns3.cloud86.eu)
+- **Deploy:** environment-specific
+- **DNS:** environment-specific
 
 ### Website Rules
 - Minimal changes only

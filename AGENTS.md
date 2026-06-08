@@ -50,6 +50,29 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
   paths from intuition. Require evidence from code, tests, logs, docs, or an
   explicit user confirmation.
 
+## Codex + Serena
+
+Codex only auto-loads `AGENTS.md` files. It does not automatically read
+`.serena/project.yml`, `.serena/memories/**`, or `.claude/rules/**`.
+
+- For code exploration under Codex, load Serena first when the Serena MCP tools
+  are available: call `initial_instructions`, then follow the project prompt in
+  `.serena/project.yml`.
+- Use Serena for source-code symbol discovery and edits. Use `rg`/normal file
+  reads for Markdown, YAML, config, env examples, and other non-code files.
+- If Serena is unavailable, continue with local source inspection and state that
+  residual risk in the final answer.
+
+Serena memory files in this public repo are public documentation. Keep them
+evergreen and contributor-safe only: repo layout, coding patterns, public
+service contracts, local development, and self-hosting templates are allowed.
+Do not write Klai production hostnames, SSH aliases, IPs, tunnel topology,
+secret names that are not already part of public code/config contracts,
+operator runbooks, business/GTM plans, compliance records, or customer context
+to `.serena/memories/**`. Production operations belong in the private
+`klai-infra` repo; business, GTM, compliance, and research context belongs in
+the private `klai-private` repo.
+
 ## Local / Production Browser Testing Contract
 
 Before any browser-driven portal check (Playwright, Browser MCP, manual

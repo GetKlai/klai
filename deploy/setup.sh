@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# core-01 initial setup — run as root directly after first SSH login
+# Initial server setup — run as root directly after first SSH login
 #
 # Usage:
 #   bash setup.sh
@@ -84,7 +84,7 @@ chown -R $SERVER_USER:$SERVER_USER /opt/klai
 
 echo ""
 echo "========================================"
-echo " core-01 setup complete!"
+echo " Server setup complete!"
 echo " Verify access: ssh $SERVER_USER@$SERVER_IP"
 echo " Root login is now disabled."
 echo "========================================"

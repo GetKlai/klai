@@ -25,9 +25,11 @@ pyproject.toml
 ```
 
 ## Auth Pattern (portal)
-- Zitadel validates tokens; startup lifespan validates the PAT on boot and crashes if invalid
-- `PORTAL_API_ZITADEL_PAT` must never be corrupted (shell $ truncation risk — see server-secrets rule)
-- SSO cookie encrypted with Fernet key (`PORTAL_API_SSO_COOKIE_KEY`)
+- Zitadel validates tokens; startup lifespan validates required provider
+  credentials on boot and crashes if invalid
+- Secret values are managed through the configured secret manager; production
+  SOPS/operator procedures belong in the private infra repo
+- SSO cookie encrypted with Fernet-compatible key material
 
 ## Connector Auth
 - `AuthMiddleware` validates internal service-to-service calls (excludes /health)

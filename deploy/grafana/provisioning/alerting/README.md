@@ -16,7 +16,7 @@ into Grafana at startup or after `docker compose up -d grafana` (recreate).
 | `rules.yaml` | Permanent zero-tolerance alert on docker-socket-proxy 403's | SEC-024-R12 |
 | `persistence-rules.yaml` | Persistence file staleness + missing alerts | SPEC-INFRA-005 Phase 6 |
 | `portal-api-rules.yaml` | 5xx rate, p95 latency, traffic drop (golden signals) | OBS-001-R9/R10/R11 |
-| `infra-rules.yaml` | Container down, restart loop, core-01 disk saturation | OBS-001-R12/R13/R17 |
+| `infra-rules.yaml` | Container down, restart loop, server disk saturation | OBS-001-R12/R13/R17 |
 | `portal-events-rules.yaml` | FLUSHALL failure (LogsQL via VictoriaLogs) | OBS-001-R14 |
 | `librechat-rules.yaml` | LibreChat chat.health_failed spike | OBS-001-R15 |
 | `ingest-rules.yaml` | Knowledge-ingest error rate spike | OBS-001-R16 |
@@ -38,13 +38,13 @@ All rules set a `spec` label so routing is deterministic:
 ## Environment variables
 
 All SMTP/URL/recipient secrets are injected via `${VAR}` substitution. Grafana
-reads these from its container environment. Declared in
-`deploy/docker-compose.yml` grafana service; values from SOPS
-(`klai-infra/core-01/.env.sops` → `/opt/klai/.env`):
+reads these from its container environment. Declare them in the
+`deploy/docker-compose.yml` grafana service and source values from the
+deployment's SOPS-managed env file:
 
 | Var | Used by | Source |
 |---|---|---|
-| `GRAFANA_SMTP_PASSWORD` | GF_SMTP (Cloud86 outbound mail) | SEC-024 commit `994b504` |
+| `GRAFANA_SMTP_PASSWORD` | GF_SMTP outbound mail | SEC-024 commit `994b504` |
 | `ALERTS_EMAIL_RECIPIENTS` | `klai-ops-alerts-email` contact point | OBS-001 |
 | `KUMA_HEARTBEAT_URL` | `heartbeat-kuma` contact point (push URL incl. token) | OBS-001 |
 | `VICTORIALOGS_AUTH_USER` / `_PASSWORD` | VictoriaLogs datasource basic-auth | SEC-024 |
@@ -75,7 +75,7 @@ landing it in a provisioning file.
 ## Verifying an alert end-to-end
 
 1. Provision the rule on a branch.
-2. After deploy-compose lands on main: `ssh core-01 "docker compose up -d grafana"`.
+2. After deploy-compose lands: `ssh <server> "docker compose up -d grafana"`.
 3. Grafana UI → Alerting → Rules: rule shows status "Normal" or "Firing" (not "Error").
 4. Trigger the condition (real event, drill, or force via log injection — see
    the relevant runbook section in `klai-infra/docs/runbooks/platform-recovery.md`).

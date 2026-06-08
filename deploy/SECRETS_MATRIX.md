@@ -39,15 +39,16 @@ librechat-getklai.
 
 Rows sorted by secret name, then by service.
 
-Source column: all rows below reference `/opt/klai/.env` (rendered
-from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
+Source column: all rows below reference the deployment's main SOPS-managed env
+file unless noted otherwise. Keep Klai production SOPS paths and operator-only
+details in the private infra repo.
 
 | Secret | Service | Purpose |
 |---|---|---|
 | `CONNECTOR_CORS_ORIGINS` | klai-connector | Comma-separated allowed CORS origins. Empty disables CORS (code default). Mapped to `CORS_ORIGINS` in-container. |
-| `SMTP_HOST` | klai-mailer | SMTP server hostname. Source: klai-infra/core-01/klai-mailer/.env.sops. |
-| `SMTP_PASSWORD` | klai-mailer | SMTP auth password. Source: klai-infra/core-01/klai-mailer/.env.sops. |
-| `SMTP_USERNAME` | klai-mailer | SMTP auth username. Source: klai-infra/core-01/klai-mailer/.env.sops. |
+| `SMTP_HOST` | klai-mailer | SMTP server hostname. Source: mailer service env. |
+| `SMTP_PASSWORD` | klai-mailer | SMTP auth password. Source: mailer service env. |
+| `SMTP_USERNAME` | klai-mailer | SMTP auth username. Source: mailer service env. |
 | `CONNECTOR_ENCRYPTION_KEY` | klai-connector | KEK for connector credential storage (two-tier hierarchy). Mapped to `ENCRYPTION_KEY` in-container. |
 | `CONNECTOR_REDIS_URL` | klai-connector | Redis URL for per-org rate limiting (SPEC-SEC-HYGIENE-001 HY-32). Empty disables rate limiting (code default). Mapped to `REDIS_URL` in-container. |
 | `CONNECTOR_ZITADEL_CLIENT_ID` | klai-connector | Zitadel OIDC client_id for connector token introspection. Mapped to `ZITADEL_CLIENT_ID` in-container. |
@@ -73,9 +74,9 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 | `LISTMONK_LIST_USERS_ID` | portal-api | listmonk list ID for real portal/Zitadel users. |
 | `LISTMONK_TX_ONBOARDING_TEMPLATE_ID` | portal-api | listmonk transactional template ID for onboarding invites. Defaults to `5`. |
 | `LISTMONK_URL` | portal-api | Internal listmonk base URL for portal-api. Defaults to `http://listmonk:9000` in Docker Compose. |
-| `LOGO_URL` | klai-mailer | Brand logo URL for email templates. Overrides code default (example.com). Mapped to `LOGO_URL` in-container. Source: klai-infra/core-01/klai-mailer/.env.sops. |
-| `BRAND_URL` | klai-mailer | Brand homepage URL for email templates. Overrides code default (example.com). Mapped to `BRAND_URL` in-container. Source: klai-infra/core-01/klai-mailer/.env.sops. |
-| `MAILER_WEBHOOK_SECRET` | klai-mailer | HMAC secret for Zitadel webhook signature verification. Validator fails closed on empty (SPEC-SEC-MAILER-INJECTION-001 REQ-9.1). Mapped to `WEBHOOK_SECRET` in-container. Source: klai-infra/core-01/klai-mailer/.env.sops. |
+| `LOGO_URL` | klai-mailer | Brand logo URL for email templates. Overrides code default (example.com). Mapped to `LOGO_URL` in-container. Source: mailer service env. |
+| `BRAND_URL` | klai-mailer | Brand homepage URL for email templates. Overrides code default (example.com). Mapped to `BRAND_URL` in-container. Source: mailer service env. |
+| `MAILER_WEBHOOK_SECRET` | klai-mailer | HMAC secret for Zitadel webhook signature verification. Validator fails closed on empty (SPEC-SEC-MAILER-INJECTION-001 REQ-9.1). Mapped to `WEBHOOK_SECRET` in-container. Source: mailer service env. |
 | `LITELLM_MASTER_KEY` | portal-api | Master key for the LiteLLM gateway — portal writes this when provisioning per-tenant LibreChat containers. |
 | `LITELLM_MASTER_KEY` | retrieval-api | Bearer token for the LiteLLM gateway (re-exposed as `LITELLM_API_KEY` in-container). |
 | `LITELLM_MASTER_KEY` | scribe-api | Bearer token for the LiteLLM gateway (AI summarization of transcripts). |
@@ -119,7 +120,7 @@ from SOPS `klai-infra/core-01/.env.sops`) unless noted otherwise.
 ## Rotation coupling
 
 See [SPEC-SEC-005](../.moai/specs/SPEC-SEC-005/spec.md) and
-`klai-infra/INTERNAL_SECRET_ROTATION.md` — narrower per-service scope
+the private infra rotation runbooks — narrower per-service scope
 means a secret rotation now touches only the services listed in its
 column of this table. When this matrix changes, cross-check the
 rotation runbooks.
@@ -130,7 +131,6 @@ rotation runbooks.
    row here in the same PR. Reviewer rejects PR without the row.
 2. When a PR removes a key from a service, remove the matching row.
 3. Keep the table sorted (alphabetical by secret name, then service).
-4. Use `/opt/klai/.env (SOPS core-01/.env.sops)` as the source for
-   shared secrets. Per-service SOPS paths (e.g.
-   `klai-infra/core-01/klai-mailer/.env.sops`) cite the per-service
-   file.
+4. Use the deployment's main SOPS-managed env file as the source for shared
+   secrets. Per-service SOPS files cite the owning service, not Klai production
+   paths.

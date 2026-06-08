@@ -77,7 +77,8 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 ## Dev stack — `docker-compose.dev.yml`
 
-Uses the same versions as production core-01 to catch version-related issues locally.
+Use the same versions as your deployed environment to catch version-related
+issues locally.
 
 | Service | Image | Notes |
 |---|---|---|
@@ -108,10 +109,10 @@ Uses the same versions as production core-01 to catch version-related issues loc
 
 ## Verification
 
-To audit drift between this file and the running server, run:
+To audit drift between this file and a running server, run:
 
 ```bash
-ssh core-01 "docker ps --format '{{.Names}}\t{{.Image}}' | sort"
+ssh <server> "docker ps --format '{{.Names}}\t{{.Image}}' | sort"
 ```
 
 Every row must match an entry in this file. New services must be added here **before** they ship.

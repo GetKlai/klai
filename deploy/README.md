@@ -34,7 +34,7 @@ cp config.example.env config.env
 Edit `config.env` and fill in your values:
 
 ```env
-SERVER_HOST=core-01          # hostname for the server
+SERVER_HOST=app-server       # hostname for your server
 SERVER_IP=1.2.3.4            # public IP address
 SERVER_USER=deploy           # non-root deploy user (created by setup.sh)
 SSH_PUBKEY="ssh-ed25519 ..." # your SSH public key
@@ -130,20 +130,11 @@ sudo bash scripts/harden-docker-user.sh
 All service configuration is driven by a single `.env` file on the server at `/opt/klai/.env`.
 This file is deployed from your encrypted `config.sops.env` via `deploy.sh`.
 
-Key variable groups:
+Key variable groups are defined in `config.example.env` and mapped in
+`docker-compose.yml`. Treat all credentials, keys, tokens, and passwords as
+SOPS-managed secrets; do not commit plaintext values.
 
-| Group | Variables |
-|-------|-----------|
-| Domain | `DOMAIN`, `ADMIN_EMAIL` |
-| DNS/TLS | `HETZNER_AUTH_API_TOKEN` |
-| Database passwords | `POSTGRES_PASSWORD`, `MONGO_ROOT_PASSWORD`, `REDIS_PASSWORD`, `MEILI_MASTER_KEY` |
-| Zitadel | `ZITADEL_MASTERKEY`, `ZITADEL_DB_PASSWORD`, `ZITADEL_ADMIN_PASSWORD`, `ZITADEL_ORG_NAME`, `ZITADEL_ADMIN_*` |
-| LiteLLM | `LITELLM_MASTER_KEY`, `LITELLM_DB_PASSWORD`, `MISTRAL_API_KEY` |
-| LibreChat | `LIBRECHAT_KLAI_JWT_SECRET`, `LIBRECHAT_KLAI_OIDC_*`, `GETKLAI_MEILI_API_KEY` |
-| Grafana | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_CADDY_USER`, `GRAFANA_CADDY_HASH` |
-| Portal API | `PORTAL_API_ZITADEL_PAT`, `PORTAL_API_DB_PASSWORD`, `PORTAL_API_INTERNAL_SECRET` |
-| listmonk portal sync | `LISTMONK_API_USER`, `LISTMONK_API_TOKEN`, `LISTMONK_LIST_*`, `LISTMONK_TX_ONBOARDING_TEMPLATE_ID` |
-| Monitoring | `KUMA_TOKEN_*` (Uptime Kuma push tokens) |
+For a per-service secret inventory, see `SECRETS_MATRIX.md`.
 
 ### listmonk Portal Automation Role
 
@@ -176,8 +167,8 @@ Configuration files:
 - `deploy/grafana/provisioning/datasources/victorialogs.yaml` — Grafana datasource
 - `deploy/grafana/provisioning/dashboards/logs.json` — Log explorer dashboard
 
-For cross-server log shipping (public-01 to core-01):
-- DNS: `logs-ingest.${DOMAIN}` pointing to core-01
+For cross-server log shipping:
+- DNS: `logs-ingest.${DOMAIN}` pointing to your log-ingest host
 - Environment variable: `VICTORIALOGS_INGEST_TOKEN` (bearer auth)
 
 ---
