@@ -1,7 +1,15 @@
 # Knowledge Ingestion & Retrieval: How It Works
 
 > Engineering reference for the running system on core-01.
-> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-05-06 for SPEC-INGEST-RECONCILE-001 — discovery/fetch separation, fetch_outcomes JSONB, skip_reasons JSONB).
+> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-05-06 for SPEC-INGEST-RECONCILE-001 — discovery/fetch separation, fetch_outcomes JSONB, skip_reasons JSONB; updated 2026-06-08 for the doc-vs-code drift audit).
+>
+> **2026-06-08 corrections:** docling-serve binary parsing is **live** (not a tracked
+> evaluation); the worker runs **nine** queues (rag-eval + rebuild-kb added); the connector
+> has six live adapters (github, notion, airtable, confluence, google_drive, ms_docs); the
+> MCP write tool was renamed/split. Capabilities that are richer in this doc than in code
+> (taxonomy clustering, the `embedding_queue` outbox, the personal-knowledge enrichment
+> carve-out) carry an **Intended vs. current** callout pointing to
+> [`product-gaps-backlog.md`](product-gaps-backlog.md).
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
@@ -242,12 +250,15 @@ markdown; if >35% of lines are link-only and the first 25 lines are >45% link-on
 
 **Adapter-owned image URL resolution (SPEC-KB-IMAGE-001):** each adapter resolves its own image URLs before handing the document to `knowledge-ingest` — web crawler extracts from Crawl4AI's `media` field with the active `css_selector` scope, Google Drive resolves file IDs, PDF adapter extracts embedded images. The core pipeline receives only already-resolved URLs and never performs resolution itself.
 
-**Planned connectors:**
-- Microsoft SharePoint / OneDrive — scoped for v2 (reuses the OAuth skeleton from Google Drive)
-- Notion — on the roadmap
-- Manual file upload — live in the portal as part of the unified Superdock-style add-source wizard
+**Live connector adapters (2026-06-08).** `klai-connector` registers many adapters today,
+not two: **github, notion, airtable, confluence, google_drive** (+ `google_docs` /
+`google_sheets` / `google_slides` aliases) and **ms_docs** (Microsoft 365, SPEC-KB-MS-DOCS-001).
+Google Drive and ms_docs register conditionally on OAuth client presence. Notion and
+Microsoft Docs are **live**, not planned (`klai-connector/app/main.py` +
+`klai-connector/app/adapters/`). Manual file upload is live in the portal's unified
+add-source wizard.
 
-Both current adapters call the same `POST /ingest/v1/document` endpoint that direct uploads
+All connector adapters call the same `POST /ingest/v1/document` endpoint that direct uploads
 use. A `source_ref` (`owner/repo:branch:path`) is used as a deduplication key so
 re-syncing the same content updates rather than duplicates.
 
@@ -298,9 +309,18 @@ If no `content_type` is set, the pipeline uses `unknown` — no enrichment, basi
 ### Phase 1: Immediate (synchronous)
 
 **Step 1 — Parse and chunk.** The content arrives as plain text (already decoded by the
-caller for Gitea pages and connector text files). Binary files (PDF, DOCX, HTML) arriving
-via klai-connector's github/notion/drive adapters are parsed upstream in **klai-connector**
-via Unstructured.io's `partition.auto` — not in knowledge-ingest itself.
+caller). There are now **two** binary-parse paths:
+- **Standalone portal file uploads** (`.pdf/.docx/.pptx/.xlsx/.json/.xml`) stream to
+  **docling-serve** v1.16.1's async queue from portal-api
+  (`app/services/docling_client.py` / `file_upload.py`, SPEC-KB-FILE-UPLOAD-001 /
+  SPEC-PORTAL-KENNIS-002): `POST /v1/chunk/hybrid/file/async`, polled, then the resulting
+  docling chunks are submitted **pre-chunked** to knowledge-ingest. knowledge-ingest has
+  docling-aware paths (`enrichment_policy.docling_chunk_count`,
+  `routes/ingest.py` "Docling/connector-prechunked uploads").
+- **Connector binary files** (github/notion/drive adapter attachments) are parsed inside
+  **klai-connector** via Unstructured.io's `partition.auto`.
+
+So Unstructured.io is now connector-only; standalone uploads use docling-serve.
 
 **Web-crawl content** follows a different path: since SPEC-CRAWLER-004 the bulk crawl
 runs inside knowledge-ingest itself (`POST /ingest/v1/crawl/sync` + Procrastinate
@@ -688,13 +708,14 @@ Bootstrap and shutdown live in `knowledge_ingest/worker.py`
 starts **two** procrastinate worker instances inside the same container —
 one per workload lane — plus three reliability mechanisms.
 
-**Two-lane architecture (SPEC-WORKER-LANES-001).** The seven queues split
-into two lanes by latency profile:
+**Two-lane architecture (SPEC-WORKER-LANES-001).** The **nine** queues split
+into two lanes by latency profile (two LLM-lane queues — `rag-eval` and
+`rebuild-kb` — were added since this doc's prior revision):
 
 | Lane | Queues | Concurrency | Per-task latency |
 |---|---|---|---|
 | **I/O** | `ingest-kb`, `connector-purge`, `crawl-jobs` | 8 | sub-second to ~30s |
-| **LLM** | `enrich-interactive`, `enrich-bulk`, `graphiti-bulk`, `taxonomy-backfill` | 4 | 5-60s, rate-limited |
+| **LLM** | `enrich-interactive`, `enrich-bulk`, `graphiti-bulk`, `taxonomy-backfill`, `rag-eval` (nightly RAGAS, SPEC-RAG-EVAL-001), `rebuild-kb` (operator KB rebuild, SPEC-RAG-REBUILD-KB-001) | 4 | 5-60s, rate-limited |
 
 Each lane runs as a dedicated `run_worker_async` task subscribed to its
 queues only. They share the same `proc_app` and connector pool, but each
@@ -1108,9 +1129,12 @@ LibreChat tenants also have access to `klai-knowledge-mcp` as an MCP tool server
 the hook (which runs automatically for every message), MCP tools are explicitly invoked
 by the model when it decides to save something to the user's personal knowledge base.
 
-The V1 tool is `save_to_personal_kb`. The model can save text with a title, tags, and
-an `assertion_mode` label (`factual`, `belief`, `hypothesis`, `procedural`, `quoted`,
-`unknown`).
+The write tool was renamed and split into three: **`save_personal_knowledge`** (personal
+KB), **`save_org_knowledge`** (org KB), and **`save_to_docs`** (documentation). There is no
+`save_to_personal_kb` symbol any more. Each saves text with a title, tags, and an
+`assertion_mode` label (`factual`, `belief`, `hypothesis`, `procedural`, `quoted`,
+`unknown`). A single read tool, `search_knowledge`, is also exposed (see GAP-MCP-01 for the
+read-surface gap).
 
 **Write path:** MCP server → `POST /ingest/v1/document` (knowledge-ingest) → Qdrant
 `klai_knowledge` collection with `kb_slug="personal"` and `user_id`. Personal saves are
@@ -1185,7 +1209,7 @@ the historical architecture details.
 |---|---|
 | `knowledge-ingest` | Ingest pipeline: chunk, embed, enqueue enrichment, graph ingestion, image upload, connector-delete orchestrator |
 | `retrieval-api` | Retrieval endpoint (SPEC-KB-008) — replaces deprecated /knowledge/v1/retrieve |
-| `procrastinate-worker` | Async task worker (in-process, owned by `WorkerLifecycle`); subscribes to all 7 queues in `queues.ALL_QUEUES`. Runs zombie recovery on every startup. |
+| `procrastinate-worker` | Async task worker (in-process, owned by `WorkerLifecycle`); two lanes cover all 9 queues in `queues.ALL_QUEUES` (`IO_QUEUES` + `LLM_QUEUES`). Runs zombie recovery on every startup. |
 | `garage` | S3-compatible object store for content-addressed image storage (SHA-256 keyed); served browser-public via Caddy at `/kb-images/...` |
 | `qdrant` | Vector store — `klai_knowledge` collection, 3 named vectors per chunk |
 | `tei` | TEI (text-embeddings-inference) — BGE-M3 dense embeddings (1024-dim, OpenAI-compatible `/v1/embeddings`) — gpu-01 via SSH tunnel at 172.18.0.1:7997 |
@@ -1319,11 +1343,15 @@ rarely be reached in practice. See SPEC-KB-015 §Design notes for full rationale
 
 | Feature | Why it's deferred |
 |---|---|
-| MCP read tools (semantic search via tool call) | V1 covers saves only |
-| Helpdesk transcript adapter | Interface with whisper-server not decided |
-| Assertion mode active in retrieval | See research below |
+| MCP read tools (full semantic surface) | `search_knowledge` is live; `related_concepts` / `belief_evolution` / `provenance_chain` / `recent` are not (GAP-MCP-01) |
+| Transcript → gap-candidate arm | scribe transcripts are ingested as documents, but emit no gap events; only low-confidence chat retrieval feeds the gap registry (GAP-LOOP-05) |
+| Assertion mode active in retrieval | `_assertion_weight` returns a flat 1.00; deferred to SPEC-EVIDENCE-002 (GAP-EVID-01) |
 | ~~Content profile chunk sizes wired to chunker~~ | Fixed 2026-03-31: `chunk_tokens_max` from profile now passed to `chunker.py` (`tokens * 4` → chars) |
-| Docling migration voor binary parsing in klai-connector | Unstructured.io huidig; Docling sneller en nauwkeuriger voor digitale PDFs. Usecase verschilt: Unstructured beter voor gescande/handgeschreven docs. Tracked voor evaluatie. |
+| ~~Docling migration for binary parsing~~ | **Shipped** (SPEC-KB-FILE-UPLOAD-001): portal uploads stream to docling-serve's async queue and submit pre-chunked. Unstructured.io is now connector-only. |
+| Self-maintaining taxonomy (periodic re-cluster) | `run_taxonomy_clustering` is registered but has no `@periodic` schedule and no caller — bootstrap is manual-only (GAP-TAX-01) |
+| Dual-store outbox / PG↔Qdrant reconciliation | `knowledge.embedding_queue` exists but is never written; the write path is direct PG-then-Qdrant (GAP-SYNC-01) |
+| Personal-knowledge enrichment carve-out | §10.2 of the architecture doc says personal content skips LLM enrichment; `enrichment_policy.py` has no personal branch, so it does not (GAP-PRIV-01) |
+| Bayesian averaging for quality_score | Running average currently used. Bayesian prior (Wilson / Evan Miller) is more principled for sparse feedback but deferred to Phase 2 when feedback volume data is available (SPEC-KB-015 §Design notes). |
 | Bayesian averaging for quality_score | Running average currently used. Bayesian prior (Wilson / Evan Miller) is more principled for sparse feedback but deferred to Phase 2 when feedback volume data is available (SPEC-KB-015 §Design notes). |
 
 ---

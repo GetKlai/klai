@@ -1,5 +1,20 @@
 # Regular chat: knowledge retrieval en citations
 
+> **Let op — regelnummers verouderd (2026-06-08).** Dit document is geschreven tegen
+> `origin/main` commit `516483a`. Op 2026-06-07 zijn twee god-modules opgesplitst:
+> `deploy/litellm/klai_knowledge.py` (commit `dd4225695`, 1614→~1250 regels) en
+> `klai-retrieval-api/.../api/retrieve.py` (commit `91e8db29b`, 929→759 regels). **Het
+> gedrag is ongewijzigd, alleen de locaties zijn verplaatst.** Alle
+> `klai_knowledge.py:33xx-42xx`- en `retrieve.py:2xx-8xx`-regelverwijzingen hieronder
+> wijzen nu voorbij het einde van die bestanden. Gebruik de symbool-/modulenamen in plaats
+> van de regelnummers. De verplaatste logica woont nu in (zie ook § Bronbestanden):
+> - scopevertaling → `deploy/litellm/klai_kb_scope_policy.py` (`build_retrieve_body`, `resolve_kb_retrieval_scope`)
+> - query-rewrite → `deploy/litellm/klai_kb_query_rewrite.py`
+> - antwoordbeleid / `_klai_kb_meta` → `deploy/litellm/klai_kb_answer_policy.py` (`KbAnswerPolicy.to_kb_meta`)
+> - context-block → `deploy/litellm/klai_kb_context_prompt.py`
+> - citation-rendering → `deploy/litellm/klai_kb_citation_render.py` (`compose_(non_)streaming_kb_response`, `render_evidence_context`)
+> - retrieve-pipeline → `retrieval_api/api/retrieve.py` (handler op `:82`) + `api/ranking.py` + `api/page_context.py`
+
 ## Onderzoeksmethode
 
 Dit document volgt alleen broncode, tests en runtimeconfiguratie. Bestaande docs,
@@ -422,12 +437,20 @@ Belangrijkste codepaden:
 - Chat preferences UI: `klai-portal/frontend/src/routes/app/_components/ChatConfigBar.tsx`
 - Portal preferences API: `klai-portal/backend/app/api/app_account.py`
 - Portal internal feature API: `klai-portal/backend/app/api/internal.py`
-- LiteLLM KB hook: `deploy/litellm/klai_knowledge.py`
+- LiteLLM KB hook (entrypoint/orchestratie): `deploy/litellm/klai_knowledge.py`
+- ↳ scopevertaling: `deploy/litellm/klai_kb_scope_policy.py` (`build_retrieve_body`, `resolve_kb_retrieval_scope`)
+- ↳ query-rewrite + taxonomy classify: `deploy/litellm/klai_kb_query_rewrite.py`
+- ↳ antwoordbeleid + `_klai_kb_meta`: `deploy/litellm/klai_kb_answer_policy.py` (`KbAnswerPolicy.to_kb_meta`)
+- ↳ context-block + language reminder: `deploy/litellm/klai_kb_context_prompt.py`
+- ↳ citation-rendering (Bronnen/Agent activiteit): `deploy/litellm/klai_kb_citation_render.py`
+- ↳ chat-modes (general/open_kb/strict_kb/…): `deploy/litellm/klai_kb_chat_mode.py`
 - Prompt constants: `deploy/litellm/klai_chat_prompts.py`
 - LiteLLM config: `deploy/litellm/config.yaml`
 - LibreChat config: `deploy/librechat/librechat.yaml`
 - LibreChat stream source patch: `deploy/librechat/getklai/patches/stream.cjs`
-- Retrieval endpoint: `klai-retrieval-api/retrieval_api/api/retrieve.py`
+- Retrieval endpoint (handler op `:82`): `klai-retrieval-api/retrieval_api/api/retrieve.py`
+- ↳ rerank / link-expand / quality-floor: `klai-retrieval-api/retrieval_api/api/ranking.py`
+- ↳ authority / page-context boost: `klai-retrieval-api/retrieval_api/api/page_context.py`
 - Retrieval request/response models: `klai-retrieval-api/retrieval_api/models.py`
 - Qdrant filters/search: `klai-retrieval-api/retrieval_api/services/search.py`
 - EvidencePack builder: `klai-retrieval-api/retrieval_api/services/evidence_pack.py`

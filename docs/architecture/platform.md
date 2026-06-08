@@ -1,6 +1,6 @@
 # Klai Platform: Technical Decisions
 
-*Last updated: 2026-04-19. For the Knowledge product specification, see [klai-knowledge-architecture.md](../klai-knowledge-architecture.md).*
+*Last updated: 2026-06-08 (doc-vs-code drift audit; prior: 2026-04-19). For the Knowledge product specification, see [klai-knowledge-architecture.md](../klai-knowledge-architecture.md). Type-B gaps (documented richer than built — e.g. the "Complexity Router") are flagged inline and tracked in [product-gaps-backlog.md](product-gaps-backlog.md).*
 
 ## Stack
 
@@ -12,11 +12,14 @@
 | Customer portal backend | FastAPI (Python) | One language for all backend services; provisioning, billing, Scribe, later RAG |
 | Public API | Partner API on portal-api (`api.getklai.com/partner/v1/*`) | OpenAI-compatible streaming, `pk_live_...` Bearer auth, KB-scoped keys (SPEC-API-001) |
 | Embeddable widget | `klai-widget` — SolidJS + Vite, FlowiseChatEmbed fork | Served from portal origin; `<script data-widget-id="wgt_...">` one-tag embed (SPEC-WIDGET-001/002) |
+| HubSpot Help Desk app | `klai-hubspot/klai-email-support` | HubSpot Projects-lifecycle UI extension (`hs project deploy`); app card surfacing Klai-generated support-email drafts. POC — sandbox-targeted. |
+| Browser extension | `klai-shield-extension` | Platform-admin-only Chrome extension (Superdock shell) for Klai Shield — checks prompts in browser LLMs, wired to Klai auth/compliance/knowledge APIs. |
+| Knowledge publication | `klai-docs` (`docs-app`, Next.js) | KB reader + REST API + publication; editor lives in the portal. |
 | Billing | Moneybird (Unlimited plan) | Dutch accounting platform handles invoicing, VAT, SEPA direct debit, customer portal — replaces the previously planned custom Mollie module (see `klai-website/docs/moneybird-research.md`) |
 | Chat UI | LibreChat (no fork) | Custom UI only when LibreChat demonstrably blocks us |
 | Auth / Identity | Zitadel + Google/Microsoft IDPs | Native B2B multi-tenancy; social signup via Zitadel IDP intents (SPEC-AUTH-001); domain allowlist + join-request self-service (SPEC-AUTH-006) |
 | Model Proxy | LiteLLM OSS -> Enterprise | Start free, upgrade at first revenue for audit trail |
-| Model routing | LiteLLM Complexity Router | Built into LiteLLM OSS; zero external calls, <1ms overhead; 4 tiers by query complexity |
+| Model routing | `custom_router.py` (`token_router` callback) | A LiteLLM callback (not the native Complexity Router): a 3-signal heuristic — tool-call detection, user-message token threshold, ≥3 URLs — that may upgrade `klai-primary`→`klai-large`. `routing_strategy: simple-shuffle` for replica load-balancing. See GAP-ROUTE-01/02. |
 | Reverse proxy | Caddy (core-01) | Better LLM streaming than Traefik, lighter, easier to debug |
 | Infra (public-01) | Coolify on Hetzner CX42 | Delay Kubernetes as long as possible (autoscaling = complexity) |
 | Infra (core-01) | Direct Docker on EX44 | Coolify's reverse proxy conflicts with Caddy; container lifecycle via custom provisioning service |
@@ -223,12 +226,27 @@ All data stays within the EU. No closed or proprietary AI APIs from non-EU compa
 
 ## AI Models — Hosting Strategy
 
+> **Current production stack (2026-06-08).** LiteLLM serves **Mistral models exclusively**
+> today; the Qwen3 / H100 self-hosting content further below is the **Phase-3 plan**, not the
+> live stack. Live tier aliases (`deploy/litellm/config.yaml`):
+>
+> | Alias | Backing model | Use |
+> |---|---|---|
+> | `klai-fast` | `mistral-small-2603` | High-volume, latency-sensitive (bypasses custom_router) |
+> | `klai-primary` | `mistral-small-2603` | Standard user-facing (routed via custom_router) |
+> | `klai-medium` | `mistral-medium-3.5` | Middle tier (also the LiteLLM fallback target) |
+> | `klai-large` | `mistral-large-2512` | Agentic / tool use / MCP |
+> | `klai-bge-m3` | BGE-M3 on TEI (gpu-01) | Embeddings |
+>
+> The LiteLLM fallback is `klai-medium`, **not** Ollama. See
+> [`.claude/rules/klai/platform/litellm.md`](../../.claude/rules/klai/platform/litellm.md).
+
 ### Approach: start with API, evaluate self-hosting
 
 **Phase 0 — Managed API (Mistral)**
 LiteLLM points to the Mistral API. Mistral is a French company, EU infrastructure by default, open weight models, DPA available, no training on customer data. Costs are variable and low at early user numbers.
 
-Fallback: small open source model via Ollama on core-01 (CPU). On Mistral failure, LiteLLM switches automatically — users notice a delay, no data loss, no downtime.
+Fallback: `klai-medium` (Mistral Medium 3.5). On a `klai-fast`/`klai-primary` failure, LiteLLM falls back to `klai-medium` automatically (`config.yaml` `fallbacks`). (Ollama is present in the compose `inference` network but is **not** wired as a model or fallback in `config.yaml`.)
 
 **Trigger for self-hosting**: when the fixed cost of a GPU server is lower than Mistral API costs. Break-even at ~1.2 billion tokens per month (~30,000 active users at normal business usage).
 
@@ -260,6 +278,12 @@ Fallback: small open source model via Ollama on core-01 (CPU). On Mistral failur
 | **Qwen2.5** | various | - | - | Apache 2.0 | Stable, widely used | Superseded by Qwen3 (April 2025), no longer current | Excluded: outdated |
 
 ### Choice: Qwen3-32B + Qwen3-8B
+
+> **This section is the Phase-3 self-hosting plan, not the live stack** (see the
+> "Current production stack" callout above — production runs Mistral). The "LiteLLM
+> Complexity Router … 7 dimensions" referenced here is also not what exists today:
+> routing is a 3-signal heuristic in `custom_router.py` (GAP-ROUTE-01). Keep this as the
+> aspirational self-host design.
 
 Two models on one H100 80GB, routed via LiteLLM Complexity Router.
 
@@ -344,7 +368,7 @@ Fully automated extraction produces 20–45% errors on standard business documen
 | Vector | Qdrant (BGE-M3 dense + sparse) | Semantic similarity: finds relevant results even when exact words differ |
 | Graph | FalkorDB + Graphiti | Multi-hop relationships: "which decisions connect to this document?" |
 
-All three are needed. The combination consistently outperforms any single approach. PostgreSQL and Qdrant are live; FalkorDB is deployed but not yet activated for retrieval (Phase 3).
+All three are needed. The combination consistently outperforms any single approach. All three are now **live**: PostgreSQL, Qdrant, **and** FalkorDB+Graphiti — `GRAPHITI_ENABLED=true` on retrieval-api and knowledge-ingest, and the graph search leg participates in the RRF fusion (`retrieval_api/services/graph_search.py`).
 
 ### Build order (followed by Klai)
 
@@ -356,9 +380,9 @@ All three are needed. The combination consistently outperforms any single approa
 
 **The classification at storage is primary. The retrieval technique is secondary.**
 
-### Knowledge graph: FalkorDB + Graphiti (Phase 3)
+### Knowledge graph: FalkorDB + Graphiti (live)
 
-FalkorDB is deployed on core-01 (not yet activated for retrieval). Key decisions:
+FalkorDB is deployed on core-01 and **active in retrieval** (`GRAPHITI_ENABLED=true`); the graph search leg is RRF-merged with the Qdrant legs. Key decisions:
 
 - **FalkorDB** over Apache AGE: PostgreSQL major version upgrades break AGE — unacceptable for a long-lived system. Both are supported by Graphiti, migration minimal if ever needed.
 - **Graphiti** for extraction: entity resolution, deduplication, and temporality handled automatically.

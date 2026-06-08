@@ -7,6 +7,8 @@
 > *Last updated: 2026-05-06 (post retrieval-coupling audit). For platform-wide infrastructure and stack decisions, see [architecture/platform.md](platform.md). For the research backing evidence-weighted scoring (§7.4) and assertion mode weights (§3.2, §13.4), see [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md).*
 >
 > *2026-05-06: §2 rewritten to remove the "Two products, one infrastructure" framing — Klai Focus / research-api was decommissioned by `SPEC-PORTAL-UNIFY-KB-001` (April 2026) and `SPEC-DECOMM-FOCUS-001` (May 2026). Klai Knowledge is now the single knowledge product. §7.4 evidence-tier activation track aligned with `SPEC-EVIDENCE-001-FOLLOWUP-001`.*
+>
+> *2026-06-08 (doc-vs-code drift audit): §0 infra table corrected (gpu-01 models, Graphiti live, PG schema populated, gap inbox live, Mistral stack). Several sections that described a richer design than the code now carry an **Intended vs. current** callout pointing to [`product-gaps-backlog.md`](product-gaps-backlog.md) — notably §8 gap detection (GAP-LOOP-*), §6 taxonomy (GAP-TAX-*), §3.3/§5 provenance (GAP-PROV-*), §7.4/§3.2 evidence weighting (GAP-EVID-*), §5.1 multitenancy (GAP-TENANCY-01), §9.2 MCP read tools (GAP-MCP-01), §10 personal-knowledge enrichment (GAP-PRIV-01). The temporal-validity filter has a field-name bug — see [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md).*
 
 ---
 
@@ -59,51 +61,67 @@ With Klai Knowledge:
 
 ## 0. Current State vs. Target Architecture
 
-This section captures what is running in production (core-01) as of March 2026. The core architecture is built and live. Remaining open items are tracked in §13.
+This section captures what is running in production as of March 2026 (infrastructure rows re-verified 2026-06-08). The core architecture is built and live. Remaining open items are tracked in §13.
+
+> **2026-06-08 correction.** The embedding / reranker / sparse / transcription
+> models are **not** core-01 docker-compose services — they run on **gpu-01** and
+> are reached over the `172.18.0.1` autossh tunnel (`TEI_URL=:7997`,
+> `TEI_RERANKER_URL=:7998`, `SPARSE_SIDECAR_URL=:8001`). Transcription is the Vexa
+> `transcription-service` on gpu-01, not a `whisper-server` container. The LiteLLM
+> fallback is `klai-medium` (Mistral Medium), not Ollama. See
+> [`platform.md`](platform.md) for the live model stack.
 
 ### What exists today
 
-**Deployed infrastructure (core-01 docker-compose):**
+**Deployed infrastructure:**
 
-| Service | What it is | Notes |
-|---|---|---|
-| `docs-app` (klai-docs) | Next.js app — reader + REST API | KB publication and CRUD; editor UI lives in klai-portal |
-| `docling-serve` | Document chunker | HybridChunker; shared across all ingest paths |
-| `tei` | Text embeddings (BGE-M3, dense only) | Dense embeddings. Sparse handled by separate `bge-m3-sparse` sidecar (FlagEmbedding). |
-| `bge-m3-sparse` | BGE-M3 sparse sidecar | FlagEmbedding-based; `http://bge-m3-sparse:8001`; batch sparse embedding |
-| `knowledge-ingest` | Unified ingest API | `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/personal/items` |
-| `retrieval-api` | Retrieval service | `POST /retrieve`; 3-leg RRF (dense + question + sparse); called by portal-api and the LiteLLM hook |
-| `klai-knowledge-mcp` | MCP write server | `save_personal_knowledge`, `save_org_knowledge`, `save_to_docs` — `klai-knowledge-mcp/main.py` |
-| Qdrant | Vector store | `klai_knowledge` collection (org + personal KB) |
-| `gitea` | Self-hosted Git | One repo per org KB; content store for klai-docs |
-| `whisper-server` | Audio transcription | Used by klai-portal Scribe/Transcribe features |
-| `searxng` | Self-hosted web search | Self-hosted; not Tavily/Brave |
-| PostgreSQL | Relational store | `docs` schema (orgs, KBs, pages); `portal` schema (tenants, billing). pgvector no longer used. |
-| LiteLLM + Ollama | LLM routing | Mistral API (primary); Ollama as CPU fallback |
-| Zitadel | Auth/OIDC | Tenant isolation; all services use same instance |
+| Service | Where | What it is | Notes |
+|---|---|---|---|
+| `docs-app` (klai-docs) | core-01 | Next.js app — reader + REST API | KB publication and CRUD; editor UI lives in klai-portal |
+| `docling-serve` | core-01 | Document chunker | HybridChunker; standalone file uploads (SPEC-KB-FILE-UPLOAD-001) |
+| TEI (dense BGE-M3) | **gpu-01** `:7997` | Dense embeddings | Reached via `172.18.0.1` tunnel; not a core-01 service |
+| BGE-M3 sparse sidecar | **gpu-01** `:8001` | FlagEmbedding sparse | `SPARSE_SIDECAR_URL`; not a core-01 service |
+| Infinity reranker | **gpu-01** `:7998` | `bge-reranker-v2-m3` | `TEI_RERANKER_URL`; not a core-01 service |
+| Vexa `transcription-service` | **gpu-01** | Audio transcription | Replaces the old `whisper-server` (SPEC-VEXA-003) |
+| `knowledge-ingest` | core-01 | Unified ingest API | `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, taxonomy + gap-event endpoints |
+| `retrieval-api` | core-01 | Retrieval service | `POST /retrieve`; RRF over dense + question/HyDE + sparse **+ graph** (Graphiti live) |
+| `klai-knowledge-mcp` | core-01 | MCP write server | `save_personal_knowledge`, `save_org_knowledge`, `save_to_docs`; one read tool `search_knowledge` |
+| Qdrant | core-01 | Vector store | `klai_knowledge` collection (org + personal KB) |
+| `gitea` | core-01 | Self-hosted Git | One repo per org KB; content store for klai-docs |
+| `searxng` | core-01 | Self-hosted web search | Startpage + DuckDuckGo |
+| PostgreSQL | core-01 | Relational store | `knowledge` schema (now populated — see below), `docs`, `portal` schemas. pgvector no longer used. |
+| LiteLLM | core-01 | LLM routing | Mistral stack (`klai-fast/primary/medium/large` = Mistral Small/Medium/Large); fallback `klai-medium`; routing via `custom_router.py` |
+| FalkorDB + Graphiti | core-01 | Knowledge graph | `GRAPHITI_ENABLED=true`; live graph search leg in RRF |
+| Zitadel | core-01 | Auth/OIDC | Tenant isolation; all services use same instance |
 
 ### What was recently built (March 2026)
 
 | Component | Status |
 |---|---|
 | Qdrant | ✅ Deployed — `klai_knowledge` collection; `org_id`, `kb_slug`, `user_id` payload indexes |
-| `knowledge` schema (PostgreSQL) | ✅ Created — migration `001_knowledge_schema.sql`; tables exist, not yet populated (Qdrant is primary store for now) |
-| Unified Ingest API | ✅ Built as `knowledge-ingest` — `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/personal/items` |
-| Retrieval API | ✅ Built — `POST /retrieve` on `retrieval-api`; 3-leg RRF fusion (dense + question + sparse) |
-| BGE-M3 sparse sidecar | ✅ Built — `bge-m3-sparse` using FlagEmbedding; deployed on core-01 |
+| `knowledge` schema (PostgreSQL) | ✅ **Populated** — `knowledge.artifacts` (+ provenance/crawl tables) written on every ingest via `pg_store.py`. Qdrant + PostgreSQL are now dual stores keyed by artifact id. (See GAP-PROV-01: the `derivations`/`entities`/`embedding_queue` tables exist but are not yet written — schema-only.) |
+| Unified Ingest API | ✅ Built as `knowledge-ingest` — `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, taxonomy + gap-event endpoints |
+| Retrieval API | ✅ Built — `POST /retrieve` on `retrieval-api`; RRF over dense + question/HyDE + sparse + graph (Graphiti) |
 | Personal knowledge saves | ✅ Live — `save_personal_knowledge` via MCP; indexed in Qdrant immediately by knowledge-ingest |
 | Org knowledge saves | ✅ Live — `save_org_knowledge` via MCP; indexed in Qdrant immediately |
-| Gap detection | ✅ Live — `_classify_gap` + `_fire_gap_event` in `KlaiKnowledgeHook` |
-| LiteLLM pre-call hook | ✅ Deployed — `KlaiKnowledgeHook` with feature gate, user_id scoping, conversation history, kb_slugs filter, gap detection; verified for `getklai` tenant |
+| Gap detection | ✅ Live — `classify_gap` + `fire_gap_event` in `deploy/litellm/klai_retrieval_telemetry.py` (a 2-class hard/soft classifier; see GAP-LOOP-* for the richer documented design that is **not** built) |
+| Gap editorial inbox | ✅ Live — frontend `/app/gaps`, backend `app_gaps.py` (`/gaps`, `/gaps/summary`, `/gaps/by-taxonomy`); hook posts gap events to portal-api `/v1/gap-events` |
+| LiteLLM pre-call hook | ✅ Deployed — `KlaiKnowledgeHook` (decomposed into `klai_kb_*` modules); feature gate, user_id scoping, history, kb_slugs filter, strict/open answer policy, gap detection |
 | Knowledge model fields in frontmatter | ✅ `KnowledgeFrontmatter` in klai-docs; Zod validation deferred |
 
 ### What does NOT exist yet (remaining open items)
 
+> Several capabilities that earlier editions of this doc listed as "live" are
+> implemented more simply than described. Those are tracked as Type-B gaps in
+> [`product-gaps-backlog.md`](product-gaps-backlog.md) and flagged inline at each
+> section, rather than repeated here.
+
 | Component | Where described | Status |
 |---|---|---|
-| PostgreSQL `knowledge` schema populated | §5.2 | Tables exist but not yet used in production; Qdrant is the primary store for now |
-| Taxonomy / gap editorial inbox UI | §6, §8.4 | Gap events are fired by the hook but no editorial inbox UI exists yet |
-| Cross-org knowledge federation | §10.7 | Deferred to V2 |
+| Cross-org knowledge federation | §10.7 | Deferred to V2 (open question §13) |
+| Self-maintaining taxonomy (re-cluster / monitor) | §6.4-6.5 | Bootstrap is manual; the periodic clustering task is registered but never scheduled — GAP-TAX-01 |
+| Gap-detection LLM judge / semantic registry / lifecycle | §8 | Editorial inbox is live, but the LLM judge, semantic dedup, and lifecycle are not — GAP-LOOP-01..04 |
+| Provenance DAG / entity registry / dual-store outbox | §3.3, §5 | Tables exist, write path does not — GAP-PROV-01, GAP-SYNC-01 |
 
 ### Completed migrations
 
@@ -292,6 +310,15 @@ This chain enables:
 - **Confidence calibration** — the system knows this claim rests on 3 independent transcripts; a claim on 1 transcript gets lower weight
 - **Temporal reasoning** — "what did we believe about this procedure in Q3 2024?" is answerable from `belief_time_start/end`
 
+> **Intended vs. current (GAP-PROV-02).** This is target design. In code the chain is not
+> populated: the MCP write tools store `derived_from = []` (source attribution goes into a
+> human-readable `source_note` string, see §9.2), and `confidence` is a manual
+> `high/medium/low` frontmatter label — never computed from independent-source count and
+> never read in retrieval scoring. So the invalidation cascade and confidence calibration
+> "enabled" here have no inputs to run on yet (their precondition — populated provenance
+> edges + computed confidence — is missing; cf. §5.2 GAP-PROV-01). Temporal reasoning has
+> a separate field-name bug — see [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md).
+
 ---
 
 ### 3.4 Knowledge evolution
@@ -356,10 +383,10 @@ Klai Knowledge accepts knowledge from multiple source types. Each source type ha
 | Help articles (web/HTML) | Crawl4AI → markdown | klai-connector webcrawler via Gitea webhook |
 | GitHub repositories | klai-connector → raw markdown | klai-connector Gitea webhook |
 | Documents (PDF, DOCX, XLSX) | docling-serve HybridChunker | klai-connector file upload endpoint |
-| Meeting transcripts | scribe-api → transcript JSON | scribe-api calls `/ingest/v1/meetings` after Whisper |
-| MCP writes (personal/org) | klai-knowledge-mcp | MCP server calls `/ingest/v1/personal` or `/ingest/v1/org` |
+| Meeting transcripts | scribe-api → transcript JSON | scribe-api posts to `/ingest/v1/document` |
+| MCP writes (personal/org/docs) | klai-knowledge-mcp | All three save tools post to `/ingest/v1/document` (scope carried in the body, not the path) |
 
-All adapters deliver to `knowledge-ingest`. Adapters do not write directly to Qdrant — this is enforced at the architecture level.
+All adapters deliver to `knowledge-ingest` via the single `/ingest/v1/document` endpoint (plus `/ingest/v1/webhook/gitea` and `/ingest/v1/crawl`). There are **no** `/ingest/v1/meetings`, `/ingest/v1/personal`, or `/ingest/v1/org` endpoints — scope (org vs personal) is a body field. Adapters do not write directly to Qdrant — this is enforced at the architecture level.
 
 ### 4.2 Enrichment pipeline
 
@@ -412,7 +439,21 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 
 **Large tenants:** Qdrant 1.16 tiered multitenancy allows promoting tenants above a vector count threshold (e.g., >20,000 vectors) to dedicated shards automatically. This provides the isolation benefits of a dedicated collection without the operational overhead.
 
-**GDPR right-to-erasure:** `DELETE /points?filter={tenant_id: org_uuid}` removes all vectors for that tenant. For personal knowledge scopes: `DELETE /points?filter={tenant_id: user_scope_id}`.
+> **Intended vs. current (GAP-TENANCY-01).** Isolation is correct, but two of the
+> mechanisms above are **not** in code:
+> - The `org_id` index is created as a plain `keyword` index — **no `is_tenant: true`
+>   flag** (`qdrant_store.py:82-105`). So there is no per-tenant HNSW subgraph; isolation
+>   is a mandatory `org_id` must-filter at query time (the configuration this section says
+>   degrades recall). `is_tenant=True` is one `create_payload_index` parameter.
+> - **Tiered sharding** for large tenants is not implemented (no `shard_key` / sharding
+>   code anywhere).
+>
+> Also: the payload key is `org_id` (the raw Zitadel org id) with a separate `user_id`
+> field — not a single `tenant_id`. There is **no `gap_{org_uuid}` Qdrant scope**; gap
+> detection lives in the Postgres `portal_retrieval_gaps` table (see §8 callout,
+> GAP-LOOP-02). The scope table below is the documented scheme, not literal payload values.
+
+**GDPR right-to-erasure:** delete-by-filter on `org_id` removes all vectors for that tenant (`qdrant_store.delete_kb` / `delete_document`). For personal scopes the filter also matches `user_id`.
 
 **Scopes tracked in the collection payload:**
 
@@ -427,6 +468,22 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 ### 5.2 Structured storage: PostgreSQL `knowledge` schema
 
 **SQLite is removed from this design.** It has one writer at a time (even in WAL mode), cannot serve multiple services concurrently, and provides none of the analytical query capability needed here. PostgreSQL is already running for klai-docs. This adds a `knowledge` schema to the same cluster — zero new infrastructure.
+
+> **Intended vs. current — parts of this schema are typed-but-inert.** `knowledge.artifacts`
+> (+ crawl/provenance-adjacent tables) **is** populated on every ingest. But several
+> structures below exist only as DDL with no write path:
+> - `derivations` (provenance DAG), `entities` + `artifact_entities` (entity registry):
+>   **0 INSERTs** in production code — GAP-PROV-01. The `WITH RECURSIVE` invalidation
+>   cascade and entity analytics the schema is designed for cannot return data. Entity
+>   data that *is* produced (Graphiti) lives in FalkorDB + the Qdrant payload, not here.
+> - `superseded_by`: only ever set to `NULL`; supersession is a path-based
+>   `belief_time_end` soft-delete, not a supersession chain.
+> - `embedding_queue` (transactional outbox): **0 INSERTs** — the write path is a direct
+>   PG-then-Qdrant write with no outbox, retry, or nightly reconciliation — GAP-SYNC-01.
+> - **Temporal-validity bug:** ingest writes `valid_from`/`valid_until` to the Qdrant
+>   payload, but retrieval filters on a `invalid_at` field that is never written (and never
+>   reads `valid_until`), so the "currently-believed only" filter is inert. See
+>   [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md).
 
 **Schema overview:**
 
@@ -596,6 +653,20 @@ The taxonomy is the navigational and analytical structure over the knowledge bas
 - How the gap-detection output tells editors *where* a new article belongs
 - How analytical queries (SQLite) are structured
 
+> **Current implementation status (GAP-TAX-01/02/03).** The taxonomy apparatus is fully
+> built but largely **inert** in production:
+> - The HDBSCAN re-clustering task (`run_taxonomy_clustering`) is registered but has **no
+>   `@periodic` schedule** and no caller — the "monthly monitoring / re-cluster / merge
+>   suggestion" loop in §6.4-6.5 does not run. A KB's taxonomy is frozen at the manual
+>   admin bootstrap (GAP-TAX-01).
+> - Query-time `coverage` is **binary** (≥1 node ⇒ 1.0, else 0.0;
+>   `taxonomy_lookup.py`), not the "fraction of corpus classified" of §6.7 (GAP-TAX-02).
+> - The automatic chat path never sends `taxonomy_node_ids` as a retrieval filter, so
+>   per-document classification is effectively **write-only** for normal retrieval, and on
+>   any KB with 0 curated nodes the whole classifier no-ops (GAP-TAX-03).
+> Document *classification* against an existing taxonomy works; taxonomy *curation* is
+> manual-only — consistent with §6.2's verdict, but more inert than the prose implies.
+
 ### 6.2 The "self-managing taxonomy" claim: verdict
 
 The working assumption from the prior research document was: "The taxonomy manages itself. There is no maintenance process, no governance meeting, no manual migration required."
@@ -692,7 +763,16 @@ Estimate per Argilla/Prodigy active learning research: a single reviewer spendin
 
 ### 7.1 Six-step retrieval pipeline
 
-The retrieval pipeline runs inside the LiteLLM hook before every chat message reaches the model. It has six steps:
+> **Correction (2026-06-08).** The numbered retrieval pipeline runs **inside
+> `retrieval-api`** (`retrieval_api/api/retrieve.py` + `api/ranking.py` +
+> `api/page_context.py`), not inside the LiteLLM hook. The hook performs an
+> independent Step-0 query rewrite (`klai_kb_query_rewrite`) and then calls
+> `POST /retrieve`; retrieval-api owns coreference (skipped when the caller
+> pre-resolved), embedding, gate, hybrid+graph search, rerank, and evidence scoring.
+> The engineering reference for the live pipeline is
+> [`knowledge-retrieval-flow.md`](knowledge-retrieval-flow.md).
+
+The retrieval pipeline (conceptually) runs before every chat message reaches the model. It has six steps:
 
 ```
 User message
@@ -765,6 +845,14 @@ Evidence-weighted scoring runs in Step 6 of the retrieval pipeline. Currently in
 | PageRank | `entity_pagerank_max` from FalkorDB | `1 + 0.20 * log1p(pagerank * 100)` — capped ~+25% | `EVIDENCE_PAGERANK_ENABLED` (default `true`) |
 | Assertion mode | `assertion_mode` (factual, procedural, ...) | **Flat weights (all 1.00)** — activate via `SPEC-EVIDENCE-002` after A/B | `EVIDENCE_ASSERTION_MODE_ENABLED` (default `true`, but flat-weights neuter the effect) |
 
+> **Intended vs. current (GAP-EVID-01/02).** This section is candid that the whole thing
+> is shadow-mode and assertion-mode weights are flat. To be explicit for implementers:
+> `_assertion_weight()` ignores its input and the flag and **always returns `1.00`**
+> (`evidence_tier.py:113-116`, `assertion_mode_weights = {}`), so that dimension is a
+> mathematical no-op even with the flag on — ready-to-activate plumbing, not a live signal.
+> The 3-into-5 epistemic grouping from §3.2 (assertion / speculation / procedure) is **not
+> implemented anywhere**. content_type / temporal / pagerank are real multipliers.
+
 After scoring, chunks are reordered into a **U-shape** (strongest at position 0, second-strongest at the last position, mid-strength clustered in the middle) per Liu et al. 2023 "Lost in the Middle" ([arXiv:2307.03172](https://arxiv.org/abs/2307.03172)).
 
 **Formula:**
@@ -808,6 +896,27 @@ Decision criteria: ≥+0.02 mean uplift on RAGAS Context Precision **and** Faith
 
 Gap detection is the mechanism by which Klai Knowledge identifies what an organization's knowledge base does not cover, based on what users actually ask.
 
+> **Intended design vs. current implementation (GAP-LOOP-01..05).** §8.2-8.4 below
+> describe the **target** design. The shipped system is considerably simpler — this is
+> the single largest ambition-vs-reality gap in the platform and the core of the
+> "self-improving knowledge base" roadmap. What is live today:
+> - Detection is a **2-class threshold classifier** (`classify_gap` in
+>   `deploy/litellm/klai_retrieval_telemetry.py`): `hard` (no chunks) / `soft` (all
+>   reranker scores below `KLAI_GAP_SOFT_THRESHOLD`) / `None`. **No LLM judge**, no
+>   `covered|partial|new` verdict, no `missing_aspects`.
+> - Only **signal #3** (low chat-retrieval confidence) is wired. The transcript /
+>   unresolved-ticket signals (#1, #2) do not feed the registry.
+> - The "registry" is the Postgres table `portal_retrieval_gaps` (one row per
+>   occurrence); "frequency" is a read-time `COUNT() GROUP BY query_text` (exact-string).
+>   **No Qdrant `org_{uuid}_gap_registry`** and no embedding-based semantic dedup.
+> - Lifecycle is a single `resolved_at` timestamp — **no** `in_progress`, **no**
+>   `resolving_article_id`, **no** re-open-after-≥3.
+> - Editorial priority is `frequency_per_day` buckets — **no** `urgency_weight` /
+>   `recency_factor`.
+> - The editorial inbox itself **is** live (`/app/gaps`, `app_gaps.py`).
+>
+> See [`product-gaps-backlog.md`](product-gaps-backlog.md) §Cluster 1 for the full delta.
+
 ### 8.1 What constitutes a gap
 
 A knowledge gap is a pattern of questions or problems that cannot be satisfactorily answered from the current knowledge base. Three signals trigger gap candidates:
@@ -816,7 +925,7 @@ A knowledge gap is a pattern of questions or problems that cannot be satisfactor
 2. **Unresolved conversations** — conversations marked `resolved: false`
 3. **Low retrieval confidence** — AI chat responses where top retrieved chunk similarity falls below a threshold
 
-### 8.2 Gap detection pipeline
+### 8.2 Gap detection pipeline (target design — not yet built)
 
 ```
 Knowledge item (from transcript extraction or chat log)
@@ -841,7 +950,7 @@ Gap registry (Qdrant collection: org_{uuid}_gap_registry)
 
 **Known limitations of cosine thresholds:** ICLR 2025 and recent RAG surveys confirm cosine similarity produces unreliable results for specific domain terms, error codes, and product names. The thresholds above (0.60/0.90) are starting points. Every tenant deployment requires calibration on real data.
 
-### 8.3 Gap lifecycle
+### 8.3 Gap lifecycle (target design — current model is binary open/resolved)
 
 Gaps follow the same superseded_by philosophy as knowledge in general:
 
@@ -853,7 +962,7 @@ Resolved gaps are not deleted. They carry a `resolving_article_id` pointing to t
 
 This creates an audit trail: "Gap G47 was first detected 2026-01-14, resolved 2026-02-28 by article X, re-opened 2026-03-12 because the article was too generic."
 
-### 8.4 Gap output for editors
+### 8.4 Gap output for editors (target design — current priority is frequency-only)
 
 The gap registry feeds a prioritized editorial inbox:
 
@@ -887,7 +996,7 @@ The AI interface (Claude or a local model) connects via MCP (Model Context Proto
 
 **The MCP server resolves org and user identity from the authenticated Zitadel session** — tools do not accept `org_id` or `user_id` as caller parameters. This prevents scope confusion and cross-user writes. Every tool call is implicitly scoped to the caller's org and (where relevant) their personal scope.
 
-**Read tools:**
+**Read tools (target surface):**
 ```
 search(query, scope: "org" | "personal" | "both", type?, time_range?)
 related_concepts(concept_id, depth)
@@ -895,6 +1004,13 @@ belief_evolution(topic, from_date, to_date)
 provenance_chain(claim_id)
 recent(days, type, scope: "org" | "personal" | "both")
 ```
+
+> **Intended vs. current (GAP-MCP-01).** Only **one** read tool is implemented today:
+> `search_knowledge(query, top_k)` in `klai-knowledge-mcp/main.py`, and it hardcodes
+> `scope: "both"` — the `scope` / `type` / `time_range` parameters above are not exposed.
+> `related_concepts`, `belief_evolution`, `provenance_chain`, and `recent` are **not
+> built** (they exist only in this doc). These are precisely the tools that would expose
+> the graph / temporal / provenance depth of the §3 model to an external agent.
 
 **Write tools — `klai-knowledge-mcp` (deployed 2026-03-21, org scope added March 2026):**
 
@@ -1094,6 +1210,14 @@ Every user in an organization has access to two distinct knowledge scopes:
 - Not processed by the contextual retrieval or HyPE enrichment pipeline (BGE-M3 direct embedding only — avoids LLM processing of personal content until the legal basis is formally established)
 - Not processed by any third-party cloud LLM — self-hosted pipeline only, consistent with the platform-wide no-external-LLM rule
 
+> **Intended vs. current (GAP-PRIV-01) — compliance-relevant.** The "personal content
+> skips LLM enrichment" carve-out above is **not implemented**. The ingest enqueue path
+> gates enrichment only on chunk count + org config (`enrichment_policy.py` has no
+> `user_id`/personal branch), so personal artifacts go through the same contextual-prefix
+> + HyPE + Graphiti pipeline as org knowledge. A one-line scope check in the enqueue path
+> would honour the documented posture. **Validate the intended policy with legal/privacy
+> before changing code** — the doc's carve-out may or may not still be the desired rule.
+
 **What personal knowledge is not:**
 - A staging area for org knowledge (though it can be used that way voluntarily — see §10.4)
 - Visible to org administrators under any normal circumstance
@@ -1251,6 +1375,15 @@ Fewer low-confidence answers → fewer gaps → smaller inbox
 The human is in the loop at the editorial step only. The detection, aggregation, prioritization, and re-indexing are automated. Humans decide what to write, not whether to write.
 
 This loop also closes the gap between what an organization knows (formal knowledge base) and what its people know (tacit knowledge in transcripts, meeting notes, emails). Over time, tacit knowledge crystallizes into explicit knowledge.
+
+> **Intended vs. current (GAP-LOOP-05/06).** Two arms of this loop are not yet built:
+> the **"helpdesk transcripts → gap candidates"** input does not exist (only low-confidence
+> chat retrieval feeds the registry — scribe transcripts are ingested as documents but emit
+> no gap events), and there is **no AI-draft** affordance (`grep 'draft'` over the portal
+> backend = 0) — every article is authored by hand in BlockNote. The detection/aggregation
+> side is also simpler than "aggregated, deduplicated, prioritized" implies (see §8 callout:
+> exact-string grouping, frequency-only priority). The editorial inbox and re-index arms
+> are live.
 
 ---
 
