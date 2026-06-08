@@ -62,12 +62,15 @@ class AutoJoinAdminNotificationVars(_BaseVars):
 
     Sent to all workspace admins when a domain_match user auto-joins.
     `admin_email` is the authoritative recipient; caller pre-resolves it.
+    `org_id` is accepted because the portal-api caller sends it in the
+    auto-join notification variables.
     """
 
     name: str
     email: EmailStr
     domain: str
     admin_email: EmailStr
+    org_id: int
 
 
 class WaitlistConfirmationVars(_BaseVars):

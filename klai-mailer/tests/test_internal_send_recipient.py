@@ -180,7 +180,7 @@ def test_approved_recipient_from_variables_email(client, stub_smtp):
 
 
 def test_auto_join_admin_notification_recipient_from_admin_email(client, stub_smtp):
-    """auto_join_admin_notification is registered and bound to admin_email."""
+    """Portal auto-join payload with org_id is accepted and bound to admin_email."""
     resp = client.post(
         "/internal/send",
         headers={"X-Internal-Secret": "internal-test-secret"},
@@ -193,6 +193,7 @@ def test_auto_join_admin_notification_recipient_from_admin_email(client, stub_sm
                 "email": "alice@test.example",
                 "domain": "test.example",
                 "admin_email": "admin@test.example",
+                "org_id": 42,
             },
         },
     )
@@ -215,6 +216,7 @@ def test_auto_join_admin_notification_recipient_mismatch_rejected(client, stub_s
                 "email": "alice@test.example",
                 "domain": "test.example",
                 "admin_email": "admin@test.example",
+                "org_id": 42,
             },
         },
     )
