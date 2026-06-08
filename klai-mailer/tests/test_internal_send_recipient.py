@@ -179,6 +179,53 @@ def test_approved_recipient_from_variables_email(client, stub_smtp):
     assert stub_smtp.sent[0]["to_address"] == "bob@test.example"
 
 
+def test_auto_join_admin_notification_recipient_from_admin_email(client, stub_smtp):
+    """Portal auto-join payload with org_id is accepted and bound to admin_email."""
+    resp = client.post(
+        "/internal/send",
+        headers={"X-Internal-Secret": "internal-test-secret"},
+        json={
+            "template": "auto_join_admin_notification",
+            "to": "admin@test.example",
+            "locale": "nl",
+            "variables": {
+                "name": "Alice",
+                "email": "alice@test.example",
+                "domain": "test.example",
+                "admin_email": "admin@test.example",
+                "org_id": 42,
+            },
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert stub_smtp.sent[0]["to_address"] == "admin@test.example"
+
+
+def test_auto_join_admin_notification_recipient_mismatch_rejected(client, stub_smtp):
+    """auto_join_admin_notification must not relay to caller-supplied addresses."""
+    resp = client.post(
+        "/internal/send",
+        headers={"X-Internal-Secret": "internal-test-secret"},
+        json={
+            "template": "auto_join_admin_notification",
+            "to": "attacker@test.example",
+            "locale": "nl",
+            "variables": {
+                "name": "Alice",
+                "email": "alice@test.example",
+                "domain": "test.example",
+                "admin_email": "admin@test.example",
+                "org_id": 42,
+            },
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "recipient mismatch"}
+    assert stub_smtp.sent == []
+
+
 def test_approved_to_mismatch_rejected(client, stub_smtp):
     """REQ-3.2: `to` != variables.email → 400 recipient mismatch."""
     resp = client.post(

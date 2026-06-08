@@ -379,7 +379,11 @@ async def _mark_failed(db: AsyncSession, org_id: int, step_name: str, error_str:
             to_state="failed_deprovisioning",
             step=step_name,
         )
-        # Populate last_failure JSONB. Use raw text() to avoid ORM RLS issues.
+        # Populate last_failure JSONB via raw text() rather than the ORM. The
+        # ORM path would layer a fresh transaction and refresh onto a session
+        # that just recovered from the failure branch. `portal_orgs` is not a
+        # Cat-D RLS table; keep text() here for explicit JSONB binding and
+        # transactional simplicity.
         # @MX:NOTE: SPEC-INFRA-TENANT-DELETE-003 Bug B — asyncpg cannot bind a
         #   Python dict to a jsonb column via text() prepared statements; it
         #   tries to call `.encode()` on the dict and raises DataError. Encode

@@ -204,6 +204,25 @@ async def test_idp_returns_401_raises_service_auth_error():
 
 
 @pytest.mark.asyncio
+async def test_idp_error_body_redacts_client_secret():
+    client = _build_client(client_secret="super-secret-client-value")
+    bad_resp = MagicMock(spec=httpx.Response)
+    bad_resp.status_code = 401
+    bad_resp.text = '{"error":"invalid_client","echo":"super-secret-client-value"}'
+
+    with patch("httpx.AsyncClient") as mock_async_client:
+        mock_async_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=bad_resp
+        )
+        with pytest.raises(ServiceAuthError) as exc_info:
+            await client.get_token()
+
+    message = str(exc_info.value)
+    assert "super-secret-client-value" not in message
+    assert "<redacted>" in message
+
+
+@pytest.mark.asyncio
 async def test_network_error_raises_service_auth_error():
     client = _build_client()
     with patch("httpx.AsyncClient") as mock_async_client:
