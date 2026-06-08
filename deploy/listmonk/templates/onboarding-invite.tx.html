@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
+  <title>Welcome to Klai, you're in</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings>
+    <o:PixelsPerInch>96</o:PixelsPerInch>
+  </o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+  <style>
+    body, table, td, a { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+    table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; }
+    img { -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; }
+    body { margin:0 !important; padding:0 !important; width:100% !important; background-color:#fffef2; }
+    @media only screen and (max-width: 640px) {
+      .klai-shell { padding:24px 12px !important; }
+      .klai-card { width:100% !important; border-radius:10px !important; }
+      .klai-header { padding:28px 24px 20px !important; }
+      .klai-content { padding:28px 24px !important; }
+      .klai-footer { padding:22px 24px 26px !important; }
+      .klai-button a { display:block !important; text-align:center !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#fffef2;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#191918;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#fffef2;line-height:1px;">
+    You're one of the first companies to join Klai.
+    &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:#fffef2;">
+    <tr>
+      <td class="klai-shell" align="center" style="padding:40px 16px;">
+        <table role="presentation" class="klai-card" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;border:1px solid #e8e6de;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td class="klai-header" align="left" style="padding:34px 40px 24px;border-bottom:1px solid #e8e6de;background-color:#ffffff;">
+              <a href="https://getklai.com" style="text-decoration:none;">
+                <img src="https://getklai.com/logo-black.svg" alt="Klai" width="120" style="display:block;max-width:120px;height:auto;border:0;">
+              </a>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="klai-content" style="padding:34px 40px;color:#191918;font-size:16px;line-height:1.65;">
+              <p style="margin:0 0 18px 0;">Hi {{ .Tx.Data.name }},</p>
+              <p style="margin:0 0 18px 0;">You made it. You're one of the first 100 companies to join Klai, and that means more to us than we can put into words.</p>
+              <p style="margin:0 0 18px 0;">We started Klai because we believe AI belongs to all of us. Not to a handful of platforms. Not to whoever has the biggest servers or the deepest pockets. To us. To the organisations doing real work with real data, and who deserve the tools to do it safely, privately, and on their own terms.</p>
+              <p style="margin:0 0 18px 0;">By joining our waitlist, you've told us something important: that you share that belief.</p>
+              <p style="margin:0 0 18px 0;">We're opening access to our private beta carefully and intentionally, because we want to get this right with you, not just for you. One of us will reach out to you personally to walk you through onboarding and make sure you're set up for success from day one.</p>
+              <p style="margin:0 0 18px 0;">Thank you for believing in something different.</p>
+              <p style="margin:0 0 24px 0;">Talk soon,<br>Jantine, Mark &amp; Steven<br>Founders of Klai</p>
+
+              <p style="margin:0 0 10px 0;color:#666666;font-size:14px;line-height:1.6;">Pick a time yourself if you prefer:</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 28px 0;">
+                <tr>
+                  <td class="klai-button" style="border-radius:999px;background-color:#fcaa2d;">
+                    <a href="{{ .Tx.Data.cal_url }}" style="display:inline-block;padding:14px 30px;color:#191918;font-weight:600;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-decoration:none;border-radius:999px;font-size:16px;line-height:1;">Plan your intake</a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:36px 0 0 0;text-align:center;">
+                <img src="https://getklai.com/founders.jpg" alt="Jantine, Mark and Steven, founders of Klai" width="520" style="display:inline-block;max-width:100%;height:auto;border-radius:8px;border:0;">
+              </p>
+              <p style="margin:8px 0 0 0;color:#666666;font-size:13px;line-height:1.6;text-align:center;">Jantine, Mark &amp; Steven, founders of Klai</p>
+              <p style="margin:30px 0 0 0;color:#666666;font-size:12px;line-height:1.6;">Full URL if the button doesn't work:<br><span style="word-break:break-all;">{{ .Tx.Data.cal_url }}</span></p>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="klai-footer" style="padding:24px 40px 30px;border-top:1px solid #e8e6de;background-color:#faf9f6;">
+              <p style="margin:0;color:#666666;font-size:13px;line-height:1.6;text-align:center;">
+                Klai &bull; <a href="https://getklai.com" style="color:#a36404;text-decoration:none;">getklai.com</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
