@@ -4,6 +4,7 @@
 > Companion to [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md), which describes what runs today.
 > Created 2026-05-04 after holistic review of current code + 2026 RAG best-practice research.
 > Updated 2026-05-05: **Tier 1 + Tier 2 SHIPPED**. Measured impact on Voys-support: precision +61%, recall +154%, faithfulness moved from broken to 0.81.
+> Updated 2026-06-08 (doc-vs-code drift audit): the nightly RAGAS cron is now wired (`@app.periodic`); the query-rewrite model is `QUERY_REWRITE_MODEL` (default `mistral-small-2603`), not the `klai-fast` alias; the faithfulness alert fires at **0.80** (not 0.85). Two measurement caveats are tracked as gaps in [`product-gaps-backlog.md`](product-gaps-backlog.md): GAP-EVAL-01 (RAGAS ground-truth is a topic-label string, weakening the headline deltas) and GAP-EVAL-02 (the `expected_chunks` regression canaries are not checked).
 
 ---
 
@@ -18,7 +19,7 @@
 
 n = 30 queries, n_faithfulness_measured = 30/30 (100% — was 0/30 on baseline due to klai-fast 3072-token truncation, then 5/8 on klai-medium with default 1024-token cap, now fully measurable after raising the heavy-LLM cap to 8192).
 
-**Variants live on Voys today:** contextual_v1 (document-summary chunks), parent-child_v1 (small children for matching, large parents for context expansion), query_rewrite_v1 (klai-fast rewrite in litellm-hook), taxonomy_v1 (multi-KB classifier in litellm-hook — currently no-ops on Voys-support since the KB has 0 curated taxonomy nodes).
+**Variants live on Voys today:** contextual_v1 (document-summary chunks), parent-child_v1 (small children for matching, large parents for context expansion), query_rewrite_v1 (`QUERY_REWRITE_MODEL` rewrite — default `mistral-small-2603` — in litellm-hook), taxonomy_v1 (multi-KB classifier in litellm-hook — currently no-ops on Voys-support since the KB has 0 curated taxonomy nodes; the periodic re-cluster that would create nodes is unscheduled — GAP-TAX-01).
 
 **Caveat:** the eval harness calls retrieval-api directly and bypasses the litellm-hook, so query_rewrite_v1 + taxonomy_v1 contribute zero to the measured deltas above. The +61% / +154% / 0.81 numbers come from contextual_v1 + parent-child_v1 + the rebuild_kb backfill alone. Hook-level features will move metrics on the chat-completion path (real users) but are out of reach of this harness.
 
@@ -74,8 +75,17 @@ Two distinct truncation regressions had to be fixed in series before faithfulnes
 - `deploy/postgres/migrations/014_rag_eval_results.sql` — storage table + 2 indexes
 - `klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml` — 60 hand-curated Voys queries with mix-tags (easy_lookup / vague_pronoun / multi_doc_synthesis / long_tail / edge_case)
 - `deploy/grafana/provisioning/dashboards/rag-quality.json` — 4 metric panels + failed-row count, 7-day moving average, `$variant` template variable
-- `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` — `rag_eval_faithfulness_low` HIGH alert (faithfulness < 0.85 on 2 consecutive nights)
+- `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` — `rag_eval_faithfulness_low` HIGH alert (faithfulness **< 0.80** on 2 consecutive nights)
 - `docs/runbooks/rag-quality.md` — triage runbook for the alert
+
+> **Ground-truth caveat (GAP-EVAL-01/02).** Two harness limits affect how much the headline
+> deltas mean: (1) the RAGAS `reference` for `context_precision`/`context_recall` is
+> `', '.join(expected_topics)` — a 2-3 keyword label, not a reference answer
+> (`judge_client.py:275,297-310`), so those metrics partly measure keyword overlap; (2) the
+> `expected_chunks` "regression canaries" are committed in the suites but the runner never
+> compares retrieved-vs-expected chunks (`ragas_runner.py`), so a dropped canary chunk is
+> invisible. Wiring real reference answers + a canary hit/miss check would make the launch
+> decision trustworthy.
 
 ### Ad-hoc usage for variant experiments
 
@@ -84,11 +94,11 @@ docker exec klai-core-knowledge-ingest-1 \
   python -m knowledge_ingest.eval --suite chat --variant my-experiment
 ```
 
-`evaluate_retrieval_quality_nightly` is registered on the `RAG_EVAL` LLM-lane queue with `queueing_lock=f"rag-eval-{suite}"`. The actual nightly cron-trigger is not wired yet (knowledge-ingest has no periodic-task scheduler today); for now the operator triggers via the CLI above.
+`evaluate_retrieval_quality_nightly` is registered on the `RAG_EVAL` LLM-lane queue with `queueing_lock=f"rag-eval-{suite}"`. The nightly cron-trigger **is** wired now: a per-suite `@procrastinate_app.periodic` wrapper (`ragas_runner.py:~230`) defers the eval on schedule. The operator can still trigger ad-hoc via the CLI above.
 
 ### Eval-harness limitations to know
 
-- **Bypasses the litellm-hook.** The harness calls retrieval-api directly with the raw query, so it cannot measure features that live in the hook itself: `query_rewrite_v1` (klai-fast rewrite + history coreference) and `taxonomy_v1` (multi-KB classifier). Their effect shows up only on the live chat-completion path.
+- **Bypasses the litellm-hook.** The harness calls retrieval-api directly with the raw query, so it cannot measure features that live in the hook itself: `query_rewrite_v1` (`QUERY_REWRITE_MODEL` rewrite + history coreference) and `taxonomy_v1` (multi-KB classifier). Their effect shows up only on the live chat-completion path.
 - **No taxonomy nodes on Voys.** `taxonomy_v1` is also unmeasurable on Voys-support specifically because the KB has 0 curated taxonomy nodes today (the multi-KB hook logs `skip_reason=all_kbs_low_coverage` for every query). Tenants that curate a taxonomy will see filter-narrowing impact; Voys won't until support content is tagged.
 
 ---
@@ -119,10 +129,10 @@ Plus the rebuild_kb operator backfill (SPEC-RAG-REBUILD-KB-001 #341 + #345 recon
 1. User asks "Hoe troubleshoot ik Bubble?" — message arrives at the litellm-hook.
 2. Hook fetches per-org KB feature flag (Redis-cached, version-keyed).
 3. Hook fetches taxonomy trees for in-scope KBs in parallel with coverage map (Redis-cached, multi-KB, single retrieval-api roundtrip).
-4. Hook runs combined query-rewrite + taxonomy classifier in ONE klai-fast call: rewritten query + classified node IDs back. Anti-hallucination guard filters IDs to the union of valid IDs across all KBs.
+4. Hook runs combined query-rewrite + taxonomy classifier in ONE `QUERY_REWRITE_MODEL` call (default `mistral-small-2603`, in `klai_kb_query_rewrite.py`): rewritten query + classified node IDs back. Anti-hallucination guard filters IDs to the union of valid IDs across all KBs.
 5. Hook calls `/retrieve` with the rewritten query + (if coverage threshold met) `taxonomy_node_ids` filter.
-6. Retrieval-api: BGE-M3 dense + sparse + question vectors → Qdrant 3-leg RRF → Infinity reranker → top-K children selected.
-7. For each top-K child, retrieval-api expands to its parent chunk via `parent_chunk_id` lookup (PR #357 made the linkage actually work for legacy artifacts).
+6. Retrieval-api: BGE-M3 dense + sparse + question vectors → Qdrant RRF (+ graph leg, Graphiti) → Infinity reranker → top-K children selected (orchestration now in `api/retrieve.py` + `api/ranking.py` after the 2026-06-07 decomposition).
+7. For each top-K child, retrieval-api expands to its parent chunk via `parent_chunk_id` lookup (`services/parent_lookup.py`; PR #357 made the linkage actually work for legacy artifacts).
 8. Chunks return to the hook — provenance-labelled `[org]` / `[persoonlijk]` — and prepend to the system message.
 9. LLM sees: rewritten query + taxonomy-narrowed parent chunks (each prefixed with their per-document summary + per-chunk context_prefix from Anthropic pattern).
 
@@ -145,7 +155,7 @@ Three reasons that still apply:
 Tier 3 SPECs remain conditional on what current metrics reveal. With Tier 1 + Tier 2 numbers in hand, three observations frame the next decision:
 
 1. **Recall jumped much further than precision.** +154% recall vs +61% precision means parent-child + contextual retrieval is broadening what we find more than it's narrowing what we surface. Top-K is fuller of relevant chunks AND fuller of marginally-relevant chunks — and 3-leg RRF + Infinity reranker keep them survivable. The next ROI lever is precision, not recall.
-2. **Faithfulness 0.812 is healthy.** The alert threshold is 0.85; we're 4pp below but well clear of a misleading-answer crisis. No urgent investment here.
+2. **Faithfulness 0.812 is healthy.** The alert threshold is **0.80**; we are ~1.2pp **above** it — clear of a misleading-answer crisis, though with less margin than the earlier "4pp below 0.85" framing implied. No urgent investment here, but the small margin is worth watching.
 3. **answer_relevance flat at 0.71.** The eval bypasses the hook's query rewriter, so this is "does the retrieved context address the literal question" — and it didn't move because the embedding model is the same and chunks are still BGE-M3-matched. The hook-level rewrite WILL move this on real chat turns; just not measurable here.
 
 | Idea | When to consider | Source | Voys signal today |

@@ -9,10 +9,15 @@ Platform-wide architectural decisions relevant to all Klai repositories.
 | [platform.md](platform.md) | Stack choices, server layout, phases, models, knowledge system design principles, RAG stack, Compatibility Review |
 | [klai-knowledge-architecture.md](klai-knowledge-architecture.md) | Klai Knowledge platform architecture — §§0-14 incl. knowledge model, ingestion, retrieval (+ evidence-weighted scoring §7.4), gap detection, AI interface, multi-tenancy |
 | [knowledge-ingest-flow.md](knowledge-ingest-flow.md) | **Engineering reference** — the running ingest system on core-01: content sources, pipeline phases, Qdrant scope, Procrastinate scheduling, HyPE, docling |
-| [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) | **Engineering reference** — the running retrieval system: LiteLLM hook, 6-step pipeline, context injection, UI toggles, config values |
+| [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) | **Engineering reference** — the running retrieval system: LiteLLM hook (`klai_kb_*` modules), retrieval pipeline, strict/open answer policy, context injection, UI toggles, config values |
+| [regular-chat-knowledge-retrieval-citations.md](regular-chat-knowledge-retrieval-citations.md) | Source-traced walkthrough (NL) of the regular-chat retrieval + citation path — `_klai_kb_meta`, `EvidencePack.sources`, scope translation, Web Search interplay |
+| [retrieval-improvements-roadmap.md](retrieval-improvements-roadmap.md) | Strategy/roadmap — companion to `knowledge-retrieval-flow.md`: what shipped (Tier 1+2), the RAGAS eval harness + measured deltas, and the Tier-3+ plan |
+| [product-gaps-backlog.md](product-gaps-backlog.md) | **Type-B gaps** — where these docs describe a richer design than the code implements today; product-improvement opportunities with code evidence, referenced inline by `GAP-*` IDs |
 | [scribe-transcription.md](scribe-transcription.md) | Public-safe Scribe/transcription architecture, contributor model, and build/deploy split |
 
 > **Engineering references are authoritative.** When there is a conflict between an architecture doc and an engineering reference, the engineering reference wins — it is verified against live code.
+>
+> **Intended vs. current.** Several sections describe a *target* design that is built more simply today. Those carry an inline "Intended vs. current" callout pointing to a `GAP-*` ID in [product-gaps-backlog.md](product-gaps-backlog.md). The docs keep the ambition (it is the roadmap); the backlog tracks the delta.
 
 ## Research
 

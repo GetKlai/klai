@@ -1,7 +1,12 @@
 # Knowledge Retrieval Flow: How Chat with Knowledge Works
 
 > Engineering reference for the full retrieval pipeline — from user preference to LLM context injection.
-> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-05-06 post retrieval-coupling audit).
+> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-05-06 post retrieval-coupling audit; updated 2026-06-08 post doc-vs-code drift audit).
+>
+> **2026-06-08 update.** Two large changes landed since 2026-05-06 and are reflected below:
+> (1) `deploy/litellm/klai_knowledge.py` was decomposed (commit `dd4225695`, 1614→~1250 lines) into ~15 sibling `klai_kb_*.py` modules + a `klai_llm_safety/` package; this doc references `klai_knowledge.py` as the hook entrypoint and the new modules where a specific responsibility moved. (2) `klai-retrieval-api/retrieve.py` was decomposed (commit `91e8db29b`, 929→759 lines) into `retrieval_api/api/{retrieve,ranking,page_context,...}.py`. A **Strict / Open KB-only answer-policy** layer (6 prompt modes, fail-closed) also shipped — see the new section in Part 1.
+>
+> Places where this doc describes a *more capable* design than the code currently implements (the retrieval gate, the router LLM fallback) carry an **Intended vs. current** callout pointing to [`product-gaps-backlog.md`](product-gaps-backlog.md).
 >
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
@@ -41,7 +46,7 @@ User types a message (LibreChat | Partner API consumer | chat widget on external
         ├──▶ Is this message trivial? (greeting, "ok", "thanks") → skip, pass through
         │
         ├──▶ Resolve identity: org_id + kb_ids (+ user_id for LibreChat only)
-        │       widget / Partner API → kb_ids from credential; no KBScopeBar
+        │       widget / Partner API → kb_ids from credential; no ChatConfigBar
         │       LibreChat            → KB preferences (cached, ~30s propagation lag)
         │
         ├──▶ Fetch rules (strict guardrails) + templates (response scaffolds) for org/KB
@@ -119,13 +124,21 @@ without portal verification — collapsing the layered defense for partner traff
 
 ## Part 1: User preferences — what each setting does
 
-### The KBScopeBar
+### The ChatConfigBar
+
+> Renamed from `KBScopeBar` → `ChatConfigBar`. The component is
+> `klai-portal/frontend/src/routes/app/_components/ChatConfigBar.tsx`
+> ("Superdock-style config bar above the LibreChat iframe"); there is no
+> `KBScopeBar.tsx` in the tree. It is backed by the same
+> `/api/app/account/kb-preference` endpoint and the same fields
+> (`kb_retrieval_enabled`, `kb_personal_enabled`, `kb_slugs_filter`,
+> `kb_narrow`, plus `active_template_ids`).
 
 The knowledge settings bar sits above the LibreChat iframe in the portal. It controls
 four things. Each change is saved immediately to the database and propagates to the
 retrieval layer within about 30 seconds (the length of the LiteLLM cache TTL).
 
-**The KBScopeBar applies to LibreChat only.** Partner API keys and embedded chat widgets are scope-locked at credential creation: their `kb_ids` whitelist is stored on `partner_api_keys` (for API keys) or in the JWT payload (for widgets), and cannot be widened at runtime. They also never query personal scope. `kb_retrieval_enabled` is implicitly always `true` for these consumers — they exist specifically to answer from knowledge.
+**The ChatConfigBar applies to LibreChat only.** Partner API keys and embedded chat widgets are scope-locked at credential creation: their `kb_ids` whitelist is stored on `partner_api_keys` (for API keys) or in the JWT payload (for widgets), and cannot be widened at runtime. They also never query personal scope. `kb_retrieval_enabled` is implicitly always `true` for these consumers — they exist specifically to answer from knowledge.
 
 ---
 
@@ -197,24 +210,33 @@ isn't there, it says so explicitly. Good for compliance situations where you wan
 traceable to specific sources.
 
 **Technical:** Stored as `kb_narrow` (bool, default `false`) on `portal_users`. Controls
-which header is prepended to the knowledge context block:
+which header is prepended to the knowledge context block. The header text is produced by
+`kb_chunks_present_header(kb_narrow)` in `deploy/litellm/klai_kb_answer_policy.py` and is
+**English-structured and language-neutral** (SPEC-RAG-MULTILINGUAL-CHAT-001) — the model
+answers in the user's detected language. The old hardcoded-Dutch strings no longer exist.
 
-**Narrow mode — exact text injected:**
+**Narrow mode (`kb_narrow=true`) — exact header injected:**
 ```
-[Klai Kennisbank — beantwoord uitsluitend op basis van onderstaande bronnen.
-Gebruik geen algemene kennis buiten deze bronnen.
-Staat het antwoord er niet in? Zeg dan: 'Ik kan dit niet vinden in de kennisbank.']
-```
-
-**Broad mode (default) — exact text injected:**
-```
-[Klai Kennisbank — gebruik dit als aanvullende context bij je antwoord.
-Je mag dit aanvullen met je algemene kennis.]
+[Klai Knowledge Base — answer strictly using only the sources below. Do not use
+general knowledge beyond these sources. If the answer is not present, say so plainly
+in the user's detected language (e.g. 'I cannot find this in the knowledge base' /
+'Dat staat niet in de kennisbank' / 'Das steht nicht in der Wissensdatenbank').]
 ```
 
-These instructions are written in Dutch and sit at the top of the model's system message,
-above any other instructions. The model reads them as a hard constraint on how to use the
-provided context.
+**Broad mode (default, `kb_narrow=false`) — exact header injected:**
+```
+[Klai Knowledge Base — use this as supplementary context for your answer. You may
+complement it with your general knowledge.]
+```
+
+The header sits at the top of the model's system message, above any other instructions.
+The model reads it as a hard constraint on how to use the provided context.
+
+> **`kb_narrow` is the surface of a deeper answer-policy.** Narrow/broad is no longer
+> just a header-text swap. It feeds a Strict/Open answer-policy state machine (6 prompt
+> modes) that, in strict mode, never bypasses the retrieval gate, strips web-search tool
+> content, and emits a deterministic refusal when there is no citable evidence or chat
+> settings are unreachable. See the new **Strict / Open answer policy** section below.
 
 ---
 
@@ -235,6 +257,42 @@ on the database row. The version pointer uses a 30-second TTL, so within that wi
 LiteLLM will re-fetch the version number from the portal and discover it has changed.
 Old feature data remains in cache but becomes unreachable — the version it was keyed
 against is no longer the current version.
+
+---
+
+### Strict / Open answer policy (6 prompt modes)
+
+Since 2026-05-07 the narrow/broad toggle drives a small answer-policy state machine
+rather than only a header swap. The mode is resolved per request and recorded in
+`_klai_kb_meta` for the post-call citation guard. Defined in
+`deploy/litellm/klai_kb_chat_mode.py` (`ChatRetrievalPromptMode`) and enforced in
+`deploy/litellm/klai_kb_answer_policy.py`:
+
+| Mode | When | Behaviour |
+|---|---|---|
+| `general` | KB retrieval off | No KB context; normal chat |
+| `open_kb` | KB on, `kb_narrow=false`, chunks found | Supplementary-context header; model may use general knowledge |
+| `strict_kb` | KB on, `kb_narrow=true`, chunks found | Strict header; answer only from sources |
+| `strict_no_kb` | `kb_narrow=true`, **no KB selected** | Deterministic notice; no general-knowledge fallback |
+| `open_unavailable` | `kb_narrow=false`, chat settings unreachable (cold cache) | Degrades to a stated-uncertainty answer |
+| `strict_unavailable` | `kb_narrow=true`, chat settings unreachable | Deterministic refusal — **fail closed** |
+
+The **strict-mode contract** (commits `f45d98eeb`, `318cad715`, `2ba0f5740`,
+`947603eea`, `2a1bf209e`):
+
+- The retrieval gate is **never** bypassed in strict mode (`retrieve.py` sets
+  `gate_skipped_reason=strict_mode` so a strict request always runs retrieval).
+- Web-search tool content is **stripped** from context so the answer cannot leak from
+  the web in strict mode.
+- When retrieval returns no citable evidence, the hook emits a **deterministic refusal**
+  (`kb_zero_chunks_notice`) instead of letting the model answer from general knowledge.
+- When chat settings are unreachable (cold cache / portal down), strict mode **refuses
+  honestly** (`strict_kb_unavailable_message` / `settings_unavailable_message`) rather
+  than silently degrading to open behaviour.
+
+The deterministic refusal builders live in `klai_kb_answer_policy.py`
+(`strict_kb_unavailable_message`, `settings_unavailable_message`,
+`kb_zero_chunks_notice`).
 
 ---
 
@@ -326,6 +384,13 @@ original query is used unchanged.
 The result is `query_resolved` — this is what gets embedded and searched. The original
 query is never used for vector search.
 
+> **Caller-pre-resolved skip.** For the LibreChat path the hook already rewrites the query
+> in Step 0 (`klai_kb_query_rewrite`) and passes both the resolved query and the
+> pre-rewrite `raw_query` to retrieval-api. retrieval-api **skips** its own coreference
+> call when the caller already resolved it (commit `79f23a34c`), so coreference does not
+> run twice for chat traffic. It still runs for callers that submit a raw query (e.g. the
+> eval harness).
+
 ---
 
 ### Step 2: Embeddings (dense + sparse, in parallel)
@@ -372,6 +437,17 @@ hook receives `retrieval_bypassed: true` and injects nothing into the model's co
 When bypassed, the metadata `gate_bypassed: true` is attached to the request so
 downstream hooks can observe the decision.
 
+> **Intended vs. current ([`GAP-RETR-01`](product-gaps-backlog.md)).** The gate above
+> describes the *intended* behaviour. In production it never bypasses anything:
+> `gate.should_bypass()` loads its reference vectors from
+> `retrieval_api/data/gate_reference.jsonl`, which **does not exist** in the repo (the
+> `data/` dir contains only `.gitkeep`) and is never generated at build or deploy. With
+> no reference corpus, `should_bypass()` returns `(False, None)` unconditionally —
+> `RETRIEVAL_GATE_ENABLED` defaults `true` but the gate is inert, so *every* query
+> (trivial or not) runs the full embed + hybrid + rerank pipeline. A generator script
+> (`scripts/generate_gate_reference.py`) exists but is manual-only. Closing the gap =
+> commit a curated `gate_reference.jsonl` or run the generator at deploy.
+
 ---
 
 ### Step 4: Hybrid search in Qdrant
@@ -400,8 +476,15 @@ Leg 2: Dense query on "vector_questions" — what questions this chunk can answe
 Leg 3: Sparse query on "vector_sparse"   — keyword overlap
 ```
 
+> **Raw-query legs (rewrite-resilience).** When the query was rewritten (Step 0/1), the
+> search fuses **two additional legs** on the user's *pre-rewrite* `raw_query` — a dense
+> `vector_chunk` leg and a sparse leg — so literal terms the rewrite dropped still match.
+> And when `graphiti_enabled` (live in prod), a **graph leg** from FalkorDB joins the
+> fusion. So the "three-leg" framing is really dense + questions/HyDE + sparse (+ raw-query
+> dense + raw-query sparse when rewritten) (+ graph), all RRF-merged.
+
 Each leg fetches `max(candidates × 4, 20)` candidates (typically 240 with `candidates=60`).
-The three result sets are merged via **Reciprocal Rank Fusion**:
+The result sets are merged via **Reciprocal Rank Fusion**:
 
 ```
 rrf_score = 1 / (k + rank + 1)    where k = 60
@@ -718,32 +801,48 @@ Before the retrieval chunks are formatted, the hook fetches the active prompt te
 
 Ordering in the final system message: **templates → KB context (below) → any pre-existing system message.**
 
-### Rules (planned, SPEC-CHAT-GUARDRAILS-001)
+### LLM safety guardrails (SPEC-CHAT-GUARDRAILS-001 — shipped)
 
-Guardrail rules (PII block/redact, keyword block/redact) are a separate layer with a dedicated `klai-pii` microservice (Presidio + GLiNER). They operate on the **user message** (block or redact), not on the system prompt. Tracked in SPEC-CHAT-GUARDRAILS-001 — not yet live. When rules ship, the final-message ordering becomes: rules-applied user message → templates → KB context → pre-existing system.
+> Corrected 2026-06-08. The earlier "planned `klai-pii` (Presidio + GLiNER)
+> microservice" description was never built. SPEC-CHAT-GUARDRAILS-001 **shipped**
+> (commits `78e84c395`, `7cf628658`, `210f1d723`) as an **LLM-based** safety layer, not a
+> Presidio/GLiNER PII service. There is no `klai-pii` service and no `app_rules.py` in the
+> repo.
+
+Guardrails are implemented in `klai-libs/llm-safety` and `deploy/litellm/klai_llm_safety/`
+(`policy.py`, `openai_moderation.py`, `refusals.py`, `models.py`, `providers.py`) — an
+OpenAI-moderation-style input/output check wired into the LiteLLM hook (and into
+retrieval-api coreference). The input check is scoped to the latest user turn and produces
+a neutral refusal when content is blocked. It is integrated into the hook flow, not a
+separate microservice the request is proxied through.
 
 ### Building the context block
 
-The chunks are formatted into a structured context block. The header depends on narrow
-mode (LibreChat) or consumer class (widget / Partner API always use grounded-KB-only); the rest is the same:
+The chunks are formatted into a structured context block by
+`build_kb_context_prompt()` in `deploy/litellm/klai_kb_context_prompt.py`. The header
+depends on narrow mode (LibreChat) or consumer class (widget / Partner API always use
+grounded-KB-only). The block is **English-structured / language-neutral** (the old Dutch
+markers are gone) and ends with `[End knowledge base context]` followed by a
+`KB_LANGUAGE_REMINDER` line that tells the model to answer in the user's language, not the
+language of the source chunks (SPEC-RAG-MULTILINGUAL-CHAT-001). Illustrative shape:
 
 ```
-[Klai Kennisbank — gebruik dit als aanvullende context bij je antwoord.
-Je mag dit aanvullen met je algemene kennis.]    ← broad mode (default, LibreChat)
+[Klai Knowledge Base — use this as supplementary context for your answer. You may
+complement it with your general knowledge.]    ← broad mode (default, LibreChat)
 
-### Titel van het document  [org]
-Tekst van de eerste chunk.
+<KB ANSWER FORMAT instructions>
+<active templates, if any>
 
-### Iets uit mijn notebook  [persoonlijk]
-Tekst van een persoonlijk chunk.
+<rendered evidence chunks with [n] citation markers>
 
-[Einde kennisbank-context]
+[End knowledge base context]
+[LANGUAGE REMINDER] ... respond in the language of the user's most recent question ...
 ```
 
-Widget responses never include `[persoonlijk]` chunks — widgets are org-scope only. Their system prompt also differs: grounded-KB-only framing (no general knowledge), and snarkdown is used for markdown rendering in the widget.
+Widget responses never include personal-scope chunks — widgets are org-scope only. Their system prompt also differs: grounded-KB-only framing (no general knowledge), and snarkdown is used for markdown rendering in the widget.
 
-The `[persoonlijk]` / `[org]` label comes from the `scope` field on each chunk.
-If a chunk has no title, the fallback is `Kennisbank`.
+Each chunk's org-vs-personal scope comes from the `scope` field on the chunk (see
+`render_evidence_context` in `deploy/litellm/klai_kb_citation_render.py`).
 
 ---
 
@@ -760,11 +859,11 @@ injected context.
 ```
 messages sent to the model:
 ┌─────────────────────────────────────────────────────────────┐
-│ system: [Klai Kennisbank — ...]                             │
-│         ### Bron 1  [org]                                   │
-│         <chunk text>                                        │
+│ system: [Klai Knowledge Base — ...]                         │
+│         <rendered evidence chunks with [n] markers>         │
 │         ...                                                 │
-│         [Einde kennisbank-context]                          │
+│         [End knowledge base context]                        │
+│         [LANGUAGE REMINDER] ...                             │
 │                                                             │
 │         <original system message, if any>                   │
 ├─────────────────────────────────────────────────────────────│
@@ -857,7 +956,9 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | Variable | Default | Purpose |
 |---|---|---|
 | `KNOWLEDGE_RETRIEVE_URL` | (required) | URL of the retrieval API |
-| `KNOWLEDGE_RETRIEVE_TOP_K` | `5` | Chunks to inject per request |
+| `KNOWLEDGE_RETRIEVE_TOP_K` | `20` | Chunks requested per call (raised from `5` by SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-4) |
+| `top_k` (retrieve request) | `8` | retrieval-api request-model default, bounded `[1,50]` (SPEC-SEC-010) |
+| `QUERY_REWRITE_MODEL` | `mistral-small-2603` | Hook-side query-rewrite + taxonomy-classify model (was the `klai-fast` alias; now env-configurable) |
 | `KNOWLEDGE_RETRIEVE_TIMEOUT` | `3.0` | Retrieval API timeout (seconds) |
 | `KLAI_GAP_SOFT_THRESHOLD` | `0.4` | Reranker score below which gap is "soft" |
 | `KLAI_GAP_DENSE_THRESHOLD` | `0.35` | Dense score fallback for gap detection |
@@ -948,8 +1049,15 @@ snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improv
 | KB preferences (model) | `klai-portal/backend/app/models/portal.py` | `PortalUser` model, all five KB fields |
 | KB preferences (API) | `klai-portal/backend/app/api/app_account.py` | `GET`/`PATCH /api/app/account/kb-preference` |
 | KB feature (internal) | `klai-portal/backend/app/api/internal.py` | `GET /internal/v1/users/{id}/feature/knowledge` |
-| KB scope bar (UI) | `klai-portal/frontend/src/routes/app/_components/KBScopeBar.tsx` | The four-toggle preference bar (LibreChat only) |
-| LiteLLM hook | `deploy/litellm/klai_knowledge.py` | `KlaiKnowledgeHook` — intercepts and enriches requests |
+| Chat config bar (UI) | `klai-portal/frontend/src/routes/app/_components/ChatConfigBar.tsx` | The preference bar (LibreChat only); was `KBScopeBar.tsx` |
+| LiteLLM hook (entrypoint) | `deploy/litellm/klai_knowledge.py` | `KlaiKnowledgeHook` — orchestrates; delegates to the `klai_kb_*` modules below |
+| ↳ scope policy | `deploy/litellm/klai_kb_scope_policy.py` | `build_retrieve_body` / `resolve_kb_retrieval_scope` (preferences → retrieve body) |
+| ↳ query rewrite | `deploy/litellm/klai_kb_query_rewrite.py` | Hook-side rewrite + taxonomy classify (`QUERY_REWRITE_MODEL`) |
+| ↳ answer policy | `deploy/litellm/klai_kb_answer_policy.py` | 6 prompt modes, deterministic refusals, `kb_chunks_present_header` |
+| ↳ chat mode | `deploy/litellm/klai_kb_chat_mode.py` | `ChatRetrievalPromptMode` enum (general / open_kb / strict_kb / …) |
+| ↳ context block | `deploy/litellm/klai_kb_context_prompt.py` | `build_kb_context_prompt` + `KB_LANGUAGE_REMINDER` |
+| ↳ citation render | `deploy/litellm/klai_kb_citation_render.py` | `compose_(non_)streaming_kb_response`, `render_evidence_context`, **Bronnen** section |
+| ↳ LLM safety | `deploy/litellm/klai_llm_safety/` + `klai-libs/llm-safety` | SPEC-CHAT-GUARDRAILS-001 moderation (input/output) |
 | Retrieval pipeline | `klai-retrieval-api/retrieval_api/api/retrieve.py` | The seven-step retrieval pipeline |
 | Coreference | `klai-retrieval-api/retrieval_api/services/coreference.py` | Pronoun resolution via `klai-fast` |
 | Embeddings | `klai-retrieval-api/retrieval_api/services/tei.py` | Dense + sparse embedding via BGE-M3 |
@@ -970,7 +1078,7 @@ snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improv
 | Widget admin | `klai-portal/backend/app/api/admin_widgets.py` | CRUD on `widgets` table (SPEC-WIDGET-002) |
 | Widget bundle | `klai-widget/src/main.ts` | SolidJS entry point; bootstrap via `/partner/v1/widget-config` |
 | Templates | `klai-portal/backend/app/api/app_templates.py` | CRUD (SPEC-CHAT-TEMPLATES-001); resolved via `/internal/templates/effective` in the LiteLLM hook. |
-| Rules (planned) | klai-pii microservice + `app_rules.py` | SPEC-CHAT-GUARDRAILS-001 — not yet live. |
+| LLM safety (shipped) | `klai-libs/llm-safety` + `deploy/litellm/klai_llm_safety/` | SPEC-CHAT-GUARDRAILS-001 — LLM-moderation guardrails (no `klai-pii`/`app_rules.py`). |
 | Config | `klai-retrieval-api/retrieval_api/config.py` | All configurable values and defaults |
 | RAGAS eval harness | `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py` | `run_evaluation()` + `evaluate_retrieval_quality_nightly` Procrastinate task |
 | RAGAS suite loader | `klai-knowledge-ingest/knowledge_ingest/eval/suite_loader.py` | YAML schema validator + `Suite` / `SuiteQuery` dataclasses |
