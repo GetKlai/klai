@@ -270,6 +270,20 @@ KLAI_KB_CHAT_RENDER_MODE = _resolve_kb_render_mode(
 )
 
 
+def _sanitize_upstream_body(body: str, *, max_len: int = 200) -> str:
+    """Redact local service secrets before logging an upstream error body."""
+    if not body:
+        return ""
+    safe = body
+    secret_values = (
+        os.getenv("PORTAL_INTERNAL_SECRET", ""),
+        os.getenv("RETRIEVAL_INTERNAL_SECRET", ""),
+    )
+    for secret in sorted({s for s in secret_values if len(s) >= 8}, key=len, reverse=True):
+        safe = safe.replace(secret, "<redacted>")
+    return safe[:max_len]
+
+
 def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrategy:
     return _select_kb_render_strategy_for_mode(
         original_stream,
@@ -725,11 +739,10 @@ class KlaiKnowledgeHook(CustomLogger):
             # caller-service-header regression in production for 7 days.
             # @MX:REASON: SPEC-SEC-IDENTITY-ASSERT-001 Phase D + the
             # `retrieve-caller-service-header-mismatch` pitfall.
-            body_snippet = ""
-            try:
-                body_snippet = exc.response.text[:200]
-            except Exception:
-                pass
+            body_snippet = _sanitize_upstream_body(
+                getattr(exc.response, "text", ""),
+                max_len=200,
+            )
             logger.error(
                 "KlaiKnowledgeHook: retrieval HTTP %d — body=%r — failing loud",
                 exc.response.status_code,

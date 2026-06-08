@@ -16,6 +16,12 @@ dist-ssr
 # TanStack Router local cache (router tree generator temp files)
 .tanstack/
 
+# Playwright run output. Failure snapshots can include filled password fields.
+test-results/
+playwright-report/
+playwright-report-prod-tenant/
+e2e/prod-tenant/_config/playwright-report-prod-tenant/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

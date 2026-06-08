@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -123,6 +124,119 @@ class TestSearch:
 
         assert results[0]["ingested_at"] is None
         assert results[0]["assertion_mode"] is None
+
+    @pytest.mark.asyncio
+    async def test_qdrant_temporal_filter_respects_valid_until_invalid_at_and_valid_from(self):
+        """The live Qdrant filter excludes stale ingest-contract temporal payloads."""
+        from qdrant_client import AsyncQdrantClient
+        from qdrant_client.models import Distance, PointStruct, VectorParams
+
+        client = AsyncQdrantClient(location=":memory:")
+        await client.create_collection(
+            "klai_knowledge",
+            vectors_config={
+                "vector_chunk": VectorParams(size=2, distance=Distance.COSINE),
+                "vector_questions": VectorParams(size=2, distance=Distance.COSINE),
+            },
+        )
+
+        now = int(time.time())
+        vector = {"vector_chunk": [1.0, 0.0], "vector_questions": [1.0, 0.0]}
+        await client.upsert(
+            "klai_knowledge",
+            points=[
+                PointStruct(
+                    id=1,
+                    vector=vector,
+                    payload={
+                        "org_id": "org-1",
+                        "kb_slug": "kb-1",
+                        "text": "expired by valid_until",
+                        "valid_from": now - 7200,
+                        "valid_until": now - 3600,
+                    },
+                ),
+                PointStruct(
+                    id=2,
+                    vector=vector,
+                    payload={
+                        "org_id": "org-1",
+                        "kb_slug": "kb-1",
+                        "text": "expired by invalid_at",
+                        "invalid_at": "2000-01-01T00:00:00+00:00",
+                    },
+                ),
+                PointStruct(
+                    id=3,
+                    vector=vector,
+                    payload={
+                        "org_id": "org-1",
+                        "kb_slug": "kb-1",
+                        "text": "not yet valid",
+                        "valid_from": now + 3600,
+                        "valid_until": now + 7200,
+                    },
+                ),
+                PointStruct(
+                    id=4,
+                    vector=vector,
+                    payload={
+                        "org_id": "org-1",
+                        "kb_slug": "kb-1",
+                        "text": "active by valid_until",
+                        "valid_from": now - 3600,
+                        "valid_until": now + 3600,
+                    },
+                ),
+                PointStruct(
+                    id=5,
+                    vector=vector,
+                    payload={
+                        "org_id": "org-1",
+                        "kb_slug": "kb-1",
+                        "text": "timeless legacy",
+                    },
+                ),
+            ],
+        )
+
+        try:
+            with patch.object(search, "_get_client", return_value=client):
+                req = RetrieveRequest(
+                    query="test",
+                    org_id="org-1",
+                    scope="org",
+                    kb_slugs=["kb-1"],
+                )
+                results = await search.hybrid_search([1.0, 0.0], req, 10)
+        finally:
+            await client.close()
+
+        assert {r["text"] for r in results} == {
+            "active by valid_until",
+            "timeless legacy",
+        }
+
+    @pytest.mark.asyncio
+    async def test_knowledge_search_aliases_valid_from_until_to_api_fields(self):
+        """Retrieval API response fields expose ingest-contract temporal payloads."""
+        point = _make_point(
+            "c1",
+            "chunk text",
+            0.8,
+            org_id="org-1",
+            valid_from=1_700_000_000,
+            valid_until=253_402_300_800,
+        )
+        mock_client = AsyncMock()
+        mock_client.query_points.return_value = _make_query_response([point])
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="test", org_id="org-1", scope="org")
+            results = await search.hybrid_search([0.1, 0.2], req, 10)
+
+        assert results[0]["valid_at"] == "2023-11-14T22:13:20+00:00"
+        assert results[0]["invalid_at"] is None
 
     @pytest.mark.asyncio
     async def test_knowledge_search_passes_heading_path(self):

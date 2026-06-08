@@ -816,17 +816,16 @@ async def gitea_webhook(request: Request) -> dict:
     # Must read raw bytes before json.loads; body stream is consumed after first read
     raw_body = await request.body()
 
-    if settings.gitea_webhook_secret:
-        signature = request.headers.get("x-gitea-signature", "")
-        if not signature:
-            raise HTTPException(status_code=401, detail="Missing X-Gitea-Signature header")
-        expected = hmac.new(
-            settings.gitea_webhook_secret.encode(),
-            raw_body,
-            hashlib.sha256,
-        ).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    signature = request.headers.get("x-gitea-signature", "")
+    if not signature:
+        raise HTTPException(status_code=401, detail="Missing X-Gitea-Signature header")
+    expected = hmac.new(
+        settings.gitea_webhook_secret.encode(),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     try:
         body = json.loads(raw_body)
@@ -1172,9 +1171,11 @@ async def _list_gitea_md_files(repo_full_name: str) -> list[str]:
 
 async def _register_gitea_webhook(gitea_repo: str, webhook_url: str) -> None:
     """Register a push webhook on a Gitea repo."""
-    config: dict = {"url": webhook_url, "content_type": "json"}
-    if settings.gitea_webhook_secret:
-        config["secret"] = settings.gitea_webhook_secret
+    config: dict = {
+        "url": webhook_url,
+        "content_type": "json",
+        "secret": settings.gitea_webhook_secret,
+    }
     async with httpx.AsyncClient(
         base_url=settings.gitea_url,
         headers={"Authorization": f"token {settings.gitea_token}"},

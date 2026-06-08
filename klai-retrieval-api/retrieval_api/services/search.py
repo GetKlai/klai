@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import warnings
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from klai_kb_slugs import personal_kb_slug
@@ -35,6 +35,8 @@ warnings.filterwarnings("ignore", message="Api key is used with an insecure conn
 logger = structlog.get_logger()
 
 _client: AsyncQdrantClient | None = None
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_ACTIVE_UNTIL_SENTINEL = 253402300800
 
 
 def _get_client() -> AsyncQdrantClient:
@@ -48,20 +50,63 @@ def _get_client() -> AsyncQdrantClient:
     return _client
 
 
-def _invalid_at_filter() -> Filter:
-    """Build a filter that excludes chunks where invalid_at is set and in the past.
+def _epoch_seconds_to_iso(value: object, *, open_ended_sentinel: bool = False) -> str | None:
+    """Convert epoch-second temporal payload values to API ISO strings."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if open_ended_sentinel and value >= _ACTIVE_UNTIL_SENTINEL:
+            return None
+        try:
+            return (_EPOCH + timedelta(seconds=float(value))).isoformat()
+        except (OverflowError, ValueError):
+            return None
+    return None
 
-    Uses must_not with a range filter: a chunk is excluded only when invalid_at
-    is present AND <= now. Absent invalid_at fields pass through because Qdrant
-    range filters on absent fields return no match (so must_not = pass).
-    The old is_null=True approach did not match absent fields in Qdrant 1.17+.
+
+def _payload_valid_at(payload: dict) -> str | None:
+    return payload.get("valid_at") or _epoch_seconds_to_iso(payload.get("valid_from"))
+
+
+def _payload_invalid_at(payload: dict) -> str | None:
+    return payload.get("invalid_at") or _epoch_seconds_to_iso(
+        payload.get("valid_until"),
+        open_ended_sentinel=True,
+    )
+
+
+def _temporal_validity_filter() -> Filter:
+    """Exclude chunks outside either supported temporal payload contract.
+
+    Retrieval historically used ``valid_at``/``invalid_at`` while
+    knowledge-ingest writes ``valid_from``/``valid_until`` from
+    ``belief_time_start``/``belief_time_end``. Support both so stale points are
+    filtered even when old Qdrant payloads were not physically deleted.
     """
-    now_iso = datetime.now(UTC).isoformat()
+    now = datetime.now(UTC)
+    now_iso = now.isoformat()
+    now_epoch = int(now.timestamp())
     return Filter(
         must_not=[
             FieldCondition(
                 key="invalid_at",
                 range={"lte": now_iso},
+            ),
+            FieldCondition(
+                key="valid_until",
+                range={"lte": now_epoch},
+            ),
+            FieldCondition(
+                key="valid_at",
+                range={"gt": now_iso},
+            ),
+            FieldCondition(
+                key="valid_from",
+                range={"gt": now_epoch},
             ),
         ]
     )
@@ -189,7 +234,7 @@ async def _search_knowledge(
     client = _get_client()
 
     scope_conditions = _scope_filter(request)
-    must_conditions = [*scope_conditions, _invalid_at_filter()]
+    must_conditions = [*scope_conditions, _temporal_validity_filter()]
 
     # SPEC-KB-022 R3: taxonomy filter with backward-compatible fallback.
     # OR: match on new taxonomy_node_ids (array) OR old taxonomy_node_id (int).
@@ -288,8 +333,8 @@ async def _search_knowledge(
             "heading_path": r.payload.get("heading_path"),
             "parent_chunk_id": r.payload.get("parent_chunk_id"),
             "scope": r.payload.get("scope"),
-            "valid_at": r.payload.get("valid_at"),
-            "invalid_at": r.payload.get("invalid_at"),
+            "valid_at": _payload_valid_at(r.payload),
+            "invalid_at": _payload_invalid_at(r.payload),
             "ingested_at": r.payload.get("ingested_at"),
             "assertion_mode": r.payload.get("assertion_mode"),
             "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
@@ -330,7 +375,7 @@ async def fetch_chunks_by_urls(
         must=[
             *scope_conditions,
             FieldCondition(key="source_url", match=MatchAny(any=urls)),
-            _invalid_at_filter(),
+            _temporal_validity_filter(),
         ]
     )
 
@@ -363,8 +408,8 @@ async def fetch_chunks_by_urls(
             "heading_path": r.payload.get("heading_path"),
             "parent_chunk_id": r.payload.get("parent_chunk_id"),
             "scope": r.payload.get("scope"),
-            "valid_at": r.payload.get("valid_at"),
-            "invalid_at": r.payload.get("invalid_at"),
+            "valid_at": _payload_valid_at(r.payload),
+            "invalid_at": _payload_invalid_at(r.payload),
             "ingested_at": r.payload.get("ingested_at"),
             "assertion_mode": r.payload.get("assertion_mode"),
             "entity_pagerank_max": r.payload.get("entity_pagerank_max"),

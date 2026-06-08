@@ -115,6 +115,7 @@ class OnboardingInviteVars(_BaseVars):
 TEMPLATE_SCHEMAS: dict[str, type[_BaseVars]] = {
     "join_request_admin": JoinRequestAdminVars,
     "join_request_approved": JoinRequestApprovedVars,
+    "auto_join_admin_notification": AutoJoinAdminNotificationVars,
     "waitlist_confirmation": WaitlistConfirmationVars,
     "waitlist_invite": WaitlistInviteVars,
     "onboarding_invite": OnboardingInviteVars,

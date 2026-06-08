@@ -105,6 +105,24 @@ def _load_hook(
     return klai_knowledge
 
 
+def test_sanitize_upstream_body_redacts_internal_secrets(monkeypatch):
+    mod = _load_hook(
+        monkeypatch,
+        extra_env={
+            "PORTAL_INTERNAL_SECRET": "portal-secret-12345",
+            "RETRIEVAL_INTERNAL_SECRET": "retrieval-secret-12345",
+        },
+    )
+
+    out = mod._sanitize_upstream_body(
+        "invalid secret=portal-secret-12345 retrieval-secret-12345"
+    )
+
+    assert "portal-secret-12345" not in out
+    assert "retrieval-secret-12345" not in out
+    assert out.count("<redacted>") == 2
+
+
 async def _test_get_kb_feature(user_id: str, org_id: str, cache):
     """Unit-test feature resolver backed by the existing _make_cache helper.
 
