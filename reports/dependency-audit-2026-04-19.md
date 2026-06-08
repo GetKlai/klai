@@ -186,7 +186,7 @@ Mantine documents explicitly that **all `@mantine/*` packages must be installed 
 
 ---
 
-## 3. Docker images — `deploy/docker-compose.yml` + `deploy/docker-compose.gpu.yml`
+## 3. Docker images — public core compose
 
 Default pattern in this repo is `:latest` with a monthly `docker compose pull` cadence (per `VERSIONS.md`). The "Status" column assumes `:latest` is pulled regularly.
 
@@ -246,14 +246,11 @@ Default pattern in this repo is `:latest` with a monthly `docker compose pull` c
 | firecrawl-rabbitmq | `rabbitmq:3-alpine` | 4.2.5-alpine | 📌 **pinned per `VERSIONS.md`** — Firecrawl has not confirmed RabbitMQ 4.x compat (AMQP 1.0 default breaking change). **Do NOT bump without checking Firecrawl releases first.** |
 | firecrawl-api | `ghcr.io/mendableai/firecrawl:latest` | built from source (v1.x) | 📌 internal build |
 
-### GPU stack (`docker-compose.gpu.yml`)
+### GPU stack
 
-| Service | Image pin | Current latest | Status |
-|---|---|---|---|
-| tei | `ghcr.io/huggingface/text-embeddings-inference:1.5` | v1.9.3 | 🟠 **4 minor versions behind** (1.5 → 1.9). Test against `BAAI/bge-m3` compat before bumping. |
-| infinity | `michaelf34/infinity:latest` | 0.0.77 (Aug 2025) | ✅ rolling — upstream slowing |
-| bge-m3-sparse | built locally from `./bge-m3-sparse` | — | 📌 local build |
-| whisper-server | `ghcr.io/getklai/whisper-server:latest` | (internal build) | 📌 internal (faster-whisper → CUDA 12 / cuDNN 9 constraint per `platform/vllm.md`) |
+GPU production compose and operator version notes are private infra material.
+Do not publish live GPU service pins, host paths, or tunnel details from this
+report; audit them in `GetKlai/klai-infra`.
 
 ### Portal-api base image
 
@@ -265,7 +262,7 @@ Default pattern in this repo is `:latest` with a monthly `docker compose pull` c
 
 - **🟠 Verify Redis 8 upgrade path.** `redis:alpine` silently follows the latest major; Redis 8 (GA Aug 2025) ships with the Vector Sets + hash-field-TTL features but also new ACL defaults. Pin explicitly: either `redis:7-alpine` everywhere (matches vexa-redis) or `redis:8-alpine` after testing with your `REDIS_PASSWORD` + AOF config.
 - **🟠 `dxflrs/garage:v2.2.0` → v2.3.0.** Release notes needed, but upgrade is minor. Re-verify `[s3_web].bind_addr` field per existing pitfall.
-- **🟠 `text-embeddings-inference:1.5` → v1.9.3.** Pinned tag; four releases behind. Testing workflow: spin up `tei:1.9` with the same `--model-id` snapshot path → verify `/embed` latency and output dimension stay identical.
+- **GPU image pins:** audit in `GetKlai/klai-infra`; do not publish live GPU compose details in the public report.
 - **📌 Don't touch `rabbitmq:3-alpine`** without Firecrawl compatibility confirmation.
 - **Scheduled:** bump `python:3.12-slim` → `python:3.13-slim` in portal-api Dockerfile (coordinate with `pyproject.toml requires-python`, ruff `target-version`, and `.moai/rules` language hint).
 

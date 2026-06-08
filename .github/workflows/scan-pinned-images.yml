@@ -15,7 +15,6 @@ on:
     paths:
       # Re-scan on any compose change so new pins get scanned immediately
       - 'deploy/docker-compose.yml'
-      - 'deploy/docker-compose.gpu.yml'
       - 'docker-compose.dev.yml'
       - '.github/workflows/scan-pinned-images.yml'
 
@@ -61,7 +60,6 @@ jobs:
           #   mendableai/firecrawl             — built locally from source on the server
           IMAGES=$(yq eval-all '.services[].image' \
             deploy/docker-compose.yml \
-            deploy/docker-compose.gpu.yml \
             docker-compose.dev.yml \
             2>/dev/null \
             | sort -u \

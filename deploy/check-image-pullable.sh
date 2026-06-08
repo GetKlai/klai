@@ -1,17 +1,14 @@
 #!/bin/sh
 # Forcing function — fail loud at commit time when a vexaai/* image
-# referenced in compose files is not actually pullable.
+# referenced in public compose files is not actually pullable.
 #
-# Why this exists: PR #269 shipped `vexaai/transcription-service:0.10.6`
-# in deploy/docker-compose.gpu.yml. That tag does not exist on Docker
-# Hub — upstream's v0.10.6 release publishes 9 images, transcription-
-# service is built locally on gpu-01. The bad ref slipped through
-# review and only failed at `docker compose pull` time on gpu-01.
+# Why this exists: a public deploy compose tag that cannot be pulled will
+# only fail at deploy time unless we verify registry manifests first.
 #
 # This script catches that class of bug at commit time.
 #
 # Behaviour:
-#   1. For every vexaai/* image reference in deploy/docker-compose*.yml,
+#   1. For every vexaai/* image reference in public deploy compose files,
 #      run `docker manifest inspect` against the public registry.
 #   2. If the manifest exists → OK (image is pullable).
 #   3. If the manifest is missing AND the tag matches a known locally-
@@ -28,7 +25,7 @@
 
 set -eu
 
-FILES="deploy/docker-compose.yml deploy/docker-compose.gpu.yml"
+FILES="deploy/docker-compose.yml"
 FAIL=0
 PUBLIC_OK=0
 LOCAL_OK=0

@@ -15,7 +15,7 @@ on:
       - 'deploy/librechat/getklai/apply-canary-config.py'
       - 'deploy/librechat/getklai/patches/**'     # getklai-only LibreChat canary patches
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
-      - 'deploy/scripts/**'                       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — deploy scripts synced to /opt/klai/scripts
+      - 'deploy/scripts/**'                       # Public-safe deploy scripts; operator health scripts live in klai-infra
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
@@ -60,10 +60,10 @@ jobs:
             git clone --depth=1 --filter=blob:none --sparse \
               https://github.com/GetKlai/klai.git klai-compose-sync
             cd klai-compose-sync
-            # SPEC-SEC-024 M4.2 + M4.3: also pull grafana/provisioning + scripts/
-            # so Grafana picks up the new alert rule and the smoke-test reaches
-            # core-01. Matches how deploy/caddy and deploy/alloy live in the
-            # repo — config travels with compose.
+            # SPEC-SEC-024 M4.2 + M4.3: also pull Grafana provisioning and
+            # public-safe deploy scripts. Operator monitoring scripts
+            # (push-health, gpu-health, monitor coverage) are owned by
+            # GetKlai/klai-infra and are intentionally not synced here.
             git sparse-checkout set --skip-checks \
               deploy/docker-compose.yml \
               deploy/docker-compose.override.yml \
@@ -88,9 +88,9 @@ jobs:
             mkdir -p /opt/klai/litellm/klai_citations
             rsync -a --delete klai-libs/citations/klai_citations/ /opt/klai/litellm/klai_citations/
 
-            # Sync deploy scripts to /opt/klai/scripts/ so cron jobs,
-            # service-deploy workflows, and systemd timers all run the
-            # version from this repo.
+            # Sync public-safe deploy scripts to /opt/klai/scripts/ for
+            # service-deploy workflows and systemd timers. Operator health
+            # scripts are synced from klai-infra.
             mkdir -p /opt/klai/scripts
             for script in deploy/scripts/*.sh; do
               bash -n "$script"
@@ -99,7 +99,6 @@ jobs:
               install -m 0755 "$script" "/opt/klai/scripts/$(basename "$script")"
             done
             test -x /opt/klai/scripts/backup.sh
-            test -x /opt/klai/scripts/push-health.sh
 
             mkdir -p /opt/klai/librechat/getklai/patches
             rsync -a --delete deploy/librechat/getklai/patches/ /opt/klai/librechat/getklai/patches/

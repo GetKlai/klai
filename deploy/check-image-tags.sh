@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPEC-VEXA-003 REQ-U-002 enforcement — no mutable Vexa image tags.
 #
-# Fails the commit if any vexaai/* image in deploy manifests points at a
+# Fails the commit if any vexaai/* image in public deploy manifests points at a
 # mutable tag (latest, dev, staging) or a non-pinned form.
 #
 # Three pinned tag forms are accepted:
@@ -24,7 +24,7 @@
 
 set -eu
 
-FILES="deploy/docker-compose.yml deploy/docker-compose.gpu.yml"
+FILES="deploy/docker-compose.yml"
 FAIL=0
 
 for F in $FILES; do

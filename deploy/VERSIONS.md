@@ -1,6 +1,6 @@
 # Explicit Version Pins
 
-This file documents every external image version running on core-01 and gpu-01, plus the rationale for each pin. **Every external image in `docker-compose.yml`, `docker-compose.gpu.yml`, and `docker-compose.dev.yml` is pinned to an explicit version tag.** No `:latest` on external services.
+This file documents public-repo external image pins for the core stack and dev stack, plus the rationale for each pin. **Every external image in `docker-compose.yml` and `docker-compose.dev.yml` is pinned to an explicit version tag.** No `:latest` on external services.
 
 Automated dependency updates are handled by Dependabot / Renovate. Upgrades follow `docs/runbooks/version-management.md`.
 
@@ -8,7 +8,9 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 
 **Exception — local builds:** `klai/retrieval-api:local` and `ghcr.io/mendableai/firecrawl:latest` are built on-host from source and not pullable from a registry. Their "versions" are tracked by git SHAs recorded in docker-compose.yml comments.
 
-**Exception — Vexa stack (upstream v0.10.6.3, 2026-06-06):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot` are currently on `0.10.6.3` — pulled directly from Docker Hub (since v0.10.4 upstream publishes pre-built images). `deploy/check-image-tags.sh` enforces upstream version or timestamped-version tag form (no `:latest` / `:dev` / `:staging`). Upgrade cadence: track upstream stable tags; bump for material fixes (chunk-leak, OOM, security). See `https://github.com/Vexa-ai/vexa/releases` for changelog. **Exception within the exception**: `vexaai/transcription-service` is NOT published to Docker Hub — it stays locally-built on gpu-01 from upstream source (CUDA + faster-whisper). Currently `0.10.6.2-local-260524-1610` (built from upstream `v0.10.6.2` tag, 2026-05-24). The `<semver>-local-YYMMDD-HHMM` convention is whitelisted by `deploy/check-image-pullable.sh` (no registry manifest exists). Bumping runbook: `docs/runbooks/transcription-service-bump.md`.
+**Exception — Vexa stack (upstream v0.10.6.3, 2026-06-06):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot` are currently on `0.10.6.3` — pulled directly from Docker Hub (since v0.10.4 upstream publishes pre-built images). `deploy/check-image-tags.sh` enforces upstream version or timestamped-version tag form (no `:latest` / `:dev` / `:staging`). Upgrade cadence: track upstream stable tags; bump for material fixes (chunk-leak, OOM, security). See `https://github.com/Vexa-ai/vexa/releases` for changelog.
+
+GPU production image pins are intentionally not listed in this public repo because the live GPU compose, operator runbooks, host paths, and tunnel details belong in `GetKlai/klai-infra`.
 
 ---
 
@@ -70,18 +72,6 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 | Service | Image | Why stuck |
 |---|---|---|
 | `firecrawl-rabbitmq` | `rabbitmq:3-alpine` | RabbitMQ 4.0 made AMQP 1.0 the default protocol (breaking change from 3.x). [Firecrawl](https://github.com/firecrawl/firecrawl) has not published confirmed RabbitMQ 4.x support. Upgrade only after Firecrawl releases a compatibility statement. Current latest is 4.2.5-alpine. |
-
----
-
-## GPU stack — `deploy/docker-compose.gpu.yml`
-
-| Service | Image | Rationale |
-|---|---|---|
-| `tei` | `ghcr.io/huggingface/text-embeddings-inference:1.9` | BGE-M3 dense embeddings. **Output-dimension critical** — verify bge-m3 embedding parity (same vector output for same input) before any upgrade, otherwise retrieval scores silently drift. |
-| `infinity` | `michaelf34/infinity:0.0.77` | BGE reranker-v2-m3. Upstream slowing (last release Aug 2025). |
-| `transcription-worker-1`, `transcription-worker-2` | `vexaai/transcription-service:0.10.6.2-local-260524-1610` (locally built on gpu-01 — NOT on Docker Hub) | Vexa transcription-service (SPEC-VEXA-003 §3.4). Replaces the legacy custom `whisper-server` 146-line Python script. `faster-whisper` + Silero VAD + hallucination detection + two-tier admission (realtime/deferred) behind Nginx LB. CUDA 12.3.2 + cuDNN 9. Host port `127.0.0.1:8000` retained so `gpu-tunnel.service` and all consumer URLs stay unchanged. Bump procedure: `docs/runbooks/transcription-service-bump.md`. |
-| `transcription-api` | `nginx:1.30.1-alpine` | Least-connections load balancer in front of the two CUDA workers. Config at `deploy/vexa-transcription/nginx.conf`. Bumped from 1.27 to pick up the CVE-2026-42945 fix; nginx marks 1.30.1+ as not vulnerable. |
-| `bge-m3-sparse` | built from `./bge-m3-sparse` | Local build. Sparse embeddings sidecar for hybrid retrieval. |
 
 ---
 
