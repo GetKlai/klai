@@ -10,6 +10,7 @@ Platform-wide architectural decisions relevant to all Klai repositories.
 | [klai-knowledge-architecture.md](klai-knowledge-architecture.md) | Klai Knowledge platform architecture — §§0-14 incl. knowledge model, ingestion, retrieval (+ evidence-weighted scoring §7.4), gap detection, AI interface, multi-tenancy |
 | [knowledge-ingest-flow.md](knowledge-ingest-flow.md) | **Engineering reference** — the running ingest system on core-01: content sources, pipeline phases, Qdrant scope, Procrastinate scheduling, HyPE, docling |
 | [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) | **Engineering reference** — the running retrieval system: LiteLLM hook, 6-step pipeline, context injection, UI toggles, config values |
+| [scribe-transcription.md](scribe-transcription.md) | Public-safe Scribe/transcription architecture, contributor model, and build/deploy split |
 
 > **Engineering references are authoritative.** When there is a conflict between an architecture doc and an engineering reference, the engineering reference wins — it is verified against live code.
 

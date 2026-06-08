@@ -39,12 +39,9 @@ All patterns and pitfalls live in `.claude/rules/klai/`:
 
 ## Deployment
 
-| Server | Spec | Services |
-|--------|------|----------|
-| **core-01** | Hetzner EX44 dedicated | Full AI stack (30+ containers) |
-| **public-01** | Hetzner CX42 | Website, Twenty CRM, Fider, Uptime Kuma |
-
-SSH: `ssh core-01` (klai user), `ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64` for public-01
+Public docs describe product services and self-hosting templates only. Klai
+production server inventory, SSH access, host addresses, and operator procedures
+live in the private `GetKlai/klai-infra` repository.
 
 ## Repo Layout
 

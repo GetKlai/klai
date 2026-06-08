@@ -1,6 +1,8 @@
 # Klai Self-Hosting Guide
 
-This directory contains everything needed to self-host the Klai platform on a single server (core-01).
+This directory contains public self-hosting templates for the Klai platform on a
+single server. It is not a copy of Klai's private production infrastructure.
+Use your own host inventory, DNS targets, secrets, and deployment procedures.
 
 ---
 

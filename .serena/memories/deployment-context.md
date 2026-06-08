@@ -1,18 +1,21 @@
 # Deployment Context
 
-## Servers
-| Server | Role | SSH |
-|--------|------|-----|
-| core-01 | Portal API, LibreChat tenants, LiteLLM, Zitadel, Qdrant, Caddy, Redis | `ssh core-01` (klai user, id_ed25519) |
-| gpu-01 | TEI (BGE-M3 dense, :7997), Infinity (reranker, :7998), bge-m3-sparse (:8001), whisper-server (:8000) — SSH tunnel from core-01 at 172.18.0.1 | `ssh gpu-01` |
-| public-01 | Website, Twenty CRM, Fider, Uptime Kuma | `ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64` |
+Production deployment context is private. Live server inventory, SSH access,
+host addresses, tunnel topology, and operator procedures belong in the private
+`GetKlai/klai-infra` repository.
 
-## GPU Services (gpu-01 → core-01 SSH tunnel)
-GPU inference services run on gpu-01 and are accessed from core-01 containers via SSH tunnel bound at 172.18.0.1 (Docker host gateway):
-- `http://172.18.0.1:7997` — TEI (HuggingFace text-embeddings-inference:1.5, BAAI/bge-m3 dense embeddings)
-- `http://172.18.0.1:7998` — Infinity (michaelf34/infinity, BAAI/bge-reranker-v2-m3 reranker)
-- `http://172.18.0.1:8001` — bge-m3-sparse (FlagEmbedding sparse SPLADE sidecar)
-- `http://172.18.0.1:8000` — whisper-server (STT for scribe-api)
+## Public Service Model
+
+The public repo documents product services and self-hosting templates:
+
+- portal API and frontend
+- LiteLLM and LibreChat integration
+- knowledge ingestion and retrieval
+- Scribe transcription APIs
+- optional self-hosted inference backends
+
+Contributors do not need Klai production access to work on product behavior,
+tests, or public build workflows.
 
 Tunnel managed by: `systemctl status gpu-tunnel.service` on core-01
 Health check: `/opt/klai/scripts/gpu-health.sh` (also called from push-health.sh)

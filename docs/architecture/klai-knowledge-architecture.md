@@ -510,7 +510,10 @@ The `id` is the shared key across both stores. Qdrant point ID = PostgreSQL `art
 
 FalkorDB runs on core-01. Graphiti integration is built into `knowledge-ingest` Phase 2 enrichment (Step E) and a parallel graph search branch is called from `retrieval-api` alongside the Qdrant 3-leg RRF fusion. `GRAPHITI_ENABLED=true` on both containers in `deploy/docker-compose.yml`.
 
-Graph retrieval was temporarily disabled on the retrieval side in March 2026 (commit `3c6d1002`) because graph search + reranker took 35–60 s per query when their LLM/embedding/reranker dependencies ran on CPU. Both are back online now that gpu-01 (GEX44, RTX 4000 Ada) is serving TEI, Infinity reranker, and LiteLLM-routed inference.
+Graph retrieval was temporarily disabled on the retrieval side in March 2026
+(commit `3c6d1002`) because graph search + reranker took 35-60 s per query
+when their LLM/embedding/reranker dependencies ran on CPU. Both are back online
+now that the inference dependencies are served by GPU-backed runtime services.
 
 **Original decision rationale (V1 gate):** do not activate the graph layer until query analysis justifies it for B2B knowledge base query patterns.
 

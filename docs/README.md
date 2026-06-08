@@ -6,6 +6,7 @@ Shared knowledge base for the Klai monorepo. Edit directly here.
 
 | Directory | Contents |
 |-----------|----------|
+| `contributing/` | Contributor docs and public/private infrastructure boundary |
 | `patterns/` | Copy-paste solutions — devops, frontend, platform, infrastructure, logging, testing, code-quality |
 | `pitfalls/` | Mistakes to avoid — process, devops, infrastructure, platform, git, code-quality |
 | `architecture/` | Architecture decision records and compatibility reviews |

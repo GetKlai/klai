@@ -1730,10 +1730,8 @@ services:
   # Deployed at https://cal.getklai.com
   # DB: cal-db on klai-core-postgres-1 (role: cal_user).
   # Secrets in klai-infra/core-01/.env.sops (CAL_* prefix).
-  # Deviation from SELFHOST_NEW_SERVICE.md (public-01 via Coolify):
-  #   Hetzner DNS API token did not resolve for public-01 A-record addition;
-  #   *.getklai.com → 65.21.174.162 (core-01) wildcard is already live via
-  #   Caddy Hetzner-DNS plugin, so core-01 was the natural landing point.
+  # Deployment target and DNS records are environment-specific. Klai production
+  # host details live in the private infra repository.
   cal-com:
     image: calcom/cal.com:v6.2.0
     restart: unless-stopped

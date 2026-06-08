@@ -95,24 +95,3 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
-
-  deploy:
-    # Split out of build-push so the scan job (above) can gate the deploy.
-    # Previously the deploy step lived inside build-push, which meant a
-    # gpu-01 deploy failure would skip the scan job entirely (since scan
-    # `needs: build-push`). After SPEC-CI-TRIVY-POLICY-001 PR #3 the gate
-    # actually gates: deploy only runs if both build AND scan succeed.
-    needs: [build-push, scan]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy to gpu-01 (via core-01 jump host)
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.CORE01_HOST }}
-          username: klai
-          key: ${{ secrets.CORE01_DEPLOY_KEY }}
-          script: |
-            set -e
-            ssh -i /opt/klai/gpu-tunnel-key -o StrictHostKeyChecking=yes root@5.9.10.215 \
-              "docker pull ghcr.io/getklai/whisper-server:latest && cd /opt/klai-gpu && docker compose up -d whisper-server"

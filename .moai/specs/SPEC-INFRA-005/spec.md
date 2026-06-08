@@ -93,7 +93,8 @@ Success means: the next time an image pin, restart, or volume misconfiguration h
 - Introducing a new backup target beyond Hetzner Storage Box.
 - Rewriting any stateful service to use a different storage engine.
 - Multi-region replication / HA for any service.
-- LUKS full-disk encryption (covered in `klai-infra/SERVERS.md` roadmap).
+- host disk-encryption roadmap items tracked in the private `klai-infra`
+  server inventory.
 - Kubernetes migration (out of scope indefinitely for this stack).
 
 ---

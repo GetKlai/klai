@@ -38,6 +38,11 @@ bash setup.sh
 
 Pull requests are welcome. For significant changes, please open an issue first.
 
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). Klai production infrastructure
+details are intentionally private, but product code, tests, self-hosting
+templates, public build workflows, and architecture docs are open for
+contribution.
+
 See [CLAUDE.md](CLAUDE.md) for the codebase guide used by AI-assisted development.
 
 ## License

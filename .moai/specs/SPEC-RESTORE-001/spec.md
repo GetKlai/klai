@@ -55,7 +55,7 @@ Per `reports/audit-2026-05-04/i18n-a11y-backup.md` (8.19):
 
 ### Out of scope
 
-- LUKS migratie van core-01 (apart traject prod-01 migration)
+- host disk-encryption migration (tracked privately in infra)
 - VictoriaLogs offsite backup (apart SPEC)
 
 ## Acceptance criteria

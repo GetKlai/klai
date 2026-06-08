@@ -31,7 +31,7 @@ The current retrieval stack is healthy. Building blocks that already exist on `m
 | Layer | Implementation | File |
 |---|---|---|
 | Embedding | BGE-M3 (dense + sparse + late-interaction in one model) | `klai-knowledge-ingest/knowledge_ingest/embeddings/` |
-| Reranker | Infinity (cross-encoder, GPU-01) | tunnelled via `gpu-tunnel-key` |
+| Reranker | Infinity-compatible cross-encoder service | environment-specific endpoint |
 | Vector store | Qdrant — 3-leg RRF (`vector_chunk` + `vector_questions` + `vector_sparse`) | `klai-retrieval-api/retrieval_api/services/search.py` |
 | Knowledge graph | Graphiti / FalkorDB — entity & relationship extraction | `klai-knowledge-ingest/knowledge_ingest/graph.py` |
 | Query injection | LiteLLM pre-call hook | `deploy/litellm/klai_knowledge.py` |

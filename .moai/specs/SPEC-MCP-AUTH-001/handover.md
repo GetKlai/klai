@@ -92,8 +92,9 @@ MCP_OAUTH_DCR_RATE_LIMIT_PER_HOUR=10
 
 ### Stap 2 — DNS record voor `mcp.getklai.com`
 
-Hetzner DNS console: voeg `A`-record `mcp.getklai.com` → `65.21.174.162`
-(core-01 IP). Propagatie tot 24u. Verifieer met `dig mcp.getklai.com`.
+DNS/provider details and target host records are maintained in the private
+`GetKlai/klai-infra` repository. Propagation can take up to 24h. Verify with
+`dig mcp.getklai.com`.
 
 ### Stap 3 — Alembic migration uitvoeren
 

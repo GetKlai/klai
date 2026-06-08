@@ -116,38 +116,36 @@ Architecture principle: tenant = isolation layer. Everything is stored and track
 
 Two layers, two machines, never mixed:
 
-- **public-01 (Coolify)** — website, CRM, feedback, status page. Coolify manages routing.
-- **core-01 (Caddy)** — AI stack: LiteLLM, LibreChat, customer portal, Partner API (`api.getklai.com/partner/v1/*`), widget bundle (served from portal origin), all `*.getklai.com` subdomains including `dev.getklai.com`.
+- public website/runtime services may be separated from the main application
+  stack.
+- the main application stack contains LiteLLM, LibreChat, the customer portal,
+  Partner API routes, widget assets, and product APIs.
 
-## Server layout (Phase 1 complete — 2026-03)
+## Runtime Layout
 
-**Phase 1 complete.** First paying customer live, Portal API in production, provisioning active.
-For the authoritative and current service list per server, see `klai-infra/SERVERS.md`.
+The public repository documents portable runtime shapes, not Klai's live
+production inventory.
 
-**Current servers:**
+**Single-server self-hosting:**
 
-| Server | Type | Cost | Services |
-|---|---|---|---|
-| public-01 | CX42 — Hetzner HEL | €17/mo | Coolify, website, Twenty (CRM), Fider, Uptime Kuma |
-| core-01 | EX44 — Hetzner HEL | €47/mo | Caddy, Zitadel, MongoDB, Meilisearch, LiteLLM + Mistral API, Ollama (fallback), LibreChat containers, PostgreSQL, Redis, Qdrant, FalkorDB, VictoriaMetrics, VictoriaLogs, Grafana, Alloy, cAdvisor, Portal API (+ Partner API routes), klai-mailer, GlitchTip, scribe-api, docling-serve, SearXNG, Firecrawl, Crawl4AI, knowledge-ingest, klai-connector, retrieval-api, klai-knowledge-mcp. Dev-only: isolated LibreChat + LiteLLM for `dev.getklai.com` (shared infra secrets, own DB) |
-| gpu-01 | GEX44 + RTX 4000 Ada 20GB — Hetzner FSN | — | TEI (BGE-M3 dense, :7997), Infinity (reranker, :7998), bge-m3-sparse (:8001), whisper-server (:8000) — reached from core-01 via SSH tunnel at 172.18.0.1 |
-| monitor-01 _(planned)_ | CAX11 — Hetzner HEL | €5/mo | Dedicated VictoriaMetrics + VictoriaLogs + Grafana (currently co-hosted on core-01) |
+| Runtime group | Services |
+|---|---|
+| edge | Caddy and TLS automation |
+| identity | Zitadel and OIDC configuration |
+| application | portal, scribe-api, mailer, connector services |
+| chat and AI | LiteLLM, LibreChat, optional local inference |
+| knowledge | Qdrant, knowledge-ingest, retrieval-api, optional graph layer |
+| observability | metrics, logs, dashboards, and alerting templates |
 
-EX44 is production-ready from day one (64 GB RAM, dedicated hardware). No migration needed as we grow. ai-01 (GPU) follows at Phase 3 trigger.
+**Split production deployments:**
 
-**Phase 3+ (self-hosting AI):**
+Larger deployments may separate website, application, observability, and
+GPU-backed inference services. Live host inventory, provider choices, costs,
+addresses, SSH procedures, and production deployment topology are maintained in
+the private infra repository.
 
-| Server | Type | Cost | Services |
-|---|---|---|---|
-| core-01 | EX44 — Hetzner HEL | €47/mo | All app services (unchanged) |
-| ai-01 | H100 80GB — Nebius HEL | €1,100-1,950/mo | vLLM, Whisper, LLM inference |
-| monitor-01 | CAX11 — Hetzner HEL | €5/mo | VictoriaLogs + VictoriaMetrics + Grafana |
-
-**Total Phase 3: ~€1,150-2,000/mo**
-
-Principle: public-01 and core-01 share no ports and no machines. monitor-01 receives logs from all servers.
-
-**Phase 0 LiteLLM failover:** primary Mistral API, fallback Ollama on core-01. Automatic via LiteLLM fallback configuration.
+**LiteLLM failover:** primary external model providers and optional local
+fallback models are configured via LiteLLM fallback configuration.
 
 **Dev environment (`dev.getklai.com`):** parallel stack on core-01 with its own isolated LibreChat + LiteLLM containers, own dev database, Caddy routes `/api/*` via a dedicated `route` block. Inter-service infra secrets are reused from prod (KB / connector CRUD work without duplicating SOPS). Runbook in [`docs/dev.md`](../dev.md).
 

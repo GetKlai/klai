@@ -28,14 +28,11 @@ The pipeline runs automatically on every push to `main` that touches:
 
 ## Required GitHub Secrets
 
-Go to **Settings → Secrets and variables → Actions** in the `klai-portal` repo.
+For self-hosted deployments, configure your own deployment host and key in the
+repository or environment that owns your deploy workflow.
 
-| Secret | Value |
-|---|---|
-| `CORE01_HOST` | `65.21.174.162` (IPv4 — do not use the IPv6 address) |
-| `CORE01_DEPLOY_KEY` | The private SSH key that matches the deploy key on core-01 |
-
-> **Note:** The `appleboy/ssh-action` cannot parse bare IPv6 addresses. Always use the IPv4 address.
+Klai production deployment secrets and host targets are maintained in the
+private `GetKlai/klai-infra` repository, not in this public monorepo.
 
 ## SSH Deploy Key
 
