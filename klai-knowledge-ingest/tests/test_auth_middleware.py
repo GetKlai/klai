@@ -114,6 +114,12 @@ def test_request_with_correct_secret_passes(secured_client):
     ``X-Caller-Service`` header. This test is *about* the secret middleware,
     so we mock the identity layer to keep it focused; the identity contract
     is exercised in test_ingest_endpoints_identity_assertion.py.
+
+    ``ingest_document_route`` (routes/ingest.py:775) branches on ``req.user_id``:
+    a user-bound body routes through ``assert_caller_identity`` (the mocked
+    function below), while a tenant-only body would call
+    ``assert_caller_identity_tenant_only`` (unmocked → 400 missing_caller_service).
+    We send ``user_id`` so the request hits the mocked user-bound branch.
     """
     with (
         patch(
@@ -132,6 +138,7 @@ def test_request_with_correct_secret_passes(secured_client):
             json={
                 "org_id": "org1",
                 "kb_slug": "test",
+                "user_id": "user-1",
                 "path": "test.md",
                 "content": "hello",
             },

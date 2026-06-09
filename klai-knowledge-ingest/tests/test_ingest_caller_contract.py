@@ -106,6 +106,17 @@ def _find_callers() -> frozenset[str]:
         # definition the route handler isn't a caller of itself.
         if "@router.post" in text and "/ingest/v1/document" in text:
             continue
+        # SQLAlchemy ORM model files (``**/app/models/**``) never issue HTTP
+        # requests -- they define DB tables. ``kb_uploads.py`` mentions
+        # ``/ingest/v1/document`` only in its module docstring (it describes
+        # the upload-row lifecycle: "the markdown was handed off to
+        # /ingest/v1/document"). The real caller is the file-upload pipeline
+        # in app.services.* which already routes through
+        # ``knowledge_ingest_client.py`` (an EXPECTED_CALLERS entry). Skip
+        # model files so a docstring lifecycle note is not flagged as a
+        # phantom HTTP caller. SPEC-SEC-AUDIT-2026-04 C3.
+        if "app/models/" in py_file.relative_to(_REPO_ROOT).as_posix():
+            continue
         if not _HTTP_CALL_NEAR_PATH.search(text):
             continue
         rel = py_file.relative_to(_REPO_ROOT).as_posix()

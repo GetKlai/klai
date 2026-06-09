@@ -74,6 +74,13 @@ def _make_mock_settings() -> MagicMock:
     m.taxonomy_bootstrap_cluster_selection_method = "leaf"
     m.taxonomy_bootstrap_max_clusters = 20
     m.taxonomy_bootstrap_top_n_per_cluster = 8
+    # SPEC-TAXONOMY-MERGE-DETECT-001 consolidation settings — must be real numbers
+    # (production defaults from config.py), else proposal_generator.py:1056 crashes
+    # on `int > MagicMock`. With target_max=9 and these small test cluster sets,
+    # consolidation is correctly skipped and the base/per-cluster path runs.
+    m.taxonomy_consolidate_enabled = True
+    m.taxonomy_consolidate_target_min = 5
+    m.taxonomy_consolidate_target_max = 9
     return m
 
 

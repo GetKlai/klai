@@ -13,7 +13,7 @@ import pytest
 # app.core.config which requires the full Scribe app context.  We mock the
 # entire app.* package tree so that Python can resolve the import chain, then
 # add scribe-api to sys.path so the actual knowledge_adapter module is found.
-_scribe_api = str(__import__("pathlib").Path(__file__).resolve().parents[3] / "klai-scribe" / "scribe-api")
+_scribe_api = str(__import__("pathlib").Path(__file__).resolve().parents[2] / "klai-scribe" / "scribe-api")
 sys.path.insert(0, _scribe_api)
 
 _mock_app = ModuleType("app")
