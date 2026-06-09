@@ -288,41 +288,138 @@
     return null;
   }
 
-  function getTextarea() {
-    return (
-      document.querySelector("#prompt-textarea") ||
-      document.querySelector('div.ProseMirror[contenteditable="true"]') ||
-      document.querySelector('[contenteditable="true"].ProseMirror') ||
-      document.querySelector('fieldset [contenteditable="true"]') ||
-      document.querySelector('rich-textarea div[contenteditable="true"]') ||
-      document.querySelector("#searchbox") ||
-      document.querySelector('textarea[name="q"]') ||
-      document.querySelector("textarea[placeholder]") ||
-      document.querySelector('.ql-editor[contenteditable="true"]') ||
-      document.querySelector('div[contenteditable="true"][data-placeholder]') ||
-      document.querySelector('div[role="textbox"][contenteditable="true"]') ||
-      document.querySelector('div[contenteditable="true"]')
+  function isInKlaiUi(el) {
+    return !!el?.closest?.("#klai-review-overlay, #klai-shield-badge, #klai-shield-card, #klai-shield-toast, #klai-shield-loading, .klai-mp");
+  }
+
+  function isVisible(el) {
+    if (!el || !(el instanceof Element)) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0;
+  }
+
+  function isDisabled(el) {
+    return !!(
+      el?.disabled ||
+      el?.getAttribute?.("aria-disabled") === "true" ||
+      el?.closest?.("[disabled], [aria-disabled='true']")
     );
   }
 
-  function getSubmitButton() {
-    return (
-      document.querySelector('button[data-testid="send-button"]') ||
-      document.querySelector('button[aria-label="Send prompt"]') ||
-      document.querySelector('button[aria-label="Send Message"]') ||
-      document.querySelector('button[aria-label="Send message"]') ||
-      document.querySelector('button[aria-label="Send"]') ||
-      document.querySelector('button[data-testid="send-message"]') ||
-      document.querySelector('fieldset button[type="button"]:last-child') ||
-      document.querySelector('fieldset button:not([disabled])') ||
-      document.querySelector("button.send-button") ||
-      document.querySelector('mat-icon[data-mat-icon-name="send"]')?.closest("button") ||
-      document.querySelector('button[aria-label="Submit"]') ||
-      document.querySelector('button[aria-label="Verzenden"]') ||
-      document.querySelector('button[aria-label="Ask"]') ||
-      document.querySelector('button[aria-label="Bericht verzenden"]') ||
-      document.querySelector('form button[type="submit"]')
-    );
+  function normalizeComposerText(text) {
+    return String(text || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\r\n/g, "\n")
+      .trim();
+  }
+
+  function toEditable(el) {
+    if (!el) return null;
+    let node = el.nodeType === Node.TEXT_NODE ? el.parentElement : el;
+    if (!(node instanceof Element)) return null;
+    if (!isEditable(node)) {
+      node = node.closest('textarea, input, [contenteditable="true"], [role="textbox"]');
+    }
+    if (!isEditable(node) || isDisabled(node) || isInKlaiUi(node) || !isVisible(node)) return null;
+    return node;
+  }
+
+  function firstVisibleEditable(selectors, root = document) {
+    for (const selector of selectors) {
+      try {
+        for (const el of root.querySelectorAll(selector)) {
+          const editable = toEditable(el);
+          if (editable) return editable;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function getActiveEditable() {
+    return toEditable(document.activeElement);
+  }
+
+  function getTextarea() {
+    const active = getActiveEditable();
+    if (active) return active;
+
+    const siteSelectors = {
+      chatgpt: [
+        "#prompt-textarea",
+        'form textarea[placeholder]',
+        'form [contenteditable="true"][role="textbox"]',
+        'form [contenteditable="true"]'
+      ],
+      claude: [
+        'div.ProseMirror[contenteditable="true"]',
+        '[contenteditable="true"].ProseMirror',
+        'fieldset [contenteditable="true"]',
+        'form [contenteditable="true"][role="textbox"]',
+        'textarea[placeholder]'
+      ],
+      gemini: [
+        'rich-textarea div[contenteditable="true"]',
+        'div[role="textbox"][contenteditable="true"]',
+        'textarea[placeholder]'
+      ],
+      copilot: [
+        "#searchbox",
+        'textarea[placeholder]',
+        'div[role="textbox"][contenteditable="true"]'
+      ]
+    };
+
+    return firstVisibleEditable(siteSelectors[site?.key] || [
+      'textarea[placeholder]',
+      'textarea[name="q"]',
+      'div[role="textbox"][contenteditable="true"]',
+      '[contenteditable="true"].ProseMirror',
+      '.ql-editor[contenteditable="true"]'
+    ]);
+  }
+
+  function isLikelySendButton(btn) {
+    if (!btn || !(btn instanceof HTMLButtonElement) || !isVisible(btn) || isInKlaiUi(btn)) return false;
+    const label = `${btn.getAttribute("aria-label") || ""} ${btn.getAttribute("data-testid") || ""} ${btn.title || ""} ${btn.textContent || ""}`.toLowerCase();
+    if (/(stop|cancel|annuleer|upload|attach|voice|microphone|dictate|menu)/.test(label)) return false;
+    return true;
+  }
+
+  function firstSendButton(selectors, roots) {
+    for (const root of roots.filter(Boolean)) {
+      for (const selector of selectors) {
+        try {
+          for (const btn of root.querySelectorAll(selector)) {
+            if (isLikelySendButton(btn)) return btn;
+          }
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
+  function getSubmitButton(textarea = getTextarea()) {
+    const selectors = [
+      'button[data-testid="send-button"]',
+      'button[data-testid="send-message"]',
+      'button[aria-label="Send prompt"]',
+      'button[aria-label="Send Message"]',
+      'button[aria-label="Send message"]',
+      'button[aria-label="Send"]',
+      'button[aria-label="Submit"]',
+      'button[aria-label="Verzenden"]',
+      'button[aria-label="Ask"]',
+      'button[aria-label="Bericht verzenden"]',
+      "button.send-button",
+      'form button[type="submit"]'
+    ];
+    const form = textarea?.closest?.("form");
+    const fieldset = textarea?.closest?.("fieldset");
+    const composer = textarea?.closest?.('[data-testid*="composer" i], [class*="composer" i], [class*="input" i]');
+    return firstSendButton(selectors, [form, fieldset, composer, document]);
   }
 
   function isEditable(el) {
@@ -332,7 +429,7 @@
       const type = (el.type || "").toLowerCase();
       return ["text", "search", "email", "url", "tel", ""].includes(type);
     }
-    return !!el.isContentEditable;
+    return !!el.isContentEditable || el.getAttribute?.("contenteditable") === "true";
   }
 
   function getText(el) {
@@ -358,7 +455,7 @@
   }
 
   function setText(el, text) {
-    if (!el) return;
+    if (!el) return false;
     if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
       const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
@@ -366,7 +463,7 @@
       else el.value = text;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
-      return;
+      return normalizeComposerText(el.value) === normalizeComposerText(text);
     }
 
     el.focus();
@@ -378,16 +475,18 @@
 
     try {
       document.execCommand("insertText", false, text);
-      if (getText(el).trim() === text.trim()) {
+      if (normalizeComposerText(getText(el)) === normalizeComposerText(text)) {
         el.dispatchEvent(new Event("input", { bubbles: true }));
-        return;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
       }
     } catch (_) {}
 
-    el.innerHTML = text
-      .split("\n")
-      .map((line) => `<p>${line ? esc(line) : "<br>"}</p>`)
-      .join("");
+    if (el.classList.contains("ProseMirror")) {
+      return false;
+    }
+
+    el.textContent = text;
     try {
       el.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertReplacementText", data: text }));
     } catch (_) {}
@@ -397,6 +496,7 @@
       el.dispatchEvent(new Event("input", { bubbles: true }));
     }
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    return normalizeComposerText(getText(el)) === normalizeComposerText(text);
   }
 
   function setCaret(el, pos) {
@@ -405,10 +505,36 @@
       try {
         el.setSelectionRange(pos, pos);
       } catch (_) {}
+      return;
     }
     try {
       el.focus();
-    } catch (_) {}
+      const range = document.createRange();
+      const sel = window.getSelection();
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let remaining = Math.max(0, pos);
+      let node = walker.nextNode();
+      while (node) {
+        const length = node.nodeValue?.length || 0;
+        if (remaining <= length) {
+          range.setStart(node, remaining);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return;
+        }
+        remaining -= length;
+        node = walker.nextNode();
+      }
+      range.selectNodeContents(el);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (_) {
+      try {
+        el.focus();
+      } catch (_) {}
+    }
   }
 
   async function getSettings() {
@@ -709,17 +835,31 @@
   }
 
   let isProcessing = false;
+  let approvedSubmitUntil = 0;
   let lastPromptWasEnriched = false;
   const site = detectSite();
 
   function interceptSubmit() {
-    function handleSubmitAttempt(event) {
-      if (event._klaiApproved || isProcessing || !isContextValid()) return;
-      const textarea = getTextarea();
-      const raw = getText(textarea).trim();
-      if (!raw) return;
+    function hasApprovedSubmitBypass(event) {
+      return event._klaiApproved || Date.now() < approvedSubmitUntil;
+    }
+
+    function blockEvent(event) {
       event.stopImmediatePropagation();
       event.preventDefault();
+    }
+
+    function handleSubmitAttempt(event) {
+      if (hasApprovedSubmitBypass(event) || !isContextValid()) return;
+      if (isProcessing) {
+        blockEvent(event);
+        return;
+      }
+      const textarea = getTextarea();
+      if (!textarea) return;
+      const raw = getText(textarea).trim();
+      if (!raw) return;
+      blockEvent(event);
       isProcessing = true;
       processPrompt(raw, textarea).finally(() => {
         isProcessing = false;
@@ -785,31 +925,28 @@
     }
 
     function sendToLLM(finalPrompt, textarea) {
-      setText(textarea, finalPrompt);
-      function trySubmit(attempt) {
-        const btn = getSubmitButton();
-        if (btn && !btn.disabled) {
-          const click = new MouseEvent("click", { bubbles: true, cancelable: true });
-          click._klaiApproved = true;
-          btn.dispatchEvent(click);
-          return;
-        }
-        if (attempt < 15) {
-          setTimeout(() => trySubmit(attempt + 1), 150);
-          return;
-        }
-        const enter = new KeyboardEvent("keydown", {
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true
-        });
-        enter._klaiApproved = true;
-        textarea?.dispatchEvent(enter);
+      const target = textarea || getTextarea();
+      const inserted = setText(target, finalPrompt);
+      if (!inserted) {
+        showToast("Klai kon dit veld niet veilig automatisch bijwerken. Plak of verstuur handmatig.");
+        return;
       }
-      setTimeout(() => trySubmit(0), 300);
+
+      function trySubmit(attempt = 0) {
+        const btn = getSubmitButton(target);
+        if (btn && !isDisabled(btn)) {
+          approvedSubmitUntil = Date.now() + 2000;
+          btn.click();
+          return;
+        }
+        if (attempt < 4) {
+          setTimeout(() => trySubmit(attempt + 1), 120);
+          return;
+        }
+        showToast("Klai heeft de prompt klaargezet. Verstuur handmatig.");
+      }
+
+      setTimeout(() => trySubmit(), 120);
     }
 
     function attachToButton(btn) {
@@ -828,15 +965,18 @@
     document.addEventListener(
       "keydown",
       (event) => {
-        if (event.key !== "Enter" || event.shiftKey || event._klaiApproved || isProcessing || !isContextValid()) return;
+        if (event.key !== "Enter" || event.shiftKey || hasApprovedSubmitBypass(event) || !isContextValid()) return;
+        if (isProcessing) {
+          blockEvent(event);
+          return;
+        }
         const textarea = getTextarea();
         if (!textarea) return;
         const active = document.activeElement;
         if (active !== textarea && !textarea.contains(active) && active?.closest?.("[contenteditable]") !== textarea) return;
         const raw = getText(textarea).trim();
         if (!raw) return;
-        event.stopImmediatePropagation();
-        event.preventDefault();
+        blockEvent(event);
         isProcessing = true;
         processPrompt(raw, textarea).finally(() => {
           isProcessing = false;
@@ -999,7 +1139,11 @@
           sendBtn.disabled = false;
           return;
         }
-        replaceTriggerWithText(context);
+        if (!replaceTriggerWithText(context)) {
+          sendBtn.disabled = false;
+          status.textContent = "Invoegen lukt niet in dit veld.";
+          return;
+        }
         closeMentionPopover();
         showToast("Klai context ingevoegd");
       } catch (error) {
@@ -1031,7 +1175,7 @@
 
   function replaceTriggerWithText(insertText) {
     const el = mentionSourceEl || getTextarea();
-    if (!el) return;
+    if (!el) return false;
     const text = getText(el);
     const start = mentionTriggerStart >= 0 ? mentionTriggerStart : text.length;
     const end = mentionTriggerEnd >= start ? mentionTriggerEnd : text.length;
@@ -1040,12 +1184,17 @@
     const spacerBefore = before && !before.endsWith("\n") ? "\n\n" : "";
     const spacerAfter = after && !after.startsWith("\n") ? "\n\n" : "";
     const next = `${before}${spacerBefore}${insertText}${spacerAfter}${after}`;
-    setText(el, next);
+    const inserted = setText(el, next);
+    if (!inserted) {
+      showToast("Klai kon de context niet veilig invoegen in dit veld.");
+      return false;
+    }
     setCaret(el, before.length + spacerBefore.length + insertText.length);
+    return true;
   }
 
   function insertContextIntoComposer(text) {
-    const el = getTextarea() || document.activeElement;
+    const el = getTextarea() || getActiveEditable();
     if (!isEditable(el)) {
       showToast("Open eerst een promptveld");
       return false;
@@ -1057,11 +1206,15 @@
       mentionSourceEl = el;
       mentionTriggerStart = trigger.start;
       mentionTriggerEnd = trigger.end;
-      replaceTriggerWithText(text);
+      if (!replaceTriggerWithText(text)) return false;
     } else {
       const separator = current.trim() ? "\n\n" : "";
-      setText(el, `${current.trimEnd()}${separator}${text}`);
-      setCaret(el, `${current.trimEnd()}${separator}${text}`.length);
+      const next = `${current.trimEnd()}${separator}${text}`;
+      if (!setText(el, next)) {
+        showToast("Klai kon de context niet veilig invoegen in dit veld.");
+        return false;
+      }
+      setCaret(el, next.length);
     }
     showToast("Klai context ingevoegd");
     return true;
@@ -1071,8 +1224,8 @@
     document.addEventListener(
       "input",
       (event) => {
-        const el = event.target;
-        if (!isEditable(el)) return;
+        const el = toEditable(event.target);
+        if (!el) return;
         if (mentionPopover?.contains(el)) return;
         const text = getText(el);
         const caret = getCaretPos(el);
