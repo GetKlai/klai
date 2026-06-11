@@ -94,6 +94,7 @@ jobs:
     name: Scan ${{ matrix.target.key }}
     needs: enumerate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         target: ${{ fromJSON(needs.enumerate.outputs.targets) }}
@@ -137,7 +138,7 @@ jobs:
               --ignore-unfixed \
               --scanners vuln \
               --image-src remote \
-              --timeout 15m \
+              --timeout 6m \
               --skip-version-check \
               --exit-code 0 \
               ${{ matrix.target.image }}; then
