@@ -158,4 +158,6 @@ jobs:
           echo "Individual findings are in the [Security tab](${{ github.server_url }}/${{ github.repository }}/security/code-scanning)." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Targets scanned" >> "$GITHUB_STEP_SUMMARY"
-          echo '${{ needs.enumerate.outputs.targets }}' | jq -r '.[] | "- `\(.services | join(\", \"))` → `\(.image)`"' >> "$GITHUB_STEP_SUMMARY"
+          echo '${{ needs.enumerate.outputs.targets }}' \
+            | jq -r '.[] | (.services | join(", ")) as $services | "- `\($services)` -> `\(.image)`"' \
+            >> "$GITHUB_STEP_SUMMARY"
