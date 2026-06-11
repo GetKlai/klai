@@ -47,7 +47,8 @@ Remaining (folded into other gaps, not a temporal bug):
 - `soft_delete_artifact()` still updates PG only (`belief_time_end`), but same-path
   replacement ingest now links the just-closed artifact row via `superseded_by`.
   Qdrant hygiene relies on the delete-then-upsert above. If the Qdrant delete fails
-  after PG commit, divergence is silent — that is `GAP-SYNC-01`.
+  after PG commit, the nightly read-only reconciler should now alert, but no
+  automatic repair exists yet — that is `GAP-SYNC-01/H2`.
 - `valid_from`/`valid_until` are in every query's `must_not` and now get integer
   payload indexes during `ensure_collection()`. The broader filter-field audit
   remains in the improvement plan.
@@ -83,7 +84,7 @@ the transcript signal.
 |---|---|
 | `GAP-PROV-01` | Provenance DAG / entity registry / supersession is schema-only (0 INSERTs) → invalidation cascade + confidence calibration cannot fire |
 | `GAP-TAX-01` | Taxonomy never re-clusters (task registered but never scheduled) → not self-maintaining |
-| `GAP-SYNC-01` | Dual-store outbox (`embedding_queue`) + nightly reconciliation is schema-only → no crash-safe PG↔Qdrant sync |
+| `GAP-SYNC-01` | Dual-store outbox (`embedding_queue`) is still schema-only; nightly read-only reconciliation now detects PG↔Qdrant drift but does not repair it |
 
 ### Sensitive — compliance
 
@@ -202,20 +203,21 @@ is a threshold classifier writing an exact-string event log to Postgres.
   retrieval scoring.
 - **Evidence:** `klai-knowledge-ingest/knowledge_ingest/routes/ingest.py:177,214-215,541`.
 
-### GAP-SYNC-01 — Dual-store outbox + reconciliation is schema-only  ·  L  ·  ⊙
+### GAP-SYNC-01 — Dual-store outbox is schema-only; reconciliation is detect-only  ·  L  ·  ⊙
 - **Intended (§5):** transactional outbox — PG write (incl. `embedding_queue`
   row) → worker → Qdrant upsert → mark processed; retry from PG on failure;
   nightly bidirectional reconciliation.
 - **Reality:** `knowledge.embedding_queue` exists but has **0 INSERTs** (every
   reference is a DELETE cleanup). The write path is synchronous PG-then-Qdrant in
-  the same handler; a Qdrant failure after PG commit leaves silent divergence
-  with no queue to recover from. The only "reconcile" in the tree is crawl
-  stale-path reconciliation (SPEC-INGEST-RECONCILE-001), not PG↔Qdrant.
+  the same handler; a Qdrant failure after PG commit leaves drift with no queue
+  to recover from. A nightly read-only PG↔Qdrant reconciliation job now logs and
+  alerts on missing/orphaned artifact payloads, but deliberately does not repair.
 - **Why it matters:** this codebase already has a history of silent PG↔Qdrant
   divergence on connector deletes; the documented outbox is exactly the
   crash-safety that's missing.
 - **Evidence:** `0001_baseline.py:222-233,599-602`;
-  `routes/ingest.py:644-672`; 0 INSERTs (verified by hand).
+  `routes/ingest.py:644-672`; `knowledge_ingest/consistency_reconcile.py`;
+  `deploy/grafana/provisioning/alerting/ingest-rules.yaml`.
 
 ## Cluster 3 — Epistemic / evidence scoring (§3.2, §7.4)
 

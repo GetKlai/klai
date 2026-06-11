@@ -11,6 +11,8 @@ Evidence markers used throughout: **[doc]** = from repo docs, **[code ✓]** = v
 
 Implementation update (2026-06-11, Codex): Phase 0.3/0.4 first slice landed in code. Scored eval runs now require `reference_answer`, RAGAS receives the full reference answer (no implicit `expected_topics` fallback), shipped suites have `reference_answer`, `expected_chunks` canaries hard-fail before fuzzy scoring, and Grafana alert `rag_eval_canary_dropped` + runbook were added. Phase 0.2 temporal hygiene also landed: same-path re-ingest now records the PG `superseded_by` chain after the replacement artifact exists, `valid_from`/`valid_until` get Qdrant integer payload indexes, and tests cover supersession linking plus in-memory Qdrant delete-then-upsert behavior. Remaining before relying on the new eval numbers: live `manual-canary-debug` verification of the dormant canary markers, then recapture `baseline-v5`.
 
+Implementation update (2026-06-11, Codex): Phase 0.5 light consistency watch landed. `reconcile_pg_qdrant` runs as a nightly read-only Procrastinate task, compares active synced PG artifacts with distinct Qdrant artifact payloads, logs `pg_qdrant_reconcile`, and Grafana alert `pg_qdrant_reconcile_failed` fires on discrepancies. It deliberately does not repair drift; the full outbox remains H2.
+
 ---
 
 ## 0. The backlog itself is stale — refresh it first
@@ -38,7 +40,7 @@ All other gaps (`LOOP-*`, `PROV-*`, `SYNC-01`, `TAX-*`, `MCP-01`, `PRIV-01`, `EV
 1. **Fix evaluation first (GAP-EVAL-01 + 02) — code slice landed, live baseline pending.** The 2026-06-11 patch requires `reference_answer` for scored suite runs, removes the implicit topic-label fallback, and hard-fails `expected_chunks` canaries before fuzzy scoring. Every activation decision (evidence tier, gate, taxonomy, Tier-3) still gates on these numbers, so the next operational step is live canary verification + recapturing `baseline-v5`.
 2. **Temporal correctness is now mostly closed; keep the consistency guard next.** Re-verification (2026-06-11) showed the serving path is safe: dual-contract filter + delete-then-upsert inside both Qdrant upsert functions. The follow-up slice now links superseded PG artifacts, adds temporal payload indexes, and tests same-path re-ingest cleanup. The remaining material risk is dual-store divergence if Qdrant delete/upsert fails after PG state changes (#4).
 3. **Force the evidence-tier shadow-mode decision.** Shadow has been running since March, pays `deepcopy + apply()` CPU on every request, and the FOLLOWUP-001 deadline passed without the A/B ever being built **[code ✓]**. Activate / temporal-only / decommission / flags-off — but decide.
-4. **PG↔Qdrant consistency watch (light GAP-SYNC-01).** Not the outbox yet: a nightly read-only reconciliation count + alert. This codebase has a documented history of silent divergence; detection is one job, no write-path surgery.
+4. **PG↔Qdrant consistency watch (light GAP-SYNC-01) — code slice landed.** Not the outbox yet: the nightly read-only reconciliation count + alert now exists. Next step is to inspect the first production baseline before deciding whether H2 outbox work is justified.
 5. **Run the Qdrant `is_tenant` migration** on the existing collection (script exists; Qdrant supports zero-downtime online reindex — [Qdrant FAQ](https://qdrant.tech/documentation/faq/qdrant-fundamentals/) **[online]**). This is the recall/scale guarantee the single-collection decision was built on.
 
 ### Top 5 quick wins (S, close to config)
@@ -283,7 +285,8 @@ Removed 2026-06-08 **[code ✓]**. The v1 plan's chunk_type experiment is droppe
 #### H1. Read-only reconciliation job (light GAP-SYNC-01) — Phase 0/1
 
 - **Problem:** write path is synchronous PG-then-Qdrant without compensation (`routes/ingest.py:554-680` **[code ✓]**); Qdrant failure after PG commit = silent divergence; happened before.
-- **Target v1:** nightly task: per org/kb, active PG artifacts vs distinct Qdrant `artifact_id` (facet/scroll) + per-artifact chunk sample; checks (v1 list — adopted): active PG artifacts missing in Qdrant, Qdrant points without active PG artifact, metadata mismatches. Discrepancy → structlog event + Grafana alert. **Shadow reconciler first — report only, never auto-delete** (v1's "reconciler deletes valid legacy points" failure mode).
+- **Status (2026-06-11): code slice landed.** Nightly task compares active synced PG artifacts against distinct Qdrant `(org_id, kb_slug, path, artifact_id)` payloads via scroll. It logs `pg_qdrant_reconcile` with missing/orphan counts and samples; Grafana alert `pg_qdrant_reconcile_failed` fires on `status=failed`. **Shadow only: report, never auto-delete.**
+- **Target v1:** add operational baseline after the first production run and decide whether drift warrants H2 outbox work. Metadata-mismatch checks beyond artifact identity remain part of the broader audit.
 - **Effort: M.**
 
 #### H2. Outbox v2 — only if H1 proves drift
@@ -338,7 +341,7 @@ conceptually (v1) — keep. **Effort: M–L / deferred.**
 | 0.2 | ~~Temporal hygiene~~ landed 2026-06-11: delete-then-upsert confirmed, PG `superseded_by` chain linked on replacement ingest, temporal Qdrant indexes added, regression tests added | S | A1 |
 | 0.3 | Eval: ~~reference answers + suite schema~~ landed; source review + **new baseline-v5** pending | S–M | D1 |
 | 0.4 | Eval: ~~canary hard-fail + alert~~ landed; live canary debug pending | S | D2 |
-| 0.5 | PG↔Qdrant reconciliation count (read-only, shadow) + alert | M | H1 |
+| 0.5 | ~~PG↔Qdrant reconciliation count~~ landed 2026-06-11: nightly read-only shadow job + `pg_qdrant_reconcile_failed` alert | M | H1 |
 | 0.6 | Evidence-tier: build + run the A/B → decide (or flags-off) | M | G1 |
 | 0.7 | GAP-PRIV-01 policy decision on the agenda (decision, not code) | — | J |
 | 0.8 | Qdrant tenant-index status verifier/health check (read-only) | S | C1 |
@@ -414,7 +417,7 @@ New named tests (merged v1+v2):
 
 - Retrieval: `retrieval_decision_record` — `gate_would_bypass`/`gate_bypassed`/`gate_margin` (per language/tenant), `router_layer_used`, `expanded_in_top_k`, `confidence_band`, `shadow_eval` order-diffs; new p50/p95-per-step panel.
 - Ingest: `ingest_complete`, `enrichment_enqueue_skipped` (will carry the personal carve-out reason), `enrichment_complete`, `enrichment_infra_failed`, `graphiti_episode_started`, `graphiti_aborted_artifact_missing`.
-- Consistency: new `pg_qdrant_reconcile` event + alert on discrepancy > 0; Qdrant payload schema snapshot for `org_id.is_tenant`; embedding-queue depth/age/dead-letters once H2 lands.
+- Consistency: `pg_qdrant_reconcile` event + `pg_qdrant_reconcile_failed` alert on discrepancy > 0; Qdrant payload schema snapshot for `org_id.is_tenant`; embedding-queue depth/age/dead-letters once H2 lands.
 - Gap loop: dedup merge rate, judge verdict distribution, editor accept/dismiss rate, reopened rate, transcript-arm candidates per transcript + PII-redaction hit rate.
 - Existing guardrails stay: `rag-quality` dashboard + `rag_eval_faithfulness_low` (<0.80) alert.
 

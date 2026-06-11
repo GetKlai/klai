@@ -107,6 +107,33 @@ async def get_active_content_hash(
     return row
 
 
+async def list_active_synced_artifacts(conn: asyncpg.Connection) -> list[dict]:
+    """Return active artifacts that should have corresponding Qdrant chunks."""
+    rows = await conn.fetch(
+        """
+        SELECT
+          id::text AS artifact_id,
+          org_id,
+          kb_slug,
+          path
+        FROM knowledge.artifacts
+        WHERE belief_time_end = $1
+          AND index_status = 'synced'
+        ORDER BY org_id, kb_slug, path, id
+        """,
+        _SENTINEL,
+    )
+    return [
+        {
+            "artifact_id": str(row["artifact_id"]),
+            "org_id": str(row["org_id"]),
+            "kb_slug": str(row["kb_slug"]),
+            "path": str(row["path"]),
+        }
+        for row in rows
+    ]
+
+
 async def create_artifact(
     conn: asyncpg.Connection,
     org_id: str,

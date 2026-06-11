@@ -224,6 +224,36 @@ async def test_get_active_content_hash_only_uses_synced_artifacts():
 
 
 @pytest.mark.asyncio
+async def test_list_active_synced_artifacts_only_returns_synced_active_rows():
+    conn = _make_conn()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {
+                "artifact_id": "artifact-1",
+                "org_id": "org-1",
+                "kb_slug": "kb",
+                "path": "page.md",
+            }
+        ]
+    )
+
+    result = await pg_store.list_active_synced_artifacts(conn)
+
+    assert result == [
+        {
+            "artifact_id": "artifact-1",
+            "org_id": "org-1",
+            "kb_slug": "kb",
+            "path": "page.md",
+        }
+    ]
+    sql = conn.fetch.call_args[0][0]
+    assert "belief_time_end = $1" in sql
+    assert "index_status = 'synced'" in sql
+    assert conn.fetch.call_args[0][1] == _SENTINEL
+
+
+@pytest.mark.asyncio
 async def test_soft_delete_updates_belief_time_end():
     conn = _make_conn()
     with patch("knowledge_ingest.pg_store.time.time", return_value=1_700_000_000):

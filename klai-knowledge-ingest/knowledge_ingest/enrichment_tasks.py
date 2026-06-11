@@ -116,6 +116,10 @@ def init_app(connector: Any) -> Any:
 
     register_stale_pending_artifact_reaper(_procrastinate_app)
 
+    from knowledge_ingest.consistency_reconcile import register_consistency_reconcile_task
+
+    register_consistency_reconcile_task(_procrastinate_app)
+
     return _procrastinate_app
 
 

@@ -488,7 +488,9 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 >   artifact row to the replacement artifact. This gives PG a supersession chain
 >   for ordinary re-ingest, but broader entity/provenance consumers remain partial.
 > - `embedding_queue` (transactional outbox): **0 INSERTs** — the write path is a direct
->   PG-then-Qdrant write with no outbox, retry, or nightly reconciliation — GAP-SYNC-01.
+>   PG-then-Qdrant write with no outbox or retry. A nightly read-only
+>   PG↔Qdrant reconciliation job now detects divergence and alerts, but does not
+>   repair it — GAP-SYNC-01/H2.
 > - **Temporal-validity bug — FIXED 2026-06-11 on the serving path:** retrieval now uses
 >   a dual-contract filter (`search.py::_temporal_validity_filter`) covering both the
 >   legacy `valid_at`/`invalid_at` and the ingest-written `valid_from`/`valid_until`
