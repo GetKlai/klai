@@ -594,13 +594,19 @@ class TestPortalOrgModelColumn:
     def test_platform_unlocked_features_in_mapper(self) -> None:
         from sqlalchemy import inspect
 
-        from app.models.portal import PortalOrg
+        from app.models.portal import DEFAULT_PLATFORM_UNLOCKED_FEATURES, PortalOrg
 
         mapper = inspect(PortalOrg)
         col_names = {c.key for c in mapper.mapper.column_attrs}
         assert "platform_unlocked_features" in col_names, (
             "PortalOrg must have 'platform_unlocked_features' mapped column (Phase 5A migration)"
         )
+
+        org = PortalOrg(zitadel_org_id="zitadel-org", name="Org", slug="org", plan="knowledge")
+        assert org.platform_unlocked_features is None
+        default_factory = PortalOrg.__table__.c.platform_unlocked_features.default.arg
+        assert default_factory(None) == list(DEFAULT_PLATFORM_UNLOCKED_FEATURES)
+        assert set(DEFAULT_PLATFORM_UNLOCKED_FEATURES) == {"partner_api", "scribe", "widgets"}
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 
+DEFAULT_PLATFORM_UNLOCKED_FEATURES: tuple[str, ...] = ("partner_api", "scribe", "widgets")
+
 
 class PortalOrg(Base):
     __tablename__ = "portal_orgs"
@@ -111,6 +113,9 @@ class PortalOrg(Base):
     # column for all tenant extensions. Stores every Klai-staff-managed feature
     # unlock for this org: scribe, docs (= user-facing products with profile-
     # floor), partner_api, widgets, custom_mcps (= platform-only gates).
+    # partner_api, scribe, and widgets are default-on for every org; platform
+    # admins can still remove them per tenant as a kill-switch. Other extensions
+    # remain opt-in.
     # NOT editable by tenant admins; mutated via /api/admin/extensions and
     # /api/admin/orgs/{slug}/platform-unlocks (both gated by
     # require_platform_admin). The legacy `enabled_addons` column was dropped
@@ -120,8 +125,8 @@ class PortalOrg(Base):
     platform_unlocked_features: Mapped[list[str]] = mapped_column(
         ARRAY(Text()),
         nullable=False,
-        default=list,
-        server_default="{}",
+        default=lambda: list(DEFAULT_PLATFORM_UNLOCKED_FEATURES),
+        server_default=sa.text("ARRAY['partner_api', 'scribe', 'widgets']::text[]"),
     )
     # @MX:NOTE: SPEC-PRIVACY-QUERY-SHADOW-001 REQ-1 — per-tenant telemetry mode.
     # 'shadow' (default): embedding + symbolic features only, no raw query persisted.
