@@ -104,7 +104,7 @@ services:
 
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
-    image: mongo:8.2.7
+    image: mongo:8.2.10
     restart: unless-stopped
     ulimits:
       nofile:
@@ -372,7 +372,7 @@ services:
 
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
-    image: ollama/ollama:0.30.6
+    image: ollama/ollama:0.30.7
     restart: unless-stopped
     volumes:
       - /opt/klai/ollama/models:/root/.ollama
@@ -781,7 +781,7 @@ services:
   # To migrate: update Alloy endpoint URLs to point to monitor-01.
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.140.0
+    image: victoriametrics/victoria-metrics:v1.145.0
     restart: unless-stopped
     volumes:
       - victoriametrics-data:/storage
@@ -872,7 +872,7 @@ services:
       - monitoring
 
   alloy:
-    image: grafana/alloy:v1.16.2
+    image: grafana/alloy:v1.16.3
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro

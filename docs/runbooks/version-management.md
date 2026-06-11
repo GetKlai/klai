@@ -447,7 +447,7 @@ Five independent mechanisms detect vulnerabilities. The goal is defence in depth
 | `pip-audit` in CI | Python deps in `uv.lock` | Every push + PR to `main` per service | PR status check (blocks merge) |
 | `npm audit` in CI | Node deps in `package-lock.json` | Every push + PR to `main` per frontend | PR status check (blocks merge) |
 | Trivy on internal image build | OS layer + installed packages in our `ghcr.io/getklai/*` images | Every internal image build | Security tab → Code scanning alerts |
-| Trivy on external pinned images | OS layer + installed packages in `mongo:8.2.7`, `redis:8-alpine`, etc. | Weekly (`scan-pinned-images.yml`) + on compose change | Security tab → Code scanning alerts |
+| Trivy on external pinned images | OS layer + installed packages in `mongo:8.2.10`, `redis:8-alpine`, etc. | Weekly (`scan-pinned-images.yml`) + on compose change | Security tab → Code scanning alerts |
 | Dependabot security updates | Python + Node deps across the whole repo | Real-time (GitHub's vulnerability DB) | Auto-PR + Security tab → Dependabot alerts |
 | Secret scanning + push protection | Accidentally committed API keys, tokens, credentials | On every push | Security tab → Secret scanning alerts + push block |
 

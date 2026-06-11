@@ -23,7 +23,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 | `postgres` | `pgvector/pgvector:pg18` | PostgreSQL major version upgrades require dump/restore. pg18 is the current stable (since Sept 2025). Upgrade path: `pg_dumpall` → stop services → change image → delete volume → restore dump. |
 | `firecrawl-postgres` | `postgres:18-alpine` | Firecrawl-internal queue DB (NUQ schema). Pinned to match main postgres major. Data is transient (queue state), so cross-major migration is just a volume delete. |
 | `listmonk-db` | `postgres:17-alpine` | Dedicated database for listmonk campaigns, subscribers, templates, and admin users. Kept on the upstream listmonk Docker Compose default; dump/restore before any major PostgreSQL bump. |
-| `mongodb` | `mongo:8.2.7` | MongoDB 8 is the current stable major. LibreChat tenants depend on this. Major upgrades require replica-set-aware migration. |
+| `mongodb` | `mongo:8.2.10` | MongoDB 8 is the current stable major. LibreChat tenants depend on this. Major upgrades require replica-set-aware migration. |
 | `redis` | `redis:8-alpine` | Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. Previously on `redis:alpine` which silently rolled to 8 anyway — now explicit. |
 | `vexa-redis` | `redis:8-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
 | `qdrant` | `qdrant/qdrant:v1.18.2` | Vector store for Klai Knowledge. Binary-incompatible on major bumps — pin explicitly. |
@@ -34,10 +34,10 @@ GPU production image pins are intentionally not listed in this public repo becau
 | Service | Image | Rationale |
 |---|---|---|
 | `zitadel` | `ghcr.io/zitadel/zitadel:v4.15.0` | OIDC IdP. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
-| `victoriametrics` | `victoriametrics/victoria-metrics:v1.140.0` | Metrics TSDB. |
+| `victoriametrics` | `victoriametrics/victoria-metrics:v1.145.0` | Metrics TSDB. |
 | `victorialogs` | `victoriametrics/victoria-logs:v1.50.0` | Log aggregation (replaces Loki). LogsQL syntax differs from LogQL. |
 | `cadvisor` | `ghcr.io/google/cadvisor:v0.57.0` | Container metrics. Registry moved from `gcr.io` to `ghcr.io`; verify dashboards that depend on container start/creation timestamps after this bump. |
-| `alloy` | `grafana/alloy:v1.16.2` | Log and metric collection. Config format stable on minor bumps. |
+| `alloy` | `grafana/alloy:v1.16.3` | Log and metric collection. Config format stable on minor bumps. |
 | `grafana` | `grafana/grafana:13.0.2` | Dashboard UI. v12 → v13 had breaking dashboard JSON changes — verify dashboards after any major bump. |
 | `glitchtip-web`, `glitchtip-worker`, `glitchtip-migrate` | `glitchtip/glitchtip:6.1.8` | Error tracking. All three share the same image (different commands). |
 
@@ -46,7 +46,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 | Service | Image | Rationale |
 |---|---|---|
 | `litellm` | `ghcr.io/berriai/litellm:v1.87.1` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). Re-assess monthly; LiteLLM ships stable tags frequently. |
-| `ollama` | `ollama/ollama:0.30.6` | CPU fallback for LLM inference. |
+| `ollama` | `ollama/ollama:0.30.7` | CPU fallback for LLM inference. |
 | `librechat` | `ghcr.io/danny-avila/librechat:v0.8.6` | LibreChat UI for all tenants. Compose-managed `librechat-getklai` and provisioning-managed tenant containers are pinned to the same image. Mounted v0.8.6 patches live under `deploy/librechat/patches/`; getklai keeps an identical canary copy under `deploy/librechat/getklai/patches/` until the separate compose service is folded back into provisioning. The entrypoints also patch LibreChat Meili runtime paths to tenant-scoped indexes when tenant index envs are configured; verify this block against the image on every LibreChat upgrade. |
 
 ### Document + search
@@ -85,7 +85,7 @@ issues locally.
 |---|---|---|
 | `postgres` | `pgvector/pgvector:pg18` | Same as prod. |
 | `redis` | `redis:8-alpine` | Aligned with prod (was `redis:alpine`). |
-| `mongodb` | `mongo:8.2.7` | Same as prod. |
+| `mongodb` | `mongo:8.2.10` | Same as prod. |
 | `meilisearch` | `getmeili/meilisearch:v1.45.2` | Aligned with prod; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
 | `litellm` | `ghcr.io/berriai/litellm:v1.87.1` | Same as prod. |
 
@@ -128,4 +128,4 @@ See `docs/runbooks/version-management.md` §9 for the full CVE detection stack.
 
 ---
 
-*Last repo pin sync: 2026-06-11 — Socat bumped for Trivy CVEs; Meilisearch and LibreChat intentionally left on their existing repo pins for the separate migration sessions.*
+*Last repo pin sync: 2026-06-11 — MongoDB, Ollama, VictoriaMetrics, Alloy, and Socat bumped for Trivy CVEs; Meilisearch and LibreChat intentionally left on their existing repo pins for the separate migration sessions.*

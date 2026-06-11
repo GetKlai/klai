@@ -63,7 +63,7 @@ mounts:
     kind: named
     host: mongodb-data
     container_path: /data/db
-    image: mongo:8.2.7
+    image: mongo:8.2.10
     category: data
     data_path_source: upstream docs (MongoDB default dbpath)
     pii: true
@@ -217,7 +217,7 @@ mounts:
     kind: named
     host: victoriametrics-data
     container_path: /storage
-    image: victoriametrics/victoria-metrics:v1.140.0
+    image: victoriametrics/victoria-metrics:v1.145.0
     category: data
     data_path_source: image CMD (-storageDataPath=/storage)
     pii: false
@@ -310,12 +310,61 @@ mounts:
     retention_enforced_by: n/a
     notes: Firecrawl crawl queue state. Small. Worth including in backup.
 
+  listmonk-db:
+    service: listmonk-db
+    kind: named
+    host: listmonk-postgres-data
+    container_path: /var/lib/postgresql/data
+    image: postgres:17-alpine
+    category: data
+    data_path_source: upstream docs (PGDATA default)
+    pii: true
+    backup: sql
+    backup_method: pg_dumpall
+    retention: manual
+    retention_enforced_by: n/a
+    notes: listmonk campaigns, subscribers, templates, and admin users.
+
+  listmonk-uploads:
+    service: listmonk
+    kind: named
+    host: listmonk-uploads-data
+    container_path: /listmonk/uploads
+    image: listmonk/listmonk:v6.1.0
+    category: data
+    data_path_source: upstream docs (upload directory)
+    verified: true
+    pii: true
+    backup: tar
+    backup_method: docker-run-tar
+    retention: manual
+    retention_enforced_by: n/a
+    notes: Uploaded campaign media; archived by backup_listmonk_uploads.
+
+  vaultwarden:
+    service: vaultwarden
+    kind: named
+    host: vaultwarden-data
+    container_path: /data
+    image: vaultwarden/server:1.36.0
+    category: data
+    data_path_source: compose DATA_FOLDER=/data
+    pii: true
+    backup: skip
+    backup_method: skip
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Vaultwarden SQLite DB and attachments. Registered for persistence audit;
+      backup coverage is intentionally not claimed here because backup.sh does
+      not currently archive this volume.
+
   ollama:
     service: ollama
     kind: bind
     host: /opt/klai/ollama/models
     container_path: /root/.ollama
-    image: ollama/ollama:0.30.6
+    image: ollama/ollama:0.30.7
     category: data
     data_path_source: upstream docs (OLLAMA_MODELS default root/.ollama)
     verified: true
@@ -436,6 +485,36 @@ mounts:
     notes: |
       Caddy's last-applied config autosave. Regenerates on restart from
       Caddyfile. No reason to back up.
+
+  runtime-api-socket-proxy:
+    service: runtime-api-socket-proxy
+    kind: named
+    host: runtime-api-docker-socket
+    container_path: /var/run
+    image: alpine/socat:1.8.0.3
+    category: ephemeral
+    data_path_source: runtime Unix socket bridge
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: ephemeral
+    retention_enforced_by: n/a
+    notes: Shared Vexa Docker socket bridge volume; recreated on container start.
+
+  runtime-api-docker-socket:
+    service: runtime-api
+    kind: named
+    host: runtime-api-docker-socket
+    container_path: /var/run
+    image: vexaai/runtime-api:0.10.6.3.14
+    category: ephemeral
+    data_path_source: runtime Unix socket bridge
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: ephemeral
+    retention_enforced_by: n/a
+    notes: Shared Vexa Docker socket bridge volume; recreated by runtime-api-socket-proxy.
 
   caddy-tenants-caddy:
     service: caddy
