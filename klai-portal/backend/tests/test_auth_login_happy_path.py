@@ -52,7 +52,8 @@ async def test_password_totp_login_happy_path(fake_redis: Any, monkeypatch: pyte
         headers={
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
             "x-forwarded-for": "203.0.113.42",
-        }
+        },
+        client=("203.0.113.42", 12345),
     )
 
     with (

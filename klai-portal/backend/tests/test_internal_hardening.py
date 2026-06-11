@@ -159,10 +159,10 @@ def _make_audit_session(capture: list[dict], fail: bool = False) -> MagicMock:
 
 
 class TestResolveCallerIp:
-    def test_uses_rightmost_xff_entry(self):
+    def test_uses_proxy_validated_client_host(self):
         from app.api.internal import _resolve_caller_ip
 
-        request = _make_request(xff="1.1.1.1, 2.2.2.2, 172.18.0.5")
+        request = _make_request(caller_ip="172.18.0.5", xff="1.1.1.1, 2.2.2.2, 203.0.113.10")
         assert _resolve_caller_ip(request) == "172.18.0.5"
 
     def test_falls_back_to_client_host(self):

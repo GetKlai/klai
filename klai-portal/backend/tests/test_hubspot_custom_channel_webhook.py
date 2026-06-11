@@ -119,6 +119,42 @@ def test_hubspot_webhook_accepts_signed_outgoing_message(hubspot_client) -> None
     assert response.status_code == 204
 
 
+def test_hubspot_webhook_ignores_spoofed_forwarded_origin_headers(hubspot_client) -> None:
+    payload = {
+        "type": "OUTGOING_CHANNEL_MESSAGE_CREATED",
+        "message": {
+            "id": "msg-1",
+            "channelAccountId": "3307400689",
+            "channelIntegrationThreadIds": ["klai-widget-wgt_abc-test"],
+            "text": "Hallo vanaf HubSpot",
+        },
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    timestamp = str(int(time.time() * 1000))
+    uri = "https://getklai.getklai.com/api/webhooks/hubspot/custom-channel"
+    signature = _signature(
+        method="POST",
+        uri=uri,
+        body=body,
+        timestamp=timestamp,
+        secret="test-hubspot-client-secret",
+    )
+
+    response = hubspot_client.post(
+        "/api/webhooks/hubspot/custom-channel",
+        content=body,
+        headers={
+            "content-type": "application/json",
+            "x-forwarded-host": "evil.example",
+            "x-forwarded-proto": "http",
+            "x-hubspot-request-timestamp": timestamp,
+            "x-hubspot-signature-v3": signature,
+        },
+    )
+
+    assert response.status_code == 204
+
+
 def test_hubspot_webhook_rejects_unsigned_request(hubspot_client) -> None:
     response = hubspot_client.post(
         "/api/webhooks/hubspot/custom-channel",

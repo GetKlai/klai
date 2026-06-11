@@ -45,6 +45,7 @@ from app.services.bff_oidc import (
 )
 from app.services.bff_session import session_service
 from app.services.oidc_pending import oidc_pending
+from app.services.request_ip import resolve_caller_ip
 
 logger = structlog.get_logger()
 
@@ -467,7 +468,5 @@ def _access_token_expiry(expires_in: int) -> int:
 
 
 def _client_ip(request: Request) -> str | None:
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",", 1)[0].strip()
-    return request.client.host if request.client else None
+    caller_ip = resolve_caller_ip(request)
+    return None if caller_ip == "unknown" else caller_ip

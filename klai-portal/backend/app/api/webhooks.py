@@ -38,8 +38,8 @@ _HUBSPOT_URI_DECODE_MAP = {
 
 
 def _hubspot_request_uri(request: Request) -> str:
-    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    proto = request.url.scheme
+    host = request.headers.get("host") or request.url.netloc
     path = request.url.path
     if request.url.query:
         path = f"{path}?{request.url.query}"

@@ -1,0 +1,35 @@
+# Security audit 2026-06-11 Finding #1: the left-most X-Forwarded-For entry
+# is attacker-controlled. App code must use uvicorn's proxy-header-validated
+# request.client.host via app.services.request_ip.resolve_caller_ip.
+id: no-leftmost-x-forwarded-for
+language: python
+severity: error
+message: |
+  Do not parse the left-most X-Forwarded-For entry. Use
+  app.services.request_ip.resolve_caller_ip so uvicorn's trusted-proxy
+  boundary decides whether XFF is honored.
+rule:
+  any:
+    - pattern: $REQUEST.headers.get("x-forwarded-for", $$$).split(",")[0]
+    - pattern: $REQUEST.headers.get("X-Forwarded-For", $$$).split(",")[0]
+    - pattern: $REQUEST.headers["x-forwarded-for"].split(",")[0]
+    - pattern: $REQUEST.headers["X-Forwarded-For"].split(",")[0]
+    - pattern: |
+        def $FUNC($REQUEST: Request) -> str:
+            $$$
+            $XFF = $REQUEST.headers.get("x-forwarded-for", $$$)
+            if $XFF:
+                return $XFF.split(",")[0].strip()
+            $$$
+    - pattern: |
+        def $FUNC($REQUEST) -> str:
+            $$$
+            $XFF = $REQUEST.headers.get("x-forwarded-for", $$$)
+            if $XFF:
+                return $XFF.split(",")[0].strip()
+            $$$
+files:
+  - 'klai-portal/backend/app/**/*.py'
+  - 'rules/tests/fixtures/*leftmost_xff*.py'
+ignores:
+  - 'klai-portal/backend/tests/**/*.py'

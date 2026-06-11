@@ -38,6 +38,7 @@ from app.models.portal import PortalOrg, PortalUser
 from app.services import audit
 from app.services import mcp_oauth as svc
 from app.services.redis_client import get_redis_pool
+from app.services.request_ip import resolve_caller_ip
 
 logger = logging.getLogger(__name__)
 
@@ -186,16 +187,6 @@ def _infer_application_type(redirect_uris: list[str]) -> str | None:
     return None
 
 
-def _client_source_ip(request: Request) -> str:
-    """Real client IP via X-Forwarded-For (Caddy front) or peer."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return ""
-
-
 @router.post("/oauth/register", status_code=status.HTTP_201_CREATED)
 async def register_client(request: Request) -> JSONResponse:
     """RFC 7591 Dynamic Client Registration with allowlist + per-IP rate-limit."""
@@ -204,7 +195,7 @@ async def register_client(request: Request) -> JSONResponse:
     except (ValidationError, json.JSONDecodeError) as exc:
         return _oauth_error("invalid_request", str(exc), 400)
 
-    source_ip = _client_source_ip(request)
+    source_ip = resolve_caller_ip(request)
     redis = await get_redis_pool()
     if redis is None:
         return _oauth_error("server_error", "Redis unavailable", 503)

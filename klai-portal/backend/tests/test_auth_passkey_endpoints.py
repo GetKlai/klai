@@ -21,10 +21,10 @@ from structlog.testing import capture_logs
 from app.api.auth import PasskeyConfirmRequest, passkey_confirm, passkey_setup
 
 
-def _make_request_mock() -> MagicMock:
+def _make_request_mock(headers: dict[str, str] | None = None) -> MagicMock:
     """Mock FastAPI Request with a headers dict so ``request.headers.get()`` works."""
     request = MagicMock()
-    request.headers = {"host": "my.getklai.com"}
+    request.headers = {"host": "my.getklai.com", **(headers or {})}
     return request
 
 
@@ -36,7 +36,7 @@ def _make_request_mock() -> MagicMock:
 @pytest.mark.asyncio
 async def test_passkey_setup_happy(respx_zitadel: respx.MockRouter) -> None:
     """REQ-1.9 — passkey_setup happy path."""
-    respx_zitadel.route().mock(
+    route = respx_zitadel.post("/v2/users/uid-1/passkeys").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -50,9 +50,31 @@ async def test_passkey_setup_happy(respx_zitadel: respx.MockRouter) -> None:
         result = await passkey_setup(request=_make_request_mock(), user_id="uid-1")
 
     assert result.passkey_id == "pk-1"
+    assert route.calls.last.request.read() == b'{"domain":"my.getklai.com"}'
     audit_log.assert_called_once()
     assert audit_log.call_args.kwargs["action"] == "auth.passkey.setup"
     assert _capture_events(captured, "passkey_setup_failed") == []
+
+
+@pytest.mark.asyncio
+async def test_passkey_setup_ignores_spoofed_forwarded_host(respx_zitadel: respx.MockRouter) -> None:
+    route = respx_zitadel.post("/v2/users/uid-1/passkeys").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "passkeyId": "pk-1",
+                "publicKeyCredentialCreationOptions": {"challenge": "abc"},
+            },
+        )
+    )
+
+    with capture_logs(), _audit_log_patch():
+        await passkey_setup(
+            request=_make_request_mock({"x-forwarded-host": "evil.example"}),
+            user_id="uid-1",
+        )
+
+    assert route.calls.last.request.read() == b'{"domain":"my.getklai.com"}'
 
 
 @pytest.mark.asyncio

@@ -93,6 +93,16 @@ _slog = structlog.get_logger()
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
+
+def _request_hostname(request: Request) -> str:
+    """Return the public request hostname without trusting X-Forwarded-Host."""
+    url_hostname = getattr(request.url, "hostname", None)
+    if isinstance(url_hostname, str) and url_hostname:
+        return url_hostname
+    host = request.headers.get("host") or settings.domain
+    return host.split(":", 1)[0]
+
+
 # ---------------------------------------------------------------------------
 # Generic TTL cache
 # ---------------------------------------------------------------------------
@@ -1836,9 +1846,7 @@ async def passkey_setup(
 
     SPEC-SEC-AUTH-COVERAGE-001 REQ-1.9: emit audit on success, structured event on 5xx.
     """
-    domain = request.headers.get("x-forwarded-host") or request.headers.get("host", settings.domain)
-    # Strip port if present
-    domain = domain.split(":")[0]
+    domain = _request_hostname(request)
     try:
         result = await zitadel.start_passkey_registration(user_id, domain)
     except httpx.HTTPStatusError as exc:

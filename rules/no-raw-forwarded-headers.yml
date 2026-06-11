@@ -1,0 +1,36 @@
+# Security audit follow-up 2026-06-11: forwarded headers are a proxy trust
+# boundary. Portal app code must use uvicorn/Starlette-validated request state
+# (request.client, request.url, Host after Caddy routing) instead of trusting
+# raw X-Forwarded-* headers.
+id: no-raw-forwarded-headers
+language: python
+severity: error
+message: |
+  Do not read raw X-Forwarded-* headers in portal app code. Use
+  app.services.request_ip.resolve_caller_ip for caller IP, request.url.scheme
+  for scheme, and Host/request.url hostname for public host reconstruction.
+rule:
+  any:
+    - pattern: $REQUEST.headers.get("x-forwarded-for", $$$)
+    - pattern: $REQUEST.headers.get("x-forwarded-for")
+    - pattern: $REQUEST.headers.get("X-Forwarded-For", $$$)
+    - pattern: $REQUEST.headers.get("X-Forwarded-For")
+    - pattern: $REQUEST.headers.get("x-forwarded-host", $$$)
+    - pattern: $REQUEST.headers.get("x-forwarded-host")
+    - pattern: $REQUEST.headers.get("X-Forwarded-Host", $$$)
+    - pattern: $REQUEST.headers.get("X-Forwarded-Host")
+    - pattern: $REQUEST.headers.get("x-forwarded-proto", $$$)
+    - pattern: $REQUEST.headers.get("x-forwarded-proto")
+    - pattern: $REQUEST.headers.get("X-Forwarded-Proto", $$$)
+    - pattern: $REQUEST.headers.get("X-Forwarded-Proto")
+    - pattern: $REQUEST.headers["x-forwarded-for"]
+    - pattern: $REQUEST.headers["X-Forwarded-For"]
+    - pattern: $REQUEST.headers["x-forwarded-host"]
+    - pattern: $REQUEST.headers["X-Forwarded-Host"]
+    - pattern: $REQUEST.headers["x-forwarded-proto"]
+    - pattern: $REQUEST.headers["X-Forwarded-Proto"]
+files:
+  - 'klai-portal/backend/app/**/*.py'
+  - 'rules/tests/fixtures/*raw_forwarded_headers*.py'
+ignores:
+  - 'klai-portal/backend/tests/**/*.py'

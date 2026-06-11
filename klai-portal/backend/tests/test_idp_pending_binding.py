@@ -67,6 +67,7 @@ def test_binding_rejects_different_ua(helper) -> None:
     # Same IP, different UA
     request = make_request(
         headers={"user-agent": _UA_CURL, "x-forwarded-for": "203.0.113.10"},
+        client=("203.0.113.10", 12345),
     )
 
     with capture_logs() as captured:
@@ -111,6 +112,7 @@ def test_binding_rejects_different_ipv4_subnet(helper) -> None:
     # Same UA, but the new caller IP is in a totally different /24
     request = make_request(
         headers={"user-agent": _UA_FIREFOX, "x-forwarded-for": "203.0.113.42"},
+        client=("203.0.113.42", 12345),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -135,6 +137,7 @@ def test_binding_passes_same_subnet_different_last_octet(helper) -> None:
 
     request = make_request(
         headers={"user-agent": _UA_FIREFOX, "x-forwarded-for": "198.51.100.214"},
+        client=("198.51.100.214", 12345),
     )
 
     # Returns None on success — no exception raised
@@ -156,6 +159,7 @@ def test_binding_passes_ipv6_in_same_48(helper) -> None:
             "user-agent": _UA_FIREFOX,
             "x-forwarded-for": "2001:db8:1234:5678:89ab::42",
         },
+        client=("2001:db8:1234:5678:89ab::42", 12345),
     )
 
     helper(payload, request)
@@ -176,7 +180,7 @@ def test_binding_handles_missing_ua_header(helper) -> None:
     payload = _payload(ua_hash=empty_ua_hash, ip_subnet="203.0.113.0")
 
     # No User-Agent header at all
-    request = make_request(headers={"x-forwarded-for": "203.0.113.99"})
+    request = make_request(headers={"x-forwarded-for": "203.0.113.99"}, client=("203.0.113.99", 12345))
 
     helper(payload, request)
 
@@ -191,6 +195,7 @@ def test_binding_rejects_when_ua_appears_after_being_absent(helper) -> None:
 
     request = make_request(
         headers={"user-agent": _UA_FIREFOX, "x-forwarded-for": "203.0.113.99"},
+        client=("203.0.113.99", 12345),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -213,6 +218,7 @@ def test_binding_rejects_payload_without_binding_fields(helper) -> None:
     }
     request = make_request(
         headers={"user-agent": _UA_FIREFOX, "x-forwarded-for": "203.0.113.10"},
+        client=("203.0.113.10", 12345),
     )
 
     with pytest.raises(HTTPException) as exc:

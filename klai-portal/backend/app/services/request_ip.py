@@ -1,16 +1,20 @@
 """Caller-IP resolution helpers for portal-api.
 
-The right-most entry of ``X-Forwarded-For`` is the IP that Caddy (the
-immediate trusted upstream) saw on the wire. Attacker-supplied entries that
-clients prepend to ``XFF`` end up to the LEFT of that entry, so they are
-ignored by ``resolve_caller_ip``.
+Uvicorn runs with ``--proxy-headers`` and a narrowly scoped
+``--forwarded-allow-ips`` value from ``scripts/uvicorn-launch.sh``. That is the
+only place raw ``X-Forwarded-For`` is trusted: when the TCP peer is Caddy,
+uvicorn rewrites ``request.client.host`` to the validated caller IP; otherwise
+``request.client.host`` remains the direct peer. Application code must not read
+the raw XFF header itself.
 
-Two consumers share the helper:
+Four consumers share the helper:
 
 - ``app.api.internal``: rate-limit key + audit row (``SPEC-SEC-005 REQ-1.6``).
 - ``app.api.auth`` / ``app.api.signup``: ``klai_idp_pending`` cookie binding
   to a ``/24`` IPv4 (or ``/48`` IPv6) subnet
   (``SPEC-SEC-SESSION-001 REQ-2.3``).
+- ``app.api.auth_bff``: BFF session metadata ``remote_ip``.
+- ``app.api.mcp_oauth``: DCR rate-limit key + audit actor.
 
 Pulled out of ``app.api.internal`` once the third callsite landed; before
 that it lived as a private ``_resolve_caller_ip`` next to its only caller.
@@ -34,19 +38,7 @@ _UNKNOWN = "unknown"
 
 
 def resolve_caller_ip(request: Request) -> str:
-    """Return the best-effort caller IP for the request.
-
-    Priority order:
-    1. Right-most entry of ``X-Forwarded-For`` from the immediate trusted
-       upstream (Caddy). Attacker-supplied left-side entries are dropped.
-    2. ``request.client.host``.
-    3. The literal string ``"unknown"`` (e.g. synthetic ASGI scope).
-    """
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        parts = [p.strip() for p in xff.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
+    """Return uvicorn's proxy-header-validated caller IP for the request."""
     if request.client and request.client.host:
         return request.client.host
     return _UNKNOWN

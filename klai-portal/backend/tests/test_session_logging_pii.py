@@ -146,6 +146,7 @@ def test_no_pii_in_binding_mismatch_logs(monkeypatch: pytest.MonkeyPatch) -> Non
     }
     request = make_request(
         headers={"user-agent": _UA_CURL, "x-forwarded-for": _RAW_IPV4_REPLAY},
+        client=(_RAW_IPV4_REPLAY, 12345),
     )
 
     with pytest.raises(HTTPException):

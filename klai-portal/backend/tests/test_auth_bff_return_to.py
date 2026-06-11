@@ -16,8 +16,9 @@ that contain `%`-encoded segments which decode to safe forms.
 from __future__ import annotations
 
 import pytest
+from starlette.requests import Request
 
-from app.api.auth_bff import _safe_return_to
+from app.api.auth_bff import _client_ip, _safe_return_to
 
 
 @pytest.mark.parametrize(
@@ -50,3 +51,21 @@ def test_safe_return_to_none_returns_app() -> None:
     """
     # type: ignore[arg-type] — deliberately exercise the falsy guard.
     assert _safe_return_to(None) == "/app"  # type: ignore[arg-type]
+
+
+def test_client_ip_uses_proxy_validated_client_host_not_raw_xff() -> None:
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "path": "/api/auth/oidc/callback",
+        "raw_path": b"/api/auth/oidc/callback",
+        "query_string": b"",
+        "scheme": "https",
+        "server": ("testserver", 443),
+        "headers": [(b"x-forwarded-for", b"198.51.100.200, 203.0.113.10")],
+        "client": ("203.0.113.10", 48112),
+    }
+
+    assert _client_ip(Request(scope)) == "203.0.113.10"
