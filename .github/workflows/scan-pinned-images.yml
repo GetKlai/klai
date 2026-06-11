@@ -28,10 +28,10 @@ env:
 
 jobs:
   enumerate:
-    name: Enumerate external images
+    name: Enumerate external image targets
     runs-on: ubuntu-latest
     outputs:
-      images: ${{ steps.parse.outputs.images }}
+      targets: ${{ steps.parse.outputs.targets }}
     steps:
       - uses: actions/checkout@v4
 
@@ -43,8 +43,16 @@ jobs:
       - name: Extract external images
         id: parse
         run: |
-          # Extract every image tag from every compose file, then filter out
-          # internal + local builds we scan via per-service workflows.
+          # Extract every external image target from every compose file, then
+          # filter out internal + local builds we scan via per-service
+          # workflows.
+          #
+          # Keep a stable service-derived key for the SARIF category instead
+          # of using the image tag. GitHub correlates code-scanning alerts by
+          # tool/category; if the category contains the old image tag, every
+          # version bump leaves stale alerts behind under the previous
+          # category. We still group exact duplicate images so shared images
+          # like glitchtip are scanned once per run.
           #
           # Excluded patterns (with rationale):
           #   ghcr.io/getklai/*                — our own CI-built images; scanned per service
@@ -58,26 +66,37 @@ jobs:
           #                                      images do not exist on Docker Hub so a `docker
           #                                      manifest inspect` always 404s.
           #   mendableai/firecrawl             — built locally from source on the server
-          IMAGES=$(yq eval-all '.services[].image' \
-            deploy/docker-compose.yml \
-            docker-compose.dev.yml \
-            2>/dev/null \
-            | sort -u \
-            | grep -vE '^(ghcr\.io/getklai/|ghcr\.io/mendableai/firecrawl|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$|---)' \
-            | grep -vE '^(null|~)$' \
-            | jq -R . | jq -sc .)
+          TARGETS=$(
+            {
+              yq -o=json eval '.services | to_entries | map({"source": "deploy", "service": .key, "image": .value.image})' deploy/docker-compose.yml
+              yq -o=json eval '.services | to_entries | map({"source": "dev", "service": .key, "image": .value.image})' docker-compose.dev.yml
+            } \
+              | jq -sc '
+                  add
+                  | map(select(.image != null and .image != "~"))
+                  | map(select(.image | test("^(ghcr\\.io/getklai/|ghcr\\.io/mendableai/firecrawl|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$)") | not))
+                  | sort_by(.image)
+                  | group_by(.image)
+                  | map({
+                      key: (map(.source + "_" + .service) | sort | join("__")),
+                      services: (map(.source + "/" + .service) | sort),
+                      image: .[0].image
+                    })
+                  | sort_by(.key)
+                '
+          )
 
-          echo "Found images:"
-          echo "$IMAGES" | jq -r '.[]'
-          echo "images=$IMAGES" >> "$GITHUB_OUTPUT"
+          echo "Found targets:"
+          echo "$TARGETS" | jq -r '.[] | "\(.key): \(.image)"'
+          echo "targets=$TARGETS" >> "$GITHUB_OUTPUT"
 
   scan:
-    name: Scan ${{ matrix.image }}
+    name: Scan ${{ matrix.target.key }}
     needs: enumerate
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        image: ${{ fromJSON(needs.enumerate.outputs.images) }}
+        target: ${{ fromJSON(needs.enumerate.outputs.targets) }}
       fail-fast: false  # One bad image shouldn't skip the rest
     steps:
       # Checkout is required so trivy-action can find .trivy.yaml
@@ -89,7 +108,7 @@ jobs:
         run: |
           # SARIF uploads need a unique category per image and a filename
           # that doesn't contain slashes or colons.
-          SAFE=$(echo '${{ matrix.image }}' | tr '/:' '__')
+          SAFE=$(printf '%s' '${{ matrix.target.key }}' | tr -c 'A-Za-z0-9_.-' '_')
           echo "name=$SAFE" >> "$GITHUB_OUTPUT"
 
       # WARN-tier scan per SPEC-CI-TRIVY-POLICY-001 REQ-3.
@@ -116,14 +135,14 @@ jobs:
             --ignore-unfixed \
             --scanners vuln \
             --exit-code 0 \
-            ${{ matrix.image }}
+            ${{ matrix.target.image }}
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4
         if: always() && hashFiles(format('trivy-{0}.sarif', steps.safe.outputs.name)) != ''
         with:
           sarif_file: 'trivy-${{ steps.safe.outputs.name }}.sarif'
-          category: 'pinned-image-${{ steps.safe.outputs.name }}'
+          category: 'pinned-service-${{ steps.safe.outputs.name }}'
 
   report:
     name: Report
@@ -135,8 +154,8 @@ jobs:
         run: |
           echo "## Scan summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Scanned $(echo '${{ needs.enumerate.outputs.images }}' | jq 'length') pinned external images." >> "$GITHUB_STEP_SUMMARY"
+          echo "Scanned $(echo '${{ needs.enumerate.outputs.targets }}' | jq 'length') pinned external image targets." >> "$GITHUB_STEP_SUMMARY"
           echo "Individual findings are in the [Security tab](${{ github.server_url }}/${{ github.repository }}/security/code-scanning)." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Images scanned" >> "$GITHUB_STEP_SUMMARY"
-          echo '${{ needs.enumerate.outputs.images }}' | jq -r '.[] | "- `\(.)`"' >> "$GITHUB_STEP_SUMMARY"
+          echo "### Targets scanned" >> "$GITHUB_STEP_SUMMARY"
+          echo '${{ needs.enumerate.outputs.targets }}' | jq -r '.[] | "- `\(.services | join(\", \"))` → `\(.image)`"' >> "$GITHUB_STEP_SUMMARY"

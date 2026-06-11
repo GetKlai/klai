@@ -1343,7 +1343,7 @@ services:
   # docker-socket-proxy:2375, which enforces the CONTAINERS/NETWORKS/POST/DELETE
   # whitelist. Runtime-api never sees the real host docker socket.
   runtime-api-socket-proxy:
-    image: alpine/socat:1.7.3.4-r1
+    image: alpine/socat:1.8.0.3
     restart: unless-stopped
     command: >
       UNIX-LISTEN:/var/run/docker.sock,fork,reuseaddr,unlink-early,mode=0660,user=999,group=999
