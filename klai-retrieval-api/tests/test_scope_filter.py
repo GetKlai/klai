@@ -1,6 +1,8 @@
 """Tests for visibility enforcement in _scope_filter."""
+
 from __future__ import annotations
 
+from klai_kb_slugs import personal_kb_slug
 from qdrant_client.models import FieldCondition, Filter
 
 from retrieval_api.models import RetrieveRequest
@@ -65,27 +67,23 @@ class TestScopeFilterVisibility:
 
         # The canonical slug filter is a direct FieldCondition, not nested in a should.
         slug_conditions = [
-            c for c in conditions
-            if isinstance(c, FieldCondition) and c.key == "kb_slug"
+            c for c in conditions if isinstance(c, FieldCondition) and c.key == "kb_slug"
         ]
         assert len(slug_conditions) == 1, (
             f"expected exactly one kb_slug condition, got {len(slug_conditions)}"
         )
         assert slug_conditions[0].match.value == "personal-user-1", (
-            f"expected canonical slug 'personal-user-1', "
-            f"got {slug_conditions[0].match.value!r}"
+            f"expected canonical slug 'personal-user-1', got {slug_conditions[0].match.value!r}"
         )
 
         # Regression guard: must NOT carry the pre-fix OR-filter that let
         # test2-style chunks through via the user_id branch.
         should_filters_with_user_id = [
-            c for c in conditions
+            c
+            for c in conditions
             if isinstance(c, Filter)
             and c.should is not None
-            and any(
-                isinstance(s, FieldCondition) and s.key == "user_id"
-                for s in c.should
-            )
+            and any(isinstance(s, FieldCondition) and s.key == "user_id" for s in c.should)
         ]
         assert should_filters_with_user_id == [], (
             "scope=personal must NOT use the user_id-OR-kb_slug branch — "
@@ -104,8 +102,7 @@ class TestScopeFilterVisibility:
         req = _make_request(scope="personal", user_id="someone")
         conditions = _scope_filter(req)
         slug_cond = next(
-            c for c in conditions
-            if isinstance(c, FieldCondition) and c.key == "kb_slug"
+            c for c in conditions if isinstance(c, FieldCondition) and c.key == "kb_slug"
         )
         assert slug_cond.match.value == personal_kb_slug("someone")
 
@@ -174,11 +171,7 @@ class TestScopeFilterVisibility:
         own_branch = vis.should[1]
         assert isinstance(own_branch, Filter)
         assert own_branch.must is not None
-        fields_by_key = {
-            c.key: c
-            for c in own_branch.must
-            if isinstance(c, FieldCondition)
-        }
+        fields_by_key = {c.key: c for c in own_branch.must if isinstance(c, FieldCondition)}
         assert "visibility" in fields_by_key
         assert "user_id" in fields_by_key
         assert "kb_slug" in fields_by_key, (
@@ -193,8 +186,7 @@ class TestScopeFilterVisibility:
         vis = _find_visibility_filter(conditions)
         own_branch = vis.should[1]
         slug_cond = next(
-            c for c in own_branch.must
-            if isinstance(c, FieldCondition) and c.key == "kb_slug"
+            c for c in own_branch.must if isinstance(c, FieldCondition) and c.key == "kb_slug"
         )
         assert slug_cond.match.any == ["personal-user-42"]
 
@@ -244,43 +236,72 @@ class TestScopeFilterVisibility:
         assert len(slug_conds) == 1
 
     def test_kb_slugs_both_scope_with_user_bypasses_personal_chunks(self):
-        """scope=both + kb_slugs: personal chunks bypass the slug filter.
+        """scope=both + kb_slugs: personal-KB chunks bypass the slug filter.
 
         The slug filter must not exclude personal KB chunks when the user has
         personal KB enabled. kb_slugs is an org-only filter.
 
-        The resulting condition must be a Filter(should=[slug_match, user_id_match])
-        so that a chunk passes if it matches a slug OR belongs to the requesting user.
+        The resulting condition must be a Filter(should=[slug_match,
+        canonical_personal_slug_match]) so a chunk passes if it matches a
+        selected slug OR lives in the requester's canonical Persoonlijk KB.
         """
         req = _make_request(scope="both", user_id="user-42", kb_slugs=["engineering"])
         conditions = _scope_filter(req)
 
         # Must NOT be a bare FieldCondition on kb_slug (that would exclude personal chunks)
         bare_slug_conds = [
-            c for c in conditions
-            if isinstance(c, FieldCondition) and c.key == "kb_slug"
+            c for c in conditions if isinstance(c, FieldCondition) and c.key == "kb_slug"
         ]
         assert len(bare_slug_conds) == 0, (
             "bare kb_slug FieldCondition must not exist for scope=both"
         )
 
-        # Must be a Filter(should=[...]) containing both slug and user_id bypass
+        # Must be a Filter(should=[...]) with the selected slugs plus the
+        # canonical personal-KB slug
         slug_should_filters = [
-            c for c in conditions
-            if isinstance(c, Filter) and c.should is not None
-            and any(
-                isinstance(s, FieldCondition) and s.key == "kb_slug"
-                for s in c.should
-            )
+            c
+            for c in conditions
+            if isinstance(c, Filter)
+            and c.should is not None
+            and any(isinstance(s, FieldCondition) and s.key == "kb_slug" for s in c.should)
         ]
         assert len(slug_should_filters) == 1, "expected one slug should-filter"
         should_filter = slug_should_filters[0]
-        keys = set()
+        slug_values: list = []
         for s in should_filter.should:
-            if isinstance(s, FieldCondition):
-                keys.add(s.key)
-        assert "kb_slug" in keys
-        assert "user_id" in keys
+            assert isinstance(s, FieldCondition)
+            assert s.key == "kb_slug"
+            if getattr(s.match, "any", None) is not None:
+                slug_values.extend(s.match.any)
+            else:
+                slug_values.append(s.match.value)
+        assert "engineering" in slug_values
+        assert personal_kb_slug("user-42") in slug_values
+
+    def test_kb_slugs_both_scope_does_not_pass_user_stamped_chunks_in_unselected_kbs(self):
+        """Codex review 2026-06-11: the personal bypass must be slug-based.
+
+        A user_id-based bypass would also pass user-stamped chunks living in
+        org/public KBs the caller did NOT select, silently widening the
+        selected-KB semantics. The slug should-filter therefore must not
+        contain any user_id condition — only kb_slug conditions.
+        """
+        req = _make_request(scope="both", user_id="user-42", kb_slugs=["engineering"])
+        conditions = _scope_filter(req)
+
+        slug_should_filters = [
+            c
+            for c in conditions
+            if isinstance(c, Filter)
+            and c.should is not None
+            and any(isinstance(s, FieldCondition) and s.key == "kb_slug" for s in c.should)
+        ]
+        assert len(slug_should_filters) == 1
+        keys = {s.key for s in slug_should_filters[0].should if isinstance(s, FieldCondition)}
+        assert keys == {"kb_slug"}, (
+            "slug bypass must match on kb_slug only — a user_id condition lets "
+            "a user-stamped chunk in a non-selected org KB through the filter"
+        )
 
     def test_kb_slugs_both_scope_without_user_falls_back_to_direct_filter(self):
         """scope=both + kb_slugs without user_id uses direct slug filter."""

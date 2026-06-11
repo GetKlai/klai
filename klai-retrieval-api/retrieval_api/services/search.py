@@ -192,14 +192,21 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
         conditions.append(Filter(should=visibility_should))
     if request.kb_slugs:
         if request.scope == "both" and request.user_id:
-            # kb_slugs is an org-only filter. When scope=both, personal chunks must not be
-            # excluded by the slug filter — a chunk passes if it matches a slug OR belongs
-            # to the requesting user (personal ownership bypass).
+            # kb_slugs is an org-only filter. When scope=both, personal chunks must not
+            # be excluded by the slug filter — a chunk passes if it matches a selected
+            # slug OR lives in the requester's canonical Persoonlijk KB. The bypass is
+            # slug-based, not user_id-based: a user_id match would also pass
+            # user-stamped chunks in NON-selected org KBs, silently widening the
+            # selected-KB semantics (Codex review 2026-06-11). The canonical slug also
+            # covers personal chunks whose user_id payload was never stamped at ingest.
             conditions.append(
                 Filter(
                     should=[
                         FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs)),
-                        FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
+                        FieldCondition(
+                            key="kb_slug",
+                            match=MatchValue(value=personal_kb_slug(request.user_id)),
+                        ),
                     ]
                 )
             )

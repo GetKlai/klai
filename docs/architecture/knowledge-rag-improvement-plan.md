@@ -33,6 +33,21 @@ findings were fixed in the same session with regression tests:
   dead-man alert when no reconcile event appears in 25h, and Grafana runbook
   links are absolute GitHub URLs.
 
+Independent Codex review (2026-06-11, post-merge, commits `98b8de3d3..cac43b5c5`):
+verdicts D1/D2/D3/D6 AGREE, D5 resolved by the `pg_qdrant_reconcile_missing`
+dead-man alert, and two actionable items:
+
+- **D7 MEDIUM — fixed**: the `scope=both + kb_slugs` personal bypass in
+  `retrieval_api/services/search.py` matched on `user_id`, which also passed
+  user-stamped chunks in NON-selected org KBs (selected-KB semantics widened;
+  not a cross-user leak — the visibility filter still blocked other users'
+  private chunks). Replaced by a canonical-`personal_kb_slug` match + regression
+  test `test_kb_slugs_both_scope_does_not_pass_user_stamped_chunks_in_unselected_kbs`.
+- **D4 — accepted architectural debt**: the reconcile job runs on the
+  `rag-eval` lane, which is documented as LLM-bound while the job is IO-bound.
+  Works tactically; a dedicated `CONSISTENCY`/batch-IO queue is the structural
+  fix. Do this when the next nightly batch job lands, not as a standalone PR.
+
 ---
 
 ## 0. The backlog itself is stale — refresh it first
