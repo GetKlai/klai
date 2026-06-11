@@ -14,39 +14,45 @@ down_revision = "0aac04f1bccc"
 branch_labels = None
 depends_on = None
 
-
-DEFAULT_FEATURES_SQL = "ARRAY['partner_api', 'scribe', 'widgets']::text[]"
-
-
 def upgrade() -> None:
     op.execute(
-        f"""
+        """
         ALTER TABLE portal_orgs
-        ALTER COLUMN platform_unlocked_features SET DEFAULT {DEFAULT_FEATURES_SQL}
+        ALTER COLUMN platform_unlocked_features SET DEFAULT ARRAY['partner_api', 'scribe', 'widgets']::text[]
         """
     )
     op.execute(
-        f"""
+        """
         UPDATE portal_orgs
         SET platform_unlocked_features = (
-            SELECT COALESCE(array_agg(DISTINCT feature ORDER BY feature), '{{}}'::text[])
-            FROM unnest(COALESCE(platform_unlocked_features, '{{}}'::text[]) || {DEFAULT_FEATURES_SQL}) AS feature
+            SELECT COALESCE(array_agg(DISTINCT feature ORDER BY feature), '{}'::text[])
+            FROM unnest(
+                COALESCE(platform_unlocked_features, '{}'::text[])
+                || ARRAY['partner_api', 'scribe', 'widgets']::text[]
+            ) AS feature
         )
         WHERE NOT (
-            COALESCE(platform_unlocked_features, '{{}}'::text[]) @> {DEFAULT_FEATURES_SQL}
+            COALESCE(platform_unlocked_features, '{}'::text[])
+            @> ARRAY['partner_api', 'scribe', 'widgets']::text[]
         )
         """
     )
     op.execute(
-        f"""
+        """
         CREATE OR REPLACE FUNCTION portal_orgs_apply_default_platform_features()
         RETURNS trigger
         LANGUAGE plpgsql
         AS $$
         BEGIN
             NEW.platform_unlocked_features := (
-                SELECT COALESCE(array_agg(DISTINCT feature ORDER BY feature), {DEFAULT_FEATURES_SQL})
-                FROM unnest(COALESCE(NEW.platform_unlocked_features, '{{}}'::text[]) || {DEFAULT_FEATURES_SQL}) AS feature
+                SELECT COALESCE(
+                    array_agg(DISTINCT feature ORDER BY feature),
+                    ARRAY['partner_api', 'scribe', 'widgets']::text[]
+                )
+                FROM unnest(
+                    COALESCE(NEW.platform_unlocked_features, '{}'::text[])
+                    || ARRAY['partner_api', 'scribe', 'widgets']::text[]
+                ) AS feature
             );
             RETURN NEW;
         END;
