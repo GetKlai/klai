@@ -202,9 +202,7 @@ class TestOAuthHappyPath:
             patch(
                 "httpx.AsyncClient.post",
                 new_callable=AsyncMock,
-                return_value=_make_retrieve_response(
-                    [_chunk(artifact_id=source_artifact_id)]
-                ),
+                return_value=_make_retrieve_response([_chunk(artifact_id=source_artifact_id)]),
             ),
         ):
             result = await search_knowledge(query="how do I X?", ctx=_oauth_ctx())
@@ -449,6 +447,173 @@ class TestTopKClamping:
             await search_knowledge(query="q", ctx=ctx, top_k=input_top_k)
 
         assert captured["json"]["top_k"] == expected
+
+
+# ─── Scope + kb_slugs passthrough (Theme I v1, knowledge-rag plan) ────────
+
+
+class TestScopeAndKbSlugsParameters:
+    @staticmethod
+    def _capture() -> tuple[dict[str, Any], Any]:
+        captured: dict[str, Any] = {}
+
+        async def _capture_post(self: Any, url: str, **kwargs: Any) -> MagicMock:
+            captured["json"] = kwargs.get("json")
+            return _make_retrieve_response([])
+
+        return captured, _capture_post
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("scope", ["org", "personal", "both"])
+    async def test_mcp_search_knowledge_scope_parameter_maps_to_retrieve_body(
+        self, scope: str
+    ) -> None:
+        from main import search_knowledge
+
+        captured, _capture_post = self._capture()
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+        ):
+            await search_knowledge(query="q", ctx=_librechat_ctx(), scope=scope)
+
+        assert captured["json"]["scope"] == scope
+
+    @pytest.mark.asyncio
+    async def test_scope_defaults_to_both(self) -> None:
+        from main import search_knowledge
+
+        captured, _capture_post = self._capture()
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+        ):
+            await search_knowledge(query="q", ctx=_librechat_ctx())
+
+        assert captured["json"]["scope"] == "both"
+
+    @pytest.mark.asyncio
+    async def test_kb_slugs_passed_through_and_omitted_when_absent(self) -> None:
+        from main import search_knowledge
+
+        captured, _capture_post = self._capture()
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+        ):
+            await search_knowledge(query="q", ctx=_librechat_ctx(), kb_slugs=["support", "hr"])
+        assert captured["json"]["kb_slugs"] == ["support", "hr"]
+
+        captured2, _capture_post2 = self._capture()
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post2),
+        ):
+            await search_knowledge(query="q", ctx=_librechat_ctx())
+        assert "kb_slugs" not in captured2["json"]
+
+    @pytest.mark.asyncio
+    async def test_empty_kb_slugs_list_is_omitted_from_body(self) -> None:
+        from main import search_knowledge
+
+        captured, _capture_post = self._capture()
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+        ):
+            await search_knowledge(query="q", ctx=_librechat_ctx(), kb_slugs=[])
+
+        assert "kb_slugs" not in captured["json"]
+
+    @pytest.mark.asyncio
+    async def test_personal_scope_strips_kb_slugs(self) -> None:
+        """Docs promise kb_slugs is ignored for personal notes; forwarding it
+        would AND-combine with the canonical personal-slug filter and silently
+        return zero results."""
+        from main import search_knowledge
+
+        captured, _capture_post = self._capture()
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+        ):
+            await search_knowledge(
+                query="q", ctx=_librechat_ctx(), scope="personal", kb_slugs=["support"]
+            )
+
+        assert captured["json"]["scope"] == "personal"
+        assert "kb_slugs" not in captured["json"]
+
+    @pytest.mark.asyncio
+    async def test_kb_slugs_clamped_to_twenty_entries(self) -> None:
+        from main import search_knowledge
+
+        captured, _capture_post = self._capture()
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch.object(httpx.AsyncClient, "post", new=_capture_post),
+        ):
+            await search_knowledge(
+                query="q", ctx=_librechat_ctx(), kb_slugs=[f"kb-{i}" for i in range(25)]
+            )
+
+        assert captured["json"]["kb_slugs"] == [f"kb-{i}" for i in range(20)]
+
+    @pytest.mark.asyncio
+    async def test_personal_scope_without_verified_user_raises_tool_error(self) -> None:
+        """scope=personal must hard-fail, never silently degrade to org.
+
+        _identify_request is mocked directly (not via _asserter.verify):
+        both dispatcher paths assert a non-empty user_id, so an empty
+        user_id is unreachable through them — this guard is defense-in-depth
+        for the day those asserts change, and the direct mock is the only
+        way to exercise it.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        from main import search_knowledge
+
+        with patch(
+            "main._identify_request",
+            new_callable=AsyncMock,
+        ) as mock_identify:
+            identity = MagicMock()
+            identity.user_id = ""
+            identity.org_id = "org1"
+            identity.client_id = None
+            identity.effective_role = "unknown"
+            mock_identify.return_value = identity
+
+            with pytest.raises(ToolError, match="verified user"):
+                await search_knowledge(query="q", ctx=_librechat_ctx(), scope="personal")
 
 
 # ─── T-10: Identity verify failure propagates ─────────────────────────────

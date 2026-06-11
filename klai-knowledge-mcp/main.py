@@ -1065,10 +1065,15 @@ EN trigger: "search my knowledge base", "what do our docs say about",
 "check the knowledge base".
 
 PARAMETERS:
-  query  - search query in the user's language (any language; bge-m3
-           embeddings are multilingual). Self-contained: resolve pronouns
-           and references yourself before passing. Maximum 2000 characters.
-  top_k  - 1-15, default 8. Higher values for broad questions.
+  query    - search query in the user's language (any language; bge-m3
+             embeddings are multilingual). Self-contained: resolve pronouns
+             and references yourself before passing. Maximum 2000 characters.
+  top_k    - 1-15, default 8. Higher values for broad questions.
+  scope    - "both" (default), "org", or "personal". Use "personal" when the
+             user asks about their own saved notes, "org" to exclude them.
+  kb_slugs - optional list of knowledge-base slugs to restrict the search to
+             (org knowledge only; ignored for personal notes). Omit to search
+             all knowledge bases the user can access. Maximum 20 slugs.
 
 RETURNS: list of chunks with title, source_url, text, score, scope.
   scope="personal" = user's own saved notes.
@@ -1080,6 +1085,8 @@ async def search_knowledge(
     query: str,
     ctx: Context,
     top_k: int = 8,
+    scope: Literal["org", "personal", "both"] = "both",
+    kb_slugs: list[str] | None = None,
 ) -> list[dict]:
     # Identity dispatcher (SPEC-MCP-AUTH-001 REQ-15). Either path raises
     # _IdentificationFailed on auth failure; we propagate it untouched so
@@ -1090,6 +1097,30 @@ async def search_knowledge(
     # LLMs frequently overshoot; defensively bounding is friendlier than an
     # input-validation error that the LLM has to debug.
     top_k = max(1, min(int(top_k), 15))
+
+    # Defense-in-depth: scope=personal must never silently widen to org data.
+    # The identity dispatcher already guarantees a verified user_id on every
+    # path, but if that invariant ever breaks, fail loudly instead of letting
+    # retrieval-api fall back to scope semantics without a user filter.
+    if scope == "personal" and not identity.user_id:
+        raise ToolError("personal scope requires a verified user identity")
+
+    # kb_slugs is an org-KB filter; the tool description promises it is
+    # ignored for personal notes. Under scope=personal retrieval-api would
+    # AND it with the canonical personal-KB slug filter, silently yielding
+    # zero results — strip it here so the documented behavior holds.
+    if scope == "personal":
+        kb_slugs = None
+
+    # Mirror retrieval-api's kb_slugs bound (max 20) by clamping instead of
+    # surfacing a 422 the calling LLM has to debug.
+    if kb_slugs and len(kb_slugs) > 20:
+        logger.warning(
+            "search_knowledge_kb_slugs_truncated: original_len=%d client_id=%s",
+            len(kb_slugs),
+            identity.client_id,
+        )
+        kb_slugs = kb_slugs[:20]
 
     # Query-length clamp: defense-in-depth against runaway prompts (a buggy
     # caller looping on a 100k-char query would otherwise multiply retrieval-
@@ -1111,7 +1142,7 @@ async def search_knowledge(
         "raw_query": query,
         "org_id": identity.org_id,
         "user_id": identity.user_id,
-        "scope": "both",
+        "scope": scope,
         "top_k": top_k,
         "conversation_history": [],
         # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-4: third-party MCP traffic
@@ -1128,6 +1159,14 @@ async def search_knowledge(
         # retrieval-api can apply slug-level filtering downstream.
         "effective_role": identity.effective_role,
     }
+    if kb_slugs:
+        # CONTRACT: retrieval-api's _scope_filter guarantees that under
+        # scope=both with a verified user_id, personal chunks stay reachable
+        # regardless of this org-only filter (kb_slugs OR own-personal-slug;
+        # SPEC-RAG-PERSONAL-SCOPE-001 REQ-3). If that OR-branch is ever
+        # refactored away, scope=both + kb_slugs silently drops personal
+        # results for MCP callers.
+        body["kb_slugs"] = kb_slugs
 
     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: caller-service header is mandatory
     # on /retrieve. ``knowledge-mcp`` is whitelisted in KNOWN_CALLER_SERVICES
