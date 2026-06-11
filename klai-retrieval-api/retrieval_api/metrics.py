@@ -113,6 +113,18 @@ retrieval_link_expand_top_k_total = Counter(
     ["outcome", "org_id"],
 )
 
+# Issue #71 measurement gate — existing Graphiti graph-leg contribution.
+# ``hit`` = at least one Graphiti result survived to the served top-K.
+# ``miss`` = Graphiti returned candidates but none survived rerank +
+# source-aware-select + quality/evidence ordering. Only incremented when
+# Graphiti returned at least one candidate so disabled/empty graph searches
+# do not dilute the signal.
+retrieval_graph_top_k_total = Counter(
+    "retrieval_graph_top_k_total",
+    "Graphiti graph-search contribution to served top-K (hit/miss per tenant)",
+    ["outcome", "org_id"],
+)
+
 # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-14 — privacy-layer observability.
 # Counts every gating decision so operators can verify the telemetry
 # layer is behaving correctly across the four decision-types:

@@ -25,6 +25,7 @@ from retrieval_api.metrics import (
     quality_floor_filtered_total,
     retrieval_chunks_total,
     retrieval_confidence_band_total,
+    retrieval_graph_top_k_total,
     retrieval_link_expand_top_k_total,
     retrieval_requests_total,
     step_latency_seconds,
@@ -235,6 +236,8 @@ async def retrieve(
     rerank_ms: float | None = None
     graph_results_count = 0
     graph_search_ms: float | None = None
+    graph_candidate_ids: set[str] = set()
+    graph_in_top_k_ids: list[str] = []
     link_expand_ms: float | None = None
     link_expand_count = 0
     # F3 phase 1 instrumentation (audit retrieval-coupling-2026-05-06):
@@ -318,6 +321,7 @@ async def retrieve(
                 step_latency_seconds.labels(step="graph").observe(graph_search_ms / 1000)
                 graph_results_count = len(graph_results)
                 if graph_results:
+                    graph_candidate_ids = {r["chunk_id"] for r in graph_results}
                     raw_results = _rrf_merge(raw_results, graph_results)
             except Exception:
                 # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
@@ -519,6 +523,20 @@ async def retrieve(
             "served_top_k": len(serving),
         }
 
+        # Issue #71 measurement gate: before adding any custom graph traversal,
+        # prove whether the current Graphiti graph leg contributes to served
+        # top-K at all. This is intentionally observability-only.
+        graph_in_top_k_ids = [
+            r["chunk_id"] for r in serving if r["chunk_id"] in graph_candidate_ids
+        ]
+        decision_record["graph_search"] = {
+            "enabled": settings.graphiti_enabled,
+            "candidates_returned": graph_results_count,
+            "graph_in_top_k": len(graph_in_top_k_ids),
+            "graph_top_k_chunk_ids": graph_in_top_k_ids,
+            "served_top_k": len(serving),
+        }
+
         # 6b. SPEC-RAG-PARENT-CHILD-001: swap child text for the parent's
         # broader-context text. Fetched in one batch query against
         # knowledge.parent_chunks. Children with no parent_chunk_id (legacy
@@ -617,6 +635,13 @@ async def retrieve(
     if not bypassed and link_expand_count > 0:
         outcome = "hit" if expanded_in_top_k_ids else "miss"
         retrieval_link_expand_top_k_total.labels(outcome=outcome, org_id=req.org_id).inc()
+
+    # Issue #71: only count requests where Graphiti returned candidates. Empty
+    # graph searches are measured by graph_results_count and should not dilute
+    # the contribution ratio.
+    if not bypassed and graph_results_count > 0:
+        outcome = "hit" if graph_in_top_k_ids else "miss"
+        retrieval_graph_top_k_total.labels(outcome=outcome, org_id=req.org_id).inc()
 
     decision_record["total_ms"] = round(retrieval_ms, 1)
 

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from retrieval_api.services.evidence_pack import build_evidence_pack
+from retrieval_api.services.gate import GateDecision
 
 
 class TestRetrieveEndpoint:
@@ -589,6 +590,88 @@ class TestGraphMetadata:
         assert "graph_results_count" in data["metadata"]
         assert "graph_search_ms" in data["metadata"]
         assert data["metadata"]["graph_results_count"] == 0
+
+    def test_decision_record_graph_search_tracks_top_k_contribution(
+        self, client, sample_retrieve_request, caplog
+    ):
+        """Issue #71: Graphiti contribution must be measurable before adding traversal."""
+        import logging
+
+        caplog.set_level(logging.INFO)
+        graph_chunk = {
+            "chunk_id": "graph:edge-1",
+            "text": "Graph edge fact",
+            "score": 0.9,
+            "artifact_id": None,
+            "content_type": "graph_edge",
+            "context_prefix": None,
+            "scope": "org",
+            "valid_at": None,
+            "invalid_at": None,
+        }
+
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved query",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.evaluate",
+                new_callable=AsyncMock,
+                return_value=GateDecision(False, False, 0.1, True),
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.graph_search.search",
+                new_callable=AsyncMock,
+                return_value=[graph_chunk],
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_enabled = False
+            mock_settings.graphiti_enabled = True
+            mock_settings.link_expand_enabled = False
+            mock_settings.link_expand_score_boost = 1.00
+            mock_settings.source_quota_enabled = False
+            mock_settings.router_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+
+            resp = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert resp.status_code == 200
+        assert resp.json()["metadata"]["graph_results_count"] == 1
+
+        rec = next(r for r in caplog.records if "retrieval_decision_record" in r.getMessage())
+        rec_attrs = " ".join(f"{k}={v}" for k, v in rec.__dict__.items())
+        for required_key in (
+            "graph_search",
+            "candidates_returned",
+            "graph_in_top_k",
+            "graph_top_k_chunk_ids",
+        ):
+            assert required_key in rec_attrs, (
+                f"graph_search block missing required key '{required_key}'. "
+                f"Record attrs: {rec.__dict__}"
+            )
+        assert "graph:edge-1" in rec_attrs
 
 
 class TestLinkExpandInstrumentation:
