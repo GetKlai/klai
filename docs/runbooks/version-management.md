@@ -154,7 +154,39 @@ For any external service (non-`ghcr.io/getklai/*`):
    ```
    Container must be `Up X seconds (healthy)`. Logs must not show errors. For stateful services, persistence-smoke must exit 0 — `Up` alone does not prove the new container's writes survive a recreate.
 
-### 3.4 Docker image major upgrade
+### 3.4 External image CVE upgrade loop
+
+Trivy does not update Docker images. It reports vulnerable packages inside the
+currently pinned image. Renovate handles the simple case: if the upstream
+repository publishes a newer stable tag, Renovate opens a Docker image PR on the
+Monday schedule. If the latest stable tag still contains the vulnerable package,
+there is no safe tag bump to make.
+
+For each `pinned-service-*` Trivy finding batch:
+
+1. **Check for a newer stable image tag**: compare the pinned tag in
+   `deploy/docker-compose.yml` / `docker-compose.dev.yml` with the upstream
+   registry and upstream releases. Do not move production pins to `latest`,
+   pre-release, nightly, `dev`, or timestamp tags unless `VERSIONS.md` documents
+   the explicit rationale.
+2. **If a newer stable tag exists**: follow §3.3, update the compose pin and
+   `VERSIONS.md`, then run:
+   ```bash
+   sh deploy/check-image-tags.sh
+   sh deploy/check-image-pullable.sh
+   gh workflow run scan-pinned-images.yml --ref main
+   ```
+3. **If the latest stable tag is still vulnerable**: choose one path:
+   - upstream PR asking the image owner to rebuild or upgrade packages;
+   - Klai-owned derived image, only if we will own rebuilds, registry publishing,
+     pinning, scans, and rollbacks;
+   - documented temporary acceptance in `VERSIONS.md` with scope, exposure, and
+     re-assessment date.
+4. **Never patch a running third-party container with `apt upgrade`**. Debian
+   package fixes must be baked into a rebuilt image; otherwise the fix is not
+   reproducible from git, disappears on recreate, and cannot be scanned by CI.
+
+### 3.5 Docker image major upgrade
 
 Same as minor + **always** these extra steps:
 
@@ -174,7 +206,7 @@ Same as minor + **always** these extra steps:
 6. **Run persistence-smoke after startup**: container `Up X (healthy)` is necessary but not sufficient. Run `sudo /opt/klai/scripts/persistence-smoke.sh <service>` and confirm OK before closing the PR.
 7. **Update `VERSIONS.md` rationale**: a major bump often changes the upgrade path for future bumps.
 
-### 3.5 Python runtime upgrade (e.g. 3.13 → 3.14)
+### 3.6 Python runtime upgrade (e.g. 3.13 → 3.14)
 
 A runtime bump touches five places. All five must change in one PR:
 
@@ -186,7 +218,7 @@ A runtime bump touches five places. All five must change in one PR:
 
 Plus: grep for any `version_info` / `sys.version` hardcoded checks and patch them. Plus: test that any `typing` / `collections.abc` usage still resolves on the new runtime.
 
-### 3.6 Node runtime upgrade
+### 3.7 Node runtime upgrade
 
 Similar but simpler — edit `.github/workflows/portal-frontend.yml` (`node-version:`) and `package.json` (`engines.node` if set). `package-lock.json` regenerates on `npm install`.
 
@@ -456,9 +488,10 @@ Five independent mechanisms detect vulnerabilities. The goal is defence in depth
 When an alert fires:
 
 1. **Triage**: is it actually exploitable in our context? Many CVEs have a high CVSS but no reachable code path in our deployment (e.g., a feature we don't use).
-2. **Fix available?** → bump the dep (follow §3.1 for Python, §3.2 for Node, §3.3 for images).
-3. **No fix available?** → document the acceptance in `VERSIONS.md` with rationale + re-assess date. Add to `pip-audit --ignore-vuln` list if needed. Portal-api already ignores `CVE-2026-4539` and `CVE-2025-71176` with a "re-assess Q3 2026" note.
-4. **Actively exploited?** → bump immediately, skip the Renovate cadence (§10.1).
+2. **Fix available in our dependency files?** → bump the dep (follow §3.1 for Python, §3.2 for Node).
+3. **Fix available inside an external Docker image?** → follow §3.4. If a newer upstream image exists, bump the image pin. If the latest upstream image is still vulnerable, escalate to upstream PR / Klai-owned derived image / documented temporary acceptance.
+4. **No fix available?** → document the acceptance in `VERSIONS.md` with rationale + re-assess date. Add to `pip-audit --ignore-vuln` list if needed. Portal-api already ignores `CVE-2026-4539` and `CVE-2025-71176` with a "re-assess Q3 2026" note.
+5. **Actively exploited?** → bump immediately, skip the Renovate cadence (§10.1).
 
 ---
 

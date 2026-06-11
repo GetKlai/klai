@@ -104,7 +104,7 @@ issues locally.
 
 ### Python runtime
 
-`python:3.13-slim` across all internal services. See `docs/runbooks/version-management.md` §3.5 for the upgrade procedure (5 files must change in lock-step).
+`python:3.13-slim` across all internal services. See `docs/runbooks/version-management.md` §3.6 for the upgrade procedure (5 files must change in lock-step).
 
 ---
 
@@ -122,7 +122,7 @@ Every row must match an entry in this file. New services must be added here **be
 
 ## Automated CVE scanning
 
-Every image in this file is scanned weekly for CRITICAL/HIGH CVEs by `.github/workflows/scan-pinned-images.yml`. Findings land in the [Security tab → Code scanning](https://github.com/GetKlai/klai/security/code-scanning). When a CVE-fixed version is available, Dependabot raises a PR automatically via GitHub's built-in security updates (enabled at the repo level).
+Every image in this file is scanned weekly for CRITICAL/HIGH CVEs by `.github/workflows/scan-pinned-images.yml`. Findings land in the [Security tab → Code scanning](https://github.com/GetKlai/klai/security/code-scanning). Renovate opens PRs when newer upstream image tags exist; Trivy findings in third-party images that are already on the latest stable tag require upstream rebuilds, Klai-owned derived images, or documented temporary acceptance.
 
 See `docs/runbooks/version-management.md` §9 for the full CVE detection stack.
 

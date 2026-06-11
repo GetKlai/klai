@@ -220,7 +220,8 @@ External images go through `scan-pinned-images.yml` (WARN-tier — never blocks 
 
 1. Wait for next Renovate Monday cycle — most external base-images are auto-bumped
 2. If urgent (active exploit in the wild): manual bump in `deploy/docker-compose*.yml`, then `gh workflow run scan-pinned-images.yml --ref main` to re-scan
-3. If image is locally-built (e.g. `vexaai/transcription-service:0.10.6-local-260503-0858`): not scannable — already filtered by SKIP-tier regex in `scan-pinned-images.yml` enumerate-step
+3. If the latest stable upstream image is still vulnerable, do not patch a running container. Either open an upstream PR, publish and own a Klai-derived image, or document a temporary acceptance with exposure and re-assessment date in `VERSIONS.md`.
+4. If image is locally-built (e.g. `vexaai/transcription-service:0.10.6-local-260503-0858`): not scannable — already filtered by SKIP-tier regex in `scan-pinned-images.yml` enumerate-step
 
 ---
 
