@@ -12,6 +12,7 @@ export interface PlatformStats {
   total_templates: number
   total_feedback_count: number
   new_feedback_count: number
+  open_feedback_item_count: number
   unread_message_count: number
   chat_error_count: number
   mrr_cents: number

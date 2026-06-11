@@ -112,6 +112,7 @@ function PlatformConsole() {
         }
       : null
   const newFeedbackCount = stats?.new_feedback_count ?? 0
+  const openFeedbackItemCount = stats?.open_feedback_item_count ?? 0
   const unreadMessageCount = stats?.unread_message_count ?? 0
   const chatErrorCount = stats?.chat_error_count ?? 0
   const extensionDownloadUrl = `${API_BASE}/api/app/shield/extension.zip`
@@ -295,12 +296,16 @@ function PlatformConsole() {
           }
           sub={
             stats
-              ? m.platform_stat_feedback_total({ count: stats.total_feedback_count })
+              ? `${m.platform_stat_feedback_total({
+                  count: stats.total_feedback_count,
+                })} · ${m.platform_stat_feedback_open({
+                  count: stats.open_feedback_item_count,
+                })}`
               : undefined
           }
           loading={statsQuery.isLoading}
-          alert={newFeedbackCount > 0}
-          tone={newFeedbackCount > 0 ? 'warning' : 'default'}
+          alert={newFeedbackCount > 0 || openFeedbackItemCount > 0}
+          tone={newFeedbackCount > 0 || openFeedbackItemCount > 0 ? 'warning' : 'default'}
           onClick={() => setPlatformTab('feedback')}
         />
         <StatCard

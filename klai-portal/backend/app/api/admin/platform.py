@@ -74,6 +74,7 @@ class PlatformStats(BaseModel):
     total_templates: int
     total_feedback_count: int
     new_feedback_count: int
+    open_feedback_item_count: int
     unread_message_count: int
     chat_error_count: int
     mrr_cents: int
@@ -534,6 +535,8 @@ async def platform_stats(
                       (SELECT COUNT(*) FROM feedback_submissions) AS total_feedback_count,
                       (SELECT COUNT(*) FROM feedback_submissions
                          WHERE status = 'new') AS new_feedback_count,
+                      (SELECT COUNT(*) FROM feedback_items
+                         WHERE status = 'open') AS open_feedback_item_count,
                       (SELECT COUNT(*)
                          FROM platform_message_threads thread
                         WHERE (
@@ -573,6 +576,7 @@ async def platform_stats(
         total_templates=row.total_templates,
         total_feedback_count=row.total_feedback_count,
         new_feedback_count=row.new_feedback_count,
+        open_feedback_item_count=row.open_feedback_item_count,
         unread_message_count=row.unread_message_count,
         chat_error_count=row.chat_error_count,
         mrr_cents=0,

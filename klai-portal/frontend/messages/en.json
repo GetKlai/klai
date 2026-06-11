@@ -2188,6 +2188,7 @@
   "platform_stat_new_feedback_value": "{count} new",
   "platform_stat_new_feedback_unit": "new",
   "platform_stat_feedback_total": "{count} total",
+  "platform_stat_feedback_open": "{count} open",
   "platform_stat_chat_errors_24h": "Last 24 hours",
   "platform_search_placeholder": "Search by name or email...",
   "platform_refresh": "Refresh",
