@@ -12,6 +12,18 @@ The detector now requires a DB query (``pool.fetch`` is awaited inside
 ``detect_anonymous_auth_wall``). Walled tests inject a fake cluster
 (5 siblings sharing the wall's SimHash) so the detector fires; clean tests
 inject an empty result so the detector returns None.
+
+Global-state note: ``crawler.py`` binds ``from knowledge_ingest.config
+import settings`` at module load, so it holds a *reference* to whatever
+``settings`` instance existed then. ``test_gitea_webhook_secret_validator``
+pops ``knowledge_ingest.config`` from ``sys.modules`` and reimports it,
+which creates a *new* ``settings`` instance under ``knowledge_ingest.config``
+while ``crawler.settings`` still points at the original object. Patching
+``knowledge_ingest.config.settings.*`` therefore silently misses the object
+the code under test actually reads, and these tests fail in the full suite
+(but pass in isolation). We patch ``knowledge_ingest.adapters.crawler.settings.*``
+— the exact name the production code reads — so the patch always lands on
+the live object regardless of any config-module reload ordering.
 """
 
 from __future__ import annotations
@@ -155,8 +167,8 @@ class TestRejectMode:
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
             patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
             patch("knowledge_ingest.link_graph", lg, create=True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_mode", "reject"),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_enabled", True),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_mode", "reject"),
         ):
             with pytest.raises(AnonymousAuthWallDetected) as excinfo:
                 await _ingest_crawl_result(
@@ -186,8 +198,8 @@ class TestRejectMode:
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
             patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
             patch("knowledge_ingest.link_graph", lg, create=True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_mode", "reject"),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_enabled", True),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_mode", "reject"),
         ):
             with pytest.raises(AnonymousAuthWallDetected) as excinfo:
                 await _ingest_crawl_result(
@@ -220,8 +232,8 @@ class TestDegradeMode:
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
             patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
             patch("knowledge_ingest.link_graph", lg, create=True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_mode", "degrade"),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_enabled", True),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_mode", "degrade"),
         ):
             await _ingest_crawl_result(
                 pool,
@@ -251,9 +263,9 @@ class TestAuditOnlyMode:
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
             patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
             patch("knowledge_ingest.link_graph", lg, create=True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", True),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_enabled", True),
             patch(
-                "knowledge_ingest.config.settings.ingest_login_wall_detect_mode",
+                "knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_mode",
                 "audit_only",
             ),
         ):
@@ -286,8 +298,8 @@ class TestCleanPageUntouched:
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
             patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
             patch("knowledge_ingest.link_graph", lg, create=True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_mode", mode),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_enabled", True),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_mode", mode),
         ):
             await _ingest_crawl_result(
                 pool,
@@ -318,8 +330,8 @@ class TestAuthenticatedClusterHeuristic:
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
             patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
             patch("knowledge_ingest.link_graph", lg, create=True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_mode", "reject"),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_enabled", True),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_mode", "reject"),
         ):
             await _ingest_crawl_result(
                 pool,
@@ -355,8 +367,8 @@ class TestDisabledFlag:
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
             patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
             patch("knowledge_ingest.link_graph", lg, create=True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", False),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_mode", "reject"),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_enabled", False),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_mode", "reject"),
         ):
             # Even in reject mode, a walled page should ingest because flag is off.
             await _ingest_crawl_result(
@@ -393,9 +405,9 @@ class TestInvalidModeFailsSafe:
             patch("knowledge_ingest.adapters.crawler._build_image_store", return_value=None),
             patch("knowledge_ingest.routes.ingest.ingest_document", ingest),
             patch("knowledge_ingest.link_graph", lg, create=True),
-            patch("knowledge_ingest.config.settings.ingest_login_wall_detect_enabled", True),
+            patch("knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_enabled", True),
             patch(
-                "knowledge_ingest.config.settings.ingest_login_wall_detect_mode",
+                "knowledge_ingest.adapters.crawler.settings.ingest_login_wall_detect_mode",
                 "garbage_value",
             ),
         ):

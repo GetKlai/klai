@@ -54,7 +54,7 @@ async def test_crawl_url_populates_link_fields():
         ) as mock_ingest,
         patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock),
         patch(
-            "knowledge_ingest.routes.crawl.assert_caller_identity",
+            "knowledge_ingest.routes.crawl.assert_caller_identity_tenant_only",
             new_callable=AsyncMock,
         ),
         patch(
@@ -125,7 +125,7 @@ async def test_crawl_url_caps_links_to_at_20():
         ) as mock_ingest,
         patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock),
         patch(
-            "knowledge_ingest.routes.crawl.assert_caller_identity",
+            "knowledge_ingest.routes.crawl.assert_caller_identity_tenant_only",
             new_callable=AsyncMock,
         ),
         patch(
@@ -181,7 +181,7 @@ async def test_crawl_url_graceful_degradation_on_link_graph_error():
         ) as mock_ingest,
         patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock),
         patch(
-            "knowledge_ingest.routes.crawl.assert_caller_identity",
+            "knowledge_ingest.routes.crawl.assert_caller_identity_tenant_only",
             new_callable=AsyncMock,
         ),
         patch(

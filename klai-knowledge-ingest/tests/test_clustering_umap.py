@@ -227,6 +227,13 @@ class TestDescriptionGenerationInV2Bootstrap:
         m.taxonomy_bootstrap_cluster_selection_method = "leaf"
         m.taxonomy_bootstrap_max_clusters = 20
         m.taxonomy_bootstrap_top_n_per_cluster = 8
+        # SPEC-TAXONOMY-MERGE-DETECT-001 consolidation settings — must be real
+        # numbers (production defaults from config.py), else proposal_generator.py:1056
+        # crashes on `int > MagicMock`. With target_max=9 and these small test
+        # cluster sets, consolidation is correctly skipped and the base path runs.
+        m.taxonomy_consolidate_enabled = True
+        m.taxonomy_consolidate_target_min = 5
+        m.taxonomy_consolidate_target_max = 9
         return m
 
     @pytest.mark.asyncio
@@ -577,6 +584,10 @@ class TestBatchedNaming:
         mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
+        # SPEC-TAXONOMY-MERGE-DETECT-001 consolidation settings (production defaults).
+        mock_settings.taxonomy_consolidate_enabled = True
+        mock_settings.taxonomy_consolidate_target_min = 5
+        mock_settings.taxonomy_consolidate_target_max = 9
 
         embeddings = _make_clusterable_embeddings(n_clusters=2, n_per_cluster=20)
         doc_summaries = _make_doc_summaries(len(embeddings))
@@ -684,6 +695,10 @@ class TestBatchedNaming:
         mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
+        # SPEC-TAXONOMY-MERGE-DETECT-001 consolidation settings (production defaults).
+        mock_settings.taxonomy_consolidate_enabled = True
+        mock_settings.taxonomy_consolidate_target_min = 5
+        mock_settings.taxonomy_consolidate_target_max = 9
 
         embeddings = _make_clusterable_embeddings(n_clusters=3, n_per_cluster=20)
         doc_summaries = _make_doc_summaries(len(embeddings))
@@ -834,6 +849,10 @@ class TestClusterPersistenceMeanFieldRename:
         mock_settings.taxonomy_bootstrap_cluster_selection_method = "leaf"
         mock_settings.taxonomy_bootstrap_max_clusters = 20
         mock_settings.taxonomy_bootstrap_top_n_per_cluster = 8
+        # SPEC-TAXONOMY-MERGE-DETECT-001 consolidation settings (production defaults).
+        mock_settings.taxonomy_consolidate_enabled = True
+        mock_settings.taxonomy_consolidate_target_min = 5
+        mock_settings.taxonomy_consolidate_target_max = 9
 
         # Use well-separated embeddings (pre_reduce=False path via small dim fixture
         # won't work since proposal_generator always calls pre_reduce=True;

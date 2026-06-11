@@ -127,7 +127,15 @@ async def test_centroid_lookup_failure_logs_at_warning_with_structured_fields():
         conn = MagicMock()
         conn.execute = AsyncMock(return_value=None)
         conn.fetch = AsyncMock(return_value=[])
-        conn.fetchval = AsyncMock(return_value=None)
+        # ``insert_parent_chunks`` (commit 57b5040ec "Index parent chunks
+        # before enrichment") runs in the ingest path and does
+        # ``row_id = await conn.fetchval("... RETURNING id")``; it raises
+        # RuntimeError if that returns None. Real Postgres always returns the
+        # generated id, so the mock must too — returning 1 mirrors the
+        # ``RETURNING id`` contract. (The centroid fast-path under test does
+        # not read ``fetchval`` itself; it only needs the ingest path to
+        # complete so the warning event is emitted.)
+        conn.fetchval = AsyncMock(return_value=1)
         conn.fetchrow = AsyncMock(return_value=None)
 
         with structlog.testing.capture_logs() as captured:

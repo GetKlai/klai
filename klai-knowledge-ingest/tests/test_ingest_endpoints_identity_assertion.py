@@ -244,16 +244,22 @@ class TestSourceCountIdentityAssertion:
         monkeypatch.setattr("knowledge_ingest.config.settings.enrichment_enabled", False)
 
     def test_identity_called_on_source_count(self, client, monkeypatch):
-        """assert_caller_identity is invoked for every source-count request."""
+        """assert_caller_identity_tenant_only is invoked for every source-count request.
+
+        source-count is a tenant-scoped stats endpoint with no end-user context,
+        so ``routes/stats.py::get_source_count`` (stats.py:56) calls the
+        tenant-only asserter, not the user-bound ``assert_caller_identity``.
+        Identity IS enforced — the spy confirms the call is made.
+        """
         calls = []
 
-        async def _spy(request, claimed_org_id, claimed_user_id=None):
+        async def _spy(request, *, claimed_org_id):
             calls.append(claimed_org_id)
             return claimed_org_id  # pretend success
 
         for path in [
-            "knowledge_ingest.identity.assert_caller_identity",
-            "knowledge_ingest.routes.stats.assert_caller_identity",
+            "knowledge_ingest.identity.assert_caller_identity_tenant_only",
+            "knowledge_ingest.routes.stats.assert_caller_identity_tenant_only",
         ]:
             try:
                 monkeypatch.setattr(path, _spy)
@@ -267,8 +273,9 @@ class TestSourceCountIdentityAssertion:
         )
         assert resp.status_code == 200, resp.text
         assert calls, (
-            "assert_caller_identity was never called for /ingest/v1/source-count. "
-            "SPEC-TI-003 AC-6 requires identity assertion on this endpoint."
+            "assert_caller_identity_tenant_only was never called for "
+            "/ingest/v1/source-count. SPEC-TI-003 AC-6 requires identity "
+            "assertion on this endpoint."
         )
         assert "org-1" in calls
 

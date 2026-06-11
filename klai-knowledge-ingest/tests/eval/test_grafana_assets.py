@@ -23,10 +23,15 @@ def test_dashboard_json_syntactically_valid() -> None:
 
 
 def test_dashboard_has_four_metric_panels_plus_failure_panel() -> None:
-    """Dashboard ships exactly 4 metric panels + 1 failure-row panel."""
+    """Dashboard ships 4 RAGAS metric panels + 1 failure-row panel + 1 low-confidence panel.
+
+    The "Low-Confidence" Prometheus panel was added in
+    SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 (REQ-8, commit b9c1d1229) to surface
+    confidence-band / link-survival observability alongside the RAGAS metrics.
+    """
     parsed = json.loads(DASHBOARD_PATH.read_text(encoding="utf-8"))
     panels = parsed["panels"]
-    assert len(panels) == 5
+    assert len(panels) == 6
     titles = {p["title"] for p in panels}
     expected_metrics = {
         "Context precision (7-day moving average)",
@@ -34,6 +39,7 @@ def test_dashboard_has_four_metric_panels_plus_failure_panel() -> None:
         "Faithfulness (7-day moving average)",
         "Answer relevance (7-day moving average)",
         "Failed-row count per nightly run (NULL metrics)",
+        "Low-Confidence",
     }
     assert titles == expected_metrics
 
@@ -46,13 +52,33 @@ def test_dashboard_has_variant_template_variable() -> None:
 
 
 def test_dashboard_panels_filter_by_variant() -> None:
-    """Every metric panel's SQL filters on `$variant` (Unit 5 contract)."""
+    """Every SQL metric panel filters on `$variant` (Unit 5 contract).
+
+    The postgres RAGAS panels query knowledge.rag_eval_results and MUST scope to
+    `$variant`. The "Low-Confidence" panel added in REQ-8 is a Prometheus panel
+    whose targets use `expr` (PromQL) instead of `rawSql` and filter on `$org_id`
+    rather than `$variant`; it has no SQL, so the variant contract does not apply
+    to it. Assert each SQL target still carries the $variant filter, and confirm
+    the non-SQL panel uses `expr` (so a future SQL panel can't silently drop the
+    filter by omitting rawSql).
+    """
     parsed = json.loads(DASHBOARD_PATH.read_text(encoding="utf-8"))
+    sql_target_count = 0
     for panel in parsed["panels"]:
         for target in panel["targets"]:
-            assert "$variant" in target["rawSql"], (
-                f"Panel {panel['title']!r} SQL is missing $variant filter."
-            )
+            if "rawSql" in target:
+                sql_target_count += 1
+                assert "$variant" in target["rawSql"], (
+                    f"Panel {panel['title']!r} SQL is missing $variant filter."
+                )
+            else:
+                assert "expr" in target, (
+                    f"Panel {panel['title']!r} target has neither rawSql nor expr."
+                )
+    # The five RAGAS/failure panels each contribute exactly one SQL target.
+    assert sql_target_count == 5, (
+        f"Expected 5 SQL targets across the RAGAS panels, found {sql_target_count}."
+    )
 
 
 def test_alert_yaml_syntactically_valid() -> None:

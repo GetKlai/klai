@@ -29,7 +29,29 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  # knowledge-ingest had NO automated test gate: its ~1100 pytest tests only ran
+  # locally, so changes merged + auto-deployed to prod without CI ever running
+  # them (the suite had drifted red, unnoticed, for an unknown period). This job
+  # closes that gap and gates the build/deploy on a green suite. All external
+  # services (Postgres/Qdrant/TEI/FalkorDB/LiteLLM/portal) are mocked, so no
+  # service containers are needed.
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-knowledge-ingest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.3"
+          python-version: "3.12"
+          enable-cache: true
+      - name: Test (pytest)
+        run: uv run --extra dev pytest -q --tb=short
+
   build-push:
+    needs: tests
     runs-on: ubuntu-latest
 
     steps:

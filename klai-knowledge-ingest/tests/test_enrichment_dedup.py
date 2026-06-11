@@ -57,12 +57,24 @@ def _base_patches(mock_app):
     """
     import contextlib
 
+    async def _fake_insert_parent_chunks(conn, *, artifact_id, org_id, parents):
+        # Production (pg_store.insert_parent_chunks) returns one generated id
+        # per inserted parent, in order, and fail-louds if any insert returns
+        # no id (SPEC-RAG-PARENT-CHILD-001). Mirror that contract here: hand
+        # back ids 1..len(parents) so the caller's child->parent index map
+        # (ingest.py:581-583) resolves without falling through to None.
+        return list(range(1, len(parents) + 1))
+
     @contextlib.asynccontextmanager
     async def _stack():
         with (
             patch(
                 "knowledge_ingest.routes.ingest.chunker.chunk_markdown_with_parents",
                 return_value=([MagicMock(text="chunk text", parent_index=0)], []),
+            ),
+            patch(
+                "knowledge_ingest.routes.ingest.pg_store.insert_parent_chunks",
+                new=AsyncMock(side_effect=_fake_insert_parent_chunks),
             ),
             patch(
                 "knowledge_ingest.routes.ingest.embedder.embed",
@@ -215,8 +227,18 @@ async def test_two_ingests_same_path_only_one_enrichment():
 
 
 @pytest.mark.asyncio
-async def test_truncated_docling_document_skips_enrichment_enqueue():
-    """A bounded preview for a pre-chunked Docling file must not start LLM fan-out."""
+async def test_large_truncated_docling_document_skips_enrichment_enqueue():
+    """A bounded preview for a LARGE pre-chunked Docling file must not start LLM fan-out.
+
+    enrichment_policy.enrichment_skip_reason (enrichment_policy.py:26-35)
+    skips enrichment for a truncated docling upload only when the FULL
+    document's chunk count (``docling_chunk_count``) exceeds
+    ``enrichment_max_chunks`` (200 here). Small truncated docling uploads are
+    deliberately reindexed instead — see the sibling contract
+    test_load_and_enrich_reindexes_small_truncated_docling_artifact
+    (test_enrichment_loads_from_pg.py:317, mock_enrich.assert_awaited_once()).
+    So this skip case must carry a docling_chunk_count above the ceiling.
+    """
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
@@ -233,7 +255,9 @@ async def test_truncated_docling_document_skips_enrichment_enqueue():
         chunks=["docling chunk one", "docling chunk two"],
         extra={
             "document_text_truncated": True,
-            "docling_chunk_count": 2,
+            # Full doc had 1557 chunks (> enrichment_max_chunks=200): too big
+            # to re-enrich from the bounded preview, so enrichment is skipped.
+            "docling_chunk_count": 1557,
         },
     )
 
