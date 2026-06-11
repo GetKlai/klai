@@ -125,6 +125,7 @@ def _merge_context_meta(
         "trailing_assistant_repaired",
         "dropped_unmatched_tool_calls",
         "dropped_orphan_tool_results",
+        "omitted_file_content_parts",
     ):
         merged[counter] = max(
             int(previous.get(counter) or 0),

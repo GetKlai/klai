@@ -257,6 +257,7 @@ services:
       - ./litellm/klai_kb_traceability.py:/app/klai_kb_traceability.py:ro
       - ./litellm/klai_kb_urls.py:/app/klai_kb_urls.py:ro
       - ./litellm/klai_litellm_response.py:/app/klai_litellm_response.py:ro
+      - ./litellm/klai_chat_attachments.py:/app/klai_chat_attachments.py:ro
       - ./litellm/custom_router.py:/app/custom_router.py:ro
       # SPEC-CHAT-GUARDRAILS-001: vendored package copy of klai-libs/llm-safety
       # (kept byte-identical via deploy/litellm/tests/test_klai_llm_safety_drift.py).
@@ -301,6 +302,10 @@ services:
       KNOWLEDGE_RETRIEVE_URL: http://retrieval-api:8040/retrieve
       KNOWLEDGE_RETRIEVE_TIMEOUT: "60.0"
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      DOCLING_URL: http://docling-serve:5001
+      KLAI_CHAT_PDF_MAX_BYTES: "20971520"
+      KLAI_CHAT_PDF_MAX_EXTRACTED_TOKENS: "120000"
+      KLAI_CHAT_PDF_CONVERSION_TIMEOUT_S: "45.0"
       PORTAL_API_URL: http://portal-api:8010
       # Two DIFFERENT secrets — one per receiver. portal-api validates the first
       # (entitlement check + templates fetch) against PORTAL_API_INTERNAL_SECRET;

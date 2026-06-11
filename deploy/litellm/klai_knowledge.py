@@ -23,6 +23,7 @@ import time
 from typing import Any
 
 import httpx
+import litellm
 
 # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): the language-detection
 # foundation that this hook prepends to every LibreChat system message,
@@ -41,6 +42,7 @@ import httpx
 # --remove-orphans litellm``) so new mounts are picked up automatically —
 # matching every other klai service deploy.
 from klai_context import (
+    ACTIVE_ATTACHMENT_CONTEXT_PLACEHOLDER as _ACTIVE_ATTACHMENT_CONTEXT_PLACEHOLDER,
     HISTORY_BUDGET_CONTEXT_PLACEHOLDER as _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
     KlaiContextOrchestrator,
     STALE_ATTACHMENT_CONTEXT_PLACEHOLDER as _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
@@ -80,6 +82,9 @@ from klai_kb_answer_policy import (
 )
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
+)
+from klai_chat_attachments import (
+    process_chat_attachments as _process_chat_attachments,
 )
 from klai_kb_context_prompt import (
     build_kb_context_prompt as _build_kb_context_prompt,
@@ -197,6 +202,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "KbAnswerPolicy",
     "_USER_PROVIDED_CONTENT_SCOPE",
+    "_ACTIVE_ATTACHMENT_CONTEXT_PLACEHOLDER",
     "_HISTORY_BUDGET_CONTEXT_PLACEHOLDER",
     "_STALE_ATTACHMENT_CONTEXT_PLACEHOLDER",
     "_compose_libre_chat_prefix",
@@ -245,6 +251,7 @@ __all__ = [
     "_sanitize_assistant_history_messages",
     "_strip_klai_backend_footer_from_text",
     "_truthy",
+    "_process_chat_attachments",
     "klai_knowledge_hook",
 ]
 
@@ -336,7 +343,30 @@ class KlaiKnowledgeHook(CustomLogger):
         query = _last_user_message(messages)
         data["messages"] = messages
         context_meta: dict[str, Any] | None = None
-        if _should_assemble_provider_context(data):
+        should_assemble_provider_context = _should_assemble_provider_context(data)
+        if should_assemble_provider_context:
+            profile = _KLAI_CONTEXT_ORCHESTRATOR.profile_for(
+                data.get("model", "klai-primary")
+            )
+            attachment_result = await _process_chat_attachments(
+                messages,
+                query=query,
+                token_counter=getattr(litellm, "token_counter", None),
+                token_counter_model=profile.token_counter_model,
+            )
+            data.setdefault("metadata", {})["_klai_chat_attachment_meta"] = attachment_result.meta
+            if attachment_result.user_visible_error is not None:
+                data["mock_response"] = attachment_result.user_visible_error
+                return data
+            if attachment_result.processed_count:
+                messages = attachment_result.messages
+                data["messages"] = messages
+                logger.warning(
+                    "chat_pdf_attachment_processed attachments=%d extracted_chars=%d extracted_tokens_estimate=%d",
+                    attachment_result.processed_count,
+                    attachment_result.meta["chat_pdf_extracted_chars"],
+                    attachment_result.meta["chat_pdf_extracted_tokens_estimate"],
+                )
             context_result = _KLAI_CONTEXT_ORCHESTRATOR.assemble(
                 messages,
                 requested_model=data.get("model", "klai-primary"),

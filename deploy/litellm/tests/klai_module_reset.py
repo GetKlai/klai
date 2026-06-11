@@ -9,6 +9,7 @@ KLAI_KB_MODULES = (
     "klai_knowledge",
     "klai_kb_answer_policy",
     "klai_kb_citation_render",
+    "klai_chat_attachments",
     "klai_kb_confidence_policy",
     "klai_kb_context_prompt",
     "klai_kb_llm_safety",

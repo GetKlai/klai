@@ -18,6 +18,12 @@ STALE_ATTACHMENT_CONTEXT_PLACEHOLDER = (
     "[Earlier uploaded document content omitted from model context. Use the "
     "latest user question and retrieved knowledge-base context instead.]"
 )
+ACTIVE_ATTACHMENT_CONTEXT_PLACEHOLDER = (
+    "[Uploaded file payload omitted from model context because this chat model "
+    "cannot consume raw LibreChat file parts. Use the user's written request "
+    "and any retrieved knowledge-base context; ask for pasted text or a "
+    "knowledge-base upload if the file contents are required.]"
+)
 HISTORY_BUDGET_CONTEXT_PLACEHOLDER = (
     "[Earlier conversation turns omitted from model context because they "
     "exceeded Klai's provider context budget. Use the latest user question, "
@@ -211,6 +217,31 @@ def _assistant_text_without_tool_parts(content: object) -> tuple[str | None, int
         return None, 0
     text = "\n".join(texts).strip() or TOOL_CONTEXT_PLACEHOLDER
     return text, omitted_parts
+
+
+def _user_text_without_file_parts(content: object) -> tuple[str | None, int]:
+    if not isinstance(content, list):
+        return None, 0
+
+    texts: list[str] = []
+    omitted_parts = 0
+    for part in content:
+        if not isinstance(part, dict):
+            return None, 0
+        part_type = part.get("type")
+        if part_type == "text" and isinstance(part.get("text"), str):
+            text = part["text"].strip()
+            if text:
+                texts.append(text)
+        elif part_type == "file":
+            omitted_parts += 1
+        else:
+            return None, 0
+
+    if not omitted_parts:
+        return None, 0
+    texts.append(ACTIVE_ATTACHMENT_CONTEXT_PLACEHOLDER)
+    return "\n\n".join(texts), omitted_parts
 
 
 def _stringify_tool_content(content: object) -> str:
@@ -453,6 +484,19 @@ class MistralProviderAdapter:
 
         text_content = _text_from_text_parts(message.get("content"))
         if text_content is None:
+            if role == "user":
+                user_text, omitted_file_parts = _user_text_without_file_parts(
+                    message.get("content")
+                )
+                if user_text is not None:
+                    next_message = dict(message)
+                    next_message["content"] = user_text
+                    meta["normalized_text_part_messages"] += 1
+                    meta["normalized_user_text_part_messages"] += 1
+                    meta["omitted_file_content_parts"] += omitted_file_parts
+                    if "raw_file_content_parts_omitted" not in meta["reason_codes"]:
+                        meta["reason_codes"].append("raw_file_content_parts_omitted")
+                    return next_message
             if role == "assistant":
                 assistant_text, omitted_tool_parts = _assistant_text_without_tool_parts(
                     message.get("content")
@@ -560,6 +604,7 @@ class KlaiContextOrchestrator:
             "stale_attachment_placeholders": 0,
             "omitted_tool_messages": 0,
             "omitted_tool_content_parts": 0,
+            "omitted_file_content_parts": 0,
             "active_tool_results_converted": 0,
             "active_tool_results_preserved": 0,
             "active_tool_results_normalized": 0,

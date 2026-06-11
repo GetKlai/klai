@@ -369,6 +369,42 @@ def _make_resp(
     return resp
 
 
+def _make_plain_resp(json_data: dict, status_code: int = 200):
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = json_data
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+@contextmanager
+def _patch_docling(success_markdown: str | None = "Extracted PDF text"):
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(
+        return_value=_make_plain_resp({"task_id": "docling-task-1"})
+    )
+
+    result_payload = (
+        {"chunks": [{"text": success_markdown}]}
+        if success_markdown is not None
+        else {"chunks": []}
+    )
+
+    async def _async_get(url, **kwargs):
+        if url.startswith("/v1/status/poll/"):
+            return _make_plain_resp({"task_status": "success"})
+        if url.startswith("/v1/result/"):
+            return _make_plain_resp(result_payload)
+        return _make_plain_resp({})
+
+    mock_client.get = AsyncMock(side_effect=_async_get)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("klai_chat_attachments._AsyncClient", return_value=mock_client):
+        yield mock_client
+
+
 @contextmanager
 def _patch_http(monkeypatch, portal_resp=None, retrieval_resp=None):
     """Patch httpx.AsyncClient.get and .post for portal and retrieval calls."""
@@ -1924,6 +1960,187 @@ class TestKlaiKnowledgeHookProviderContext:
         meta = result["metadata"]["_klai_context_meta"]
         assert meta["normalized_user_text_part_messages"] == 1
         assert meta["stale_attachment_placeholders"] == 1
+
+    @pytest.mark.asyncio
+    async def test_provider_context_converts_active_pdf_file_parts(
+        self, monkeypatch
+    ):
+        """Active PDF file parts become text context before Mistral."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        latest = (
+            "Maak een opzet voor een presentatie over verwerkingen en DPIA's."
+        )
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": latest},
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "privacybytes.pdf",
+                                "file_data": "data:application/pdf;base64,JVBERi0xLjQK",
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+
+        with _patch_docling("Pagina 1: verwerkingen en DPIA's."), patch(
+            "klai_knowledge.httpx.AsyncClient"
+        ) as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        body = mc.post.call_args.kwargs.get("json") or {}
+        assert body["raw_query"] == latest
+        provider_messages = result["messages"]
+        user_messages = [m for m in provider_messages if m.get("role") == "user"]
+        assert user_messages
+        assert all(isinstance(m.get("content"), str) for m in user_messages)
+        provider_text = "\n".join(m["content"] for m in user_messages)
+        assert latest in provider_text
+        assert "Pagina 1: verwerkingen en DPIA's." in provider_text
+        assert "[Uploaded PDF content]" in provider_text
+        assert mod._ACTIVE_ATTACHMENT_CONTEXT_PLACEHOLDER not in provider_text
+        assert "file_data" not in str(provider_messages)
+        assert "JVBERi0xLjQK" not in str(provider_messages)
+        attachment_meta = result["metadata"]["_klai_chat_attachment_meta"]
+        assert attachment_meta["chat_pdf_attachments_seen"] == 1
+        assert attachment_meta["chat_pdf_attachments_processed"] == 1
+        meta = result["metadata"]["_klai_context_meta"]
+        assert meta["omitted_file_content_parts"] == 0
+        assert "raw_file_content_parts_omitted" not in meta["reason_codes"]
+
+    @pytest.mark.asyncio
+    async def test_active_pdf_over_chat_byte_cap_short_circuits(self, monkeypatch):
+        mod = _load_hook(monkeypatch, {"KLAI_CHAT_PDF_MAX_BYTES": "12"})
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        latest = "Kun je deze PDF samenvatten?"
+        pdf = b"%PDF-1.4\n" + b"x" * 20
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": latest},
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "groot.pdf",
+                                "file_data": "data:application/pdf;base64,"
+                                + __import__("base64").b64encode(pdf).decode("ascii"),
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+
+        with patch("klai_chat_attachments._AsyncClient") as docling_cls, patch(
+            "klai_knowledge.httpx.AsyncClient"
+        ) as retrieval_cls:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert "mock_response" in result
+        assert "te groot" in result["mock_response"]
+        assert result["metadata"]["_klai_chat_attachment_meta"]["chat_pdf_error_reason"] == "file_too_large"
+        docling_cls.assert_not_called()
+        retrieval_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unreadable_active_pdf_short_circuits(self, monkeypatch):
+        _load_hook(monkeypatch)
+        import klai_knowledge as mod
+
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        latest = "Kun je deze PDF samenvatten?"
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": latest},
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "scan.pdf",
+                                "file_data": "data:application/pdf;base64,JVBERi0xLjQK",
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+
+        with _patch_docling(None), patch("klai_knowledge.httpx.AsyncClient") as retrieval_cls:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert "mock_response" in result
+        assert "geen leesbare tekst" in result["mock_response"]
+        assert result["metadata"]["_klai_chat_attachment_meta"]["chat_pdf_error_reason"] == "unreadable_pdf"
+        retrieval_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_active_pdf_over_extracted_token_cap_short_circuits(self, monkeypatch):
+        _load_hook(monkeypatch, {"KLAI_CHAT_PDF_MAX_EXTRACTED_TOKENS": "2"})
+        import klai_knowledge as mod
+
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        latest = "Kun je deze PDF samenvatten?"
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": latest},
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "tekst.pdf",
+                                "file_data": "data:application/pdf;base64,JVBERi0xLjQK",
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+
+        with _patch_docling("Deze PDF heeft meer tekst dan de testlimiet."), patch(
+            "klai_knowledge.httpx.AsyncClient"
+        ) as retrieval_cls:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert "mock_response" in result
+        assert "te veel tekst" in result["mock_response"]
+        assert (
+            result["metadata"]["_klai_chat_attachment_meta"]["chat_pdf_error_reason"]
+            == "extracted_text_too_large"
+        )
+        retrieval_cls.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_provider_context_defers_history_budget_to_router(self, monkeypatch):
