@@ -10,7 +10,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from klai_chat_prompts import no_citable_sources_message
-from klai_citations import compose_answer_with_trusted_sources
+from klai_citations import (
+    compose_answer_with_trusted_sources,
+    strip_model_citation_artifacts,
+)
 from klai_kb_answer_policy import strict_kb_unavailable_message
 from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 from klai_kb_traceability import dedupe_strings
@@ -658,12 +661,18 @@ def _collapse_whitespace_with_index_map(text: str) -> tuple[str, list[int]]:
     return "".join(collapsed), index_map
 
 
-def remove_already_streamed_prefix(final_text: str, emitted_text: str) -> str:
+def remove_already_streamed_prefix(final_text: str, emitted_text: str) -> str | None:
     """Return only the part of final_text that has not already streamed.
 
     The deterministic citation renderer may normalize whitespace compared to
     the token stream. Use an exact cut when possible, then a whitespace-tolerant
     cut so the final source footer does not replay the full answer in LibreChat.
+
+    Returns ``None`` when the rendered text diverges from the streamed prefix
+    in non-whitespace content (e.g. the cleaner renumbered list lines). The
+    caller must then compose the flush delta from the raw un-streamed
+    remainder — replaying ``final_text`` after already-streamed text duplicates
+    the whole answer in the client (Voys feedback #21, 2026-06-11).
     """
     if not emitted_text:
         return final_text
@@ -676,7 +685,7 @@ def remove_already_streamed_prefix(final_text: str, emitted_text: str) -> str:
         cut_index = final_map[len(collapsed_emitted) - 1] + 1
         return final_text[cut_index:]
 
-    return final_text
+    return None
 
 
 def compose_non_streaming_kb_response(
@@ -875,15 +884,42 @@ def compose_streaming_kb_response(
                 no_citable_message=kb_meta.get("no_citable_message"),
             )
         )
+        tail = remove_already_streamed_prefix(rendered_content, emitted_text)
+        if tail is None and no_citable_sources:
+            # Deliberate replacement (strict refusal): the canned message is
+            # the contract and is short — append it in full after the stream.
+            tail = rendered_content
+            decision["stream_flush_alignment"] = "replacement_appended"
+        elif tail is None:
+            # The cleaner changed non-whitespace content inside the region the
+            # user already saw, so the rendered answer cannot be aligned with
+            # the stream. Never replay the full answer (Voys feedback #21,
+            # 2026-06-11: BT-ticket form restarted at "Hello BT"). Emit the
+            # raw un-streamed remainder instead, cleaned standalone so
+            # buffered model-authored links/images still cannot leak.
+            remainder = (
+                full_text[len(emitted_text) :]
+                if full_text.startswith(emitted_text)
+                else rendered_content
+            )
+            tail = strip_model_citation_artifacts(
+                remainder,
+                allowed_image_urls=allowed_image_urls,
+                source_titles={
+                    source["title"]
+                    for source in trusted_sources
+                    if isinstance(source.get("title"), str)
+                },
+            )
+            decision["stream_flush_alignment"] = "raw_remainder"
+        else:
+            decision["stream_flush_alignment"] = "prefix_cut"
         _remember_citation_decision(
             kb_meta,
             decision,
             no_citable_sources=no_citable_sources,
         )
-        final_text = _append_visible_sources_section(
-            rendered_content, sources, kb_meta=kb_meta
-        )
-        final_text = remove_already_streamed_prefix(final_text, emitted_text)
+        final_text = _append_visible_sources_section(tail, sources, kb_meta=kb_meta)
         if sources:
             set_message_field(delta, "sources", sources)
         set_message_content(delta, final_text)
