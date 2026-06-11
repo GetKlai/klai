@@ -148,8 +148,8 @@ def _base_patches(mock_app):
 
 
 @pytest.mark.asyncio
-async def test_queueing_lock_uses_org_kb_path():
-    """configure() is called with queueing_lock = '{org_id}:{kb_slug}:{path}'."""
+async def test_queueing_lock_uses_org_kb_path_and_artifact():
+    """configure() scopes dedup to the path and the concrete artifact version."""
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
@@ -168,7 +168,7 @@ async def test_queueing_lock_uses_org_kb_path():
         result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
-    task_fn.configure.assert_called_once_with(queueing_lock="org-1:my-kb:docs/page.md")
+    task_fn.configure.assert_called_once_with(queueing_lock="org-1:my-kb:docs/page.md:art-test")
 
 
 @pytest.mark.asyncio
@@ -197,12 +197,55 @@ async def test_already_enqueued_does_not_propagate():
 
 
 @pytest.mark.asyncio
-async def test_two_ingests_same_path_only_one_enrichment():
-    """Second ingest for the same path silently skips enrichment (AlreadyEnqueued)."""
+async def test_two_ingests_same_path_enqueue_per_artifact():
+    """A newer artifact for the same path must get its own enrichment job.
+
+    Otherwise the only queued job can belong to the older artifact, which is
+    soft-deleted by the second ingest before the worker gets to it.
+    """
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
-    # First call succeeds, second raises AlreadyEnqueued
+    configured = MagicMock()
+    configured.defer_async = AsyncMock(return_value=None)
+    task_fn = MagicMock()
+    task_fn.configure = MagicMock(return_value=configured)
+    mock_app = MagicMock()
+    mock_app.enrich_document_bulk = task_fn
+
+    conn = _make_mock_conn()
+    req = IngestRequest(
+        org_id="org-2",
+        kb_slug="kb-slug",
+        path="notes/doc.md",
+        content="# Doc\n\nSome text.",
+        source_type="docs",
+        content_type="kb_article",
+    )
+
+    async with _base_patches(mock_app):
+        with patch(
+            "knowledge_ingest.routes.ingest.pg_store.create_artifact",
+            new_callable=AsyncMock,
+            side_effect=["art-first", "art-second"],
+        ):
+            result1 = await ingest_document(conn, req)
+            result2 = await ingest_document(conn, req)
+
+    assert result1["status"] == "ok"
+    assert result2["status"] == "ok"
+    assert task_fn.configure.call_args_list[0].kwargs["queueing_lock"].endswith(":art-first")
+    assert task_fn.configure.call_args_list[1].kwargs["queueing_lock"].endswith(":art-second")
+    assert configured.defer_async.await_args_list[0].kwargs == {"artifact_id": "art-first"}
+    assert configured.defer_async.await_args_list[1].kwargs == {"artifact_id": "art-second"}
+
+
+@pytest.mark.asyncio
+async def test_already_enqueued_same_artifact_does_not_propagate():
+    """When the exact same artifact job is already queued, ingest still returns ok."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
     configured = MagicMock()
     configured.defer_async = AsyncMock(side_effect=[None, _AlreadyEnqueued()])
     task_fn = MagicMock()
@@ -226,7 +269,6 @@ async def test_two_ingests_same_path_only_one_enrichment():
 
     assert result1["status"] == "ok"
     assert result2["status"] == "ok"
-    # configure called twice (once per ingest), but only the first defer_async succeeds
     assert task_fn.configure.call_count == 2
     assert configured.defer_async.call_count == 2
 

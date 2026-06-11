@@ -144,6 +144,16 @@ async def _load_and_enrich(artifact_id: str) -> None:
     if artifact is None:
         logger.info("enrichment_aborted_artifact_missing", artifact_id=artifact_id)
         return
+    if artifact["belief_time_end"] != pg_store._SENTINEL:
+        logger.info(
+            "enrichment_aborted_artifact_superseded",
+            artifact_id=artifact_id,
+            org_id=artifact["org_id"],
+            kb_slug=artifact["kb_slug"],
+            path=artifact["path"],
+            belief_time_end=artifact["belief_time_end"],
+        )
+        return
 
     extra: dict = artifact["extra"] or {}
     document_text: str = extra.get("document_text", "") or ""

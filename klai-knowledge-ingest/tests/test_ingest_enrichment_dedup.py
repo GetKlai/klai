@@ -1,9 +1,9 @@
 """
 Tests that duplicate enrichment tasks are deduplicated via queueing_lock.
 
-Two rapid ingest calls for the same (org_id, kb_slug, path) must produce
-exactly one enrichment task — the second defer_async() raises AlreadyEnqueued
-and is silently skipped.
+Duplicate enqueue attempts for the same concrete artifact are silently skipped,
+but a newer artifact for the same path must get a distinct job. Otherwise an
+older queued job can be the only enrichment job left after a re-ingest.
 
 procrastinate is mocked at the sys.modules level so this file runs in
 environments where libpq is not installed (CI, local dev on Windows).
@@ -66,17 +66,10 @@ _DEFER_KWARGS = dict(
     org_id="org1",
     kb_slug="my-kb",
     path="docs/page.md",
-    document_text="hello",
-    chunks=["hello"],
-    title="Page",
     artifact_id="aid1",
-    user_id=None,
-    extra_payload={},
-    synthesis_depth=1,
-    content_type="unknown",
 )
 
-_QUEUEING_LOCK = "{org_id}:{kb_slug}:{path}".format(**_DEFER_KWARGS)
+_QUEUEING_LOCK = "{org_id}:{kb_slug}:{path}:{artifact_id}".format(**_DEFER_KWARGS)
 
 
 async def _run_enqueue(task_fn):
@@ -85,7 +78,7 @@ async def _run_enqueue(task_fn):
         from procrastinate.exceptions import AlreadyEnqueued as _AE  # noqa: PLC0415
         await task_fn.configure(
             queueing_lock=_QUEUEING_LOCK,
-        ).defer_async(**_DEFER_KWARGS)
+        ).defer_async(artifact_id=_DEFER_KWARGS["artifact_id"])
     except _AE:
         logging.getLogger("knowledge_ingest.routes.ingest").info(
             "enrichment already queued, skipping (%s/%s org=%s)",
@@ -130,38 +123,37 @@ async def test_first_ingest_not_skipped():
 
 
 @pytest.mark.asyncio
-async def test_queueing_lock_includes_org_kb_path():
-    """queueing_lock must be '{org_id}:{kb_slug}:{path}' — no collisions across orgs."""
+async def test_queueing_lock_includes_org_kb_path_and_artifact():
+    """queueing_lock includes path identity plus the concrete artifact version."""
     # Two tasks for different orgs, same KB+path — must get different locks
     task_fn_a, configured_a = _make_task_fn(side_effects=[None])
     task_fn_b, configured_b = _make_task_fn(side_effects=[None])
+    task_fn_c, configured_c = _make_task_fn(side_effects=[None])
 
     org_a, org_b = "orgA", "orgB"
     kb_slug, path = "shared-kb", "docs/page.md"
 
-    for org_id, task_fn in [(org_a, task_fn_a), (org_b, task_fn_b)]:
-        lock = f"{org_id}:{kb_slug}:{path}"
+    scenarios = [
+        (org_a, "artifact-a", task_fn_a),
+        (org_b, "artifact-b", task_fn_b),
+        (org_a, "artifact-c", task_fn_c),
+    ]
+    for org_id, artifact_id, task_fn in scenarios:
+        lock = f"{org_id}:{kb_slug}:{path}:{artifact_id}"
         try:
             from procrastinate.exceptions import AlreadyEnqueued as _AE  # noqa: PLC0415
             await task_fn.configure(queueing_lock=lock).defer_async(
-                org_id=org_id,
-                kb_slug=kb_slug,
-                path=path,
-                document_text="x",
-                chunks=["x"],
-                title="T",
-                artifact_id="a",
-                user_id=None,
-                extra_payload={},
-                synthesis_depth=1,
-                content_type="unknown",
+                artifact_id=artifact_id,
             )
         except _AE:
             pass
 
     lock_a = task_fn_a.configure.call_args.kwargs["queueing_lock"]
     lock_b = task_fn_b.configure.call_args.kwargs["queueing_lock"]
+    lock_c = task_fn_c.configure.call_args.kwargs["queueing_lock"]
 
     assert lock_a != lock_b, "Different orgs must produce different locks"
-    assert lock_a == f"{org_a}:{kb_slug}:{path}"
-    assert lock_b == f"{org_b}:{kb_slug}:{path}"
+    assert lock_a != lock_c, "Different artifact versions must produce different locks"
+    assert lock_a == f"{org_a}:{kb_slug}:{path}:artifact-a"
+    assert lock_b == f"{org_b}:{kb_slug}:{path}:artifact-b"
+    assert lock_c == f"{org_a}:{kb_slug}:{path}:artifact-c"

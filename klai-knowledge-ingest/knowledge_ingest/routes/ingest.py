@@ -700,7 +700,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             from procrastinate.exceptions import AlreadyEnqueued
 
             await task_fn.configure(
-                queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}",
+                queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}:{artifact_id}",
             ).defer_async(artifact_id=artifact_id)
         except AlreadyEnqueued:
             logger.info(

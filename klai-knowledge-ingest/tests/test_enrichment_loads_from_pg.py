@@ -558,6 +558,46 @@ async def test_enrich_document_skips_qdrant_write_when_artifact_superseded():
     mock_status.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_load_and_enrich_skips_superseded_artifact():
+    """An old queued job for a superseded artifact must not overwrite the
+    current path in Qdrant with stale content.
+    """
+    fake_artifact = {
+        "artifact_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "org_id": "org-pg",
+        "kb_slug": "kb-pg",
+        "path": "docs/p.md",
+        "user_id": "user-1",
+        "content_type": "kb_article",
+        "synthesis_depth": 2,
+        "assertion_mode": "factual",
+        "provenance_type": "extracted",
+        "confidence": None,
+        "belief_time_start": 0,
+        "belief_time_end": 1779974993,
+        "extra": {
+            "document_text": "# Old title\n\nOld body.",
+            "title": "Old title",
+            "source_type": "upload",
+        },
+    }
+
+    with (
+        patch(
+            "knowledge_ingest.enrichment_tasks.pg_store.read_artifact_for_enrichment",
+            new_callable=AsyncMock,
+            return_value=fake_artifact,
+        ),
+        patch("knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock) as enrich,
+    ):
+        from knowledge_ingest.enrichment_tasks import _load_and_enrich
+
+        await _load_and_enrich("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+    enrich.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # Smoke test on the task variants — confirm signature accepts only artifact_id
 # ---------------------------------------------------------------------------
