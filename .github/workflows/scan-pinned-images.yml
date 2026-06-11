@@ -98,6 +98,7 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.enumerate.outputs.targets) }}
       fail-fast: false  # One bad image shouldn't skip the rest
+      max-parallel: 6   # Avoid hammering Trivy DB + Docker Hub with 30+ pulls at once
     steps:
       # Checkout is required so trivy-action can find .trivy.yaml
       # (`trivy-config:` resolves relative to repo root).
@@ -128,17 +129,28 @@ jobs:
 
       - name: Trivy scan
         run: |
-          trivy image \
-            --format sarif \
-            --output trivy-${{ steps.safe.outputs.name }}.sarif \
-            --severity CRITICAL,HIGH \
-            --ignore-unfixed \
-            --scanners vuln \
-            --image-src remote \
-            --timeout 15m \
-            --skip-version-check \
-            --exit-code 0 \
-            ${{ matrix.target.image }}
+          for attempt in 1 2; do
+            if trivy image \
+              --format sarif \
+              --output trivy-${{ steps.safe.outputs.name }}.sarif \
+              --severity CRITICAL,HIGH \
+              --ignore-unfixed \
+              --scanners vuln \
+              --image-src remote \
+              --timeout 15m \
+              --skip-version-check \
+              --exit-code 0 \
+              ${{ matrix.target.image }}; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 2 ]; then
+              exit 1
+            fi
+
+            echo "Trivy scan failed on attempt $attempt; retrying after 30s..."
+            sleep 30
+          done
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4
