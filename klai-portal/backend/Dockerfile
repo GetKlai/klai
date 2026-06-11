@@ -43,6 +43,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.13-slim
 
+LABEL org.opencontainers.image.source="https://github.com/GetKlai/klai"
+
 # Match builder WORKDIR so venv shebangs (which embed the absolute path
 # /repo/klai-portal/backend/.venv/bin/python3.13) stay valid.
 WORKDIR /repo/klai-portal/backend

@@ -15,6 +15,8 @@ on:
       - 'deploy/librechat/getklai/apply-canary-config.py'
       - 'deploy/librechat/getklai/patches/**'     # getklai-only LibreChat canary patches
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
+      - 'deploy/check-image-pullable.sh'          # public self-host image pullability guard
+      - 'deploy/check-image-tags.sh'              # compose image tag policy guard
       - 'deploy/scripts/**'                       # Public-safe deploy scripts; operator health scripts live in klai-infra
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
@@ -35,10 +37,10 @@ jobs:
       - uses: actions/checkout@v6
 
       # Forcing function — fail loud BEFORE pushing to core-01 if any
-      # vexaai/* image reference points at a tag that is not pullable
-      # from the registry and not a locally-built convention. This is
-      # the CI half of the defense; .githooks/pre-commit is the local
-      # half. PR #269 (broken `:0.10.6` for transcription-service)
+      # public self-host image reference points at a tag that is not
+      # pullable from the registry and not a locally-built convention.
+      # This catches both private ghcr.io/getklai/* packages and broken
+      # upstream tags. PR #269 (broken `:0.10.6` for transcription-service)
       # would have failed this gate.
       - name: Validate image tags + pullability
         run: |

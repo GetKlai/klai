@@ -13,6 +13,37 @@ Use your own host inventory, DNS targets, secrets, and deployment procedures.
 - A domain name with DNS managed by Hetzner (required for wildcard TLS via the Hetzner DNS plugin)
 - [SOPS](https://github.com/getsops/sops) and [age](https://github.com/FiloSottile/age) for secret management
 - An SSH key pair for server access
+- Pull access to every image referenced by `docker-compose.yml`
+
+Klai's own runtime images are published as `ghcr.io/getklai/*`. The public
+self-host path expects these packages to be public and anonymously pullable
+from GitHub Container Registry. Before starting the stack, verify from a fresh
+Docker config so an existing local GHCR login cannot hide a private package:
+
+```bash
+tmp_docker_config="$(mktemp -d)"
+DOCKER_CONFIG="$tmp_docker_config" sh check-image-pullable.sh
+rm -rf "$tmp_docker_config"
+```
+
+For GetKlai maintainers: every package referenced by the public compose file
+must be public before advertising this guide as unauthenticated self-hosting:
+
+- `caddy-hetzner`
+- `klai-connector`
+- `klai-docs`
+- `klai-knowledge-mcp`
+- `klai-mailer`
+- `knowledge-ingest`
+- `portal-api`
+- `retrieval-api`
+- `scribe-api`
+
+If `portal-api` still points at the archived `GetKlai/klai-portal` repository
+in package settings, remove that repository source and grant Actions access to
+`GetKlai/klai`. The current source lives in this monorepo at
+`klai-portal/backend/Dockerfile`; the archived repository is no longer needed
+for package publication.
 
 ---
 
@@ -85,6 +116,11 @@ ssh deploy@your-server
 cd /opt/klai
 docker compose up -d
 ```
+
+If Compose fails with `unauthorized` for `ghcr.io/getklai/...`, stop there:
+that is a registry visibility problem, not a database or service startup
+problem. Publish the package, then retry. A wave of `context canceled` errors
+after the first failed pull is the normal Docker Compose cascade.
 
 ### 6. Harden Docker networking
 
@@ -193,6 +229,60 @@ Before major updates, take a backup first:
 ```bash
 bash scripts/backup.sh
 ```
+
+---
+
+## Troubleshooting
+
+### GHCR `unauthorized` during `docker compose up`
+
+Symptom:
+
+```text
+Head "https://ghcr.io/v2/getklai/<service>/manifests/latest": unauthorized
+```
+
+Meaning: Docker cannot pull at least one Klai-owned container image from GHCR.
+For the public self-host path, this means the package is still private or the
+tag does not exist. Fix the package visibility/tag first; later `context
+canceled` messages are usually a cascade from the first failed pull.
+
+Then verify the exact manifest:
+
+```bash
+docker manifest inspect ghcr.io/getklai/portal-api:latest >/dev/null
+```
+
+The repository-level guard is:
+
+```bash
+cd deploy
+sh check-image-pullable.sh
+```
+
+### Zitadel first-instance domain already exists
+
+Symptom:
+
+```text
+Errors.Instance.Domain.AlreadyExists
+```
+
+This comes from Zitadel's first-instance bootstrap, usually when an existing
+Zitadel database/volume already contains an instance for `auth.${DOMAIN}` or
+when first-instance/default-instance settings are rerun against partially
+initialized state.
+
+Check the actual state before changing config:
+
+```bash
+docker compose logs zitadel --tail 200
+docker compose ps postgres zitadel
+```
+
+For a truly fresh install, remove the partial Zitadel/Postgres state and rerun
+bootstrap. For a non-fresh install, do not delete data; create or rotate the
+required PAT manually in Zitadel and update `/opt/klai/.env`.
 
 ---
 

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Forcing function — fail loud at commit time when a vexaai/* image
-# referenced in public compose files is not actually pullable.
+# Forcing function — fail loud at commit time when an image referenced in
+# public compose files is not actually pullable.
 #
 # Why this exists: a public deploy compose tag that cannot be pulled will
 # only fail at deploy time unless we verify registry manifests first.
@@ -8,8 +8,9 @@
 # This script catches that class of bug at commit time.
 #
 # Behaviour:
-#   1. For every vexaai/* image reference in public deploy compose files,
-#      run `docker manifest inspect` against the public registry.
+#   1. For every ghcr.io/getklai/* and vexaai/* image reference in public
+#      deploy compose files, run `docker manifest inspect` against the
+#      public registry.
 #   2. If the manifest exists → OK (image is pullable).
 #   3. If the manifest is missing AND the tag matches a known locally-
 #      built convention → OK (with INFO note).
@@ -33,18 +34,29 @@ LOCAL_OK=0
 for F in $FILES; do
     [ -f "$F" ] || continue
 
-    # Extract every `vexaai/<svc>:<tag>` reference (both `image:` lines
-    # and env vars like `BOT_IMAGE_NAME` / `BROWSER_IMAGE`).
-    REFS=$(grep -oE 'vexaai/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" | sort -u || true)
+    # Extract every public self-host image reference we expect a user to
+    # pull without project-specific credentials:
+    #   - ghcr.io/getklai/* from the published compose stack
+    #   - vexaai/* images and env vars like BOT_IMAGE_NAME / BROWSER_IMAGE
+    REFS=$(
+        {
+            grep -oE 'ghcr\.io/getklai/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" || true
+            grep -oE 'vexaai/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" || true
+        } | sort -u
+    )
 
     [ -z "$REFS" ] && continue
 
     for REF in $REFS; do
-        # Allow the explicit "mid-migration placeholder" that
-        # check-image-tags.sh already rejects with its own message.
         case "$REF" in
-            *":"*"-pending"|*":latest"|*":dev"|*":staging")
-                continue  # check-image-tags.sh owns this category
+            vexaai/*)
+                # Allow the explicit "mid-migration placeholder" that
+                # check-image-tags.sh already rejects with its own message.
+                case "$REF" in
+                    *":"*"-pending"|*":latest"|*":dev"|*":staging")
+                        continue  # check-image-tags.sh owns this category
+                        ;;
+                esac
                 ;;
         esac
 
@@ -73,9 +85,17 @@ for F in $FILES; do
             *)
                 echo "ERROR: $REF in $F — manifest not pullable from registry," >&2
                 echo "       and tag does not match a locally-built convention." >&2
-                echo "       This is what bit us in PR #269. Either:" >&2
-                echo "         - fix the tag to one that exists on Docker Hub, OR" >&2
-                echo "         - rename to <semver>-local-YYMMDD-HHMM if locally built." >&2
+                case "$REF" in
+                    ghcr.io/getklai/*)
+                        echo "       Public self-hosting requires this GetKlai GHCR package" >&2
+                        echo "       to be anonymously pullable." >&2
+                        ;;
+                    vexaai/*)
+                        echo "       This is what bit us in PR #269. Either:" >&2
+                        echo "         - fix the tag to one that exists on Docker Hub, OR" >&2
+                        echo "         - rename to <semver>-local-YYMMDD-HHMM if locally built." >&2
+                        ;;
+                esac
                 FAIL=1
                 ;;
         esac
