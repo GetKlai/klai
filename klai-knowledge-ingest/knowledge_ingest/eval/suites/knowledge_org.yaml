@@ -15,6 +15,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Yealink firmware versie"
+    reference_answer: "Het antwoord noemt de ondersteunde of nieuwste Yealink firmwareversie en plaatst die in de telefonie- of toestelcontext."
     expected_topics: [yealink, firmware, telefonie]
     expected_chunks: ["latest Yealink firmware"]
     mix: easy_lookup
@@ -23,6 +24,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Bubble troubleshoot procedure"
+    reference_answer: "Het antwoord verwijst naar de Bubble troubleshoot-procedure en beschrijft de stappen om plugin-, verbindings- of configuratieproblemen op te lossen."
     expected_topics: [bubble, troubleshoot]
     expected_chunks: ["Bubble troubleshoot"]
     mix: easy_lookup
@@ -31,6 +33,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Pipedrive configuratie"
+    reference_answer: "Het antwoord beschrijft de Pipedrive CRM-configuratie of integratie met telefonie en noemt de relevante koppelingsstappen."
     expected_topics: [pipedrive, crm]
     expected_chunks: ["pipedrive"]
     mix: easy_lookup
@@ -39,6 +42,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "3CX API integratie"
+    reference_answer: "Het antwoord legt uit hoe de 3CX API-integratie binnen de telefoniecontext gebruikt of geconfigureerd wordt."
     expected_topics: [3cx, api, telefonie]
     expected_chunks: ["3cx-api"]
     mix: easy_lookup
@@ -47,6 +51,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Monday.com integratie"
+    reference_answer: "Het antwoord beschrijft de Monday.com CRM- of workflowintegratie en hoe die met de klant- of telefonieprocessen samenhangt."
     expected_topics: [monday, crm]
     expected_chunks: ["Monday.com"]
     mix: easy_lookup
@@ -55,6 +60,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Uitporteringen verwerken"
+    reference_answer: "Het antwoord beschrijft de procedure voor het verwerken van uitporteringen, inclusief benodigde klant- en nummerinformatie en afhandeling van de porting-out status."
     expected_topics: [uitportering, portering, customer-service]
     expected_chunks: ["Uitporteringen verwerken (Porting Out)"]
     mix: easy_lookup
@@ -63,6 +69,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Webphone troubleshoot"
+    reference_answer: "Het antwoord gebruikt de Webphone troubleshoot- en transferdocumentatie om webphoneproblemen te diagnosticeren en op te lossen."
     expected_topics: [webphone, troubleshoot]
     expected_chunks: ["Webphone troubleshoot & transfer"]
     mix: easy_lookup
@@ -71,6 +78,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "bedrijfswijzigingen verwerken"
+    reference_answer: "Het antwoord beschrijft hoe bedrijfswijzigingen of account changes worden verwerkt door customer service."
     expected_topics: [account-changes, customer-service]
     expected_chunks: ["Bedrijfswijzigingen verwerken (Account Changes)"]
     mix: easy_lookup
@@ -79,8 +87,9 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "politie belt voor klantgegevens"
+    reference_answer: "Het antwoord behandelt een politie- of gegevensverzoek als privacygevoelig: geef geen klantgegevens zonder de juiste procedure, controle of autorisatie."
     expected_topics: [fraude, politie, privacy]
-    expected_chunks: ["Als de"]
+    expected_chunks: ["politie belt voor klantgegevens"]
     mix: easy_lookup
 
   # --- Vague-pronoun (9) ---
@@ -88,6 +97,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "die procedure"
+    reference_answer: "Omdat de zoekterm naar een onduidelijke procedure verwijst, moet het antwoord de bedoelde procedure uit context gebruiken of om verduidelijking vragen."
     expected_topics: [procedure]
     expected_chunks: []
     mix: vague_pronoun
@@ -96,6 +106,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "zijn firmware update"
+    reference_answer: "Als de context naar Yealink of toestelsoftware verwijst, geef de relevante firmware-update; zonder context moet het antwoord om het toestel of product vragen."
     expected_topics: [firmware, yealink]
     expected_chunks: []
     mix: vague_pronoun
@@ -104,6 +115,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "hun nummerportering"
+    reference_answer: "Het antwoord moet de procedure voor hun nummerportering of nummerovername beschrijven als de context duidelijk is, anders om verduidelijking vragen."
     expected_topics: [portering, nummerovername]
     expected_chunks: []
     mix: vague_pronoun
@@ -112,6 +124,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "deze inkomende telefonie issue"
+    reference_answer: "Het antwoord moet de troubleshoot-stappen voor een inkomend telefonieprobleem geven als de context duidelijk is, anders vragen welk inkomend probleem bedoeld wordt."
     expected_topics: [telefonie, inkomend, troubleshoot]
     expected_chunks: []
     mix: vague_pronoun
@@ -120,6 +133,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "die audioproblemen"
+    reference_answer: "Het antwoord moet audio- of webphoneproblemen diagnosticeren via de relevante troubleshootprocedure, met verduidelijking als de concrete klacht ontbreekt."
     expected_topics: [audio, troubleshoot, webphone]
     expected_chunks: []
     mix: vague_pronoun
@@ -128,6 +142,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "zijn account is geblokkeerd"
+    reference_answer: "Het antwoord beschrijft hoe een geblokkeerd Freedom- of klantaccount wordt gecontroleerd en hoe toegang of inloggegevens worden hersteld."
     expected_topics: [klantaccount, freedom, inloggegevens]
     expected_chunks: []
     mix: vague_pronoun
@@ -136,6 +151,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "die overdracht"
+    reference_answer: "Het antwoord moet de bedoelde overdracht naar of binnen Voys uit context afleiden en anders vragen welke overdracht bedoeld wordt."
     expected_topics: [overdracht, voys]
     expected_chunks: []
     mix: vague_pronoun
@@ -144,6 +160,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "deze trunk"
+    reference_answer: "Het antwoord beschrijft de trunk- of telefonieprocedure voor de bedoelde klantcontext, of vraagt om verduidelijking welke trunk bedoeld wordt."
     expected_topics: [trunk, telefonie]
     expected_chunks: []
     mix: vague_pronoun
@@ -152,6 +169,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "deze fraude case"
+    reference_answer: "Het antwoord behandelt de case als fraude en beschrijft vastleggen, controle, customer-service stappen en eventuele escalatie."
     expected_topics: [fraude, customer-service]
     expected_chunks: []
     mix: vague_pronoun
@@ -161,6 +179,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Overzicht van alle CRM-integraties die we ondersteunen"
+    reference_answer: "Het antwoord geeft een overzicht van de ondersteunde CRM-integraties en benoemt per integratie de relevante koppelings- of gebruikscontext."
     expected_topics: [crm, integratie, overzicht]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -169,6 +188,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Welke phone-software integraties hebben we en wat zijn de verschillen?"
+    reference_answer: "Het antwoord vergelijkt de beschikbare phone-software integraties en noemt de belangrijkste verschillen in functie, configuratie of doelgroep."
     expected_topics: [telefonie, phone-software, integratie]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -177,6 +197,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Bubble lifecycle: van setup tot vertrek van een klant"
+    reference_answer: "Het antwoord beschrijft de Bubble lifecycle van setup en gebruik tot klantvertrek, inclusief relevante opzegging- of migratiestappen."
     expected_topics: [bubble, setup, opzegging, lifecycle]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -185,6 +206,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Verschillende soorten porteringen en hun procedures"
+    reference_answer: "Het antwoord onderscheidt de soorten porteringen, zoals uitportering en nummerovername, en beschrijft de procedure per type."
     expected_topics: [portering, uitportering, nummerovername]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -193,6 +215,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Veelvoorkomende customer-service issues en hoe ze op te lossen"
+    reference_answer: "Het antwoord geeft een overzicht van veelvoorkomende customer-service issues en koppelt elk issue aan de juiste troubleshoot- of afhandelingsstappen."
     expected_topics: [customer-service, troubleshoot]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -201,6 +224,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Klant lifecycle events: heractivering, opzegging, dispuut"
+    reference_answer: "Het antwoord beschrijft klant lifecycle events zoals heractivering, opzegging en dispuut, met de bijbehorende customer-service handelingen."
     expected_topics: [klantaccount, opzegging, heractivering, dispuut]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -210,6 +234,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Elevate UC integratie"
+    reference_answer: "Het antwoord beschrijft de Elevate UC-integratie in de telefoniecontext en noemt wat nodig is om die te gebruiken of te configureren."
     expected_topics: [elevate-uc, telefonie]
     expected_chunks: []
     mix: long_tail
@@ -218,6 +243,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "T-Mobile Cloud Clear"
+    reference_answer: "Het antwoord legt uit wat T-Mobile Cloud Clear binnen de telefoniecontext betekent en welke relevante klant- of configuratie-informatie erbij hoort."
     expected_topics: [tmobile, telefonie]
     expected_chunks: []
     mix: long_tail
@@ -226,6 +252,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Bouwinfosys CRM"
+    reference_answer: "Het antwoord beschrijft de Bouwinfosys CRM-integratie of CRM-context en hoe die samenhangt met de ondersteunde klantprocessen."
     expected_topics: [bouwinfosys, crm]
     expected_chunks: []
     mix: long_tail
@@ -234,6 +261,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Teamviewer QS"
+    reference_answer: "Het antwoord beschrijft Teamviewer QS als support-tool en wanneer of hoe die in klantondersteuning gebruikt wordt."
     expected_topics: [teamviewer, support-tools]
     expected_chunks: []
     mix: long_tail
@@ -243,6 +271,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "How does the Trunk procedure work voor een nieuwe klant?"
+    reference_answer: "Answer the mixed-language query by explaining the trunk procedure for a new customer, including the required telefonie setup and customer details."
     expected_topics: [trunk, telefonie, klant]
     expected_chunks: []
     mix: edge_case
@@ -251,6 +280,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "?"
+    reference_answer: "Dit is geen inhoudelijke zoekvraag; het antwoord moet om een concrete vraag of aanvullende context vragen en geen kennisbankantwoord fabriceren."
     expected_topics: []
     expected_chunks: []
     mix: edge_case

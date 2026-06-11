@@ -31,7 +31,8 @@ def _make_retrieval_result(chunks=None):
     from knowledge_ingest.eval.retrieval_client import RetrievalResult
 
     return RetrievalResult(
-        chunks=chunks or [{"id": "c1", "text": "Context text for eval"}],
+        chunks=chunks
+        or [{"id": "c1", "title": "Bubble troubleshoot", "text": "Context text for eval"}],
         retrieval_ms=150,
         total_tokens=200,
     )

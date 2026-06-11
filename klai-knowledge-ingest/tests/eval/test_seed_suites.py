@@ -41,7 +41,7 @@ VOYS_ORG_ID = "368884765035593759"
 @pytest.fixture(params=SHIPPED_SUITES)
 def shipped_suite(request: pytest.FixtureRequest) -> Suite:
     """Yield each shipped seed suite as a parsed Suite object."""
-    return load_suite(SUITES_DIR / f"{request.param}.yaml")
+    return load_suite(SUITES_DIR / f"{request.param}.yaml", require_reference_answer=True)
 
 
 def test_shipped_suite_loads_without_validation_error(shipped_suite: Suite) -> None:

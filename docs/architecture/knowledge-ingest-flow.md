@@ -11,6 +11,15 @@
 > carve-out) carry an **Intended vs. current** callout pointing to
 > [`product-gaps-backlog.md`](product-gaps-backlog.md).
 >
+> **2026-06-11 corrections (per-claim source re-verification):** §1.3 transcript path —
+> scribe ingests the **full transcript text**, not a summary, and the STT endpoint is the
+> Vexa transcription-service on gpu-01 (scribe config still uses legacy `whisper_*`
+> naming); the per-chunk `chunk_type` classification was **removed** 2026-06-08
+> (GAP-INGEST-02 closed); `org_id` ships `is_tenant=True` for new collections (existing
+> collections need the one-time upgrade script); the Part-6 assertion-mode status table
+> was refreshed (payload + retrieval response are done; weighting is shadow-gated, no
+> longer flat).
+>
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
 > For evidence-weighted scoring and assertion mode weights research, see
@@ -264,13 +273,24 @@ re-syncing the same content updates rather than duplicates.
 
 ### 1.3 Meeting transcripts via scribe-api
 
-After a meeting is processed by the Vexa bot and whisper-server, scribe-api sends the
-summarized transcript to knowledge-ingest — **but only if the user has enabled knowledge
-saving** for their account. This is opt-in.
+> Corrected 2026-06-11 against `klai-scribe/scribe-api` source. Two earlier claims were
+> wrong: (1) what gets ingested is the **full transcript text**, not a summary —
+> `knowledge_adapter.ingest_scribe_transcript()` sends `full_text` (segment-clustered /
+> paragraph-chunked); the summarizer (`services/summarizer.py`) is a separate
+> user-facing feature whose output is *not* what lands in the knowledge base.
+> (2) Naming: scribe config still calls the STT endpoint `whisper_server_url`
+> (`whisper_http` provider, audit label `whisper-cpu`), pointing at the gpu-01 tunnel
+> `172.18.0.1:8000` where the Vexa `transcription-service` runs (SPEC-VEXA-003). The
+> "whisper-server" name in code is legacy naming for that endpoint, not a separate
+> core-01 container.
+
+After a meeting is transcribed, scribe-api can send the transcript to knowledge-ingest —
+**but only if the user has enabled knowledge saving** for their account. This is opt-in.
 
 ```
-Vexa bot captures audio → whisper-server transcribes
-  → scribe-api summarizes
+Vexa bot captures audio → transcription-service (gpu-01, via tunnel) transcribes
+  → scribe-api POST /v1/transcriptions/{id}/ingest (operator/user-triggered, opt-in)
+  → knowledge_adapter.ingest_scribe_transcript() sends the FULL transcript text
   → POST /ingest/v1/document (content_type: meeting_transcript or 1on1_transcript)
 ```
 
@@ -569,9 +589,13 @@ context — mentioning the knowledge base name and source type. This bridges the
 gap between different sources (e.g., Mitel's "hunt group" vs Voys's "belgroep") by
 ensuring the embedding captures that these are domain-specific terms, not universal.
 
-Additionally, the LLM generates a `content_type` classification: one of `procedural` | `conceptual` |
-`reference` | `warning` | `example`. This is recorded in the Qdrant payload for downstream
-consumption (e.g., by retrieval routers or future assertion-mode filtering).
+> **Removed 2026-06-08 (was GAP-INGEST-02):** the per-chunk `chunk_type` classification
+> (`procedural` | `conceptual` | `reference` | `warning` | `example`) that used to be
+> generated here was deleted — it was an LLM-classified label no retrieval consumer
+> ever read, and dropping it also removed a strict-Literal validation retry round-trip
+> per chunk. Rationale: `docs/research/chunk-type-retrieval-value.md`. The
+> *document*-level `content_type` (kb_article / pdf_document / meeting_transcript / …),
+> which evidence-tier scoring consumes, is unaffected.
 
 **Fail-loudly enrichment:** If the LLM call in Step A fails or returns invalid JSON, the
 system raises `EnrichmentError` and does not retry silently. The Procrastinate task queue
@@ -608,11 +632,18 @@ For crawled content, additional link-graph fields are populated (SPEC-CRAWLER-00
 `anchor_texts` (texts used by other pages to link here), `incoming_link_count` (integer
 index — number of inbound links within the KB, refreshed after each bulk crawl).
 
-**Tenant isolation** is enforced by `org_id`: it's a payload index with `is_tenant: true`,
-and every search includes a mandatory `must: org_id = X` filter. All tenants share a
-single `klai_knowledge` collection — there's no collection-per-tenant. This keeps ops
-simple (one index to manage, one backup, no provisioning step per org) while still
-isolating data at query time.
+**Tenant isolation** is enforced by `org_id`: every search includes a mandatory
+`must: org_id = X` filter. All tenants share a single `klai_knowledge` collection —
+there's no collection-per-tenant. This keeps ops simple (one index to manage, one
+backup, no provisioning step per org) while still isolating data at query time.
+
+> **`is_tenant` status (GAP-TENANCY-01, 2026-06-11):** `ensure_collection()` creates
+> the `org_id` index with `is_tenant=True` for **new** collections (Qdrant native
+> multitenancy — tenant co-location so the mandatory filter doesn't degrade recall).
+> Collections that existed before this landed keep their plain keyword index until the
+> one-time online upgrade (`scripts/upgrade_org_id_tenant_index.py`) is run —
+> deliberately not auto-rebuilt at startup. Whether the production collection has been
+> upgraded must be checked against the live payload schema, not this doc.
 
 ### Phase 3: Knowledge graph ingestion (Graphiti / FalkorDB)
 
@@ -1345,13 +1376,12 @@ rarely be reached in practice. See SPEC-KB-015 §Design notes for full rationale
 |---|---|
 | MCP read tools (full semantic surface) | `search_knowledge` is live; `related_concepts` / `belief_evolution` / `provenance_chain` / `recent` are not (GAP-MCP-01) |
 | Transcript → gap-candidate arm | scribe transcripts are ingested as documents, but emit no gap events; only low-confidence chat retrieval feeds the gap registry (GAP-LOOP-05) |
-| Assertion mode active in retrieval | `_assertion_weight` returns a flat 1.00; deferred to SPEC-EVIDENCE-002 (GAP-EVID-01) |
+| Assertion mode active in retrieval | `_assertion_weight` now reads a conservative profile (factual/procedural 1.00 … hypothesis 0.90) but remains **shadow-gated** (`EVIDENCE_SHADOW_MODE=true`) — measured, never served. Go-live deferred to SPEC-EVIDENCE-002; the deciding evidence-tier A/B from SPEC-EVIDENCE-001-FOLLOWUP-001 has not been built (GAP-EVID-01, updated 2026-06-11) |
 | ~~Content profile chunk sizes wired to chunker~~ | Fixed 2026-03-31: `chunk_tokens_max` from profile now passed to `chunker.py` (`tokens * 4` → chars) |
 | ~~Docling migration for binary parsing~~ | **Shipped** (SPEC-KB-FILE-UPLOAD-001): portal uploads stream to docling-serve's async queue and submit pre-chunked. Unstructured.io is now connector-only. |
 | Self-maintaining taxonomy (periodic re-cluster) | No periodic re-clustering task is registered — bootstrap is manual-only (GAP-TAX-01) |
 | Dual-store outbox / PG↔Qdrant reconciliation | `knowledge.embedding_queue` exists but is never written; the write path is direct PG-then-Qdrant (GAP-SYNC-01) |
 | Personal-knowledge enrichment carve-out | §10.2 of the architecture doc says personal content skips LLM enrichment; `enrichment_policy.py` has no personal branch, so it does not (GAP-PRIV-01) |
-| Bayesian averaging for quality_score | Running average currently used. Bayesian prior (Wilson / Evan Miller) is more principled for sparse feedback but deferred to Phase 2 when feedback volume data is available (SPEC-KB-015 §Design notes). |
 | Bayesian averaging for quality_score | Running average currently used. Bayesian prior (Wilson / Evan Miller) is more principled for sparse feedback but deferred to Phase 2 when feedback volume data is available (SPEC-KB-015 §Design notes). |
 
 ---
@@ -1378,13 +1408,16 @@ axes (alongside provenance type and synthesis depth) described in the architectu
 | Valid set: `{factual, belief, hypothesis, procedural, quoted, unknown}` | Done |
 | Migration dict: handles old → new name variants in frontmatter | Done |
 | Frontend UI (add-connector page assertion mode multi-select) | Done |
-| HyPE classification | Not built — enrichment does not classify assertion mode |
-| Qdrant payload | Not included — cannot filter or weight by assertion mode |
-| Retrieval API response | Not returned — stripped from results |
-| Reranker weighting | Not built |
+| HyPE/LLM classification | Not built — enrichment does not classify assertion mode (value comes from author frontmatter or connector hint only) |
+| Qdrant payload | **Done** (corrected 2026-06-11) — `assertion_mode` is in `_ALLOWED_METADATA_FIELDS` (`qdrant_store.py:450`) and written from `extra_payload` at ingest |
+| Retrieval API response | **Done** (corrected 2026-06-11) — read back from the payload in `search.py:339,414` and exposed on the chunk model (`models.py:91`) |
+| Evidence-tier weighting | **Shadow-gated** — conservative profile in `evidence_tier.py` (`factual`/`procedural` 1.00, `quoted` 0.98, `unknown` 0.97, `belief` 0.95, `hypothesis` 0.90); computed + logged, never served while `EVIDENCE_SHADOW_MODE=true`. Go-live: SPEC-EVIDENCE-002. |
 
-**Summary:** Storage and ingest parsing exist. The entire consumption side (retrieval,
-reranking, generation context) ignores assertion mode.
+**Summary (updated 2026-06-11):** Storage, ingest parsing, Qdrant payload, and retrieval
+response all carry `assertion_mode` end-to-end. The consumption side computes
+conservative weights in evidence-tier scoring but serves nothing yet — everything is
+shadow-gated pending SPEC-EVIDENCE-002 (and the never-run SPEC-EVIDENCE-001-FOLLOWUP-001
+A/B, see GAP-EVID-01).
 
 ### Industry landscape
 

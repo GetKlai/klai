@@ -28,6 +28,7 @@ class SuiteQuery:
     query: str
     org_zitadel_id: str
     user_zitadel_id: str | None = None
+    reference_answer: str | None = None
     expected_topics: list[str] = field(default_factory=list)
     expected_chunks: list[str] = field(default_factory=list)
 
@@ -41,13 +42,17 @@ class Suite:
     queries: list[SuiteQuery]
 
 
-def load_suite(path: Path) -> Suite:
+def load_suite(path: Path, *, require_reference_answer: bool = False) -> Suite:
     """Load and validate a suite YAML file.
 
     Parameters
     ----------
     path:
         Absolute or relative path to the suite ``.yaml`` file.
+    require_reference_answer:
+        When True, every query must define a non-empty ``reference_answer``.
+        Use this for scored suites that should feed RAGAS claim metrics from
+        real answers instead of legacy topic labels.
 
     Returns
     -------
@@ -80,6 +85,14 @@ def load_suite(path: Path) -> Suite:
                 f"Suite {suite_name!r}: query entry {q_id!r}"
                 " is missing required field 'org_zitadel_id'."
             )
+        reference_answer = q.get("reference_answer")
+        if reference_answer is not None:
+            reference_answer = str(reference_answer).strip() or None
+        if require_reference_answer and not reference_answer:
+            raise SuiteValidationError(
+                f"Suite {suite_name!r}: query entry {q_id!r}"
+                " is missing required field 'reference_answer'."
+            )
 
         queries.append(
             SuiteQuery(
@@ -87,6 +100,7 @@ def load_suite(path: Path) -> Suite:
                 query=str(q["query"]),
                 org_zitadel_id=str(q["org_zitadel_id"]),
                 user_zitadel_id=q.get("user_zitadel_id"),
+                reference_answer=reference_answer,
                 expected_topics=list(q.get("expected_topics") or []),
                 expected_chunks=list(q.get("expected_chunks") or []),
             )

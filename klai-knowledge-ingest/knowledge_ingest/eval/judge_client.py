@@ -228,7 +228,7 @@ async def evaluate_query(
     query: str,
     chunks: list[dict[str, Any]],
     answer: str | None,
-    expected_topics: list[str],
+    reference_answer: str,
 ) -> dict[str, float | None]:
     """Run the four RAGAS metrics for one query and return a metrics dict.
 
@@ -249,8 +249,9 @@ async def evaluate_query(
         Retrieved chunks with at least a ``text`` key each.
     answer:
         Model answer string (from generate_answer). May be None.
-    expected_topics:
-        Topic labels used as ground_truth for context_precision/recall.
+    reference_answer:
+        Full reference answer for RAGAS context_precision/context_recall claim
+        matching. The caller must validate this before invoking the judge.
     """
     result: dict[str, float | None] = {
         "context_precision": None,
@@ -272,7 +273,7 @@ async def evaluate_query(
         )
 
         contexts = [c.get("text", "") for c in chunks]
-        reference = ", ".join(expected_topics) if expected_topics else "general"
+        reference = reference_answer.strip()
         response = answer or ""
 
         # Per-metric model assignment (see module docstring).

@@ -1,6 +1,14 @@
 # Product Gaps Backlog — where the docs describe more than the code does
 
 > Created 2026-06-08 from a doc-vs-code drift audit of `docs/architecture/`.
+> **Updated 2026-06-11** after per-gap re-verification against source: five entries
+> shifted — `GAP-TEMPORAL-01` is fixed on the serving path (filter + delete-then-upsert),
+> `GAP-RETR-01` and `GAP-TENANCY-01` are partially closed (shadow gate + stub corpus;
+> `is_tenant` for new collections, existing collection needs the one-time upgrade script),
+> `GAP-EVID-01` shifted (conservative weights exist, shadow-gated; the deciding A/B was
+> never built), and `GAP-INGEST-02` is **closed by removal**. See
+> [`knowledge-rag-improvement-plan.md`](knowledge-rag-improvement-plan.md) for the plan
+> built on this refreshed state.
 > This file captures **Type-B drift**: places where an architecture document
 > describes a richer / more capable design than what is actually implemented
 > today. These are **product-improvement opportunities**, not doc bugs — the
@@ -20,14 +28,31 @@
 - **Effort** — rough order of magnitude only (S / M / L / XL). Not a commitment.
 - Evidence paths are relative to repo root and were accurate as of 2026-06-08.
 
-## Not a gap — a real bug (tracked separately)
+## ~~Not a gap — a real bug~~ — FIXED on the serving path (2026-06-11)
 
-The temporal "currently-believed" retrieval filter is dead: ingest writes
-`valid_from` / `valid_until` to the Qdrant payload, but retrieval filters on a
-`invalid_at` field that ingest never writes, and never reads `valid_until`. See
-[`docs/retros/2026-06-08-temporal-filter-field-mismatch.md`](../retros/2026-06-08-temporal-filter-field-mismatch.md).
-Listed here for completeness as `GAP-TEMPORAL-01` but it should be fixed as a
-bug, not designed as a feature.
+`GAP-TEMPORAL-01` is resolved as a serving bug. Verified against source 2026-06-11:
+
+- Retrieval now uses a **dual-contract** temporal filter
+  (`search.py::_temporal_validity_filter`): `must_not` over both the legacy
+  `valid_at`/`invalid_at` fields and the ingest-written `valid_from`/`valid_until`
+  epoch fields (open-ended sentinel handled). Integration-tested in
+  `klai-retrieval-api/tests/test_search.py` (expired/future/active/legacy cases).
+- The retro's open question ("do stale points linger on re-ingest?") is answered:
+  **both** `qdrant_store.upsert_chunks` and `upsert_enriched_chunks` delete all
+  existing points for `(org_id, kb_slug, path)` before upserting, so same-path
+  re-ingest physically removes superseded chunks. Page deletes call
+  `delete_document()`.
+
+Remaining (folded into other gaps, not a temporal bug):
+- `soft_delete_artifact()` still updates PG only (`belief_time_end`); Qdrant
+  hygiene relies on the delete-then-upsert above. If the Qdrant delete fails
+  after PG commit, divergence is silent — that is `GAP-SYNC-01`.
+- `valid_from`/`valid_until` are in every query's `must_not` but have **no
+  payload index** (Qdrant supports datetime/integer indexes; `is_principal`
+  exists for exactly this) — latency risk at scale, see the improvement plan.
+
+History: [`docs/retros/2026-06-08-temporal-filter-field-mismatch.md`](../retros/2026-06-08-temporal-filter-field-mismatch.md)
+(carries a 2026-06-11 status addendum).
 
 ---
 
@@ -35,14 +60,14 @@ bug, not designed as a feature.
 
 ### Quick wins (S effort, high value — close to config changes)
 
-| Gap | One-liner | Verif |
+| Gap | One-liner (state per 2026-06-11) | Verif |
 |---|---|---|
-| `GAP-RETR-01` | Retrieval gate never bypasses (reference corpus never shipped) → every trivial query runs the full pipeline | ✓ |
-| `GAP-TENANCY-01` | Qdrant `org_id` index missing `is_tenant` flag → no per-tenant HNSW subgraph / recall guarantee | ✓✓ |
-| `GAP-EVID-01` | Assertion-mode scoring dimension multiplies by a constant `1.00` | ✓ |
-| `GAP-INGEST-02` | `chunk_type` LLM classification is stored but never read by any retrieval consumer | ✓ |
+| `GAP-RETR-01` | Gate now runs in **shadow mode** with a 16-line stub corpus → never bypasses in practice; remaining work = generate the full 200-query corpus + analyze `gate_would_bypass` telemetry + activate | ✓✓ 06-11 |
+| `GAP-TENANCY-01` | `is_tenant=True` ships for **new** collections; the existing prod collection still needs the one-time online upgrade (`scripts/upgrade_org_id_tenant_index.py`) | ✓✓ 06-11 |
+| `GAP-EVID-01` | Assertion-mode weights are no longer flat (conservative profile, shadow-gated); the deciding RAGAS A/B (SPEC-EVIDENCE-001-FOLLOWUP-001) was **never built** and its 30-day deadline lapsed | ✓✓ 06-11 |
 | `GAP-MCP-01` | MCP `search_knowledge` hardcodes `scope: "both"` (no org-only / personal-only / type / time filters) | ✓✓ |
-| `GAP-TEMPORAL-01` | Temporal filter targets a non-existent field — **bug**, see retro | ✓✓ |
+| ~~`GAP-INGEST-02`~~ | **CLOSED** — `chunk_type` classification removed 2026-06-08 (`enrichment.py`, rationale in `docs/research/chunk-type-retrieval-value.md`) | ✓✓ 06-11 |
+| ~~`GAP-TEMPORAL-01`~~ | **FIXED** on the serving path — dual-contract filter + delete-then-upsert; see section above | ✓✓ 06-11 |
 
 ### Flagship differentiator (L, the "self-improving knowledge base" story)
 
@@ -191,17 +216,23 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 ## Cluster 3 — Epistemic / evidence scoring (§3.2, §7.4)
 
-### GAP-EVID-01 — Assertion-mode weight is a constant 1.00  ·  S  ·  ✓
+### GAP-EVID-01 — Assertion-mode weights exist but the deciding A/B was never run  ·  S  ·  ✓✓ (updated 2026-06-11)
 - **Intended (§7.4):** assertion-mode is one of four multiplicative scoring
   dimensions (`final = reranker × content_type × assertion_mode × temporal ×
   pagerank`) with its own default-true flag.
-- **Reality:** `_assertion_weight()` ignores its input and the flag and returns
-  `1.00` ("plumbing only in v1"); `assertion_mode_weights = {}`. The field is
-  classified, stored, and threaded to the scorer purely to be multiplied by 1.0.
-- **Note:** §7.4 is honest that weights are flat pending SPEC-EVIDENCE-002, but
-  §3.2 reads as present-tense scoring. A ready-to-activate lever, not a silent
-  absence.
-- **Evidence:** `klai-retrieval-api/retrieval_api/services/evidence_tier.py:51,113-116,167`.
+- **Reality (2026-06-11):** `_assertion_weight()` now reads a **conservative
+  profile** from `DEFAULT_EVIDENCE_PROFILE["assertion_mode_weights"]`
+  (factual/procedural 1.00, hypothesis 0.90, unknown 0.97 — spread 0.10 per the
+  weights research). Everything stays **shadow-gated** (`EVIDENCE_SHADOW_MODE=true`):
+  computed and logged, never served. The real gap has moved: the RAGAS A/B that
+  SPEC-EVIDENCE-001-FOLLOWUP-001 requires to decide activate / temporal-only /
+  decommission / flags-off (variants `evidence_tier_full`,
+  `evidence_tier_temporal_only`) **does not exist in the eval harness** — only
+  `baseline` is ever used — and the SPEC's 30-day deadline has lapsed while the
+  shadow `deepcopy + apply()` CPU cost is paid on every request.
+- **Evidence:** `klai-retrieval-api/retrieval_api/services/evidence_tier.py:43-67,125-148`;
+  `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py:38-51` (variant env
+  read, no evidence_tier variants defined anywhere).
 
 ### GAP-EVID-02 — 3-into-5 epistemic grouping unbuilt  ·  M  ·  ✓
 - **Intended (§3.2):** the 5 epistemic values collapse to 3 groups
@@ -250,20 +281,25 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 ## Cluster 5 — Retrieval gate & routing
 
-### GAP-RETR-01 — Retrieval gate never bypasses (dead in prod)  ·  S  ·  ✓
+### GAP-RETR-01 — Gate in shadow mode with a stub corpus  ·  S  ·  ✓✓ (updated 2026-06-11)
 - **Intended (knowledge-retrieval-flow §Gate):** a semantic gate that skips KB
   lookup for general-knowledge queries (`RETRIEVAL_GATE_ENABLED=true`).
-- **Reality:** `gate.should_bypass()` loads `data/gate_reference.jsonl`, which
-  does not exist (`data/` has only `.gitkeep`) and is never generated at
-  build/deploy. So `should_bypass()` returns `(False, None)` unconditionally —
-  every query, trivial or not, runs the full embed + 3/4-leg + rerank pipeline.
-  A generator script exists but is manual-only.
-- **Why it matters:** latency + embedding/GPU cost on every trivial message, and
-  off-topic KB chunks can still be injected — the exact failure mode the gate was
-  built to prevent. Closing it = commit a curated `gate_reference.jsonl` or run
-  the generator at deploy.
-- **Evidence:** `klai-retrieval-api/retrieval_api/services/gate.py:33-45,91-104`;
-  `scripts/generate_gate_reference.py` (manual-only); `data/.gitkeep` only.
+- **Reality (2026-06-11):** materially better than the 06-08 claim, but still
+  not bypassing in practice. `data/gate_reference.jsonl` **exists** — a 16-line
+  stub of meta/utility queries (titles, translate, summarize in NL/EN), not the
+  200-query × 6-language corpus `scripts/generate_gate_reference.py` produces.
+  The gate now also runs in **shadow mode by default**
+  (`retrieval_gate_shadow=True`, `config.py`): it computes and logs
+  `gate_would_bypass` per request but never acts. Strict KB mode skips the gate
+  entirely by design (`gate_skipped_reason=strict_mode`, `retrieve.py`).
+- **Why it matters:** every query still pays the full embed + multi-leg + rerank
+  pipeline. Closing the gap = (1) generate + commit the full corpus, (2) analyze
+  1–2 weeks of `gate_would_bypass` telemetry (false-bypass rate per language),
+  (3) flip `retrieval_gate_shadow=false`.
+- **Evidence:** `klai-retrieval-api/retrieval_api/services/gate.py`;
+  `retrieval_api/config.py:21-28`; `retrieval_api/data/gate_reference.jsonl`
+  (16 lines); `retrieve.py` strict-mode gate block; `tests/test_gate.py`
+  (incl. shadow-mode tests).
 
 ### GAP-ROUTE-01 — "Complexity Router" is a 3-signal heuristic  ·  L  ·  ✓✓
 - **Intended (platform.md):** LiteLLM's native Complexity Router scoring every
@@ -300,19 +336,23 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 ## Cluster 6 — Multitenancy & scale (§5, §10)
 
-### GAP-TENANCY-01 — Qdrant `is_tenant` flag not set  ·  S  ·  ✓✓
-- **Intended (§5.1):** `org_id` payload index with `is_tenant: true` (Qdrant 1.12+
-  native multitenancy → per-tenant HNSW subgraph, no recall degradation) plus
+### GAP-TENANCY-01 — `is_tenant` ships for new collections; existing collection needs the one-time upgrade  ·  S  ·  ✓✓ (updated 2026-06-11)
+- **Intended (§5.1):** `org_id` payload index with `is_tenant: true` (Qdrant 1.11+
+  native multitenancy → tenant co-location, no recall degradation) plus
   Qdrant 1.16 tiered sharding for large tenants.
-- **Reality:** `org_id` is a plain `keyword` index; **0** `is_tenant` /
-  `shard_key` references. Isolation works via a mandatory `org_id` must-filter at
-  query time — i.e. the exact unindexed-for-tenancy config the doc says degrades
-  recall.
-- **Why it matters:** correctness is fine, but the recall/scale guarantee the doc
-  cites as the reason single-collection multitenancy is acceptable is not in
-  place. `is_tenant=True` is one `create_payload_index` parameter.
-- **Evidence:** `klai-knowledge-ingest/knowledge_ingest/qdrant_store.py:82-105,473`;
-  `klai-retrieval-api/retrieval_api/services/search.py:76-77`; verified by hand.
+- **Reality (2026-06-11):** `ensure_collection()` now creates the `org_id` index
+  with `KeywordIndexParams(is_tenant=True)` — but only when the index doesn't
+  exist yet, i.e. **new collections**. The code comment is explicit: existing
+  collections keep their plain keyword index until upgraded once, online, via
+  `scripts/upgrade_org_id_tenant_index.py` (deliberately not auto-rebuilt at
+  startup). Whether the production `klai_knowledge` collection has been upgraded
+  is **not verifiable from the repo** — check the live payload schema.
+- **Why it matters:** the recall/scale guarantee the doc cites as the reason
+  single-collection multitenancy is acceptable only holds once the prod
+  collection is upgraded. Qdrant supports a zero-downtime online reindex
+  (serve old index until the new one is built).
+- **Evidence:** `klai-knowledge-ingest/knowledge_ingest/qdrant_store.py:85-102`;
+  `klai-knowledge-ingest/scripts/upgrade_org_id_tenant_index.py`.
 
 ### GAP-FED-01 — Federated / cross-org knowledge unbuilt
 - Tracked as an open question in §13 — listed here only as a pointer; it is
@@ -351,42 +391,48 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 ## Cluster 9 — Measurement & eval harness (roadmap, ingest)
 
-### GAP-EVAL-01 — RAGAS ground-truth is a topic-label string  ·  M  ·  ✓
+### GAP-EVAL-01 — CLOSED in code: RAGAS uses full reference answers  ·  M  ·  ✓✓ (closed 2026-06-11)
 - **Intended (roadmap):** headline `context_precision +61%` / `context_recall
-  +154%` measured by a RAGAS harness over 60 hand-curated Voys queries.
-- **Reality:** the RAGAS `reference` is `', '.join(expected_topics)` — a 2-3
-  keyword label (e.g. "bubble, troubleshoot"), not a reference answer. RAGAS
-  context metrics are designed to score against a full reference answer, so the
-  headline deltas partly measure keyword overlap, not answerability.
-- **Why it matters:** these metrics gate the Tier-3 decision; a weak ground-truth
-  risks wrong prioritisation (HyDE vs GraphRAG vs Agentic).
-- **Evidence:** `klai-knowledge-ingest/knowledge_ingest/eval/judge_client.py:275,297-310`;
-  `eval/suites/chat.yaml:17,25,33`.
+  +154%` measured by a RAGAS harness over hand-curated Voys queries.
+- **Resolution (2026-06-11):** scored suite runs now call
+  `load_suite(..., require_reference_answer=True)`, every shipped query in
+  `chat`, `knowledge_org`, and `_sample` has `reference_answer`, and
+  `judge_client.evaluate_query()` accepts only that full reference answer for
+  RAGAS context metrics. There is no implicit fallback to `expected_topics`.
+- **Remaining operational step:** old baseline rows are not comparable. Run a
+  manual canary/debug eval first, then recapture `baseline-v5`.
+- **Evidence:** `klai-knowledge-ingest/knowledge_ingest/eval/suite_loader.py`;
+  `eval/ragas_runner.py`; `eval/judge_client.py`; `eval/suites/chat.yaml`;
+  `eval/suites/knowledge_org.yaml`; `tests/eval/test_seed_suites.py`;
+  `tests/eval/test_judge_client.py`.
 
-### GAP-EVAL-02 — Regression canaries never checked  ·  S  ·  ·
+### GAP-EVAL-02 — CLOSED in code: regression canaries hard-fail  ·  S  ·  ✓✓ (closed 2026-06-11)
 - **Intended (roadmap):** 9 `easy_lookup` "regression canaries" with
   `expected_chunks` populated.
-- **Reality:** `expected_chunks` is loaded into `SuiteQuery` but the runner never
-  compares retrieved vs expected chunks — no canary hit/miss metric. A regression
-  that drops a canary's known-good chunk is invisible as long as the fuzzy RAGAS
-  score stays plausible.
-- **Evidence:** `eval/ragas_runner.py:108-144`; `eval/judge_client.py:227-338`;
-  `tests/eval/test_seed_suites.py:71-89`.
+- **Resolution (2026-06-11):** `ragas_runner` compares `expected_chunks` before
+  calling the judge. Missing canaries write a NULL-metric row with
+  `meta.canary.passed=false`, skip fuzzy RAGAS scoring, and trigger the new
+  `rag_eval_canary_dropped` Grafana alert. The matcher uses strong fields for
+  short markers and only permits body-text matches for longer phrase markers.
+- **Remaining operational step:** because these markers were dormant before,
+  verify a live `manual-canary-debug` run before relying on the HIGH alert.
+- **Evidence:** `eval/ragas_runner.py`; `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml`;
+  `docs/runbooks/rag-quality.md`; `tests/eval/test_ragas_runner.py`;
+  `tests/eval/test_grafana_assets.py`.
 
-### GAP-INGEST-02 — `chunk_type` classified but never consumed  ·  M  ·  ✓
-- **Intended (ingest-flow):** per-chunk `chunk_type`
-  (procedural|conceptual|reference|warning|example) "for downstream consumption by
-  retrieval routers".
-- **Reality:** ingest pays an LLM classification (+ a retry round-trip on invalid
-  values) and stores it to the Qdrant payload, but **no** retrieval consumer reads
-  `chunk_type` — not the router, diversity, reranker, evidence-tier, or any
-  filter. (Distinct from the *document*-level `content_type`, which evidence-tier
-  does use.)
-- **Why it matters:** either wire it into retrieval (prefer `procedural` chunks
-  for "how do I…", surface `warning` chunks for risk questions) or stop paying for
-  the label.
-- **Evidence:** `klai-knowledge-ingest/knowledge_ingest/enrichment.py:133-135,368-402`;
-  `qdrant_store.py:330-331`; 0 `chunk_type` consumers in `retrieval_api`.
+### GAP-INGEST-02 — CLOSED: `chunk_type` removed  ·  —  ·  ✓✓ (closed 2026-06-08, verified 2026-06-11)
+- **Was:** ingest paid a per-chunk LLM classification
+  (procedural|conceptual|reference|warning|example) + a strict-Literal retry
+  round-trip, stored to the Qdrant payload, with zero retrieval consumers.
+- **Resolution:** the classification was **removed** on 2026-06-08 — the gap was
+  closed by deleting the cost, not by wiring a consumer. Rationale recorded in
+  `docs/research/chunk-type-retrieval-value.md`. Document-level `content_type`
+  (consumed by evidence-tier) is unaffected.
+- **If revisited:** any future chunk-type-aware retrieval SPEC should start from
+  that research doc, not from re-adding the label speculatively.
+- **Evidence:** `klai-knowledge-ingest/knowledge_ingest/enrichment.py:10-15`
+  (removal note); 0 `chunk_type` references left in `retrieval_api` or
+  `deploy/litellm`.
 
 ---
 
@@ -394,7 +440,7 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 | ID | Area | Effort | Verif | Doc |
 |---|---|---|---|---|
-| GAP-TEMPORAL-01 | temporal filter (bug) | S | ✓✓ | knowledge-architecture §5 / retrieval-flow |
+| ~~GAP-TEMPORAL-01~~ | temporal filter — **FIXED 2026-06-11** (serving path) | — | ✓✓ | knowledge-architecture §5 / retrieval-flow |
 | GAP-LOOP-01 | gap LLM-judge | L | ✓ | knowledge-architecture §8 |
 | GAP-LOOP-02 | semantic gap registry | L | ✓ | knowledge-architecture §8 |
 | GAP-LOOP-03 | gap lifecycle | L | ✓ | knowledge-architecture §8 |
@@ -404,19 +450,19 @@ is a threshold classifier writing an exact-string event log to Postgres.
 | GAP-PROV-01 | provenance DAG/entities | L | ⊙ | knowledge-architecture §3,§5 |
 | GAP-PROV-02 | derived_from/confidence | L | · | knowledge-architecture §3 |
 | GAP-SYNC-01 | dual-store outbox | L | ⊙ | knowledge-architecture §5 |
-| GAP-EVID-01 | assertion-mode weight | S | ✓ | knowledge-architecture §7.4 |
+| GAP-EVID-01 | evidence-tier A/B never run (weights exist, shadow-gated) | S/M | ✓✓ | knowledge-architecture §7.4 |
 | GAP-EVID-02 | 3-into-5 grouping | M | ✓ | knowledge-architecture §3.2 |
 | GAP-TAX-01 | taxonomy re-cluster | M | ✓✓ | knowledge-architecture §6 |
 | GAP-TAX-02 | binary coverage | M | · | knowledge-architecture §6 |
 | GAP-TAX-03 | taxonomy write-only | L | · | knowledge-architecture §6 / roadmap |
-| GAP-RETR-01 | retrieval gate inert | S | ✓ | knowledge-retrieval-flow |
+| GAP-RETR-01 | gate shadow-mode + stub corpus (activation pending) | S | ✓✓ | knowledge-retrieval-flow |
 | GAP-ROUTE-01 | complexity router | L | ✓✓ | platform |
 | GAP-ROUTE-02 | medium tier unused | M | ✓ | platform |
 | GAP-ROUTE-03 | router LLM fallback | M | · | knowledge-retrieval-flow |
-| GAP-TENANCY-01 | is_tenant flag | S | ✓✓ | knowledge-architecture §5 |
+| GAP-TENANCY-01 | is_tenant: new collections done; prod upgrade pending | S | ✓✓ | knowledge-architecture §5 |
 | GAP-FED-01 | cross-org federation | XL | — | knowledge-architecture §10.7 / §13 (open question) |
 | GAP-MCP-01 | MCP read tools | L | ✓✓ | knowledge-architecture §9 |
 | GAP-PRIV-01 | personal enrichment | S | ⊙ | knowledge-architecture §10 |
-| GAP-EVAL-01 | RAGAS reference | M | ✓ | roadmap |
-| GAP-EVAL-02 | regression canaries | S | · | roadmap |
-| GAP-INGEST-02 | chunk_type unused | M | ✓ | knowledge-ingest-flow |
+| ~~GAP-EVAL-01~~ | RAGAS reference — **CLOSED in code 2026-06-11; baseline-v5 pending** | M | ✓✓ | roadmap |
+| ~~GAP-EVAL-02~~ | regression canaries — **CLOSED in code 2026-06-11; live canary debug pending** | S | ✓✓ | roadmap |
+| ~~GAP-INGEST-02~~ | chunk_type — **CLOSED by removal 2026-06-08** | — | ✓✓ | knowledge-ingest-flow |

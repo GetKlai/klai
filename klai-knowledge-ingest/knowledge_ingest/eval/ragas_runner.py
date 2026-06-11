@@ -35,6 +35,74 @@ logger = structlog.get_logger()
 _MAX_ERROR_LEN = 200
 
 
+_MIN_BODY_CANARY_CHARS = 16
+
+
+def _chunk_canary_fields(chunk: dict[str, Any]) -> tuple[str, str]:
+    """Return strong fields and body text for expected_chunks canary matching."""
+    strong_values = [
+        chunk.get("chunk_id"),
+        chunk.get("id"),
+        chunk.get("title"),
+        chunk.get("source_url"),
+    ]
+    metadata = chunk.get("metadata")
+    if isinstance(metadata, dict):
+        strong_values.extend(
+            [
+                metadata.get("title"),
+                metadata.get("source_url"),
+                metadata.get("path"),
+                metadata.get("kb_slug"),
+            ]
+        )
+    strong = "\n".join(str(v) for v in strong_values if v is not None).lower()
+    body = str(chunk.get("text") or "").lower()
+    return strong, body
+
+
+def _canary_allows_body_match(expected: str) -> bool:
+    """Body-text canaries must be specific enough to avoid generic hits."""
+    marker = expected.strip()
+    return len(marker) >= _MIN_BODY_CANARY_CHARS and any(ch.isspace() for ch in marker)
+
+
+def _expected_chunk_canary(
+    expected_chunks: list[str],
+    chunks: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Compare expected chunk markers with retrieved chunks.
+
+    Suite YAML canaries are human-readable markers rather than guaranteed
+    internal IDs, so matching is case-insensitive substring matching across
+    stable returned fields. Empty expected_chunks means the query is not a
+    canary and returns None.
+    """
+    if not expected_chunks:
+        return None
+
+    searchable_chunks = [_chunk_canary_fields(chunk) for chunk in chunks]
+    matched: list[str] = []
+    missing: list[str] = []
+    for expected in expected_chunks:
+        needle = expected.strip().lower()
+        allow_body = _canary_allows_body_match(expected)
+        if needle and any(
+            needle in strong or (allow_body and needle in body)
+            for strong, body in searchable_chunks
+        ):
+            matched.append(expected)
+        else:
+            missing.append(expected)
+
+    return {
+        "expected_chunks": expected_chunks,
+        "matched_chunks": matched,
+        "missing_chunks": missing,
+        "passed": not missing,
+    }
+
+
 async def run_evaluation(suite: str, variant: str | None = None) -> dict:
     """Run the RAGAS evaluation harness for one query suite.
 
@@ -55,7 +123,7 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
 
     suites_dir = Path(settings.rag_eval_suites_dir)
     suite_file = suites_dir / f"{suite}.yaml"
-    loaded = load_suite(suite_file)
+    loaded = load_suite(suite_file, require_reference_answer=True)
 
     queries_processed: int = 0
     rows_written: int = 0
@@ -115,6 +183,44 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
         # the Grafana per-chunk drill-down for any post-mortem analysis.
         chunk_ids = [c.get("chunk_id", "") for c in chunks if c.get("chunk_id")]
 
+        canary = _expected_chunk_canary(query.expected_chunks, chunks)
+        if canary is not None:
+            meta["canary"] = canary
+        if canary is not None and not canary["passed"]:
+            missing = ", ".join(canary["missing_chunks"])
+            q_errors.append(f"canary_failed: missing expected_chunks: {missing}")
+            await insert_eval_row(
+                suite=suite,
+                variant=variant,
+                query_id=query.id,
+                context_precision=None,
+                context_recall=None,
+                faithfulness=None,
+                answer_relevance=None,
+                retrieved_chunk_ids=chunk_ids,
+                retrieval_ms=retrieval_ms,
+                total_tokens=total_tokens,
+                meta=meta,
+            )
+            rows_written += 1
+            queries_processed += 1
+            logger.info(
+                "rag_eval_query_evaluated",
+                query_id=query.id,
+                suite=suite,
+                variant=variant,
+                context_precision=None,
+                context_recall=None,
+                faithfulness=None,
+                answer_relevance=None,
+                retrieval_ms=retrieval_ms,
+                error_count=len(q_errors),
+                canary_passed=False,
+                canary_missing_chunks=canary["missing_chunks"],
+            )
+            continue
+
+        meta["reference_source"] = "reference_answer"
         answer = await judge_client.generate_answer(
             query=query.query,
             chunks=chunks,
@@ -126,7 +232,7 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
             query=query.query,
             chunks=chunks,
             answer=answer,
-            expected_topics=query.expected_topics,
+            reference_answer=query.reference_answer or "",
         )
 
         await insert_eval_row(

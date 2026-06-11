@@ -106,6 +106,21 @@ def test_alert_faithfulness_rule_present() -> None:
     assert "HAVING COUNT(*) = 2" in raw_sql
 
 
+def test_alert_canary_dropped_rule_present() -> None:
+    """rag_eval_canary_dropped fires on expected_chunks canary failures."""
+    parsed = yaml.safe_load(ALERT_PATH.read_text(encoding="utf-8"))
+    rules = parsed["groups"][0]["rules"]
+    rule = next(r for r in rules if r["uid"] == "rag-eval-001-canary-dropped")
+
+    assert rule["title"] == "rag_eval_canary_dropped"
+    assert rule["labels"]["spec"] == "SPEC-RAG-EVAL-001"
+    assert rule["labels"]["alert_type"] == "canary_dropped"
+    raw_sql = rule["data"][0]["model"]["rawSql"]
+    assert "variant = 'baseline'" in raw_sql
+    assert "meta::jsonb -> 'canary' ->> 'passed' = 'false'" in raw_sql
+    assert "HAVING COUNT(*) > 0" in raw_sql
+
+
 def test_alert_carries_spec_label() -> None:
     """Alert rule carries the SPEC-RAG-EVAL-001 label for routing."""
     parsed = yaml.safe_load(ALERT_PATH.read_text(encoding="utf-8"))

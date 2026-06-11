@@ -8,6 +8,17 @@
 >
 > Places where this doc describes a *more capable* design than the code currently implements (the retrieval gate, the router LLM fallback) carry an **Intended vs. current** callout pointing to [`product-gaps-backlog.md`](product-gaps-backlog.md).
 >
+> **2026-06-11 corrections (per-claim source re-verification):** (1) the retrieval gate
+> now ships a reference file (16-line stub) and runs in **shadow mode** by default
+> (`retrieval_gate_shadow=True`) — it logs `gate_would_bypass` but never acts; (2) the
+> temporal filter is **dual-contract** (legacy `valid_at`/`invalid_at` + current
+> `valid_from`/`valid_until`) — the 2026-06-08 field-mismatch bug is fixed on the
+> serving path; (3) RRF fusion is Qdrant-native (`FusionQuery(fusion=RRF)`) with
+> prefetch `max(candidates × 4, 20)` — there is no hand-rolled `k=60` formula in code;
+> (4) evidence-tier assertion-mode weights are no longer flat 1.00 (conservative
+> profile, still shadow-gated), and the SPEC-EVIDENCE-001-FOLLOWUP-001 deciding A/B has
+> **not** been built — its 30-day deadline lapsed.
+>
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
 >
@@ -437,16 +448,25 @@ hook receives `retrieval_bypassed: true` and injects nothing into the model's co
 When bypassed, the metadata `gate_bypassed: true` is attached to the request so
 downstream hooks can observe the decision.
 
-> **Intended vs. current ([`GAP-RETR-01`](product-gaps-backlog.md)).** The gate above
-> describes the *intended* behaviour. In production it never bypasses anything:
-> `gate.should_bypass()` loads its reference vectors from
-> `retrieval_api/data/gate_reference.jsonl`, which **does not exist** in the repo (the
-> `data/` dir contains only `.gitkeep`) and is never generated at build or deploy. With
-> no reference corpus, `should_bypass()` returns `(False, None)` unconditionally —
-> `RETRIEVAL_GATE_ENABLED` defaults `true` but the gate is inert, so *every* query
-> (trivial or not) runs the full embed + hybrid + rerank pipeline. A generator script
-> (`scripts/generate_gate_reference.py`) exists but is manual-only. Closing the gap =
-> commit a curated `gate_reference.jsonl` or run the generator at deploy.
+> **Intended vs. current ([`GAP-RETR-01`](product-gaps-backlog.md), updated 2026-06-11).**
+> The gate above describes the *intended* behaviour. In production it still never
+> bypasses, but for different reasons than the original gap claimed:
+>
+> 1. **Shadow mode is the default** (`retrieval_gate_shadow=True` in `config.py`): the
+>    gate computes and logs its decision (`gate_would_bypass`, `gate_margin` in the
+>    decision record) but `bypassed` is forced `false`. Deliberate: a wrong bypass
+>    silently drops all KB context, so the gate stays in shadow until production data
+>    confirms the corpus only catches non-KB queries.
+> 2. **The reference corpus is a 16-line stub** (`retrieval_api/data/gate_reference.jsonl`:
+>    meta-title / translate / summarize queries in NL+EN), not the 200-query ×
+>    6-language corpus that `scripts/generate_gate_reference.py` generates.
+> 3. **Strict KB mode skips the gate entirely by design** — `retrieve.py` sets
+>    `gate_skipped_reason=strict_mode` so a strict request always runs retrieval.
+>
+> Closing the gap = generate + commit the full corpus, analyze 1–2 weeks of
+> `gate_would_bypass` telemetry (false-bypass rate per language/tenant), then set
+> `retrieval_gate_shadow=false`. Gate logic itself is tested (`tests/test_gate.py`,
+> incl. shadow-mode cases).
 
 ---
 
@@ -483,21 +503,28 @@ Leg 3: Sparse query on "vector_sparse"   — keyword overlap
 > fusion. So the "three-leg" framing is really dense + questions/HyDE + sparse (+ raw-query
 > dense + raw-query sparse when rewritten) (+ graph), all RRF-merged.
 
-Each leg fetches `max(candidates × 4, 20)` candidates (typically 240 with `candidates=60`).
-The result sets are merged via **Reciprocal Rank Fusion**:
-
-```
-rrf_score = 1 / (k + rank + 1)    where k = 60
-```
-
-Duplicate chunks (same `chunk_id` appearing in multiple legs) have their scores summed.
-The merged list is re-sorted by combined score before proceeding.
+Each leg prefetches `max(candidates × 4, 20)` candidates (typically 240 with
+`candidates=60`). The legs are merged by **Qdrant's native Reciprocal Rank Fusion**
+(`FusionQuery(fusion=Fusion.RRF)` in `services/search.py`) — fusion happens
+server-side inside Qdrant, not in retrieval-api. There is no hand-rolled RRF
+formula or tunable `k` constant in our code; Qdrant applies its built-in RRF over
+the prefetch legs and returns one fused ranking. *(Corrected 2026-06-11 — an
+earlier revision of this doc described a manual `1/(k+rank+1), k=60` merge that
+does not exist in code.)*
 
 **Filters applied at query time:**
 
 All scopes:
 - `org_id == request.org_id` — tenant isolation, always enforced
-- `invalid_at` not set OR `invalid_at > now()` — bi-temporal validity
+- Temporal validity (dual-contract, `_temporal_validity_filter()`): a `must_not`
+  excludes chunks where `invalid_at <= now` OR `valid_until <= now` (epoch,
+  open-ended sentinel = active) OR `valid_at > now` OR `valid_from > now`. Both
+  the legacy ISO fields and the ingest-written epoch fields are honored, so stale
+  points are filtered even when old payloads were not physically deleted. Note:
+  physical hygiene is the primary mechanism — both Qdrant upsert paths delete all
+  points for `(org, kb, path)` before re-upserting, so same-path re-ingest leaves
+  no stale points. Neither temporal field has a payload index today (latency
+  consideration at scale).
 
 Scope `"org"` or `"both"`:
 - Visibility: `visibility != "private"` OR `user_id == request.user_id` (private documents
@@ -735,7 +762,7 @@ final_score = reranker_score
 | Weight | Source | Default values |
 |---|---|---|
 | `content_type_weight` | Per-chunk `content_type` payload (set at ingest) | `kb_article=1.00`, `pdf_document=0.90`, `meeting_transcript=0.80`, `1on1_transcript=0.80`, `graph_edge=0.70`, `web_crawl=0.65`, `unknown=0.55` |
-| `assertion_mode_weight` | Per-chunk `assertion_mode` payload | All flat at 1.00 in v1 — plumbing only. SPEC-EVIDENCE-002 governs activation. |
+| `assertion_mode_weight` | Per-chunk `assertion_mode` payload | Conservative profile (no longer flat): `factual`/`procedural` = 1.00, `quoted` = 0.98, `unknown` = 0.97, `belief` = 0.95, `hypothesis` = 0.90 (spread 0.10 per the weights research; unmapped modes fall back to `unknown` — never penalize absent metadata). Shadow-gated like the rest; SPEC-EVIDENCE-002 governs go-live (preconditions: LLM-derived labels, measured unknown-fraction). |
 | `temporal_decay` | Chunk `ingested_at` age | `<30d=1.00`, `30-180d=0.95`, `180-365d=0.90`, `>365d=0.85` |
 | `pagerank_weight` | Per-chunk `entity_pagerank_max` from FalkorDB | `1 + 0.20 * log1p(pagerank * 100)` — capped ~+25% for hub entities |
 
@@ -766,6 +793,14 @@ SPEC sets a 30-day deadline to either:
 The RAGAS A/B uses three `RAG_EVAL_VARIANT` values (`baseline`, `evidence_tier_full`,
 `evidence_tier_temporal_only`) over 7 consecutive days. Decision criteria: ≥+0.02 on
 RAGAS Context Precision AND Faithfulness with Wilcoxon `p<0.05` against baseline.
+
+> **Status 2026-06-11: the A/B was never built and the deadline lapsed.** The eval
+> harness reads `RAG_EVAL_VARIANT` but only `baseline` exists — there is no
+> `evidence_tier_full` / `evidence_tier_temporal_only` code path anywhere in
+> `knowledge_ingest/eval/`. Meanwhile the shadow `copy.deepcopy + apply()` CPU cost is
+> paid on every `/retrieve` request. The pending decision (activate / temporal-only /
+> decommission / flags-off) is tracked as Phase 0 work in
+> [`knowledge-rag-improvement-plan.md`](knowledge-rag-improvement-plan.md).
 
 ---
 
@@ -964,6 +999,7 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `KLAI_GAP_DENSE_THRESHOLD` | `0.35` | Dense score fallback for gap detection |
 | `RETRIEVAL_GATE_ENABLED` | `true` | Enable/disable the retrieval gate |
 | `RETRIEVAL_GATE_THRESHOLD` | `0.1` | Cosine margin threshold for gate bypass |
+| `RETRIEVAL_GATE_SHADOW` | `true` | Shadow mode: gate computes + logs `gate_would_bypass` but never acts. Set `false` to go live (only after corpus + telemetry validation — see GAP-RETR-01). |
 | `retrieval_candidates` | `60` | Raw candidates fetched from Qdrant |
 | `reranker_candidates` | `20` | Top-N sent to cross-encoder |
 | `EVIDENCE_SHADOW_MODE` | `true` | Compute weighted score + U-shape order, log as `shadow_eval`, serve flat reranker order. Activation gated by SPEC-EVIDENCE-001-FOLLOWUP-001 (RAGAS A/B + 30-day deadline). |

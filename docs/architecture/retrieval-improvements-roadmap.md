@@ -4,7 +4,7 @@
 > Companion to [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md), which describes what runs today.
 > Created 2026-05-04 after holistic review of current code + 2026 RAG best-practice research.
 > Updated 2026-05-05: **Tier 1 + Tier 2 SHIPPED**. Measured impact on Voys-support: precision +61%, recall +154%, faithfulness moved from broken to 0.81.
-> Updated 2026-06-08 (doc-vs-code drift audit): the nightly RAGAS cron is now wired (`@app.periodic`); the query-rewrite model is `QUERY_REWRITE_MODEL` (default `mistral-small-2603`), not the `klai-fast` alias; the faithfulness alert fires at **0.80** (not 0.85). Two measurement caveats are tracked as gaps in [`product-gaps-backlog.md`](product-gaps-backlog.md): GAP-EVAL-01 (RAGAS ground-truth is a topic-label string, weakening the headline deltas) and GAP-EVAL-02 (the `expected_chunks` regression canaries are not checked).
+> Updated 2026-06-11: GAP-EVAL-01/02 are closed in code. Scored RAGAS suites require full `reference_answer`, `expected_chunks` canaries hard-fail before fuzzy scoring, and the new `rag_eval_canary_dropped` alert catches dropped canaries. Old baselines are not comparable; run live canary debug and recapture `baseline-v5` before using the new numbers as decision gates.
 
 ---
 
@@ -73,19 +73,17 @@ Two distinct truncation regressions had to be fixed in series before faithfulnes
 
 - `klai-knowledge-ingest/knowledge_ingest/eval/` — `ragas_runner.py`, `suite_loader.py`, `retrieval_client.py`, `judge_client.py`, `store.py`. Uses RAGAS 0.4.3's `ragas.metrics.collections` per-metric `ascore()` API (parallel via `asyncio.gather`, per-metric fail-open via `_safe_ascore`).
 - `deploy/postgres/migrations/014_rag_eval_results.sql` — storage table + 2 indexes
-- `klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml` — 60 hand-curated Voys queries with mix-tags (easy_lookup / vague_pronoun / multi_doc_synthesis / long_tail / edge_case)
+- `klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml` — 67 hand-curated Voys queries with mix-tags (easy_lookup / vague_pronoun / multi_doc_synthesis / long_tail / edge_case / brand_bridging), full `reference_answer` fields for RAGAS, and `expected_chunks` canaries where applicable
 - `deploy/grafana/provisioning/dashboards/rag-quality.json` — 4 metric panels + failed-row count, 7-day moving average, `$variant` template variable
-- `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` — `rag_eval_faithfulness_low` HIGH alert (faithfulness **< 0.80** on 2 consecutive nights)
-- `docs/runbooks/rag-quality.md` — triage runbook for the alert
+- `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` — `rag_eval_faithfulness_low` HIGH alert (faithfulness **< 0.80** on 2 consecutive nights) + `rag_eval_canary_dropped` HIGH alert for failed expected-chunk canaries
+- `docs/runbooks/rag-quality.md` — triage runbook for both alerts
 
-> **Ground-truth caveat (GAP-EVAL-01/02).** Two harness limits affect how much the headline
-> deltas mean: (1) the RAGAS `reference` for `context_precision`/`context_recall` is
-> `', '.join(expected_topics)` — a 2-3 keyword label, not a reference answer
-> (`judge_client.py:275,297-310`), so those metrics partly measure keyword overlap; (2) the
-> `expected_chunks` "regression canaries" are committed in the suites but the runner never
-> compares retrieved-vs-expected chunks (`ragas_runner.py`), so a dropped canary chunk is
-> invisible. Wiring real reference answers + a canary hit/miss check would make the launch
-> decision trustworthy.
+> **Ground-truth status (updated 2026-06-11).** GAP-EVAL-01/02 are closed in
+> code: scored suite runs now require `reference_answer`, RAGAS receives that
+> full reference answer rather than joined topic labels, and `expected_chunks`
+> canaries hard-fail before fuzzy scoring. Old baselines remain incomparable;
+> recapture `baseline-v5` after a live `manual-canary-debug` run confirms the
+> canary markers match production retrieval output.
 
 ### Ad-hoc usage for variant experiments
 

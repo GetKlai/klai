@@ -96,6 +96,67 @@ This runs the same suite synchronously and prints per-query results. Cheaper tha
 
 ---
 
+## canary-dropped
+
+**Situation:** the alert `rag_eval_canary_dropped` has fired. At least one
+`baseline` RAG eval query declared `expected_chunks`, but retrieval did not
+return a matching chunk marker. The runner hard-failed that row before fuzzy
+RAGAS scoring, so the normal aggregate metrics may be NULL for the query.
+
+### Step 1 — Inspect the failed canaries
+
+```bash
+ssh core-01
+
+docker exec klai-core-postgres-1 psql -U klai -d klai -c "
+  SELECT
+    suite,
+    query_id,
+    run_at,
+    meta::jsonb #> '{canary,missing_chunks}' AS missing_chunks,
+    meta::jsonb #> '{canary,matched_chunks}' AS matched_chunks,
+    retrieved_chunk_ids
+  FROM knowledge.rag_eval_results
+  WHERE variant = 'baseline'
+    AND run_at >= NOW() - INTERVAL '36 hours'
+    AND meta::jsonb -> 'canary' ->> 'passed' = 'false'
+  ORDER BY run_at DESC;
+"
+```
+
+If multiple easy-lookup canaries failed in the same suite, treat it as a
+retrieval regression. If one canary failed, check whether the source content was
+renamed, removed, superseded, or re-ingested with different chunk titles.
+
+### Step 2 — Check retrieval and ingest around the run
+
+```bash
+# Retrieval-api recent errors
+docker logs --tail 100 klai-core-klai-retrieval-api-1 2>&1 | grep -iE "error|warn|qdrant|rerank" | head -30
+
+# knowledge-ingest eval logs
+docker logs --tail 200 klai-core-knowledge-ingest-1 2>&1 | grep -E "rag_eval_|canary" | head -50
+```
+
+### Step 3 — Re-run after the suspected fix
+
+```bash
+docker exec klai-core-knowledge-ingest-1 \
+  python -m knowledge_ingest.eval --suite chat --variant manual-canary-debug
+```
+
+Use a non-baseline variant for manual debugging so the baseline alert remains
+tied to nightly runs. The alert auto-resolves after the 36h window clears or a
+new baseline run has no canary failures.
+
+### Related
+
+- Alert rule: `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml`
+- Canary suites: `klai-knowledge-ingest/knowledge_ingest/eval/suites/`
+- Runner: `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py`
+
+---
+
 ## Low-confidence served rate alert (SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001)
 
 **Alert:** `RAG: Low-confidence served rate > 20%`

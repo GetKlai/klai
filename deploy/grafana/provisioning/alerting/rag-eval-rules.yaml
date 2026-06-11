@@ -4,6 +4,8 @@
 #
 #   R1  rag_eval_faithfulness_low   HIGH  baseline faithfulness < 0.80 on
 #                                         two consecutive nightly runs
+#   R3  rag_eval_canary_dropped     HIGH  one or more expected_chunks
+#                                         canaries missing in baseline eval
 #
 # Source: knowledge.rag_eval_results (PortalPostgres datasource).
 # Variant scope is intentionally pinned to 'baseline' — variant runs are
@@ -78,6 +80,48 @@ groups:
             Investigate: did the corpus change? Did retrieval-api or LiteLLM
             misbehave? Query knowledge.rag_eval_results for details.
           runbook_url: 'docs/runbooks/rag-quality.md#faithfulness-baseline-low'
+
+      # ── R3: rag_eval_canary_dropped ────────────────────────────────────
+      # Deterministic canary detector. Fires when the baseline nightly eval
+      # writes any row whose expected_chunks canary failed before RAGAS
+      # scoring. The 36h window covers one nightly run plus retries.
+      - uid: rag-eval-001-canary-dropped
+        title: rag_eval_canary_dropped
+        condition: canary_dropped
+        data:
+          - refId: canary_dropped
+            datasourceUid: portal-postgres
+            queryType: ""
+            relativeTimeRange:
+              from: 129600       # 36h: covers one nightly run even with retries.
+              to: 0
+            model:
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                SELECT COUNT(*) AS value
+                FROM knowledge.rag_eval_results
+                WHERE variant = 'baseline'
+                  AND run_at >= NOW() - INTERVAL '36 hours'
+                  AND meta::jsonb -> 'canary' ->> 'passed' = 'false'
+                HAVING COUNT(*) > 0;
+              refId: canary_dropped
+        for: 0s
+        noDataState: OK
+        execErrState: Alerting
+        labels:
+          severity: high
+          spec: SPEC-RAG-EVAL-001
+          alert_type: canary_dropped
+        annotations:
+          summary: "RAG eval expected_chunks canary dropped"
+          description: |
+            At least one baseline RAG eval query failed its expected_chunks
+            canary before RAGAS scoring. This means retrieval no longer returned
+            a known-good chunk marker from the suite.
+          runbook_url: 'docs/runbooks/rag-quality.md#canary-dropped'
 
       # ── R2: rag_low_confidence_served_rate ─────────────────────────────
       # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-8b.

@@ -5,6 +5,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe troubleshoot ik Bubble?"
+    reference_answer: "Controleer of de Bubble browserplugin actief is, herstart de browser of plugin en volg de Bubble troubleshoot-stappen voor verbindingsproblemen."
     expected_topics:
       - bubble
       - browser-plugin
@@ -14,6 +15,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat is de procedure voor uitportering?"
+    reference_answer: "Bij uitportering volg je de customer-service procedure voor nummerovername, controleer je de benodigde klantgegevens en verwerk je de porting-out status volgens de interne stappen."
     expected_topics:
       - uitportering
       - customer-service
@@ -21,6 +23,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe stel ik een voicemail in?"
+    reference_answer: "Voicemail instellen gebeurt via de telefonie-instellingen van de gebruiker of extensie; configureer de begroeting, doorschakeling en bereikbaarheid volgens de voicemailprocedure."
     expected_topics:
       - voicemail
       - telefonie

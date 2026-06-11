@@ -9,6 +9,8 @@
 > *2026-05-06: §2 rewritten to remove the "Two products, one infrastructure" framing — Klai Focus / research-api was decommissioned by `SPEC-PORTAL-UNIFY-KB-001` (April 2026) and `SPEC-DECOMM-FOCUS-001` (May 2026). Klai Knowledge is now the single knowledge product. §7.4 evidence-tier activation track aligned with `SPEC-EVIDENCE-001-FOLLOWUP-001`.*
 >
 > *2026-06-08 (doc-vs-code drift audit): §0 infra table corrected (gpu-01 models, Graphiti live, PG schema populated, gap inbox live, Mistral stack). Several sections that described a richer design than the code now carry an **Intended vs. current** callout pointing to [`product-gaps-backlog.md`](product-gaps-backlog.md) — notably §8 gap detection (GAP-LOOP-*), §6 taxonomy (GAP-TAX-*), §3.3/§5 provenance (GAP-PROV-*), §7.4/§3.2 evidence weighting (GAP-EVID-*), §5.1 multitenancy (GAP-TENANCY-01), §9.2 MCP read tools (GAP-MCP-01), §10 personal-knowledge enrichment (GAP-PRIV-01). The temporal-validity filter has a field-name bug — see [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md).*
+>
+> *2026-06-11 (per-claim re-verification): the temporal field-name bug is **fixed** on the serving path (dual-contract filter + delete-then-upsert; see §5.2 callout and the retro addendum); `is_tenant=True` now ships for new collections (existing collection needs the one-time upgrade script — §5.1 callout); evidence-tier assertion weights are no longer flat (conservative profile, shadow-gated — §7.4 callout); GAP-INGEST-02 (`chunk_type`) was closed by removal. Refreshed gap states: [`product-gaps-backlog.md`](product-gaps-backlog.md); improvement plan: [`knowledge-rag-improvement-plan.md`](knowledge-rag-improvement-plan.md).*
 
 ---
 
@@ -442,12 +444,15 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 
 **Large tenants:** Qdrant 1.16 tiered multitenancy allows promoting tenants above a vector count threshold (e.g., >20,000 vectors) to dedicated shards automatically. This provides the isolation benefits of a dedicated collection without the operational overhead.
 
-> **Intended vs. current (GAP-TENANCY-01).** Isolation is correct, but two of the
-> mechanisms above are **not** in code:
-> - The `org_id` index is created as a plain `keyword` index — **no `is_tenant: true`
->   flag** (`qdrant_store.py:82-105`). So there is no per-tenant HNSW subgraph; isolation
->   is a mandatory `org_id` must-filter at query time (the configuration this section says
->   degrades recall). `is_tenant=True` is one `create_payload_index` parameter.
+> **Intended vs. current (GAP-TENANCY-01, updated 2026-06-11).** Isolation is correct;
+> the optimization mechanisms are now partially in code:
+> - `ensure_collection()` creates the `org_id` index with
+>   `KeywordIndexParams(is_tenant=True)` for **new** collections
+>   (`qdrant_store.py:85-102`). Collections created before this landed keep their plain
+>   keyword index until the one-time online upgrade
+>   (`scripts/upgrade_org_id_tenant_index.py`) is run — deliberately not auto-rebuilt at
+>   startup. Whether the production `klai_knowledge` collection has been upgraded must be
+>   verified against the live payload schema.
 > - **Tiered sharding** for large tenants is not implemented (no `shard_key` / sharding
 >   code anywhere).
 >
@@ -483,10 +488,16 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 >   `belief_time_end` soft-delete, not a supersession chain.
 > - `embedding_queue` (transactional outbox): **0 INSERTs** — the write path is a direct
 >   PG-then-Qdrant write with no outbox, retry, or nightly reconciliation — GAP-SYNC-01.
-> - **Temporal-validity bug:** ingest writes `valid_from`/`valid_until` to the Qdrant
->   payload, but retrieval filters on a `invalid_at` field that is never written (and never
->   reads `valid_until`), so the "currently-believed only" filter is inert. See
->   [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md).
+> - **Temporal-validity bug — FIXED 2026-06-11 on the serving path:** retrieval now uses
+>   a dual-contract filter (`search.py::_temporal_validity_filter`) covering both the
+>   legacy `valid_at`/`invalid_at` and the ingest-written `valid_from`/`valid_until`
+>   fields, and both Qdrant upsert paths delete all points for `(org, kb, path)` before
+>   re-upserting, so same-path re-ingest leaves no stale points. What remains:
+>   `soft_delete_artifact()` updates PG only (Qdrant hygiene relies on delete-then-upsert;
+>   a failed Qdrant call after PG commit is silent divergence → GAP-SYNC-01), and the
+>   temporal fields carry no payload index. History:
+>   [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md) (with 2026-06-11
+>   status addendum).
 
 **Schema overview:**
 
@@ -845,15 +856,24 @@ Evidence-weighted scoring runs in Step 6 of the retrieval pipeline. Currently in
 | Content type | `content_type` (kb_article, pdf_document, web_crawl, ...) | Per-type weight, see table below | `EVIDENCE_CONTENT_TYPE_ENABLED` (default `true`) |
 | Temporal decay | `ingested_at` age | Step function across <30d / 30-180d / 180-365d / >365d brackets | `EVIDENCE_TEMPORAL_DECAY_ENABLED` (default `true`) |
 | PageRank | `entity_pagerank_max` from FalkorDB | `1 + 0.20 * log1p(pagerank * 100)` — capped ~+25% | `EVIDENCE_PAGERANK_ENABLED` (default `true`) |
-| Assertion mode | `assertion_mode` (factual, procedural, ...) | **Flat weights (all 1.00)** — activate via `SPEC-EVIDENCE-002` after A/B | `EVIDENCE_ASSERTION_MODE_ENABLED` (default `true`, but flat-weights neuter the effect) |
+| Assertion mode | `assertion_mode` (factual, procedural, ...) | **Conservative profile** (factual/procedural 1.00, quoted 0.98, unknown 0.97, belief 0.95, hypothesis 0.90) — go-live via `SPEC-EVIDENCE-002` | `EVIDENCE_ASSERTION_MODE_ENABLED` (default `true`; shadow mode keeps it measured-not-served) |
 
-> **Intended vs. current (GAP-EVID-01/02).** This section is candid that the whole thing
-> is shadow-mode and assertion-mode weights are flat. To be explicit for implementers:
-> `_assertion_weight()` ignores its input and the flag and **always returns `1.00`**
-> (`evidence_tier.py:113-116`, `assertion_mode_weights = {}`), so that dimension is a
-> mathematical no-op even with the flag on — ready-to-activate plumbing, not a live signal.
-> The 3-into-5 epistemic grouping from §3.2 (assertion / speculation / procedure) is **not
-> implemented anywhere**. content_type / temporal / pagerank are real multipliers.
+> **Intended vs. current (GAP-EVID-01/02, updated 2026-06-11).** The whole evidence-tier
+> remains shadow-mode (`EVIDENCE_SHADOW_MODE=true`: weighted order is computed and
+> logged as `shadow_eval`, the flat reranker order is served). Two corrections to the
+> earlier callout:
+> - `_assertion_weight()` no longer returns a constant: it reads the conservative
+>   profile above from `DEFAULT_EVIDENCE_PROFILE` (`evidence_tier.py:43-67,125-148`;
+>   spread 0.10 per the weights research, unmapped modes fall back to `unknown`).
+>   Still measured-not-served while shadow mode is on.
+> - The deciding RAGAS A/B (SPEC-EVIDENCE-001-FOLLOWUP-001 variants
+>   `evidence_tier_full` / `evidence_tier_temporal_only`) was **never built** — the eval
+>   harness only knows `baseline` — and the SPEC's 30-day decision deadline has lapsed
+>   while the shadow `deepcopy + apply()` CPU cost is paid per request.
+>
+> The 3-into-5 epistemic grouping from §3.2 (assertion / speculation / procedure) is
+> still **not implemented anywhere**. content_type / temporal / pagerank are real
+> multipliers (also shadow-served).
 
 After scoring, chunks are reordered into a **U-shape** (strongest at position 0, second-strongest at the last position, mid-strength clustered in the middle) per Liu et al. 2023 "Lost in the Middle" ([arXiv:2307.03172](https://arxiv.org/abs/2307.03172)).
 

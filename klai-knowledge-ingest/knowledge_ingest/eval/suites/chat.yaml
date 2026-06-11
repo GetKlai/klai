@@ -14,6 +14,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe troubleshoot ik Bubble?"
+    reference_answer: "Gebruik de Bubble troubleshoot-procedure: controleer de browserplugin, herstart of verbind Bubble opnieuw en volg de stappen voor bekende verbindings- of pluginproblemen."
     expected_topics: [bubble, troubleshoot]
     expected_chunks: ["Bubble troubleshoot"]
     mix: easy_lookup
@@ -22,6 +23,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Welke Yealink firmware ondersteunen we?"
+    reference_answer: "Het antwoord noemt de ondersteunde of nieuwste Yealink firmwareversie uit de firmwaredocumentatie en koppelt die aan de relevante telefonie- of toestelcontext."
     expected_topics: [yealink, firmware, telefonie]
     expected_chunks: ["latest Yealink firmware"]
     mix: easy_lookup
@@ -30,6 +32,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe verwerk ik een afgehandelde uitportering zonder verdere nummers?"
+    reference_answer: "Volg de CS-procedure voor een afgehandelde uitportering zonder verdere telefoonnummers: rond de porting-out status af, leg vast dat er geen extra nummers zijn en sluit de klantactie volgens de interne stappen."
     expected_topics: [uitportering, customer-service, portering]
     expected_chunks: ["CS | Uitportering afgehandeld - Geen verdere telefoonnummers"]
     mix: easy_lookup
@@ -38,6 +41,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat doe ik als een klant zijn inloggegevens kwijt is en geen toegang heeft tot Freedom?"
+    reference_answer: "Help de klant met herstel van toegang tot Freedom door de identiteit te controleren en de procedure voor verloren inloggegevens of accounttoegang te volgen."
     expected_topics: [inloggegevens, freedom, klantaccount]
     expected_chunks: ["Klant is inloggegevens verloren en heeft geen toegang meer tot Freedom"]
     mix: easy_lookup
@@ -46,6 +50,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe handel ik fraude af waarbij onze klant zich voordoet als een ander bedrijf?"
+    reference_answer: "Behandel dit als een fraude-scenario waarin een klant zich voordoet als een ander bedrijf: volg de fraudeprocedure, verzamel relevante gegevens en escaleer volgens de customer-service afspraken."
     expected_topics: [fraude, customer-service]
     expected_chunks: ["Fraude: Onze klant doet zich voor als een ander bedrijf"]
     mix: easy_lookup
@@ -54,6 +59,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe verwerk ik een opzegging?"
+    reference_answer: "Verwerk een opzegging via de cancellations-procedure: controleer klant- en contractgegevens, registreer de opzegging en voer de vereiste vervolgacties of bevestiging uit."
     expected_topics: [opzeggingen, customer-service]
     expected_chunks: ["3.011 Opzeggingen verwerken (Cancellations)"]
     mix: easy_lookup
@@ -62,6 +68,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat is de werkwijze buiten openingstijden in de avond en het weekend?"
+    reference_answer: "Het antwoord beschrijft de werkwijze buiten openingstijden voor avonden en weekenden, inclusief hoe binnenkomende klantvragen of storingen dan worden opgepakt of doorgeschakeld."
     expected_topics: [openingstijden, customer-service, weekend]
     expected_chunks: ["Werkwijze buiten openingstijden (avonden & weekenden)"]
     mix: easy_lookup
@@ -70,6 +77,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe werkt de Pipedrive integratie?"
+    reference_answer: "Leg uit hoe de Pipedrive CRM-integratie met de telefooncentrale werkt, welke configuratie of koppeling nodig is en waar gebruikers de integratie voor gebruiken."
     expected_topics: [pipedrive, crm, integratie]
     expected_chunks: ["pipedrive"]
     mix: easy_lookup
@@ -78,6 +86,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat is Bubble365 mobiele app?"
+    reference_answer: "Beschrijf Bubble365 mobiele app als de mobiele Bubble-app en noem de relevante functies of installatiecontext uit de mobiele-app documentatie."
     expected_topics: [bubble, mobiele-app]
     expected_chunks: ["52-bubble365-mobiele-app"]
     mix: easy_lookup
@@ -87,6 +96,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe verwerk ik die portering verder?"
+    reference_answer: "Als de context naar een portering verwijst, geef de vervolgstappen voor uitportering of nummerovername; zonder context moet het antwoord om verduidelijking vragen welke portering bedoeld wordt."
     expected_topics: [portering, uitportering, customer-service]
     expected_chunks: []
     mix: vague_pronoun
@@ -95,6 +105,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat is hier de laatste versie van?"
+    reference_answer: "Als de context naar Yealink firmware verwijst, noem de laatste ondersteunde firmwareversie; zonder context moet het antwoord vragen van welk product of toestel de laatste versie bedoeld wordt."
     expected_topics: [firmware, yealink]
     expected_chunks: []
     mix: vague_pronoun
@@ -103,6 +114,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat doe ik als hij dat niet kan vinden?"
+    reference_answer: "Als de context Bubble troubleshooting betreft, geef de stap voor wanneer Bubble of de plugin iets niet kan vinden; zonder context moet het antwoord eerst vragen wat niet gevonden wordt."
     expected_topics: [bubble, troubleshoot]
     expected_chunks: []
     mix: vague_pronoun
@@ -111,6 +123,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe gaat dat dan precies?"
+    reference_answer: "Omdat de vraag naar een eerdere procedure verwijst, moet het antwoord de bedoelde procedure uit context gebruiken of om verduidelijking vragen als die context ontbreekt."
     expected_topics: [procedure, customer-service]
     expected_chunks: []
     mix: vague_pronoun
@@ -119,6 +132,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Die mevrouw kan niet meer inloggen, wat nu?"
+    reference_answer: "Behandel dit als een klant die niet meer kan inloggen bij Freedom: controleer identiteit en accountstatus en volg de procedure voor verloren of geblokkeerde inloggegevens."
     expected_topics: [inloggegevens, freedom]
     expected_chunks: []
     mix: vague_pronoun
@@ -127,6 +141,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hij doet alsof hij een ander bedrijf is, wat moet ik doen?"
+    reference_answer: "Classificeer dit als fraude of identiteitsmisbruik en volg de customer-service fraudeprocedure, inclusief vastleggen, controle en eventuele escalatie."
     expected_topics: [fraude, customer-service]
     expected_chunks: []
     mix: vague_pronoun
@@ -135,6 +150,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hij wil zo'n ding hebben, hoe regel ik dat?"
+    reference_answer: "Als 'zo'n ding' naar een trunk verwijst, beschrijf hoe een trunk voor telefonie wordt aangevraagd of ingericht; zonder context moet het antwoord vragen wat de klant precies wil."
     expected_topics: [trunk, telefonie]
     expected_chunks: []
     mix: vague_pronoun
@@ -143,6 +159,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat doe ik met die klant die overstapt?"
+    reference_answer: "Als de klant overstapt van CloudCTI naar Bubble, beschrijf de migratie- of overstapprocedure en de klantacties die nodig zijn."
     expected_topics: [bubble, cloudcti, klant]
     expected_chunks: []
     mix: vague_pronoun
@@ -151,6 +168,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe gaat dat met die garantie?"
+    reference_answer: "Beantwoord met de relevante garantie-informatie als de context duidelijk maakt welk product of dienst bedoeld wordt; vraag anders om welk garantiegeval het gaat."
     expected_topics: [garantie, info]
     expected_chunks: []
     mix: vague_pronoun
@@ -160,6 +178,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Welke klanten moeten we van CloudCTI naar Bubble migreren en waarom?"
+    reference_answer: "Het antwoord legt uit welke klantgroepen van CloudCTI naar Bubble moeten migreren en benoemt de reden voor die migratie, zoals lifecycle, support of productstrategie."
     expected_topics: [bubble, cloudcti, migratie]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -168,6 +187,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat is het volledige proces van een nummerovername, van aanvraag tot afhandeling?"
+    reference_answer: "Beschrijf het end-to-end proces voor nummerovername of portering: aanvraag, benodigde klantgegevens, verwerking, statusbewaking en afhandeling richting klant."
     expected_topics: [portering, nummerovername, customer-service]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -176,6 +196,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat zijn de verschillende fraude-scenario's en hoe handelen we elk af?"
+    reference_answer: "Som de bekende fraude-scenario's op en beschrijf per scenario de customer-service handeling, benodigde gegevens, controles en escalatie."
     expected_topics: [fraude, customer-service]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -184,6 +205,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe zet ik Bubble op en wat doe ik als er iets misgaat?"
+    reference_answer: "Combineer de Bubble setup-stappen met de troubleshootprocedure: installatie of koppeling uitvoeren, configuratie controleren en bij fouten de bekende herstelstappen volgen."
     expected_topics: [bubble, setup, troubleshoot]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -192,6 +214,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Welke account-wijzigingen zijn er en hoe verwerk ik elk type?"
+    reference_answer: "Geef een overzicht van de typen account- of bedrijfswijzigingen en beschrijf per type hoe customer service de wijziging verwerkt."
     expected_topics: [account-changes, klantaccount, customer-service]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -200,6 +223,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe ziet de complete overdracht naar Voys eruit, inclusief porteringen en setups?"
+    reference_answer: "Beschrijf de overdracht naar Voys als een proces met klantoverdracht, porteringen, telefonie- of Bubble-setups en afronding van de benodigde customer-service stappen."
     expected_topics: [overdracht, voys, portering, setup]
     expected_chunks: []
     mix: multi_doc_synthesis
@@ -209,6 +233,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat moet ik weten over de myneva CRM-integratie?"
+    reference_answer: "Het antwoord benoemt wat de myneva CRM-integratie doet, hoe deze met telefonie of Bubble samenhangt en welke configuratie- of gebruikscontext belangrijk is."
     expected_topics: [myneva, crm, integratie]
     expected_chunks: []
     mix: long_tail
@@ -217,6 +242,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Wat is anders bij Belgische klanten?"
+    reference_answer: "Beschrijf de afwijkende aandachtspunten voor Belgische klanten, zoals internationale of land-specifieke telefonie-, klant- of procedureverschillen."
     expected_topics: [belgische-klanten, internationaal]
     expected_chunks: []
     mix: long_tail
@@ -225,6 +251,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "In welke landen werkt VoIP-telefonie soms niet goed?"
+    reference_answer: "Noem de landen of internationale situaties waar VoIP-telefonie soms problemen geeft en beschrijf de relevante troubleshoot- of verwachtingscontext."
     expected_topics: [voip, internationaal, troubleshoot]
     expected_chunks: []
     mix: long_tail
@@ -233,6 +260,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe werkt de Odoo softphone via websocket?"
+    reference_answer: "Leg uit hoe de Odoo softphone via websocket werkt, welke telefonie- of softphone-integratie nodig is en welke websocketconfiguratie relevant is."
     expected_topics: [odoo, softphone, websocket]
     expected_chunks: []
     mix: long_tail
@@ -242,6 +270,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "How do I handle een klant die zijn inloggegevens kwijt is?"
+    reference_answer: "Answer in the user's mixed language context: verify the customer and follow the Freedom/account login-recovery procedure for lost credentials."
     expected_topics: [inloggegevens, freedom, klantaccount]
     expected_chunks: []
     mix: edge_case
@@ -250,6 +279,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "hoi"
+    reference_answer: "Dit is alleen een begroeting; het antwoord hoort kort te groeten en om een concrete vraag of kennisbankcontext te vragen, niet inhoudelijk te zoeken of te fabriceren."
     expected_topics: []
     expected_chunks: []
     mix: edge_case
@@ -264,6 +294,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Ik wil Voys Freedom graag koppelen aan Salesforce. Hoe werkt dat?"
+    reference_answer: "Leg uit dat Salesforce-koppelingen via de CRM-ERP telefonie-integratiecontext lopen, verwijs naar Bubble of RedCactus waar relevant en beschrijf de globale koppeling met Voys Freedom."
     expected_topics: [bubble, redcactus, salesforce, integratie]
     expected_chunks: ["Bubble: Koppel je telefooncentrale aan je CRM-ERP"]
     mix: brand_bridging
@@ -272,6 +303,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe koppel ik HubSpot aan Voys?"
+    reference_answer: "Beantwoord als CRM-integratievraag: beschrijf hoe HubSpot met Voys of Bubble gekoppeld kan worden als die integratie ondersteund is, of verwijs naar de relevante CRM-koppelingsdocumentatie."
     expected_topics: [bubble, hubspot, crm, integratie]
     mix: brand_bridging
 
@@ -279,6 +311,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Werkt Voys Freedom met Microsoft Teams?"
+    reference_answer: "Beantwoord of en hoe Microsoft Teams binnen de Voys Freedom of telefonie-integratiecontext ondersteund wordt, inclusief eventuele beperkingen of benodigde koppelingen."
     expected_topics: [teams, microsoft, integratie]
     mix: brand_bridging
 
@@ -286,6 +319,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Pipedrive integreren met onze telefooncentrale, kan dat?"
+    reference_answer: "Bevestig de Pipedrive CRM-telefonie integratie als die ondersteund is en beschrijf op hoofdlijnen hoe de telefooncentrale aan Pipedrive wordt gekoppeld."
     expected_topics: [pipedrive, crm, bubble, integratie]
     mix: brand_bridging
 
@@ -293,6 +327,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Ondersteunen jullie de Acme Foo Connector v3 voor Salesforce Commerce B2B Lightning?"
+    reference_answer: "De KB bevat geen betrouwbare informatie over deze specifieke Acme Foo Connector; het antwoord moet geen ondersteuning verzinnen en om verduidelijking of verificatie vragen."
     expected_topics: [onbekend]
     mix: brand_bridging
     # Negative-class canary: KB has no relevant content for this query.
@@ -304,6 +339,7 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe werkt de Bubble integratie met Salesforce?"
+    reference_answer: "Beschrijf de Bubble CRM-ERP telefonie-integratie met Salesforce op basis van de bekende Bubble-koppelingsdocumentatie en noem de relevante configuratiecontext."
     expected_topics: [bubble, salesforce, crm, integratie]
     expected_chunks: ["Bubble: Koppel je telefooncentrale aan je CRM-ERP"]
     mix: brand_bridging
@@ -314,5 +350,6 @@ queries:
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: "Hoe koppel ik Zoom aan Voys?"
+    reference_answer: "Als de KB geen specifieke Zoom-koppeling met Voys bevat, moet het antwoord geen integratie verzinnen en vragen om nadere context of verwijzen naar bekende integratieopties."
     expected_topics: [zoom, integratie]
     mix: brand_bridging

@@ -1,10 +1,46 @@
 # Temporal retrieval filter is inert — field-name mismatch + no supersession payload update
 
 > Found 2026-06-08 during the `docs/architecture` doc-vs-code drift audit.
-> Status: **unconfirmed in production** — code defect is certain, customer
-> impact depends on a path not yet fully traced (see "Open question"). Filed so
-> it can be triaged as a bug, not designed as a feature. Backlog handle:
-> `GAP-TEMPORAL-01` in `docs/architecture/product-gaps-backlog.md`.
+> Status: ~~unconfirmed in production~~ → **RESOLVED on the serving path, 2026-06-11**
+> (see Status addendum below). Backlog handle: `GAP-TEMPORAL-01` in
+> `docs/architecture/product-gaps-backlog.md` (now marked fixed).
+
+## Status addendum — 2026-06-11 (verified against source)
+
+Both halves of this retro are now answered:
+
+1. **The field-name mismatch is fixed.** Retrieval uses a dual-contract filter
+   (`search.py::_temporal_validity_filter`): `must_not` over the legacy
+   `valid_at`/`invalid_at` ISO fields **and** the ingest-written
+   `valid_from`/`valid_until` epoch fields, with the open-ended sentinel
+   (`belief_time_end = 253402300800`) treated as active. Integration-tested in
+   `klai-retrieval-api/tests/test_search.py` (expired / future-valid / active /
+   legacy-timeless cases, against a real Qdrant).
+2. **The open question is answered: stale chunks do NOT linger on re-ingest.**
+   The delete lives *inside* the upsert functions, not in the route: both
+   `qdrant_store.upsert_chunks` and `qdrant_store.upsert_enriched_chunks` start
+   with `client.delete(...)` on `(org_id, kb_slug, path)` before upserting
+   (qdrant_store.py, "Delete existing points for this document"). The random
+   `uuid4` point IDs flagged below are therefore harmless — overwrite-by-ID is
+   not the mechanism; delete-by-path-filter is. Page deletes call
+   `delete_document()`. The original analysis looked for a delete in
+   `routes/ingest.py` and missed the one inside the store layer.
+
+So the outcome matches this retro's second branch ("if every route deletes, the
+filter is dead-but-harmless defense-in-depth") — except the filter is no longer
+dead: it now matches the written fields, making it *working* defense-in-depth
+for the one case physical deletion cannot cover (a Qdrant delete that fails
+after the PG commit — that residual is the dual-store consistency gap,
+`GAP-SYNC-01`). Remaining loose ends, tracked in
+`docs/architecture/knowledge-rag-improvement-plan.md` (theme A1):
+`soft_delete_artifact` still updates PG only (acceptable given delete-then-upsert,
+but `superseded_by` is never set), the recommended end-to-end
+ingest→supersede→retrieve test does not exist yet, and `valid_from`/`valid_until`
+have no payload index.
+
+---
+
+*Original retro below, kept verbatim for the record.*
 
 ## What is certain (verified against source 2026-06-08)
 

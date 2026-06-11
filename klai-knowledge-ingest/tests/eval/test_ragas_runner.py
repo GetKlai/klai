@@ -14,7 +14,7 @@ Coverage:
 from __future__ import annotations
 
 import os
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -255,3 +255,132 @@ def test_queue_in_llm_lane():
     assert queues.RAG_EVAL == "rag-eval"
     assert queues.RAG_EVAL in queues.LLM_QUEUES
     assert queues.RAG_EVAL in queues.ALL_QUEUES
+
+
+# ---------------------------------------------------------------------------
+# Test 7 - expected_chunks matcher avoids generic body false positives
+# ---------------------------------------------------------------------------
+
+
+def test_expected_chunks_canary_does_not_match_generic_body_text():
+    """Short generic markers must match strong fields, not arbitrary body text."""
+    from knowledge_ingest.eval.ragas_runner import _expected_chunk_canary
+
+    canary = _expected_chunk_canary(
+        expected_chunks=["pipedrive"],
+        chunks=[
+            {
+                "chunk_id": "other",
+                "title": "CRM overview",
+                "text": "This body happens to mention pipedrive as one of many tools.",
+            }
+        ],
+    )
+
+    assert canary == {
+        "expected_chunks": ["pipedrive"],
+        "matched_chunks": [],
+        "missing_chunks": ["pipedrive"],
+        "passed": False,
+    }
+
+
+def test_expected_chunks_canary_matches_specific_body_phrase():
+    """Long phrase markers may still match body text when no stable title exists."""
+    from knowledge_ingest.eval.ragas_runner import _expected_chunk_canary
+
+    canary = _expected_chunk_canary(
+        expected_chunks=["specifieke procedure voor uitportering"],
+        chunks=[
+            {
+                "chunk_id": "c1",
+                "title": "Generic title",
+                "text": "De specifieke procedure voor uitportering staat hier beschreven.",
+            }
+        ],
+    )
+
+    assert canary is not None
+    assert canary["matched_chunks"] == ["specifieke procedure voor uitportering"]
+    assert canary["missing_chunks"] == []
+    assert canary["passed"] is True
+
+
+# ---------------------------------------------------------------------------
+# Test 8 - expected_chunks canary hard-fail
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_expected_chunks_canary_fails_when_missing():
+    """A query with expected_chunks must fail before fuzzy RAGAS scoring.
+
+    ``expected_chunks`` are regression canaries: if retrieval no longer returns
+    the known-good chunk marker, aggregate RAGAS scores must not hide it.
+    """
+    from knowledge_ingest.eval.ragas_runner import run_evaluation
+    from knowledge_ingest.eval.retrieval_client import RetrievalResult
+    from knowledge_ingest.eval.suite_loader import Suite, SuiteQuery
+
+    query = SuiteQuery(
+        id="canary-missing",
+        query="Waar staat Bubble troubleshoot?",
+        org_zitadel_id="org-1",
+        expected_topics=["bubble"],
+        expected_chunks=["Bubble troubleshoot"],
+    )
+    mock_suite = Suite(name="chat", description="", queries=[query])
+    rows: list[dict] = []
+
+    async def _capture_insert(**kwargs):
+        rows.append(kwargs)
+        return 1
+
+    with (
+        patch("knowledge_ingest.eval.suite_loader.load_suite", return_value=mock_suite),
+        patch(
+            "knowledge_ingest.eval.retrieval_client.retrieve_chunks",
+            AsyncMock(
+                return_value=RetrievalResult(
+                    chunks=[
+                        {
+                            "chunk_id": "other-chunk",
+                            "title": "Other doc",
+                            "text": "Unrelated content",
+                        }
+                    ],
+                    retrieval_ms=12,
+                    total_tokens=10,
+                )
+            ),
+        ),
+        patch("knowledge_ingest.eval.judge_client.generate_answer", AsyncMock()) as mock_answer,
+        patch("knowledge_ingest.eval.judge_client.evaluate_query", AsyncMock()) as mock_metrics,
+        patch(
+            "knowledge_ingest.eval.store.insert_eval_row", AsyncMock(side_effect=_capture_insert)
+        ),
+    ):
+        result = await run_evaluation(suite="chat", variant="baseline")
+
+    assert result == {
+        "suite": "chat",
+        "variant": "baseline",
+        "queries_processed": 1,
+        "rows_written": 1,
+    }
+    assert rows, "expected one eval row to be written"
+    row = rows[0]
+    assert row["context_precision"] is None
+    assert row["context_recall"] is None
+    assert row["faithfulness"] is None
+    assert row["answer_relevance"] is None
+    assert row["retrieved_chunk_ids"] == ["other-chunk"]
+    assert row["meta"]["canary"] == {
+        "expected_chunks": ["Bubble troubleshoot"],
+        "matched_chunks": [],
+        "missing_chunks": ["Bubble troubleshoot"],
+        "passed": False,
+    }
+    assert "canary_failed: missing expected_chunks: Bubble troubleshoot" in row["meta"]["errors"]
+    mock_answer.assert_not_awaited()
+    mock_metrics.assert_not_awaited()

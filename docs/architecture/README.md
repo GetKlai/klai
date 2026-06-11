@@ -12,6 +12,7 @@ Platform-wide architectural decisions relevant to all Klai repositories.
 | [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) | **Engineering reference** — the running retrieval system: LiteLLM hook (`klai_kb_*` modules), retrieval pipeline, strict/open answer policy, context injection, UI toggles, config values |
 | [regular-chat-knowledge-retrieval-citations.md](regular-chat-knowledge-retrieval-citations.md) | Source-traced walkthrough (NL) of the regular-chat retrieval + citation path — `_klai_kb_meta`, `EvidencePack.sources`, scope translation, Web Search interplay |
 | [retrieval-improvements-roadmap.md](retrieval-improvements-roadmap.md) | Strategy/roadmap — companion to `knowledge-retrieval-flow.md`: what shipped (Tier 1+2), the RAGAS eval harness + measured deltas, and the Tier-3+ plan |
+| [knowledge-rag-improvement-plan.md](knowledge-rag-improvement-plan.md) | **Improvement plan (2026-06-11)** — merged code-verified plan across all knowledge/RAG themes: stale-backlog corrections, phased roadmap (Phase 0-3), per-theme improvements with code paths, verification plan, and verified research sources |
 | [product-gaps-backlog.md](product-gaps-backlog.md) | **Type-B gaps** — where these docs describe a richer design than the code implements today; product-improvement opportunities with code evidence, referenced inline by `GAP-*` IDs |
 | [scribe-transcription.md](scribe-transcription.md) | Public-safe Scribe/transcription architecture, contributor model, and build/deploy split |
 

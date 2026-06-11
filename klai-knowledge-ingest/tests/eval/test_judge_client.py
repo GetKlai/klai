@@ -196,13 +196,17 @@ async def test_evaluate_query_returns_metrics_dict(monkeypatch, _patch_module_de
 
     settings = _make_settings()
     chunks = [{"id": "c1", "text": "Context text"}]
+    reference_answer = (
+        "Bubble troubleshoot je door de plugin te herstarten en de "
+        "browserconfiguratie te controleren."
+    )
 
     with patch("knowledge_ingest.eval.judge_client.settings", settings):
         result = await evaluate_query(
             query="Hoe troubleshoot ik Bubble?",
             chunks=chunks,
             answer="Bubble is een plugin.",
-            expected_topics=["bubble", "browser-plugin"],
+            reference_answer=reference_answer,
         )
 
     assert result["context_precision"] == pytest.approx(0.85)
@@ -215,7 +219,7 @@ async def test_evaluate_query_returns_metrics_dict(monkeypatch, _patch_module_de
     assert metrics["ContextPrecision"].calls == [
         {
             "user_input": "Hoe troubleshoot ik Bubble?",
-            "reference": "bubble, browser-plugin",
+            "reference": reference_answer,
             "retrieved_contexts": ["Context text"],
         }
     ]
@@ -223,7 +227,7 @@ async def test_evaluate_query_returns_metrics_dict(monkeypatch, _patch_module_de
         {
             "user_input": "Hoe troubleshoot ik Bubble?",
             "retrieved_contexts": ["Context text"],
-            "reference": "bubble, browser-plugin",
+            "reference": reference_answer,
         }
     ]
     assert metrics["Faithfulness"].calls == [
@@ -266,7 +270,7 @@ async def test_evaluate_query_partial_failure(monkeypatch, _patch_module_deps) -
             query="Test query",
             chunks=chunks,
             answer="Test answer",
-            expected_topics=["test"],
+            reference_answer="Test answer grounded in the retrieved context.",
         )
 
     assert result["faithfulness"] is None
@@ -292,7 +296,7 @@ async def test_evaluate_query_no_chunks_returns_all_none() -> None:
             query="anything",
             chunks=[],
             answer="anything",
-            expected_topics=["x"],
+            reference_answer="Reference answer.",
         )
 
     assert result == {
@@ -322,7 +326,12 @@ async def test_evaluate_query_fail_open_on_setup_error(monkeypatch) -> None:
     chunks = [{"id": "c1", "text": "ctx"}]
 
     with patch("knowledge_ingest.eval.judge_client.settings", settings):
-        result = await evaluate_query(query="q", chunks=chunks, answer="a", expected_topics=["t"])
+        result = await evaluate_query(
+            query="q",
+            chunks=chunks,
+            answer="a",
+            reference_answer="Reference answer.",
+        )
 
     assert result == {
         "context_precision": None,
@@ -398,7 +407,7 @@ async def test_metrics_run_in_parallel(monkeypatch, _patch_module_deps) -> None:
             query="q",
             chunks=[{"id": "c1", "text": "ctx"}],
             answer="a",
-            expected_topics=["t"],
+            reference_answer="Reference answer.",
         )
 
     for name in (
