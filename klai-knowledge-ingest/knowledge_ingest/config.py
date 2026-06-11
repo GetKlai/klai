@@ -233,8 +233,8 @@ class Settings(BaseSettings):
         """SEC-014: fail-closed on empty/missing PORTAL_INTERNAL_TOKEN.
 
         Same class of bug as F-003/F-012 but for the ingest→portal direction:
-        outbound calls in clustering_tasks/portal_client send this token as a
-        Bearer header to portal-api internal endpoints. An empty value would
+        outbound calls in portal_client send this token as a Bearer header to
+        portal-api internal endpoints. An empty value would
         silently degrade auth on the outbound side, so missing config must
         fail at startup rather than open the surface.
 

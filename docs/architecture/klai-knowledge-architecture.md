@@ -119,7 +119,7 @@ This section captures what is running in production as of March 2026 (infrastruc
 | Component | Where described | Status |
 |---|---|---|
 | Cross-org knowledge federation | §10.7 | Deferred to V2 (open question §13) |
-| Self-maintaining taxonomy (re-cluster / monitor) | §6.4-6.5 | Bootstrap is manual; the periodic clustering task is registered but never scheduled — GAP-TAX-01 |
+| Self-maintaining taxonomy (re-cluster / monitor) | §6.4-6.5 | Bootstrap is manual; no periodic clustering task is registered — GAP-TAX-01 |
 | Gap-detection LLM judge / semantic registry / lifecycle | §8 | Editorial inbox is live, but the LLM judge, semantic dedup, and lifecycle are not — GAP-LOOP-01..04 |
 | Provenance DAG / entity registry / dual-store outbox | §3.3, §5 | Tables exist, write path does not — GAP-PROV-01, GAP-SYNC-01 |
 
@@ -655,10 +655,9 @@ The taxonomy is the navigational and analytical structure over the knowledge bas
 
 > **Current implementation status (GAP-TAX-01/02/03).** The taxonomy apparatus is fully
 > built but largely **inert** in production:
-> - The HDBSCAN re-clustering task (`run_taxonomy_clustering`) is registered but has **no
->   `@periodic` schedule** and no caller — the "monthly monitoring / re-cluster / merge
->   suggestion" loop in §6.4-6.5 does not run. A KB's taxonomy is frozen at the manual
->   admin bootstrap (GAP-TAX-01).
+> - No periodic HDBSCAN re-clustering task is registered — the "monthly
+>   monitoring / re-cluster / merge suggestion" loop in §6.4-6.5 does not run.
+>   A KB's taxonomy is frozen at the manual admin bootstrap (GAP-TAX-01).
 > - Query-time `coverage` is **binary** (≥1 node ⇒ 1.0, else 0.0;
 >   `taxonomy_lookup.py`), not the "fraction of corpus classified" of §6.7 (GAP-TAX-02).
 > - The automatic chat path never sends `taxonomy_node_ids` as a retrieval filter, so

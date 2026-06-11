@@ -51,7 +51,7 @@ rule:
 files:
   - klai-knowledge-ingest/knowledge_ingest/crawl_tasks.py
   - klai-knowledge-ingest/knowledge_ingest/enrichment_tasks.py
-  - klai-knowledge-ingest/knowledge_ingest/clustering_tasks.py
+  - klai-knowledge-ingest/knowledge_ingest/auto_categorise_tasks.py
   - klai-knowledge-ingest/knowledge_ingest/connector_purge_tasks.py
   - klai-knowledge-ingest/knowledge_ingest/taxonomy_tasks.py
   - klai-knowledge-ingest/knowledge_ingest/ingest_tasks.py

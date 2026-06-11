@@ -91,7 +91,8 @@ class TestAutoCategoriseTaskRegistration:
         mock_procrastinate.RetryDecision = MagicMock
 
         with patch.dict(sys.modules, {"procrastinate": mock_procrastinate}):
-            from knowledge_ingest.clustering_tasks import register_auto_categorise_task
+            from knowledge_ingest.auto_categorise_tasks import register_auto_categorise_task
+
             register_auto_categorise_task(mock_app)
 
         assert "run_auto_categorise" in registered_tasks
@@ -100,5 +101,4 @@ class TestAutoCategoriseTaskRegistration:
         # Verify stepwise backoff: 30s, 5m, 30m (SPEC-KB-026 R5)
         retry = task_config["retry"]
         assert retry._waits == [30, 300, 1800]
-
 

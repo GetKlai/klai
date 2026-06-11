@@ -1005,7 +1005,7 @@ async def taxonomy_auto_categorise(
     legacy per-route X-Internal-Token check was removed in
     SPEC-CODEBASE-AUDIT-001 cluster G TP-1 to eliminate header drift across
     ingest routes. portal_internal_token remains the outbound credential
-    used by clustering_tasks/portal_client to call portal-api.
+    used by portal_client to call portal-api.
     """
     categorised = await _auto_categorise_impl(
         org_id=req.org_id,

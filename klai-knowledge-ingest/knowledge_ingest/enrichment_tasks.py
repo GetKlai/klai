@@ -80,12 +80,8 @@ def init_app(connector: Any) -> Any:
 
     register_taxonomy_tasks(_procrastinate_app)
 
-    from knowledge_ingest.clustering_tasks import (
-        register_auto_categorise_task,
-        register_clustering_tasks,
-    )
+    from knowledge_ingest.auto_categorise_tasks import register_auto_categorise_task
 
-    register_clustering_tasks(_procrastinate_app)
     register_auto_categorise_task(_procrastinate_app)
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-04: orchestrated connector-purge
@@ -250,7 +246,9 @@ async def _set_direct_upload_index_status(artifact: dict, status: str) -> None:
     if _has_source_connector(artifact):
         return
     if not artifact_id or not org_id:
-        raise ArtifactIndexStatusUpdateError("missing artifact_id or org_id for index_status update")
+        raise ArtifactIndexStatusUpdateError(
+            "missing artifact_id or org_id for index_status update"
+        )
     try:
         async with tenant_scoped_connection(org_id) as conn:
             updated = await pg_store.set_artifact_index_status(conn, artifact_id, org_id, status)

@@ -214,13 +214,14 @@ is a threshold classifier writing an exact-string event log to Postgres.
 - **Intended (§6.4-6.5):** ongoing BERTopic/HDBSCAN discovery, monthly
   monitoring (outlier rate, coverage, velocity), outlier alerts, merge
   suggestions.
-- **Reality:** `run_taxonomy_clustering` is registered but has **no `@periodic`
-  decorator** and no caller; only the manual admin "bootstrap" endpoint
-  populates a taxonomy. A KB's taxonomy is frozen at bootstrap; new docs are
-  classified against the frozen set but never trigger new-node proposals. No
-  outlier/velocity monitoring, no merge surfacing.
-- **Evidence:** `klai-knowledge-ingest/knowledge_ingest/clustering_tasks.py:36,44`
-  (no `@periodic`, contrast `ragas_runner.py:230`, `stale_pending_artifact_reaper.py:52`); verified by hand.
+- **Reality:** no periodic re-clustering task is registered; only the manual
+  admin "bootstrap" endpoint populates a taxonomy. A KB's taxonomy is frozen at
+  bootstrap; new docs are classified against the frozen set but never trigger
+  new-node proposals. No outlier/velocity monitoring, no merge surfacing.
+- **Evidence:** `klai-knowledge-ingest/knowledge_ingest/routes/taxonomy.py`
+  calls `proposal_generator.generate_bootstrap_proposals_v2(...)` only from the
+  manual bootstrap endpoint.
+  No other taxonomy re-cluster enqueue or scheduler exists; verified by hand.
 
 ### GAP-TAX-02 — `coverage` is binary, not fraction-classified  ·  M  ·  ·
 - **Intended (§6.7):** coverage = "% of corpus assigned to non-noise clusters".

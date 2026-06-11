@@ -7,7 +7,7 @@
 > evaluation); the worker runs **nine** queues (rag-eval + rebuild-kb added); the connector
 > has six live adapters (github, notion, airtable, confluence, google_drive, ms_docs); the
 > MCP write tool was renamed/split. Capabilities that are richer in this doc than in code
-> (taxonomy clustering, the `embedding_queue` outbox, the personal-knowledge enrichment
+> (taxonomy self-maintenance, the `embedding_queue` outbox, the personal-knowledge enrichment
 > carve-out) carry an **Intended vs. current** callout pointing to
 > [`product-gaps-backlog.md`](product-gaps-backlog.md).
 >
@@ -1348,7 +1348,7 @@ rarely be reached in practice. See SPEC-KB-015 §Design notes for full rationale
 | Assertion mode active in retrieval | `_assertion_weight` returns a flat 1.00; deferred to SPEC-EVIDENCE-002 (GAP-EVID-01) |
 | ~~Content profile chunk sizes wired to chunker~~ | Fixed 2026-03-31: `chunk_tokens_max` from profile now passed to `chunker.py` (`tokens * 4` → chars) |
 | ~~Docling migration for binary parsing~~ | **Shipped** (SPEC-KB-FILE-UPLOAD-001): portal uploads stream to docling-serve's async queue and submit pre-chunked. Unstructured.io is now connector-only. |
-| Self-maintaining taxonomy (periodic re-cluster) | `run_taxonomy_clustering` is registered but has no `@periodic` schedule and no caller — bootstrap is manual-only (GAP-TAX-01) |
+| Self-maintaining taxonomy (periodic re-cluster) | No periodic re-clustering task is registered — bootstrap is manual-only (GAP-TAX-01) |
 | Dual-store outbox / PG↔Qdrant reconciliation | `knowledge.embedding_queue` exists but is never written; the write path is direct PG-then-Qdrant (GAP-SYNC-01) |
 | Personal-knowledge enrichment carve-out | §10.2 of the architecture doc says personal content skips LLM enrichment; `enrichment_policy.py` has no personal branch, so it does not (GAP-PRIV-01) |
 | Bayesian averaging for quality_score | Running average currently used. Bayesian prior (Wilson / Evan Miller) is more principled for sparse feedback but deferred to Phase 2 when feedback volume data is available (SPEC-KB-015 §Design notes). |

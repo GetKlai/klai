@@ -928,7 +928,7 @@ actual data path.
 
 ### Fixed — SPEC-KB-026: Taxonomy Integration Hardening (6 bugs)
 
-- **R1+R2 (Critical) — `clustering_tasks.py`**: Fixed `submit_taxonomy_proposal` signature mismatch that caused a `TypeError` on every clustering run — no proposals were ever submitted. Added `cluster_centroid` field to `TaxonomyProposal` dataclass and payload so auto-categorise fires after proposal approval.
+- **R1+R2 (Critical) — legacy clustering task**: Fixed `submit_taxonomy_proposal` signature mismatch that caused a `TypeError` on every clustering run — no proposals were ever submitted. Added `cluster_centroid` field to `TaxonomyProposal` dataclass and payload so auto-categorise fires after proposal approval.
 - **R3 (Major) — `proposal_generator.py`**: `maybe_generate_proposal()` now calls `generate_node_description()` — node descriptions were always empty.
 - **R4 (Major) — portal gap classification**: New `POST /ingest/v1/taxonomy/classify` endpoint in `klai-knowledge-ingest`. Portal's gap classification wired to it in `app/api/internal.py` (was a skeleton that only logged "not yet connected").
 - **R5 (Major) — auto-categorise job**: Replaced `asyncio.create_task()` fire-and-forget in `app/api/taxonomy.py` with a Procrastinate background job via `POST /ingest/v1/taxonomy/auto-categorise-job` (stepwise retry: 30 s → 5 m → 30 m).
