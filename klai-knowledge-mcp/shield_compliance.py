@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _NL_PHONE_RE = re.compile(r"(?<!\d)(?:\+31|0031|0)\s?(?:6|[1-9]\d)\s?(?:[\s.-]?\d){7,8}(?!\d)")
 _CREDIT_CARD_RE = re.compile(r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)")

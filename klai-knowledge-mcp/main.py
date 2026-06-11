@@ -46,9 +46,9 @@ from log_utils import sanitize_response_body, verify_shared_secret
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from shield_compliance import check_compliance as _shield_check_compliance
 
 from logging_setup import setup_logging
+from shield_compliance import check_compliance as _shield_check_compliance
 
 setup_logging()
 

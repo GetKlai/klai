@@ -19,7 +19,7 @@ repos:
 
       - id: pip-audit
         name: pip-audit
-        entry: bash -c 'cd backend && uv run --with pip-audit pip-audit'
+        entry: bash -c 'cd backend && uv run --with pip-audit pip-audit --skip-editable'
         language: system
         files: ^backend/pyproject\.toml$
         pass_filenames: false

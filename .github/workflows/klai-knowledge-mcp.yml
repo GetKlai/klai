@@ -69,8 +69,11 @@ jobs:
       # surfaces here before tests. If a future CVE has no fix available,
       # add `--ignore-vuln <id>` with rationale comment, mirroring
       # portal-api.yml lines 73-74.
+      # --skip-editable keeps the gate focused on external dependencies;
+      # internal klai-libs are editable path dependencies and are not PyPI
+      # releases to query by distribution name.
       - name: Dependency vulnerability scan (pip-audit)
-        run: uv run --with pip-audit pip-audit
+        run: uv run --with pip-audit pip-audit --skip-editable
 
       - name: Test (pytest)
         run: uv run pytest -q --tb=short
