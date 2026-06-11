@@ -254,6 +254,35 @@ async def test_qdrant_org_id_index_reports_tenant_status(
         mock_client.delete_payload_index.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("params_payload", "expected_is_tenant"),
+    [
+        ({"type": "keyword", "is_tenant": True}, True),
+        ({"type": "keyword"}, False),
+        (None, False),
+    ],
+    ids=["tenant-index", "keyword-params-no-flag", "plain-keyword-no-params"],
+)
+def test_payload_index_info_model_shape_matches_verifier_attribute_path(
+    params_payload, expected_is_tenant
+):
+    """Pin the qdrant_client model shape the verifier relies on.
+
+    The GAP-TENANCY-01 verifier reads
+    ``payload_schema["org_id"].params.is_tenant``. If a qdrant_client
+    version bump renames or moves that attribute path, this round-trip
+    through the real pydantic model fails in CI instead of producing a
+    permanently wrong startup status log.
+    """
+    from qdrant_client.http.models import PayloadIndexInfo
+
+    info = PayloadIndexInfo.model_validate(
+        {"data_type": "keyword", "params": params_payload, "points": 0}
+    )
+    params = getattr(info, "params", None)
+    assert (getattr(params, "is_tenant", None) is True) is expected_is_tenant
+
+
 @pytest.mark.asyncio
 async def test_ensure_collection_skips_indexes_when_already_present():
     """When source_url and incoming_link_count are already indexed, skip creation."""
