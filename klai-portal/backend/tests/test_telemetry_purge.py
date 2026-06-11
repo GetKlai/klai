@@ -36,7 +36,12 @@ async def test_purge_once_runs_both_deletes_with_cutoff() -> None:
         sql = str(stmt)
         captured_calls.append({"sql": sql, "params": params})
         result = MagicMock()
-        result.rowcount = 3 if "query_shadow" in sql else 1
+        if "telemetry.query_shadow" in sql:
+            result.rowcount = 3
+        elif "SELECT id FROM public.portal_retrieval_gaps" in sql:
+            result.scalars.return_value.all.return_value = [11]
+        else:
+            result.rowcount = 1
         return result
 
     db = AsyncMock()
@@ -51,15 +56,17 @@ async def test_purge_once_runs_both_deletes_with_cutoff() -> None:
         counts = await _purge_once()
 
     assert counts == {"query_shadow": 3, "retrieval_gaps": 1}
-    assert len(captured_calls) == 2
+    assert len(captured_calls) == 3
     # First DELETE targets telemetry.query_shadow
     assert "telemetry.query_shadow" in captured_calls[0]["sql"]
-    # Second DELETE targets portal_retrieval_gaps and excludes the
+    # Second SELECT targets portal_retrieval_gaps and excludes the
     # redacted sentinel rows.
     assert "portal_retrieval_gaps" in captured_calls[1]["sql"]
     assert "[REDACTED:%" in captured_calls[1]["sql"]
-    # Both calls share the same cutoff (within a small clock skew)
-    cutoffs = [call["params"]["cutoff"] for call in captured_calls]
+    assert "DELETE FROM public.portal_retrieval_gaps" in captured_calls[2]["sql"]
+    assert captured_calls[2]["params"]["gap_ids"] == [11]
+    # The TTL-bearing calls share the same cutoff (within a small clock skew).
+    cutoffs = [call["params"]["cutoff"] for call in captured_calls[:2]]
     expected = datetime.now(UTC) - timedelta(days=RETENTION_DAYS)
     for cutoff in cutoffs:
         assert abs((cutoff - expected).total_seconds()) < 5
@@ -79,7 +86,10 @@ async def test_purge_once_continues_when_first_delete_fails() -> None:
         if call_n == 1:
             raise RuntimeError("simulated query_shadow failure")
         result = MagicMock()
-        result.rowcount = 7
+        if "SELECT id FROM public.portal_retrieval_gaps" in str(stmt):
+            result.scalars.return_value.all.return_value = [21, 22, 23, 24, 25, 26, 27]
+        else:
+            result.rowcount = 7
         return result
 
     db = AsyncMock()
@@ -96,6 +106,41 @@ async def test_purge_once_continues_when_first_delete_fails() -> None:
     # query_shadow failed so the count stayed 0; retrieval_gaps still
     # ran and counted 7.
     assert counts == {"query_shadow": 0, "retrieval_gaps": 7}
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_purge_once_skips_retrieval_gap_delete_when_no_candidates() -> None:
+    """No expired retrieval-gap candidates means no RLS-table DELETE."""
+    from app.services.telemetry_purge import _purge_once
+
+    captured_sql: list[str] = []
+
+    async def _exec(stmt, params):
+        sql = str(stmt)
+        captured_sql.append(sql)
+        if "DELETE FROM public.portal_retrieval_gaps" in sql:
+            raise AssertionError("DELETE must not run when the candidate SELECT is empty")
+        result = MagicMock()
+        if "telemetry.query_shadow" in sql:
+            result.rowcount = 0
+        else:
+            result.scalars.return_value.all.return_value = []
+        return result
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=_exec)
+    db.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield db
+
+    with patch("app.services.telemetry_purge.cross_org_session", _fake_session):
+        counts = await _purge_once()
+
+    assert counts == {"query_shadow": 0, "retrieval_gaps": 0}
+    assert any("SELECT id FROM public.portal_retrieval_gaps" in sql for sql in captured_sql)
     db.commit.assert_awaited_once()
 
 

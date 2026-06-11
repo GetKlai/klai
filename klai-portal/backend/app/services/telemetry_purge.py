@@ -38,6 +38,7 @@ logger = structlog.get_logger()
 # within the privacy fence.
 PURGE_INTERVAL_SECONDS = 24 * 60 * 60
 RETENTION_DAYS = 7
+_RETRIEVAL_GAP_CHUNK_SIZE = 10_000
 
 
 async def _purge_once() -> dict[str, int]:
@@ -66,15 +67,36 @@ async def _purge_once() -> dict[str, int]:
         #    '[REDACTED:legacy]' (one-time cleanup) and
         #    '[REDACTED:shadow]' (ongoing shadow-mode inserts) survive.
         try:
-            result = await db.execute(
-                text(
-                    "DELETE FROM public.portal_retrieval_gaps "
-                    "WHERE query_text NOT LIKE '[REDACTED:%' "
-                    "AND occurred_at < :cutoff"
-                ),
-                {"cutoff": cutoff},
-            )
-            counts["retrieval_gaps"] = result.rowcount or 0  # type: ignore[attr-defined]
+            while True:
+                candidate_result = await db.execute(
+                    text(
+                        """
+                        SELECT id FROM public.portal_retrieval_gaps
+                        WHERE query_text NOT LIKE '[REDACTED:%'
+                        AND occurred_at < :cutoff
+                        ORDER BY id
+                        LIMIT :chunk_size
+                        """
+                    ),
+                    {"cutoff": cutoff, "chunk_size": _RETRIEVAL_GAP_CHUNK_SIZE},
+                )
+                gap_ids = list(candidate_result.scalars().all())
+                if not gap_ids:
+                    break
+
+                result = await db.execute(
+                    text(
+                        """
+                        DELETE FROM public.portal_retrieval_gaps
+                        WHERE id = ANY(CAST(:gap_ids AS integer[]))
+                        """
+                    ),
+                    {"gap_ids": gap_ids},
+                )
+                rows_deleted = result.rowcount or 0  # type: ignore[attr-defined]
+                counts["retrieval_gaps"] += rows_deleted
+                if rows_deleted == 0 or len(gap_ids) < _RETRIEVAL_GAP_CHUNK_SIZE:
+                    break
         except Exception:
             logger.warning("telemetry_purge_retrieval_gaps_failed", exc_info=True)
 

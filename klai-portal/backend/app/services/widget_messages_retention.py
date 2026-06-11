@@ -47,18 +47,29 @@ async def _retention_run_once() -> dict[str, int]:
 
     while True:
         async with cross_org_session() as db:
+            candidate_result = await db.execute(
+                text(
+                    """
+                    SELECT id FROM widget_messages
+                    WHERE created_at < :cutoff
+                    ORDER BY id
+                    LIMIT :chunk_size
+                    """
+                ),
+                {"cutoff": cutoff, "chunk_size": _CHUNK_SIZE},
+            )
+            message_ids = list(candidate_result.scalars().all())
+            if not message_ids:
+                break
+
             result = await db.execute(
                 text(
                     """
                     DELETE FROM widget_messages
-                    WHERE id IN (
-                        SELECT id FROM widget_messages
-                        WHERE created_at < :cutoff
-                        LIMIT :chunk_size
-                    )
+                    WHERE id = ANY(CAST(:message_ids AS bigint[]))
                     """
                 ),
-                {"cutoff": cutoff, "chunk_size": _CHUNK_SIZE},
+                {"message_ids": message_ids},
             )
             rows_deleted: int = result.rowcount or 0  # type: ignore[attr-defined]
             await db.commit()
@@ -66,7 +77,7 @@ async def _retention_run_once() -> dict[str, int]:
         chunk_count += 1
         deleted_total += rows_deleted
 
-        if rows_deleted == 0:
+        if rows_deleted == 0 or len(message_ids) < _CHUNK_SIZE:
             break
 
     logger.info(

@@ -229,6 +229,41 @@ async def test_retention_run_once_returns_zero_when_no_old_rows():
     assert result["deleted_count"] == 0
 
 
+@pytest.mark.asyncio
+async def test_retention_run_once_skips_delete_when_no_candidates():
+    """No expired candidates means no DELETE against the RLS-protected table."""
+    from app.services.widget_messages_retention import _retention_run_once
+
+    captured_sql: list[str] = []
+    db = AsyncMock()
+
+    async def _execute(stmt, params=None, **kwargs):
+        sql = str(stmt)
+        captured_sql.append(sql)
+        if "DELETE FROM widget_messages" in sql:
+            raise AssertionError("DELETE must not run when the candidate SELECT is empty")
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        return result
+
+    db.execute = _execute
+    db.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield db
+
+    with (
+        patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.settings") as mock_settings,
+    ):
+        mock_settings.widget_messages_retention_days = 90
+        result = await _retention_run_once()
+
+    assert result == {"deleted_count": 0, "chunk_count": 0}
+    assert any("SELECT id FROM widget_messages" in sql for sql in captured_sql)
+
+
 # ---------------------------------------------------------------------------
 # AC8.3 — retention worker emits audit event
 # ---------------------------------------------------------------------------
