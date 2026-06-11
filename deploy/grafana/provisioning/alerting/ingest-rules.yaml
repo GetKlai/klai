@@ -6,6 +6,7 @@
 #   R17  pg_qdrant_reconcile_failed   HIGH   PG/Qdrant shadow reconcile
 #                                            found any discrepancy, or the
 #                                            reconcile job itself crashed
+#   R18  pg_qdrant_reconcile_missing  HIGH   no reconcile event in 25h
 #
 # Field shape verified against production VictoriaLogs (2026-04-22):
 #   service:knowledge-ingest         → klai-core-knowledge-ingest-1
@@ -96,10 +97,9 @@ groups:
       # Shadow consistency detector for GAP-SYNC-01. The nightly job is
       # read-only; this alert means PG and Qdrant disagree (status=failed)
       # OR the reconcile job itself crashed (status=error) — an operator
-      # should inspect before choosing a repair path. Known blind spot: if
-      # the ingest worker is down entirely the job never logs and this
-      # alert stays silent (noDataState: OK); worker health is monitored
-      # separately. See docs/runbooks/pg-qdrant-reconcile.md.
+      # should inspect before choosing a repair path. R18 below is the
+      # dead-man's switch for nights where the worker never logs any
+      # reconcile event.
       - uid: obs-001-pg-qdrant-divergence
         title: pg_qdrant_reconcile_failed
         condition: threshold
@@ -153,10 +153,74 @@ groups:
           alert_type: consistency_reconcile
         annotations:
           summary: 'PG/Qdrant reconciliation found inconsistent knowledge artifacts'
-          runbook_url: 'docs/runbooks/pg-qdrant-reconcile.md'
+          runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/pg-qdrant-reconcile.md'
           description: |
             The nightly read-only PG/Qdrant reconciliation job logged
             status=failed (drift found) or status=error (the job crashed).
             For failed: query the pg_qdrant_reconcile event for
             missing_in_qdrant, orphaned_in_qdrant, and sample artifact keys.
             For error: inspect the exception on the same event.
+
+      # ── R18: pg_qdrant_reconcile_missing ───────────────────────────────
+      # Dead-man's switch for R17. If the periodic task never runs (worker
+      # down, task registration broken, periodic deferrer unhealthy), R17
+      # sees no failed/error event and remains OK. This rule fires on
+      # absence of any pg_qdrant_reconcile event over 25h.
+      - uid: obs-001-pg-qdrant-reconcile-missing
+        title: pg_qdrant_reconcile_missing
+        condition: no_recent_reconcile
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 90000
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND event:pg_qdrant_reconcile'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 90000
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: no_recent_reconcile
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 90000
+              to: 0
+            model:
+              refId: no_recent_reconcile
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 4h
+        isPaused: false
+        labels:
+          severity: high
+          spec: SPEC-OBS-001
+          service_group: ingest
+          alert_type: consistency_reconcile_missing
+        annotations:
+          summary: 'PG/Qdrant reconciliation did not run in the last 25h'
+          runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/pg-qdrant-reconcile.md#missing-run-alert'
+          description: |
+            No pg_qdrant_reconcile event was logged in the last 25 hours.
+            The periodic reconcile task may not be registered, the worker may
+            be down, or the periodic deferrer may not be running.

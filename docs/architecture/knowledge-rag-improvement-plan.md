@@ -28,9 +28,10 @@ findings were fixed in the same session with regression tests:
   `status:failed OR status:error`; 15-min race-tolerance window via
   `created_at` cutoff + recent-keys exclusion; 15-min `asyncio.timeout`; task
   moved from the latency-sensitive `ingest-kb` IO lane to the `rag-eval`
-  nightly batch lane. Accepted residual (documented in the runbook): a
-  worker-down night logs nothing and the alert stays silent (`noDataState:
-  OK`) — covered by separate worker-health monitoring, not this rule.
+  nightly batch lane.
+- *Reconcile hardening follow-up*: `pg_qdrant_reconcile_missing` now acts as a
+  dead-man alert when no reconcile event appears in 25h, and Grafana runbook
+  links are absolute GitHub URLs.
 
 ---
 
@@ -304,7 +305,7 @@ Removed 2026-06-08 **[code ✓]**. The v1 plan's chunk_type experiment is droppe
 #### H1. Read-only reconciliation job (light GAP-SYNC-01) — Phase 0/1
 
 - **Problem:** write path is synchronous PG-then-Qdrant without compensation (`routes/ingest.py:554-680` **[code ✓]**); Qdrant failure after PG commit = silent divergence; happened before.
-- **Status (2026-06-11): code slice landed.** Nightly task compares active synced PG artifacts against distinct Qdrant `(org_id, kb_slug, path, artifact_id)` payloads via scroll. It logs `pg_qdrant_reconcile` with missing/orphan counts and samples; Grafana alert `pg_qdrant_reconcile_failed` fires on `status=failed`. **Shadow only: report, never auto-delete.**
+- **Status (2026-06-11): code slice landed.** Nightly task compares active synced PG artifacts against distinct Qdrant `(org_id, kb_slug, path, artifact_id)` payloads via scroll. It logs `pg_qdrant_reconcile` with missing/orphan counts and samples; Grafana alert `pg_qdrant_reconcile_failed` fires on `status=failed` or `status=error`, and `pg_qdrant_reconcile_missing` fires when no event appears in 25h. **Shadow only: report, never auto-delete.**
 - **Target v1:** add operational baseline after the first production run and decide whether drift warrants H2 outbox work. Metadata-mismatch checks beyond artifact identity remain part of the broader audit.
 - **Effort: M.**
 
@@ -463,7 +464,7 @@ New named tests (merged v1+v2):
 
 - Retrieval: `retrieval_decision_record` — `gate_would_bypass`/`gate_bypassed`/`gate_margin` (per language/tenant), `router_layer_used`, `expanded_in_top_k`, `confidence_band`, `shadow_eval` order-diffs; new p50/p95-per-step panel.
 - Ingest: `ingest_complete`, `enrichment_enqueue_skipped` (will carry the personal carve-out reason), `enrichment_complete`, `enrichment_infra_failed`, `graphiti_episode_started`, `graphiti_aborted_artifact_missing`.
-- Consistency: `pg_qdrant_reconcile` event + `pg_qdrant_reconcile_failed` alert on discrepancy > 0; Qdrant payload schema snapshot for `org_id.is_tenant`; embedding-queue depth/age/dead-letters once H2 lands.
+- Consistency: `pg_qdrant_reconcile` event + `pg_qdrant_reconcile_failed` alert on discrepancy > 0 / job error + `pg_qdrant_reconcile_missing` dead-man alert; Qdrant payload schema snapshot for `org_id.is_tenant`; embedding-queue depth/age/dead-letters once H2 lands.
 - Gap loop: dedup merge rate, judge verdict distribution, editor accept/dismiss rate, reopened rate, transcript-arm candidates per transcript + PII-redaction hit rate.
 - Existing guardrails stay: `rag-quality` dashboard + `rag_eval_faithfulness_low` (<0.80) alert.
 

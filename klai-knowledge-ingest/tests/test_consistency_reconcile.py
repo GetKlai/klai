@@ -347,9 +347,31 @@ def test_pg_qdrant_reconcile_alert_rule_present():
     assert rule["title"] == "pg_qdrant_reconcile_failed"
     assert rule["labels"]["alert_type"] == "consistency_reconcile"
     assert rule["labels"]["severity"] == "high"
-    assert rule["annotations"]["runbook_url"] == "docs/runbooks/pg-qdrant-reconcile.md"
+    assert rule["annotations"]["runbook_url"] == (
+        "https://github.com/GetKlai/klai/blob/main/docs/runbooks/pg-qdrant-reconcile.md"
+    )
     query = rule["data"][0]["model"]["expr"]
     assert "event:pg_qdrant_reconcile" in query
     assert "status:failed" in query
     # A crashed job logs status=error; the alert must catch that too.
     assert "status:error" in query
+
+
+def test_pg_qdrant_reconcile_missing_alert_rule_present():
+    parsed = yaml.safe_load(INGEST_ALERT_PATH.read_text(encoding="utf-8"))
+    rules = parsed["groups"][0]["rules"]
+    rule = next(r for r in rules if r["uid"] == "obs-001-pg-qdrant-reconcile-missing")
+
+    assert rule["title"] == "pg_qdrant_reconcile_missing"
+    assert rule["labels"]["alert_type"] == "consistency_reconcile_missing"
+    assert rule["labels"]["severity"] == "high"
+    assert rule["noDataState"] == "Alerting"
+    assert rule["annotations"]["runbook_url"] == (
+        "https://github.com/GetKlai/klai/blob/main/docs/runbooks/"
+        "pg-qdrant-reconcile.md#missing-run-alert"
+    )
+    query = rule["data"][0]["model"]["expr"]
+    assert "event:pg_qdrant_reconcile" in query
+    threshold = rule["data"][2]
+    assert threshold["refId"] == "no_recent_reconcile"
+    assert threshold["model"]["conditions"][0]["evaluator"] == {"params": [1], "type": "lt"}
