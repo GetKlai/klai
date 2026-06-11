@@ -286,9 +286,7 @@ class TestVerifiedIdentityForwarded:
         assert put_headers["X-Org-ID"] == "VERIFIED-ORG"
         assert put_headers["X-Org-ID"] != "header-org-attacker"
         put_json = captured["put_json"]
-        assert put_json["frontmatter"]["derived_from"] == [
-            "11111111-2222-4333-8444-555555555555"
-        ]
+        assert put_json["frontmatter"]["derived_from"] == ["11111111-2222-4333-8444-555555555555"]
 
 
 # ---------------------------------------------------------------------------
