@@ -234,7 +234,7 @@ services:
 
   # ─── LiteLLM ──────────────────────────────────────────────────────────────
   litellm:
-    image: ghcr.io/berriai/litellm:v1.87.1
+    image: ghcr.io/berriai/litellm:v1.88.1
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
@@ -1464,7 +1464,7 @@ services:
   # The previous /data mount was cosmetic and caused total graph loss on 2026-04-19
   # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
-    image: falkordb/falkordb:v4.18.9
+    image: falkordb/falkordb:v4.18.10
     restart: unless-stopped
     ports:
       - "127.0.0.1:6380:6379"

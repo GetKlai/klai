@@ -27,7 +27,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 | `redis` | `redis:8-alpine` | Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. Previously on `redis:alpine` which silently rolled to 8 anyway — now explicit. |
 | `vexa-redis` | `redis:8-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
 | `qdrant` | `qdrant/qdrant:v1.18.2` | Vector store for Klai Knowledge. Binary-incompatible on major bumps — pin explicitly. |
-| `falkordb` | `falkordb/falkordb:v4.18.9` | Knowledge graph (Graphiti backend). v4.x has stable RediSearch + graph engine integration. |
+| `falkordb` | `falkordb/falkordb:v4.18.10` | Knowledge graph (Graphiti backend). v4.x has stable RediSearch + graph engine integration. |
 
 ### Auth + monitoring
 
@@ -45,7 +45,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 | Service | Image | Rationale |
 |---|---|---|
-| `litellm` | `ghcr.io/berriai/litellm:v1.87.1` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). Re-assess monthly; LiteLLM ships stable tags frequently. |
+| `litellm` | `ghcr.io/berriai/litellm:v1.88.1` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). Re-assess monthly; LiteLLM ships stable tags frequently. |
 | `ollama` | `ollama/ollama:0.30.7` | CPU fallback for LLM inference. |
 | `librechat` | `ghcr.io/danny-avila/librechat:v0.8.6` | LibreChat UI for all tenants. Compose-managed `librechat-getklai` and provisioning-managed tenant containers are pinned to the same image. Mounted v0.8.6 patches live under `deploy/librechat/patches/`; getklai keeps an identical canary copy under `deploy/librechat/getklai/patches/` until the separate compose service is folded back into provisioning. The entrypoints also patch LibreChat Meili runtime paths to tenant-scoped indexes when tenant index envs are configured; verify this block against the image on every LibreChat upgrade. |
 
@@ -87,7 +87,7 @@ issues locally.
 | `redis` | `redis:8-alpine` | Aligned with prod (was `redis:alpine`). |
 | `mongodb` | `mongo:8.2.10` | Same as prod. |
 | `meilisearch` | `getmeili/meilisearch:v1.45.2` | Aligned with prod; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
-| `litellm` | `ghcr.io/berriai/litellm:v1.87.1` | Same as prod. |
+| `litellm` | `ghcr.io/berriai/litellm:v1.88.1` | Same as prod. |
 
 ---
 
@@ -128,4 +128,4 @@ See `docs/runbooks/version-management.md` §9 for the full CVE detection stack.
 
 ---
 
-*Last repo pin sync: 2026-06-11 — MongoDB, Ollama, VictoriaMetrics, Alloy, and Socat bumped for Trivy CVEs; Meilisearch and LibreChat intentionally left on their existing repo pins for the separate migration sessions.*
+*Last repo pin sync: 2026-06-11 — MongoDB, Ollama, VictoriaMetrics, Alloy, Socat, FalkorDB, and LiteLLM bumped for Trivy CVEs; Meilisearch and LibreChat intentionally left on their existing repo pins for the separate migration sessions.*
