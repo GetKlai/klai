@@ -515,10 +515,6 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     else:
         merged_tags = llm_tags
 
-    # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row).
-    # The replacement artifact must exist before superseded_by can point to it.
-    superseded_at = await pg_store.soft_delete_artifact(conn, req.org_id, req.kb_slug, req.path)
-
     # Derive user_id from canonical personal-KB slug when the caller did not
     # supply one. Connectors like ``web_crawler`` ingest into a personal KB
     # without passing ``user_id`` because they have no concept of an owning
@@ -552,32 +548,35 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     if indexable_content:
         pg_extra["document_text"] = indexable_content
 
-    artifact_id = await pg_store.create_artifact(
-        conn,
-        org_id=req.org_id,
-        kb_slug=req.kb_slug,
-        path=req.path,
-        provenance_type=kf["provenance_type"],
-        assertion_mode=kf["assertion_mode"],
-        synthesis_depth=kf["synthesis_depth"],
-        confidence=kf["confidence"],
-        belief_time_start=kf["belief_time_start"],
-        belief_time_end=kf["belief_time_end"],
-        user_id=chunk_user_id,
-        content_type=req.content_type,
-        extra=pg_extra or None,
-        content_hash=content_hash,
-        index_status="pending",
-        derived_from=kf["derived_from"],
-    )
-    await pg_store.set_superseded_by_for_path(
-        conn,
-        req.org_id,
-        req.kb_slug,
-        req.path,
-        superseded_at,
-        artifact_id,
-    )
+    # Soft-delete previous artifact for this path (AC-5: re-ingest creates new
+    # row), create the replacement, and link the closed rows to it — as one
+    # atomic step. A crash in between must not leave the path closed without a
+    # replacement, or closed rows without their superseded_by link
+    # (adversarial review 2026-06-11). create_artifact's internal transaction
+    # nests as a SAVEPOINT, keeping its UniqueViolation recovery intact.
+    async with conn.transaction():
+        superseded_ids = await pg_store.soft_delete_artifact(
+            conn, req.org_id, req.kb_slug, req.path
+        )
+        artifact_id = await pg_store.create_artifact(
+            conn,
+            org_id=req.org_id,
+            kb_slug=req.kb_slug,
+            path=req.path,
+            provenance_type=kf["provenance_type"],
+            assertion_mode=kf["assertion_mode"],
+            synthesis_depth=kf["synthesis_depth"],
+            confidence=kf["confidence"],
+            belief_time_start=kf["belief_time_start"],
+            belief_time_end=kf["belief_time_end"],
+            user_id=chunk_user_id,
+            content_type=req.content_type,
+            extra=pg_extra or None,
+            content_hash=content_hash,
+            index_status="pending",
+            derived_from=kf["derived_from"],
+        )
+        await pg_store.set_superseded_by(conn, superseded_ids, artifact_id)
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: record image-key
     # bookkeeping so per-connector cleanup can compute orphan keys via

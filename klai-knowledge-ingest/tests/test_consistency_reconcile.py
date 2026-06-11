@@ -150,8 +150,129 @@ async def test_fetch_qdrant_artifact_counts_scrolls_all_pages():
     assert client.scroll.call_args_list[1].kwargs["offset"] == "next"
 
 
+def _patched_reconcile_env(
+    pg_artifacts: list[dict],
+    recent_artifacts: list[dict],
+    qdrant_counts: Counter,
+):
+    conn = MagicMock()
+
+    @asynccontextmanager
+    async def _ctx():
+        yield conn
+
+    return (
+        patch(
+            "knowledge_ingest.consistency_reconcile.cross_org_admin_connection",
+            return_value=_ctx(),
+        ),
+        patch(
+            "knowledge_ingest.consistency_reconcile.pg_store.list_active_synced_artifacts",
+            new_callable=AsyncMock,
+            return_value=pg_artifacts,
+        ),
+        patch(
+            "knowledge_ingest.consistency_reconcile.pg_store.list_recent_artifact_keys",
+            new_callable=AsyncMock,
+            return_value=recent_artifacts,
+        ),
+        patch(
+            "knowledge_ingest.consistency_reconcile._fetch_qdrant_artifact_counts",
+            new_callable=AsyncMock,
+            return_value=qdrant_counts,
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_reconcile_pg_qdrant_logs_failed_status_on_discrepancy():
+    env = _patched_reconcile_env(
+        pg_artifacts=[
+            {
+                "org_id": "org-1",
+                "kb_slug": "kb",
+                "path": "missing.md",
+                "artifact_id": "art-missing",
+            }
+        ],
+        recent_artifacts=[],
+        qdrant_counts=Counter(),
+    )
+    with (
+        env[0],
+        env[1] as mock_list_active,
+        env[2],
+        env[3],
+        patch("knowledge_ingest.consistency_reconcile.logger") as mock_logger,
+    ):
+        result = await reconcile_pg_qdrant()
+
+    assert result["status"] == "failed"
+    assert result["discrepancies_total"] == 1
+    # Race-tolerance window: very recent artifacts are excluded from the
+    # active list via the created_before cutoff.
+    assert "created_before" in mock_list_active.call_args.kwargs
+    mock_logger.info.assert_called_once()
+    assert mock_logger.info.call_args.args == ("pg_qdrant_reconcile",)
+    assert mock_logger.info.call_args.kwargs["status"] == "failed"
+    assert mock_logger.info.call_args.kwargs["missing_in_qdrant"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pg_qdrant_logs_ok_status_when_inventories_match():
+    env = _patched_reconcile_env(
+        pg_artifacts=[
+            {
+                "org_id": "org-1",
+                "kb_slug": "kb",
+                "path": "present.md",
+                "artifact_id": "art-present",
+            }
+        ],
+        recent_artifacts=[],
+        qdrant_counts=Counter({ArtifactKey("org-1", "kb", "present.md", "art-present"): 3}),
+    )
+    with (
+        env[0],
+        env[1],
+        env[2],
+        env[3],
+        patch("knowledge_ingest.consistency_reconcile.logger") as mock_logger,
+    ):
+        result = await reconcile_pg_qdrant()
+
+    assert result["status"] == "ok"
+    assert result["discrepancies_total"] == 0
+    assert mock_logger.info.call_args.kwargs["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pg_qdrant_ignores_recently_touched_artifacts():
+    # An orphan-looking Qdrant key that belongs to a just-created replacement
+    # artifact (excluded from the active list by created_before) must not be
+    # reported as drift.
+    env = _patched_reconcile_env(
+        pg_artifacts=[],
+        recent_artifacts=[
+            {
+                "org_id": "org-1",
+                "kb_slug": "kb",
+                "path": "fresh.md",
+                "artifact_id": "art-fresh",
+            }
+        ],
+        qdrant_counts=Counter({ArtifactKey("org-1", "kb", "fresh.md", "art-fresh"): 2}),
+    )
+    with env[0], env[1], env[2], env[3]:
+        result = await reconcile_pg_qdrant()
+
+    assert result["status"] == "ok"
+    assert result["orphaned_in_qdrant"] == 0
+    assert result["discrepancies_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pg_qdrant_logs_error_status_and_reraises_on_crash():
     conn = MagicMock()
 
     @asynccontextmanager
@@ -166,33 +287,21 @@ async def test_reconcile_pg_qdrant_logs_failed_status_on_discrepancy():
         patch(
             "knowledge_ingest.consistency_reconcile.pg_store.list_active_synced_artifacts",
             new_callable=AsyncMock,
-            return_value=[
-                {
-                    "org_id": "org-1",
-                    "kb_slug": "kb",
-                    "path": "missing.md",
-                    "artifact_id": "art-missing",
-                }
-            ],
-        ),
-        patch(
-            "knowledge_ingest.consistency_reconcile._fetch_qdrant_artifact_counts",
-            new_callable=AsyncMock,
-            return_value=Counter(),
+            side_effect=RuntimeError("pg down"),
         ),
         patch("knowledge_ingest.consistency_reconcile.logger") as mock_logger,
+        pytest.raises(RuntimeError, match="pg down"),
     ):
-        result = await reconcile_pg_qdrant()
+        await reconcile_pg_qdrant()
 
-    assert result["status"] == "failed"
-    assert result["discrepancies_total"] == 1
-    mock_logger.info.assert_called_once()
-    assert mock_logger.info.call_args.args == ("pg_qdrant_reconcile",)
-    assert mock_logger.info.call_args.kwargs["status"] == "failed"
-    assert mock_logger.info.call_args.kwargs["missing_in_qdrant"] == 1
+    # The crash must still emit the alertable pg_qdrant_reconcile event,
+    # otherwise the Grafana rule never sees a status for that night.
+    mock_logger.exception.assert_called_once()
+    assert mock_logger.exception.call_args.args == ("pg_qdrant_reconcile",)
+    assert mock_logger.exception.call_args.kwargs["status"] == "error"
 
 
-def test_register_consistency_reconcile_task_registers_periodic_io_task():
+def test_register_consistency_reconcile_task_registers_periodic_batch_task():
     app = _FakeApp()
 
     register_consistency_reconcile_task(app)
@@ -207,7 +316,9 @@ def test_register_consistency_reconcile_task_registers_periodic_io_task():
     assert task_kwargs["name"] == (
         "knowledge_ingest.consistency_reconcile.reconcile_pg_qdrant_periodic"
     )
-    assert task_kwargs["queue"] == "ingest-kb"
+    # Nightly batch lane — the full-collection scroll must not hold a slot
+    # on the latency-sensitive I/O lane (adversarial review 2026-06-11).
+    assert task_kwargs["queue"] == "rag-eval"
     assert task_kwargs["queueing_lock"] == "pg-qdrant-reconcile"
     assert task_kwargs["retry"] is not None
     assert hasattr(app, "reconcile_pg_qdrant_periodic")
@@ -240,3 +351,5 @@ def test_pg_qdrant_reconcile_alert_rule_present():
     query = rule["data"][0]["model"]["expr"]
     assert "event:pg_qdrant_reconcile" in query
     assert "status:failed" in query
+    # A crashed job logs status=error; the alert must catch that too.
+    assert "status:error" in query

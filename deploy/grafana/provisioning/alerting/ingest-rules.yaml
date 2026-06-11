@@ -4,7 +4,8 @@
 #
 #   R16  ingest_error_rate_elevated   HIGH   >10 errors in 10m
 #   R17  pg_qdrant_reconcile_failed   HIGH   PG/Qdrant shadow reconcile
-#                                            found any discrepancy
+#                                            found any discrepancy, or the
+#                                            reconcile job itself crashed
 #
 # Field shape verified against production VictoriaLogs (2026-04-22):
 #   service:knowledge-ingest         → klai-core-knowledge-ingest-1
@@ -93,8 +94,12 @@ groups:
 
       # ── R17: pg_qdrant_reconcile_failed ────────────────────────────────
       # Shadow consistency detector for GAP-SYNC-01. The nightly job is
-      # read-only; this alert only means PG and Qdrant disagree and an
-      # operator should inspect before choosing a repair path.
+      # read-only; this alert means PG and Qdrant disagree (status=failed)
+      # OR the reconcile job itself crashed (status=error) — an operator
+      # should inspect before choosing a repair path. Known blind spot: if
+      # the ingest worker is down entirely the job never logs and this
+      # alert stays silent (noDataState: OK); worker health is monitored
+      # separately. See docs/runbooks/pg-qdrant-reconcile.md.
       - uid: obs-001-pg-qdrant-divergence
         title: pg_qdrant_reconcile_failed
         condition: threshold
@@ -110,7 +115,7 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:knowledge-ingest AND event:pg_qdrant_reconcile AND status:failed'
+              expr: 'service:knowledge-ingest AND event:pg_qdrant_reconcile AND (status:failed OR status:error)'
               queryType: instant
           - refId: count
             datasourceUid: __expr__
@@ -151,5 +156,7 @@ groups:
           runbook_url: 'docs/runbooks/pg-qdrant-reconcile.md'
           description: |
             The nightly read-only PG/Qdrant reconciliation job logged
-            status=failed. Query the pg_qdrant_reconcile event for
+            status=failed (drift found) or status=error (the job crashed).
+            For failed: query the pg_qdrant_reconcile event for
             missing_in_qdrant, orphaned_in_qdrant, and sample artifact keys.
+            For error: inspect the exception on the same event.

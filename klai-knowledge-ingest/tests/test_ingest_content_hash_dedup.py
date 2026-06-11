@@ -18,6 +18,7 @@ finish, so retry dedupe only trusts completed rows.
 from __future__ import annotations
 
 import hashlib
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -42,6 +43,12 @@ def _make_mock_conn() -> MagicMock:
     conn.fetch = AsyncMock(return_value=[])
     conn.fetchval = AsyncMock(return_value=None)
     conn.fetchrow = AsyncMock(return_value=None)
+
+    @asynccontextmanager
+    async def _tx():
+        yield None
+
+    conn.transaction = MagicMock(side_effect=_tx)
     return conn
 
 
@@ -89,7 +96,7 @@ async def test_proceeds_when_content_changed():
         patch(
             "knowledge_ingest.pg_store.soft_delete_artifact",
             new_callable=AsyncMock,
-            return_value=1_700_000_000,
+            return_value=["closed-artifact-id"],
         ) as mock_soft_delete,
         patch(
             "knowledge_ingest.pg_store.create_artifact",
@@ -97,7 +104,7 @@ async def test_proceeds_when_content_changed():
             return_value="artifact-uuid-1",
         ) as mock_create,
         patch(
-            "knowledge_ingest.pg_store.set_superseded_by_for_path",
+            "knowledge_ingest.pg_store.set_superseded_by",
             new_callable=AsyncMock,
         ) as mock_set_superseded_by,
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
@@ -153,12 +160,11 @@ async def test_proceeds_when_content_changed():
     mock_create.assert_awaited_once()
     mock_set_superseded_by.assert_awaited_once_with(
         conn,
-        req.org_id,
-        req.kb_slug,
-        req.path,
-        1_700_000_000,
+        ["closed-artifact-id"],
         "artifact-uuid-1",
     )
+    # The three steps must run inside one transaction (atomicity contract).
+    conn.transaction.assert_called_once()
 
 
 @pytest.mark.asyncio

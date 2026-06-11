@@ -13,6 +13,25 @@ Implementation update (2026-06-11, Codex): Phase 0.3/0.4 first slice landed in c
 
 Implementation update (2026-06-11, Codex): Phase 0.5 light consistency watch landed. `reconcile_pg_qdrant` runs as a nightly read-only Procrastinate task, compares active synced PG artifacts with distinct Qdrant artifact payloads, logs `pg_qdrant_reconcile`, and Grafana alert `pg_qdrant_reconcile_failed` fires on discrepancies. It deliberately does not repair drift; the full outbox remains H2.
 
+Review status (2026-06-11, evening): commits `a47a5e78f` (Phase 0.2 temporal
+hygiene) and `41f2a449f` (Phase 0.5 PG↔Qdrant consistency watch) received their
+**independent adversarial review** (two skeptical evaluator agents, one per
+commit). Both verdicts: PASS-WITH-ISSUES, no blocking findings. All HIGH/MEDIUM
+findings were fixed in the same session with regression tests:
+
+- *Temporal (a47a5e78f)*: timestamp-equality supersession linking replaced with
+  id-based linking (`soft_delete_artifact` RETURNING id → `set_superseded_by`),
+  and soft-delete + create + supersede-link now run in one PG transaction.
+- *Reconcile (41f2a449f)*: a crashed job now still emits `pg_qdrant_reconcile`
+  with `status=error` (previously a crash produced **no** event and the alert
+  silently never fired — refuted claim); alert expr extended to
+  `status:failed OR status:error`; 15-min race-tolerance window via
+  `created_at` cutoff + recent-keys exclusion; 15-min `asyncio.timeout`; task
+  moved from the latency-sensitive `ingest-kb` IO lane to the `rag-eval`
+  nightly batch lane. Accepted residual (documented in the runbook): a
+  worker-down night logs nothing and the alert stays silent (`noDataState:
+  OK`) — covered by separate worker-health monitoring, not this rule.
+
 ---
 
 ## 0. The backlog itself is stale — refresh it first
@@ -373,6 +392,21 @@ AI-draft in editorial inbox (E5) · outbox/write-path hardening if H1 proves dri
 
 ## 5. Verification Plan
 
+### Mainline / adversarial review gate
+
+For every next code, migration, alerting, scheduler, data-contract, or production
+ops change from this plan:
+
+1. Implement and run local verification.
+2. Produce a focused adversarial-review prompt that names the exact commits/files,
+   expected behavior, verification already run, and the highest-risk failure modes.
+3. Get an independent review result, or an explicit user waiver, before pushing to
+   `main`.
+4. If review finds issues, fix them and re-run verification before push.
+
+Docs-only status edits can land with normal diff review, but any doc edit that
+claims a production behavior changed must point to code evidence and tests.
+
 ### Commands / tests
 
 ```bash
@@ -406,6 +440,8 @@ New named tests (merged v1+v2):
 - `test_personal_kb_does_not_enqueue_enrichment_when_policy_disabled`
 - `test_personal_kb_does_not_enqueue_graphiti_when_policy_disabled`
 - `test_qdrant_org_id_index_reports_tenant_status`
+- `test_reconcile_pg_qdrant_logs_failed_status_on_discrepancy`
+- `test_pg_qdrant_reconcile_alert_rule_present`
 - gap-loop: semantic dedup threshold tests, lifecycle transitions, reopen-after-resolved, mocked judge classification, off/shadow/full telemetry modes
 - transcript arm: untrusted-input handling, PII redaction, delete/offboarding cascade
 

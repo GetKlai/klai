@@ -237,7 +237,7 @@ async def test_list_active_synced_artifacts_only_returns_synced_active_rows():
         ]
     )
 
-    result = await pg_store.list_active_synced_artifacts(conn)
+    result = await pg_store.list_active_synced_artifacts(conn, created_before=1_700_000_000)
 
     assert result == [
         {
@@ -250,21 +250,60 @@ async def test_list_active_synced_artifacts_only_returns_synced_active_rows():
     sql = conn.fetch.call_args[0][0]
     assert "belief_time_end = $1" in sql
     assert "index_status = 'synced'" in sql
+    assert "created_at <= $2" in sql
     assert conn.fetch.call_args[0][1] == _SENTINEL
+    assert conn.fetch.call_args[0][2] == 1_700_000_000
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_updates_belief_time_end():
+async def test_list_recent_artifact_keys_covers_created_and_closed_rows():
     conn = _make_conn()
+    conn.fetch = AsyncMock(
+        return_value=[
+            {
+                "artifact_id": "artifact-recent",
+                "org_id": "org-1",
+                "kb_slug": "kb",
+                "path": "page.md",
+            }
+        ]
+    )
+
+    result = await pg_store.list_recent_artifact_keys(conn, since=1_700_000_000)
+
+    assert result == [
+        {
+            "artifact_id": "artifact-recent",
+            "org_id": "org-1",
+            "kb_slug": "kb",
+            "path": "page.md",
+        }
+    ]
+    sql = conn.fetch.call_args[0][0]
+    assert "created_at > $1" in sql
+    # Closed-recently branch must exclude the still-active sentinel value,
+    # otherwise every active row matches belief_time_end > since.
+    assert "belief_time_end <> $2" in sql
+    assert "belief_time_end > $1" in sql
+    assert conn.fetch.call_args[0][1] == 1_700_000_000
+    assert conn.fetch.call_args[0][2] == _SENTINEL
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_updates_belief_time_end_and_returns_closed_ids():
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[{"id": "closed-id-1"}, {"id": "closed-id-2"}])
     with patch("knowledge_ingest.pg_store.time.time", return_value=1_700_000_000):
         result = await pg_store.soft_delete_artifact(conn, "org123", "personal", "note.md")
 
-    assert result == 1_700_000_000
-    conn.execute.assert_called_once()
-    call_args = conn.execute.call_args[0]
+    assert result == ["closed-id-1", "closed-id-2"]
+    conn.fetch.assert_called_once()
+    call_args = conn.fetch.call_args[0]
     assert "UPDATE knowledge.artifacts" in call_args[0]
     assert "belief_time_end" in call_args[0]
+    assert "RETURNING id" in call_args[0]
     values = call_args[1:]
+    assert 1_700_000_000 in values
     assert "org123" in values
     assert "personal" in values
     assert "note.md" in values
@@ -276,21 +315,18 @@ async def test_soft_delete_only_updates_active_records():
     """Verifies the WHERE belief_time_end = SENTINEL constraint is present."""
     conn = _make_conn()
     await pg_store.soft_delete_artifact(conn, "org", "kb", "path.md")
-    sql = conn.execute.call_args[0][0]
+    sql = conn.fetch.call_args[0][0]
     # Must filter on sentinel to avoid touching already-deleted records
     assert str(_SENTINEL) in sql or "$5" in sql
 
 
 @pytest.mark.asyncio
-async def test_set_superseded_by_for_path_links_only_just_closed_records():
+async def test_set_superseded_by_links_only_listed_unlinked_rows():
     conn = _make_conn()
 
-    await pg_store.set_superseded_by_for_path(
+    await pg_store.set_superseded_by(
         conn,
-        "org123",
-        "kb",
-        "path.md",
-        1_700_000_000,
+        ["closed-id-1", "closed-id-2"],
         "replacement-artifact-id",
     )
 
@@ -299,15 +335,21 @@ async def test_set_superseded_by_for_path_links_only_just_closed_records():
     sql = call_args[0]
     assert "UPDATE knowledge.artifacts" in sql
     assert "SET superseded_by = $1" in sql
-    assert "belief_time_end = $5" in sql
+    assert "id = ANY($2::uuid[])" in sql
     assert "superseded_by IS NULL" in sql
     assert call_args[1:] == (
         "replacement-artifact-id",
-        "org123",
-        "kb",
-        "path.md",
-        1_700_000_000,
+        ["closed-id-1", "closed-id-2"],
     )
+
+
+@pytest.mark.asyncio
+async def test_set_superseded_by_is_noop_for_empty_id_list():
+    conn = _make_conn()
+
+    await pg_store.set_superseded_by(conn, [], "replacement-artifact-id")
+
+    conn.execute.assert_not_called()
 
 
 @pytest.mark.asyncio

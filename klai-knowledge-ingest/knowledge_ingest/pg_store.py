@@ -107,8 +107,14 @@ async def get_active_content_hash(
     return row
 
 
-async def list_active_synced_artifacts(conn: asyncpg.Connection) -> list[dict]:
-    """Return active artifacts that should have corresponding Qdrant chunks."""
+async def list_active_synced_artifacts(conn: asyncpg.Connection, created_before: int) -> list[dict]:
+    """Return active artifacts that should have corresponding Qdrant chunks.
+
+    ``created_before`` excludes artifacts ingested moments ago whose Qdrant
+    writes may legitimately still be in flight — without it the nightly
+    reconcile flags freshly-ingested documents as drift (adversarial review
+    2026-06-11).
+    """
     rows = await conn.fetch(
         """
         SELECT
@@ -119,8 +125,43 @@ async def list_active_synced_artifacts(conn: asyncpg.Connection) -> list[dict]:
         FROM knowledge.artifacts
         WHERE belief_time_end = $1
           AND index_status = 'synced'
+          AND created_at <= $2
         ORDER BY org_id, kb_slug, path, id
         """,
+        _SENTINEL,
+        created_before,
+    )
+    return [
+        {
+            "artifact_id": str(row["artifact_id"]),
+            "org_id": str(row["org_id"]),
+            "kb_slug": str(row["kb_slug"]),
+            "path": str(row["path"]),
+        }
+        for row in rows
+    ]
+
+
+async def list_recent_artifact_keys(conn: asyncpg.Connection, since: int) -> list[dict]:
+    """Return keys of artifacts created or closed after ``since``.
+
+    Used by the PG<->Qdrant reconcile to tolerate in-flight writes: Qdrant
+    points belonging to a just-created replacement artifact (excluded from
+    the active list by ``created_before``) or to a just-superseded artifact
+    must not be reported as orphans.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT
+          id::text AS artifact_id,
+          org_id,
+          kb_slug,
+          path
+        FROM knowledge.artifacts
+        WHERE created_at > $1
+           OR (belief_time_end <> $2 AND belief_time_end > $1)
+        """,
+        since,
         _SENTINEL,
     )
     return [
@@ -336,15 +377,22 @@ async def get_personal_artifact(
 
 async def soft_delete_artifact(
     conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
-) -> int:
-    """Set belief_time_end = now for all active artifacts matching this path."""
+) -> list[str]:
+    """Set belief_time_end = now for all active artifacts matching this path.
+
+    Returns the ids of the rows that were closed, so the caller can link
+    them to their replacement via :func:`set_superseded_by`. Id-based
+    linking avoids the epoch-second collision risk of matching closed rows
+    back by timestamp (adversarial review 2026-06-11).
+    """
     now = int(time.time())
-    await conn.execute(
+    rows = await conn.fetch(
         """
         UPDATE knowledge.artifacts
         SET belief_time_end = $1
         WHERE org_id = $2 AND kb_slug = $3 AND path = $4
           AND belief_time_end = $5
+        RETURNING id
         """,
         now,
         org_id,
@@ -352,31 +400,26 @@ async def soft_delete_artifact(
         path,
         _SENTINEL,
     )
-    return now
+    return [str(row["id"]) for row in rows]
 
 
-async def set_superseded_by_for_path(
+async def set_superseded_by(
     conn: asyncpg.Connection,
-    org_id: str,
-    kb_slug: str,
-    path: str,
-    belief_time_end: int,
+    artifact_ids: list[str],
     superseded_by: str,
 ) -> None:
-    """Link artifacts closed at ``belief_time_end`` to their replacement artifact."""
+    """Link just-closed artifact rows to their replacement artifact."""
+    if not artifact_ids:
+        return
     await conn.execute(
         """
         UPDATE knowledge.artifacts
         SET superseded_by = $1
-        WHERE org_id = $2 AND kb_slug = $3 AND path = $4
-          AND belief_time_end = $5
+        WHERE id = ANY($2::uuid[])
           AND superseded_by IS NULL
         """,
         superseded_by,
-        org_id,
-        kb_slug,
-        path,
-        belief_time_end,
+        artifact_ids,
     )
 
 
