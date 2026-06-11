@@ -16,6 +16,7 @@ Acceptance coverage:
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -224,7 +225,7 @@ class TestVerifiedIdentityForwarded:
         )
 
         # Capture the outgoing headers from httpx PUT.
-        captured: dict[str, dict[str, str]] = {}
+        captured: dict[str, Any] = {}
 
         with (
             patch("main._asserter.verify", new_callable=AsyncMock, return_value=verified),
@@ -249,6 +250,7 @@ class TestVerifiedIdentityForwarded:
                 url: str, json: dict | None = None, headers: dict[str, str] | None = None
             ) -> MagicMock:
                 captured["put_headers"] = headers or {}
+                captured["put_json"] = json or {}
                 return mock_put_resp
 
             mock_client.get = AsyncMock(side_effect=fake_get)
@@ -273,6 +275,7 @@ class TestVerifiedIdentityForwarded:
                 ctx=ctx,
                 kb_name="docs",
                 page_path="inbox/note",
+                derived_from=["11111111-2222-4333-8444-555555555555"],
             )
 
         assert "Error" not in result
@@ -282,6 +285,10 @@ class TestVerifiedIdentityForwarded:
         assert put_headers["X-User-ID"] == "VERIFIED-USER"
         assert put_headers["X-Org-ID"] == "VERIFIED-ORG"
         assert put_headers["X-Org-ID"] != "header-org-attacker"
+        put_json = captured["put_json"]
+        assert put_json["frontmatter"]["derived_from"] == [
+            "11111111-2222-4333-8444-555555555555"
+        ]
 
 
 # ---------------------------------------------------------------------------

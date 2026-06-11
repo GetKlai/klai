@@ -607,6 +607,23 @@ def _validate_page_path(page_path: str) -> None:
         )
 
 
+def _normalise_uuid_list(values: list[str] | None, field_name: str) -> list[str]:
+    """Return canonical UUID strings, preserving first-seen order."""
+    if not values:
+        return []
+    normalised: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        try:
+            canonical = str(uuid.UUID(str(value)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} must contain only UUID strings") from exc
+        if canonical not in seen:
+            normalised.append(canonical)
+            seen.add(canonical)
+    return normalised
+
+
 def _slugify(text: str) -> str:
     text = text.lower().strip()
     text = text.encode("ascii", "ignore").decode()  # strip accented chars
@@ -839,6 +856,7 @@ PARAMETERS:
               value — omit it and the tool will auto-select or return the list
               of valid slugs to choose from
   page_path - (optional) explicit path; auto-generated from title if omitted
+  derived_from - (optional) source artifact UUIDs from search_knowledge results
 """
 )
 async def save_to_docs(
@@ -847,6 +865,7 @@ async def save_to_docs(
     ctx: Context,
     kb_name: str | None = None,
     page_path: str | None = None,
+    derived_from: list[str] | None = None,
 ) -> str:
     # SPEC-MCP-AUTH-001 REQ-12 + REQ-15: dispatcher selects OAuth-token pad
     # vs LibreChat internal-secret pad based on Authorization header prefix.
@@ -886,6 +905,11 @@ async def save_to_docs(
             # vs %-encoded vs NFKC) to avoid handing an attacker a
             # validator-shape oracle.
             return "Error: page_path contains invalid path components."
+
+    try:
+        derived_from_ids = _normalise_uuid_list(derived_from, "derived_from")
+    except ValueError as exc:
+        return f"Error: {exc}"
 
     # REQ-2.3 / REQ-2.6: outgoing klai-docs URL uses canonical slug from
     # portal verify response, not the LibreChat-asserted X-Org-Slug.
@@ -959,7 +983,7 @@ async def save_to_docs(
             "belief_time_end": None,
             "superseded_by": None,
             "confidence": "medium",
-            "derived_from": [],
+            "derived_from": derived_from_ids,
             "created_by": verified.user_id,
             "system_time": today,
         },
@@ -1023,7 +1047,7 @@ async def save_to_docs(
 #   3. POST to retrieval-api with the verified org_id+user_id
 #   4. fire retrieval-log + (conditional) gap-event telemetry, labelled
 #      with identity.client_id when the caller is an OAuth client
-#   5. return list[dict] of chunks with title/source_url/text/score/scope
+#   5. return list[dict] of chunks with title/source_url/text/artifact_id/score/scope
 #
 # Failure modes raise ToolError so the MCP host (Claude Desktop) surfaces
 # the failure to the LLM rather than letting it claim "no results found"
@@ -1174,6 +1198,7 @@ async def search_knowledge(
             "title": c.get("title") or c.get("metadata", {}).get("title", ""),
             "source_url": c.get("source_url"),
             "text": (c.get("text") or "").strip(),
+            "artifact_id": c.get("artifact_id"),
             "score": c.get("reranker_score")
             if c.get("reranker_score") is not None
             else c.get("score"),

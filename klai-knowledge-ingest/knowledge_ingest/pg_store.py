@@ -32,6 +32,59 @@ _SENTINEL = 253402300800  # 9999-12-31 — sentinel value for "still active"
 _ACTIVE_ARTIFACT_UNIQUE_INDEX = "uq_artifacts_active_path"
 
 
+def _normalise_uuid_strings(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    normalised: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        canonical = str(uuid.UUID(str(value)))
+        if canonical not in seen:
+            normalised.append(canonical)
+            seen.add(canonical)
+    return normalised
+
+
+async def _insert_derivation_edges(
+    conn: asyncpg.Connection,
+    *,
+    org_id: str,
+    child_id: str,
+    parent_ids: list[str],
+) -> None:
+    if not parent_ids:
+        return
+
+    rows = await conn.fetch(
+        """
+        SELECT id
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND id = ANY($2::uuid[])
+          AND belief_time_end = $3
+        """,
+        org_id,
+        parent_ids,
+        _SENTINEL,
+    )
+    found_ids = {str(row["id"]) for row in rows}
+    missing = [parent_id for parent_id in parent_ids if parent_id not in found_ids]
+    if missing:
+        raise ValueError(
+            "derived_from contains unknown, deleted, or cross-org artifact ids: "
+            + ", ".join(missing)
+        )
+
+    await conn.executemany(
+        """
+        INSERT INTO knowledge.derivations (child_id, parent_id)
+        VALUES ($1::uuid, $2::uuid)
+        ON CONFLICT DO NOTHING
+        """,
+        [(child_id, parent_id) for parent_id in parent_ids],
+    )
+
+
 async def get_active_content_hash(
     conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
 ) -> str | None:
@@ -70,6 +123,7 @@ async def create_artifact(
     extra: dict | None = None,
     content_hash: str | None = None,
     index_status: str = "synced",
+    derived_from: list[str] | None = None,
 ) -> str:
     """Create a knowledge artifact record. Returns the artifact UUID.
 
@@ -86,79 +140,101 @@ async def create_artifact(
     artifact_id = str(uuid.uuid4())
     now = int(time.time())
     extra_json = json.dumps(extra) if extra else "{}"
-    try:
-        await conn.execute(
-            """
-            INSERT INTO knowledge.artifacts
-              (id, org_id, user_id, kb_slug, path,
-               provenance_type, assertion_mode,
-               synthesis_depth, confidence,
-               belief_time_start, belief_time_end,
-               content_type, extra, content_hash,
-               index_status, created_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-            """,
-            artifact_id,
-            org_id,
-            user_id,
-            kb_slug,
-            path,
-            provenance_type,
-            assertion_mode,
-            synthesis_depth,
-            confidence,
-            belief_time_start,
-            belief_time_end,
-            content_type,
-            extra_json,
-            content_hash,
-            index_status,
-            now,
-        )
-        return artifact_id
-    except asyncpg.UniqueViolationError as exc:
-        # SPEC-INGEST-UNIQUE-ARTIFACT-001 — concurrent ingest race.
-        # Only swallow the violation that originates from our active-path
-        # constraint. Any other unique violation (e.g. id collision —
-        # vanishingly unlikely but possible) is a real bug; re-raise it.
-        constraint_name = getattr(exc, "constraint_name", "") or ""
-        if _ACTIVE_ARTIFACT_UNIQUE_INDEX not in constraint_name:
-            raise
+    parent_ids = _normalise_uuid_strings(derived_from)
 
-        winning_artifact_id = await conn.fetchval(
-            """
-            SELECT id FROM knowledge.artifacts
-            WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-              AND belief_time_end = $4
-            """,
-            org_id,
-            kb_slug,
-            path,
-            _SENTINEL,
-        )
-        # Defensive: if the winning row vanished between INSERT and SELECT
-        # (e.g. a concurrent soft_delete), surface a clear error rather
-        # than returning None and letting the caller hit a downstream
-        # NULL violation.
-        if winning_artifact_id is None:
+    async def _insert_artifact_row() -> str:
+        try:
+            # Keep the existing UniqueViolation recovery valid even when the
+            # caller already opened a transaction for derived_from edges. In
+            # asyncpg/PostgreSQL, a failed statement aborts the current
+            # transaction; a nested transaction becomes a SAVEPOINT, so the
+            # recovery SELECT below can still run after rollback to savepoint.
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO knowledge.artifacts
+                      (id, org_id, user_id, kb_slug, path,
+                       provenance_type, assertion_mode,
+                       synthesis_depth, confidence,
+                       belief_time_start, belief_time_end,
+                       content_type, extra, content_hash,
+                       index_status, created_at)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+                    """,
+                    artifact_id,
+                    org_id,
+                    user_id,
+                    kb_slug,
+                    path,
+                    provenance_type,
+                    assertion_mode,
+                    synthesis_depth,
+                    confidence,
+                    belief_time_start,
+                    belief_time_end,
+                    content_type,
+                    extra_json,
+                    content_hash,
+                    index_status,
+                    now,
+                )
+            return artifact_id
+        except asyncpg.UniqueViolationError as exc:
+            # SPEC-INGEST-UNIQUE-ARTIFACT-001 — concurrent ingest race.
+            # Only swallow the violation that originates from our active-path
+            # constraint. Any other unique violation (e.g. id collision —
+            # vanishingly unlikely but possible) is a real bug; re-raise it.
+            constraint_name = getattr(exc, "constraint_name", "") or ""
+            if _ACTIVE_ARTIFACT_UNIQUE_INDEX not in constraint_name:
+                raise
+
+            winning_artifact_id = await conn.fetchval(
+                """
+                SELECT id FROM knowledge.artifacts
+                WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+                  AND belief_time_end = $4
+                """,
+                org_id,
+                kb_slug,
+                path,
+                _SENTINEL,
+            )
+            # Defensive: if the winning row vanished between INSERT and SELECT
+            # (e.g. a concurrent soft_delete), surface a clear error rather
+            # than returning None and letting the caller hit a downstream
+            # NULL violation.
+            if winning_artifact_id is None:
+                logger.error(
+                    "artifact_create_race_lost_no_winner",
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    path=path,
+                    my_attempt_id=artifact_id,
+                )
+                raise
+
             logger.error(
-                "artifact_create_race_lost_no_winner",
+                "artifact_create_race_lost",
                 org_id=org_id,
                 kb_slug=kb_slug,
                 path=path,
+                winning_artifact_id=str(winning_artifact_id),
                 my_attempt_id=artifact_id,
             )
-            raise
+            return str(winning_artifact_id)
 
-        logger.error(
-            "artifact_create_race_lost",
+    if not parent_ids:
+        return await _insert_artifact_row()
+
+    async with conn.transaction():
+        child_id = await _insert_artifact_row()
+        await _insert_derivation_edges(
+            conn,
             org_id=org_id,
-            kb_slug=kb_slug,
-            path=path,
-            winning_artifact_id=str(winning_artifact_id),
-            my_attempt_id=artifact_id,
+            child_id=child_id,
+            parent_ids=parent_ids,
         )
-        return str(winning_artifact_id)
+        return child_id
 
 
 async def list_personal_artifacts(

@@ -143,29 +143,35 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 ## Cluster 2 — Provenance, supersession & dual-store integrity (§3, §5)
 
-### GAP-PROV-01 — Provenance DAG / entity registry / supersession is schema-only  ·  L  ·  ⊙
+### GAP-PROV-01 — Provenance DAG / entity registry / supersession is partial  ·  L  ·  ⊙
 - **Intended (§3.3, §5):** a `derivations` adjacency DAG, a `knowledge.entities`
   registry + `artifact_entities`, and a `superseded_by` chain — powering an
   invalidation cascade ("retract src-2847 → flag everything derived from it")
   and confidence-from-source-count, plus `WITH RECURSIVE` lineage analytics.
-- **Reality:** all four structures exist in `0001_baseline.py` but production
-  code never populates them: **0 INSERTs** into `derivations` / `entities` /
-  `artifact_entities`; `superseded_by` is only ever set to `NULL`. Entity data
-  that *is* produced (Graphiti) lives in FalkorDB + the Qdrant payload, not the
-  PG registry the doc's SQL queries.
+- **Reality:** all four structures exist in `0001_baseline.py`.
+  `derivations` is now populated for Docs artifacts when valid `derived_from`
+  UUIDs are present, but production code still has **0 INSERTs** into
+  `entities` / `artifact_entities`; `superseded_by` is only ever set to `NULL`.
+  Entity data that *is* produced (Graphiti) lives in FalkorDB + the Qdrant
+  payload, not the PG registry the doc's SQL queries.
 - **Why it matters:** the cascade and confidence calibration the doc presents as
-  *enabled* have no inputs to run on; the analytical queries return nothing.
+  *enabled* only have partial inputs; queries over derivations can work for
+  explicitly linked Docs artifacts, but entity/supersession analytics still have
+  no populated PG inputs.
 - **Evidence:** `klai-knowledge-ingest/alembic/versions/0001_baseline.py:115,144-150,213-219,236-250`;
-  `pg_store.py:305,433,524` (only `superseded_by = NULL`); 0 INSERTs (verified by hand).
+  `klai-knowledge-ingest/knowledge_ingest/pg_store.py` writes `knowledge.derivations`
+  for valid `derived_from` parents, while `superseded_by` remains only cleared.
 
-### GAP-PROV-02 — `derived_from` empty, `confidence` a manual label  ·  L  ·  ·
+### GAP-PROV-02 — `derived_from` wired for Docs, `confidence` a manual label  ·  L  ·  ·
 - **Intended (§3.3):** every artifact keeps a `derived_from` chain (source+span)
   and a `confidence` derived from independent-source count (example: 0.87 from 3
   sources).
-- **Reality:** MCP write tools store `derived_from = []` and put attribution in a
-  human-readable `source_note` string; `confidence` is a `high/medium/low`
-  frontmatter enum, never computed and never read in retrieval scoring (0 hits
-  in `retrieval_api/services`).
+- **Reality:** `search_knowledge` exposes source `artifact_id`, `save_to_docs`
+  accepts `derived_from`, and ingest writes valid parent→child rows to
+  `knowledge.derivations`. The editor display, delete-warning flow, automatic
+  source capture, and confidence-from-source-count remain open. `confidence` is
+  still a `high/medium/low` frontmatter enum, never computed and never read in
+  retrieval scoring.
 - **Evidence:** `klai-knowledge-ingest/knowledge_ingest/routes/ingest.py:177,214-215,541`.
 
 ### GAP-SYNC-01 — Dual-store outbox + reconciliation is schema-only  ·  L  ·  ⊙

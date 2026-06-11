@@ -7,7 +7,7 @@ The tool is a thin wrapper around retrieval-api ``/retrieve`` that:
   - identifies the caller via the existing dispatcher (LibreChat or OAuth)
   - clamps top_k to [1, 15]
   - posts to retrieval-api with a 3.0s timeout
-  - returns a list[dict] of chunks with title/source_url/text/score/scope
+  - returns a list[dict] of chunks with title/source_url/text/score/scope/artifact_id
   - fires retrieval-log + (optional) gap-event telemetry tagged with the
     OAuth client_id when the caller is an OAuth client
   - raises ToolError on retrieval-api 4xx/5xx/timeout
@@ -87,9 +87,11 @@ def _chunk(
     reranker_score: float | None = 0.9,
     scope: str = "org",
     chunk_id: str = "chunk-1",
+    artifact_id: str | None = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 ) -> dict[str, Any]:
     return {
         "chunk_id": chunk_id,
+        "artifact_id": artifact_id,
         "title": title,
         "source_url": source_url,
         "text": text,
@@ -166,7 +168,48 @@ class TestOAuthHappyPath:
         assert isinstance(result, list)
         assert len(result) == 3
         for item in result:
-            assert set(item.keys()) >= {"title", "source_url", "text", "score", "scope"}
+            assert set(item.keys()) >= {
+                "title",
+                "source_url",
+                "text",
+                "score",
+                "scope",
+                "artifact_id",
+            }
+
+    @pytest.mark.asyncio
+    async def test_returns_artifact_id_for_derived_from_followup(self) -> None:
+        """Issue #85: callers need source artifact IDs for save_to_docs.derived_from."""
+        from klai_identity_assert.mcp_token_client import McpTokenVerifyResult
+
+        from main import search_knowledge
+
+        source_artifact_id = "11111111-2222-4333-8444-555555555555"
+
+        with (
+            patch(
+                "main._mcp_token_asserter.verify",
+                new_callable=AsyncMock,
+                return_value=McpTokenVerifyResult.allow(
+                    user_id="zit-user-1",
+                    org_id="42",
+                    org_slug="acme",
+                    scopes=("mcp:knowledge",),
+                    resource_uri="https://mcp.getklai.com",
+                    client_id="claude-desktop",
+                ),
+            ),
+            patch(
+                "httpx.AsyncClient.post",
+                new_callable=AsyncMock,
+                return_value=_make_retrieve_response(
+                    [_chunk(artifact_id=source_artifact_id)]
+                ),
+            ),
+        ):
+            result = await search_knowledge(query="how do I X?", ctx=_oauth_ctx())
+
+        assert result[0]["artifact_id"] == source_artifact_id
 
     @pytest.mark.asyncio
     async def test_oauth_path_fires_retrieval_log_with_client_id(self) -> None:

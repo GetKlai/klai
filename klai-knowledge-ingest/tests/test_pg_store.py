@@ -120,6 +120,98 @@ async def test_create_artifact_accepts_initial_index_status():
 
 
 @pytest.mark.asyncio
+async def test_create_artifact_inserts_derivations_for_same_org_parents():
+    conn = _make_conn()
+    parent_one = "11111111-2222-4333-8444-555555555555"
+    parent_two = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    conn.fetch = AsyncMock(return_value=[{"id": parent_one}, {"id": parent_two}])
+
+    artifact_id = await pg_store.create_artifact(
+        conn,
+        "org",
+        "kb",
+        "child.md",
+        "synthesized",
+        "factual",
+        1,
+        "medium",
+        0,
+        _SENTINEL,
+        derived_from=[parent_one, parent_one, parent_two],
+    )
+
+    conn.fetch.assert_awaited_once()
+    fetch_args = conn.fetch.call_args[0]
+    assert "FROM knowledge.artifacts" in fetch_args[0]
+    assert fetch_args[1] == "org"
+    assert fetch_args[2] == [parent_one, parent_two]
+
+    conn.executemany.assert_awaited_once()
+    sql, rows = conn.executemany.call_args[0]
+    assert "INSERT INTO knowledge.derivations" in sql
+    assert rows == [(artifact_id, parent_one), (artifact_id, parent_two)]
+
+
+@pytest.mark.asyncio
+async def test_create_artifact_rejects_missing_or_cross_org_derived_from_parent():
+    conn = _make_conn()
+    known_parent = "11111111-2222-4333-8444-555555555555"
+    missing_parent = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    conn.fetch = AsyncMock(return_value=[{"id": known_parent}])
+
+    with pytest.raises(ValueError, match="derived_from"):
+        await pg_store.create_artifact(
+            conn,
+            "org",
+            "kb",
+            "child.md",
+            "synthesized",
+            "factual",
+            1,
+            "medium",
+            0,
+            _SENTINEL,
+            derived_from=[known_parent, missing_parent],
+        )
+
+    conn.executemany.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_artifact_with_derived_from_recovers_unique_race_inside_savepoint():
+    conn = _make_conn()
+    parent_id = "11111111-2222-4333-8444-555555555555"
+    winning_child_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    violation = pg_store.asyncpg.UniqueViolationError("simulated unique violation")
+    violation.constraint_name = "uq_artifacts_active_path"
+    conn.execute = AsyncMock(side_effect=violation)
+    conn.fetchval = AsyncMock(return_value=winning_child_id)
+    conn.fetch = AsyncMock(return_value=[{"id": parent_id}])
+
+    result = await pg_store.create_artifact(
+        conn,
+        "org",
+        "kb",
+        "child.md",
+        "synthesized",
+        "factual",
+        1,
+        "medium",
+        0,
+        _SENTINEL,
+        derived_from=[parent_id],
+    )
+
+    assert result == winning_child_id
+    # One outer transaction for artifact+derivations, one nested transaction
+    # around INSERT so UniqueViolation rollback does not abort the outer one.
+    assert conn.transaction.call_count == 2
+    conn.fetchval.assert_awaited_once()
+    conn.executemany.assert_awaited_once()
+    assert conn.executemany.call_args[0][1] == [(winning_child_id, parent_id)]
+
+
+@pytest.mark.asyncio
 async def test_get_active_content_hash_only_uses_synced_artifacts():
     conn = _make_conn()
     conn.fetchval = AsyncMock(return_value="sha256")

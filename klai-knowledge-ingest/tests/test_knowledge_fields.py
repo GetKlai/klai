@@ -4,6 +4,8 @@ Tests for _parse_knowledge_fields() and db._parse_dsn().
 These are pure functions — no mocking needed.
 """
 
+import pytest
+
 from knowledge_ingest.db import _parse_dsn
 from knowledge_ingest.routes.ingest import _parse_knowledge_fields
 
@@ -115,6 +117,32 @@ class TestParseKnowledgeFieldsFromFrontmatter:
     def test_belief_time_end_always_sentinel(self):
         content = "---\nprovenance_type: observed\n---\n# Doc"
         assert _parse_knowledge_fields(content, None)["belief_time_end"] == _SENTINEL
+
+    def test_valid_derived_from_uuid_list_is_preserved_and_deduped(self):
+        content = """---
+derived_from:
+  - 11111111-2222-4333-8444-555555555555
+  - 11111111-2222-4333-8444-555555555555
+  - aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
+---
+# Doc"""
+
+        result = _parse_knowledge_fields(content, None)
+
+        assert result["derived_from"] == [
+            "11111111-2222-4333-8444-555555555555",
+            "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        ]
+
+    def test_invalid_derived_from_fails_loudly(self):
+        content = """---
+derived_from:
+  - not-a-uuid
+---
+# Doc"""
+
+        with pytest.raises(ValueError, match="derived_from"):
+            _parse_knowledge_fields(content, None)
 
 
 # ── db._parse_dsn ────────────────────────────────────────────────────────────

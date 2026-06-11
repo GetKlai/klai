@@ -310,12 +310,15 @@ This chain enables:
 - **Confidence calibration** — the system knows this claim rests on 3 independent transcripts; a claim on 1 transcript gets lower weight
 - **Temporal reasoning** — "what did we believe about this procedure in Q3 2024?" is answerable from `belief_time_start/end`
 
-> **Intended vs. current (GAP-PROV-02).** This is target design. In code the chain is not
-> populated: the MCP write tools store `derived_from = []` (source attribution goes into a
-> human-readable `source_note` string, see §9.2), and `confidence` is a manual
-> `high/medium/low` frontmatter label — never computed from independent-source count and
-> never read in retrieval scoring. So the invalidation cascade and confidence calibration
-> "enabled" here have no inputs to run on yet (their precondition — populated provenance
+> **Intended vs. current (GAP-PROV-02).** This is target design. In code the
+> direct Docs chain is partially populated: `search_knowledge` exposes source
+> `artifact_id`, `save_to_docs` accepts `derived_from`, and ingest writes valid
+> parent→child rows to `knowledge.derivations`. Automatic source capture, editor
+> display, delete warnings, and confidence-from-source-count are still open.
+> `confidence` is a manual `high/medium/low` frontmatter label — never computed
+> from independent-source count and never read in retrieval scoring. So the full
+> invalidation cascade and confidence calibration still lack all required inputs
+> (their precondition — complete populated provenance
 > edges + computed confidence — is missing; cf. §5.2 GAP-PROV-01). Temporal reasoning has
 > a separate field-name bug — see [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md).
 
@@ -1026,7 +1029,10 @@ Auth: internal service token (`KNOWLEDGE_INGEST_SECRET`).
 Storage: POSTs directly to `{KNOWLEDGE_INGEST_URL}/ingest/v1/document` — **not** via klai-docs API.
 Qdrant indexing: **live** — saves are ingested and indexed immediately by the knowledge-ingest pipeline.
 
-`derived_from` stores `[]` (empty); source attribution is stored in `source_note` as a human-readable string until UUID provenance is wired in.
+`search_knowledge` returns source `artifact_id`; `save_to_docs` can store those
+UUIDs in `derived_from`; ingest validates them for the same org and writes
+parent→child rows to `knowledge.derivations`. Human-authored source attribution
+can still use `source_note`.
 
 **LibreChat config** (per tenant in `librechat.yaml`):
 ```yaml

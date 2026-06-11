@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 import time
+import uuid
 from datetime import UTC, datetime
 
 import asyncpg
@@ -137,7 +138,7 @@ def _extract_frontmatter_metadata(content: str) -> dict:
         if not isinstance(fm, dict):
             return {}
         result = {}
-        for key in ("tags", "provenance_type", "confidence", "source_note"):
+        for key in ("tags", "provenance_type", "confidence", "source_note", "derived_from"):
             if fm.get(key) is not None:
                 result[key] = fm[key]
         return result
@@ -155,6 +156,24 @@ _ASSERTION_MODE_MIGRATION: dict[str, str] = {
 _VALID_ASSERTION_MODES = frozenset(
     {"factual", "belief", "hypothesis", "procedural", "quoted", "unknown"}
 )
+
+
+def _parse_derived_from(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("derived_from must be a list of UUID strings")
+    derived_from: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        try:
+            canonical = str(uuid.UUID(str(item)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("derived_from must contain only UUID strings") from exc
+        if canonical not in seen:
+            derived_from.append(canonical)
+            seen.add(canonical)
+    return derived_from
 
 
 def _parse_knowledge_fields(
@@ -177,6 +196,7 @@ def _parse_knowledge_fields(
         "confidence": None,
         "belief_time_start": int(time.time()),
         "belief_time_end": _SENTINEL,
+        "derived_from": [],
     }
 
     # Apply connector-level hint before frontmatter: hint sets the default,
@@ -213,6 +233,7 @@ def _parse_knowledge_fields(
         result["synthesis_depth"] = fm["synthesis_depth"]
     if fm.get("confidence") in ("high", "medium", "low"):
         result["confidence"] = fm["confidence"]
+    result["derived_from"] = _parse_derived_from(fm.get("derived_from"))
     if isinstance(fm.get("belief_time_start"), str):
         try:
             result["belief_time_start"] = int(
@@ -546,6 +567,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         extra=pg_extra or None,
         content_hash=content_hash,
         index_status="pending",
+        derived_from=kf["derived_from"],
     )
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: record image-key

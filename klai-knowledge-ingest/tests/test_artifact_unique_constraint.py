@@ -21,6 +21,7 @@ instead of patching pg_store.get_pool.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import asyncpg
@@ -41,6 +42,12 @@ def _make_mock_conn() -> MagicMock:
     conn.fetch = AsyncMock(return_value=[])
     conn.fetchval = AsyncMock(return_value=None)
     conn.fetchrow = AsyncMock(return_value=None)
+
+    @asynccontextmanager
+    async def _tx():
+        yield None
+
+    conn.transaction = MagicMock(side_effect=_tx)
     return conn
 
 
