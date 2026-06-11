@@ -14,6 +14,7 @@ down_revision = "0aac04f1bccc"
 branch_labels = None
 depends_on = None
 
+
 def upgrade() -> None:
     op.execute(
         """
