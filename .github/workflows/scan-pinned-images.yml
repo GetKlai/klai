@@ -134,6 +134,9 @@ jobs:
             --severity CRITICAL,HIGH \
             --ignore-unfixed \
             --scanners vuln \
+            --image-src remote \
+            --timeout 15m \
+            --skip-version-check \
             --exit-code 0 \
             ${{ matrix.target.image }}
 
