@@ -89,10 +89,10 @@ async function askChat(page: Page, prompt: string): Promise<string> {
     () => {
       const text = document.body.innerText
       return (
-        text.includes('Agent activiteit') ||
+        text.includes('Modus: Open, kennisbank met fallback.') ||
+        text.includes('Modus: Strict, alleen kennisbank.') ||
         text.includes('niet betrouwbaar beantwoorden') ||
-        text.includes('cannot answer this reliably') ||
-        text.includes('TCP/IP')
+        text.includes('cannot answer this reliably')
       )
     },
     null,
