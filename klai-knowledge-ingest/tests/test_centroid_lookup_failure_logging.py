@@ -71,6 +71,11 @@ async def test_centroid_lookup_failure_logs_at_warning_with_structured_fields():
             return_value="artifact-uuid-finding5",
         ),
         patch(
+            "knowledge_ingest.pg_store.set_artifact_ingest_status",
+            new_callable=AsyncMock,
+            return_value={"artifact_id": "artifact-uuid-finding5", "path": req.path},
+        ),
+        patch(
             "knowledge_ingest.embedder.embed",
             new_callable=AsyncMock,
             return_value=[[0.1] * 10],

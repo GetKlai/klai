@@ -545,6 +545,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         content_type=req.content_type,
         extra=pg_extra or None,
         content_hash=content_hash,
+        index_status="pending",
     )
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: record image-key
@@ -708,6 +709,16 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
                 path=req.path,
                 org_id=req.org_id,
             )
+
+    updated = await pg_store.set_artifact_ingest_status(conn, artifact_id, req.org_id, "synced")
+    if updated is None:
+        logger.error(
+            "artifact_ingest_status_update_missing",
+            artifact_id=artifact_id,
+            org_id=req.org_id,
+            status="synced",
+        )
+        raise RuntimeError(f"artifact {artifact_id} was not updated to index_status=synced")
 
     # Graphiti episode ingest — queued via Procrastinate on graphiti-bulk (lowest priority).
     # The worker drains: ingest-kb → enrich-interactive → enrich-bulk → graphiti-bulk.

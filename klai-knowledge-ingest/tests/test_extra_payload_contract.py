@@ -213,6 +213,11 @@ async def _run_with_mocks(
             new_callable=AsyncMock,
         ) as update_extra_mock,
         patch(
+            "knowledge_ingest.pg_store.set_artifact_ingest_status",
+            new_callable=AsyncMock,
+            return_value={"artifact_id": "artifact-uuid-contract", "path": req.path},
+        ),
+        patch(
             "knowledge_ingest.pg_store.insert_parent_chunks",
             new_callable=AsyncMock,
             return_value=[1],

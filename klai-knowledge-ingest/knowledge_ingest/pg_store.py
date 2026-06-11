@@ -35,13 +35,14 @@ _ACTIVE_ARTIFACT_UNIQUE_INDEX = "uq_artifacts_active_path"
 async def get_active_content_hash(
     conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
 ) -> str | None:
-    """Return the content_hash of the current active artifact for this path, or None."""
+    """Return the content_hash of the current synced active artifact, or None."""
     row = await conn.fetchval(
         """
         SELECT content_hash
         FROM knowledge.artifacts
         WHERE org_id = $1 AND kb_slug = $2 AND path = $3
           AND belief_time_end = $4
+          AND index_status = 'synced'
         ORDER BY created_at DESC
         LIMIT 1
         """,
@@ -68,6 +69,7 @@ async def create_artifact(
     content_type: str = "unknown",
     extra: dict | None = None,
     content_hash: str | None = None,
+    index_status: str = "synced",
 ) -> str:
     """Create a knowledge artifact record. Returns the artifact UUID.
 
@@ -93,8 +95,8 @@ async def create_artifact(
                synthesis_depth, confidence,
                belief_time_start, belief_time_end,
                content_type, extra, content_hash,
-               created_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+               index_status, created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
             """,
             artifact_id,
             org_id,
@@ -110,6 +112,7 @@ async def create_artifact(
             content_type,
             extra_json,
             content_hash,
+            index_status,
             now,
         )
         return artifact_id
@@ -1586,13 +1589,37 @@ async def set_artifact_index_status(
     return {"artifact_id": row["artifact_id"], "path": row["path"]}
 
 
+async def set_artifact_ingest_status(
+    conn: asyncpg.Connection,
+    artifact_id: str,
+    org_id: str,
+    status: str,
+) -> dict | None:
+    """Update index_status for any artifact produced by ingest_document."""
+    row = await conn.fetchrow(
+        """
+        UPDATE knowledge.artifacts
+        SET index_status = $1
+        WHERE id = $2::uuid
+          AND org_id = $3
+        RETURNING id::text AS artifact_id, path
+        """,
+        status,
+        artifact_id,
+        org_id,
+    )
+    if row is None:
+        return None
+    return {"artifact_id": row["artifact_id"], "path": row["path"]}
+
+
 async def mark_stale_pending_artifacts_failed(
     conn: asyncpg.Connection,
     *,
     cutoff_created_at: int,
     limit: int = 500,
 ) -> list[dict]:
-    """Fail direct-upload artifacts that are pending with no live enrich job.
+    """Fail artifacts that are pending with no live enrich job.
 
     Cross-org by design: callers must pass a ``cross_org_admin_connection``.
     The runnable-job guard is what keeps a slow but still-progressing
@@ -1606,7 +1633,6 @@ async def mark_stale_pending_artifacts_failed(
             WHERE a.index_status = 'pending'
               AND a.belief_time_end = $2
               AND a.created_at < $1
-              AND (a.extra IS NULL OR a.extra::jsonb->>'source_connector_id' IS NULL)
               AND NOT EXISTS (
                   SELECT 1
                   FROM procrastinate_jobs pj

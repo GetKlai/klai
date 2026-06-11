@@ -1,4 +1,4 @@
-"""Periodic cleanup for direct-upload artifacts stuck in pending.
+"""Periodic cleanup for artifacts stuck in pending.
 
 This is a final safety net. Normal enrichment must still set
 ``index_status`` to ``synced`` or ``failed`` itself; this janitor only handles

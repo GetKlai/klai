@@ -83,6 +83,7 @@ async def test_create_artifact_executes_insert():
     assert 3 in values
     assert "high" in values
     assert "user456" in values
+    assert "synced" in values
 
 
 @pytest.mark.asyncio
@@ -95,6 +96,39 @@ async def test_create_artifact_generates_unique_ids():
         conn, "o", "kb", "p2.md", "observed", "factual", 0, None, 0, _SENTINEL
     )
     assert id1 != id2
+
+
+@pytest.mark.asyncio
+async def test_create_artifact_accepts_initial_index_status():
+    conn = _make_conn()
+
+    await pg_store.create_artifact(
+        conn,
+        "o",
+        "kb",
+        "p.md",
+        "observed",
+        "factual",
+        0,
+        None,
+        0,
+        _SENTINEL,
+        index_status="pending",
+    )
+
+    assert conn.execute.call_args[0][-2] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_get_active_content_hash_only_uses_synced_artifacts():
+    conn = _make_conn()
+    conn.fetchval = AsyncMock(return_value="sha256")
+
+    result = await pg_store.get_active_content_hash(conn, "org", "kb", "path.md")
+
+    assert result == "sha256"
+    sql = conn.fetchval.call_args[0][0]
+    assert "index_status = 'synced'" in sql
 
 
 @pytest.mark.asyncio
@@ -227,7 +261,7 @@ async def test_mark_stale_pending_artifacts_failed_requires_no_runnable_job():
     sql = conn.fetch.call_args[0][0]
     assert "a.index_status = 'pending'" in sql
     assert "a.belief_time_end = $2" in sql
-    assert "source_connector_id" in sql
+    assert "source_connector_id" not in sql
     assert "NOT EXISTS" in sql
     assert "procrastinate_jobs" in sql
     assert "pj.status IN ('todo', 'doing')" in sql
@@ -243,6 +277,20 @@ async def test_mark_stale_pending_artifacts_failed_requires_no_runnable_job():
         ],
         25,
     )
+
+
+@pytest.mark.asyncio
+async def test_set_artifact_ingest_status_updates_any_artifact():
+    conn = _make_conn()
+    conn.fetchrow = AsyncMock(return_value={"artifact_id": "art-1", "path": "doc.md"})
+
+    result = await pg_store.set_artifact_ingest_status(conn, "art-1", "org1", "synced")
+
+    assert result == {"artifact_id": "art-1", "path": "doc.md"}
+    sql = conn.fetchrow.call_args[0][0]
+    assert "SET index_status = $1" in sql
+    assert "source_connector_id" not in sql
+    assert conn.fetchrow.call_args[0][1:] == ("synced", "art-1", "org1")
 
 
 # -- list_personal_artifacts --------------------------------------------------

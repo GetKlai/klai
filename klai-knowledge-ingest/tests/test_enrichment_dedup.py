@@ -100,6 +100,11 @@ def _base_patches(mock_app):
                 new_callable=AsyncMock,
             ),
             patch(
+                "knowledge_ingest.routes.ingest.pg_store.set_artifact_ingest_status",
+                new_callable=AsyncMock,
+                return_value={"artifact_id": "art-test", "path": "doc.md"},
+            ),
+            patch(
                 "knowledge_ingest.routes.ingest.qdrant_store.upsert_chunks",
                 new_callable=AsyncMock,
             ),

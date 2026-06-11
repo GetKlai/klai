@@ -10,10 +10,9 @@ SPEC-TI-003-FOLLOWUP-001: ingest_document now takes asyncpg.Connection
 as its first argument. The patches below address the helpers it calls
 on that conn -- conn itself is a mock instance.
 
-SPEC-INGEST-CONTENT-PG-001: ingest_document persists extra_payload via
-pg_store.update_artifact_extra before defer; the enrichment task takes
-only artifact_id. The new ``update_artifact_extra`` mock keeps these
-tests aligned with the merged contract.
+Issue #403 follow-up: ingest_document creates artifacts as ``pending`` and
+only marks them ``synced`` after Qdrant, PG extra, and enrichment enqueue
+finish, so retry dedupe only trusts completed rows.
 """
 
 from __future__ import annotations
@@ -95,6 +94,11 @@ async def test_proceeds_when_content_changed():
         ),
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
+            "knowledge_ingest.pg_store.set_artifact_ingest_status",
+            new_callable=AsyncMock,
+            return_value={"artifact_id": "artifact-status", "path": req.path},
+        ),
+        patch(
             "knowledge_ingest.pg_store.insert_parent_chunks",
             new_callable=AsyncMock,
             return_value=[1],
@@ -159,6 +163,11 @@ async def test_proceeds_when_no_previous_artifact():
         ),
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
+            "knowledge_ingest.pg_store.set_artifact_ingest_status",
+            new_callable=AsyncMock,
+            return_value={"artifact_id": "artifact-status", "path": req.path},
+        ),
+        patch(
             "knowledge_ingest.pg_store.insert_parent_chunks",
             new_callable=AsyncMock,
             return_value=[1],
@@ -222,6 +231,11 @@ async def test_content_hash_stored_on_create():
         patch("knowledge_ingest.pg_store.create_artifact", mock_create),
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
+            "knowledge_ingest.pg_store.set_artifact_ingest_status",
+            new_callable=AsyncMock,
+            return_value={"artifact_id": "artifact-status", "path": req.path},
+        ),
+        patch(
             "knowledge_ingest.pg_store.insert_parent_chunks",
             new_callable=AsyncMock,
             return_value=[1],
@@ -265,6 +279,79 @@ async def test_content_hash_stored_on_create():
 
     call_kwargs = mock_create.call_args.kwargs
     assert call_kwargs["content_hash"] == expected_hash
+    assert call_kwargs["index_status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_qdrant_failure_leaves_artifact_pending_for_retry():
+    """A failed Qdrant write must not create a synced content-hash dedupe source."""
+    req = _make_request("# Fresh content")
+    conn = _make_mock_conn()
+
+    mock_create = AsyncMock(return_value="artifact-qdrant-failed")
+    mock_set_status = AsyncMock(
+        return_value={"artifact_id": "artifact-qdrant-failed", "path": req.path}
+    )
+
+    with (
+        patch(
+            "knowledge_ingest.pg_store.get_active_content_hash",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch("knowledge_ingest.pg_store.soft_delete_artifact", new_callable=AsyncMock),
+        patch("knowledge_ingest.pg_store.create_artifact", mock_create),
+        patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
+        patch("knowledge_ingest.pg_store.set_artifact_ingest_status", mock_set_status),
+        patch(
+            "knowledge_ingest.pg_store.insert_parent_chunks",
+            new_callable=AsyncMock,
+            return_value=[1],
+        ),
+        patch(
+            "knowledge_ingest.embedder.embed",
+            new_callable=AsyncMock,
+            return_value=[[0.1] * 10],
+        ),
+        patch(
+            "knowledge_ingest.qdrant_store.upsert_chunks",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("qdrant unavailable"),
+        ),
+        patch(
+            "knowledge_ingest.org_config.is_enrichment_enabled",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
+            new_callable=AsyncMock,
+            return_value="internal",
+        ),
+        patch(
+            "knowledge_ingest.portal_client.fetch_taxonomy_nodes",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "knowledge_ingest.content_labeler.generate_content_label",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch("knowledge_ingest.routes.ingest.settings") as mock_settings,
+    ):
+        mock_settings.graphiti_enabled = False
+        mock_settings.chunk_size = 1500
+        mock_settings.chunk_overlap = 200
+        mock_settings.enrichment_enabled = False
+
+        from knowledge_ingest.routes.ingest import ingest_document
+
+        with pytest.raises(RuntimeError, match="qdrant unavailable"):
+            await ingest_document(conn, req)
+
+    assert mock_create.call_args.kwargs["index_status"] == "pending"
+    mock_set_status.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -287,6 +374,11 @@ async def test_content_hash_override_used_for_prechunked_ingest():
         patch("knowledge_ingest.pg_store.soft_delete_artifact", new_callable=AsyncMock),
         patch("knowledge_ingest.pg_store.create_artifact", mock_create),
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
+        patch(
+            "knowledge_ingest.pg_store.set_artifact_ingest_status",
+            new_callable=AsyncMock,
+            return_value={"artifact_id": "artifact-status", "path": req.path},
+        ),
         patch(
             "knowledge_ingest.pg_store.insert_parent_chunks",
             new_callable=AsyncMock,
@@ -366,6 +458,11 @@ async def test_docling_skip_chunking_writes_parent_chunks() -> None:
         patch("knowledge_ingest.pg_store.soft_delete_artifact", new_callable=AsyncMock),
         patch("knowledge_ingest.pg_store.create_artifact", mock_create),
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
+        patch(
+            "knowledge_ingest.pg_store.set_artifact_ingest_status",
+            new_callable=AsyncMock,
+            return_value={"artifact_id": "artifact-status", "path": req.path},
+        ),
         patch("knowledge_ingest.pg_store.insert_parent_chunks", mock_insert_parents),
         patch(
             "knowledge_ingest.embedder.embed",
