@@ -12,6 +12,7 @@ import json
 import logging
 import math
 from pathlib import Path
+from typing import NamedTuple
 
 from retrieval_api.config import settings
 
@@ -22,6 +23,20 @@ _GATE_FILE = Path(__file__).parent.parent / "data" / "gate_reference.jsonl"
 # Module-level caches
 _reference_queries: list[dict] | None = None
 _reference_vectors: list[list[float]] | None = None
+
+
+class GateDecision(NamedTuple):
+    """Outcome of a gate evaluation.
+
+    ``would_bypass`` is the raw recommendation, ignoring shadow mode.
+    ``bypassed`` is what the caller MUST act on — it is forced ``False``
+    while ``retrieval_gate_shadow`` is on, so retrieval always runs.
+    """
+
+    would_bypass: bool
+    bypassed: bool
+    margin: float | None
+    shadow: bool
 
 
 def _load_reference_queries() -> list[dict]:
@@ -102,6 +117,27 @@ async def should_bypass(query_vector: list[float]) -> tuple[bool, float | None]:
     if margin > settings.retrieval_gate_threshold:
         return True, margin
     return False, margin
+
+
+async def evaluate(query_vector: list[float]) -> GateDecision:
+    """Compute the gate recommendation and apply shadow-mode policy.
+
+    A wrong bypass silently drops every citation (the user gets a
+    model-only answer with no sources), so the gate runs in shadow by
+    default: ``would_bypass`` is computed and logged, but ``bypassed`` is
+    forced ``False`` so retrieval always runs. Keep shadow on until the
+    production ``gate_would_bypass`` rate confirms the reference corpus
+    only fires on non-KB queries, then set ``retrieval_gate_shadow`` to
+    ``False`` to go live.
+    """
+    would_bypass, margin = await should_bypass(query_vector)
+    shadow = settings.retrieval_gate_shadow
+    return GateDecision(
+        would_bypass=would_bypass,
+        bypassed=would_bypass and not shadow,
+        margin=margin,
+        shadow=shadow,
+    )
 
 
 def reset_cache() -> None:

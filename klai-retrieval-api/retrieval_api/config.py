@@ -20,6 +20,12 @@ class Settings(BaseSettings):
 
     retrieval_gate_enabled: bool = True
     retrieval_gate_threshold: float = 0.1
+    # Shadow mode (default ON): the gate computes + logs its bypass decision
+    # (gate_would_bypass) but never acts on it, so retrieval always runs. A
+    # wrong bypass silently drops all citations, so the gate stays in shadow
+    # until production data confirms the reference corpus only catches non-KB
+    # queries. Set to False to go live.
+    retrieval_gate_shadow: bool = True
     retrieval_candidates: int = 60
     reranker_candidates: int = 20  # top-N from retrieval sent to reranker (CPU budget)
 

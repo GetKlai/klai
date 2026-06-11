@@ -1,0 +1,16 @@
+{"query": "Provide a concise, five-word-or-less title for this conversation in title case. Only return the title.", "label": "meta-title"}
+{"query": "Geef een korte titel van maximaal vijf woorden voor dit gesprek. Geef alleen de titel terug.", "label": "meta-title"}
+{"query": "Translate the following text into English.", "label": "translate"}
+{"query": "Vertaal de bovenstaande tekst naar het Nederlands.", "label": "translate"}
+{"query": "Summarize the text above in a few sentences.", "label": "summarize"}
+{"query": "Vat de bovenstaande tekst kort samen.", "label": "summarize"}
+{"query": "Convert the text above into a bulleted list.", "label": "format"}
+{"query": "Zet dit om naar opsommingstekens.", "label": "format"}
+{"query": "Rewrite this paragraph so it sounds more formal.", "label": "rewrite"}
+{"query": "Herschrijf deze tekst zodat hij vriendelijker klinkt.", "label": "rewrite"}
+{"query": "What is 15 percent of 240?", "label": "math"}
+{"query": "Bereken 47 keer 19.", "label": "math"}
+{"query": "Correct the spelling and grammar in the text above.", "label": "proofread"}
+{"query": "Write a short poem about spring.", "label": "creative"}
+{"query": "Schrijf een kort gedicht over de zee.", "label": "creative"}
+{"query": "Tell me a fun fact.", "label": "chitchat"}

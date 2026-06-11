@@ -208,14 +208,23 @@ async def retrieve(
 
     # 3. Gate check. Strict KB mode must never skip retrieval: a wrong bypass
     # would turn "answer only from selected KBs" into a plain model answer.
+    # Shadow mode (default) computes + logs the decision but never acts on it.
     if req.kb_narrow:
-        bypassed = False
-        gate_margin = None
+        gate_decision = gate.GateDecision(
+            would_bypass=False,
+            bypassed=False,
+            margin=None,
+            shadow=settings.retrieval_gate_shadow,
+        )
         decision_record["gate_skipped_reason"] = "strict_mode"
     else:
-        bypassed, gate_margin = await gate.should_bypass(query_vector)
+        gate_decision = await gate.evaluate(query_vector)
 
+    bypassed = gate_decision.bypassed
+    gate_margin = gate_decision.margin
     decision_record["gate_margin"] = round(gate_margin, 4) if gate_margin is not None else None
+    decision_record["gate_would_bypass"] = gate_decision.would_bypass
+    decision_record["gate_shadow_mode"] = gate_decision.shadow
     decision_record["gate_bypassed"] = bypassed
     decision_record["gate_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 

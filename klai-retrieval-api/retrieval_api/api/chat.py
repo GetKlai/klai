@@ -42,10 +42,13 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
         # 2. Embed resolved query
         query_vector = await embed_single(query_resolved)
 
-        # 3. Gate check
-        bypassed, gate_margin = await gate.should_bypass(query_vector)
+        # 3. Gate check (shadow-aware: computes the decision but only acts on
+        # it when retrieval_gate_shadow is off — a wrong bypass silently drops
+        # all citations).
+        gate_decision = await gate.evaluate(query_vector)
+        gate_margin = gate_decision.margin
 
-        if bypassed:
+        if gate_decision.bypassed:
             # Stream a bypass done event with no tokens
             done_event = {
                 "type": "done",
