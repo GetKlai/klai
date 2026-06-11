@@ -136,13 +136,11 @@ function McpEditPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       if (!server) throw new Error('Server not loaded')
-      // Skip placeholder values; the backend keeps whatever is already stored
-      // for non-secret vars when we send the placeholder string.
+      // Omit configured placeholder/blank values. The backend preserves
+      // existing values unless the admin explicitly enters a replacement.
       const env: Record<string, string> = {}
       for (const [key, value] of Object.entries(envValues)) {
         if (value && value !== SECRET_PLACEHOLDER) {
-          env[key] = value
-        } else if (server.configured_env_vars.includes(key)) {
           env[key] = value
         }
       }

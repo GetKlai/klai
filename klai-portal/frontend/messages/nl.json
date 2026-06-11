@@ -1575,7 +1575,7 @@
   "admin_mcps_builtin": "Ingebouwd",
   "admin_mcps_save": "Opslaan",
   "admin_mcps_saving": "Opslaan…",
-  "admin_mcps_save_success": "MCP opgeslagen. Container wordt herstart.",
+  "admin_mcps_save_success": "MCP opgeslagen. Runtimeconfiguratie is toegepast.",
   "admin_mcps_save_error": "Opslaan mislukt, probeer opnieuw.",
   "admin_mcps_test": "Test verbinding",
   "admin_mcps_testing": "Testen…",

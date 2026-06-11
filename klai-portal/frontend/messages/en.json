@@ -1575,7 +1575,7 @@
   "admin_mcps_builtin": "Built-in",
   "admin_mcps_save": "Save",
   "admin_mcps_saving": "Saving…",
-  "admin_mcps_save_success": "MCP saved. Container is restarting.",
+  "admin_mcps_save_success": "MCP saved. Runtime configuration was applied.",
   "admin_mcps_save_error": "Save failed, please try again.",
   "admin_mcps_test": "Test connection",
   "admin_mcps_testing": "Testing…",

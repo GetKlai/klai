@@ -1,11 +1,11 @@
 version: "1.0"
-# MCP Catalog -- whitelist van ondersteunde MCP servers met config templates.
-# Alleen entries in dit bestand kunnen door tenants worden geactiveerd via de Portal.
-# config_template bevat ${VAR} placeholders die LibreChat bij startup expandeert.
+# MCP Catalog -- whitelist of supported MCP servers with config templates.
+# Only entries in this file can be activated by tenants through the Portal.
+# config_template contains ${VAR} placeholders expanded by LibreChat at startup.
 servers:
   klai-knowledge:
     display_name: "Klai Knowledge"
-    description: "Zoek in je eigen kennisbanken en sla notities op."
+    description: "Search your knowledge bases and save notes."
     # Managed entries are wired via librechat.yaml with tenant headers
     # (X-Org-ID, X-Org-Slug, X-Internal-Secret). The portal only lists them;
     # it never issues PUT or TEST requests so no config_template is needed.
@@ -13,7 +13,7 @@ servers:
     required_env_vars: []
   twenty-crm:
     display_name: "Twenty CRM"
-    description: "Twenty CRM -- contacten, bedrijven, deals, taken"
+    description: "Twenty CRM -- contacts, companies, deals, tasks"
     required_env_vars:
       - TWENTY_API_KEY
       - TWENTY_BASE_URL

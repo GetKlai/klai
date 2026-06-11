@@ -360,26 +360,18 @@ def _wait_for_librechat_openid_ready(client, container_name: str) -> None:
     )
 
 
-def _flush_redis_and_restart_librechat(slug: str) -> None:
-    """Invalidate the LibreChat config cache and restart the tenant container.
+def _invalidate_librechat_config_cache(slug: str) -> None:
+    """Invalidate LibreChat's cached yaml config for tenant config rollouts.
 
     LibreChat caches librechat.yaml in Redis with no TTL (see
-    platform/librechat.md -- Redis config caching). The cache invalidation
-    must run before the restart so the container reads the updated config
-    from disk.
+    platform/librechat.md -- Redis config caching). Invalidation must run
+    before restart/recreate so the process reads updated config from disk.
 
     SPEC-SEC-INTERNAL-001 REQ-2: this previously called FLUSHALL, which
     cleared every key in Redis -- rate-limit buckets, SSO cache, partner-API
     state for every tenant. We now SCAN MATCH the configured pattern
     (``configs:*`` by default per REQ-2.3) and UNLINK each match, which
     leaves unrelated keys untouched.
-
-    Fail-loud: both the cache invalidation and the post-restart health check
-    are hard requirements. A failed invalidation means LibreChat keeps
-    serving stale yaml and the operator thinks their change landed; a failed
-    health check means the tenant's LibreChat is down and provisioning
-    silently succeeded. Both were previously logged as warnings and ignored.
-    Now they raise.
     """
     _assert_safe_slug(slug)  # REQ-18 (Finding C-3)
     with _redis_sync_client() as client:
@@ -401,6 +393,20 @@ def _flush_redis_and_restart_librechat(slug: str) -> None:
         pattern=cache_pattern,
         deleted=deleted,
     )
+
+
+def _flush_redis_and_restart_librechat(slug: str) -> None:
+    """Invalidate the LibreChat config cache and restart the tenant container.
+
+    Fail-loud: both the cache invalidation and the post-restart health check
+    are hard requirements. A failed invalidation means LibreChat keeps
+    serving stale yaml and the operator thinks their change landed; a failed
+    health check means the tenant's LibreChat is down and provisioning
+    silently succeeded. Both were previously logged as warnings and ignored.
+    Now they raise.
+    """
+    _assert_safe_slug(slug)  # REQ-18 (Finding C-3)
+    _invalidate_librechat_config_cache(slug)
 
     # Restart the tenant's LibreChat container. /containers/{id}/restart is
     # allowed by docker-socket-proxy (CONTAINERS=1 + POST=1).

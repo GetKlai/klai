@@ -14,6 +14,7 @@ from app.services.provisioning.generators import (
 from app.services.provisioning.infrastructure import (
     _create_mongodb_tenant_user,
     _flush_redis_and_restart_librechat,
+    _invalidate_librechat_config_cache,
     _reload_caddy,
     _start_librechat_container,
     _sync_drop_mongodb_tenant_user,
@@ -35,6 +36,7 @@ __all__ = [
     "_flush_redis_and_restart_librechat",
     "_generate_librechat_env",
     "_generate_librechat_yaml",
+    "_invalidate_librechat_config_cache",
     "_provision",
     "_reload_caddy",
     "_slugify_unique",

@@ -27,12 +27,16 @@ from app.core.permissions import (
     get_caller_at_least,
 )
 from app.core.profiles import ProfileRole
+from app.core.provisioning_names import validate_slug_for_provisioning
+from app.services.provisioning.generators import _generate_librechat_yaml
 from app.services.secrets import decrypt_mcp_secret, encrypt_mcp_secret, is_secret_var
 from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTERNAL-001 REQ-4
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["mcp-servers"])
+
+_CONFIGURED_PLACEHOLDER = "••••••••"
 
 
 async def _load_catalog() -> dict[str, Any]:
@@ -42,13 +46,110 @@ async def _load_catalog() -> dict[str, Any]:
         catalog = await asyncio.to_thread(_read_yaml, catalog_path)
         return catalog.get("servers", {})
     except FileNotFoundError:
-        logger.warning("mcp_catalog.yaml niet gevonden op %s", catalog_path)
+        logger.warning("mcp_catalog.yaml not found at %s", catalog_path)
         return {}
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _catalog_env_var_names(catalog_servers: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for entry in catalog_servers.values():
+        names.update(entry.get("required_env_vars", []))
+    return names
+
+
+def _render_mcp_env_lines(mcp_servers: dict[str, Any], catalog_servers: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for server_id, server_cfg in mcp_servers.items():
+        if not server_cfg.get("enabled", False):
+            continue
+        catalog_entry = catalog_servers.get(server_id)
+        if not catalog_entry or catalog_entry.get("managed", False):
+            continue
+
+        env_vars = server_cfg.get("env", {})
+        rendered_for_server: list[str] = []
+        for var_name in catalog_entry.get("required_env_vars", []):
+            raw_value = env_vars.get(var_name)
+            if not raw_value:
+                continue
+            if is_secret_var(var_name):
+                raw_value = decrypt_mcp_secret(raw_value)
+            rendered_for_server.append(f"{var_name}={raw_value}")
+
+        if rendered_for_server:
+            lines.append(f"# MCP server: {server_id}")
+            lines.extend(rendered_for_server)
+
+    return lines
+
+
+def _replace_mcp_env_block(env_path: Path, mcp_servers: dict[str, Any], catalog_servers: dict[str, Any]) -> None:
+    if not env_path.exists():
+        raise RuntimeError(f"LibreChat tenant env file missing: {env_path}")
+
+    mcp_env_names = _catalog_env_var_names(catalog_servers)
+    kept_lines: list[str] = []
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("# MCP server:"):
+            continue
+        key = line.split("=", 1)[0].strip() if "=" in line else ""
+        if key in mcp_env_names:
+            continue
+        kept_lines.append(line)
+
+    while kept_lines and not kept_lines[-1].strip():
+        kept_lines.pop()
+
+    mcp_lines = _render_mcp_env_lines(mcp_servers, catalog_servers)
+    if mcp_lines:
+        kept_lines.extend(["", *mcp_lines])
+
+    env_path.write_text("\n".join(kept_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _write_tenant_mcp_runtime_files(
+    slug: str,
+    mcp_servers: dict[str, Any],
+    catalog_servers: dict[str, Any],
+) -> None:
+    validate_slug_for_provisioning(slug, domain=settings.domain)
+    base_dir = Path(settings.librechat_container_data_path)
+    base_yaml_path = base_dir / "librechat.yaml"
+    tenant_dir = base_dir / slug
+    env_path = tenant_dir / ".env"
+    if not env_path.exists():
+        raise RuntimeError(f"LibreChat tenant env file missing: {env_path}")
+
+    tenant_yaml_content = _generate_librechat_yaml(base_yaml_path, mcp_servers)
+    (tenant_dir / "librechat.yaml").write_text(tenant_yaml_content, encoding="utf-8")
+    _replace_mcp_env_block(env_path, mcp_servers, catalog_servers)
+
+
+def _build_stored_env(
+    *,
+    enabled: bool,
+    submitted_env: dict[str, str],
+    existing_env: dict[str, str],
+) -> dict[str, str]:
+    if not enabled:
+        return {}
+
+    stored_env = dict(existing_env)
+    for var_name, value in submitted_env.items():
+        if value in ("", _CONFIGURED_PLACEHOLDER) and var_name in existing_env:
+            continue
+        if value == _CONFIGURED_PLACEHOLDER:
+            continue
+        if value and is_secret_var(var_name):
+            stored_env[var_name] = encrypt_mcp_secret(value)
+        else:
+            stored_env[var_name] = value
+    return stored_env
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +248,7 @@ async def update_mcp_server(
     """Enable/disable a MCP server and store its env var configuration.
 
     Secret vars (KEY/SECRET/TOKEN in name) are encrypted with AES-256-GCM
-    before being stored. Triggers an async Redis flush + container restart.
+    before being stored. Applies tenant runtime files and recreates LibreChat.
     """
     org = await _load_org_or_500(db, perms.org_id)
     catalog_servers = await _load_catalog()
@@ -175,31 +276,29 @@ async def update_mcp_server(
 
     required_vars = catalog_entry.get("required_env_vars", [])
 
-    # Validate all required vars are present when enabling
+    # Merge into existing mcp_servers JSON
+    current: dict[str, Any] = dict(org.mcp_servers) if org.mcp_servers else {}
+    existing_entry = current.get(server_id, {})
+    existing_env = dict(existing_entry.get("env", {})) if isinstance(existing_entry, dict) else {}
+
+    try:
+        stored_env = _build_stored_env(enabled=body.enabled, submitted_env=body.env, existing_env=existing_env)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid MCP server configuration: {exc}",
+        ) from exc
+
+    # Validate all required vars are present when enabling. Existing configured
+    # values count: edit forms omit already-stored secrets so they are not leaked.
     if body.enabled:
-        missing = [v for v in required_vars if not body.env.get(v)]
+        missing = [v for v in required_vars if not stored_env.get(v)]
         if missing:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Missing required env vars: {missing}",
             )
 
-    # Encrypt secret values; store non-secret values as-is
-    stored_env: dict[str, str] = {}
-    for var_name, value in body.env.items():
-        if value and is_secret_var(var_name):
-            try:
-                stored_env[var_name] = encrypt_mcp_secret(value)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid value for {var_name}: {exc}",
-                ) from exc
-        else:
-            stored_env[var_name] = value
-
-    # Merge into existing mcp_servers JSON
-    current: dict[str, Any] = dict(org.mcp_servers) if org.mcp_servers else {}
     current[server_id] = {"enabled": body.enabled, "env": stored_env}
 
     # SQLAlchemy needs explicit assignment to detect JSONB mutation
@@ -213,33 +312,31 @@ async def update_mcp_server(
     slug = org.slug
     mcp_servers_to_apply = current
 
-    # Trigger async restart (fire-and-forget; R-002: brief container downtime acceptable).
-    # The user has already received their 200 by the time this runs, so we log with
-    # full traceback at error level — the MCP config change IS committed in portal,
-    # but the LibreChat container may still be serving the old config if the restart
-    # silently failed. That state needs to be visible in VictoriaLogs for operators.
-    async def _restart() -> None:
-        loop = asyncio.get_event_loop()
-        from app.services.provisioning import _flush_redis_and_restart_librechat, _sync_librechat_tenant_config_files
+    # Apply the DB state to the mounted tenant runtime files, invalidate
+    # LibreChat's config cache, then recreate the tenant container. Recreate is
+    # intentional: Docker bakes the `.env` content into the container environment
+    # at create time, so secret rotation must not rely on restart semantics.
+    # A 200 means the runtime picked up the saved config; failed rollout is
+    # surfaced as 502, not hidden behind a best-effort background task.
+    try:
+        from app.services.provisioning import _invalidate_librechat_config_cache, _start_librechat_container
 
-        try:
-            await loop.run_in_executor(
-                None,
-                lambda: (
-                    _sync_librechat_tenant_config_files(slug, mcp_servers_to_apply),
-                    _flush_redis_and_restart_librechat(slug),
-                ),
-            )
-        except Exception:
-            logger.exception("mcp_server_librechat_restart_failed: slug=%s", slug)
-
-    _task = asyncio.create_task(_restart())  # noqa: RUF006 — fire-and-forget, not awaited
+        await asyncio.to_thread(_write_tenant_mcp_runtime_files, slug, mcp_servers_to_apply, catalog_servers)
+        await asyncio.to_thread(_invalidate_librechat_config_cache, slug)
+        env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
+        await asyncio.to_thread(_start_librechat_container, slug, env_file_host_path, mcp_servers_to_apply)
+    except Exception as exc:
+        logger.exception("mcp_server_runtime_apply_failed: slug=%s server_id=%s", slug, server_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="MCP config was saved, but LibreChat runtime update failed",
+        ) from exc
 
     return McpServerUpdateResponse(
         id=server_id,
         enabled=body.enabled,
         configured_env_vars=configured_vars,
-        restart_required=True,
+        restart_required=False,
     )
 
 
@@ -315,7 +412,7 @@ async def test_mcp_server(
     result = await _probe_mcp_server(mcp_url, headers_template)
     if result.status == "error":
         logger.warning(
-            "MCP test mislukt voor tenant %s / server %s: %s",
+            "MCP test failed for tenant %s / server %s: %s",
             org.slug,
             server_id,
             result.error,

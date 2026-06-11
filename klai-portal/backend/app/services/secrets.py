@@ -54,40 +54,40 @@ portal_secrets = PortalSecretsService(settings.portal_secrets_key)
 
 
 def encrypt_mcp_secret(plaintext: str) -> str:
-    """Encrypt een MCP secret en retourneer base64-encoded ciphertext.
+    """Encrypt an MCP secret and return base64-encoded ciphertext.
 
-    Gebruikt de bestaande PortalSecretsService (AES-256-GCM).
-    Base64 encoding maakt het resultaat JSON-serializable.
+    Uses the existing PortalSecretsService (AES-256-GCM).
+    Base64 encoding makes the result JSON-serializable.
 
     Args:
-        plaintext: De te encrypten geheime waarde (API key, token, etc.).
+        plaintext: Secret value to encrypt (API key, token, etc.).
 
     Returns:
         Base64-encoded ciphertext string.
 
     Raises:
-        ValueError: Als plaintext leeg is of alleen whitespace bevat.
+        ValueError: If plaintext is empty or only contains whitespace.
     """
     if not plaintext or not plaintext.strip():
-        raise ValueError("MCP secret mag niet leeg zijn")
+        raise ValueError("MCP secret must not be empty")
     ciphertext_bytes = portal_secrets.encrypt(plaintext)
     return base64.b64encode(ciphertext_bytes).decode("ascii")
 
 
 def decrypt_mcp_secret(ciphertext: str) -> str:
-    """Decrypt een base64-encoded MCP secret ciphertext.
+    """Decrypt base64-encoded MCP secret ciphertext.
 
     Args:
-        ciphertext: Base64-encoded ciphertext string (output van encrypt_mcp_secret).
+        ciphertext: Base64-encoded ciphertext string (output from encrypt_mcp_secret).
 
     Returns:
-        Gedecrypteerde plaintext string.
+        Decrypted plaintext string.
 
     Raises:
-        ValueError: Als de ciphertext ongeldig is of niet gedecrypt kan worden.
+        ValueError: If the ciphertext is invalid or cannot be decrypted.
     """
     try:
         ciphertext_bytes = base64.b64decode(ciphertext)
         return portal_secrets.decrypt(ciphertext_bytes)
     except Exception as exc:
-        raise ValueError(f"Ongeldige MCP secret ciphertext: {exc}") from exc
+        raise ValueError(f"Invalid MCP secret ciphertext: {exc}") from exc
