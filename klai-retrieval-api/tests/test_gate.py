@@ -96,3 +96,54 @@ class TestGate:
                 bypass, margin = await gate.should_bypass([0.1, 0.2])
                 assert bypass is False
                 assert margin is None
+
+
+class TestGateShadowMode:
+    """evaluate() applies the shadow-mode policy on top of should_bypass()."""
+
+    @staticmethod
+    def _seed_bypass_corpus():
+        # top-1 close, top-2 orthogonal => large margin => would_bypass True
+        gate._reference_queries = [{"query": "q1"}, {"query": "q2"}]
+        gate._reference_vectors = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+
+    @pytest.mark.asyncio
+    async def test_shadow_on_records_but_does_not_bypass(self):
+        """Shadow on (default): would_bypass True but bypassed forced False."""
+        self._seed_bypass_corpus()
+        with (
+            patch.object(gate.settings, "retrieval_gate_enabled", True),
+            patch.object(gate.settings, "retrieval_gate_threshold", 0.1),
+            patch.object(gate.settings, "retrieval_gate_shadow", True),
+        ):
+            decision = await gate.evaluate([0.99, 0.01, 0.0])
+            assert decision.would_bypass is True
+            assert decision.bypassed is False  # shadow suppresses the action
+            assert decision.shadow is True
+            assert decision.margin is not None and decision.margin > 0.1
+
+    @pytest.mark.asyncio
+    async def test_shadow_off_acts_on_recommendation(self):
+        """Shadow off: bypassed follows would_bypass."""
+        self._seed_bypass_corpus()
+        with (
+            patch.object(gate.settings, "retrieval_gate_enabled", True),
+            patch.object(gate.settings, "retrieval_gate_threshold", 0.1),
+            patch.object(gate.settings, "retrieval_gate_shadow", False),
+        ):
+            decision = await gate.evaluate([0.99, 0.01, 0.0])
+            assert decision.would_bypass is True
+            assert decision.bypassed is True  # acts when shadow is off
+            assert decision.shadow is False
+
+    @pytest.mark.asyncio
+    async def test_shadow_off_no_recommendation_does_not_bypass(self):
+        """Shadow off but gate disabled: nothing to act on, bypassed False."""
+        with (
+            patch.object(gate.settings, "retrieval_gate_enabled", False),
+            patch.object(gate.settings, "retrieval_gate_shadow", False),
+        ):
+            decision = await gate.evaluate([0.1, 0.2, 0.3])
+            assert decision.would_bypass is False
+            assert decision.bypassed is False
+            assert decision.margin is None
