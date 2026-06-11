@@ -21,6 +21,21 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from knowledge_ingest import pg_store
+from knowledge_ingest.routes.kb_sources import ChunksSummaryResponse
+
+# -- chunks-summary response contract ---------------------------------------
+
+
+def test_chunks_summary_response_uses_canonical_source_count_key() -> None:
+    response = ChunksSummaryResponse(
+        chunks_by_kb={"kb-a": 12},
+        sources_by_kb={"kb-a": 4},
+    )
+
+    assert response.model_dump() == {
+        "chunks_by_kb": {"kb-a": 12},
+        "sources_by_kb": {"kb-a": 4},
+    }
 
 # -- count_chunks_per_kb ----------------------------------------------------
 

@@ -192,3 +192,29 @@ def test_get_kb_sources_retries_transient_connect_error(monkeypatch) -> None:
 
     assert attempts == 2
     assert result == {"connectors": [], "uploads": []}
+
+
+def test_get_chunks_summary_reads_canonical_source_count_key() -> None:
+    """get_chunks_summary() reads source counts from the canonical response key."""
+    import asyncio
+    from unittest.mock import patch
+
+    import httpx
+
+    from app.services.knowledge_ingest_client import get_chunks_summary
+
+    async def _mock_send(self, request, *args, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "chunks_by_kb": {"kb-a": 7},
+                "sources_by_kb": {"kb-a": 3},
+            },
+            request=request,
+        )
+
+    with patch.object(httpx.AsyncClient, "send", _mock_send):
+        chunks, sources = asyncio.run(get_chunks_summary(org_id="org-test", kb_slugs=["kb-a"]))
+
+    assert chunks == {"kb-a": 7}
+    assert sources == {"kb-a": 3}
