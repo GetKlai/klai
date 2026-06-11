@@ -756,10 +756,11 @@ async def read_artifact_for_enrichment(conn: asyncpg.Connection, artifact_id: st
     second direct-POST could overwrite the raw Qdrant vectors while the
     worker still processed the older content from frozen task args.
 
-    Returns ``None`` if the artifact has been deleted between enqueue and
-    dequeue (e.g. by the connector purge orchestrator). Callers should
-    treat ``None`` as a soft-skip, the same way ``artifact_exists()`` is
-    used by the graphiti task today.
+    Returns ``None`` if the artifact has been deleted or superseded between
+    enqueue and dequeue (e.g. by the connector purge orchestrator or a second
+    direct POST to the same path). Callers should treat ``None`` as a
+    soft-skip, the same way ``artifact_exists()`` is used by the graphiti task
+    today.
 
     SPEC-TI-003-FOLLOWUP-001 AC-1: caller passes the GUC-pinned ``conn``.
     """
@@ -774,8 +775,10 @@ async def read_artifact_for_enrichment(conn: asyncpg.Connection, artifact_id: st
                extra
         FROM knowledge.artifacts
         WHERE id = $1::uuid
+          AND belief_time_end = $2
         """,
         artifact_id,
+        _SENTINEL,
     )
     if row is None:
         return None
@@ -799,6 +802,23 @@ async def read_artifact_for_enrichment(conn: asyncpg.Connection, artifact_id: st
         "belief_time_end": row["belief_time_end"],
         "extra": extra,
     }
+
+
+async def artifact_is_active(conn: asyncpg.Connection, artifact_id: str) -> bool:
+    """Return True iff artifact_id still points at the active row for its path."""
+    if not artifact_id:
+        return False
+    row = await conn.fetchrow(
+        """
+        SELECT 1
+        FROM knowledge.artifacts
+        WHERE id = $1::uuid
+          AND belief_time_end = $2
+        """,
+        artifact_id,
+        _SENTINEL,
+    )
+    return row is not None
 
 
 async def artifact_exists(conn: asyncpg.Connection, artifact_id: str) -> bool:

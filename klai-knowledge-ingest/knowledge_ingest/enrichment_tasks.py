@@ -525,6 +525,16 @@ async def _enrich_document(
         # SPEC-TI-003-FOLLOWUP-001 AC-1: tenant_scoped_connection so kb_config +
         # insert_parent_chunks see the RLS GUC for this org.
         async with tenant_scoped_connection(org_id) as conn:
+            if not await pg_store.artifact_is_active(conn, artifact_id):
+                logger.info(
+                    "enrichment_aborted_artifact_superseded",
+                    artifact_id=artifact_id,
+                    kb_slug=kb_slug,
+                    path=path,
+                    org_id=org_id,
+                )
+                return
+
             extra_payload["visibility"] = await kb_config.get_kb_visibility(conn, org_id, kb_slug)
 
             # SPEC-RAG-PARENT-CHILD-001: persist parents to Postgres NOW so the
@@ -534,8 +544,6 @@ async def _enrich_document(
             # hasn't been switched to chunk_markdown_with_parents yet.
             parent_chunk_ids: list[int | None] = [None] * len(enriched_chunks)
             if parents and parent_index_per_child:
-                from knowledge_ingest import pg_store
-
                 await pg_store.delete_parent_chunks_for_artifact(conn, artifact_id)
                 inserted_ids = await pg_store.insert_parent_chunks(
                     conn,

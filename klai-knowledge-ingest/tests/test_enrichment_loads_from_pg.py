@@ -84,6 +84,46 @@ async def test_read_artifact_returns_none_for_missing():
 
 
 @pytest.mark.asyncio
+async def test_read_artifact_only_loads_active_artifact():
+    """A queued stale enrichment job must not reprocess a superseded artifact."""
+    conn = _make_mock_conn()
+
+    async def _fetchrow(query: str, artifact_id: str, belief_time_end: int):
+        assert "belief_time_end = $2" in query
+        assert artifact_id == "11111111-2222-3333-4444-555555555555"
+        assert belief_time_end == 253402300800
+        return None
+
+    conn.fetchrow = AsyncMock(side_effect=_fetchrow)
+
+    from knowledge_ingest.pg_store import read_artifact_for_enrichment
+
+    result = await read_artifact_for_enrichment(
+        conn,
+        "11111111-2222-3333-4444-555555555555",
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_artifact_is_active_requires_active_sentinel():
+    conn = _make_mock_conn()
+
+    async def _fetchrow(query: str, artifact_id: str, belief_time_end: int):
+        assert "belief_time_end = $2" in query
+        assert artifact_id == "11111111-2222-3333-4444-555555555555"
+        assert belief_time_end == 253402300800
+        return {"?column?": 1}
+
+    conn.fetchrow = AsyncMock(side_effect=_fetchrow)
+
+    from knowledge_ingest.pg_store import artifact_is_active
+
+    assert await artifact_is_active(conn, "11111111-2222-3333-4444-555555555555") is True
+
+
+@pytest.mark.asyncio
 async def test_read_artifact_returns_none_for_empty_id():
     """Defensive: empty/None id short-circuits without a DB hit."""
     conn = _make_mock_conn()
@@ -446,6 +486,76 @@ async def test_load_and_enrich_passes_pg_state_to_enrich_document():
     # extra_payload is the *current* PG extra — not a frozen task arg
     assert captured_kwargs["extra_payload"]["tags"] == ["onboarding"]
     assert captured_kwargs["extra_payload"]["source_type"] == "upload"
+
+
+@pytest.mark.asyncio
+async def test_enrich_document_skips_qdrant_write_when_artifact_superseded():
+    """A running stale job must not overwrite newer raw chunks in Qdrant."""
+    from knowledge_ingest.enrichment import EnrichedChunk
+    from knowledge_ingest.enrichment_tasks import _enrich_document
+
+    conn = _make_mock_conn()
+    enriched = [EnrichedChunk("old c1", "old c1 enriched", "", [])]
+
+    with (
+        patch(
+            "knowledge_ingest.enrichment_tasks.tenant_scoped_connection",
+            return_value=_AsyncContext(conn),
+        ),
+        patch(
+            "knowledge_ingest.enrichment_tasks.enrichment.enrich_chunks",
+            new_callable=AsyncMock,
+            return_value=enriched,
+        ),
+        patch(
+            "knowledge_ingest.enrichment_tasks.embedder.embed",
+            new_callable=AsyncMock,
+            return_value=[[0.1] * 10],
+        ),
+        patch(
+            "knowledge_ingest.enrichment_tasks.sparse_embedder.embed_sparse_batch",
+            new_callable=AsyncMock,
+            return_value=[None],
+        ),
+        patch(
+            "knowledge_ingest.enrichment_tasks.pg_store.artifact_is_active",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_active,
+        patch(
+            "knowledge_ingest.enrichment_tasks.kb_config.get_kb_visibility",
+            new_callable=AsyncMock,
+        ) as mock_visibility,
+        patch(
+            "knowledge_ingest.enrichment_tasks.qdrant_store.upsert_enriched_chunks",
+            new_callable=AsyncMock,
+        ) as mock_upsert,
+        patch(
+            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            new_callable=AsyncMock,
+        ) as mock_status,
+    ):
+        await _enrich_document(
+            org_id="org-1",
+            kb_slug="kb-1",
+            path="docs/race.md",
+            document_text="old c1",
+            chunks=["old c1"],
+            title="Race",
+            artifact_id="11111111-2222-3333-4444-555555555555",
+            user_id=None,
+            extra_payload={
+                "document_summary": "summary",
+                "document_language": "en",
+            },
+            synthesis_depth=0,
+            content_type="unknown",
+        )
+
+    mock_active.assert_awaited_once_with(conn, "11111111-2222-3333-4444-555555555555")
+    mock_visibility.assert_not_called()
+    mock_upsert.assert_not_called()
+    mock_status.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
