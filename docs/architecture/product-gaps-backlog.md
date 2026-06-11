@@ -44,12 +44,13 @@
   `delete_document()`.
 
 Remaining (folded into other gaps, not a temporal bug):
-- `soft_delete_artifact()` still updates PG only (`belief_time_end`); Qdrant
-  hygiene relies on the delete-then-upsert above. If the Qdrant delete fails
+- `soft_delete_artifact()` still updates PG only (`belief_time_end`), but same-path
+  replacement ingest now links the just-closed artifact row via `superseded_by`.
+  Qdrant hygiene relies on the delete-then-upsert above. If the Qdrant delete fails
   after PG commit, divergence is silent — that is `GAP-SYNC-01`.
-- `valid_from`/`valid_until` are in every query's `must_not` but have **no
-  payload index** (Qdrant supports datetime/integer indexes; `is_principal`
-  exists for exactly this) — latency risk at scale, see the improvement plan.
+- `valid_from`/`valid_until` are in every query's `must_not` and now get integer
+  payload indexes during `ensure_collection()`. The broader filter-field audit
+  remains in the improvement plan.
 
 History: [`docs/retros/2026-06-08-temporal-filter-field-mismatch.md`](../retros/2026-06-08-temporal-filter-field-mismatch.md)
 (carries a 2026-06-11 status addendum).
@@ -175,8 +176,9 @@ is a threshold classifier writing an exact-string event log to Postgres.
   and confidence-from-source-count, plus `WITH RECURSIVE` lineage analytics.
 - **Reality:** all four structures exist in `0001_baseline.py`.
   `derivations` is now populated for Docs artifacts when valid `derived_from`
-  UUIDs are present, but production code still has **0 INSERTs** into
-  `entities` / `artifact_entities`; `superseded_by` is only ever set to `NULL`.
+  UUIDs are present, and same-path replacement ingest now writes the
+  `superseded_by` chain. Production code still has **0 INSERTs** into
+  `entities` / `artifact_entities`.
   Entity data that *is* produced (Graphiti) lives in FalkorDB + the Qdrant
   payload, not the PG registry the doc's SQL queries.
 - **Why it matters:** the cascade and confidence calibration the doc presents as
@@ -185,7 +187,8 @@ is a threshold classifier writing an exact-string event log to Postgres.
   no populated PG inputs.
 - **Evidence:** `klai-knowledge-ingest/alembic/versions/0001_baseline.py:115,144-150,213-219,236-250`;
   `klai-knowledge-ingest/knowledge_ingest/pg_store.py` writes `knowledge.derivations`
-  for valid `derived_from` parents, while `superseded_by` remains only cleared.
+  for valid `derived_from` parents and links just-closed same-path artifacts via
+  `superseded_by`.
 
 ### GAP-PROV-02 — `derived_from` wired for Docs, `confidence` a manual label  ·  L  ·  ·
 - **Intended (§3.3):** every artifact keeps a `derived_from` chain (source+span)

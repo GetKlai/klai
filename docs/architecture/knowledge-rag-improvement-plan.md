@@ -9,7 +9,7 @@ Provenance: this is a merge of two independent analyses produced on 2026-06-11:
 
 Evidence markers used throughout: **[doc]** = from repo docs, **[code ✓]** = verified against source on 2026-06-11 with file:line, **[online]** = web research with verified URL, **[not verified]** explicit.
 
-Implementation update (2026-06-11, Codex): Phase 0.3/0.4 first slice landed in code. Scored eval runs now require `reference_answer`, RAGAS receives the full reference answer (no implicit `expected_topics` fallback), shipped suites have `reference_answer`, `expected_chunks` canaries hard-fail before fuzzy scoring, and Grafana alert `rag_eval_canary_dropped` + runbook were added. Remaining before relying on the new numbers: live `manual-canary-debug` verification of the dormant canary markers, then recapture `baseline-v5`.
+Implementation update (2026-06-11, Codex): Phase 0.3/0.4 first slice landed in code. Scored eval runs now require `reference_answer`, RAGAS receives the full reference answer (no implicit `expected_topics` fallback), shipped suites have `reference_answer`, `expected_chunks` canaries hard-fail before fuzzy scoring, and Grafana alert `rag_eval_canary_dropped` + runbook were added. Phase 0.2 temporal hygiene also landed: same-path re-ingest now records the PG `superseded_by` chain after the replacement artifact exists, `valid_from`/`valid_until` get Qdrant integer payload indexes, and tests cover supersession linking plus in-memory Qdrant delete-then-upsert behavior. Remaining before relying on the new eval numbers: live `manual-canary-debug` verification of the dormant canary markers, then recapture `baseline-v5`.
 
 ---
 
@@ -19,7 +19,7 @@ Implementation update (2026-06-11, Codex): Phase 0.3/0.4 first slice landed in c
 
 | Gap | Backlog claim | Actual state 2026-06-11 |
 |---|---|---|
-| `GAP-TEMPORAL-01` | retrieval filters on never-written `invalid_at` | **Fixed on the serving path** (re-verified 2026-06-11): `search.py:71-112` has a dual-contract `must_not` over `invalid_at`/`valid_until`/`valid_at`/`valid_from`, with a passing integration test (`test_search.py:129-218`). The retro's open question is **answered**: both `qdrant_store.upsert_chunks` and `upsert_enriched_chunks` delete all points for `(org, kb, path)` before upserting — same-path re-ingest leaves no stale points (the random `uuid4` point IDs are harmless; delete-by-path-filter is the mechanism, not overwrite-by-ID). Remaining: `soft_delete_artifact` is PG-only and `superseded_by` is never set (`pg_store.py:231-248`), the temporal fields have no payload index, and a failed Qdrant delete after PG commit is silent divergence (→ H1 / GAP-SYNC-01). |
+| `GAP-TEMPORAL-01` | retrieval filters on never-written `invalid_at` | **Fixed on the serving path** (re-verified 2026-06-11): `search.py:71-112` has a dual-contract `must_not` over `invalid_at`/`valid_until`/`valid_at`/`valid_from`, with a passing integration test (`test_search.py:129-218`). The retro's open question is **answered**: both `qdrant_store.upsert_chunks` and `upsert_enriched_chunks` delete all points for `(org, kb, path)` before upserting — same-path re-ingest leaves no stale points (the random `uuid4` point IDs are harmless; delete-by-path-filter is the mechanism, not overwrite-by-ID). Temporal hygiene is now also covered in code: replacement ingests link the just-closed PG artifact row via `superseded_by`, and `valid_from`/`valid_until` get Qdrant integer payload indexes. Remaining risk: a failed Qdrant delete after PG commit is silent divergence (→ H1 / GAP-SYNC-01). |
 | `GAP-RETR-01` | gate inert, reference file missing | `gate_reference.jsonl` **exists** (16-line generic stub) and the gate runs in **shadow mode** (`retrieval_gate_shadow=True`, `config.py:28`), logging `gate_would_bypass` per request; strict mode skips the gate by design (`gate_skipped_reason=strict_mode`, `retrieve.py:213-220`). Blocker is now corpus quality, not existence. |
 | `GAP-TENANCY-01` | `is_tenant` missing | Code sets `is_tenant=True` for **new** collections (`qdrant_store.py:85-102`); the existing prod collection awaits a one-time online migration via `scripts/upgrade_org_id_tenant_index.py`. |
 | `GAP-INGEST-02` | `chunk_type` classified but never read | **Resolved by removal** on 2026-06-08 (`enrichment.py:10-14`, rationale in `docs/research/chunk-type-retrieval-value.md`). Close the gap. ⚠️ The v1 plan's "chunk_type serving experiment" (its quick win #5 and theme 7) is based on this stale claim and has been **dropped** from the merged plan. |
@@ -36,7 +36,7 @@ All other gaps (`LOOP-*`, `PROV-*`, `SYNC-01`, `TAX-*`, `MCP-01`, `PRIV-01`, `EV
 ### Top 5 we SHOULD do
 
 1. **Fix evaluation first (GAP-EVAL-01 + 02) — code slice landed, live baseline pending.** The 2026-06-11 patch requires `reference_answer` for scored suite runs, removes the implicit topic-label fallback, and hard-fails `expected_chunks` canaries before fuzzy scoring. Every activation decision (evidence tier, gate, taxonomy, Tier-3) still gates on these numbers, so the next operational step is live canary verification + recapturing `baseline-v5`.
-2. **Finish temporal correctness — now a smaller item.** Re-verification (2026-06-11) showed the serving path is safe: dual-contract filter + delete-then-upsert inside both Qdrant upsert functions. What's left is hygiene, not a bug: the end-to-end ingest→supersede→retrieve regression test, `superseded_by` actually being set, and a payload index on the temporal fields. The "may fail silently" residual moved to the dual-store consistency item (#4).
+2. **Temporal correctness is now mostly closed; keep the consistency guard next.** Re-verification (2026-06-11) showed the serving path is safe: dual-contract filter + delete-then-upsert inside both Qdrant upsert functions. The follow-up slice now links superseded PG artifacts, adds temporal payload indexes, and tests same-path re-ingest cleanup. The remaining material risk is dual-store divergence if Qdrant delete/upsert fails after PG state changes (#4).
 3. **Force the evidence-tier shadow-mode decision.** Shadow has been running since March, pays `deepcopy + apply()` CPU on every request, and the FOLLOWUP-001 deadline passed without the A/B ever being built **[code ✓]**. Activate / temporal-only / decommission / flags-off — but decide.
 4. **PG↔Qdrant consistency watch (light GAP-SYNC-01).** Not the outbox yet: a nightly read-only reconciliation count + alert. This codebase has a documented history of silent divergence; detection is one job, no write-path surgery.
 5. **Run the Qdrant `is_tenant` migration** on the existing collection (script exists; Qdrant supports zero-downtime online reindex — [Qdrant FAQ](https://qdrant.tech/documentation/faq/qdrant-fundamentals/) **[online]**). This is the recall/scale guarantee the single-collection decision was built on.
@@ -125,21 +125,30 @@ scribe-api `POST /v1/transcriptions/{id}/ingest` (`transcribe.py::ingest_transcr
 > so same-path re-ingest physically removes superseded chunks and the random `uuid4`
 > point IDs are harmless. The serving bug is closed; what's left is hygiene.
 
-- **Problem (residual):** `soft_delete_artifact()` updates PG only — `superseded_by` is
-  never set, so the PG supersession history is incomplete; there is no end-to-end
-  regression test covering ingest→supersede→retrieve; and the temporal filter fields
-  carry no payload index. The only stale-serving path left is a Qdrant delete that
-  fails after PG commit — that is dual-store divergence, owned by H1/H2 (GAP-SYNC-01).
-- **Why now:** cheap to finish while verified knowledge is fresh; the regression test is
-  the guard that keeps the now-correct behavior correct.
-- **Target:** (1) integration test ingest → supersede → retrieve asserts the old chunk
-  is not served; (2) `soft_delete_artifact` sets `superseded_by` (couples to H3);
-  (3) datetime/integer index on the temporal fields. Keep dual-contract (legacy +
-  current) filter support until payloads are migrated (v1 point — adopted).
+- **Status (2026-06-11): code slice landed.** `soft_delete_artifact()` returns the
+  close timestamp; `ingest_document()` creates the replacement artifact and then links
+  rows closed at that timestamp via `set_superseded_by_for_path()`. `valid_from` and
+  `valid_until` now get Qdrant integer payload indexes. Tests cover PG supersession
+  linking, ingest propagation, in-memory Qdrant re-ingest cleanup, and the existing
+  retrieval temporal filter contract.
+- **Problem (residual):** the only stale-serving path left is a Qdrant delete/upsert
+  failure after PG state changes — that is dual-store divergence, owned by H1/H2
+  (`GAP-SYNC-01`).
+- **Why now:** done while verified knowledge was fresh; the regression tests keep the
+  now-correct behavior correct.
+- **Target:** keep dual-contract (legacy + current) filter support until payloads are
+  migrated (v1 point — adopted). Next reliability work is the PG↔Qdrant consistency
+  watch, not more temporal filter surgery.
 - **Code:** `pg_store.py:231-248` (`superseded_by`), `qdrant_store.py` (index creation),
   new test in ingest or retrieval-api test suite. Retrieval side is done.
-- **Data/config:** no migration; add datetime/`is_principal` payload index on `valid_until` (datetime index Qdrant v1.8+, `is_principal` v1.11+ — [indexing docs](https://qdrant.tech/documentation/manage-data/indexing/) **[online]**). The temporal fields are in every query's `must_not` but **unindexed today** **[code ✓]** — see C2.
-- **Tests:** integration test ingest → supersede → retrieve: old chunk not served (exactly what the retro proposed). Keep `test_search.py::test_qdrant_temporal_filter_*` green. Unit: `belief_time_end` sentinel maps to active payload (v1).
+- **Data/config:** no migration; existing collections create the new Qdrant indexes on
+  `ensure_collection()`. Current payloads store these fields as epoch integers, so the
+  index type is `integer`.
+- **Tests:** `test_pg_store.py::test_set_superseded_by_for_path_links_only_just_closed_records`,
+  `test_ingest_content_hash_dedup.py::test_proceeds_when_content_changed`,
+  `test_personal_kb_e2e.py::test_upsert_chunks_reingest_removes_old_points_for_same_path`,
+  `test_qdrant_link_counts.py::test_ensure_collection_creates_temporal_indexes_when_missing`,
+  and the existing `test_search.py::test_qdrant_temporal_filter_*` contract.
 - **Rollout/metrics:** no flag; one-time audit query (Qdrant points per artifact whose PG row is superseded) as baseline and regression metric. Optional: `temporal_filter_contract_version` in the decision record (v1).
 - **Failure modes:** batched `set_payload` on large artifacts; clock skew; mixed ISO/epoch fields; legacy payloads missing both contracts (v1).
 - **Effort: S.** Confidence: high — filter, delete-then-upsert, and tests all verified against source 2026-06-11.
@@ -181,7 +190,7 @@ scribe-api `POST /v1/transcriptions/{id}/ingest` (`transcribe.py::ingest_transcr
 
 #### C2. Filter-field index audit
 
-Every payload key used in filters must have an index — unindexed filter fields break Qdrant's cardinality estimator ("extremely slow search times or low accuracy results", [filtering article](https://qdrant.tech/articles/vector-search-filtering/) **[online]**). `valid_from`/`valid_until` are in every query's `must_not` and unindexed today **[code ✓]** → add datetime/integer index (ties into A1). Audit the other ~16 indexed fields vs actual filter usage. **Effort: S.**
+Every payload key used in filters must have an index — unindexed filter fields break Qdrant's cardinality estimator ("extremely slow search times or low accuracy results", [filtering article](https://qdrant.tech/articles/vector-search-filtering/) **[online]**). `valid_from`/`valid_until` are now indexed via A1; audit the other filter fields against actual query/delete filters. **Effort: S.**
 
 ### Theme D — Evaluation quality
 
@@ -283,7 +292,14 @@ Activate `knowledge.embedding_queue` (schema exists, 0 INSERTs **[code ✓]**): 
 
 #### H3. Provenance population (GAP-PROV-01/02)
 
-`derivations` is populated for Docs artifacts with valid `derived_from` **[code ✓]**; `entities`/`artifact_entities` 0 INSERTs; `superseded_by` only ever NULLed. Plan: (1) actually set `superseded_by` in `soft_delete_artifact` on same-path re-ingest (S, couples to A1); (2) fill the entity registry from Graphiti output (entities already extracted; only the PG write is missing) — **only when a consumer exists** (MCP `provenance_chain`/`related_concepts`, Theme I); (3) confidence-from-source-count: defer (corroboration research lists 3 unmet prerequisites **[doc]**). Cross-org `derived_from` rejection test exists conceptually (v1) — keep. **Effort: S / M–L / deferred.**
+`derivations` is populated for Docs artifacts with valid `derived_from` **[code ✓]**;
+same-path re-ingest now sets `superseded_by` after the replacement artifact exists
+**[code ✓]**; `entities`/`artifact_entities` still have 0 INSERTs. Plan: (1) fill the
+entity registry from Graphiti output (entities already extracted; only the PG write is
+missing) — **only when a consumer exists** (MCP `provenance_chain`/`related_concepts`,
+Theme I); (2) confidence-from-source-count: defer (corroboration research lists 3
+unmet prerequisites **[doc]**). Cross-org `derived_from` rejection test exists
+conceptually (v1) — keep. **Effort: M–L / deferred.**
 
 ### Theme I — MCP read tools (GAP-MCP-01)
 
@@ -319,7 +335,7 @@ Activate `knowledge.embedding_queue` (schema exists, 0 INSERTs **[code ✓]**): 
 | # | Item | Effort | Theme |
 |---|---|---|---|
 | 0.1 | Refresh backlog/docs (5 shifted gaps incl. chunk_type closure) | S | §0 |
-| 0.2 | Temporal: ~~verify re-ingest delete behavior~~ (done 2026-06-11: delete-then-upsert confirmed in both upsert paths) → add ingest→supersede→retrieve regression test + `superseded_by` + temporal index | S | A1 |
+| 0.2 | ~~Temporal hygiene~~ landed 2026-06-11: delete-then-upsert confirmed, PG `superseded_by` chain linked on replacement ingest, temporal Qdrant indexes added, regression tests added | S | A1 |
 | 0.3 | Eval: ~~reference answers + suite schema~~ landed; source review + **new baseline-v5** pending | S–M | D1 |
 | 0.4 | Eval: ~~canary hard-fail + alert~~ landed; live canary debug pending | S | D2 |
 | 0.5 | PG↔Qdrant reconciliation count (read-only, shadow) + alert | M | H1 |

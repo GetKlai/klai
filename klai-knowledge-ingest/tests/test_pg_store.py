@@ -9,7 +9,7 @@ directly.
 """
 
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -226,7 +226,10 @@ async def test_get_active_content_hash_only_uses_synced_artifacts():
 @pytest.mark.asyncio
 async def test_soft_delete_updates_belief_time_end():
     conn = _make_conn()
-    await pg_store.soft_delete_artifact(conn, "org123", "personal", "note.md")
+    with patch("knowledge_ingest.pg_store.time.time", return_value=1_700_000_000):
+        result = await pg_store.soft_delete_artifact(conn, "org123", "personal", "note.md")
+
+    assert result == 1_700_000_000
     conn.execute.assert_called_once()
     call_args = conn.execute.call_args[0]
     assert "UPDATE knowledge.artifacts" in call_args[0]
@@ -246,6 +249,35 @@ async def test_soft_delete_only_updates_active_records():
     sql = conn.execute.call_args[0][0]
     # Must filter on sentinel to avoid touching already-deleted records
     assert str(_SENTINEL) in sql or "$5" in sql
+
+
+@pytest.mark.asyncio
+async def test_set_superseded_by_for_path_links_only_just_closed_records():
+    conn = _make_conn()
+
+    await pg_store.set_superseded_by_for_path(
+        conn,
+        "org123",
+        "kb",
+        "path.md",
+        1_700_000_000,
+        "replacement-artifact-id",
+    )
+
+    conn.execute.assert_called_once()
+    call_args = conn.execute.call_args[0]
+    sql = call_args[0]
+    assert "UPDATE knowledge.artifacts" in sql
+    assert "SET superseded_by = $1" in sql
+    assert "belief_time_end = $5" in sql
+    assert "superseded_by IS NULL" in sql
+    assert call_args[1:] == (
+        "replacement-artifact-id",
+        "org123",
+        "kb",
+        "path.md",
+        1_700_000_000,
+    )
 
 
 @pytest.mark.asyncio

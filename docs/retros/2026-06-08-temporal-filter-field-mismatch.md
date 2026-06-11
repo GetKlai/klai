@@ -33,10 +33,10 @@ for the one case physical deletion cannot cover (a Qdrant delete that fails
 after the PG commit — that residual is the dual-store consistency gap,
 `GAP-SYNC-01`). Remaining loose ends, tracked in
 `docs/architecture/knowledge-rag-improvement-plan.md` (theme A1):
-`soft_delete_artifact` still updates PG only (acceptable given delete-then-upsert,
-but `superseded_by` is never set), the recommended end-to-end
-ingest→supersede→retrieve test does not exist yet, and `valid_from`/`valid_until`
-have no payload index.
+same-path replacement ingest now records the PG `superseded_by` chain,
+`valid_from`/`valid_until` have Qdrant integer payload indexes, and regression
+tests cover the delete-then-upsert behavior. The remaining loose end is
+dual-store consistency if a Qdrant delete/upsert fails after PG state changes.
 
 ---
 

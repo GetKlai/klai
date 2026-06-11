@@ -309,7 +309,7 @@ async def get_personal_artifact(
 
 async def soft_delete_artifact(
     conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
-) -> None:
+) -> int:
     """Set belief_time_end = now for all active artifacts matching this path."""
     now = int(time.time())
     await conn.execute(
@@ -324,6 +324,32 @@ async def soft_delete_artifact(
         kb_slug,
         path,
         _SENTINEL,
+    )
+    return now
+
+
+async def set_superseded_by_for_path(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    path: str,
+    belief_time_end: int,
+    superseded_by: str,
+) -> None:
+    """Link artifacts closed at ``belief_time_end`` to their replacement artifact."""
+    await conn.execute(
+        """
+        UPDATE knowledge.artifacts
+        SET superseded_by = $1
+        WHERE org_id = $2 AND kb_slug = $3 AND path = $4
+          AND belief_time_end = $5
+          AND superseded_by IS NULL
+        """,
+        superseded_by,
+        org_id,
+        kb_slug,
+        path,
+        belief_time_end,
     )
 
 

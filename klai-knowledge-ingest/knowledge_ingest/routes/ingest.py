@@ -515,8 +515,9 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     else:
         merged_tags = llm_tags
 
-    # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row)
-    await pg_store.soft_delete_artifact(conn, req.org_id, req.kb_slug, req.path)
+    # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row).
+    # The replacement artifact must exist before superseded_by can point to it.
+    superseded_at = await pg_store.soft_delete_artifact(conn, req.org_id, req.kb_slug, req.path)
 
     # Derive user_id from canonical personal-KB slug when the caller did not
     # supply one. Connectors like ``web_crawler`` ingest into a personal KB
@@ -568,6 +569,14 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         content_hash=content_hash,
         index_status="pending",
         derived_from=kf["derived_from"],
+    )
+    await pg_store.set_superseded_by_for_path(
+        conn,
+        req.org_id,
+        req.kb_slug,
+        req.path,
+        superseded_at,
+        artifact_id,
     )
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: record image-key

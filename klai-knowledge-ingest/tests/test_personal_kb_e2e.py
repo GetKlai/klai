@@ -11,8 +11,9 @@ content indexed with user_id=A cannot be retrieved when filtering for user_id=B.
 """
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, AsyncMock
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     Distance,
@@ -153,6 +154,45 @@ async def test_non_personal_chunk_has_no_user_id(mem_client):
     points, _ = await mem_client.scroll(COLLECTION, with_payload=True, limit=10)
     assert len(points) == 1
     assert "user_id" not in (points[0].payload or {})
+
+
+@pytest.mark.asyncio
+async def test_upsert_chunks_reingest_removes_old_points_for_same_path(mem_client):
+    """Re-ingest deletes stale points before inserting replacement chunks."""
+    with patch.object(qs_module, "get_client", return_value=mem_client):
+        await qs_module.upsert_chunks(
+            org_id="org-test",
+            kb_slug="team-docs",
+            path="docs/page.md",
+            chunks=["Old procedure."],
+            vectors=[_unit_vector()],
+            artifact_id="art-old",
+        )
+        await qs_module.upsert_chunks(
+            org_id="org-test",
+            kb_slug="team-docs",
+            path="docs/page.md",
+            chunks=["New procedure."],
+            vectors=[_unit_vector()],
+            artifact_id="art-new",
+        )
+
+    points, _ = await mem_client.scroll(
+        COLLECTION,
+        scroll_filter=Filter(
+            must=[
+                FieldCondition(key="org_id", match=MatchValue(value="org-test")),
+                FieldCondition(key="kb_slug", match=MatchValue(value="team-docs")),
+                FieldCondition(key="path", match=MatchValue(value="docs/page.md")),
+            ]
+        ),
+        with_payload=True,
+        limit=10,
+    )
+
+    assert len(points) == 1
+    assert points[0].payload["artifact_id"] == "art-new"
+    assert points[0].payload["text"] == "New procedure."
 
 
 @pytest.mark.asyncio

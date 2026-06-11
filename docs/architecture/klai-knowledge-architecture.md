@@ -484,8 +484,9 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 >   **0 INSERTs** in production code — GAP-PROV-01. The `WITH RECURSIVE` invalidation
 >   cascade and entity analytics the schema is designed for cannot return data. Entity
 >   data that *is* produced (Graphiti) lives in FalkorDB + the Qdrant payload, not here.
-> - `superseded_by`: only ever set to `NULL`; supersession is a path-based
->   `belief_time_end` soft-delete, not a supersession chain.
+> - `superseded_by`: same-path replacement ingest now links the just-closed
+>   artifact row to the replacement artifact. This gives PG a supersession chain
+>   for ordinary re-ingest, but broader entity/provenance consumers remain partial.
 > - `embedding_queue` (transactional outbox): **0 INSERTs** — the write path is a direct
 >   PG-then-Qdrant write with no outbox, retry, or nightly reconciliation — GAP-SYNC-01.
 > - **Temporal-validity bug — FIXED 2026-06-11 on the serving path:** retrieval now uses
@@ -494,8 +495,9 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 >   fields, and both Qdrant upsert paths delete all points for `(org, kb, path)` before
 >   re-upserting, so same-path re-ingest leaves no stale points. What remains:
 >   `soft_delete_artifact()` updates PG only (Qdrant hygiene relies on delete-then-upsert;
->   a failed Qdrant call after PG commit is silent divergence → GAP-SYNC-01), and the
->   temporal fields carry no payload index. History:
+>   a failed Qdrant call after PG commit is silent divergence → GAP-SYNC-01). The
+>   `valid_from`/`valid_until` payload fields now get integer indexes during
+>   `ensure_collection()`. History:
 >   [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md) (with 2026-06-11
 >   status addendum).
 

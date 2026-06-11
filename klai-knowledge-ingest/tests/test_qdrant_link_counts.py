@@ -98,6 +98,41 @@ async def test_ensure_collection_creates_incoming_link_count_index_when_missing(
 
 
 @pytest.mark.asyncio
+async def test_ensure_collection_creates_temporal_indexes_when_missing():
+    """valid_from/valid_until integer indexes support temporal filter performance."""
+    existing_fields = {
+        "org_id",
+        "kb_slug",
+        "artifact_id",
+        "content_type",
+        "user_id",
+        "entity_uuids",
+    }
+
+    with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_client.get_collections = AsyncMock(
+            return_value=MagicMock(collections=[_mock_collection_entry("klai_knowledge")])
+        )
+        mock_client.get_collection = AsyncMock(return_value=_mock_collection_info(existing_fields))
+        mock_client.create_payload_index = AsyncMock()
+
+        await ensure_collection()
+
+        calls = mock_client.create_payload_index.call_args_list
+        temporal_calls = {
+            c.kwargs.get("field_name"): c.kwargs.get("field_schema")
+            for c in calls
+            if c.kwargs.get("field_name") in {"valid_from", "valid_until"}
+        }
+        assert temporal_calls == {
+            "valid_from": "integer",
+            "valid_until": "integer",
+        }
+
+
+@pytest.mark.asyncio
 async def test_ensure_collection_creates_org_id_as_tenant_index_when_missing():
     """org_id is created as a tenant index (is_tenant=True) for new collections.
 
@@ -184,6 +219,8 @@ async def test_ensure_collection_skips_indexes_when_already_present():
         "content_label",
         "source_label",
         "heading_path",
+        "valid_from",
+        "valid_until",
     }
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:

@@ -146,6 +146,15 @@ async def ensure_collection() -> None:
             collection=COLLECTION,
         )
 
+    for field in ("valid_from", "valid_until"):
+        if field not in indexed_fields:
+            await client.create_payload_index(
+                COLLECTION,
+                field_name=field,
+                field_schema="integer",
+            )
+            logger.info("qdrant_payload_index_created", field=field, collection=COLLECTION)
+
 
 # Audit 2026-05-06 finding 4: deny-list of extra_payload keys that the
 # pipeline carries through Procrastinate task args + PG `artifacts.extra`

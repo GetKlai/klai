@@ -86,12 +86,20 @@ async def test_proceeds_when_content_changed():
             new_callable=AsyncMock,
             return_value=old_hash,  # different from current content
         ),
-        patch("knowledge_ingest.pg_store.soft_delete_artifact", new_callable=AsyncMock),
+        patch(
+            "knowledge_ingest.pg_store.soft_delete_artifact",
+            new_callable=AsyncMock,
+            return_value=1_700_000_000,
+        ) as mock_soft_delete,
         patch(
             "knowledge_ingest.pg_store.create_artifact",
             new_callable=AsyncMock,
             return_value="artifact-uuid-1",
-        ),
+        ) as mock_create,
+        patch(
+            "knowledge_ingest.pg_store.set_superseded_by_for_path",
+            new_callable=AsyncMock,
+        ) as mock_set_superseded_by,
         patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
         patch(
             "knowledge_ingest.pg_store.set_artifact_ingest_status",
@@ -141,6 +149,16 @@ async def test_proceeds_when_content_changed():
         result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
+    mock_soft_delete.assert_awaited_once_with(conn, req.org_id, req.kb_slug, req.path)
+    mock_create.assert_awaited_once()
+    mock_set_superseded_by.assert_awaited_once_with(
+        conn,
+        req.org_id,
+        req.kb_slug,
+        req.path,
+        1_700_000_000,
+        "artifact-uuid-1",
+    )
 
 
 @pytest.mark.asyncio
