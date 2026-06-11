@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'klai-portal/backend/**'
+      - 'klai-libs/citations/**'
       - 'klai-libs/connector-credentials/**'
       - 'klai-libs/kb-slugs/**'
       - '.github/workflows/portal-api.yml'
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths:
       - 'klai-portal/backend/**'
+      - 'klai-libs/citations/**'
       - 'klai-libs/connector-credentials/**'
       - 'klai-libs/kb-slugs/**'
       - '.github/workflows/portal-api.yml'

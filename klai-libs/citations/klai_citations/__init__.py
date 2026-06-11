@@ -422,32 +422,48 @@ def _looks_like_model_source_title_line(line: str, source_titles: set[str]) -> b
 
 
 def _renumber_ordered_list_runs(text: str) -> str:
-    """Renumber copied mid-document ordered-list excerpts to clean local lists."""
+    """Renumber copied mid-document ordered-list excerpts to clean local lists.
+
+    Numbered lines that continue the document-level sequence are left
+    untouched: form-style answers alternate "N. question" and answer lines,
+    so every numbered line is an isolated run, and stripping/renumbering
+    those mangles the fixed template layout (Voys feedback #4/#21, BT-ticket
+    form lost its "2." to "8." numbering). Only runs that neither start at 1
+    nor continue the preceding numbered line are treated as copied excerpts.
+    """
     lines = text.splitlines()
     output: list[str] = []
     run: list[str] = []
+    last_list_number = 0
 
     def flush_run() -> None:
-        nonlocal run
+        nonlocal run, last_list_number
         if not run:
             return
         numbers = [int(match.group(2)) for line in run if (match := _ORDERED_LIST_LINE_RE.match(line))]
-        expected = list(range(1, len(run) + 1))
-        if len(run) == 1 and numbers and numbers[0] != 1:
+        starts_fresh = numbers == list(range(1, len(run) + 1))
+        continues_document_list = numbers == list(
+            range(last_list_number + 1, last_list_number + 1 + len(run))
+        )
+        if starts_fresh or continues_document_list:
+            output.extend(run)
+            last_list_number = numbers[-1]
+        elif len(run) == 1:
+            # Unanchored single mid-list line: drop the copied number.
             match = _ORDERED_LIST_LINE_RE.match(run[0])
             if match:
                 output.append(f"{match.group(1)}{match.group(4).lstrip()}")
             else:
                 output.extend(run)
-        elif numbers and numbers != expected:
+        else:
+            # Unanchored mid-document excerpt: renumber as a clean local list.
             for index, line in enumerate(run, 1):
                 match = _ORDERED_LIST_LINE_RE.match(line)
                 if match:
                     output.append(f"{match.group(1)}{index}{match.group(3)}{match.group(4)}")
                 else:
                     output.append(line)
-        else:
-            output.extend(run)
+            last_list_number = len(run)
         run = []
 
     for line in lines:
@@ -503,7 +519,9 @@ def strip_model_citation_artifacts(
     cleaned = _PAREN_CITATION_RE.sub("", cleaned)
     cleaned = _BARE_NUMBER_RUN_RE.sub("", cleaned)
     cleaned = _RAW_URL_RE.sub("", cleaned)
-    cleaned = re.sub(r"\s+\n", "\n", cleaned)
+    # Trailing whitespace only — `\s+\n` would also swallow blank lines and
+    # collapse paragraph/form layout into one wall of text (Voys feedback #4/#21).
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"[ \t]+([.,;:!?])", r"\1", cleaned)
     cleaned = re.sub(r"\(\s*\)", "", cleaned)

@@ -1047,3 +1047,80 @@ def test_trusted_source_composition_uses_evidence_items_and_strips_model_source_
         }
     ]
     assert composed.decision["rejected"]
+
+
+def test_strip_preserves_blank_lines_between_paragraphs() -> None:
+    """Blank lines are answer formatting, not citation artifacts.
+
+    Regression (Voys feedback #4/#21): the trailing-whitespace cleanup used
+    ``\\s+\\n`` which also swallowed every blank line, collapsing template-
+    driven forms into a single unformatted wall of text.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "Hello BT,\n\n"
+        "1. What is the name of your company?\nVOYS TELECOM\n\n"
+        "2. What is your Corp ID?\n01003911"
+    )
+
+    assert strip_model_citation_artifacts(text) == text
+
+
+def test_strip_keeps_form_numbering_separated_by_answer_lines() -> None:
+    """Numbered question lines that continue the document sequence stay numbered.
+
+    Regression (Voys feedback #4/#21): a BT-ticket form alternates "N. question"
+    and answer lines, so every numbered line is an isolated single-line run.
+    The mid-document-excerpt heuristic stripped the numbers from "2." to "8.",
+    mangling the fixed template layout.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "1. What is the name of your company?\nVOYS TELECOM\n\n"
+        "2. What is your Corp ID?\n01003911\n\n"
+        "3. What product are you reporting a fault on?\nAmsterdam port 1/16\n\n"
+        "8. Call examples:\nzie hieronder"
+    )
+
+    cleaned = strip_model_citation_artifacts(text)
+    assert "2. What is your Corp ID?" in cleaned
+    assert "3. What product are you reporting a fault on?" in cleaned
+    # "8." does not continue "3." — it is renumber-exempt only when the
+    # sequence continues; a jump still reads as part of the same form when
+    # the answer skipped questions, so it must at least not break earlier
+    # numbering. The contiguous-sequence lines above are the contract.
+
+
+def test_strip_keeps_contiguous_run_continuing_document_sequence() -> None:
+    """A contiguous numbered run continuing the preceding list stays as-is."""
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "1. Open Admin > Gebruikers.\n"
+        "Daarna verschijnt het formulier.\n"
+        "2. Typ het werk-emailadres.\n"
+        "3. Selecteer de startrol."
+    )
+
+    cleaned = strip_model_citation_artifacts(text)
+    assert "2. Typ het werk-emailadres." in cleaned
+    assert "3. Selecteer de startrol." in cleaned
+
+
+def test_strip_still_renumbers_unanchored_mid_document_excerpt() -> None:
+    """Copied mid-list excerpts without a preceding list still get cleaned."""
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "Voeg stap voor stap toe:\n"
+        "3. Typ het werk-emailadres.\n"
+        "4. Selecteer de startrol.\n"
+        "6. De gebruiker klikt op de link."
+    )
+
+    cleaned = strip_model_citation_artifacts(text)
+    assert "1. Typ het werk-emailadres." in cleaned
+    assert "2. Selecteer de startrol." in cleaned
+    assert "3. De gebruiker klikt op de link." in cleaned
