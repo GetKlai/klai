@@ -217,6 +217,49 @@ describe('FeedbackItemDetailPanel update button label', () => {
   })
 })
 
+describe('FeedbackItemDetailPanel bug prompt', () => {
+  it('adds a root-cause stopgate before debugging a bug item', async () => {
+    testState.item = itemWithNotificationState('not_needed', {
+      kind: 'bug',
+      title: 'Chat restarts halfway through a template',
+      summary: 'Answer repeats itself after step 8.',
+      status: 'open',
+    })
+
+    render(
+      <FeedbackItemDetailPanel
+        itemId={12}
+        fmtDate={(value) => value ?? '-'}
+        onClose={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(screen.getByRole('heading', { name: 'Debug instructions' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy debug instructions' }))
+
+    await waitFor(() => {
+      expect(clipboardWriteText).toHaveBeenCalledWith(
+        expect.stringContaining('Root-cause stopgate'),
+      )
+    })
+    expect(clipboardWriteText).toHaveBeenCalledWith(
+      expect.stringContaining('at least 3 competing explanations'),
+    )
+    expect(clipboardWriteText).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'what production fact would make this fix invalid',
+      ),
+    )
+    expect(clipboardWriteText).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'routing, model choice, output budget, retries, caching',
+      ),
+    )
+  })
+})
+
 describe('FeedbackItemDetailPanel feature prompt', () => {
   it('adds an LLM prompt step before completing a feature request', async () => {
     testState.item = itemWithNotificationState('not_needed', {
