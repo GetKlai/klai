@@ -100,6 +100,27 @@ async def ensure_collection() -> None:
             is_tenant=True,
             collection=COLLECTION,
         )
+    else:
+        # GAP-TENANCY-01 verifier: report (read-only, never rebuild) whether
+        # the existing org_id index is a tenant index. A pre-upgrade
+        # collection keeps a plain keyword index until the one-time online
+        # migration via scripts/upgrade_org_id_tenant_index.py runs; the
+        # warning makes that state visible in VictoriaLogs on every startup.
+        org_id_params = getattr(
+            (collection_info.payload_schema or {}).get("org_id"), "params", None
+        )
+        org_id_is_tenant = getattr(org_id_params, "is_tenant", None) is True
+        log = logger.info if org_id_is_tenant else logger.warning
+        log(
+            "qdrant_org_id_tenant_index_status",
+            is_tenant=org_id_is_tenant,
+            collection=COLLECTION,
+            remediation=(
+                None
+                if org_id_is_tenant
+                else "run scripts/upgrade_org_id_tenant_index.py (one-time online migration)"
+            ),
+        )
 
     for field in (
         "kb_slug",

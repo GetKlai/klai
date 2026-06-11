@@ -200,6 +200,61 @@ async def test_ensure_collection_does_not_recreate_existing_org_id_index():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("is_tenant_value", "expected_is_tenant", "expected_level"),
+    [
+        (True, True, "info"),
+        (False, False, "warning"),
+        (None, False, "warning"),
+    ],
+    ids=["tenant-index", "plain-keyword-index", "params-without-is-tenant"],
+)
+async def test_qdrant_org_id_index_reports_tenant_status(
+    is_tenant_value, expected_is_tenant, expected_level
+):
+    """GAP-TENANCY-01 verifier: existing org_id index status is logged read-only.
+
+    A tenant index logs info; a plain pre-upgrade keyword index logs a warning
+    with the migration script as remediation. Never any rebuild call.
+    """
+    existing_fields = {"org_id", "kb_slug", "artifact_id"}
+    info = _mock_collection_info(existing_fields)
+    org_params = MagicMock()
+    org_params.is_tenant = is_tenant_value
+    info.payload_schema["org_id"].params = org_params
+
+    with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_client.get_collections = AsyncMock(
+            return_value=MagicMock(collections=[_mock_collection_entry("klai_knowledge")])
+        )
+        mock_client.get_collection = AsyncMock(return_value=info)
+        mock_client.create_payload_index = AsyncMock()
+        mock_client.delete_payload_index = AsyncMock()
+
+        with patch("knowledge_ingest.qdrant_store.logger") as mock_logger:
+            await ensure_collection()
+
+        status_calls = [
+            c
+            for level in ("info", "warning")
+            for c in getattr(mock_logger, level).call_args_list
+            if c.args and c.args[0] == "qdrant_org_id_tenant_index_status"
+        ]
+        assert len(status_calls) == 1
+        call = status_calls[0]
+        assert call.kwargs["is_tenant"] is expected_is_tenant
+        level_calls = getattr(mock_logger, expected_level).call_args_list
+        assert call in level_calls
+        if expected_is_tenant:
+            assert call.kwargs["remediation"] is None
+        else:
+            assert "upgrade_org_id_tenant_index" in call.kwargs["remediation"]
+        mock_client.delete_payload_index.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_ensure_collection_skips_indexes_when_already_present():
     """When source_url and incoming_link_count are already indexed, skip creation."""
     all_fields = {
