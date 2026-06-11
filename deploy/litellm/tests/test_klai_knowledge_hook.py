@@ -5665,6 +5665,124 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert not hasattr(final.choices[0].delta, "sources")
 
     @pytest.mark.asyncio
+    async def test_streaming_flush_never_replays_streamed_answer(self, monkeypatch):
+        """The final flush delta must never repeat text the user already saw.
+
+        Live regression (Voys feedback #21, 2026-06-11): a template-driven
+        "BT ticket" form streamed up to "Date/time " (step 8), where the first
+        literal "[" made the stream guard buffer the rest. At flush the citation
+        cleaner renumbered the isolated "2."–"8." question lines and collapsed
+        blank lines, so the cleaned answer no longer matched the streamed
+        prefix and remove_already_streamed_prefix fell back to replaying the
+        FULL cleaned answer: the user saw the form restart at "Hello BT" as one
+        unformatted wall of text.
+        """
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "render_mode": "streaming_guard",
+                    "allowed_image_urls": [],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "BT Cloud Work",
+                            "url": "https://wiki.example/bt",
+                        }
+                    ],
+                    "citation_chunks": [
+                        {
+                            "title": "BT Cloud Work",
+                            "source_url": "https://wiki.example/bt",
+                            "text": (
+                                "BT ticket template with Corp ID examples for "
+                                "the VOYS TELECOM company name."
+                            ),
+                        }
+                    ],
+                }
+            }
+        }
+
+        chunks = [
+            # Isolated numbered question lines: the citation cleaner's
+            # ordered-list renumbering strips "2."/"8." from these, and
+            # "examples :" loses its pre-colon space — both non-whitespace
+            # changes INSIDE the already-streamed region.
+            "Hello BT,\n\n1. What is the name of your company?\nVOYS TELECOM\n\n",
+            "2. What is your Corp ID?\n01003911\n\n",
+            "8. Call examples : Please provide exact timestamps:\n\nDate/time ",
+            # First "[" → stream guard buffers from here until flush.
+            "[yyyy-mm-dd hh:mm]:\n2026-06-11 08:08\n\nKind regards,\n[name]",
+        ]
+        items = [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content=chunk), finish_reason=None
+                    )
+                ]
+            )
+            for chunk in chunks
+        ]
+        items.append(
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content=""), finish_reason="stop"
+                    )
+                ]
+            )
+        )
+
+        async def stream():
+            for item in items:
+                yield item
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
+        ]
+
+        visible = "".join(
+            item.choices[0].delta.content or ""
+            for item in streamed
+            if item.choices and getattr(item.choices[0], "delta", None) is not None
+        )
+        assert visible.count("Hello BT,") == 1, (
+            "flush delta replayed the already-streamed answer:\n" + visible
+        )
+        assert visible.count("01003911") == 1
+        # The buffered tail (template bracket onward) must still be delivered.
+        assert "[yyyy-mm-dd hh:mm]:" in visible
+        assert "2026-06-11 08:08" in visible
+        assert "Kind regards," in visible
+        # Sources footer still appended exactly once.
+        assert visible.count("**Bronnen**") == 1
+        assert "- [BT Cloud Work](https://wiki.example/bt)" in visible
+
+    def test_remove_already_streamed_prefix_returns_none_on_content_mismatch(
+        self, monkeypatch
+    ):
+        """Non-whitespace divergence must be reported, never replayed."""
+        _load_hook(monkeypatch)
+        from klai_kb_citation_render import remove_already_streamed_prefix
+
+        emitted_text = "Hello BT,\n\n2. What is your Corp ID?\n01003911\n\n"
+        # Cleaner stripped the "2." numbering → prefix can no longer align.
+        final_text = "Hello BT,\nWhat is your Corp ID?\n01003911\n\n**Bronnen**"
+
+        assert remove_already_streamed_prefix(final_text, emitted_text) is None
+
+    @pytest.mark.asyncio
     async def test_streaming_strict_short_unsupported_answer_gets_activity_not_sources(
         self, monkeypatch
     ):
