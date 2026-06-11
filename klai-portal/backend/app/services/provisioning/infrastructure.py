@@ -28,6 +28,7 @@ from app.core.config import settings
 from app.core.provisioning_names import validate_slug_for_provisioning
 from app.services.provisioning._slug_guard import _assert_safe_slug
 from app.services.provisioning.generators import _generate_librechat_yaml
+from app.services.secrets import decrypt_mcp_secret, is_secret_var
 
 logger = structlog.get_logger()
 
@@ -205,6 +206,83 @@ def _ensure_librechat_env_flags(path: Path) -> dict[str, str]:
         path.write_text("\n".join(updated).rstrip() + "\n")
 
     return env
+
+
+def _mcp_env_lines(server_id: str, server_cfg: dict) -> list[str]:
+    """Render one enabled MCP server's env block for an existing tenant .env."""
+    if not server_cfg.get("enabled", False):
+        return []
+    env_vars = server_cfg.get("env", {})
+    if not env_vars:
+        return []
+
+    lines = [f"# MCP server: {server_id}"]
+    for var_name, encrypted_or_plain in env_vars.items():
+        if is_secret_var(var_name):
+            value = decrypt_mcp_secret(encrypted_or_plain)
+        else:
+            value = encrypted_or_plain
+        lines.append(f"{var_name}={value}")
+    return lines
+
+
+def _sync_librechat_mcp_env(path: Path, mcp_servers: dict | None) -> None:
+    """Replace generated MCP env blocks in an existing tenant .env file."""
+    configured_servers = mcp_servers or {}
+    configured_ids = set(configured_servers)
+    existing_lines = path.read_text().splitlines()
+    kept: list[str] = []
+    idx = 0
+
+    while idx < len(existing_lines):
+        line = existing_lines[idx]
+        stripped = line.strip()
+        if stripped.startswith("# MCP server:"):
+            server_id = stripped.removeprefix("# MCP server:").strip()
+            if server_id in configured_ids:
+                idx += 1
+                while idx < len(existing_lines):
+                    next_stripped = existing_lines[idx].strip()
+                    if next_stripped.startswith("# MCP server:"):
+                        break
+                    if next_stripped == "":
+                        idx += 1
+                        break
+                    idx += 1
+                continue
+
+        kept.append(line)
+        idx += 1
+
+    rendered_blocks: list[str] = []
+    for server_id, server_cfg in configured_servers.items():
+        block = _mcp_env_lines(server_id, server_cfg)
+        if block:
+            if rendered_blocks:
+                rendered_blocks.append("")
+            rendered_blocks.extend(block)
+
+    output = "\n".join(kept).rstrip()
+    if rendered_blocks:
+        rendered = "\n".join(rendered_blocks).rstrip()
+        output = f"{output}\n\n{rendered}" if output else rendered
+    path.write_text(output.rstrip() + "\n")
+
+
+def _sync_librechat_tenant_config_files(slug: str, mcp_servers: dict | None = None) -> None:
+    """Materialize the tenant YAML and MCP env blocks before restarting LibreChat."""
+    _assert_safe_slug(slug)
+    base_yaml_path = Path(settings.librechat_container_data_path) / "librechat.yaml"
+    tenant_yaml_content = _generate_librechat_yaml(base_yaml_path, mcp_servers)
+    tenant_yaml_dir = Path(settings.librechat_container_data_path) / slug
+    tenant_yaml_dir.mkdir(parents=True, exist_ok=True)
+    (tenant_yaml_dir / "images").mkdir(exist_ok=True)
+    (tenant_yaml_dir / "librechat.yaml").write_text(tenant_yaml_content)
+
+    tenant_env_path = tenant_yaml_dir / ".env"
+    if not tenant_env_path.exists():
+        raise RuntimeError(f"LibreChat tenant env file missing for {slug}: {tenant_env_path}")
+    _sync_librechat_mcp_env(tenant_env_path, mcp_servers)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

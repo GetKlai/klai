@@ -17,6 +17,7 @@ from app.services.provisioning.infrastructure import (
     _reload_caddy,
     _start_librechat_container,
     _sync_drop_mongodb_tenant_user,
+    _sync_librechat_tenant_config_files,
     _sync_remove_container,
     _write_tenant_caddyfile,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "_slugify_unique",
     "_start_librechat_container",
     "_sync_drop_mongodb_tenant_user",
+    "_sync_librechat_tenant_config_files",
     "_sync_remove_container",
     "_write_tenant_caddyfile",
     "provision_tenant",

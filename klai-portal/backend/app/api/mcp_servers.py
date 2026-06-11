@@ -210,6 +210,8 @@ async def update_mcp_server(
     await db.commit()
 
     configured_vars = list(stored_env.keys())
+    slug = org.slug
+    mcp_servers_to_apply = current
 
     # Trigger async restart (fire-and-forget; R-002: brief container downtime acceptable).
     # The user has already received their 200 by the time this runs, so we log with
@@ -218,12 +220,18 @@ async def update_mcp_server(
     # silently failed. That state needs to be visible in VictoriaLogs for operators.
     async def _restart() -> None:
         loop = asyncio.get_event_loop()
-        from app.services.provisioning import _flush_redis_and_restart_librechat
+        from app.services.provisioning import _flush_redis_and_restart_librechat, _sync_librechat_tenant_config_files
 
         try:
-            await loop.run_in_executor(None, lambda: _flush_redis_and_restart_librechat(org.slug))
+            await loop.run_in_executor(
+                None,
+                lambda: (
+                    _sync_librechat_tenant_config_files(slug, mcp_servers_to_apply),
+                    _flush_redis_and_restart_librechat(slug),
+                ),
+            )
         except Exception:
-            logger.exception("mcp_server_librechat_restart_failed: slug=%s", org.slug)
+            logger.exception("mcp_server_librechat_restart_failed: slug=%s", slug)
 
     _task = asyncio.create_task(_restart())  # noqa: RUF006 — fire-and-forget, not awaited
 

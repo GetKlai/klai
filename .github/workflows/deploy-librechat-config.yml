@@ -10,6 +10,11 @@ on:
       - 'deploy/librechat/patches/**'
       - '.github/workflows/deploy-librechat-config.yml'
   workflow_dispatch:
+    inputs:
+      recreate_containers:
+        description: 'Recreate all provisioning-managed tenant containers instead of restart-only'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -56,10 +61,13 @@ jobs:
             # calls getwd() and crashes if cwd no longer exists, so jump to the
             # compose project dir before invoking it.
             cd /opt/klai
+            RECREATE_CONTAINERS="${{ github.event_name == 'workflow_dispatch' && inputs.recreate_containers == true }}"
 
             # Regenerate per-tenant configs from the updated base template.
             # portal-api exposes an internal endpoint that re-runs _generate_librechat_yaml
             # for each tenant, writes the result, flushes Redis, and restarts containers.
+            # Push-triggered config/catalog/patch changes use restart-only. Full
+            # recreate is reserved for explicit workflow_dispatch image rollouts.
             #
             # portal-api has no host port mapping — it only listens on portal-api:8010
             # inside the klai-net Docker network. We therefore run the request *inside*
@@ -69,12 +77,17 @@ jobs:
             # inside the container from .env.
             echo "Triggering tenant config regeneration via portal-api..."
             set +e
-            RESPONSE=$(docker compose -f /opt/klai/docker-compose.yml exec -T portal-api python -c '
+            RESPONSE=$(docker compose -f /opt/klai/docker-compose.yml exec -T \
+              -e RECREATE_CONTAINERS="$RECREATE_CONTAINERS" \
+              portal-api python -c '
             import os, sys, httpx
             secret = os.environ["INTERNAL_SECRET"]
+            url = "http://localhost:8010/internal/librechat/regenerate"
+            if os.environ.get("RECREATE_CONTAINERS") == "true":
+                url += "?recreate_containers=true"
             try:
                 r = httpx.post(
-                    "http://localhost:8010/internal/librechat/regenerate?recreate_containers=true",
+                    url,
                     headers={
                         "Authorization": f"Bearer {secret}",
                         "Content-Type": "application/json",
