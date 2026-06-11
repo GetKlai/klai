@@ -363,7 +363,7 @@ conceptually (v1) — keep. **Effort: M–L / deferred.**
 | 0.5 | ~~PG↔Qdrant reconciliation count~~ landed 2026-06-11: nightly read-only shadow job + `pg_qdrant_reconcile_failed` alert | M | H1 |
 | 0.6 | Evidence-tier: build + run the A/B → decide (or flags-off) | M | G1 |
 | 0.7 | GAP-PRIV-01 policy decision on the agenda (decision, not code) | — | J |
-| 0.8 | Qdrant tenant-index status verifier/health check (read-only) | S | C1 |
+| 0.8 | ~~Qdrant tenant-index status verifier~~ landed 2026-06-11: `ensure_collection` logs `qdrant_org_id_tenant_index_status` (warning + remediation hint when the prod collection still has a plain keyword index); test `test_qdrant_org_id_index_reports_tenant_status` | S | C1 |
 
 ### Phase 1 — low-risk quick wins
 
