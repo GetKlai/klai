@@ -65,8 +65,8 @@ def _write_librechat_files(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_mcp_server_applies_yaml_and_env_before_restart(tmp_path, monkeypatch) -> None:
-    """Admin MCP changes must update the mounted LibreChat files, not only restart."""
+async def test_update_mcp_server_applies_yaml_and_env_before_recreate(tmp_path, monkeypatch) -> None:
+    """Admin MCP changes must update mounted files before recreating LibreChat."""
 
     _write_librechat_files(tmp_path)
     monkeypatch.setattr(mcp_mod.settings, "librechat_container_data_path", str(tmp_path))
@@ -78,30 +78,21 @@ async def test_update_mcp_server_applies_yaml_and_env_before_restart(tmp_path, m
     org.mcp_servers = None
     org.platform_unlocked_features = ["custom_mcps"]
 
-    db = AsyncMock()
-    db.get = AsyncMock(return_value=org)
-    db.commit = AsyncMock()
-
-    monkeypatch.setattr(mcp_mod, "encrypt_mcp_secret", lambda value: f"encrypted:{value}")
-
     import app.services.provisioning as provisioning
-    import app.services.provisioning.infrastructure as infra_mod
 
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    cache_invalidate = MagicMock()
+    recreate = MagicMock()
+
+    monkeypatch.setattr(mcp_mod, "_load_org_or_500", AsyncMock(return_value=org))
     monkeypatch.setattr(
-        infra_mod,
-        "decrypt_mcp_secret",
-        lambda value: value.removeprefix("encrypted:"),
-        raising=False,
+        mcp_mod,
+        "_load_catalog",
+        AsyncMock(return_value=yaml.safe_load((tmp_path / "mcp_catalog.yaml").read_text())["servers"]),
     )
-    monkeypatch.setattr(provisioning, "_flush_redis_and_restart_librechat", lambda slug: None)
-
-    created_tasks = []
-
-    def capture_task(coro):
-        created_tasks.append(coro)
-        return MagicMock()
-
-    monkeypatch.setattr(mcp_mod.asyncio, "create_task", capture_task)
+    monkeypatch.setattr(provisioning, "_invalidate_librechat_config_cache", cache_invalidate)
+    monkeypatch.setattr(provisioning, "_start_librechat_container", recreate)
 
     response = await mcp_mod.update_mcp_server(
         "twenty-crm",
@@ -115,10 +106,7 @@ async def test_update_mcp_server_applies_yaml_and_env_before_restart(tmp_path, m
         perms=make_perms(org_id=1, org_slug="acme", platform_unlocked_features=["custom_mcps"]),
         db=db,
     )
-    assert response.restart_required is True
-    assert created_tasks
-
-    await created_tasks[0]
+    assert response.restart_required is False
 
     parsed_yaml = yaml.safe_load((tmp_path / "acme" / "librechat.yaml").read_text(encoding="utf-8"))
     assert "twenty-crm" in parsed_yaml["mcpServers"]
@@ -129,3 +117,5 @@ async def test_update_mcp_server_applies_yaml_and_env_before_restart(tmp_path, m
     assert "TWENTY_API_KEY=new-key" in env_text
     assert "TWENTY_BASE_URL=https://crm.example" in env_text
     assert "old-key" not in env_text
+    cache_invalidate.assert_called_once_with("acme")
+    recreate.assert_called_once_with("acme", f"{tmp_path}/acme/.env", org.mcp_servers)

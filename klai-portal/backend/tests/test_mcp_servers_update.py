@@ -172,7 +172,9 @@ async def test_update_surfaces_runtime_apply_failure_after_save() -> None:
     recreate.assert_not_called()
 
 
-def test_runtime_file_writer_updates_yaml_and_replaces_only_mcp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_file_writer_updates_yaml_and_replaces_only_mcp_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import app.api.mcp_servers as mcp_mod
 
     (tmp_path / "librechat.yaml").write_text(
