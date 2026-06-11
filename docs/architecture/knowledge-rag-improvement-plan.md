@@ -325,7 +325,17 @@ conceptually (v1) — keep. **Effort: M–L / deferred.**
 
 ### Theme I — MCP read tools (GAP-MCP-01)
 
-- **v1 (quick win, S–M):** extend `search_knowledge` with `scope: org|personal|both` (default both), `kb_slugs`, `content_type` (v1 — adopted), `time_range` (A1 makes it trustworthy), `top_k`. No new backend features — request model + passthrough.
+- **v1 (quick win, S–M): first slice landed 2026-06-11.** `search_knowledge` now
+  accepts `scope: org|personal|both` (default both) and `kb_slugs` (clamped to 20;
+  stripped under `scope=personal` so the documented "ignored for personal notes"
+  holds), passthrough to `/retrieve` which already supported both. `top_k` already
+  existed. Guards: `scope=personal` hard-fails without a verified user;
+  adversarial review PASS + klai-tenant-review clean (cross-user personal-KB
+  access via crafted `kb_slugs` refuted with code evidence — the `user_id`
+  ownership branch in `_scope_filter` blocks it). **Still open for v1:**
+  `content_type` and `time_range` — both need `RetrieveRequest` + filter-leg
+  additions in retrieval-api first, deliberately deferred out of the passthrough
+  slice.
 - **v2 (M):** `recent(scope, kb_slug, content_type, since)` — PG query on `knowledge.artifacts`; `related_concepts(query|artifact_id, depth)` — Graphiti traversal (graph_search service exists).
 - **v3 (L, dependency H3):** `provenance_chain(artifact_id)`, `belief_evolution(entity_or_query, time_range)`.
 - **Security:** identity-verify path unchanged (every tool through `_identify_request`); `scope:"personal"` without verified user must **hard-fail**, never silently degrade to org; run klai-tenant-review on the PR. Keep `ToolError` fail-loud (v1).
