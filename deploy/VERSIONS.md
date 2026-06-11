@@ -8,7 +8,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 
 **Exception — local builds:** `klai/retrieval-api:local` and `ghcr.io/mendableai/firecrawl:latest` are built on-host from source and not pullable from a registry. Their "versions" are tracked by git SHAs recorded in docker-compose.yml comments.
 
-**Exception — Vexa stack (upstream v0.10.6.3, 2026-06-06):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot` are currently on `0.10.6.3` — pulled directly from Docker Hub (since v0.10.4 upstream publishes pre-built images). `deploy/check-image-tags.sh` enforces upstream version or timestamped-version tag form (no `:latest` / `:dev` / `:staging`). Upgrade cadence: track upstream stable tags; bump for material fixes (chunk-leak, OOM, security). See `https://github.com/Vexa-ai/vexa/releases` for changelog.
+**Exception — Vexa stack (upstream v0.10.6.3.14, 2026-06-07):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot` are currently on `0.10.6.3.14` — pulled directly from Docker Hub (since v0.10.4 upstream publishes pre-built images). `deploy/check-image-tags.sh` enforces upstream version or timestamped-version tag form (no `:latest` / `:dev` / `:staging`). Upgrade cadence: track upstream stable tags; bump for material fixes (chunk-leak, OOM, security, browser/admission fixes). See `https://github.com/Vexa-ai/vexa/releases` for changelog.
 
 GPU production image pins are intentionally not listed in this public repo because the live GPU compose, operator runbooks, host paths, and tunnel details belong in `GetKlai/klai-infra`.
 
