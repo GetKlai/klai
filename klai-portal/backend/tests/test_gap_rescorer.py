@@ -6,6 +6,24 @@ Pure unit tests -- no real DB or HTTP calls. All async sessions and httpx are mo
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.dialects import postgresql
+
+
+def test_rescore_gap_query_uses_grouped_recent_ordering() -> None:
+    """Regression: PostgreSQL rejects DISTINCT rows ordered by a non-selected column."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.gap_rescorer import _open_gap_queries_stmt
+
+    cutoff = datetime.now(tz=UTC) - timedelta(days=30)
+    stmt = _open_gap_queries_stmt(org_id=1, kb_slug=None, cutoff=cutoff)
+
+    compiled = str(stmt.compile(dialect=postgresql.dialect()))
+
+    assert "SELECT DISTINCT" not in compiled
+    assert "max(portal_retrieval_gaps.occurred_at)" in compiled
+    assert "GROUP BY portal_retrieval_gaps.query_text, portal_retrieval_gaps.gap_type" in compiled
+    assert "ORDER BY max(portal_retrieval_gaps.occurred_at) DESC" in compiled
 
 
 @pytest.mark.asyncio

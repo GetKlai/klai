@@ -78,6 +78,44 @@ def _setup_db(db, execute_results: list):
 
 
 @pytest.mark.asyncio
+async def test_list_user_grants_uses_collection_search_endpoint_with_user_and_project_filters():
+    """ZITADEL grant search is collection-scoped; per-user _search returns 405."""
+    from app.services.zitadel import ZitadelClient
+
+    client = ZitadelClient.__new__(ZitadelClient)
+    response = MagicMock()
+    response.json.return_value = {
+        "result": [{"id": "grant-1", "projectId": settings.zitadel_project_id, "roleKeys": ["org:owner"]}]
+    }
+    client._http = MagicMock()
+    client._http.post = AsyncMock(return_value=response)
+
+    result = await client.list_user_grants(org_id="org-123", user_id="zit-abc123")
+
+    client._http.post.assert_awaited_once_with(
+        "/management/v1/users/grants/_search",
+        headers={"x-zitadel-orgid": "org-123"},
+        json={
+            "queries": [
+                {"userIdQuery": {"userId": "zit-abc123"}},
+                {"projectIdQuery": {"projectId": settings.zitadel_project_id}},
+            ]
+        },
+    )
+    response.raise_for_status.assert_called_once()
+    assert result == [{"id": "grant-1", "projectId": settings.zitadel_project_id, "roleKeys": ["org:owner"]}]
+
+
+def test_grant_has_project_role_uses_zitadel_role_keys_field():
+    """ZITADEL ListUserGrants returns roleKeys, not roles."""
+    from app.services.zitadel import _grant_has_project_role
+
+    grant = {"id": "grant-1", "projectId": settings.zitadel_project_id, "roleKeys": ["org:owner"]}
+
+    assert _grant_has_project_role(grant, "org:owner") is True
+
+
+@pytest.mark.asyncio
 async def test_sync_role_grant_does_not_remove_when_other_admin_memberships_remain():
     """Demoting one tenant admin must keep org:owner when another admin membership remains."""
     from app.services import user_memberships as memberships_module
@@ -94,7 +132,7 @@ async def test_sync_role_grant_does_not_remove_when_other_admin_memberships_rema
             zitadel_module.zitadel,
             "list_user_grants",
             new=AsyncMock(
-                return_value=[{"id": "grant-1", "projectId": settings.zitadel_project_id, "roles": ["org:owner"]}]
+                return_value=[{"id": "grant-1", "projectId": settings.zitadel_project_id, "roleKeys": ["org:owner"]}]
             ),
         ),
         patch.object(zitadel_module.zitadel, "remove_user_role", new=AsyncMock()) as remove_user_role,
@@ -123,7 +161,7 @@ async def test_sync_role_grant_removes_when_no_admin_memberships_remain():
             zitadel_module.zitadel,
             "list_user_grants",
             new=AsyncMock(
-                return_value=[{"id": "grant-1", "projectId": settings.zitadel_project_id, "roles": ["org:owner"]}]
+                return_value=[{"id": "grant-1", "projectId": settings.zitadel_project_id, "roleKeys": ["org:owner"]}]
             ),
         ),
         patch.object(zitadel_module.zitadel, "remove_user_role", new=AsyncMock()) as remove_user_role,

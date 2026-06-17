@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 MAIN_PY = Path(__file__).resolve().parents[1] / "main.py"
+DOCKERFILE = Path(__file__).resolve().parents[1] / "Dockerfile"
 CADDYFILE = Path(__file__).resolve().parents[2] / "deploy" / "caddy" / "Caddyfile"
 
 
@@ -55,3 +56,12 @@ def test_caddyfile_routes_mcp_subdomain_to_knowledge_mcp() -> None:
     assert "reverse_proxy klai-knowledge-mcp" in text, (
         "expected reverse_proxy to klai-knowledge-mcp in the mcp.${DOMAIN} block"
     )
+
+
+def test_dockerfile_copies_local_runtime_modules_imported_by_main() -> None:
+    """Local modules imported by main.py must be present in the runtime image."""
+    main_text = MAIN_PY.read_text(encoding="utf-8")
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "from shield_compliance import" in main_text
+    assert "klai-knowledge-mcp/shield_compliance.py" in dockerfile

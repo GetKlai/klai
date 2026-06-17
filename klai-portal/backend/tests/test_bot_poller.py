@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm.exc import DetachedInstanceError
 
 from app.services import bot_poller
@@ -96,6 +97,59 @@ def _mk_cross_org_session(active_rows, stuck_rows, post_exit_flag: list[bool]):
             post_exit_flag[0] = True
 
     return _ctx
+
+
+def test_stuck_meetings_stmt_includes_rows_without_vexa_meeting_id() -> None:
+    """A stopping row without vexa_meeting_id cannot be transcribed, but it must not hang forever."""
+    cutoff = datetime.now(tz=UTC) - timedelta(minutes=10)
+
+    compiled = str(bot_poller._stuck_meetings_stmt(cutoff).compile(dialect=postgresql.dialect()))
+
+    assert "vexa_meetings.status = %(status_1)s" in compiled
+    assert "vexa_meetings.vexa_meeting_id IS NOT NULL" not in compiled
+    assert "vexa_meetings.ended_at <" in compiled
+    assert "vexa_meetings.created_at <" in compiled
+
+
+@pytest.mark.asyncio
+async def test_handle_meeting_ended_rearms_tenant_context_after_stopping_commit(monkeypatch) -> None:
+    """The interim stopping commit can release the RLS GUC; re-set it before transcription."""
+    events: list[str] = []
+    meeting_id = uuid.uuid4()
+    meeting = MagicMock()
+    meeting.id = meeting_id
+    meeting.status = "recording"
+    meeting.ended_at = None
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=meeting)
+    db.commit = AsyncMock(side_effect=lambda: events.append("commit"))
+
+    @asynccontextmanager
+    async def _tenant_session(_org_id):
+        yield db
+
+    async def _set_tenant(_db, _org_id):
+        events.append("set_tenant")
+
+    async def _run_transcription(_meeting, _db):
+        events.append("run_transcription")
+
+    monkeypatch.setattr(bot_poller, "tenant_scoped_session", _tenant_session)
+    monkeypatch.setattr(bot_poller, "set_tenant", _set_tenant)
+    monkeypatch.setattr(bot_poller, "run_transcription", _run_transcription)
+    monkeypatch.setattr(bot_poller, "cleanup_recording", AsyncMock())
+
+    snap = bot_poller._ActiveMeetingSnapshot(
+        id=meeting_id,
+        org_id=42,
+        meeting_url="https://meet.google.com/abc-def-ghi",
+        status="recording",
+    )
+
+    await bot_poller._handle_meeting_ended(snap)
+
+    assert events == ["commit", "set_tenant", "run_transcription", "commit"]
 
 
 # ---------------------------------------------------------------------------

@@ -1289,6 +1289,7 @@ services:
       # Defense-in-depth: if someone bypasses api-gateway and hits meeting-api:8080
       # directly on klai-net, require VEXA_API_KEY. Empty API_KEYS = dev mode = anyone can create bots.
       API_KEYS: ${VEXA_API_KEY}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       RUNTIME_API_URL: http://runtime-api:8090
       RUNTIME_API_TOKEN: ${BOT_API_TOKEN}
       MEETING_API_URL: http://meeting-api:8080

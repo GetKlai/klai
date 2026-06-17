@@ -11,6 +11,7 @@ import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
+import { activeMeetingInfoKind } from './-status-copy'
 
 type TabId = 'summary' | 'transcript'
 
@@ -257,6 +258,13 @@ function MeetingDetailPage() {
     })
   }
 
+  function activeMeetingInfo(status: string): string {
+    const kind = activeMeetingInfoKind(status)
+    if (kind === 'stopping') return m.app_meetings_stopping_info()
+    if (kind === 'processing') return m.app_meetings_processing_info()
+    return m.app_meetings_active_info()
+  }
+
   function renderSummarizeButton(variant: 'default' | 'outline') {
     return (
       <Button
@@ -306,7 +314,7 @@ function MeetingDetailPage() {
           <Card>
             <CardContent className="pt-4">
               <p className="text-sm text-gray-400">
-                {m.app_meetings_active_info()}
+                {activeMeetingInfo(meeting.status)}
               </p>
             </CardContent>
             {canStop && (

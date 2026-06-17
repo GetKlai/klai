@@ -35,6 +35,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY --chown=app:app klai-knowledge-mcp/logging_setup.py logging_setup.py
 COPY --chown=app:app klai-knowledge-mcp/dispatcher.py dispatcher.py
+COPY --chown=app:app klai-knowledge-mcp/shield_compliance.py shield_compliance.py
 COPY --chown=app:app klai-knowledge-mcp/main.py main.py
 
 ENV PATH="/repo/klai-knowledge-mcp/.venv/bin:${PATH}" \

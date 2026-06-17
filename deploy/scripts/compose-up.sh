@@ -129,8 +129,32 @@ check_litellm_prisma_migration_baseline() {
     echo "LiteLLM Prisma migration baseline OK ($migration_count applied migrations)"
 }
 
+pull_vexa_runtime_images() {
+    # Vexa bot containers are spawned by runtime-api from profile/env image refs
+    # such as BOT_IMAGE_NAME / BROWSER_IMAGE. They are not compose services, so
+    # `docker compose pull` will not fetch them. Missing bot images surface only
+    # later as Docker /containers/create 404s when a user starts Scribe.
+    local refs
+    refs="$(
+        grep -oE 'vexaai/[a-z0-9-]+:[A-Za-z0-9._-]+' /opt/klai/docker-compose.yml | sort -u
+    )"
+    if [[ -z "$refs" ]]; then
+        return 0
+    fi
+
+    echo "Pulling Vexa runtime image refs from docker-compose.yml..."
+    while IFS= read -r ref; do
+        [[ -n "$ref" ]] || continue
+        docker pull "$ref"
+    done <<< "$refs"
+}
+
 if [[ "$SERVICE" == "litellm" ]]; then
     check_litellm_prisma_migration_baseline
+fi
+
+if [[ -z "$SERVICE" || "$SERVICE" == "runtime-api" || "$SERVICE" == "meeting-api" ]]; then
+    pull_vexa_runtime_images
 fi
 
 if [[ -n "$SERVICE" ]]; then

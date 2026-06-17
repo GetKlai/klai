@@ -27,7 +27,7 @@ import structlog
 from sqlalchemy import select
 
 from app.api.meetings import ACTIVE_STATUSES, run_transcription
-from app.core.database import cross_org_session, tenant_scoped_session
+from app.core.database import cross_org_session, set_tenant, tenant_scoped_session
 from app.models.meetings import VexaMeeting
 from app.services.recording_cleanup import cleanup_recording
 from app.services.vexa import parse_meeting_url, vexa
@@ -96,6 +96,7 @@ async def _handle_meeting_ended(snap: _ActiveMeetingSnapshot) -> None:
         m.ended_at = m.ended_at or datetime.now(UTC)
         await db.commit()
 
+        await set_tenant(db, snap.org_id)
         await run_transcription(m, db)
         await db.commit()
         if m.status == "done":
@@ -166,16 +167,20 @@ async def _load_cycle_snapshots() -> tuple[list[_ActiveMeetingSnapshot], list[_A
         active = [_snapshot(m) for m in active_result.scalars().all()]
 
         timeout_cutoff = datetime.now(UTC) - timedelta(minutes=PROCESSING_TIMEOUT_MINUTES)
-        stuck_result = await db.execute(
-            select(VexaMeeting).where(
-                VexaMeeting.status == "stopping",
-                VexaMeeting.ended_at < timeout_cutoff,
-                VexaMeeting.vexa_meeting_id.is_not(None),
-            )
-        )
+        stuck_result = await db.execute(_stuck_meetings_stmt(timeout_cutoff))
         stuck = [_snapshot(m) for m in stuck_result.scalars().all()]
 
     return active, stuck
+
+
+def _stuck_meetings_stmt(timeout_cutoff: datetime):
+    return select(VexaMeeting).where(
+        VexaMeeting.status == "stopping",
+        (
+            (VexaMeeting.ended_at.is_not(None) & (VexaMeeting.ended_at < timeout_cutoff))
+            | (VexaMeeting.ended_at.is_(None) & (VexaMeeting.created_at < timeout_cutoff))
+        ),
+    )
 
 
 async def _poll_once() -> None:

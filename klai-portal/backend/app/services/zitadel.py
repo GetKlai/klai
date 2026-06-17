@@ -212,9 +212,14 @@ class ZitadelClient:
     async def list_user_grants(self, org_id: str, user_id: str) -> list[dict]:
         """List all project grants for a user in a specific org."""
         resp = await self._http.post(
-            f"/management/v1/users/{user_id}/grants/_search",
+            "/management/v1/users/grants/_search",
             headers={"x-zitadel-orgid": org_id},
-            json={},
+            json={
+                "queries": [
+                    {"userIdQuery": {"userId": user_id}},
+                    {"projectIdQuery": {"projectId": settings.zitadel_project_id}},
+                ]
+            },
         )
         resp.raise_for_status()
         return resp.json().get("result", [])
@@ -230,7 +235,7 @@ class ZitadelClient:
         """
         grants = await self.list_user_grants(org_id=org_id, user_id=user_id)
         for grant in grants:
-            if grant.get("projectId") == settings.zitadel_project_id and role in (grant.get("roles") or []):
+            if _grant_has_project_role(grant, role):
                 grant_id = grant["id"]
                 resp = await self._http.delete(
                     f"/management/v1/users/{user_id}/grants/{grant_id}",
@@ -1061,7 +1066,7 @@ _PORTAL_ADMIN_ROLE = "admin"
 
 
 def _grant_has_project_role(grant: dict, role: str) -> bool:
-    return grant.get("projectId") == settings.zitadel_project_id and role in (grant.get("roles") or [])
+    return grant.get("projectId") == settings.zitadel_project_id and role in (grant.get("roleKeys") or [])
 
 
 async def _sync_zitadel_role_grant(

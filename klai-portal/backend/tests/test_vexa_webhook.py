@@ -8,6 +8,10 @@ normaliser can silently regress when refactored.
 
 from __future__ import annotations
 
+import uuid
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from app.api.meetings import VexaWebhookPayload
@@ -165,3 +169,63 @@ class TestUpstreamFirePostMeetingHooksShape:
         assert model.native_meeting_id is None  # known upstream gap
         assert model.status == "completed"
         assert model.ended_at == "2026-04-19T15:04:12+00:00"
+
+
+@pytest.mark.asyncio
+async def test_webhook_rearms_tenant_context_after_stopping_commit(monkeypatch) -> None:
+    """The interim stopping commit can release the RLS GUC; re-set it before transcription."""
+    from app.api import meetings as meetings_module
+    from app.core import database as database_module
+
+    events: list[str] = []
+    meeting = MagicMock()
+    meeting.id = uuid.uuid4()
+    meeting.org_id = 42
+    meeting.status = "recording"
+    meeting.ended_at = None
+
+    lookup_db = MagicMock()
+    lookup_db.scalar = AsyncMock(return_value=meeting)
+    lookup_db.expunge = MagicMock()
+
+    scoped_db = MagicMock()
+    scoped_db.merge = AsyncMock(return_value=meeting)
+    scoped_db.commit = AsyncMock(side_effect=lambda: events.append("commit"))
+
+    @asynccontextmanager
+    async def _cross_org_session():
+        yield lookup_db
+
+    @asynccontextmanager
+    async def _tenant_session(_org_id):
+        yield scoped_db
+
+    async def _set_tenant(_db, _org_id):
+        events.append("set_tenant")
+
+    async def _run_transcription(_meeting, _db):
+        events.append("run_transcription")
+        _meeting.status = "done"
+
+    monkeypatch.setattr(meetings_module, "_require_webhook_secret", lambda _request: None)
+    monkeypatch.setattr(database_module, "cross_org_session", _cross_org_session)
+    monkeypatch.setattr(database_module, "tenant_scoped_session", _tenant_session)
+    monkeypatch.setattr(database_module, "set_tenant", _set_tenant)
+    cleanup_recording = AsyncMock()
+    emit_event = MagicMock()
+    monkeypatch.setattr(meetings_module, "run_transcription", _run_transcription)
+    monkeypatch.setattr(meetings_module, "cleanup_recording", cleanup_recording)
+    monkeypatch.setattr(meetings_module, "emit_event", emit_event)
+
+    payload = VexaWebhookPayload(
+        platform="google_meet",
+        native_meeting_id="abc-def-ghi",
+        status="completed",
+    )
+
+    result = await meetings_module.vexa_webhook(payload, request=MagicMock(), db=AsyncMock())
+
+    assert result == {"status": "ok"}
+    assert events == ["commit", "set_tenant", "run_transcription", "commit"]
+    cleanup_recording.assert_awaited_once_with(meeting, scoped_db, recording_id=None)
+    emit_event.assert_called_once()

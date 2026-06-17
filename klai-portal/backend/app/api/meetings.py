@@ -696,7 +696,7 @@ async def vexa_webhook(
     # id, not our org_id), so the correlation SELECT must cross tenants.
     # Use an explicit cross_org_session; the subsequent UPDATE is then
     # scoped to the meeting's own org via tenant_scoped_session.
-    from app.core.database import cross_org_session, tenant_scoped_session
+    from app.core.database import cross_org_session, set_tenant, tenant_scoped_session
 
     async with cross_org_session() as lookup_db:
         # Prefer vexa_meeting_id (unambiguous FK); fall back to
@@ -760,10 +760,11 @@ async def vexa_webhook(
             meeting.vexa_meeting_id = payload.vexa_meeting_id
         await scoped_db.commit()
 
+        await set_tenant(scoped_db, meeting.org_id)
         await run_transcription(meeting, scoped_db)
         await scoped_db.commit()
 
-        if meeting.status == "completed":
+        if meeting.status == "done":
             await cleanup_recording(meeting, scoped_db, recording_id=payload.recording_id)
             emit_event(
                 "meeting.completed",

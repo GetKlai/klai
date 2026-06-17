@@ -15,7 +15,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -27,6 +27,32 @@ logger = logging.getLogger(__name__)
 
 MAX_QUERIES_PER_TRIGGER = 50
 RESCORE_WINDOW_DAYS = 30
+
+
+def _open_gap_queries_stmt(org_id: int, kb_slug: str | None, cutoff: datetime):
+    # PostgreSQL rejects SELECT DISTINCT query_text, gap_type ORDER BY occurred_at
+    # because occurred_at is not in the select list. Grouping preserves the
+    # one-row-per-gap contract and keeps the ordering deterministic.
+    stmt = (
+        select(
+            PortalRetrievalGap.query_text.label("query_text"),
+            PortalRetrievalGap.gap_type.label("gap_type"),
+            func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
+        )
+        .where(
+            PortalRetrievalGap.org_id == org_id,
+            PortalRetrievalGap.resolved_at.is_(None),
+            PortalRetrievalGap.occurred_at >= cutoff,
+        )
+        .group_by(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type)
+        .order_by(func.max(PortalRetrievalGap.occurred_at).desc())
+        .limit(MAX_QUERIES_PER_TRIGGER)
+    )
+    if kb_slug is not None:
+        stmt = stmt.where(
+            (PortalRetrievalGap.nearest_kb_slug == kb_slug) | PortalRetrievalGap.nearest_kb_slug.is_(None)
+        )
+    return stmt
 
 
 async def rescore_open_gaps(
@@ -60,25 +86,8 @@ async def rescore_open_gaps(
 
     cutoff = datetime.now(tz=UTC) - timedelta(days=RESCORE_WINDOW_DAYS)
 
-    # Step 1: fetch distinct open gap queries within window
-    stmt = (
-        select(
-            PortalRetrievalGap.query_text,
-            PortalRetrievalGap.gap_type,
-        )
-        .where(
-            PortalRetrievalGap.org_id == org_id,
-            PortalRetrievalGap.resolved_at.is_(None),
-            PortalRetrievalGap.occurred_at >= cutoff,
-        )
-        .distinct()
-        .order_by(PortalRetrievalGap.occurred_at.desc())
-        .limit(MAX_QUERIES_PER_TRIGGER)
-    )
-    if kb_slug is not None:
-        stmt = stmt.where(
-            (PortalRetrievalGap.nearest_kb_slug == kb_slug) | PortalRetrievalGap.nearest_kb_slug.is_(None)
-        )
+    # Step 1: fetch distinct open gap queries within window, most-recent first.
+    stmt = _open_gap_queries_stmt(org_id, kb_slug, cutoff)
 
     result = await db.execute(stmt)
     gap_queries = result.all()
