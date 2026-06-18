@@ -2,8 +2,10 @@
 #
 # Routed via spec=SPEC-SEC-IDENTITY-ASSERT-001 -> klai-ops-alerts-email.
 #
-#   R1  litellm_retrieval_failed   CRIT  ANY KB-retrieval failure logged by
-#                                        klai_knowledge_hook in the last 5m
+#   R1  litellm_retrieval_failed       CRIT  ANY KB-retrieval failure logged by
+#                                            klai_knowledge_hook in the last 5m
+#   R2  litellm_provider_auth_failed   CRIT  ANY upstream provider auth failure
+#                                            emitted by LiteLLM in the last 5m
 #
 # Why an error-rate alert (not a count threshold):
 #   The 2026-04-28 -> 2026-05-05 outage went undetected for 7 days because
@@ -109,3 +111,78 @@ groups:
                  this alert — that one is the legacy fallback retry path
                  (Phase C-1), which is expected to fire until Phase D
                  cleanup. It is followed by the actual outcome.
+
+      # -- R2: litellm_provider_auth_failed --------------------------------
+      - uid: obs-002-litellm-provider-auth-failed
+        title: litellm_provider_auth_failed
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:5m service:litellm
+                  ("AuthenticationError" OR "MistralException" OR "Unauthorized")
+                  | stats count() as n
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-SEC-IDENTITY-ASSERT-001
+          service_group: litellm
+        annotations:
+          summary: 'LiteLLM upstream provider authentication failed'
+          runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
+          description: |
+            LiteLLM logged an upstream provider authentication failure in the
+            last 5m. Chat/search synthesis can fail even if retrieval-api and
+            LiteLLM liveliness checks are healthy.
+
+            Triage:
+              1. VictoriaLogs (Grafana -> Explore):
+                   _time:15m service:litellm
+                     ("AuthenticationError" OR "MistralException" OR "Unauthorized")
+                 Confirm model alias and upstream provider from the error.
+              2. If the error contains `MistralException - {"detail":"Unauthorized"}`,
+                 verify the deployed `MISTRAL_API_KEY` secret and recreate the
+                 LiteLLM container so `deploy/litellm/config.yaml` resolves the
+                 corrected environment variable.
+              3. Remember that `klai-primary`, `klai-fast`, `klai-large`, and
+                 `klai-medium` all read `os.environ/MISTRAL_API_KEY`; fallback
+                 between those aliases does not mitigate a bad Mistral key.
