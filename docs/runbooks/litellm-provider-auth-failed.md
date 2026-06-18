@@ -37,6 +37,18 @@ api_key: os.environ/MISTRAL_API_KEY
 
 So fallback between these aliases does not recover from a bad Mistral key.
 
+Also check the synthetic Mistral API probe:
+
+```text
+_time:15m service:mistral-api-probe event:mistral_api_probe
+| sort by(_time) desc
+| limit 20
+```
+
+`status=fail` with `http_status=401` means Mistral rejected the deployed key
+before LiteLLM was involved. Check the workspace monthly spending limit/API
+paused state as well as the key itself.
+
 ## Recover
 
 1. Verify the deployed secret source contains a valid `MISTRAL_API_KEY`.

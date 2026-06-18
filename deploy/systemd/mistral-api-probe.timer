@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Klai Mistral API auth probe every 2 minutes
+Requires=mistral-api-probe.service
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Persistent=true
+Unit=mistral-api-probe.service
+
+[Install]
+WantedBy=timers.target

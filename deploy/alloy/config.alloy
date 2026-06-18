@@ -45,6 +45,21 @@ loki.source.docker "containers" {
   forward_to = [loki.process.extract_level.receiver]
 }
 
+// ─── Host-side synthetic probe logs ──────────────────────────────────────────
+
+local.file_match "mistral_api_probe" {
+  path_targets = [{
+    __path__ = "/opt/klai/logs/mistral-api-probe.log",
+    service  = "mistral-api-probe",
+    host     = "core-01",
+  }]
+}
+
+loki.source.file "mistral_api_probe" {
+  targets    = local.file_match.mistral_api_probe.targets
+  forward_to = [loki.process.extract_level.receiver]
+}
+
 // ─── Extract log level from JSON ────────────────────────────────────────────
 
 loki.process "extract_level" {

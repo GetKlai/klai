@@ -1,0 +1,137 @@
+# Mistral API synthetic auth probe alerts.
+#
+# The systemd timer `mistral-api-probe.timer` calls Mistral `/v1/models` with
+# the deployed production key every 2 minutes. The script appends JSON logs to
+# `/opt/klai/logs/mistral-api-probe.log`; Alloy file scraping ships them to
+# VictoriaLogs with `service:mistral-api-probe`.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: mistral-api-probe
+    folder: Klai
+    interval: 1m
+    rules:
+      - uid: obs-003-mistral-api-probe-failed
+        title: mistral_api_probe_failed
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:5m service:mistral-api-probe event:mistral_api_probe status:fail
+                  | stats count() as n
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          service_group: litellm
+          alert_type: synthetic
+        annotations:
+          summary: 'Mistral API key probe failed'
+          runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
+          description: |
+            The synthetic Mistral API probe failed in the last 5 minutes.
+            This catches workspace spending-limit/API-access pauses and key
+            auth failures before chat traffic has to hit LiteLLM.
+
+            Triage in VictoriaLogs:
+              _time:15m service:mistral-api-probe event:mistral_api_probe | sort by(_time) desc | limit 20
+
+      - uid: obs-003-mistral-api-probe-missing
+        title: mistral_api_probe_missing
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:10m service:mistral-api-probe event:mistral_api_probe
+                  | stats count() as n
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: Alerting
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: warning
+          service_group: litellm
+          alert_type: synthetic
+        annotations:
+          summary: 'Mistral API probe logs missing'
+          runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
+          description: |
+            No Mistral API probe log was seen in the last 10 minutes.
+            Check `mistral-api-probe.timer`, `/opt/klai/logs/mistral-api-probe.log`,
+            Alloy, and VictoriaLogs.

@@ -1,0 +1,20 @@
+[Unit]
+Description=Klai Mistral API auth probe
+Documentation=https://github.com/GetKlai/klai/blob/main/docs/runbooks/litellm-provider-auth-failed.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/klai/scripts/mistral-api-probe.sh
+TimeoutStartSec=30s
+
+# Stdout goes to journald; the script also appends a JSON line to
+# /opt/klai/logs/mistral-api-probe.log, which Alloy ships to VictoriaLogs.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
