@@ -1087,10 +1087,24 @@ def test_strip_keeps_form_numbering_separated_by_answer_lines() -> None:
     cleaned = strip_model_citation_artifacts(text)
     assert "2. What is your Corp ID?" in cleaned
     assert "3. What product are you reporting a fault on?" in cleaned
-    # "8." does not continue "3." — it is renumber-exempt only when the
-    # sequence continues; a jump still reads as part of the same form when
-    # the answer skipped questions, so it must at least not break earlier
-    # numbering. The contiguous-sequence lines above are the contract.
+    assert "8. Call examples:" in cleaned
+
+
+def test_strip_still_strips_loose_later_number_after_form_context() -> None:
+    """A later number without answer text is still treated as copied mid-list."""
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "1. What is the name of your company?\nVOYS TELECOM\n\n"
+        "2. What is your Corp ID?\n01003911\n\n"
+        "Related old-doc excerpt:\n"
+        "8. Configure the external routing."
+    )
+
+    cleaned = strip_model_citation_artifacts(text)
+    assert "2. What is your Corp ID?" in cleaned
+    assert "8. Configure the external routing." not in cleaned
+    assert "Configure the external routing." in cleaned
 
 
 def test_strip_keeps_contiguous_run_continuing_document_sequence() -> None:

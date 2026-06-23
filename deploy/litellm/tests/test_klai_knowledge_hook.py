@@ -5769,6 +5769,87 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert visible.count("**Bronnen**") == 1
         assert "- [BT Cloud Work](https://wiki.example/bt)" in visible
 
+    @pytest.mark.asyncio
+    async def test_streaming_flush_handles_final_chunk_with_content(self, monkeypatch):
+        """A stop chunk may carry the last buffered answer text and must not replay."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "chunks_injected": 1,
+                    "retrieval_ms": 12,
+                    "gate_bypassed": False,
+                    "render_mode": "streaming_guard",
+                    "allowed_image_urls": [],
+                    "trusted_sources": [
+                        {
+                            "label": "1",
+                            "title": "BT Cloud Work",
+                            "url": "https://wiki.example/bt",
+                        }
+                    ],
+                    "citation_chunks": [
+                        {
+                            "title": "BT Cloud Work",
+                            "source_url": "https://wiki.example/bt",
+                            "text": "BT ticket template with date and time examples.",
+                        }
+                    ],
+                }
+            }
+        }
+        first = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=(
+                            "Hello BT,\n\n"
+                            "1. What is the name of your company?\nVOYS TELECOM\n\n"
+                            "2. What is your Corp ID?\n01003911\n\n"
+                            "8. Call examples:\n\nDate/time "
+                        )
+                    ),
+                    finish_reason=None,
+                )
+            ]
+        )
+        final = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content="[yyyy-mm-dd hh:mm]:\n2026-06-11 08:08"
+                    ),
+                    finish_reason="stop",
+                )
+            ]
+        )
+
+        async def stream():
+            for item in (first, final):
+                yield item
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
+        ]
+        visible = "".join(
+            item.choices[0].delta.content or ""
+            for item in streamed
+            if item.choices and getattr(item.choices[0], "delta", None) is not None
+        )
+
+        assert visible.count("Hello BT,") == 1
+        assert visible.count("01003911") == 1
+        assert "[yyyy-mm-dd hh:mm]:" in visible
+        assert "2026-06-11 08:08" in visible
+        assert visible.count("**Bronnen**") == 1
+        assert final.choices[0].delta.content == ""
+
     def test_remove_already_streamed_prefix_returns_none_on_content_mismatch(
         self, monkeypatch
     ):

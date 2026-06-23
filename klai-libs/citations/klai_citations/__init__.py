@@ -436,7 +436,7 @@ def _renumber_ordered_list_runs(text: str) -> str:
     run: list[str] = []
     last_list_number = 0
 
-    def flush_run() -> None:
+    def flush_run(*, followed_by_text: bool = False) -> None:
         nonlocal run, last_list_number
         if not run:
             return
@@ -445,7 +445,13 @@ def _renumber_ordered_list_runs(text: str) -> str:
         continues_document_list = numbers == list(
             range(last_list_number + 1, last_list_number + 1 + len(run))
         )
-        if starts_fresh or continues_document_list:
+        continues_form_sequence = (
+            len(run) == 1
+            and followed_by_text
+            and last_list_number > 0
+            and numbers[0] > last_list_number
+        )
+        if starts_fresh or continues_document_list or continues_form_sequence:
             output.extend(run)
             last_list_number = numbers[-1]
         elif len(run) == 1:
@@ -470,7 +476,7 @@ def _renumber_ordered_list_runs(text: str) -> str:
         if _ORDERED_LIST_LINE_RE.match(line):
             run.append(line)
             continue
-        flush_run()
+        flush_run(followed_by_text=True)
         output.append(line)
     flush_run()
     return "\n".join(output)
