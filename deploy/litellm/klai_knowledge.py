@@ -338,6 +338,8 @@ class KlaiKnowledgeHook(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         if call_type not in ("completion", "acompletion"):
             return data
+        if _truthy(_request_metadata(data).get("_klai_openai_passthrough")):
+            return data
 
         messages = _sanitize_assistant_history_messages(data.get("messages", []))
         query = _last_user_message(messages)

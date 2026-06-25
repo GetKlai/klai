@@ -57,7 +57,7 @@ class KbAccessEntry(BaseModel):
 class CreateApiKeyRequest(BaseModel):
     name: str = Field(min_length=3, max_length=128)
     description: str | None = None
-    permissions: dict  # {"chat": bool, "feedback": bool, "knowledge_append": bool}
+    permissions: dict  # {"chat": bool, "feedback": bool, "knowledge_append": bool, "general_chat": bool}
     kb_access: list[KbAccessEntry]
     rate_limit_rpm: int = Field(default=60, ge=10, le=600)
 
@@ -211,6 +211,26 @@ def _rotated_key_name(name: str, now: datetime) -> str:
     return f"{name[: 128 - len(suffix)]}{suffix}"
 
 
+def _validate_permissions_against_kb_access(
+    permissions: dict,
+    kb_access: list[KbAccessEntry],
+    *,
+    require_chat_kb: bool = True,
+    require_knowledge_append_kb: bool = True,
+) -> None:
+    if require_chat_kb and permissions.get("chat") and not kb_access:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="chat permission requires at least one knowledge base with read access",
+        )
+    if require_knowledge_append_kb and permissions.get("knowledge_append"):
+        if not any(e.access_level == "read_write" for e in kb_access):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="knowledge_append permission requires at least one KB with read_write access",
+            )
+
+
 # ---------------------------------------------------------------------------
 # POST /api/api-keys
 # ---------------------------------------------------------------------------
@@ -226,14 +246,7 @@ async def create_api_key(
     """Create a new partner API key."""
     kb_ids = [entry.kb_id for entry in body.kb_access]
     await _validate_kb_ids(kb_ids, perms.org_id, perms.user_id, db)
-
-    # Validate: knowledge_append requires at least one read_write KB
-    if body.permissions.get("knowledge_append"):
-        if not any(e.access_level == "read_write" for e in body.kb_access):
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail="knowledge_append permission requires at least one KB with read_write access",
-            )
+    _validate_permissions_against_kb_access(body.permissions, body.kb_access)
 
     plaintext_key, key_hash = generate_partner_key()
     key_id = str(uuid.uuid4())
@@ -477,6 +490,32 @@ async def update_api_key(
 ) -> ApiKeyResponse:
     """Partial update of an API key."""
     key = await _get_key_or_404(key_id, perms.org_id, db)
+    effective_permissions = body.permissions if body.permissions is not None else key.permissions
+    effective_kb_access = body.kb_access
+    permissions_changed = body.permissions is not None
+    kb_access_changed = body.kb_access is not None
+    if effective_kb_access is None and body.permissions is not None:
+        current_access_result = await db.execute(
+            select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
+        )
+        effective_kb_access = [
+            KbAccessEntry(kb_id=row.kb_id, access_level=row.access_level)
+            for row in current_access_result.scalars().all()
+        ]
+    if effective_kb_access is not None:
+        previous_permissions = key.permissions or {}
+        _validate_permissions_against_kb_access(
+            effective_permissions,
+            effective_kb_access,
+            require_chat_kb=kb_access_changed
+            or (permissions_changed and not previous_permissions.get("chat") and effective_permissions.get("chat")),
+            require_knowledge_append_kb=kb_access_changed
+            or (
+                permissions_changed
+                and not previous_permissions.get("knowledge_append")
+                and effective_permissions.get("knowledge_append")
+            ),
+        )
 
     if body.name is not None:
         key.name = body.name

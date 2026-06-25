@@ -112,3 +112,17 @@ async def test_retry_after_is_positive_seconds(mock_redis):
     allowed, retry_after = await check_rate_limit(mock_redis, "key-4", limit_per_minute=3)
     assert allowed is False
     assert 0 < retry_after <= 60
+
+
+@pytest.mark.asyncio
+async def test_weighted_rate_limit_sums_request_costs(mock_redis):
+    """Weighted limiter denies when accumulated token cost would exceed limit."""
+    from app.services.partner_rate_limit import check_weighted_rate_limit
+
+    allowed, retry_after = await check_weighted_rate_limit(mock_redis, "key-5", cost=40, limit_per_minute=100)
+    assert allowed is True
+    assert retry_after == 0
+
+    allowed, retry_after = await check_weighted_rate_limit(mock_redis, "key-5", cost=70, limit_per_minute=100)
+    assert allowed is False
+    assert retry_after > 0

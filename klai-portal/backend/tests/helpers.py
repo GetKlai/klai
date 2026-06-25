@@ -100,7 +100,7 @@ def make_partner_auth(
 
     Override permissions or kb_access as needed per test:
 
-        make_partner_auth(permissions={"chat": True, "knowledge_append": True})
+        make_partner_auth(permissions={"chat": True, "knowledge_append": True, "general_chat": False})
         make_partner_auth(kb_access={10: "read_write"})
     """
     from app.api.partner_dependencies import PartnerAuthContext
@@ -109,7 +109,7 @@ def make_partner_auth(
         key_id="key-uuid-1",
         org_id=42,
         zitadel_org_id="zit-org-42",
-        permissions=permissions or {"chat": True, "feedback": True, "knowledge_append": False},
+        permissions=permissions or {"chat": True, "feedback": True, "knowledge_append": False, "general_chat": False},
         kb_access=kb_access if kb_access is not None else {10: "read", 20: "read_write"},
         rate_limit_rpm=60,
     )

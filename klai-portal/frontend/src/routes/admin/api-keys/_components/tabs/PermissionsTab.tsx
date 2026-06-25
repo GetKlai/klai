@@ -15,11 +15,13 @@ export function PermissionsTab({ apiKey }: Props) {
   const [chat, setChat] = useState(apiKey.permissions.chat)
   const [feedback, setFeedback] = useState(apiKey.permissions.feedback)
   const [knowledgeAppend, setKnowledgeAppend] = useState(apiKey.permissions.knowledge_append)
+  const [generalChat, setGeneralChat] = useState(Boolean(apiKey.permissions.general_chat))
 
   useEffect(() => {
     setChat(apiKey.permissions.chat)
     setFeedback(apiKey.permissions.feedback)
     setKnowledgeAppend(apiKey.permissions.knowledge_append)
+    setGeneralChat(Boolean(apiKey.permissions.general_chat))
   }, [apiKey.permissions])
 
   function handleSubmit(e: React.FormEvent) {
@@ -30,6 +32,7 @@ export function PermissionsTab({ apiKey }: Props) {
           chat,
           feedback,
           knowledge_append: knowledgeAppend,
+          general_chat: generalChat,
         },
       },
       {
@@ -81,6 +84,20 @@ export function PermissionsTab({ apiKey }: Props) {
               <span className="font-medium">{m.admin_api_keys_perm_knowledge_append()}</span>
               <p className="text-xs text-gray-400 mt-0.5">
                 {m.admin_api_keys_perm_knowledge_append_description()}
+              </p>
+            </div>
+          </label>
+          <label className="flex items-start gap-2 text-sm text-gray-900">
+            <input
+              type="checkbox"
+              checked={generalChat}
+              onChange={(e) => setGeneralChat(e.target.checked)}
+              className="accent-[var(--color-accent)] mt-0.5"
+            />
+            <div>
+              <span className="font-medium">{m.admin_api_keys_perm_general_chat()}</span>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {m.admin_api_keys_perm_general_chat_description()}
               </p>
             </div>
           </label>

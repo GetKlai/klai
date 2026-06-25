@@ -64,3 +64,46 @@ async def check_rate_limit(
     await redis_pool.expire(redis_key, window_seconds * 2)
 
     return True, 0
+
+
+async def check_weighted_rate_limit(
+    redis_pool: aioredis.Redis,
+    key_id: str,
+    cost: int,
+    limit_per_minute: int,
+    window_seconds: int = 60,
+) -> tuple[bool, int]:
+    """Check and increment a weighted sliding-window limit.
+
+    This is used for token-style limits where a single request consumes more
+    than one unit. Each request is stored as one ZSET member whose score is the
+    request time and whose member includes the consumed cost, so cleanup remains
+    the same cheap sliding-window operation as the request-count limiter.
+    """
+    if cost < 1:
+        cost = 1
+
+    now = time.time()
+    window_start = now - window_seconds
+    redis_key = f"partner_weighted_rl:{key_id}"
+
+    await redis_pool.zremrangebyscore(redis_key, 0, window_start)
+    entries = await redis_pool.zrange(redis_key, 0, -1, withscores=True)
+    current_total = 0
+    for member, _score in entries:
+        raw = member.decode() if isinstance(member, bytes) else str(member)
+        try:
+            current_total += int(raw.rsplit(":", 1)[-1])
+        except ValueError:
+            current_total += 1
+
+    if current_total + cost > limit_per_minute:
+        oldest_score = entries[0][1] if entries else window_start
+        retry_after = max(1, math.ceil(window_seconds - (now - float(oldest_score))))
+        return False, retry_after
+
+    member = f"{now}:{uuid.uuid4().hex[:8]}:{cost}"
+    await redis_pool.zadd(redis_key, {member: now})
+    await redis_pool.expire(redis_key, window_seconds * 2)
+
+    return True, 0

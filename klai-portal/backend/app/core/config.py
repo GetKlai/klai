@@ -98,10 +98,18 @@ class Settings(BaseSettings):
     mongo_root_password: str = ""
     meili_master_key: str = ""
     litellm_master_key: str = ""
+    litellm_general_chat_key: str = ""  # Dedicated LiteLLM virtual key for Partner OpenAI-compatible chat.
     redis_password: str = ""
     redis_host: str = "redis"
     redis_port: int = 6379
     firecrawl_internal_key: str = ""  # FIRECRAWL_INTERNAL_KEY — shared web search API key
+
+    # Partner OpenAI-compatible chat guardrails. These are intentionally lower
+    # than the generic Partner API RPM because this route exposes paid model
+    # capacity without knowledge grounding.
+    partner_openai_rpm_limit: int = 10
+    partner_openai_tpm_limit: int = 60_000
+    partner_openai_max_input_tokens: int = 16_000
 
     # Provisioning paths (container-internal paths, mounted from host)
     caddy_tenants_path: str = "/caddy/tenants"  # per-tenant .caddyfile dir (caddy-tenants volume)

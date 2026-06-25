@@ -123,6 +123,27 @@ def test_sanitize_upstream_body_redacts_internal_secrets(monkeypatch):
     assert out.count("<redacted>") == 2
 
 
+@pytest.mark.asyncio
+async def test_openai_passthrough_metadata_bypasses_knowledge_hook(monkeypatch):
+    mod = _load_hook(monkeypatch)
+    hook = mod.KlaiKnowledgeHook()
+    cache = _make_cache(feature_enabled=True)
+    data = {
+        "user": "external-user-1",
+        "metadata": {"_klai_openai_passthrough": True},
+        "model": "klai-large",
+        "messages": [{"role": "user", "content": "Use generic chat"}],
+    }
+    original = dict(data)
+
+    result = await hook.async_pre_call_hook(
+        _make_user_api_key(), cache, data, "completion"
+    )
+
+    assert result == original
+    cache.async_get_cache.assert_not_awaited()
+
+
 async def _test_get_kb_feature(user_id: str, org_id: str, cache):
     """Unit-test feature resolver backed by the existing _make_cache helper.
 

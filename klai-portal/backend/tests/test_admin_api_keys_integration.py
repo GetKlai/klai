@@ -59,7 +59,7 @@ async def test_create_api_key_returns_plaintext_key():
 
     body = CreateApiKeyRequest(
         name="Test Key",
-        permissions={"chat": True, "feedback": False, "knowledge_append": False},
+        permissions={"chat": False, "feedback": False, "knowledge_append": False, "general_chat": True},
         kb_access=[],
         rate_limit_rpm=60,
     )
@@ -77,6 +77,31 @@ async def test_create_api_key_returns_plaintext_key():
     assert result.key_prefix == result.api_key[:12]
     db.add.assert_called()
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_api_key_rejects_knowledge_chat_without_kb_access():
+    """Knowledge-grounded chat keys must be scoped to at least one KB."""
+    from app.api.admin_api_keys import CreateApiKeyRequest, create_api_key
+
+    db = AsyncMock()
+    body = CreateApiKeyRequest(
+        name="Knowledge Key",
+        permissions={"chat": True, "feedback": False, "knowledge_append": False, "general_chat": False},
+        kb_access=[],
+        rate_limit_rpm=60,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await create_api_key(
+            body=body,
+            perms=make_perms(role="admin", user_id="user-1", org_id=1),
+            db=db,
+        )
+
+    assert exc.value.status_code == 400
+    assert "requires at least one knowledge base" in exc.value.detail
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -202,6 +227,40 @@ async def test_update_api_key_rejects_personal_kb_on_key_created_by_other_user()
     assert "created by the caller" in exc.value.detail
     assert db.execute.await_count == 2
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_api_key_allows_adding_general_chat_to_legacy_key_without_kb():
+    """Legacy no-KB chat keys can still be edited when chat itself is unchanged."""
+    from app.api.admin_api_keys import UpdateApiKeyRequest, update_api_key
+
+    key = FakeKeyRow(
+        id="key-1",
+        permissions={"chat": True, "feedback": False, "knowledge_append": False, "general_chat": False},
+    )
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([key]),  # SELECT key
+            FakeResult([]),  # current KB access rows
+            FakeResult(scalar_value=0),  # count KB access for response
+        ],
+    )
+    body = UpdateApiKeyRequest(
+        permissions={"chat": True, "feedback": False, "knowledge_append": False, "general_chat": True}
+    )
+
+    with patch("app.api.admin_api_keys.emit_event"):
+        result = await update_api_key(
+            key_id="key-1",
+            body=body,
+            perms=make_perms(role="admin", user_id="user-1", org_id=1),
+            db=db,
+        )
+
+    assert result.permissions["general_chat"] is True
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

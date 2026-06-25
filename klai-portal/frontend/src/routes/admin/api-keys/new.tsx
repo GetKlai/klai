@@ -24,6 +24,7 @@ interface FormState {
   chat: boolean
   feedback: boolean
   knowledge_append: boolean
+  general_chat: boolean
   kb_access: { kb_id: number; access_level: AccessLevel }[]
   rate_limit_rpm: number
 }
@@ -34,6 +35,7 @@ const INITIAL_FORM: FormState = {
   chat: true,
   feedback: true,
   knowledge_append: false,
+  general_chat: false,
   kb_access: [],
   rate_limit_rpm: 60,
 }
@@ -80,12 +82,12 @@ function NewApiKeyPage() {
         : null
     }
     if (s === 'permissions') {
-      return form.chat || form.feedback || form.knowledge_append
+      return form.chat || form.feedback || form.knowledge_append || form.general_chat
         ? null
         : m.admin_api_keys_wizard_error_no_permissions()
     }
     if (s === 'kbs') {
-      return form.kb_access.length === 0
+      return (form.chat || form.knowledge_append) && form.kb_access.length === 0
         ? m.admin_shared_wizard_error_no_kb_selected()
         : null
     }
@@ -117,6 +119,7 @@ function NewApiKeyPage() {
           chat: form.chat,
           feedback: form.feedback,
           knowledge_append: form.knowledge_append,
+          general_chat: form.general_chat,
         },
         rate_limit_rpm: form.rate_limit_rpm,
         kb_access: form.kb_access,
@@ -232,6 +235,20 @@ function NewApiKeyPage() {
                   <span className="font-medium">{m.admin_api_keys_perm_knowledge_append()}</span>
                   <p className="text-xs text-gray-400 mt-0.5">
                     {m.admin_api_keys_perm_knowledge_append_description()}
+                  </p>
+                </div>
+              </label>
+              <label className="flex items-start gap-2 text-sm text-gray-900">
+                <input
+                  type="checkbox"
+                  checked={form.general_chat}
+                  onChange={(e) => setForm((p) => ({ ...p, general_chat: e.target.checked }))}
+                  className="accent-[var(--color-accent)] mt-0.5"
+                />
+                <div>
+                  <span className="font-medium">{m.admin_api_keys_perm_general_chat()}</span>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {m.admin_api_keys_perm_general_chat_description()}
                   </p>
                 </div>
               </label>

@@ -18,6 +18,7 @@ import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from redis.exceptions import RedisError
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response, StreamingResponse
@@ -38,12 +39,14 @@ from app.services.events import emit_event
 from app.services.partner_chat import (
     chat_completion_non_streaming,
     chat_completion_streaming,
+    openai_chat_completion_non_streaming,
+    openai_chat_completion_streaming,
     retrieve_context,
     safety_refusal_response,
     safety_refusal_stream,
     widget_input_safety_violation,
 )
-from app.services.partner_rate_limit import check_rate_limit
+from app.services.partner_rate_limit import check_rate_limit, check_weighted_rate_limit
 from app.services.partner_sse import (
     _extract_assistant_text_and_sources,
     _parse_audit_sse_chunk,
@@ -79,10 +82,39 @@ _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
 router = APIRouter(prefix="/partner/v1", tags=["Partner API"])
 
 _ALLOWED_MODELS = {"klai-primary", "klai-fast"}
+_OPENAI_COMPATIBLE_MODELS = {"klai-primary", "klai-fast", "klai-large"}
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _HUBSPOT_HANDOFF_DEV_TENANT_SLUG = "getklai"
 _HUBSPOT_HANDOFF_DEV_ORIGIN = "https://getklai.getklai.com"
 _MAX_WEB_SEARCH_QUERY_CHARS = 512
+_OPENAI_COMPAT_MAX_BODY_BYTES = 131_072
+_OPENAI_COMPAT_DEFAULT_MAX_TOKENS = 2048
+_OPENAI_COMPAT_MAX_TOKENS = 4096
+_OPENAI_COMPAT_MAX_N = 1
+_OPENAI_COMPAT_FORWARD_FIELDS = {
+    "frequency_penalty",
+    "logit_bias",
+    "logprobs",
+    "max_completion_tokens",
+    "max_tokens",
+    "messages",
+    "model",
+    "n",
+    "parallel_tool_calls",
+    "presence_penalty",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "stop",
+    "stream",
+    "stream_options",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_logprobs",
+    "top_p",
+    "user",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +530,225 @@ def _validate_chat_request(request: ChatCompletionsRequest) -> None:
         )
 
 
+def _openai_compatible_model_payload() -> list[dict[str, Any]]:
+    return [
+        {"id": model, "object": "model", "created": 0, "owned_by": "klai"}
+        for model in sorted(_OPENAI_COMPATIBLE_MODELS)
+    ]
+
+
+async def _openai_compatible_request_body(http_request: Request) -> dict[str, Any]:
+    content_length = http_request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > _OPENAI_COMPAT_MAX_BODY_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail={
+                        "error": {
+                            "type": "invalid_request",
+                            "message": "Request body too large",
+                        }
+                    },
+                )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"type": "invalid_request", "message": "Content-Length must be an integer"}},
+            ) from exc
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in http_request.stream():
+        total += len(chunk)
+        if total > _OPENAI_COMPAT_MAX_BODY_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail={
+                    "error": {
+                        "type": "invalid_request",
+                        "message": "Request body too large",
+                    }
+                },
+            )
+        chunks.append(chunk)
+
+    raw = b"".join(chunks)
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"type": "invalid_request", "message": "Request body must be valid JSON"}},
+        )
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"type": "invalid_request", "message": "Request body must be valid JSON"}},
+        ) from exc
+    if not isinstance(body, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"type": "invalid_request", "message": "Request body must be a JSON object"}},
+        )
+    return body
+
+
+def _validated_openai_compatible_body(body: dict[str, Any]) -> dict[str, Any]:
+    forwarded = {field: body[field] for field in _OPENAI_COMPAT_FORWARD_FIELDS if field in body}
+    model = forwarded.get("model") or "klai-primary"
+    if model not in _OPENAI_COMPATIBLE_MODELS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "type": "invalid_request",
+                    "message": f"Model must be one of: {', '.join(sorted(_OPENAI_COMPATIBLE_MODELS))}",
+                }
+            },
+        )
+    forwarded["model"] = model
+
+    messages = forwarded.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"type": "invalid_request", "message": "Messages must be a non-empty array"}},
+        )
+
+    n = forwarded.get("n", 1)
+    if not isinstance(n, int) or isinstance(n, bool) or n < 1 or n > _OPENAI_COMPAT_MAX_N:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"type": "invalid_request", "message": "n must be 1"}},
+        )
+
+    for field in ("max_tokens", "max_completion_tokens"):
+        value = forwarded.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"type": "invalid_request", "message": f"{field} must be a positive integer"}},
+            )
+        if value > _OPENAI_COMPAT_MAX_TOKENS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": {
+                        "type": "invalid_request",
+                        "message": f"{field} may not exceed {_OPENAI_COMPAT_MAX_TOKENS}",
+                    }
+                },
+            )
+    if forwarded.get("max_tokens") is None and forwarded.get("max_completion_tokens") is None:
+        forwarded["max_tokens"] = _OPENAI_COMPAT_DEFAULT_MAX_TOKENS
+
+    return forwarded
+
+
+def _estimate_openai_input_tokens(body: dict[str, Any]) -> int:
+    """Conservative preflight token estimate for abuse limits.
+
+    Exact provider tokenization is model-specific. For a cheap fail-fast guard,
+    estimate from serialized OpenAI messages/tools/response_format and round up.
+    """
+    payload = {
+        "messages": body.get("messages", []),
+        "tools": body.get("tools"),
+        "tool_choice": body.get("tool_choice"),
+        "response_format": body.get("response_format"),
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return max(1, (len(serialized) + 3) // 4)
+
+
+def _reserved_openai_output_tokens(body: dict[str, Any]) -> int:
+    values = [
+        value
+        for value in (body.get("max_tokens"), body.get("max_completion_tokens"))
+        if value is not None
+    ]
+    return int(max(values) if values else _OPENAI_COMPAT_DEFAULT_MAX_TOKENS)
+
+
+async def _enforce_openai_compatible_usage_limits(
+    *,
+    auth: PartnerAuthContext,
+    body: dict[str, Any],
+) -> None:
+    input_tokens = _estimate_openai_input_tokens(body)
+    if input_tokens > settings.partner_openai_max_input_tokens:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "type": "invalid_request",
+                    "message": f"estimated input tokens may not exceed {settings.partner_openai_max_input_tokens}",
+                }
+            },
+        )
+
+    redis_pool = await get_redis_pool()
+    if redis_pool is None:
+        logger.warning("partner_openai_rate_limit_unavailable", org_id=auth.org_id, key_id=str(auth.key_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": {"type": "service_unavailable", "message": "Rate limit service unavailable"}},
+        )
+
+    try:
+        rpm_allowed, rpm_retry_after = await check_rate_limit(
+            redis_pool,
+            f"openai:{auth.key_id}",
+            settings.partner_openai_rpm_limit,
+        )
+    except (RedisError, ConnectionError, OSError) as exc:
+        logger.warning(
+            "partner_openai_rate_limit_unavailable",
+            org_id=auth.org_id,
+            key_id=str(auth.key_id),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": {"type": "service_unavailable", "message": "Rate limit service unavailable"}},
+        ) from exc
+    if not rpm_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": {"type": "rate_limit_error", "message": "OpenAI-compatible chat rate limit exceeded"}},
+            headers={"Retry-After": str(rpm_retry_after)},
+        )
+
+    token_cost = input_tokens + _reserved_openai_output_tokens(body)
+    try:
+        tpm_allowed, tpm_retry_after = await check_weighted_rate_limit(
+            redis_pool,
+            f"openai_tpm:{auth.key_id}",
+            token_cost,
+            settings.partner_openai_tpm_limit,
+        )
+    except (RedisError, ConnectionError, OSError) as exc:
+        logger.warning(
+            "partner_openai_rate_limit_unavailable",
+            org_id=auth.org_id,
+            key_id=str(auth.key_id),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": {"type": "service_unavailable", "message": "Rate limit service unavailable"}},
+        ) from exc
+    if not tpm_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": {"type": "rate_limit_error", "message": "OpenAI-compatible token rate limit exceeded"}},
+            headers={"Retry-After": str(tpm_retry_after)},
+        )
+
+
 def _message_text(content: object) -> str:
     """Extract plain text from a message ``content`` that may be a string or an
     OpenAI-style list of parts (``[{"type": "text", "text": "…"}, …]``)."""
@@ -543,6 +794,33 @@ def _resolve_web_query(request: ChatCompletionsRequest) -> str | None:
         if text := _clean_web_query(_message_text(message.get("content"))):
             return text
     return None
+
+
+@router.get("/openai/models")
+async def openai_compatible_models(
+    auth: PartnerAuthContext = Depends(get_partner_key),
+) -> dict[str, Any]:
+    """List models available through the OpenAI-compatible partner passthrough."""
+    require_permission(auth, "general_chat")
+    return {"object": "list", "data": _openai_compatible_model_payload()}
+
+
+@router.post("/openai/chat/completions", response_model=None)
+async def openai_compatible_chat_completions(
+    http_request: Request,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+) -> Response | dict[str, Any]:
+    """OpenAI-compatible generic chat completions passthrough.
+
+    This endpoint is intentionally separate from /partner/v1/chat/completions,
+    which remains knowledge-grounded and citation-managed.
+    """
+    require_permission(auth, "general_chat")
+    body = _validated_openai_compatible_body(await _openai_compatible_request_body(http_request))
+    await _enforce_openai_compatible_usage_limits(auth=auth, body=body)
+    if bool(body.get("stream", False)):
+        return await openai_chat_completion_streaming(body, settings, org_id=auth.org_id)
+    return await openai_chat_completion_non_streaming(body, settings, org_id=auth.org_id)
 
 
 async def _maybe_apply_web_search(

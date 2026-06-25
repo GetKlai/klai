@@ -57,7 +57,7 @@ class PartnerAuthContext:
     key_id: str  # UUID as string
     org_id: int  # portal org integer id
     zitadel_org_id: str  # for retrieval-api calls
-    permissions: dict  # {"chat": bool, "feedback": bool, "knowledge_append": bool}
+    permissions: dict  # {"chat": bool, "feedback": bool, "knowledge_append": bool, "general_chat": bool}
     kb_access: dict[int, str]  # {kb_id: access_level} from junction table
     rate_limit_rpm: int
     # REQ-15 (Finding B-11, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001):

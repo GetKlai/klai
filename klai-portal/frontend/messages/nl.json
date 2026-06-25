@@ -1610,6 +1610,8 @@
   "admin_api_keys_perm_feedback_description": "Beoordeel antwoorden als goed of slecht om resultaten te verbeteren.",
   "admin_api_keys_perm_knowledge_append": "Kennis toevoegen",
   "admin_api_keys_perm_knowledge_append_description": "Voeg nieuwe kennis toe aan kennisbanken.",
+  "admin_api_keys_perm_general_chat": "Algemene AI-chat",
+  "admin_api_keys_perm_general_chat_description": "Gebruik deze key met OpenAI-compatible clients, zonder kennisbankbronnen. Dit gebruikt algemene modelcapaciteit.",
   "admin_shared_kb_name": "Kennisbank",
   "admin_api_keys_kb_type": "Type",
   "admin_api_keys_kb_none": "Geen",

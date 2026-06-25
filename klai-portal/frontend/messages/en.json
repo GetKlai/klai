@@ -1610,6 +1610,8 @@
   "admin_api_keys_perm_feedback_description": "Rate answers as good or bad to improve results.",
   "admin_api_keys_perm_knowledge_append": "Add knowledge",
   "admin_api_keys_perm_knowledge_append_description": "Add new knowledge to knowledge bases.",
+  "admin_api_keys_perm_general_chat": "General AI chat",
+  "admin_api_keys_perm_general_chat_description": "Use this key with OpenAI-compatible clients, without knowledge-base grounding. This uses general model capacity.",
   "admin_shared_kb_name": "Knowledge base",
   "admin_api_keys_kb_type": "Type",
   "admin_api_keys_kb_none": "None",

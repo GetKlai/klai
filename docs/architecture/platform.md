@@ -10,7 +10,7 @@
 | Routing (portal) | TanStack Router (code-based) | Type-safe routes and search params; React Router v7 as backup for simple navigation |
 | Data fetching (portal) | TanStack Query | Dashboard + mutations need caching and retry; SWR as alternative for simpler use |
 | Customer portal backend | FastAPI (Python) | One language for all backend services; provisioning, billing, Scribe, later RAG |
-| Public API | Partner API on portal-api (`api.getklai.com/partner/v1/*`) | OpenAI-compatible streaming, `pk_live_...` Bearer auth, KB-scoped keys (SPEC-API-001) |
+| Public API | Partner API on portal-api (`api.getklai.com/partner/v1/*`) | KB-grounded chat plus a separate OpenAI-compatible passthrough, `pk_live_...` Bearer auth, KB-scoped keys (SPEC-API-001) |
 | Embeddable widget | `klai-widget` — SolidJS + Vite, FlowiseChatEmbed fork | Served from portal origin; `<script data-widget-id="wgt_...">` one-tag embed (SPEC-WIDGET-001/002) |
 | HubSpot Help Desk app | `klai-hubspot/klai-email-support` | HubSpot Projects-lifecycle UI extension (`hs project deploy`); app card surfacing Klai-generated support-email drafts. POC — sandbox-targeted. |
 | Browser extension | `klai-shield-extension` | Platform-admin-only Chrome extension (Superdock shell) for Klai Shield — checks prompts in browser LLMs, wired to Klai auth/compliance/knowledge APIs. |
@@ -41,7 +41,7 @@ Billing (handled by Moneybird, see Stack table):
 
 ### Public API surface
 
-`api.getklai.com/partner/v1/*` exposes the platform to external developers (SPEC-API-001). Endpoints: `/chat/completions` (OpenAI-compatible streaming SSE), `/feedback`, `/knowledge/append`, `/widget-config`. Bearer auth with `pk_live_<40-hex>` tokens, SHA-256 hashed in `partner_api_keys`. Every key carries a KB whitelist and per-key rate limit.
+`api.getklai.com/partner/v1/*` exposes the platform to external developers (SPEC-API-001). Endpoints: `/chat/completions` for Klai knowledge-grounded chat, `/openai/chat/completions` for OpenAI-compatible general chat passthrough, `/openai/models`, `/feedback`, `/knowledge/append`, `/widget-config`. Bearer auth with `pk_live_<40-hex>` tokens, SHA-256 hashed in `partner_api_keys`. Every key carries a KB whitelist, per-key rate limit, and explicit permissions. The OpenAI-compatible passthrough requires the `general_chat` permission, keeps a separate route from the knowledge endpoint, forwards only OpenAI chat fields, and enforces a 128 KiB request body, `n=1`, bounded output tokens, estimated input tokens <= 16k, route RPM 10, and estimated TPM 60k. Portal forwards these calls with `LITELLM_GENERAL_CHAT_KEY`, a dedicated LiteLLM virtual key that must be distinct from `LITELLM_MASTER_KEY` and must also carry budget/RPM/TPM limits.
 
 ### Chat widgets
 
