@@ -40,7 +40,7 @@ pipeline with three different credentials:
 | Consumer | Entry point | Credential |
 |---|---|---|
 | **LibreChat tenant** (in-portal) | LibreChat container → LiteLLM | Team key (metadata: `org_id`) |
-| **Partner API client** (server-to-server) | `api.getklai.com/partner/v1/chat/completions` → LiteLLM | `pk_live_...` Bearer token (SHA-256 lookup in `partner_api_keys`) |
+| **Partner API client** (server-to-server) | `api.getklai.com/partner/v1/chat/completions` or `/partner/v1/responses` → LiteLLM | `pk_live_...` Bearer token (SHA-256 lookup in `partner_api_keys`) |
 | **Embedded chat widget** (external website) | `api.getklai.com/partner/v1/chat/completions` → LiteLLM | JWT session token (signed with `WIDGET_JWT_SECRET`, obtained from `/partner/v1/widget-config`) |
 
 All three converge on `KlaiKnowledgeHook`. LiteLLM intercepts the request, enriches it with knowledge, and only then forwards the enriched request to the model.
@@ -149,7 +149,7 @@ The knowledge settings bar sits above the LibreChat iframe in the portal. It con
 four things. Each change is saved immediately to the database and propagates to the
 retrieval layer within about 30 seconds (the length of the LiteLLM cache TTL).
 
-**The ChatConfigBar applies to LibreChat only.** Partner API keys and embedded chat widgets are scope-locked at credential creation when `/partner/v1/chat/completions` is used with Klai knowledge extensions: their `kb_ids` whitelist is stored on `partner_api_keys` (for API keys) or in the JWT payload (for widgets), and cannot be widened at runtime. They also never query personal scope. `kb_retrieval_enabled` is implicitly always `true` for these knowledge-grounded consumers. Plain OpenAI-compatible calls to the same `/partner/v1/chat/completions` path use the general model passthrough instead and require the API key's `general_chat` permission.
+**The ChatConfigBar applies to LibreChat only.** Partner API keys and embedded chat widgets are scope-locked at credential creation when `/partner/v1/chat/completions` is used with Klai knowledge extensions: their `kb_ids` whitelist is stored on `partner_api_keys` (for API keys) or in the JWT payload (for widgets), and cannot be widened at runtime. They also never query personal scope. `kb_retrieval_enabled` is implicitly always `true` for these knowledge-grounded consumers. Plain OpenAI-compatible calls to `/partner/v1/chat/completions` and the stateless `/partner/v1/responses` text adapter use the general model passthrough instead and require the API key's `general_chat` permission; `/responses` does not accept Klai knowledge extensions.
 
 ---
 

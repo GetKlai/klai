@@ -7,6 +7,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from redis.exceptions import RedisError
+from starlette.responses import StreamingResponse
 
 from app.api.partner_dependencies import PartnerAuthContext
 
@@ -509,6 +510,202 @@ async def test_openai_compatible_models_lists_general_models():
     ]
 
 
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_requires_general_chat_permission():
+    from app.api.partner import openai_compatible_responses
+
+    with pytest.raises(HTTPException) as exc:
+        await openai_compatible_responses(
+            http_request=_request({"model": "gpt-4o-mini", "input": "hi"}),
+            auth=_auth({"chat": True}),
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_maps_text_request_to_chat(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(
+        return_value={
+            "id": "chatcmpl-1",
+            "model": "klai-fast",
+            "choices": [{"message": {"content": '{"ok":true}'}}],
+            "usage": {"total_tokens": 7},
+        }
+    )
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.openai_compatible_responses(
+        http_request=_request(
+            {
+                "model": "gpt-4o-mini",
+                "instructions": "Answer as JSON.",
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "Ping"}]}],
+                "max_output_tokens": 123,
+                "text": {"format": {"type": "json_object"}},
+                "stream": False,
+            }
+        ),
+        auth=_auth(),
+    )
+
+    assert result["object"] == "response"
+    assert result["id"] == "chatcmpl-1"
+    assert result["model"] == "klai-fast"
+    assert result["output_text"] == '{"ok":true}'
+    assert result["output"][0]["content"][0]["type"] == "output_text"
+    assert result["usage"] == {"total_tokens": 7}
+
+    sent = forwarded.await_args.args[0]
+    assert sent["model"] == "klai-fast"
+    assert sent["messages"] == [
+        {"role": "system", "content": "Answer as JSON."},
+        {"role": "user", "content": "Ping"},
+    ]
+    assert sent["max_tokens"] == 123
+    assert sent["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_maps_function_tools(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(
+        return_value={
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_123",
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": '{"id":1}'},
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.openai_compatible_responses(
+        http_request=_request(
+            {
+                "model": "klai-primary",
+                "input": "Find this customer",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "lookup",
+                        "description": "Look up a customer",
+                        "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}},
+                    }
+                ],
+                "tool_choice": {"type": "function", "name": "lookup"},
+            }
+        ),
+        auth=_auth(),
+    )
+
+    sent = forwarded.await_args.args[0]
+    assert sent["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "description": "Look up a customer",
+                "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}},
+            },
+        }
+    ]
+    assert sent["tool_choice"] == {"type": "function", "function": {"name": "lookup"}}
+    assert result["output"][1] == {
+        "type": "function_call",
+        "id": "call_123",
+        "call_id": "call_123",
+        "name": "lookup",
+        "arguments": '{"id":1}',
+        "status": "completed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_rejects_hosted_tools():
+    from app.api.partner import openai_compatible_responses
+
+    with pytest.raises(HTTPException) as exc:
+        await openai_compatible_responses(
+            http_request=_request(
+                {
+                    "model": "gpt-4o-mini",
+                    "input": "Search the web",
+                    "tools": [{"type": "web_search_preview"}],
+                }
+            ),
+            auth=_auth(),
+        )
+
+    assert exc.value.status_code == 400
+    assert "not supported" in exc.value.detail["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_rejects_knowledge_extensions():
+    from app.api.partner import openai_compatible_responses
+
+    with pytest.raises(HTTPException) as exc:
+        await openai_compatible_responses(
+            http_request=_request(
+                {
+                    "model": "gpt-4o-mini",
+                    "input": "Use KB",
+                    "knowledge": {"enabled": True},
+                }
+            ),
+            auth=_auth(),
+        )
+
+    assert exc.value.status_code == 400
+    assert "/chat/completions" in exc.value.detail["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_streams_text_events(monkeypatch):
+    import app.api.partner as partner
+
+    async def chat_events():
+        yield b'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
+        yield b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    monkeypatch.setattr(
+        partner,
+        "openai_chat_completion_streaming",
+        AsyncMock(return_value=StreamingResponse(chat_events(), media_type="text/event-stream")),
+    )
+
+    response = await partner.openai_compatible_responses(
+        http_request=_request({"model": "gpt-4o-mini", "input": "hi", "stream": True}),
+        auth=_auth(),
+    )
+
+    assert isinstance(response, StreamingResponse)
+    chunks: list[bytes] = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk if isinstance(chunk, bytes) else str(chunk).encode())
+    body = b"".join(chunks).decode()
+    assert "event: response.output_text.delta" in body
+    assert '"delta": "hel"' in body
+    assert '"delta": "lo"' in body
+    assert "event: response.completed" in body
+    assert '"output_text": "hello"' in body
+    assert "data: [DONE]" in body
+
+
 def test_openai_compatible_routes_are_canonical_only():
     import app.api.partner as partner
 
@@ -516,6 +713,7 @@ def test_openai_compatible_routes_are_canonical_only():
 
     assert "/partner/v1/models" in route_paths
     assert "/partner/v1/chat/completions" in route_paths
+    assert "/partner/v1/responses" in route_paths
     assert "/partner/v1/openai/models" not in route_paths
     assert "/partner/v1/openai/chat/completions" not in route_paths
 
