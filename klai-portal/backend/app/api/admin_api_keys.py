@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -499,7 +499,10 @@ async def update_api_key(
             select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
         )
         effective_kb_access = [
-            KbAccessEntry(kb_id=row.kb_id, access_level=row.access_level)
+            KbAccessEntry(
+                kb_id=row.kb_id,
+                access_level=cast(Literal["read", "read_write"], row.access_level),
+            )
             for row in current_access_result.scalars().all()
         ]
     if effective_kb_access is not None:
@@ -507,13 +510,17 @@ async def update_api_key(
         _validate_permissions_against_kb_access(
             effective_permissions,
             effective_kb_access,
-            require_chat_kb=kb_access_changed
-            or (permissions_changed and not previous_permissions.get("chat") and effective_permissions.get("chat")),
-            require_knowledge_append_kb=kb_access_changed
-            or (
-                permissions_changed
-                and not previous_permissions.get("knowledge_append")
-                and effective_permissions.get("knowledge_append")
+            require_chat_kb=bool(
+                kb_access_changed
+                or (permissions_changed and not previous_permissions.get("chat") and effective_permissions.get("chat"))
+            ),
+            require_knowledge_append_kb=bool(
+                kb_access_changed
+                or (
+                    permissions_changed
+                    and not previous_permissions.get("knowledge_append")
+                    and effective_permissions.get("knowledge_append")
+                )
             ),
         )
 

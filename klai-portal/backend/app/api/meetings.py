@@ -737,8 +737,9 @@ async def vexa_webhook(
     if meeting.org_id is None:
         logger.warning("vexa_webhook_skipped_missing_org_id", meeting_id=str(meeting.id))
         return {"status": "ignored"}
+    meeting_org_id = meeting.org_id
 
-    async with tenant_scoped_session(meeting.org_id) as scoped_db:
+    async with tenant_scoped_session(meeting_org_id) as scoped_db:
         # Re-attach the detached ORM instance to the new session.
         meeting = await scoped_db.merge(meeting)
 
@@ -760,7 +761,7 @@ async def vexa_webhook(
             meeting.vexa_meeting_id = payload.vexa_meeting_id
         await scoped_db.commit()
 
-        await set_tenant(scoped_db, meeting.org_id)
+        await set_tenant(scoped_db, meeting_org_id)
         await run_transcription(meeting, scoped_db)
         await scoped_db.commit()
 
