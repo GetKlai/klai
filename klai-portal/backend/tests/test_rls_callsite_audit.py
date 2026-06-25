@@ -157,6 +157,9 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         # set_tenant for this session.
         "get_accessible_meetings",
         "count_accessible_meetings",
+        # app/services/bot_poller.py — pure SQLAlchemy statement builder,
+        # only called from _load_cycle_snapshots inside cross_org_session().
+        "_stuck_meetings_stmt",
     }
 )
 
