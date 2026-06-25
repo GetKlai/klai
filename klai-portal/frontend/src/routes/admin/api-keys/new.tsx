@@ -15,8 +15,8 @@ export const Route = createFileRoute('/admin/api-keys/new')({
   component: NewApiKeyPage,
 })
 
-type Step = 'details' | 'permissions' | 'kbs' | 'rate_limit'
-const STEPS: Step[] = ['details', 'permissions', 'kbs', 'rate_limit']
+type Step = 'details' | 'permissions' | 'kbs'
+const STEPS: Step[] = ['details', 'permissions', 'kbs']
 
 interface FormState {
   name: string
@@ -26,7 +26,6 @@ interface FormState {
   knowledge_append: boolean
   general_chat: boolean
   kb_access: { kb_id: number; access_level: AccessLevel }[]
-  rate_limit_rpm: number
 }
 
 const INITIAL_FORM: FormState = {
@@ -37,7 +36,6 @@ const INITIAL_FORM: FormState = {
   knowledge_append: false,
   general_chat: false,
   kb_access: [],
-  rate_limit_rpm: 60,
 }
 
 function NewApiKeyPage() {
@@ -55,9 +53,7 @@ function NewApiKeyPage() {
         ? m.admin_shared_wizard_step_details()
         : s === 'permissions'
           ? m.admin_api_keys_wizard_step_permissions()
-          : s === 'kbs'
-            ? m.admin_shared_wizard_step_kb_access()
-            : m.admin_api_keys_wizard_step_rate_limit(),
+          : m.admin_shared_wizard_step_kb_access(),
     onClick: () => setStep(s),
   }))
 
@@ -121,7 +117,6 @@ function NewApiKeyPage() {
           knowledge_append: form.knowledge_append,
           general_chat: form.general_chat,
         },
-        rate_limit_rpm: form.rate_limit_rpm,
         kb_access: form.kb_access,
       },
       {
@@ -266,35 +261,6 @@ function NewApiKeyPage() {
               onChange={(kb_access) => setForm((p) => ({ ...p, kb_access }))}
               knowledgeAppendEnabled={form.knowledge_append}
             />
-          </section>
-        )}
-
-        {step === 'rate_limit' && (
-          <section className="space-y-4">
-            <p className="text-sm text-gray-400">
-              {m.admin_api_keys_wizard_rate_limit_intro()}
-            </p>
-            <div className="space-y-1.5">
-              <Label htmlFor="rate-limit">
-                {m.admin_api_keys_field_rate_limit()}
-              </Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="rate-limit"
-                  type="number"
-                  min={10}
-                  max={600}
-                  value={form.rate_limit_rpm}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, rate_limit_rpm: Number(e.target.value) }))
-                  }
-                  className="max-w-[8rem]"
-                />
-                <span className="text-sm text-gray-400">
-                  {m.admin_api_keys_rate_limit_unit()}
-                </span>
-              </div>
-            </div>
           </section>
         )}
 

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { ArrowLeft, Info, Shield, Settings, RotateCcw, AlertTriangle, Loader2 } from 'lucide-react'
+import { ArrowLeft, Info, Shield, RotateCcw, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { QueryErrorState } from '@/components/ui/query-error-state'
@@ -8,13 +8,12 @@ import { useApiKey } from './-hooks'
 import { DetailsTab } from './_components/tabs/DetailsTab'
 import { PermissionsTab } from './_components/tabs/PermissionsTab'
 import { KnowledgeBasesTab } from './_components/tabs/KnowledgeBasesTab'
-import { RateLimitTab } from './_components/tabs/RateLimitTab'
 import { RotationTab } from './_components/tabs/RotationTab'
 import { DangerTab } from './_components/tabs/DangerTab'
 
-type TabId = 'details' | 'permissions' | 'kbs' | 'rate_limit' | 'rotation' | 'danger'
+type TabId = 'details' | 'permissions' | 'kbs' | 'rotation' | 'danger'
 
-const VALID_TABS = new Set<TabId>(['details', 'permissions', 'kbs', 'rate_limit', 'rotation', 'danger'])
+const VALID_TABS = new Set<TabId>(['details', 'permissions', 'kbs', 'rotation', 'danger'])
 
 type DetailSearch = {
   tab?: TabId
@@ -66,7 +65,6 @@ function ApiKeyDetailPage() {
     { id: 'details', label: m.admin_shared_tab_general(), icon: Info },
     { id: 'permissions', label: m.admin_api_keys_wizard_step_permissions(), icon: Shield },
     { id: 'kbs', label: m.admin_shared_wizard_step_kb_access(), icon: Shield },
-    { id: 'rate_limit', label: m.admin_api_keys_wizard_step_rate_limit(), icon: Settings },
     { id: 'rotation', label: m.admin_api_keys_tab_rotation(), icon: RotateCcw },
     { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
   ]
@@ -108,7 +106,6 @@ function ApiKeyDetailPage() {
       {activeTab === 'details' && <DetailsTab apiKey={apiKey} />}
       {activeTab === 'permissions' && <PermissionsTab apiKey={apiKey} />}
       {activeTab === 'kbs' && <KnowledgeBasesTab apiKey={apiKey} />}
-      {activeTab === 'rate_limit' && <RateLimitTab apiKey={apiKey} />}
       {activeTab === 'rotation' && <RotationTab apiKey={apiKey} />}
       {activeTab === 'danger' && <DangerTab apiKey={apiKey} />}
     </div>

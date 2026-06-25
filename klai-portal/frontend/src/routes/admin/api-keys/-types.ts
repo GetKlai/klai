@@ -43,7 +43,6 @@ export interface CreateApiKeyRequest {
     knowledge_append: boolean
     general_chat: boolean
   }
-  rate_limit_rpm: number
   kb_access: { kb_id: number; access_level: AccessLevel }[]
 }
 
