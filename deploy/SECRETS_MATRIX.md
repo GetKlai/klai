@@ -78,7 +78,7 @@ details in the private infra repo.
 | `BRAND_URL` | klai-mailer | Brand homepage URL for email templates. Overrides code default (example.com). Mapped to `BRAND_URL` in-container. Source: mailer service env. |
 | `MAILER_WEBHOOK_SECRET` | klai-mailer | HMAC secret for Zitadel webhook signature verification. Validator fails closed on empty (SPEC-SEC-MAILER-INJECTION-001 REQ-9.1). Mapped to `WEBHOOK_SECRET` in-container. Source: mailer service env. |
 | `LITELLM_MASTER_KEY` | portal-api | Master key for the LiteLLM gateway — portal writes this when provisioning per-tenant LibreChat containers. |
-| `LITELLM_GENERAL_CHAT_KEY` | portal-api | Dedicated LiteLLM virtual key for `/partner/v1/openai/chat/completions`; MUST be distinct from `LITELLM_MASTER_KEY` and must carry its own LiteLLM budget/RPM/TPM limits. |
+| `LITELLM_GENERAL_CHAT_KEY` | portal-api | Dedicated LiteLLM virtual key for plain OpenAI-compatible `/partner/v1/chat/completions` calls; MUST be distinct from `LITELLM_MASTER_KEY` and must carry its own LiteLLM budget/RPM/TPM limits. |
 | `LITELLM_MASTER_KEY` | retrieval-api | Bearer token for the LiteLLM gateway (re-exposed as `LITELLM_API_KEY` in-container). |
 | `LITELLM_MASTER_KEY` | scribe-api | Bearer token for the LiteLLM gateway (AI summarization of transcripts). |
 | `GETKLAI_MEILI_API_KEY` | librechat-getklai | Meilisearch API key scoped to `getklai_messages` and `getklai_convos`. Do not use `MEILI_MASTER_KEY` in LibreChat containers. |

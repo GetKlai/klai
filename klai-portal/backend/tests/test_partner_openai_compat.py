@@ -498,7 +498,110 @@ async def test_openai_compatible_models_lists_general_models():
     result = await openai_compatible_models(auth=_auth())
 
     model_ids = [entry["id"] for entry in result["data"]]
-    assert model_ids == ["klai-fast", "klai-large", "klai-primary"]
+    assert model_ids == [
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "klai-fast",
+        "klai-large",
+        "klai-primary",
+    ]
+
+
+def test_openai_compatible_routes_are_canonical_only():
+    import app.api.partner as partner
+
+    route_paths = {route.path for route in partner.router.routes}
+
+    assert "/partner/v1/models" in route_paths
+    assert "/partner/v1/chat/completions" in route_paths
+    assert "/partner/v1/openai/models" not in route_paths
+    assert "/partner/v1/openai/chat/completions" not in route_paths
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_without_knowledge_uses_general_passthrough(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "Return JSON"}],
+                "response_format": {"type": "json_object"},
+                "stream": False,
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "ok"}}]}
+    sent = forwarded.await_args.args[0]
+    assert sent["model"] == "klai-fast"
+    assert sent["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_with_knowledge_uses_rag_flow(monkeypatch):
+    import app.api.partner as partner
+
+    knowledge_flow = AsyncMock(return_value={"choices": [{"message": {"content": "rag"}}]})
+    monkeypatch.setattr(partner, "chat_completions", knowledge_flow)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "klai-primary",
+                "messages": [{"role": "user", "content": "Answer from KB"}],
+                "stream": False,
+                "knowledge": {
+                    "enabled": True,
+                    "knowledge_base_ids": [1],
+                    "include_sources": True,
+                },
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "rag"}}]}
+    knowledge_flow.assert_awaited_once()
+    sent_request = knowledge_flow.await_args.kwargs["request"]
+    assert sent_request.knowledge is not None
+    assert sent_request.knowledge.enabled is True
+    assert sent_request.knowledge.knowledge_base_ids == [1]
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_with_knowledge_disabled_uses_general_passthrough(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "general"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "klai-primary",
+                "messages": [{"role": "user", "content": "general question"}],
+                "stream": False,
+                "knowledge": {"enabled": False},
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "general"}}]}
+    sent = forwarded.await_args.args[0]
+    assert sent["model"] == "klai-primary"
+    assert "knowledge" not in sent
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ from typing import Any, Literal
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,6 +83,20 @@ router = APIRouter(prefix="/partner/v1", tags=["Partner API"])
 
 _ALLOWED_MODELS = {"klai-primary", "klai-fast"}
 _OPENAI_COMPATIBLE_MODELS = {"klai-primary", "klai-fast", "klai-large"}
+_OPENAI_COMPATIBLE_MODEL_ALIASES = {
+    "gpt-4o-mini": "klai-fast",
+    "gpt-4o": "klai-primary",
+    "gpt-4.1-mini": "klai-fast",
+    "gpt-4.1": "klai-primary",
+}
+_OPENAI_COMPATIBLE_ACCEPTED_MODELS = _OPENAI_COMPATIBLE_MODELS | set(_OPENAI_COMPATIBLE_MODEL_ALIASES)
+_KNOWLEDGE_CHAT_TRIGGER_FIELDS = {
+    "knowledge",
+    "knowledge_base_ids",
+    "page_context",
+    "web_search",
+    "web_search_query",
+}
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _HUBSPOT_HANDOFF_DEV_TENANT_SLUG = "getklai"
 _HUBSPOT_HANDOFF_DEV_ORIGIN = "https://getklai.getklai.com"
@@ -531,10 +545,8 @@ def _validate_chat_request(request: ChatCompletionsRequest) -> None:
 
 
 def _openai_compatible_model_payload() -> list[dict[str, Any]]:
-    return [
-        {"id": model, "object": "model", "created": 0, "owned_by": "klai"}
-        for model in sorted(_OPENAI_COMPATIBLE_MODELS)
-    ]
+    model_ids = sorted(_OPENAI_COMPATIBLE_ACCEPTED_MODELS)
+    return [{"id": model, "object": "model", "created": 1_735_689_600, "owned_by": "klai"} for model in model_ids]
 
 
 async def _openai_compatible_request_body(http_request: Request) -> dict[str, Any]:
@@ -596,14 +608,15 @@ async def _openai_compatible_request_body(http_request: Request) -> dict[str, An
 
 def _validated_openai_compatible_body(body: dict[str, Any]) -> dict[str, Any]:
     forwarded = {field: body[field] for field in _OPENAI_COMPAT_FORWARD_FIELDS if field in body}
-    model = forwarded.get("model") or "klai-primary"
+    requested_model = forwarded.get("model") or "klai-primary"
+    model = _OPENAI_COMPATIBLE_MODEL_ALIASES.get(requested_model, requested_model)
     if model not in _OPENAI_COMPATIBLE_MODELS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "error": {
                     "type": "invalid_request",
-                    "message": f"Model must be one of: {', '.join(sorted(_OPENAI_COMPATIBLE_MODELS))}",
+                    "message": f"Model must be one of: {', '.join(sorted(_OPENAI_COMPATIBLE_ACCEPTED_MODELS))}",
                 }
             },
         )
@@ -646,6 +659,24 @@ def _validated_openai_compatible_body(body: dict[str, Any]) -> dict[str, Any]:
         forwarded["max_tokens"] = _OPENAI_COMPAT_DEFAULT_MAX_TOKENS
 
     return forwarded
+
+
+def _uses_knowledge_chat(body: dict[str, Any]) -> bool:
+    knowledge = body.get("knowledge")
+    if "knowledge" in body and not (isinstance(knowledge, dict) and knowledge.get("enabled") is False):
+        return True
+    return any(field in body for field in _KNOWLEDGE_CHAT_TRIGGER_FIELDS - {"knowledge"})
+
+
+def _openai_compatible_enabled(auth: PartnerAuthContext) -> bool:
+    return bool(auth.permissions.get("general_chat"))
+
+
+def _parse_knowledge_chat_request(body: dict[str, Any]) -> ChatCompletionsRequest:
+    try:
+        return ChatCompletionsRequest.model_validate(body)
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors()) from exc
 
 
 def _estimate_openai_input_tokens(body: dict[str, Any]) -> int:
@@ -796,7 +827,7 @@ def _resolve_web_query(request: ChatCompletionsRequest) -> str | None:
     return None
 
 
-@router.get("/openai/models")
+@router.get("/models")
 async def openai_compatible_models(
     auth: PartnerAuthContext = Depends(get_partner_key),
 ) -> dict[str, Any]:
@@ -805,22 +836,26 @@ async def openai_compatible_models(
     return {"object": "list", "data": _openai_compatible_model_payload()}
 
 
-@router.post("/openai/chat/completions", response_model=None)
+async def _openai_compatible_chat_completions_from_body(
+    body: dict[str, Any],
+    *,
+    auth: PartnerAuthContext,
+) -> Response | dict[str, Any]:
+    require_permission(auth, "general_chat")
+    validated_body = _validated_openai_compatible_body(body)
+    await _enforce_openai_compatible_usage_limits(auth=auth, body=validated_body)
+    if bool(validated_body.get("stream", False)):
+        return await openai_chat_completion_streaming(validated_body, settings, org_id=auth.org_id)
+    return await openai_chat_completion_non_streaming(validated_body, settings, org_id=auth.org_id)
+
+
 async def openai_compatible_chat_completions(
     http_request: Request,
     auth: PartnerAuthContext = Depends(get_partner_key),
 ) -> Response | dict[str, Any]:
-    """OpenAI-compatible generic chat completions passthrough.
-
-    This endpoint is intentionally separate from /partner/v1/chat/completions,
-    which remains knowledge-grounded and citation-managed.
-    """
-    require_permission(auth, "general_chat")
-    body = _validated_openai_compatible_body(await _openai_compatible_request_body(http_request))
-    await _enforce_openai_compatible_usage_limits(auth=auth, body=body)
-    if bool(body.get("stream", False)):
-        return await openai_chat_completion_streaming(body, settings, org_id=auth.org_id)
-    return await openai_chat_completion_non_streaming(body, settings, org_id=auth.org_id)
+    """Internal request-shaped helper for the canonical chat route tests."""
+    body = await _openai_compatible_request_body(http_request)
+    return await _openai_compatible_chat_completions_from_body(body, auth=auth)
 
 
 async def _maybe_apply_web_search(
@@ -869,7 +904,32 @@ async def _maybe_apply_web_search(
     return enriched_prompt, web_results_as_chunks(web_results), web_query
 
 
-@router.post("/chat/completions")
+@router.post("/chat/completions", response_model=None)
+async def canonical_chat_completions(
+    http_request: Request,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+    db: AsyncSession = Depends(get_db),
+) -> Response | dict[str, Any]:
+    """OpenAI SDK-compatible chat endpoint with Klai knowledge extensions.
+
+    The canonical OpenAI path defaults to general model passthrough when the
+    partner key has ``general_chat`` and the request does not opt into Klai
+    knowledge features. Supplying ``knowledge``/KB/web-search fields keeps the
+    existing knowledge-grounded Klai behavior.
+    """
+    body = await _openai_compatible_request_body(http_request)
+    if _openai_compatible_enabled(auth) and not _uses_knowledge_chat(body):
+        return await _openai_compatible_chat_completions_from_body(body, auth=auth)
+
+    knowledge_request = _parse_knowledge_chat_request(body)
+    return await chat_completions(
+        request=knowledge_request,
+        http_request=http_request,
+        auth=auth,
+        db=db,
+    )
+
+
 async def chat_completions(  # noqa: C901
     request: ChatCompletionsRequest,
     http_request: Request,

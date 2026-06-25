@@ -149,7 +149,7 @@ The knowledge settings bar sits above the LibreChat iframe in the portal. It con
 four things. Each change is saved immediately to the database and propagates to the
 retrieval layer within about 30 seconds (the length of the LiteLLM cache TTL).
 
-**The ChatConfigBar applies to LibreChat only.** Partner API keys and embedded chat widgets are scope-locked at credential creation for the knowledge-grounded `/partner/v1/chat/completions` route: their `kb_ids` whitelist is stored on `partner_api_keys` (for API keys) or in the JWT payload (for widgets), and cannot be widened at runtime. They also never query personal scope. `kb_retrieval_enabled` is implicitly always `true` for these consumers — they exist specifically to answer from knowledge. General model passthrough is a separate `/partner/v1/openai/chat/completions` endpoint and requires the API key's `general_chat` permission.
+**The ChatConfigBar applies to LibreChat only.** Partner API keys and embedded chat widgets are scope-locked at credential creation when `/partner/v1/chat/completions` is used with Klai knowledge extensions: their `kb_ids` whitelist is stored on `partner_api_keys` (for API keys) or in the JWT payload (for widgets), and cannot be widened at runtime. They also never query personal scope. `kb_retrieval_enabled` is implicitly always `true` for these knowledge-grounded consumers. Plain OpenAI-compatible calls to the same `/partner/v1/chat/completions` path use the general model passthrough instead and require the API key's `general_chat` permission.
 
 ---
 
