@@ -696,11 +696,7 @@ def _estimate_openai_input_tokens(body: dict[str, Any]) -> int:
 
 
 def _reserved_openai_output_tokens(body: dict[str, Any]) -> int:
-    values = [
-        value
-        for value in (body.get("max_tokens"), body.get("max_completion_tokens"))
-        if value is not None
-    ]
+    values = [value for value in (body.get("max_tokens"), body.get("max_completion_tokens")) if value is not None]
     return int(max(values) if values else _OPENAI_COMPAT_DEFAULT_MAX_TOKENS)
 
 
