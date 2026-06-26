@@ -8,7 +8,7 @@ the unpatched code (this is the M1 + D1 chain in spec.md).
 
 Acceptance coverage:
 - AC-1: spoof attempt rejected (M1 + D1 closure)
-- AC-7 partial: happy-path save_personal / save_org / save_to_docs still works
+- AC-7 partial: happy-path save_personal / save_org / create_docs_page still works
 - REQ-2.3: outgoing X-User-ID / X-Org-ID to klai-docs come from VERIFIED identity
 - REQ-2.6: missing X-Org-Slug rejects (no DEFAULT_ORG_SLUG fallback)
 - REQ-2.6: claimed slug mismatch is rejected via portal-side org_slug_mismatch
@@ -216,9 +216,9 @@ class TestVerifiedIdentityForwarded:
         assert kwargs["kb_slug"] == "personal-VERIFIED-USER"
 
     @pytest.mark.asyncio
-    async def test_save_to_docs_forwards_verified_identity_in_outgoing_headers(self) -> None:
+    async def test_create_docs_page_forwards_verified_identity_in_outgoing_headers(self) -> None:
         """REQ-2.3: outgoing klai-docs PUT carries verified X-User-ID / X-Org-ID."""
-        from main import save_to_docs
+        from main import create_docs_page
 
         verified = allow_verify_result(
             user_id="VERIFIED-USER", org_id="VERIFIED-ORG", org_slug="acme"
@@ -236,6 +236,10 @@ class TestVerifiedIdentityForwarded:
             mock_kbs_resp.json.return_value = [{"slug": "docs", "name": "Docs KB"}]
             mock_kbs_resp.text = ""
 
+            mock_not_found_resp = MagicMock()
+            mock_not_found_resp.status_code = 404
+            mock_not_found_resp.text = "not found"
+
             mock_put_resp = MagicMock()
             mock_put_resp.status_code = 200
             mock_put_resp.text = "ok"
@@ -244,7 +248,9 @@ class TestVerifiedIdentityForwarded:
 
             async def fake_get(url: str, headers: dict[str, str] | None = None) -> MagicMock:
                 captured.setdefault("get_headers", headers or {})
-                return mock_kbs_resp
+                if url.endswith("/kbs"):
+                    return mock_kbs_resp
+                return mock_not_found_resp
 
             async def fake_put(
                 url: str, json: dict | None = None, headers: dict[str, str] | None = None
@@ -269,7 +275,7 @@ class TestVerifiedIdentityForwarded:
                 }
             )
 
-            result = await save_to_docs(
+            result = await create_docs_page(
                 title="A page",
                 content="content",
                 ctx=ctx,

@@ -301,7 +301,8 @@ _ROLE_ORDER: dict[str, int] = {
 # Tools that require at minimum a specific role.
 _TOOL_MIN_ROLE: dict[str, str] = {
     "save_org_knowledge": "company",
-    "save_to_docs": "company",
+    "create_docs_page": "company",
+    "update_docs_page": "company",
 }
 
 
@@ -505,7 +506,7 @@ async def _identify_request(ctx: Context) -> _VerifiedIdentity:
     only) falls through to the LibreChat pad.
 
     @MX:ANCHOR fan_in=high — called from save_personal_knowledge,
-    save_org_knowledge, save_to_docs (and any future tool). Cross-service
+    save_org_knowledge, create_docs_page (and any future tool). Cross-service
     contract: the returned ``_VerifiedIdentity`` shape MUST stay aligned with
     ``IdentityAsserter.VerifyResult`` so downstream upstream-calls can use
     either path indistinguishably.
@@ -633,6 +634,109 @@ def _slugify(text: str) -> str:
     return text[:60] or "note"
 
 
+def _docs_headers(identity: _VerifiedIdentity) -> dict[str, str]:
+    assert identity.user_id is not None and identity.org_id is not None
+    return {
+        _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
+        "X-User-ID": identity.user_id,
+        "X-Org-ID": identity.org_id,
+    }
+
+
+def _validate_kb_name(kb_name: str | None) -> str | None:
+    if kb_name is not None and not _KB_NAME_PATTERN.match(kb_name):
+        return (
+            "Error: kb_name contains invalid characters. "
+            "Only alphanumeric, hyphens, and underscores are allowed."
+        )
+    return None
+
+
+async def _fetch_docs_kbs(identity: _VerifiedIdentity) -> list[dict]:
+    assert identity.org_slug is not None
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{KLAI_DOCS_API_BASE}/api/orgs/{identity.org_slug}/kbs",
+                headers=_docs_headers(identity),
+            )
+    except httpx.RequestError as exc:
+        logger.error("docs KB list fetch failed: %s", exc)
+        raise ToolError(_ERR_KB_UNAVAILABLE) from exc
+
+    if resp.status_code != 200:
+        logger.error(
+            "docs KB list fetch returned %d: %s (org_slug=%s, org_id=%s)",
+            resp.status_code,
+            sanitize_response_body(resp, _KNOWN_SECRETS, max_len=512),
+            identity.org_slug,
+            identity.org_id,
+        )
+        raise ToolError(_ERR_KB_UNAVAILABLE)
+
+    body = resp.json()
+    if not isinstance(body, list):
+        logger.error("docs KB list fetch returned non-list JSON (org_slug=%s)", identity.org_slug)
+        raise ToolError(_ERR_KB_UNAVAILABLE)
+    return [item for item in body if isinstance(item, dict)]
+
+
+def _select_docs_kb(kbs: list[dict], kb_name: str | None) -> str:
+    error = _validate_kb_name(kb_name)
+    if error:
+        raise ToolError(error)
+
+    valid_slugs = [kb.get("slug") for kb in kbs if isinstance(kb.get("slug"), str)]
+    if not valid_slugs:
+        raise ToolError("Error: geen documentatie-kennisbanken gevonden voor deze organisatie.")
+
+    if kb_name is None:
+        if len(valid_slugs) == 1:
+            return valid_slugs[0]
+        options = ", ".join(
+            f"{kb.get('slug', '?')} ({kb.get('name', '')})"
+            for kb in kbs
+            if isinstance(kb.get("slug"), str)
+        )
+        raise ToolError(
+            f"Meerdere kennisbanken beschikbaar: {options}. "
+            "Geef de slug op als kb_name bij de volgende aanroep."
+        )
+
+    if kb_name not in valid_slugs:
+        options = ", ".join(valid_slugs)
+        raise ToolError(f"Onbekende kb_name '{kb_name}'. Geldige slugs: {options}.")
+
+    return kb_name
+
+
+def _require_docs_write_role(identity: _VerifiedIdentity, tool_name: str) -> str | None:
+    required_role = _TOOL_MIN_ROLE[tool_name]
+    if _role_at_least(identity.effective_role, required_role):
+        return None
+    _slog.warning(
+        "knowledge_mcp_role_gate_denied",
+        tool=tool_name,
+        effective_role=identity.effective_role,
+        required_role=required_role,
+        user_id=identity.user_id,
+    )
+    return (
+        "Error: Je account heeft niet de benodigde rol om de "
+        "documentatie-kennisbank te bewerken. Vraag een beheerder om je rol te upgraden."
+    )
+
+
+def _docs_page_url(identity: _VerifiedIdentity, kb_name: str, page_path: str) -> str:
+    assert identity.org_slug is not None
+    return f"{KLAI_DOCS_API_BASE}/api/orgs/{identity.org_slug}/kbs/{kb_name}/pages/{page_path}"
+
+
+def _docs_kb_url(identity: _VerifiedIdentity, kb_name: str, suffix: str = "") -> str:
+    assert identity.org_slug is not None
+    return f"{KLAI_DOCS_API_BASE}/api/orgs/{identity.org_slug}/kbs/{kb_name}{suffix}"
+
+
 # -- MCP server ---------------------------------------------------------------
 # klai-security-audit 2026-05-07 finding B3 (CANNOT-VERIFY → reviewed
 # 2026-05-07): FastMCP's Streamable HTTP transport binds session state to
@@ -687,9 +791,17 @@ mcp = FastMCP(
         "Trigger: 'sla dit op voor het team', 'deel dit met de organisatie',\n"
         "'save this for the team', 'share with the org',\n"
         "'voeg toe aan de teamkennis', 'organisatiekennis'\n\n"
-        "DOCUMENTATIE (save_to_docs):\n"
+        "DOCUMENTATIE LEZEN (list_docs_kbs/list_docs_pages/get_docs_page):\n"
+        "Trigger: 'welke docs zijn er', 'toon docs pagina', 'lees documentatiepagina',\n"
+        "'list docs', 'get docs page'. Gebruik dit voor canonieke Docs-bronnen;\n"
+        "gebruik search_knowledge voor semantische kennisretrieval.\n\n"
+        "DOCUMENTATIE AANMAKEN (create_docs_page):\n"
         "Trigger: 'voeg toe aan de docs', 'bewaar in documentatie',\n"
-        "'add to docs', 'save to documentation'\n\n"
+        "'add to docs', 'save to documentation'. Deze tool maakt alleen nieuwe\n"
+        "pagina's aan en overschrijft nooit bestaande Docs-pagina's.\n\n"
+        "DOCUMENTATIE UPDATE (update_docs_page):\n"
+        "Trigger: 'werk deze doc bij', 'update deze documentatiepagina',\n"
+        "'update this docs page', 'edit the documentation page'\n\n"
         "ONDUIDELIJK? Vraag: 'Wil je dit opslaan voor jezelf, "
         "of voor de hele organisatie?'\n\n"
         "You have access to the user's personal and organisation knowledge base.\n"
@@ -841,25 +953,188 @@ async def save_org_knowledge(
     return f"✓ Opgeslagen in de organisatie-kennisbank: {title}"
 
 
-# -- Tool: save_to_docs -------------------------------------------------------
+# -- Tools: Klai Docs source navigation ---------------------------------------
 @mcp.tool(
-    description="""Save content to a Klai Docs documentation knowledge base.
+    description="""List Klai Docs documentation knowledge bases for the verified organisation.
 
-WHEN TO CALL: user says "voeg toe aan de docs", "bewaar in documentatie",
-"add to docs", "save to documentation", or wants to write/update a page
-in the Gitea-backed documentation system.
+WHEN TO CALL: before using any docs-page tool when kb_name is unknown; when the
+user asks "welke docs/kennisbanken zijn er", "list docs KBs", or needs the
+valid KB slug.
 
-PARAMETERS:
-  title     - page title
-  content   - page content (markdown)
-  kb_name   - (optional) KB slug as returned by this tool; NEVER guess this
-              value — omit it and the tool will auto-select or return the list
-              of valid slugs to choose from
-  page_path - (optional) explicit path; auto-generated from title if omitted
-  derived_from - (optional) source artifact UUIDs from search_knowledge results
+This is source navigation, not semantic knowledge retrieval. For semantic
+questions use search_knowledge.
+
+RETURNS: list of KBs with slug, name, visibility, and kb_type when present.
 """
 )
-async def save_to_docs(
+async def list_docs_kbs(ctx: Context) -> list[dict]:
+    identity = await _identify_request(ctx)
+    kbs = await _fetch_docs_kbs(identity)
+    return [
+        {
+            "slug": kb.get("slug"),
+            "name": kb.get("name"),
+            "visibility": kb.get("visibility"),
+            "kb_type": kb.get("kb_type"),
+        }
+        for kb in kbs
+        if kb.get("slug")
+    ]
+
+
+@mcp.tool(
+    description="""List pages in a Klai Docs knowledge base.
+
+WHEN TO CALL: when the user asks what pages exist, when you need a page slug
+before get_docs_page/update_docs_page, or when resolving a docs navigation task.
+
+PARAMETERS:
+  kb_name - optional KB slug. NEVER guess this value; omit it only when the
+            organisation has one docs KB, otherwise call list_docs_kbs first.
+
+RETURNS: page index entries with stable id, slug, title, and icon. Use the
+"slug" as page_path for get_docs_page/update_docs_page; "id" is a stable
+reference only and is not accepted by the write tools.
+"""
+)
+async def list_docs_pages(ctx: Context, kb_name: str | None = None) -> list[dict]:
+    identity = await _identify_request(ctx)
+    kbs = await _fetch_docs_kbs(identity)
+    resolved_kb = _select_docs_kb(kbs, kb_name)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                _docs_kb_url(identity, resolved_kb, "/page-index"),
+                headers=_docs_headers(identity),
+            )
+    except httpx.RequestError as exc:
+        logger.error("docs page-index fetch failed: %s", exc)
+        raise ToolError(_ERR_KB_UNAVAILABLE) from exc
+
+    if resp.status_code != 200:
+        logger.error(
+            "docs page-index fetch returned %d (kb=%s): %s",
+            resp.status_code,
+            resolved_kb,
+            sanitize_response_body(resp, _KNOWN_SECRETS, max_len=512),
+        )
+        raise ToolError(_ERR_KB_UNAVAILABLE)
+
+    body = resp.json()
+    if not isinstance(body, list):
+        logger.error("docs page-index returned non-list JSON (kb=%s)", resolved_kb)
+        raise ToolError(_ERR_KB_UNAVAILABLE)
+    return [
+        {
+            "id": page.get("id"),
+            "slug": page.get("slug"),
+            "title": page.get("title"),
+            "icon": page.get("icon"),
+            "kb_name": resolved_kb,
+        }
+        for page in body
+        if isinstance(page, dict) and page.get("slug")
+    ]
+
+
+@mcp.tool(
+    description="""Get the full markdown content of one existing Klai Docs page.
+
+WHEN TO CALL: before editing a docs page, when the user asks to read a specific
+documentation page, or when exact source content is needed. This is exact docs
+source retrieval; semantic knowledge retrieval remains search_knowledge.
+
+PARAMETERS:
+  page_path - page slug/path without ".md" (the "slug" from list_docs_pages).
+              Pass the slug, not the UUID id: update_docs_page writes back to
+              this exact path, and only the slug round-trips to a write.
+  kb_name   - optional KB slug. NEVER guess this value; omit only for a single KB.
+
+RETURNS: frontmatter, markdown content, sha, kb_name, and requested page_path.
+"""
+)
+async def get_docs_page(
+    page_path: str,
+    ctx: Context,
+    kb_name: str | None = None,
+) -> dict:
+    identity = await _identify_request(ctx)
+    error = _validate_kb_name(kb_name)
+    if error:
+        raise ToolError(error)
+    try:
+        _validate_page_path(page_path)
+    except ValueError as exc:
+        raise ToolError("Error: page_path contains invalid path components.") from exc
+
+    kbs = await _fetch_docs_kbs(identity)
+    resolved_kb = _select_docs_kb(kbs, kb_name)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                _docs_page_url(identity, resolved_kb, page_path),
+                headers=_docs_headers(identity),
+            )
+    except httpx.RequestError as exc:
+        logger.error("docs page fetch failed: %s", exc)
+        raise ToolError(_ERR_KB_UNAVAILABLE) from exc
+
+    if resp.status_code == 404:
+        raise ToolError(f"Error: docs page not found in kennisbank '{resolved_kb}': {page_path}")
+    if resp.status_code != 200:
+        logger.error(
+            "docs page fetch returned %d (kb=%s, page=%s): %s",
+            resp.status_code,
+            resolved_kb,
+            page_path,
+            sanitize_response_body(resp, _KNOWN_SECRETS, max_len=512),
+        )
+        raise ToolError(_ERR_KB_UNAVAILABLE)
+
+    body = resp.json()
+    if not isinstance(body, dict):
+        logger.error(
+            "docs page fetch returned non-object JSON (kb=%s, page=%s)",
+            resolved_kb,
+            page_path,
+        )
+        raise ToolError(_ERR_KB_UNAVAILABLE)
+
+    frontmatter = body.get("frontmatter")
+    if not isinstance(frontmatter, dict):
+        frontmatter = {}
+    return {
+        "kb_name": resolved_kb,
+        "page_path": page_path,
+        "title": frontmatter.get("title") or page_path.rsplit("/", 1)[-1],
+        "frontmatter": frontmatter,
+        "content": body.get("content") or "",
+        "sha": body.get("sha"),
+    }
+
+
+@mcp.tool(
+    description="""Create a new Klai Docs page.
+
+WHEN TO CALL: user asks to create a new documentation page. This tool is
+create-oriented: it preflights the target path and refuses to write when a page
+already exists. Use update_docs_page for an existing page.
+
+PATH BEHAVIOUR: when page_path is omitted, the tool starts at inbox/{title-slug}
+and picks the first free suffix such as inbox/{title-slug}-2. When page_path is
+explicit, the tool never changes it and fails if that page already exists.
+
+PARAMETERS:
+  title        - page title
+  content      - full markdown page body
+  kb_name      - optional KB slug. NEVER guess this value; omit only for one KB.
+  page_path    - optional explicit path without ".md"; defaults to inbox/{title-slug}
+  derived_from - optional source artifact UUIDs from search_knowledge results
+"""
+)
+async def create_docs_page(
     title: str,
     content: str,
     ctx: Context,
@@ -867,8 +1142,162 @@ async def save_to_docs(
     page_path: str | None = None,
     derived_from: list[str] | None = None,
 ) -> str:
-    # SPEC-MCP-AUTH-001 REQ-12 + REQ-15: dispatcher selects OAuth-token pad
-    # vs LibreChat internal-secret pad based on Authorization header prefix.
+    try:
+        identity = await _identify_request(ctx)
+    except ValueError as exc:
+        return f"Error: {exc}"
+    except _IdentificationFailed as exc:
+        return str(exc)
+
+    role_error = _require_docs_write_role(identity, "create_docs_page")
+    if role_error:
+        return role_error
+
+    error = _validate_kb_name(kb_name)
+    if error:
+        return error
+    explicit_page_path = page_path is not None
+    base_page_path = page_path if explicit_page_path else f"inbox/{_slugify(title)}"
+    try:
+        _validate_page_path(base_page_path)
+    except ValueError:
+        return "Error: page_path contains invalid path components."
+    try:
+        derived_from_ids = _normalise_uuid_list(derived_from, "derived_from")
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    try:
+        kbs = await _fetch_docs_kbs(identity)
+        resolved_kb = _select_docs_kb(kbs, kb_name)
+    except ToolError as exc:
+        return str(exc)
+    docs_headers = _docs_headers(identity)
+    created_page_path: str | None = None
+    resp: httpx.Response | None = None
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            max_attempts = 1 if explicit_page_path else 25
+            for attempt in range(max_attempts):
+                candidate_page_path = (
+                    base_page_path if attempt == 0 else f"{base_page_path}-{attempt + 1}"
+                )
+                page_url = _docs_page_url(identity, resolved_kb, candidate_page_path)
+                existing = await client.get(page_url, headers=docs_headers)
+                if existing.status_code == 200:
+                    if explicit_page_path:
+                        return (
+                            f"Error: docs page already exists in kennisbank **{resolved_kb}** "
+                            f"at path '{candidate_page_path}'. Use update_docs_page to edit it."
+                        )
+                    continue
+                if existing.status_code != 404:
+                    request_id = str(uuid.uuid4())
+                    logger.error(
+                        "create_docs_page preflight returned %d "
+                        "(kb=%s, page=%s, request_id=%s): %s",
+                        existing.status_code,
+                        resolved_kb,
+                        candidate_page_path,
+                        request_id,
+                        sanitize_response_body(existing, _KNOWN_SECRETS, max_len=512),
+                    )
+                    return (
+                        f"Error creating docs page: upstream returned HTTP {existing.status_code}. "
+                        f"Request ID: {request_id}. Operator: check VictoriaLogs."
+                    )
+
+                today = date.today().isoformat()
+                idempotency_key = str(uuid.uuid4())
+                resp = await client.put(
+                    page_url,
+                    json={
+                        "title": title,
+                        "content": content.strip(),
+                        "icon": "\U0001f4dd",
+                        "edit_access": "owner",
+                        "frontmatter": {
+                            "provenance_type": "synthesized",
+                            "assertion_mode": "factual",
+                            "synthesis_depth": 1,
+                            "belief_time_start": today,
+                            "belief_time_end": None,
+                            "superseded_by": None,
+                            "confidence": "medium",
+                            "derived_from": derived_from_ids,
+                            "created_by": identity.user_id,
+                            "system_time": today,
+                        },
+                    },
+                    headers={
+                        **docs_headers,
+                        "Content-Type": "application/json",
+                        "Idempotency-Key": idempotency_key,
+                    },
+                )
+                created_page_path = candidate_page_path
+                break
+            else:
+                return (
+                    "Error: could not find an unused docs page path for "
+                    f"'{base_page_path}'. Geef page_path expliciet op."
+                )
+    except httpx.RequestError as exc:
+        return f"Error: could not reach klai-docs API ({exc})."
+
+    if resp is None or created_page_path is None:
+        return "Error creating docs page: no create attempt was made."
+
+    if resp.status_code not in (200, 201):
+        request_id = str(uuid.uuid4())
+        logger.error(
+            "create_docs_page PUT returned %d (kb=%s, page=%s, request_id=%s): %s",
+            resp.status_code,
+            resolved_kb,
+            created_page_path,
+            request_id,
+            sanitize_response_body(resp, _KNOWN_SECRETS, max_len=512),
+        )
+        return (
+            f"Error creating docs page: upstream returned HTTP {resp.status_code}. "
+            f"Request ID: {request_id}. Operator: check VictoriaLogs."
+        )
+
+    return f"✓ Aangemaakt in kennisbank **{resolved_kb}**: {title} (pad: {created_page_path})"
+
+
+# -- Tool: update_docs_page ---------------------------------------------------
+@mcp.tool(
+    description="""Update an existing Klai Docs documentation page.
+
+WHEN TO CALL: user says "werk deze doc bij", "update deze documentatiepagina",
+"update this docs page", or wants to edit an existing page in the Gitea-backed
+documentation system.
+
+IMPORTANT: this tool updates only. It first reads the page and fails if the
+page does not exist. Use create_docs_page to create a new page.
+
+PARAMETERS:
+  page_path    - existing page path without ".md"; required and never guessed
+  content      - full replacement markdown content for the page body
+  kb_name      - (optional) KB slug as returned by list_docs_kbs; NEVER guess
+                 this value — omit it only when the organisation has one KB
+  title        - (optional) title to set; omitted preserves the current title
+  derived_from - (optional) source artifact UUIDs from search_knowledge results
+  expected_sha - (optional) page SHA previously read by the caller; when omitted
+                 the tool uses the SHA from its preflight GET
+"""
+)
+async def update_docs_page(
+    page_path: str,
+    content: str,
+    ctx: Context,
+    kb_name: str | None = None,
+    title: str | None = None,
+    derived_from: list[str] | None = None,
+    expected_sha: str | None = None,
+) -> str:
     try:
         verified = await _identify_request(ctx)
     except ValueError as exc:
@@ -876,165 +1305,140 @@ async def save_to_docs(
     except _IdentificationFailed as exc:
         return str(exc)
 
-    # SPEC-PORTAL-RBAC-REFACTOR-001 4E: docs KB requires at least "company" role.
-    if not _role_at_least(verified.effective_role, _TOOL_MIN_ROLE["save_to_docs"]):
-        _slog.warning(
-            "knowledge_mcp_role_gate_denied",
-            tool="save_to_docs",
-            effective_role=verified.effective_role,
-            required_role=_TOOL_MIN_ROLE["save_to_docs"],
-            user_id=verified.user_id,
-        )
-        return (
-            "Error: Je account heeft niet de benodigde rol om naar de "
-            "documentatie-kennisbank op te slaan. Vraag een beheerder om je rol te upgraden."
-        )
+    role_error = _require_docs_write_role(verified, "update_docs_page")
+    if role_error:
+        return role_error
 
-    # V009: reject path traversal in caller-supplied KB coordinates
-    if kb_name is not None and not _KB_NAME_PATTERN.match(kb_name):
-        return (
-            "Error: kb_name contains invalid characters. "
-            "Only alphanumeric, hyphens, and underscores are allowed."
-        )
-    if page_path is not None:
-        try:
-            _validate_page_path(page_path)
-        except ValueError:
-            # SPEC-SEC-HYGIENE-001 REQ-46.1: keep the user-facing error
-            # generic — do NOT echo the specific rejection class (literal
-            # vs %-encoded vs NFKC) to avoid handing an attacker a
-            # validator-shape oracle.
-            return "Error: page_path contains invalid path components."
+    error = _validate_kb_name(kb_name)
+    if error:
+        return error
+    try:
+        _validate_page_path(page_path)
+    except ValueError:
+        return "Error: page_path contains invalid path components."
 
     try:
-        derived_from_ids = _normalise_uuid_list(derived_from, "derived_from")
+        derived_from_ids = (
+            None if derived_from is None else _normalise_uuid_list(derived_from, "derived_from")
+        )
     except ValueError as exc:
         return f"Error: {exc}"
 
-    # REQ-2.3 / REQ-2.6: outgoing klai-docs URL uses canonical slug from
-    # portal verify response, not the LibreChat-asserted X-Org-Slug.
-    assert (
-        verified.user_id is not None
-        and verified.org_id is not None
-        and verified.org_slug is not None
-    )
-    org_slug = verified.org_slug
+    if expected_sha is not None and not expected_sha.strip():
+        return "Error: expected_sha must be a non-empty string when provided."
 
-    # Resolve KB name — always fetch list to validate, auto-select if only one
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs",
-                headers={
-                    _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
-                    "X-User-ID": verified.user_id,
-                    "X-Org-ID": verified.org_id,
-                },
-            )
-    except httpx.RequestError as exc:
-        logger.error("KB list fetch failed: %s", exc)
-        return _ERR_SAVE
-
-    if resp.status_code != 200:
-        logger.error(
-            "KB list fetch returned %d: %s (org_slug=%s, org_id=%s)",
-            resp.status_code,
-            sanitize_response_body(resp, _KNOWN_SECRETS, max_len=200),
-            org_slug,
-            verified.org_id,
-        )
-        return _ERR_SAVE
-
-    kbs = resp.json()
-    if not kbs:
-        return "Error: geen documentatie-kennisbanken gevonden voor deze organisatie."
-
-    valid_slugs = [kb.get("slug") for kb in kbs if kb.get("slug")]
-
-    if kb_name is None:
-        if len(kbs) == 1:
-            kb_name = valid_slugs[0]
-        else:
-            options = ", ".join(f"{kb.get('slug', '?')} ({kb.get('name', '')})" for kb in kbs)
-            return (
-                f"Meerdere kennisbanken beschikbaar: {options}. "
-                "Geef de slug op als kb_name bij de volgende aanroep."
-            )
-    elif kb_name not in valid_slugs:
-        options = ", ".join(valid_slugs)
-        return f"Onbekende kb_name '{kb_name}'. Geldige slugs: {options}."
-
-    # Build page path if not provided — land in inbox/ for manual organisation later
-    if page_path is None:
-        page_path = f"inbox/{_slugify(title)}"
-
-    today = date.today().isoformat()
-
-    request_body = {
-        "title": title,
-        "content": content.strip(),
-        "icon": "\U0001f4dd",
-        "edit_access": "owner",
-        "frontmatter": {
-            "provenance_type": "synthesized",
-            "assertion_mode": "factual",
-            "synthesis_depth": 1,
-            "belief_time_start": today,
-            "belief_time_end": None,
-            "superseded_by": None,
-            "confidence": "medium",
-            "derived_from": derived_from_ids,
-            "created_by": verified.user_id,
-            "system_time": today,
-        },
-    }
-
-    # Idempotency-Key is REQUIRED by docs-app for page creation (REQ-UNW-03).
-    # Updates to an existing page treat it as optional, but sending one is
-    # always safe (REQ-STA-01: same key returns the existing page). A fresh
-    # uuid4 per call keeps "second tool invocation" semantics correct: the
-    # second call creates a NEW page with a NEW path, not a replay.
-    idempotency_key = str(uuid.uuid4())
+        kbs = await _fetch_docs_kbs(verified)
+        resolved_kb = _select_docs_kb(kbs, kb_name)
+    except ToolError as exc:
+        return str(exc)
+    page_url = _docs_page_url(verified, resolved_kb, page_path)
+    docs_headers = _docs_headers(verified)
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.put(
-                f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs/{kb_name}/pages/{page_path}",
+            get_resp = await client.get(page_url, headers=docs_headers)
+            if get_resp.status_code == 404:
+                return (
+                    f"Error: docs page not found in kennisbank **{resolved_kb}** "
+                    f"at path '{page_path}'. Use create_docs_page to create it."
+                )
+            if get_resp.status_code != 200:
+                request_id = str(uuid.uuid4())
+                logger.error(
+                    "update_docs_page GET returned %d (kb=%s, page=%s, request_id=%s): %s",
+                    get_resp.status_code,
+                    resolved_kb,
+                    page_path,
+                    request_id,
+                    sanitize_response_body(get_resp, _KNOWN_SECRETS, max_len=512),
+                )
+                return (
+                    f"Error updating docs: upstream returned HTTP {get_resp.status_code}. "
+                    f"Request ID: {request_id}. Operator: check VictoriaLogs."
+                )
+
+            try:
+                existing_page = get_resp.json()
+            except ValueError:
+                request_id = str(uuid.uuid4())
+                logger.error(
+                    "update_docs_page GET returned invalid JSON (kb=%s, page=%s, request_id=%s)",
+                    resolved_kb,
+                    page_path,
+                    request_id,
+                )
+                return (
+                    "Error updating docs: upstream returned an invalid response. "
+                    f"Request ID: {request_id}. Operator: check VictoriaLogs."
+                )
+
+            frontmatter = existing_page.get("frontmatter")
+            if not isinstance(frontmatter, dict):
+                frontmatter = {}
+            current_title = title or str(frontmatter.get("title") or page_path.rsplit("/", 1)[-1])
+            current_sha = expected_sha or existing_page.get("sha")
+
+            request_body: dict[str, object] = {
+                "title": current_title,
+                "content": content.strip(),
+            }
+            if current_sha:
+                request_body["sha"] = current_sha
+            if derived_from_ids is not None:
+                request_body["frontmatter"] = {
+                    "derived_from": derived_from_ids,
+                    "system_time": date.today().isoformat(),
+                }
+
+            put_resp = await client.put(
+                page_url,
                 json=request_body,
                 headers={
-                    _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
-                    "X-User-ID": verified.user_id,
-                    "X-Org-ID": verified.org_id,
+                    **docs_headers,
                     "Content-Type": "application/json",
-                    "Idempotency-Key": idempotency_key,
                 },
             )
     except httpx.RequestError as exc:
         return f"Error: could not reach klai-docs API ({exc})."
 
-    if resp.status_code not in (200, 201):
-        # SPEC-SEC-INTERNAL-001 REQ-8.1 / AC-11.1: the MCP tool return value
-        # ends up verbatim in the LibreChat / ChatGPT-compatible chat UI.
-        # Echoing ``resp.text`` would leak any header the upstream reflected
-        # in its 5xx body (for example DOCS_INTERNAL_SECRET when the docs
-        # service runs FastAPI's ServerErrorMiddleware in debug mode).
-        # Surface a status code + correlation ID; the sanitized upstream
-        # body lands in the structlog stream keyed by the same request_id.
+    if put_resp.status_code == 409:
+        return (
+            "Error: docs page changed while updating. "
+            "Read the latest page and retry with the current content."
+        )
+    if put_resp.status_code == 404:
+        return (
+            f"Error: docs page not found in kennisbank **{resolved_kb}** "
+            f"at path '{page_path}'. It may have been deleted."
+        )
+    if put_resp.status_code not in (200, 201):
         request_id = str(uuid.uuid4())
         logger.error(
-            "save_to_docs upstream returned %d (kb=%s, page=%s, request_id=%s): %s",
-            resp.status_code,
-            kb_name,
+            "update_docs_page PUT returned %d (kb=%s, page=%s, request_id=%s): %s",
+            put_resp.status_code,
+            resolved_kb,
             page_path,
             request_id,
-            sanitize_response_body(resp, _KNOWN_SECRETS, max_len=512),
+            sanitize_response_body(put_resp, _KNOWN_SECRETS, max_len=512),
         )
         return (
-            f"Error saving to docs: upstream returned HTTP {resp.status_code}. "
+            f"Error updating docs: upstream returned HTTP {put_resp.status_code}. "
             f"Request ID: {request_id}. Operator: check VictoriaLogs."
         )
 
-    return f"✓ Opgeslagen in kennisbank **{kb_name}**: {title} (pad: {page_path})"
+    new_sha = None
+    try:
+        body = put_resp.json()
+        if isinstance(body, dict):
+            new_sha = body.get("sha")
+    except ValueError:
+        new_sha = None
+
+    suffix = f" (sha: {new_sha})" if new_sha else ""
+    return (
+        f"✓ Bijgewerkt in kennisbank **{resolved_kb}**: {current_title} (pad: {page_path}){suffix}"
+    )
 
 
 # -- Tool: search_knowledge ---------------------------------------------------

@@ -38,17 +38,17 @@ _VALID_HEADERS = {
 
 
 # ---------------------------------------------------------------------------
-# REQ-8 / AC-11.1: save_to_docs never echoes resp.text to the chat UI
+# REQ-8 / AC-11.1: create_docs_page never echoes resp.text to the chat UI
 # ---------------------------------------------------------------------------
 
 
-class TestSaveToDocsDoesNotEchoUpstreamBody:
+class TestCreateDocsPageDoesNotEchoUpstreamBody:
     @pytest.mark.asyncio
     async def test_upstream_500_with_secret_in_body_is_not_returned_to_user(self):
         """AC-11.1: a klai-docs 500 echoing the DOCS_INTERNAL_SECRET in its body
         MUST NOT surface that secret in the MCP tool return string.
         """
-        from main import save_to_docs
+        from main import create_docs_page
 
         # Upstream tells us about the auth header verbatim -- the kind of
         # accidental reflection that ServerErrorMiddleware does in debug mode.
@@ -70,18 +70,22 @@ class TestSaveToDocsDoesNotEchoUpstreamBody:
             list_resp.json.return_value = [{"name": "docs", "slug": "docs"}]
             list_resp.text = ""
 
+            not_found_resp = MagicMock()
+            not_found_resp.status_code = 404
+            not_found_resp.text = "not found"
+
             put_resp = MagicMock()
             put_resp.status_code = 500
             put_resp.text = bad_upstream_body
 
             mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=list_resp)
+            mock_client.get = AsyncMock(side_effect=[list_resp, not_found_resp])
             mock_client.put = AsyncMock(return_value=put_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client_cls.return_value = mock_client
 
-            result = await save_to_docs(
+            result = await create_docs_page(
                 title="T",
                 content="C",
                 ctx=ctx,
@@ -96,14 +100,14 @@ class TestSaveToDocsDoesNotEchoUpstreamBody:
         assert "Bearer" not in result, result
         # The contract response shape: status code + request_id + operator hint.
         assert re.match(
-            r"^Error saving to docs: upstream returned HTTP \d+\. Request ID: [0-9a-f-]+\. .+$",
+            r"^Error creating docs page: upstream returned HTTP \d+\. Request ID: [0-9a-f-]+\. .+$",
             result,
         ), result
 
     @pytest.mark.asyncio
     async def test_request_id_in_return_is_a_uuid(self):
         """AC-11.3: the surfaced Request ID is a UUID operators can grep."""
-        from main import save_to_docs
+        from main import create_docs_page
 
         ctx = _make_ctx(_VALID_HEADERS)
         with (
@@ -117,18 +121,22 @@ class TestSaveToDocsDoesNotEchoUpstreamBody:
             list_resp.json.return_value = [{"name": "docs", "slug": "docs"}]
             list_resp.text = ""
 
+            not_found_resp = MagicMock()
+            not_found_resp.status_code = 404
+            not_found_resp.text = "not found"
+
             put_resp = MagicMock()
             put_resp.status_code = 502
             put_resp.text = "ignored"
 
             mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=list_resp)
+            mock_client.get = AsyncMock(side_effect=[list_resp, not_found_resp])
             mock_client.put = AsyncMock(return_value=put_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client_cls.return_value = mock_client
 
-            result = await save_to_docs(
+            result = await create_docs_page(
                 title="T",
                 content="C",
                 ctx=ctx,
@@ -270,7 +278,7 @@ class TestNoSilentOmitGuardsRemain:
         """AC-11.2: ``return f\"Error.*{resp.text\"`` returns nothing."""
         main_src = (Path(_MAIN_PY_DIR) / "main.py").read_text(encoding="utf-8")
 
-        # The return contract for save_to_docs is now:
+        # The return contract for create_docs_page is:
         #   "Error saving to docs: upstream returned HTTP {status}. Request ID: {request_id}. ..."
         # Any return statement that interpolates resp.text into a user-visible
         # error string would re-introduce the leak.
