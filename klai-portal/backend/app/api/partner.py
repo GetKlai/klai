@@ -131,13 +131,19 @@ _OPENAI_COMPAT_FORWARD_FIELDS = {
 }
 _OPENAI_RESPONSES_UNSUPPORTED_FIELDS = {
     "background",
+    "conversation",
     "context_management",
     "include",
+    "max_tool_calls",
+    "metadata",
     "previous_response_id",
     "prompt",
+    "prompt_cache_key",
+    "prompt_cache_retention",
     "reasoning",
     "service_tier",
     "store",
+    "stream_options",
     "truncation",
 }
 
@@ -556,8 +562,24 @@ def _validate_chat_request(request: ChatCompletionsRequest) -> None:
 
 
 def _openai_compatible_model_payload() -> list[dict[str, Any]]:
-    model_ids = sorted(_OPENAI_COMPATIBLE_ACCEPTED_MODELS)
-    return [{"id": model, "object": "model", "created": 1_735_689_600, "owned_by": "klai"} for model in model_ids]
+    # Advertise only the canonical klai-* models. The gpt-* aliases stay
+    # ACCEPTED as input (convenience for drop-in clients) but are not listed as
+    # klai-owned models — doing so misrepresents a Mistral-backed model as GPT.
+    model_ids = sorted(_OPENAI_COMPATIBLE_MODELS)
+    return [_openai_compatible_model_entry(model) for model in model_ids]
+
+
+def _openai_compatible_model_entry(model: str) -> dict[str, Any]:
+    if model in _OPENAI_COMPATIBLE_MODELS:
+        owned_by = "klai"
+    elif model in _OPENAI_COMPATIBLE_MODEL_ALIASES:
+        owned_by = "klai-alias"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"type": "not_found", "message": f"Model '{model}' not found"}},
+        )
+    return {"id": model, "object": "model", "created": 1_735_689_600, "owned_by": owned_by}
 
 
 async def _openai_compatible_request_body(http_request: Request) -> dict[str, Any]:
@@ -694,7 +716,14 @@ def _parse_knowledge_chat_request(body: dict[str, Any]) -> ChatCompletionsReques
     try:
         return ChatCompletionsRequest.model_validate(body)
     except ValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors()) from exc
+        first_error = exc.errors()[0] if exc.errors() else {}
+        loc = ".".join(str(part) for part in first_error.get("loc", []))
+        msg = str(first_error.get("msg") or "Invalid request")
+        detail = f"{loc}: {msg}" if loc else msg
+        raise _openai_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Invalid knowledge chat request: {detail}",
+        ) from exc
 
 
 def _estimate_openai_input_tokens(body: dict[str, Any]) -> int:
@@ -859,6 +888,8 @@ def _responses_tool_choice_to_chat_tool_choice(body: dict[str, Any]) -> object |
         return None
     tool_choice = body["tool_choice"]
     if isinstance(tool_choice, str):
+        if tool_choice not in {"auto", "none", "required"}:
+            raise _openai_error(status.HTTP_400_BAD_REQUEST, f"tool_choice '{tool_choice}' is not supported")
         return tool_choice
     if (
         isinstance(tool_choice, dict)
@@ -866,7 +897,7 @@ def _responses_tool_choice_to_chat_tool_choice(body: dict[str, Any]) -> object |
         and isinstance(tool_choice.get("name"), str)
     ):
         return {"type": "function", "function": {"name": tool_choice["name"]}}
-    return tool_choice
+    raise _openai_error(status.HTTP_400_BAD_REQUEST, "tool_choice must be auto, none, required, or a function choice")
 
 
 def _responses_to_chat_body(body: dict[str, Any]) -> dict[str, Any]:
@@ -907,6 +938,11 @@ def _responses_to_chat_body(body: dict[str, Any]) -> dict[str, Any]:
     for field in passthrough_fields:
         if field in body:
             chat_body[field] = body[field]
+    safety_identifier = body.get("safety_identifier")
+    if safety_identifier is not None:
+        if not isinstance(safety_identifier, str) or not safety_identifier.strip():
+            raise _openai_error(status.HTTP_400_BAD_REQUEST, "safety_identifier must be a non-empty string")
+        chat_body["user"] = safety_identifier
     if "max_output_tokens" in body:
         chat_body["max_tokens"] = body["max_output_tokens"]
     if response_format := _responses_format_to_chat_response_format(body):
@@ -936,37 +972,117 @@ def _chat_completion_text(chat_result: dict[str, Any]) -> str:
     return ""
 
 
+def _responses_usage_from_chat_usage(chat_usage: object) -> dict[str, Any] | None:
+    """Translate a Chat Completions ``usage`` block to the Responses usage shape.
+
+    The OpenAI Responses API uses ``input_tokens``/``output_tokens`` with required
+    ``*_details`` sub-objects — NOT Chat Completions' ``prompt_tokens``/
+    ``completion_tokens``. Passing the chat shape through makes the SDK's
+    ``ResponseUsage`` parse every canonical field to ``None`` (broken metering).
+    """
+    if not isinstance(chat_usage, dict):
+        return None
+    prompt = chat_usage.get("prompt_tokens")
+    completion = chat_usage.get("completion_tokens")
+    total = chat_usage.get("total_tokens")
+    if prompt is None and completion is None and total is None:
+        return None
+    input_tokens = int(prompt or 0)
+    output_tokens = int(completion or 0)
+    total_tokens = int(total if total is not None else input_tokens + output_tokens)
+    prompt_details = chat_usage.get("prompt_tokens_details")
+    cached_tokens = prompt_details.get("cached_tokens", 0) if isinstance(prompt_details, dict) else 0
+    return {
+        "input_tokens": input_tokens,
+        "input_tokens_details": {"cached_tokens": int(cached_tokens or 0)},
+        "output_tokens": output_tokens,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": total_tokens,
+    }
+
+
+def _responses_object(
+    *,
+    response_id: str,
+    model: str,
+    status: str,
+    output: list[dict[str, Any]],
+    output_text: str,
+    created_at: int,
+    usage: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build a Responses ``Response`` object carrying every SDK-required field.
+
+    ``parallel_tool_calls``, ``tool_choice`` and ``tools`` are required by the
+    SDK's ``Response`` model; omitting them makes those typed attributes parse to
+    ``None`` on the client. The remaining keys are common Optionals included so a
+    client reading them gets sensible values rather than surprising ``None``s.
+    """
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": created_at,
+        "status": status,
+        "model": model,
+        "output": output,
+        "output_text": output_text,
+        "usage": usage,
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+        "instructions": None,
+        "metadata": {},
+        "temperature": None,
+        "top_p": None,
+        "max_output_tokens": None,
+        "previous_response_id": None,
+        "error": None,
+        "incomplete_details": None,
+    }
+
+
 def _responses_payload_from_chat_result(chat_result: dict[str, Any], *, requested_model: str) -> dict[str, Any]:
     output_text = _chat_completion_text(chat_result)
     message_id = f"msg_{uuid.uuid4().hex}"
     response_id = str(chat_result.get("id") or f"resp_{uuid.uuid4().hex}")
     model = str(chat_result.get("model") or requested_model)
-    output: list[dict[str, Any]] = [
-        {
-            "id": message_id,
-            "type": "message",
-            "status": "completed",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": output_text, "annotations": []}],
-        }
-    ]
+    output: list[dict[str, Any]] = []
+    if output_text:
+        output.append(
+            {
+                "id": message_id,
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": output_text, "annotations": []}],
+            }
+        )
 
     choices = chat_result.get("choices")
     if isinstance(choices, list) and choices and isinstance(choices[0], dict):
         message = choices[0].get("message")
         if isinstance(message, dict) and isinstance(message.get("tool_calls"), list):
             output.extend(_responses_function_calls_from_chat_tool_calls(message["tool_calls"]))
+    if not output:
+        output.append(
+            {
+                "id": message_id,
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "", "annotations": []}],
+            }
+        )
 
-    return {
-        "id": response_id,
-        "object": "response",
-        "created_at": int(datetime.now(UTC).timestamp()),
-        "status": "completed",
-        "model": model,
-        "output": output,
-        "output_text": output_text,
-        "usage": chat_result.get("usage"),
-    }
+    return _responses_object(
+        response_id=response_id,
+        model=model,
+        status="completed",
+        output=output,
+        output_text=output_text,
+        created_at=int(datetime.now(UTC).timestamp()),
+        usage=_responses_usage_from_chat_usage(chat_result.get("usage")),
+    )
 
 
 def _responses_function_calls_from_chat_tool_calls(tool_calls: list[object]) -> list[dict[str, Any]]:
@@ -1025,90 +1141,87 @@ async def _responses_stream_from_chat_response(
 ) -> AsyncGenerator[bytes]:
     response_id = f"resp_{uuid.uuid4().hex}"
     message_id = f"msg_{uuid.uuid4().hex}"
-    content_id = f"ct_{uuid.uuid4().hex}"
+    created_at = int(datetime.now(UTC).timestamp())
     full_text: list[str] = []
-    started = {
-        "id": response_id,
-        "object": "response",
-        "created_at": int(datetime.now(UTC).timestamp()),
+    sequence = 0
+
+    def event(name: str, **fields: Any) -> bytes:
+        # Every Responses streaming event MUST carry ``type`` (the SDK's union
+        # discriminator) and a monotonic ``sequence_number`` in its JSON payload,
+        # else the SDK drops the event (type=None) and the high-level
+        # ``responses.stream()`` helper raises.
+        nonlocal sequence
+        payload = {"type": name, "sequence_number": sequence, **fields}
+        sequence += 1
+        return _responses_sse(name, payload)
+
+    def response_obj(status: str, output: list[dict[str, Any]]) -> dict[str, Any]:
+        return _responses_object(
+            response_id=response_id,
+            model=requested_model,
+            status=status,
+            output=output,
+            output_text="".join(full_text),
+            created_at=created_at,
+            usage=None,
+        )
+
+    message_in_progress = {
+        "id": message_id,
+        "type": "message",
         "status": "in_progress",
-        "model": requested_model,
-        "output": [],
+        "role": "assistant",
+        "content": [],
     }
-    yield _responses_sse("response.created", started)
-    yield _responses_sse(
-        "response.output_item.added",
-        {
-            "response_id": response_id,
-            "output_index": 0,
-            "item": {"id": message_id, "type": "message", "status": "in_progress", "role": "assistant", "content": []},
-        },
-    )
-    yield _responses_sse(
+    yield event("response.created", response=response_obj("in_progress", []))
+    yield event("response.in_progress", response=response_obj("in_progress", []))
+    yield event("response.output_item.added", output_index=0, item=message_in_progress)
+    yield event(
         "response.content_part.added",
-        {
-            "response_id": response_id,
-            "item_id": message_id,
-            "output_index": 0,
-            "content_index": 0,
-            "part": {"type": "output_text", "text": "", "annotations": []},
-        },
+        item_id=message_id,
+        output_index=0,
+        content_index=0,
+        part={"type": "output_text", "text": "", "annotations": []},
     )
     async for chunk in chat_response.body_iterator:
         if not isinstance(chunk, bytes):
             chunk = str(chunk).encode()
         if delta := _chat_sse_delta_text(chunk):
             full_text.append(delta)
-            yield _responses_sse(
+            yield event(
                 "response.output_text.delta",
-                {
-                    "response_id": response_id,
-                    "item_id": message_id,
-                    "output_index": 0,
-                    "content_index": 0,
-                    "delta": delta,
-                },
+                item_id=message_id,
+                output_index=0,
+                content_index=0,
+                delta=delta,
+                logprobs=[],
             )
     output_text = "".join(full_text)
-    yield _responses_sse(
+    yield event(
         "response.output_text.done",
-        {
-            "response_id": response_id,
-            "item_id": message_id,
-            "output_index": 0,
-            "content_index": 0,
-            "text": output_text,
-        },
+        item_id=message_id,
+        output_index=0,
+        content_index=0,
+        text=output_text,
+        logprobs=[],
     )
-    yield _responses_sse(
+    final_part = {"type": "output_text", "text": output_text, "annotations": []}
+    yield event(
         "response.content_part.done",
-        {
-            "response_id": response_id,
-            "item_id": message_id,
-            "output_index": 0,
-            "content_index": 0,
-            "part": {"type": "output_text", "text": output_text, "annotations": []},
-        },
+        item_id=message_id,
+        output_index=0,
+        content_index=0,
+        part=final_part,
     )
-    completed = {
-        "id": response_id,
-        "object": "response",
-        "created_at": started["created_at"],
+    completed_message = {
+        "id": message_id,
+        "type": "message",
         "status": "completed",
-        "model": requested_model,
-        "output": [
-            {
-                "id": message_id,
-                "type": "message",
-                "status": "completed",
-                "role": "assistant",
-                "content": [{"id": content_id, "type": "output_text", "text": output_text, "annotations": []}],
-            }
-        ],
-        "output_text": output_text,
-        "usage": None,
+        "role": "assistant",
+        "content": [final_part],
     }
-    yield _responses_sse("response.completed", {"response": completed})
+    yield event("response.output_item.done", output_index=0, item=completed_message)
+    yield event("response.completed", response=response_obj("completed", [completed_message]))
     yield b"data: [DONE]\n\n"
 
 
@@ -1242,6 +1355,16 @@ async def openai_compatible_models(
     """List models available through the OpenAI-compatible partner passthrough."""
     require_permission(auth, "general_chat")
     return {"object": "list", "data": _openai_compatible_model_payload()}
+
+
+@router.get("/models/{model}")
+async def openai_compatible_model(
+    model: str,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+) -> dict[str, Any]:
+    """Retrieve a model available through the OpenAI-compatible partner passthrough."""
+    require_permission(auth, "general_chat")
+    return _openai_compatible_model_entry(model)
 
 
 async def _openai_compatible_chat_completions_from_body(

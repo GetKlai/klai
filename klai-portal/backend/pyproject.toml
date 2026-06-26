@@ -91,6 +91,11 @@ dev = [
     # SPEC-SEC-SESSION-001 REQ-6: in-memory Redis substitute for TOTP and IDP
     # pending-cookie regression tests. Implements HSET/INCR/EXPIRE atomically.
     "fakeredis>=2.26",
+    # Partner OpenAI-compat contract test: drives the real OpenAI SDK against
+    # our /partner/v1/responses + /chat/completions payloads via a mock
+    # transport, so green == SDK-parseable. Test-only — portal-api does not
+    # import openai at runtime (it SERVES an OpenAI-compatible surface).
+    "openai>=2.0",
 ]
 
 [dependency-groups]
@@ -109,6 +114,9 @@ dev = [
     # SPEC-SEC-SESSION-001 REQ-6: in-memory Redis substitute for the TOTP +
     # IDP-pending regression suites. Mirrors [project.optional-dependencies] dev.
     "fakeredis>=2.26",
+    # Partner OpenAI-compat contract test only — portal-api does not import
+    # openai at runtime. Mirrors [project.optional-dependencies] dev.
+    "openai>=2.0",
 ]
 
 [tool.pytest.ini_options]

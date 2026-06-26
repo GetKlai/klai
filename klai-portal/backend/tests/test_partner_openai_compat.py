@@ -498,16 +498,32 @@ async def test_openai_compatible_models_lists_general_models():
 
     result = await openai_compatible_models(auth=_auth())
 
+    # Only canonical klai-* models are advertised. gpt-* aliases remain accepted
+    # as input but are not listed as klai-owned models (would misrepresent a
+    # Mistral-backed model as GPT).
     model_ids = [entry["id"] for entry in result["data"]]
-    assert model_ids == [
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "gpt-4o",
-        "gpt-4o-mini",
-        "klai-fast",
-        "klai-large",
-        "klai-primary",
-    ]
+    assert model_ids == ["klai-fast", "klai-large", "klai-primary"]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_model_retrieves_canonical_and_alias_models():
+    from app.api.partner import openai_compatible_model
+
+    canonical = await openai_compatible_model(model="klai-fast", auth=_auth())
+    alias = await openai_compatible_model(model="gpt-4o-mini", auth=_auth())
+
+    assert canonical == {"id": "klai-fast", "object": "model", "created": 1_735_689_600, "owned_by": "klai"}
+    assert alias == {"id": "gpt-4o-mini", "object": "model", "created": 1_735_689_600, "owned_by": "klai-alias"}
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_model_rejects_unknown_model():
+    from app.api.partner import openai_compatible_model
+
+    with pytest.raises(HTTPException) as exc:
+        await openai_compatible_model(model="gpt-unknown", auth=_auth())
+
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -532,7 +548,7 @@ async def test_openai_compatible_responses_maps_text_request_to_chat(monkeypatch
             "id": "chatcmpl-1",
             "model": "klai-fast",
             "choices": [{"message": {"content": '{"ok":true}'}}],
-            "usage": {"total_tokens": 7},
+            "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
         }
     )
     monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
@@ -556,7 +572,18 @@ async def test_openai_compatible_responses_maps_text_request_to_chat(monkeypatch
     assert result["model"] == "klai-fast"
     assert result["output_text"] == '{"ok":true}'
     assert result["output"][0]["content"][0]["type"] == "output_text"
-    assert result["usage"] == {"total_tokens": 7}
+    # usage is translated from Chat Completions shape to the Responses shape.
+    assert result["usage"] == {
+        "input_tokens": 3,
+        "input_tokens_details": {"cached_tokens": 0},
+        "output_tokens": 4,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 7,
+    }
+    # SDK-required Response fields must be present (not None on the client).
+    assert result["parallel_tool_calls"] is True
+    assert result["tool_choice"] == "auto"
+    assert result["tools"] == []
 
     sent = forwarded.await_args.args[0]
     assert sent["model"] == "klai-fast"
@@ -566,6 +593,27 @@ async def test_openai_compatible_responses_maps_text_request_to_chat(monkeypatch
     ]
     assert sent["max_tokens"] == 123
     assert sent["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_maps_safety_identifier_to_user(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    await partner.openai_compatible_responses(
+        http_request=_request(
+            {
+                "model": "klai-fast",
+                "input": "hi",
+                "safety_identifier": "hashed-end-user-1",
+            }
+        ),
+        auth=_auth(),
+    )
+
+    assert forwarded.await_args.args[0]["user"] == "hashed-end-user-1"
 
 
 @pytest.mark.asyncio
@@ -623,6 +671,116 @@ async def test_openai_compatible_responses_maps_function_tools(monkeypatch):
         }
     ]
     assert sent["tool_choice"] == {"type": "function", "function": {"name": "lookup"}}
+    assert result["output"] == [
+        {
+            "type": "function_call",
+            "id": "call_123",
+            "call_id": "call_123",
+            "name": "lookup",
+            "arguments": '{"id":1}',
+            "status": "completed",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_rejects_unsupported_tool_choice():
+    from app.api.partner import openai_compatible_responses
+
+    with pytest.raises(HTTPException) as exc:
+        await openai_compatible_responses(
+            http_request=_request(
+                {
+                    "model": "klai-primary",
+                    "input": "Find this customer",
+                    "tools": [{"type": "function", "name": "lookup"}],
+                    "tool_choice": {"type": "hosted_tool", "name": "web_search_preview"},
+                }
+            ),
+            auth=_auth(),
+        )
+
+    assert exc.value.status_code == 400
+    assert "tool_choice" in exc.value.detail["error"]["message"]
+
+    with pytest.raises(HTTPException) as exc:
+        await openai_compatible_responses(
+            http_request=_request(
+                {
+                    "model": "klai-primary",
+                    "input": "Find this customer",
+                    "tools": [{"type": "function", "name": "lookup"}],
+                    "tool_choice": "invalid",
+                }
+            ),
+            auth=_auth(),
+        )
+
+    assert exc.value.status_code == 400
+    assert "invalid" in exc.value.detail["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_canonical_knowledge_validation_error_uses_openai_error_envelope():
+    import app.api.partner as partner
+
+    with pytest.raises(HTTPException) as exc:
+        await partner.canonical_chat_completions(
+            http_request=_request(
+                {
+                    "model": "klai-primary",
+                    "messages": [],
+                    "knowledge": {"enabled": True},
+                }
+            ),
+            auth=_auth({"chat": True}),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error"] == {
+        "type": "invalid_request",
+        "message": "Invalid knowledge chat request: messages: List should have at least 1 item after validation, not 0",
+    }
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_preserves_text_message_with_function_tool(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(
+        return_value={
+            "choices": [
+                {
+                    "message": {
+                        "content": "I need to look that up.",
+                        "tool_calls": [
+                            {
+                                "id": "call_123",
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": '{"id":1}'},
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.openai_compatible_responses(
+        http_request=_request(
+            {
+                "model": "klai-primary",
+                "input": "Find this customer",
+                "tools": [{"type": "function", "name": "lookup"}],
+            }
+        ),
+        auth=_auth(),
+    )
+
+    assert result["output"][0]["type"] == "message"
+    assert result["output"][0]["content"][0]["text"] == "I need to look that up."
     assert result["output"][1] == {
         "type": "function_call",
         "id": "call_123",
@@ -674,6 +832,27 @@ async def test_openai_compatible_responses_rejects_knowledge_extensions():
 
 
 @pytest.mark.asyncio
+async def test_openai_compatible_responses_rejects_unsupported_stateful_fields():
+    from app.api.partner import openai_compatible_responses
+
+    for field, value in (
+        ("conversation", "conv_123"),
+        ("metadata", {"customer": "acme"}),
+        ("stream_options", {"include_usage": True}),
+        ("prompt_cache_key", "cache-key"),
+        ("max_tool_calls", 1),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await openai_compatible_responses(
+                http_request=_request({"model": "gpt-4o-mini", "input": "hi", field: value}),
+                auth=_auth(),
+            )
+
+        assert exc.value.status_code == 400
+        assert field in exc.value.detail["error"]["message"]
+
+
+@pytest.mark.asyncio
 async def test_openai_compatible_responses_streams_text_events(monkeypatch):
     import app.api.partner as partner
 
@@ -712,6 +891,7 @@ def test_openai_compatible_routes_are_canonical_only():
     route_paths = {route.path for route in partner.router.routes}
 
     assert "/partner/v1/models" in route_paths
+    assert "/partner/v1/models/{model}" in route_paths
     assert "/partner/v1/chat/completions" in route_paths
     assert "/partner/v1/responses" in route_paths
     assert "/partner/v1/openai/models" not in route_paths
