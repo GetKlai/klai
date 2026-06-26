@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "structlog>=25.0",
     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-7.4: identity verification helper
-    # consumed by save_personal_knowledge / save_org_knowledge / save_to_docs.
+    # consumed by save_personal_knowledge / save_org_knowledge / create_docs_page.
     # Editable install — mirrors klai-image-storage pattern in knowledge-ingest.
     "klai-identity-assert",
     # SPEC-SEC-INTERNAL-001 REQ-4 / REQ-8: shared sanitize_response_body +

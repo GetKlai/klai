@@ -179,7 +179,7 @@ class TestOAuthHappyPath:
 
     @pytest.mark.asyncio
     async def test_returns_artifact_id_for_derived_from_followup(self) -> None:
-        """Issue #85: callers need source artifact IDs for save_to_docs.derived_from."""
+        """Issue #85: callers need source artifact IDs for create_docs_page.derived_from."""
         from klai_identity_assert.mcp_token_client import McpTokenVerifyResult
 
         from main import search_knowledge
@@ -794,5 +794,5 @@ class TestOrgIdForwarding:
 
 
 # ─── Save-tools regression (T-14) lives in existing tests/ — no new test
-# needed. The save_personal_knowledge / save_org_knowledge / save_to_docs
+# needed. The save_personal_knowledge / save_org_knowledge / create_docs_page
 # suites in tests/ continue to pass under the Phase 1+2 changes.

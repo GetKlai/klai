@@ -3,7 +3,7 @@
 Covers:
   - _role_at_least unit tests (4C)
   - save_org_knowledge gate: "personal" denied, "company" allowed (4E)
-  - save_to_docs gate: "personal" denied, "company" allowed (4E)
+  - create_docs_page gate: "personal" denied, "company" allowed (4E)
 
 Strategy: patch ``main._identify_request`` with an ``AsyncMock`` that
 returns a fake identity with the desired ``effective_role``.  This avoids
@@ -170,60 +170,52 @@ class TestSaveOrgKnowledgeRoleGate:
 
 
 # ---------------------------------------------------------------------------
-# Integration tests: save_to_docs role gate
+# Integration tests: update_docs_page role gate
 # ---------------------------------------------------------------------------
 
 
-class TestSaveToDocsRoleGate:
-    """Role gate in save_to_docs must deny sub-company roles (4E)."""
+class TestUpdateDocsPageRoleGate:
+    """Role gate in update_docs_page must deny sub-company roles."""
 
     @pytest.mark.asyncio
     async def test_personal_role_is_denied(self) -> None:
-        from main import save_to_docs
+        from main import update_docs_page
 
         ctx = _make_ctx()
         identity = _FakeIdentity(effective_role="personal")
         with patch("main._identify_request", new_callable=AsyncMock, return_value=identity):
-            result = await save_to_docs(
-                title="Doc title",
+            result = await update_docs_page(
+                page_path="docs/page",
                 content="doc body",
                 ctx=ctx,
+                kb_name="docs",
             )
         assert result.startswith("Error:")
         assert "rol" in result.lower()
 
     @pytest.mark.asyncio
     async def test_unknown_role_is_denied(self) -> None:
-        from main import save_to_docs
+        from main import update_docs_page
 
         ctx = _make_ctx()
         identity = _FakeIdentity(effective_role="unknown")
         with patch("main._identify_request", new_callable=AsyncMock, return_value=identity):
-            result = await save_to_docs(
-                title="Doc title",
+            result = await update_docs_page(
+                page_path="docs/page",
                 content="doc body",
                 ctx=ctx,
+                kb_name="docs",
             )
         assert result.startswith("Error:")
 
     @pytest.mark.asyncio
     async def test_company_role_passes_gate(self) -> None:
-        """company role must NOT be denied by the role gate (4E).
-
-        The gate check happens before the KB-list fetch. Patching
-        _identify_request with a company-role identity and letting the
-        httpx KB-list call fail with RequestError (no server) is enough
-        to confirm the gate was passed — the resulting error message will
-        be the generic save-error, NOT the role-denied message.
-        """
         import httpx
 
-        from main import save_to_docs
+        from main import update_docs_page
 
         ctx = _make_ctx()
         identity = _FakeIdentity(effective_role="company")
-
-        role_denied_fragment = "rol"  # present only in the role-gate Dutch error
 
         with (
             patch("main._identify_request", new_callable=AsyncMock, return_value=identity),
@@ -232,11 +224,58 @@ class TestSaveToDocsRoleGate:
                 side_effect=httpx.RequestError("no server"),
             ),
         ):
-            result = await save_to_docs(
+            result = await update_docs_page(
+                page_path="docs/page",
+                content="doc body",
+                ctx=ctx,
+                kb_name="docs",
+            )
+
+        assert "rol" not in result.lower()
+
+
+class TestCreateDocsPageRoleGate:
+    """Role gate in create_docs_page must deny sub-company roles."""
+
+    @pytest.mark.asyncio
+    async def test_personal_role_is_denied(self) -> None:
+        from main import create_docs_page
+
+        ctx = _make_ctx()
+        identity = _FakeIdentity(effective_role="personal")
+        with patch("main._identify_request", new_callable=AsyncMock, return_value=identity):
+            result = await create_docs_page(
                 title="Doc title",
                 content="doc body",
                 ctx=ctx,
+                kb_name="docs",
+                page_path="docs/page",
+            )
+        assert result.startswith("Error:")
+        assert "rol" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_company_role_passes_gate(self) -> None:
+        import httpx
+
+        from main import create_docs_page
+
+        ctx = _make_ctx()
+        identity = _FakeIdentity(effective_role="company")
+
+        with (
+            patch("main._identify_request", new_callable=AsyncMock, return_value=identity),
+            patch(
+                "httpx.AsyncClient",
+                side_effect=httpx.RequestError("no server"),
+            ),
+        ):
+            result = await create_docs_page(
+                title="Doc title",
+                content="doc body",
+                ctx=ctx,
+                kb_name="docs",
+                page_path="docs/page",
             )
 
-        # Gate passed → error is a downstream/save error, not the role-denied message.
-        assert role_denied_fragment not in result.lower()
+        assert "rol" not in result.lower()

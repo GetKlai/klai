@@ -34,7 +34,7 @@ _VALID_HEADERS = {
 
 
 class TestPathTraversalValidation:
-    """Tests for save_to_docs path traversal prevention (V009).
+    """Tests for create_docs_page path traversal prevention (V009).
 
     Identity verification is mocked to allow — these tests focus on the
     parameter-validation gate, not the identity gate (which has its own
@@ -43,13 +43,13 @@ class TestPathTraversalValidation:
 
     @pytest.mark.asyncio
     async def test_kb_name_with_path_traversal_rejected(self, _patch_env):
-        from main import save_to_docs
+        from main import create_docs_page
 
         ctx = _make_ctx(_VALID_HEADERS)
         with patch(
             "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
         ):
-            result = await save_to_docs(
+            result = await create_docs_page(
                 title="Test",
                 content="content",
                 ctx=ctx,
@@ -61,13 +61,13 @@ class TestPathTraversalValidation:
 
     @pytest.mark.asyncio
     async def test_kb_name_with_slash_rejected(self, _patch_env):
-        from main import save_to_docs
+        from main import create_docs_page
 
         ctx = _make_ctx(_VALID_HEADERS)
         with patch(
             "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
         ):
-            result = await save_to_docs(
+            result = await create_docs_page(
                 title="Test",
                 content="content",
                 ctx=ctx,
@@ -78,13 +78,13 @@ class TestPathTraversalValidation:
 
     @pytest.mark.asyncio
     async def test_page_path_with_dotdot_rejected(self, _patch_env):
-        from main import save_to_docs
+        from main import create_docs_page
 
         ctx = _make_ctx(_VALID_HEADERS)
         with patch(
             "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
         ):
-            result = await save_to_docs(
+            result = await create_docs_page(
                 title="Test",
                 content="content",
                 ctx=ctx,
@@ -96,13 +96,13 @@ class TestPathTraversalValidation:
 
     @pytest.mark.asyncio
     async def test_page_path_with_backslash_rejected(self, _patch_env):
-        from main import save_to_docs
+        from main import create_docs_page
 
         ctx = _make_ctx(_VALID_HEADERS)
         with patch(
             "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
         ):
-            result = await save_to_docs(
+            result = await create_docs_page(
                 title="Test",
                 content="content",
                 ctx=ctx,
@@ -113,13 +113,13 @@ class TestPathTraversalValidation:
 
     @pytest.mark.asyncio
     async def test_page_path_starting_with_slash_rejected(self, _patch_env):
-        from main import save_to_docs
+        from main import create_docs_page
 
         ctx = _make_ctx(_VALID_HEADERS)
         with patch(
             "main._asserter.verify", new_callable=AsyncMock, return_value=allow_verify_result()
         ):
-            result = await save_to_docs(
+            result = await create_docs_page(
                 title="Test",
                 content="content",
                 ctx=ctx,
@@ -130,7 +130,7 @@ class TestPathTraversalValidation:
 
     @pytest.mark.asyncio
     async def test_valid_kb_name_and_page_path_accepted(self, _patch_env):
-        from main import save_to_docs
+        from main import create_docs_page
 
         ctx = _make_ctx(_VALID_HEADERS)
         with (
@@ -151,7 +151,7 @@ class TestPathTraversalValidation:
             mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client_cls.return_value = mock_client
 
-            result = await save_to_docs(
+            result = await create_docs_page(
                 title="Test Page",
                 content="Valid content",
                 ctx=ctx,
