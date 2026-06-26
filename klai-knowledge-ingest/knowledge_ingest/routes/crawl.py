@@ -173,6 +173,76 @@ class AuthProbeResponse(BaseModel):
 
 # Minimum word count for a crawl result to be considered usable content.
 _MIN_WORD_COUNT = 100
+_AI_SELECTOR_EMPTY_REASON = (
+    "AI could not find a content selector with enough text. "
+    "Try a different URL or enter a selector manually."
+)
+_AI_SELECTOR_CANDIDATE_LIMIT = 6
+
+
+def _dom_word_count(item: dict) -> int:
+    raw = item.get("wordCount", item.get("word_count", 0))
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _ai_selector_candidates(
+    ai_selector: str | None,
+    dom_summary: list[dict],
+) -> list[str]:
+    """Order selectors to validate: LLM pick first UNLESS it is demonstrably
+    thin in the DOM summary, then high-signal DOM candidates by word count.
+
+    The LLM pick leads only when we cannot disprove it (it is absent from the
+    DOM summary, so we have no word count) or it already looks content-rich.
+    A demonstrably thin LLM pick (e.g. ``div.page-content-inner`` with 4 words)
+    is demoted to a last-resort fallback so we do not waste the first recrawl
+    on a selector the DOM summary already shows is empty.
+    """
+    dom_word_counts: dict[str, int] = {}
+    for item in dom_summary:
+        sel = item.get("selector")
+        if isinstance(sel, str) and sel.strip():
+            key = sel.strip()
+            dom_word_counts[key] = max(dom_word_counts.get(key, 0), _dom_word_count(item))
+
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    def add(selector: str | None) -> None:
+        if not selector:
+            return
+        selector = selector.strip()
+        if not selector or selector in seen or selector in {"html", "body"}:
+            return
+        seen.add(selector)
+        candidates.append(selector)
+
+    ai_norm = ai_selector.strip() if ai_selector else ""
+    ai_word_count = dom_word_counts.get(ai_norm)
+    # Lead with the LLM pick only when it is not known-thin.
+    if ai_norm and (ai_word_count is None or ai_word_count >= _MIN_WORD_COUNT):
+        add(ai_selector)
+
+    for item in sorted(dom_summary, key=_dom_word_count, reverse=True):
+        if len(candidates) >= _AI_SELECTOR_CANDIDATE_LIMIT:
+            break
+        if _dom_word_count(item) < _MIN_WORD_COUNT:
+            continue
+        tag = str(item.get("tag") or "").lower()
+        if tag in {"script", "style", "link", "meta", "noscript", "template", "svg"}:
+            continue
+        add(item.get("selector") if isinstance(item.get("selector"), str) else None)
+
+    # If the LLM pick was demoted (known-thin), still try it last rather than
+    # dropping it entirely — the recrawl word count is the source of truth.
+    if ai_norm and ai_norm not in seen and len(candidates) < _AI_SELECTOR_CANDIDATE_LIMIT:
+        add(ai_selector)
+
+    return candidates
+    return candidates
 
 
 async def _run_crawl(
@@ -302,7 +372,12 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
             # Initial crawl (HTTP, no DB). Capture full CrawlResult so we
             # can run the REQ-3 classifier with HTTP-level metadata
             # (status_code, redirect URL, response headers).
-            initial_result = await crawl_page(body.url, effective_selector, cookies=body.cookies)
+            initial_result = await crawl_page(
+                body.url,
+                effective_selector,
+                cookies=body.cookies,
+                retry_relaxed_on_thin=effective_selector is None,
+            )
             fit_md = initial_result.fit_markdown or initial_result.raw_markdown
             word_count = initial_result.word_count
             raw_html = initial_result.html
@@ -320,10 +395,12 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                 dom_summary = await crawl_dom_summary(body.url)
                 if dom_summary:
                     ai_selector = await detect_selector_via_llm(dom_summary)
-                    if ai_selector:
+                    for candidate_selector in _ai_selector_candidates(ai_selector, dom_summary):
                         try:
                             recrawl_result = await crawl_page(
-                                body.url, ai_selector, cookies=body.cookies
+                                body.url,
+                                candidate_selector,
+                                cookies=body.cookies,
                             )
                             recrawl_md = recrawl_result.fit_markdown or recrawl_result.raw_markdown
                             recrawl_wc = recrawl_result.word_count
@@ -332,7 +409,7 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                                     conn,
                                     extract_domain(body.url),
                                     body.org_id,
-                                    ai_selector,
+                                    candidate_selector,
                                     "ai",
                                 )
                                 fit_md = recrawl_md
@@ -340,10 +417,19 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                                 raw_html = recrawl_result.html
                                 last_result = recrawl_result
                                 warnings = _detect_nav_contamination(fit_md)
-                                effective_selector = ai_selector
+                                effective_selector = candidate_selector
                                 selector_source = "ai"
+                                break
                             else:
                                 # Re-crawl also thin — return original, do not store
+                                selector_source = "ai_failed"
+                                logger.info(
+                                    "crawl_ai_selector_rejected",
+                                    url=body.url,
+                                    ai_selector=ai_selector,
+                                    candidate_selector=candidate_selector,
+                                    word_count=recrawl_wc,
+                                )
                                 if "low_word_count" not in warnings:
                                     warnings.append("low_word_count")
                         except Exception as exc:
@@ -351,6 +437,7 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
                                 "crawl_ai_recrawl_failed",
                                 url=body.url,
                                 ai_selector=ai_selector,
+                                candidate_selector=candidate_selector,
                                 error=str(exc),
                             )
                             if "low_word_count" not in warnings:
@@ -409,6 +496,15 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
             redirect_target_url=metadata.get("redirect_url") or metadata.get("location"),
             set_cookie_header=set_cookie_header,
         )
+        # AI ran and could not find a usable selector: replace the generic
+        # "try AI" hint with an explicit reason. Applies to the thin-content
+        # classifications, but never to auth_wall_detected (the auth reason is
+        # the accurate one there).
+        if selector_source == "ai_failed" and classification in {
+            "selector_returns_empty",
+            "requires_javascript",
+        }:
+            classification_reason = _AI_SELECTOR_EMPTY_REASON
 
         # SPEC-CONNECTOR-INPUT-VALIDATION-001 — completion log for production
         # debugging. Without this, a 200 with classification='unknown' or

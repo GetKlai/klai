@@ -83,7 +83,8 @@ export function PreviewClassificationFeedback({
         reason ?? 'The output looks like a navigation menu. Configure a Content Selector.'
       break
     case 'selector_returns_empty':
-      message = "Selector matched no content. Try a different selector or click 'Let AI find'."
+      message =
+        reason ?? "Selector matched no content. Try a different selector or click 'Let AI find'."
       break
     case 'requires_javascript':
       message =

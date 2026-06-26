@@ -707,7 +707,7 @@ function EditConnectorPage() {
                           invalidatePreview()
                         }}
                       >
-                        No, it&apos;s public
+                        Public site
                       </Button>
                       <Button
                         type="button"
@@ -721,7 +721,7 @@ function EditConnectorPage() {
                           invalidatePreview()
                         }}
                       >
-                        Yes, login required
+                        Login required
                       </Button>
                     </div>
                   </div>
@@ -1083,7 +1083,8 @@ function EditConnectorPage() {
 
                       {/* Inline "Try AI find selector" CTA for applicable classifications */}
                       {(previewResult.classification === 'selector_required' || previewResult.classification === 'selector_returns_empty') &&
-                        previewResult.selector_source !== 'ai' && (
+                        previewResult.selector_source !== 'ai' &&
+                        previewResult.selector_source !== 'ai_failed' && (
                         <button
                           type="button"
                           className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-50"

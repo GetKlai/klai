@@ -119,6 +119,16 @@ describe('PreviewClassificationFeedback', () => {
     expect(screen.getByText(/let ai find/i)).toBeTruthy()
   })
 
+  it('shows the server-supplied reason for selector_returns_empty', () => {
+    render(
+      <PreviewClassificationFeedback
+        classification="selector_returns_empty"
+        reason="AI could not find a content selector with enough text."
+      />,
+    )
+    expect(screen.getByText(/AI could not find/i)).toBeTruthy()
+  })
+
   it('shows JS hint for requires_javascript', () => {
     render(
       <PreviewClassificationFeedback

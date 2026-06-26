@@ -20,6 +20,23 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from knowledge_ingest.routes.crawl import _ai_selector_candidates
+
+
+def test_ai_candidates_demote_thin_llm_selector_below_rich_dom_node() -> None:
+    """A known-thin LLM pick is recrawled last, not first (M4)."""
+    dom = [
+        {"tag": "div", "selector": "#wrapper", "wordCount": 200},
+        {"tag": "div", "selector": "div.inner", "wordCount": 4},
+    ]
+    assert _ai_selector_candidates("div.inner", dom) == ["#wrapper", "div.inner"]
+
+
+def test_ai_candidates_lead_with_llm_selector_when_not_in_dom_summary() -> None:
+    """An LLM pick absent from the DOM summary has no disproving signal, so it
+    still leads."""
+    dom = [{"tag": "div", "selector": "#wrapper", "wordCount": 200}]
+    assert _ai_selector_candidates("article.body", dom) == ["article.body", "#wrapper"]
 
 
 def _result(
@@ -111,6 +128,147 @@ def test_preview_classification_selector_returns_empty_with_thin_md_rich_html(
     assert body["classification"] == "selector_returns_empty"
 
 
+def test_preview_try_ai_returns_explicit_reason_when_ai_selector_is_still_empty(
+    client: TestClient,
+) -> None:
+    """Regression: a failed AI selector attempt must not send the user back to
+    the same generic "click Let AI find" instruction."""
+    initial = _result(
+        fit_markdown="Just a tiny stub.",
+        raw_markdown="Just a tiny stub.",
+        html="<html>" + ("<div>x</div>" * 1000) + "</html>",
+        word_count=4,
+    )
+    recrawl = _result(
+        fit_markdown="Tiny selected text.",
+        raw_markdown="Tiny selected text.",
+        html="<html>" + ("<div>x</div>" * 1000) + "</html>",
+        word_count=3,
+    )
+    with (
+        patch("knowledge_ingest.routes.crawl.assert_caller_identity_tenant_only", new=AsyncMock()),
+        patch(
+            "knowledge_ingest.routes.crawl.crawl_page",
+            new=AsyncMock(side_effect=[initial, recrawl]),
+        ),
+        patch(
+            "knowledge_ingest.routes.crawl.crawl_dom_summary",
+            new=AsyncMock(return_value=[{"selector": "main", "wordCount": 4}]),
+        ),
+        patch(
+            "knowledge_ingest.routes.crawl.detect_selector_via_llm",
+            new=AsyncMock(return_value="main"),
+        ),
+    ):
+        resp = client.post(
+            "/ingest/v1/crawl/preview",
+            json={"url": "https://example.com/page", "org_id": "org-test", "try_ai": True},
+        )
+    body = resp.json()
+    assert body["classification"] == "selector_returns_empty"
+    assert body["selector_source"] == "ai_failed"
+    assert "AI could not find" in body["classification_reason"]
+
+
+def test_preview_try_ai_explicit_reason_also_for_requires_javascript(
+    client: TestClient,
+) -> None:
+    """A failed AI attempt on a JS-only page (minimal raw HTML) must also surface
+    the explicit AI reason, not the generic 'configure a wait_for' hint."""
+    initial = _result(
+        fit_markdown="tiny",
+        raw_markdown="tiny",
+        html="<html><body>tiny</body></html>",
+        word_count=1,
+    )
+    recrawl = _result(
+        fit_markdown="still tiny",
+        raw_markdown="still tiny",
+        html="<html><body>tiny</body></html>",
+        word_count=2,
+    )
+    with (
+        patch("knowledge_ingest.routes.crawl.assert_caller_identity_tenant_only", new=AsyncMock()),
+        patch(
+            "knowledge_ingest.routes.crawl.crawl_page",
+            new=AsyncMock(side_effect=[initial, recrawl]),
+        ),
+        patch(
+            "knowledge_ingest.routes.crawl.crawl_dom_summary",
+            new=AsyncMock(return_value=[{"selector": "main", "wordCount": 4}]),
+        ),
+        patch(
+            "knowledge_ingest.routes.crawl.detect_selector_via_llm",
+            new=AsyncMock(return_value="main"),
+        ),
+    ):
+        resp = client.post(
+            "/ingest/v1/crawl/preview",
+            json={"url": "https://example.com/page", "org_id": "org-test", "try_ai": True},
+        )
+    body = resp.json()
+    assert body["classification"] == "requires_javascript"
+    assert body["selector_source"] == "ai_failed"
+    assert "AI could not find" in body["classification_reason"]
+
+
+def test_preview_try_ai_validates_dom_candidates_after_bad_llm_selector(
+    client: TestClient,
+) -> None:
+    """AI find should validate DOM candidates, not trust one bad LLM selector.
+
+    The LLM picks ``div.page-content-inner`` which the DOM summary shows is thin
+    (4 words). A demonstrably-thin LLM pick must be demoted, so the rich
+    ``#fullpage-wrapper`` container is recrawled FIRST and wins — without wasting
+    a recrawl on the known-empty LLM selector.
+    """
+    initial = _result(
+        fit_markdown="Tiny landing text.",
+        raw_markdown="Tiny landing text.",
+        html="<html><body>tiny</body></html>",
+        word_count=3,
+    )
+    good_dom = _result(
+        fit_markdown="Recovered article content. " * 60,
+        raw_markdown="Recovered article content. " * 60,
+        html="<html><body>good</body></html>",
+        word_count=180,
+    )
+    with (
+        patch("knowledge_ingest.routes.crawl.assert_caller_identity_tenant_only", new=AsyncMock()),
+        patch(
+            "knowledge_ingest.routes.crawl.crawl_page",
+            # Only two crawls expected: the initial thin crawl, then the rich
+            # #fullpage-wrapper candidate (the thin LLM pick is demoted, not
+            # recrawled first).
+            new=AsyncMock(side_effect=[initial, good_dom]),
+        ),
+        patch(
+            "knowledge_ingest.routes.crawl.crawl_dom_summary",
+            new=AsyncMock(
+                return_value=[
+                    {"tag": "div", "selector": "#fullpage-wrapper", "wordCount": 180},
+                    {"tag": "div", "selector": "div.page-content-inner", "wordCount": 4},
+                ]
+            ),
+        ),
+        patch(
+            "knowledge_ingest.routes.crawl.detect_selector_via_llm",
+            new=AsyncMock(return_value="div.page-content-inner"),
+        ),
+        patch("knowledge_ingest.routes.crawl.upsert_domain_selector", new=AsyncMock()),
+    ):
+        resp = client.post(
+            "/ingest/v1/crawl/preview",
+            json={"url": "https://example.com/page", "org_id": "org-test", "try_ai": True},
+        )
+    body = resp.json()
+    assert body["classification"] == "success"
+    assert body["selector_source"] == "ai"
+    assert body["content_selector"] == "#fullpage-wrapper"
+    assert body["word_count"] == 180
+
+
 def test_preview_classification_requires_javascript_when_html_minimal(
     client: TestClient,
 ) -> None:
@@ -190,9 +348,7 @@ def test_preview_classification_field_always_present(client: TestClient) -> None
         "knowledge_ingest.routes.crawl.crawl_page",
         new=AsyncMock(return_value=healthy),
     ):
-        resp = client.post(
-            "/ingest/v1/crawl/preview", json={"url": "https://example.com/page"}
-        )
+        resp = client.post("/ingest/v1/crawl/preview", json={"url": "https://example.com/page"})
     body = resp.json()
     assert "classification" in body
     assert body["classification"] in {

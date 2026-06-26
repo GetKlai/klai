@@ -782,7 +782,7 @@ function AddConnectorPage() {
                   </div>
                 )}
 
-                {/* Step 3: Authentication question - Yes/No only, no other state. */}
+                {/* Step 3: Authentication question - login mode selection. */}
                 {wcStep === 'auth-question' && (
                   <div className="space-y-4">
                     <div className="rounded-lg border border-gray-200 p-4 space-y-3">
@@ -805,7 +805,7 @@ function AddConnectorPage() {
                             invalidatePreview()
                           }}
                         >
-                          No, it&apos;s public
+                          Public site
                         </Button>
                         <Button
                           type="button"
@@ -817,7 +817,7 @@ function AddConnectorPage() {
                             invalidatePreview()
                           }}
                         >
-                          Yes, login required
+                          Login required
                         </Button>
                       </div>
                     </div>
@@ -1085,7 +1085,9 @@ function AddConnectorPage() {
                             selector_required / selector_returns_empty when no selector is set
                             and AI was not the source. */}
                         {(previewResult.classification === 'selector_required' || previewResult.classification === 'selector_returns_empty') &&
-                          !webcrawlerConfig.content_selector && previewResult.selector_source !== 'ai' && (
+                          !webcrawlerConfig.content_selector &&
+                          previewResult.selector_source !== 'ai' &&
+                          previewResult.selector_source !== 'ai_failed' && (
                           <button
                             type="button"
                             className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-50"

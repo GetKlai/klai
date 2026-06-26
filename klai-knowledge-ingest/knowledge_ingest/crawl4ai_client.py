@@ -14,6 +14,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from html import unescape
+from html.parser import HTMLParser
 from typing import Any, Literal
 from urllib.parse import urldefrag, urlparse, urlunparse
 
@@ -112,6 +113,47 @@ _PRIORITY_SECTION_ROOT = 20
 _PRIORITY_LISTING_CHILD = 25
 _PRIORITY_PAGE_LINK = 50
 _LISTING_LINK_THRESHOLD = 50
+_THIN_CONTENT_WORD_COUNT = 100
+
+
+class _HTMLTextCounter(HTMLParser):
+    """Cheap rendered-HTML text signal for deciding whether a crawl was over-pruned."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip_depth = 0
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in {"script", "style", "noscript", "template", "svg"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "noscript", "template", "svg"} and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            self.parts.append(data)
+
+
+def _html_text_word_count(html: str) -> int:
+    if not html:
+        return 0
+    parser = _HTMLTextCounter()
+    try:
+        parser.feed(html)
+    except Exception:
+        return 0
+    return len(unescape(" ".join(parser.parts)).split())
+
+
+def _should_retry_relaxed_for_thin_content(result: CrawlResult) -> bool:
+    return (
+        result.success
+        and result.word_count < _THIN_CONTENT_WORD_COUNT
+        and _html_text_word_count(result.html) >= _THIN_CONTENT_WORD_COUNT
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +337,7 @@ async def _fetch_sitemap_document(
 def _parse_sitemap_locs(xml_text: str) -> tuple[str, list[str]]:
     """Parse a sitemap or sitemap-index XML document."""
     root_match = re.search(r"<\s*([A-Za-z_:][\w:.-]*)\b", xml_text or "")
-    root_name = (root_match.group(1).split(":")[-1].lower() if root_match else "urlset")
+    root_name = root_match.group(1).split(":")[-1].lower() if root_match else "urlset"
     kind = "sitemapindex" if root_name == "sitemapindex" else "urlset"
     locs = [unescape(u.strip()) for u in re.findall(r"<loc>\s*(.*?)\s*</loc>", xml_text or "")]
     return kind, [u for u in locs if u]
@@ -657,6 +699,7 @@ async def crawl_page(
     url: str,
     selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
+    retry_relaxed_on_thin: bool = False,
 ) -> CrawlResult:
     """Crawl a single page via the Crawl4AI REST API.
 
@@ -666,9 +709,46 @@ async def crawl_page(
     before the page navigation starts.
     """
     config = build_crawl_config(selector)
+    result = await _crawl_page_with_config(
+        url,
+        config,
+        cookies=cookies,
+        selector=selector,
+    )
+    if (
+        retry_relaxed_on_thin
+        and selector is None
+        and _should_retry_relaxed_for_thin_content(result)
+    ):
+        logger.info(
+            "crawl_page_retry_relaxed_config",
+            url=url,
+            word_count=result.word_count,
+            html_words=_html_text_word_count(result.html),
+        )
+        relaxed_result = await _crawl_page_with_config(
+            url,
+            _relax_seed_crawl_config(config),
+            cookies=cookies,
+            selector=selector,
+            relaxed=True,
+        )
+        if relaxed_result.word_count > result.word_count:
+            return relaxed_result
+    return result
+
+
+async def _crawl_page_with_config(
+    url: str,
+    crawler_config: dict[str, Any],
+    *,
+    cookies: list[dict[str, Any]] | None,
+    selector: str | None,
+    relaxed: bool = False,
+) -> CrawlResult:
     payload: dict[str, Any] = {
         "urls": [url],
-        "crawler_config": {"type": "CrawlerRunConfig", "params": config},
+        "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
     }
     bc = _build_browser_config_with_cookies(cookies)
     if bc:
@@ -709,6 +789,7 @@ async def crawl_page(
         "crawl4ai_page_result",
         url=url,
         selector=selector,
+        relaxed=relaxed,
         fit_words=len(result.fit_markdown.split()),
         raw_words=len(result.raw_markdown.split()),
     )
@@ -767,9 +848,7 @@ class CrawlLedger:
             if not href:
                 continue
             priority = (
-                _PRIORITY_LISTING_CHILD
-                if source_listing
-                else _priority_for_discovered_url(href)
+                _PRIORITY_LISTING_CHILD if source_listing else _priority_for_discovered_url(href)
             )
             self.add(
                 href,
@@ -978,7 +1057,9 @@ async def crawl_site(
     ledger.mark_outcome(start_outcome)
     outcomes.append(start_outcome)
     fetched_count += 1
-    if _result_is_ingestable(start_result, base_domain=base_domain) and not _is_non_content_listing_page(start_result):
+    if _result_is_ingestable(
+        start_result, base_domain=base_domain
+    ) and not _is_non_content_listing_page(start_result):
         crawl_results.append(start_result)
     if start_result.success:
         ledger.add_links_from_result(start_result, source_depth=0)
@@ -1001,12 +1082,25 @@ async def crawl_site(
             transport_error=transport_error,
             base_domain=base_domain,
         )
+        # Preview↔ingest parity: the single-page preview recovers thin-but-rich
+        # pages via a relaxed retry; do the same for BFS pages so site ingest
+        # does not silently store them thin. Only when no selector is active
+        # (a selector means the thin result is the intended scope).
+        if selector is None:
+            batch_results = await _recover_thin_bulk_results(
+                batch_results,
+                crawler_config=crawler_config,
+                cookies=cookies,
+                base_domain=base_domain,
+            )
         for outcome in batch_outcomes:
             ledger.mark_outcome(outcome)
         outcomes.extend(batch_outcomes)
         crawl_results.extend(batch_results)
 
+        recovered_by_canonical = {_canonicalise_url(r.url): r for r in batch_results}
         for result in _crawl_results_from_raw_results(raw_results, base_domain=base_domain):
+            result = recovered_by_canonical.get(_canonicalise_url(result.url), result)
             source_depth = ledger.depth_for_url(result.url)
             if source_depth is not None and source_depth < max_depth:
                 ledger.add_links_from_result(result, source_depth=source_depth)
@@ -1103,7 +1197,40 @@ async def _fetch_seed_page(
             error_message="empty response",
         )
 
-    return _extract_result(start_url, pages[0])
+    result = _extract_result(start_url, pages[0])
+    # Only retry relaxed when no content selector is active: a selector-scoped
+    # config keeps its target_elements through _relax_seed_crawl_config, so a
+    # retry would re-run the same scoped extraction and just waste a crawl. This
+    # mirrors the ``selector is None`` gate in crawl_page.
+    if not crawler_config.get("target_elements") and _should_retry_relaxed_for_thin_content(result):
+        relaxed_payload = {
+            **payload,
+            "crawler_config": {
+                "type": "CrawlerRunConfig",
+                "params": _relax_seed_crawl_config(crawler_config),
+            },
+        }
+        logger.info(
+            "crawl_site_seed_retry_relaxed_config",
+            start_url=start_url,
+            word_count=result.word_count,
+            html_words=_html_text_word_count(result.html),
+        )
+        try:
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                relaxed_data = await _crawl_sync(client, relaxed_payload)
+            relaxed_pages = _normalise_results_block(relaxed_data)
+            if relaxed_pages:
+                relaxed_result = _extract_result(start_url, relaxed_pages[0])
+                if relaxed_result.word_count > result.word_count:
+                    return relaxed_result
+        except Exception as exc:
+            logger.warning(
+                "crawl_site_seed_relaxed_retry_failed",
+                start_url=start_url,
+                error=str(exc),
+            )
+    return result
 
 
 def _extract_bfs_seeds(seed_result: CrawlResult, *, base_domain: str) -> list[str]:
@@ -1247,9 +1374,8 @@ def _combine_bulk_responses(
                 pos_canonical = _canonicalise_url(pos_url)
                 pos_owner_idx = canonical_to_idx.get(pos_canonical)
                 pos_domain = urlparse(pos_url).netloc.lower()
-                if (
-                    (pos_owner_idx is None or pos_owner_idx == i)
-                    and _same_site_domain(pos_domain, base_domain)
+                if (pos_owner_idx is None or pos_owner_idx == i) and _same_site_domain(
+                    pos_domain, base_domain
                 ):
                     page = positional
                     claimed_response_indices.add(i)
@@ -1283,6 +1409,75 @@ def _combine_bulk_responses(
             crawl_results.append(result)
 
     return crawl_results, outcomes
+
+
+async def _recover_thin_bulk_results(
+    batch_results: list[CrawlResult],
+    *,
+    crawler_config: dict[str, Any],
+    cookies: list[dict[str, Any]] | None,
+    base_domain: str,
+) -> list[CrawlResult]:
+    """Re-crawl thin-but-rich-HTML bulk pages with the relaxed config.
+
+    Mirrors the single-page preview / seed relaxed retry so BFS pages do not
+    diverge from what the preview shows. Bounded by design:
+
+    - only pages whose strict result is thin yet whose HTML clearly holds
+      content (``_should_retry_relaxed_for_thin_content``) are retried, so a
+      well-extracted site pays nothing;
+    - a single extra bulk request covers the whole thin subset;
+    - a relaxed result replaces the strict one only when it has more words.
+
+    Worst case (a site that is thin under strict config on every page) is one
+    extra bulk crawl of those pages — the precise cost of recovering content
+    the strict pipeline over-pruned. Logged so that cost is visible.
+    """
+    thin = [r for r in batch_results if _should_retry_relaxed_for_thin_content(r)]
+    if not thin:
+        return batch_results
+
+    thin_urls = [r.url for r in thin]
+    logger.info(
+        "crawl_site_bulk_retry_relaxed_config",
+        thin_count=len(thin_urls),
+        batch_size=len(batch_results),
+    )
+    relaxed_raw, relaxed_error = await _chunked_bulk_fetch(
+        urls=thin_urls,
+        crawler_config=_relax_seed_crawl_config(crawler_config),
+        cookies=cookies,
+    )
+    relaxed_results, _ = _combine_bulk_responses(
+        candidates=thin_urls,
+        raw_results=relaxed_raw,
+        transport_error=relaxed_error,
+        base_domain=base_domain,
+    )
+    relaxed_by_canonical = {_canonicalise_url(r.url): r for r in relaxed_results}
+
+    recovered: list[CrawlResult] = []
+    recovered_pages: list[dict[str, Any]] = []
+    for result in batch_results:
+        better = relaxed_by_canonical.get(_canonicalise_url(result.url))
+        if better is not None and better.word_count > result.word_count:
+            recovered.append(better)
+            recovered_pages.append(
+                {
+                    "url": result.url,
+                    "strict_word_count": result.word_count,
+                    "relaxed_word_count": better.word_count,
+                }
+            )
+        else:
+            recovered.append(result)
+    logger.info(
+        "crawl_site_bulk_retry_relaxed_result",
+        thin_count=len(thin_urls),
+        recovered_count=len(recovered_pages),
+        recovered_pages=recovered_pages[:10],
+    )
+    return recovered
 
 
 # Single bulk-crawl request budget. crawl4ai's MemoryAdaptiveDispatcher
@@ -1628,8 +1823,15 @@ async def crawl_dom_summary(url: str) -> list[dict] | None:
     """
     dom_js = """
 (async () => {
+  const skipTags = new Set(['script', 'style', 'link', 'meta', 'noscript', 'template', 'svg']);
   const els = [...document.body.querySelectorAll('*')]
-    .filter(el => el.innerText && el.children.length < 5)
+    .filter(el => {
+      const tag = el.tagName.toLowerCase();
+      if (skipTags.has(tag)) return false;
+      const style = window.getComputedStyle(el);
+      if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+      return el.innerText && el.children.length < 8;
+    })
     .map(el => ({
       tag: el.tagName.toLowerCase(),
       id: el.id || null,

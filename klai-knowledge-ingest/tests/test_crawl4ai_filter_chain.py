@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -87,6 +88,256 @@ async def test_fetch_seed_retries_relaxed_config_after_minimal_content_antibot(
     assert "js_code_before_wait" not in calls[1]
     assert "wait_for" not in calls[1]
     assert calls[1]["excluded_tags"] == ["script", "style"]
+
+
+@pytest.mark.asyncio
+async def test_crawl_page_retries_relaxed_config_when_strict_result_is_thin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preview-style single-page crawls should recover when pruning hides content."""
+    calls: list[dict[str, Any]] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        calls.append(payload["crawler_config"]["params"])
+        if len(calls) == 1:
+            return {
+                "results": [
+                    {
+                        "url": "https://example.com/",
+                        "success": True,
+                        "html": "<html><body>" + ("real content " * 140) + "</body></html>",
+                        "markdown": "thin preview text",
+                        "links": {"internal": []},
+                    }
+                ]
+            }
+        return {
+            "results": [
+                {
+                    "url": "https://example.com/",
+                    "success": True,
+                    "html": "<html><body>" + ("real content " * 140) + "</body></html>",
+                    "markdown": "recovered content " * 120,
+                    "links": {"internal": []},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    result = await crawl4ai_client.crawl_page(
+        "https://example.com/",
+        retry_relaxed_on_thin=True,
+    )
+
+    assert result.word_count >= 100
+    assert len(calls) == 2
+    assert "js_code_before_wait" in calls[0]
+    assert "js_code_before_wait" not in calls[1]
+    assert calls[1]["excluded_tags"] == ["script", "style"]
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_recovers_thin_bulk_pages_with_relaxed_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H1: a BFS child page that is thin under the strict config but content-rich
+    in HTML must be recovered with the relaxed config — so site ingest matches
+    what the single-page preview shows instead of silently ingesting it thin."""
+    _patch_seed(
+        monkeypatch,
+        _seed_result(
+            "https://portfolio.example",
+            ["https://portfolio.example/work"],
+        ),
+    )
+
+    async def _no_sitemap(_base: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _no_sitemap)
+
+    rich_html = "<html><body>" + ("real content " * 140) + "</body></html>"
+    bulk_configs: list[dict[str, Any]] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        params = payload["crawler_config"]["params"]
+        bulk_configs.append(params)
+        relaxed = "js_code_before_wait" not in params
+        return {
+            "results": [
+                {
+                    "url": "https://portfolio.example/work",
+                    "success": True,
+                    "html": rich_html,
+                    "markdown": ("recovered content " * 120) if relaxed else "thin",
+                    "links": {"internal": []},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, _outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://portfolio.example",
+        selector=None,
+        max_pages=10,
+    )
+
+    work = next(r for r in results if r.url == "https://portfolio.example/work")
+    assert work.word_count >= 100  # recovered, not the 1-word strict result
+    # Strict bulk fetch + one relaxed retry over the thin page.
+    assert len(bulk_configs) == 2
+    assert "js_code_before_wait" in bulk_configs[0]
+    assert "js_code_before_wait" not in bulk_configs[1]
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_discovers_links_from_recovered_bulk_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recovered child pages must feed the BFS frontier, not only storage."""
+    _patch_seed(
+        monkeypatch,
+        _seed_result(
+            "https://portfolio.example",
+            ["https://portfolio.example/work"],
+        ),
+    )
+
+    async def _no_sitemap(_base: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _no_sitemap)
+
+    rich_html = "<html><body>" + ("real content " * 140) + "</body></html>"
+    submitted_batches: list[list[str]] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        urls = payload["urls"]
+        submitted_batches.append(urls)
+        params = payload["crawler_config"]["params"]
+        relaxed = "js_code_before_wait" not in params
+
+        if urls == ["https://portfolio.example/work"] and not relaxed:
+            return {
+                "results": [
+                    {
+                        "url": "https://portfolio.example/work",
+                        "success": True,
+                        "html": rich_html,
+                        "markdown": "thin",
+                        "links": {"internal": []},
+                    }
+                ]
+            }
+        if urls == ["https://portfolio.example/work"] and relaxed:
+            return {
+                "results": [
+                    {
+                        "url": "https://portfolio.example/work",
+                        "success": True,
+                        "html": rich_html,
+                        "markdown": "recovered content " * 120,
+                        "links": {
+                            "internal": [
+                                {"href": "https://portfolio.example/work/detail", "text": "Detail"}
+                            ]
+                        },
+                    }
+                ]
+            }
+        return {
+            "results": [
+                {
+                    "url": url,
+                    "success": True,
+                    "html": "<html><body>detail</body></html>",
+                    "markdown": "detail content " * 120,
+                    "links": {"internal": []},
+                }
+                for url in urls
+            ]
+        }
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, _outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://portfolio.example",
+        selector=None,
+        max_pages=10,
+    )
+
+    assert ["https://portfolio.example/work/detail"] in submitted_batches
+    assert "https://portfolio.example/work/detail" in {r.url for r in results}
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_skips_relaxed_retry_when_selector_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A user/stored selector means the thin result is intentional — no relaxed
+    retry (which would re-run the same scoped extraction and waste a crawl)."""
+    _patch_seed(
+        monkeypatch,
+        _seed_result(
+            "https://portfolio.example",
+            ["https://portfolio.example/work"],
+        ),
+    )
+
+    async def _no_sitemap(_base: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _no_sitemap)
+
+    bulk_calls = 0
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        nonlocal bulk_calls
+        bulk_calls += 1
+        return {
+            "results": [
+                {
+                    "url": "https://portfolio.example/work",
+                    "success": True,
+                    "html": "<html><body>" + ("real content " * 140) + "</body></html>",
+                    "markdown": "thin",
+                    "links": {"internal": []},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    await crawl4ai_client.crawl_site(
+        start_url="https://portfolio.example",
+        selector="main",
+        max_pages=10,
+    )
+
+    # Exactly one bulk fetch — no relaxed retry pass when a selector is active.
+    assert bulk_calls == 1
+
+
+def test_dom_summary_excludes_non_content_nodes() -> None:
+    source = Path(crawl4ai_client.__file__).read_text(encoding="utf-8")
+    assert "skipTags" in source
+    assert "'style'" in source
+    assert "'script'" in source
+    assert "window.getComputedStyle" in source
 
 
 @pytest.mark.asyncio
@@ -208,6 +459,7 @@ async def test_crawl_site_excludes_archive_candidates_after_discovery(
         "https://www.getklai.com/blog/article-from-sitemap",
         "https://www.getklai.com/blog/tag/privacy",
     ]
+
     async def _fake_sitemap(_base: str) -> list[str]:
         return sitemap_urls
 
