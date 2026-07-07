@@ -79,6 +79,7 @@ __all__ = [
     "DUTCH_QUERY_MARKERS",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
+    "KB_CONTEXT_LANGUAGE_REMINDER",
     "META_CHAT_SYSTEM_PROMPT",
     "OPEN_KB_CHAT_SYSTEM_PROMPT",
     "no_citable_sources_message",
@@ -177,6 +178,14 @@ _LANGUAGE_DETECTION_PREAMBLE: Final[str] = (
     "- A clearly switched substantive message (a full-sentence question or statement in a "
     "different language) DOES switch the response language and stays switched until another "
     "substantive switch."
+)
+
+KB_CONTEXT_LANGUAGE_REMINDER: Final[str] = (
+    "[LANGUAGE REMINDER] The knowledge-base chunks above may be in a "
+    "different language than the user's question. Always respond in "
+    "the language of the user's most recent substantive question, "
+    "NOT the language of the source documents. Translate cited "
+    "content into the user's language without translator disclaimers."
 )
 
 _GROUNDED_BODY: Final[str] = (

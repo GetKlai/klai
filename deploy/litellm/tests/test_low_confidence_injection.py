@@ -92,7 +92,7 @@ def _load_hook(monkeypatch, extra_env=None):
 
 
 def test_injection_text_constant_exists(monkeypatch) -> None:
-    """The Dutch injection text is defined at module level so prompt
+    """The injection text is defined at module level so prompt
     iterations are a single-file change.
     """
     klai_knowledge = _load_hook(monkeypatch)
@@ -101,8 +101,13 @@ def test_injection_text_constant_exists(monkeypatch) -> None:
     assert isinstance(text, str)
     assert len(text) > 100  # non-trivial content
     # must contain the key anti-hallucination instructions
-    assert "verzin" in text.lower() or "geen" in text.lower()
-    assert "verduidelijking" in text.lower()
+    assert "do not" in text.lower() and "invent" in text.lower()
+    assert "clarifying question" in text.lower()
+    # Instruction blocks are English-only (SPEC-RAG-MULTILINGUAL-CHAT-001
+    # REQ-10): a Dutch guard here was the last strong language anchor and
+    # pulled English questions into Dutch answers on the low-confidence band.
+    assert "verzin" not in text.lower()
+    assert "relevantie" not in text.lower()
 
 
 def test_open_low_confidence_text_preserves_open_contract(monkeypatch) -> None:
@@ -115,15 +120,14 @@ def test_open_low_confidence_text_preserves_open_contract(monkeypatch) -> None:
     klai_knowledge = _load_hook(monkeypatch)
     text = klai_knowledge._LOW_CONFIDENCE_OPEN_CONTEXT_TEXT
 
-    assert "Open mode blijft actief" in text
-    assert "weiger niet alleen omdat KB-bewijs zwak" in text
-    assert "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext" in text
-    assert "de kennisbank die specifieke claim niet ondersteunt" in text
-    assert "Citeer alleen wat letterlijk in de chunks staat" not in text
+    assert "Open mode stays active" in text
+    assert "do not refuse solely because KB evidence is weak" in text
+    assert "Answer from general knowledge or visible user context" in text
+    assert "the knowledge base does not support that specific claim" in text
+    assert "Cite only what is literally in the chunks" not in text
     assert "alleen een algemeen antwoord wanneer dat veilig kan" not in text
     # Attachment policy is a cross-cutting, mode-independent concern; it lives
     # in the foundation-layer _USER_PROVIDED_CONTENT_SCOPE clause, not here.
-    # Keep this block NL-only (no mid-paragraph English sentence).
     assert "User-provided image attachments" not in text
 
 

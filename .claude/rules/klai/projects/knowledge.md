@@ -55,12 +55,18 @@ that mistake cost a full audit cycle to detect.
 
 **Detection in production:** `event:chat_synthesis_complete` events in
 VictoriaLogs carry `query_language_detected`,
-`response_language_detected`, and `language_correctness`. The
-`service:` field tells you which path emitted the event (`litellm`
-for path A, `portal-api` for path B, `retrieval-api` for path C). A
-drop in language-correctness rate for one language on one specific
-service is the signal that ONE of the three locations drifted —
-correlate with recent PRs touching that file.
+`response_language_detected`, `language_correctness`, and
+`chunks_injected` (added 2026-07-07; `None` on call sites that cannot
+determine the count). A drop in language-correctness rate is the
+signal that a prompt location drifted — correlate with recent PRs.
+
+**Coverage gap (verified 2026-07-07):** only path B (`portal-api`)
+emits this event. Path A (litellm hook) has NO language-correctness
+telemetry — `detect_language` does not exist in `deploy/litellm/` and
+VictoriaLogs shows zero `chat_synthesis_complete` events with
+`service:litellm`. A path-A language regression is invisible in
+telemetry today; audit path A by prompt-content tests
+(`deploy/litellm/tests/`) until litellm-side emission lands.
 
 **See:** SPEC-RAG-MULTILINGUAL-CHAT-001 (HISTORY v1.2 has the
 post-merge audit that uncovered the three-paths confusion),

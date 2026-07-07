@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from klai_citations import render_evidence_context
+from klai_chat_prompts import KB_CONTEXT_LANGUAGE_REMINDER
 from klai_kb_answer_policy import kb_chunks_present_header
 from klai_kb_urls import absolute_image_url, chunk_source_url
 
@@ -54,14 +55,6 @@ KB_ANSWER_FORMAT_INSTRUCTION = (
     "not define how user-provided attachments may be used — see the "
     "[User-provided content] note above.\n"
     "- Do NOT add images in the TL;DR (section 1).]\n"
-)
-
-KB_LANGUAGE_REMINDER = (
-    "[LANGUAGE REMINDER] The knowledge-base chunks above may be in a "
-    "different language than the user's question. Always respond in "
-    "the language of the user's most recent substantive question, "
-    "NOT the language of the source documents. Translate cited "
-    "content into the user's language without translator disclaimers."
 )
 
 @dataclass(frozen=True)
@@ -121,12 +114,12 @@ def build_kb_context_prompt(
             lines.append(f"![afbeelding {i}]({img_url})")
         lines.append("")
 
-    lines.append("[End knowledge base context]")
-    lines.append(KB_LANGUAGE_REMINDER)
-
     low_confidence_applied = low_confidence_inject and not low_confidence_injection_disabled
+    lines.append("[End knowledge base context]")
     if low_confidence_applied:
         lines.append(low_confidence_strict_text if kb_narrow else low_confidence_open_text)
+
+    lines.append(KB_CONTEXT_LANGUAGE_REMINDER)
 
     return KbContextPrompt(
         context_block="\n".join(lines),

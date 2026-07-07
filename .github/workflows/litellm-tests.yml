@@ -13,11 +13,17 @@ on:
       - 'deploy/litellm/**'
       - 'klai-libs/citations/**'
       - 'klai-libs/service-auth/**'
+      # chat-prompts is compared byte-for-byte against the vendored
+      # deploy/litellm/klai_chat_prompts.py by test_klai_chat_prompts_drift.py.
+      # Without this trigger a canonical-only edit lands without ever running
+      # the drift gate, and the NEXT unrelated litellm PR fails on it.
+      - 'klai-libs/chat-prompts/**'
   pull_request:
     paths:
       - 'deploy/litellm/**'
       - 'klai-libs/citations/**'
       - 'klai-libs/service-auth/**'
+      - 'klai-libs/chat-prompts/**'
 
 jobs:
   litellm-tests:
@@ -33,9 +39,12 @@ jobs:
       # must run from the deploy/litellm working directory.
       - name: Test (pytest)
         working-directory: deploy/litellm
+        # pyyaml: test_litellm_config_provider_guard.py imports yaml; missing
+        # dep kept this workflow red on main from 2026-06-18 to 2026-07-07.
         run: >
           uv run --no-project --python 3.13
           --with pytest --with pytest-asyncio --with httpx --with structlog
+          --with pyyaml
           --with ../../klai-libs/citations
           --with ../../klai-libs/service-auth
           python -m pytest tests/ -q --tb=short

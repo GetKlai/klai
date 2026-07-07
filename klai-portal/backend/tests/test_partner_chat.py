@@ -1207,6 +1207,32 @@ def test_build_system_prompt_includes_widget_system_prompt():
     assert "URL rules for citations and source links" in prompt
 
 
+def test_build_system_prompt_reinforces_user_language_after_kb_context():
+    """Widget/partner prompts must not let Dutch KB chunks be the final language anchor."""
+    from app.services.partner_chat import _build_system_prompt
+
+    prompt = _build_system_prompt(
+        [
+            {
+                "title": "Annuleren",
+                "source_url": "https://docs.example.com/annuleren",
+                "text": "Klanten kunnen reserveringen annuleren via de app.",
+            }
+        ],
+        widget_system_prompt=(
+            "Pas een klantenservice-stijl toe. Antwoord in de taal van de laatste "
+            "inhoudelijke gebruikersinput; de taal waarin deze instructie is geschreven "
+            "is niet leidend."
+        ),
+        backend_managed_citations=True,
+    )
+
+    assert "[LANGUAGE REMINDER]" in prompt
+    assert "NOT the language of the source documents" in prompt
+    assert prompt.rindex("[LANGUAGE REMINDER]") > prompt.index("Klanten kunnen reserveringen annuleren")
+    assert prompt.rstrip().endswith("without translator disclaimers.")
+
+
 def test_build_system_prompt_includes_optional_page_context_guardrails():
     from app.services.partner_chat import _build_system_prompt
 
@@ -2367,6 +2393,30 @@ def test_language_correctness_log_does_not_duplicate_structlog_event(monkeypatch
     assert args == ("chat_synthesis_complete",)
     assert "event" not in kwargs
     assert kwargs["org_id"] == 1
+    # No chunk count passed → logged as None, so no-chunks answers stay
+    # distinguishable from chunks-present answers in VictoriaLogs.
+    assert kwargs["chunks_injected"] is None
+
+
+def test_language_correctness_log_records_chunks_injected(monkeypatch):
+    """Language mismatches must be attributable to KB-content anchoring."""
+    from app.services import partner_chat
+
+    logger = MagicMock()
+    monkeypatch.setattr(partner_chat, "logger", logger)
+    monkeypatch.setattr(partner_chat, "detect_language", MagicMock(return_value="en"))
+    monkeypatch.setattr(partner_chat, "language_correctness", MagicMock(return_value=True))
+
+    partner_chat._emit_language_correctness_log(
+        org_id=1,
+        query="What does Klai collect?",
+        response_text="Klai collects account data.",
+        chunks_injected=4,
+    )
+
+    logger.info.assert_called_once()
+    _, kwargs = logger.info.call_args
+    assert kwargs["chunks_injected"] == 4
 
 
 @pytest.mark.asyncio
