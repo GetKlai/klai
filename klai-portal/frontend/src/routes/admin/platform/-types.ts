@@ -19,6 +19,87 @@ export interface PlatformStats {
   arr_cents: number
 }
 
+export type PlatformUsageRange = '7d' | '30d' | '90d'
+
+export interface PlatformUsageOverview {
+  range: PlatformUsageRange
+  start: string
+  end: string
+  litellm_available: boolean
+  litellm_configured: boolean
+  total_events: number
+  knowledge_queries: number
+  knowledge_uploads: number
+  meetings_started: number
+  problem_reports: number
+  active_users: number
+  active_tenants: number
+  api_requests: number | null
+  successful_requests: number | null
+  failed_requests: number | null
+  total_tokens: number | null
+  spend_usd: number | null
+}
+
+export interface PlatformUsageTenantRow {
+  org_id: number
+  name: string
+  slug: string
+  plan: string
+  billing_status: string
+  litellm_team_id: string | null
+  knowledge_queries: number
+  active_users: number
+  total_events: number
+  last_activity_at: string | null
+  api_requests: number | null
+  successful_requests: number | null
+  failed_requests: number | null
+  total_tokens: number | null
+  spend_usd: number | null
+}
+
+export interface DailyUsagePoint {
+  date: string
+  events: number
+  knowledge_queries: number
+  api_requests: number | null
+  failed_requests: number | null
+  tokens: number | null
+  spend_usd: number | null
+}
+
+export interface EventTypeCount {
+  event_type: string
+  count: number
+}
+
+export interface ModelUsageRow {
+  model: string
+  api_requests: number
+  successful_requests: number
+  failed_requests: number
+  tokens: number
+  spend_usd: number
+}
+
+export interface PlatformUsageTenantDetail {
+  org_id: number
+  name: string
+  slug: string
+  range: PlatformUsageRange
+  start: string
+  end: string
+  litellm_configured: boolean
+  litellm_mapped: boolean
+  litellm_available: boolean
+  active_users: number
+  last_activity_at: string | null
+  daily: DailyUsagePoint[]
+  event_type_breakdown: EventTypeCount[]
+  model_breakdown: ModelUsageRow[] | null
+}
+
 export interface PlatformUser {
   zitadel_user_id: string
   email: string | null
@@ -294,6 +375,7 @@ export type PlatformTab =
   | 'templates'
   | 'subscriptions'
   | 'bots'
+  | 'stats'
   | 'feedback'
   | 'chat-errors'
   | 'status'

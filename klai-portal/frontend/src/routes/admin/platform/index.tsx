@@ -25,8 +25,9 @@ import {
   UsersTab,
 } from './-components/PlatformDashboardTabs'
 import { FeedbackTab } from './-components/feedback/FeedbackTab'
+import { StatsTab } from './-components/stats/StatsTab'
 import { StatCard } from '@/components/ui/stat-card'
-import type { PlatformTab } from './-types'
+import type { PlatformTab, PlatformUsageRange } from './-types'
 
 const VALID_TABS = new Set<PlatformTab>([
   'users',
@@ -36,6 +37,7 @@ const VALID_TABS = new Set<PlatformTab>([
   'templates',
   'subscriptions',
   'bots',
+  'stats',
   'feedback',
   'chat-errors',
   'status',
@@ -44,6 +46,7 @@ const VALID_TABS = new Set<PlatformTab>([
 
 type PlatformSearch = {
   tab?: PlatformTab
+  range?: PlatformUsageRange
   messageUserId?: string
   messageOrgId?: string
   messageRecipient?: string
@@ -54,6 +57,10 @@ export const Route = createFileRoute('/admin/platform/')({
     tab: (VALID_TABS as Set<string>).has(search.tab as string)
       ? (search.tab as PlatformTab)
       : undefined,
+    range:
+      search.range === '7d' || search.range === '30d' || search.range === '90d'
+        ? search.range
+        : undefined,
     messageUserId: typeof search.messageUserId === 'string' ? search.messageUserId : undefined,
     messageOrgId: typeof search.messageOrgId === 'string' ? search.messageOrgId : undefined,
     messageRecipient: typeof search.messageRecipient === 'string' ? search.messageRecipient : undefined,
@@ -69,6 +76,7 @@ const TABS: { id: PlatformTab; label: () => string }[] = [
   { id: 'templates', label: m.platform_tab_templates },
   { id: 'subscriptions', label: m.platform_tab_subscriptions },
   { id: 'bots', label: m.platform_tab_bots },
+  { id: 'stats', label: m.platform_tab_stats },
   { id: 'feedback', label: m.platform_tab_feedback },
   { id: 'chat-errors', label: m.platform_tab_chat_errors },
   { id: 'status', label: m.platform_tab_status },
@@ -102,6 +110,7 @@ function PlatformConsole() {
   const statsQuery = usePlatformStats(isPlatformAdmin)
   const stats = statsQuery.data
   const tab = routeSearch.tab ?? 'users'
+  const range = routeSearch.range ?? '30d'
   const composeOrgId = Number(routeSearch.messageOrgId)
   const composeTarget =
     routeSearch.messageUserId && Number.isFinite(composeOrgId)
@@ -120,7 +129,20 @@ function PlatformConsole() {
   function setPlatformTab(nextTab: PlatformTab) {
     void navigate({
       to: '/admin/platform',
-      search: { tab: nextTab === 'users' ? undefined : nextTab },
+      search: {
+        tab: nextTab === 'users' ? undefined : nextTab,
+        range: nextTab === 'stats' && range !== '30d' ? range : undefined,
+      },
+    })
+  }
+
+  function setUsageRange(nextRange: PlatformUsageRange) {
+    void navigate({
+      to: '/admin/platform',
+      search: {
+        tab: 'stats',
+        range: nextRange === '30d' ? undefined : nextRange,
+      },
     })
   }
 
@@ -175,6 +197,8 @@ function PlatformConsole() {
     void queryClient.invalidateQueries({ queryKey: ['platform-chat-errors'] })
     void queryClient.invalidateQueries({ queryKey: ['platform-feedback-submissions'] })
     void queryClient.invalidateQueries({ queryKey: ['platform-message-threads'] })
+    void queryClient.invalidateQueries({ queryKey: ['platform-usage-overview'] })
+    void queryClient.invalidateQueries({ queryKey: ['platform-usage-tenants'] })
   }
 
   return (
@@ -363,6 +387,14 @@ function PlatformConsole() {
         <TemplatesTab search={search} fmtDate={fmtDate} />
       )}
       {tab === 'bots' && <BotsTab search={search} fmtDate={fmtDate} />}
+      {tab === 'stats' && (
+        <StatsTab
+          search={search}
+          range={range}
+          onRangeChange={setUsageRange}
+          fmtDate={fmtDate}
+        />
+      )}
       {tab === 'feedback' && (
         <FeedbackTab search={search} fmtDate={fmtDate} />
       )}

@@ -22,6 +22,10 @@ import type {
   PlatformTemplate,
   CreateTenantPayload,
   CreateTenantResult,
+  PlatformUsageOverview,
+  PlatformUsageRange,
+  PlatformUsageTenantDetail,
+  PlatformUsageTenantRow,
 } from './-types'
 
 export function usePlatformSubdomains(enabled = true) {
@@ -97,6 +101,49 @@ export function usePlatformOrgDetail(orgId: string) {
         `/api/admin/platform/organizations/${orgId}`,
       ),
     enabled: auth.isAuthenticated && !!orgId,
+  })
+}
+
+export function usePlatformUsageOverview(range: PlatformUsageRange, enabled = true) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-usage-overview', range],
+    queryFn: async () =>
+      apiFetch<PlatformUsageOverview>(
+        `/api/admin/platform/usage/overview?range=${encodeURIComponent(range)}`,
+      ),
+    staleTime: 30_000,
+    enabled: auth.isAuthenticated && enabled,
+  })
+}
+
+export function usePlatformUsageTenants(range: PlatformUsageRange, enabled = true) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-usage-tenants', range],
+    queryFn: async () =>
+      apiFetch<PlatformUsageTenantRow[]>(
+        `/api/admin/platform/usage/tenants?range=${encodeURIComponent(range)}`,
+      ),
+    staleTime: 30_000,
+    enabled: auth.isAuthenticated && enabled,
+  })
+}
+
+export function usePlatformUsageTenantDetail(
+  orgId: string,
+  range: PlatformUsageRange,
+  enabled = true,
+) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-usage-tenant-detail', orgId, range],
+    queryFn: async () =>
+      apiFetch<PlatformUsageTenantDetail>(
+        `/api/admin/platform/usage/tenants/${encodeURIComponent(orgId)}?range=${encodeURIComponent(range)}`,
+      ),
+    staleTime: 30_000,
+    enabled: auth.isAuthenticated && enabled && !!orgId,
   })
 }
 

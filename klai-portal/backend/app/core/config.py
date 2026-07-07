@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     meili_master_key: str = ""
     litellm_master_key: str = ""
     litellm_general_chat_key: str = ""  # Dedicated LiteLLM virtual key for Partner OpenAI-compatible chat.
+    litellm_analytics_database_url: str = ""  # Optional RO DB URL for platform usage analytics.
     redis_password: str = ""
     redis_host: str = "redis"
     redis_port: int = 6379

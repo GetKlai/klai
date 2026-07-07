@@ -7,6 +7,7 @@ import {
   FileText,
   Loader2,
   Settings,
+  BarChart3,
   Users,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -26,8 +27,10 @@ import {
   TenantFeaturesSection,
   UsersSection,
 } from './-components/OrgDetailSections'
+import { UsageSection } from './-components/stats/UsageSection'
+import type { PlatformUsageRange } from './-types'
 
-type TabId = 'features' | 'users' | 'bots' | 'knowledge-bases' | 'templates' | 'danger'
+type TabId = 'features' | 'users' | 'bots' | 'knowledge-bases' | 'templates' | 'usage' | 'danger'
 
 const VALID_TABS = new Set<TabId>([
   'features',
@@ -35,11 +38,13 @@ const VALID_TABS = new Set<TabId>([
   'bots',
   'knowledge-bases',
   'templates',
+  'usage',
   'danger',
 ])
 
 type DetailSearch = {
   tab?: TabId
+  range?: PlatformUsageRange
 }
 
 export const Route = createFileRoute('/admin/platform/orgs/$orgId')({
@@ -47,6 +52,10 @@ export const Route = createFileRoute('/admin/platform/orgs/$orgId')({
     tab: (VALID_TABS as Set<string>).has(search.tab as string)
       ? (search.tab as TabId)
       : undefined,
+    range:
+      search.range === '7d' || search.range === '30d' || search.range === '90d'
+        ? search.range
+        : undefined,
   }),
   component: PlatformOrgDetailPage,
 })
@@ -68,6 +77,7 @@ function PlatformOrgDetailPage() {
   const navigate = useNavigate()
   const { data, isLoading, error, refetch } = usePlatformOrgDetail(orgId)
   const activeTab: TabId = search.tab ?? 'features'
+  const range = search.range ?? '30d'
 
   if (isLoading) {
     return (
@@ -124,6 +134,11 @@ function PlatformOrgDetailPage() {
       count: data.templates.length,
     },
     {
+      id: 'usage',
+      label: m.platform_org_tab_usage(),
+      icon: BarChart3,
+    },
+    {
       id: 'danger',
       label: m.admin_shared_tab_danger(),
       icon: AlertTriangle,
@@ -134,7 +149,7 @@ function PlatformOrgDetailPage() {
     void navigate({
       to: '/admin/platform/orgs/$orgId',
       params: { orgId },
-      search: { tab },
+      search: { tab, range: tab === 'usage' && range !== '30d' ? range : undefined },
     })
   }
 
@@ -202,6 +217,9 @@ function PlatformOrgDetailPage() {
       )}
       {activeTab === 'templates' && (
         <TemplatesSection templates={data.templates} fmtDate={fmtDate} />
+      )}
+      {activeTab === 'usage' && (
+        <UsageSection orgId={orgId} range={range} fmtDate={fmtDate} />
       )}
       {activeTab === 'danger' && <TenantDangerZone org={data.org} />}
     </div>
