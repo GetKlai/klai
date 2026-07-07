@@ -718,18 +718,25 @@ def _select_docs_kb(kbs: list[dict], kb_name: str | None) -> str:
     if error:
         raise ToolError(error)
 
-    valid_slugs = [kb.get("slug") for kb in kbs if isinstance(kb.get("slug"), str)]
+    valid_slugs: list[str] = []
+    for kb in kbs:
+        slug = kb.get("slug")
+        if isinstance(slug, str):
+            valid_slugs.append(slug)
     if not valid_slugs:
         raise ToolError("Error: geen documentatie-kennisbanken gevonden voor deze organisatie.")
 
     if kb_name is None:
         if len(valid_slugs) == 1:
             return valid_slugs[0]
-        options = ", ".join(
-            f"{kb.get('slug', '?')} ({kb.get('name', '')})"
-            for kb in kbs
-            if isinstance(kb.get("slug"), str)
-        )
+        option_labels: list[str] = []
+        for kb in kbs:
+            slug = kb.get("slug")
+            if not isinstance(slug, str):
+                continue
+            name = kb.get("name", "")
+            option_labels.append(f"{slug} ({name if isinstance(name, str) else ''})")
+        options = ", ".join(option_labels)
         raise ToolError(
             f"Meerdere kennisbanken beschikbaar: {options}. "
             "Geef de slug op als kb_name bij de volgende aanroep."
