@@ -11,28 +11,33 @@ import os
 
 from klai_citations import extract_salient_query_tokens
 
+# English on purpose: every other instruction block in the prompt stack is
+# English-wrapped (SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-10). A Dutch guard here
+# was the last strong language anchor before generation and pulled English
+# questions into Dutch answers when the low-confidence band fired.
 LOW_CONFIDENCE_INJECTION_TEXT = (
-    "[Klai retrieval — lage relevantie]\n"
-    "Het opgehaalde KB-materiaal heeft een lage relevantie-score voor "
-    "deze vraag. Citeer alleen wat letterlijk in de chunks staat. Verzin "
-    "GEEN integratie-routes, productnamen, stappen, bedragen, of "
-    "technische details die niet expliciet in de chunks voorkomen. "
-    "Sluit af met een vraag om verduidelijking aan de gebruiker als het "
-    "materiaal de vraag niet volledig dekt — dat is beter dan een "
-    "verzonnen antwoord."
+    "[Klai retrieval — low relevance]\n"
+    "The retrieved KB material has a low relevance score for this "
+    "question. Cite only what is literally in the chunks. Do NOT "
+    "invent integration routes, product names, steps, amounts, or "
+    "technical details that do not explicitly appear in the chunks. "
+    "If the material does not fully cover the question, close with a "
+    "clarifying question to the user — in the user's language — "
+    "rather than giving a fabricated answer."
 )
 LOW_CONFIDENCE_OPEN_CONTEXT_TEXT = (
-    "[Klai retrieval — lage relevantie in Open modus]\n"
-    "Het opgehaalde KB-materiaal heeft een lage relevantie-score voor "
-    "deze vraag. Behandel de chunks als zwakke aanvullende context. "
-    "Open mode blijft actief: weiger niet alleen omdat KB-bewijs zwak, "
-    "tangentieel, of afwezig is. Antwoord vanuit algemene kennis of "
-    "zichtbare gebruikerscontext wanneer de vraag daarmee betrouwbaar te "
-    "beantwoorden is. Presenteer zulke delen expliciet als algemene kennis "
-    "of als afgeleid uit de gebruikerscontext, niet als iets dat uit de "
-    "kennisbank komt. Voor organisatie-specifieke feiten, prijzen, routes, "
-    "productnamen, stappen, of bronclaims: verzin ze niet en zeg kort dat "
-    "de kennisbank die specifieke claim niet ondersteunt."
+    "[Klai retrieval — low relevance in Open mode]\n"
+    "The retrieved KB material has a low relevance score for this "
+    "question. Treat the chunks as weak supplementary context. Open "
+    "mode stays active: do not refuse solely because KB evidence is "
+    "weak, tangential, or absent. Answer from general knowledge or "
+    "visible user context when the question can be answered reliably "
+    "that way. Present such parts explicitly as general knowledge or "
+    "as derived from the user context, not as something that comes "
+    "from the knowledge base. For organisation-specific facts, "
+    "prices, routes, product names, steps, or source claims: do not "
+    "invent them and say briefly that the knowledge base does not "
+    "support that specific claim."
 )
 LOW_CONFIDENCE_INJECTION_DISABLED = (
     os.getenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", "0") == "1"

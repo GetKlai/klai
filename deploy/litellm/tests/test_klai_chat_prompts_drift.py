@@ -122,6 +122,27 @@ def test_vendored_meta_prompt_matches_canonical() -> None:
     )
 
 
+def test_vendored_kb_context_language_reminder_matches_canonical() -> None:
+    """``KB_CONTEXT_LANGUAGE_REMINDER`` MUST be byte-identical between
+    vendored and canonical copies. Path A (LiteLLM hook) appends the
+    vendored copy as the final block of the KB context; path B
+    (partner_chat) appends the canonical one after its Context block.
+    The ``__all__`` test only catches a missing NAME — content drift
+    here would silently give the two chat surfaces different final
+    language anchors.
+    """
+    vendored = _load("_drift_vendored_kb_reminder", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_kb_reminder", _CANONICAL_PATH)
+
+    assert (
+        vendored.KB_CONTEXT_LANGUAGE_REMINDER == canonical.KB_CONTEXT_LANGUAGE_REMINDER
+    ), (
+        "KB_CONTEXT_LANGUAGE_REMINDER drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+
+
 def test_vendored_dutch_markers_match_canonical() -> None:
     """``DUTCH_QUERY_MARKERS`` MUST be set-equal between vendored and
     canonical. The set drives the language choice for the strict-mode

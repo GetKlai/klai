@@ -6743,15 +6743,15 @@ class TestKlaiKnowledgeHookOpenMode:
             )
 
         sys_content = self._system_msg(result)
-        assert "lage relevantie in Open modus" in sys_content
-        assert "Open mode blijft actief" in sys_content
-        assert "weiger niet alleen omdat KB-bewijs zwak" in sys_content
+        assert "low relevance in Open mode" in sys_content
+        assert "Open mode stays active" in sys_content
+        assert "do not refuse solely because KB evidence is weak" in sys_content
         assert (
-            "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext"
+            "Answer from general knowledge or visible user context"
             in sys_content
         )
         assert "alleen een algemeen antwoord wanneer dat veilig kan" not in sys_content
-        assert "Citeer alleen wat letterlijk in de chunks staat" not in sys_content
+        assert "Cite only what is literally in the chunks" not in sys_content
         self._assert_open_kb_foundation(sys_content)
 
     @pytest.mark.asyncio
@@ -6809,14 +6809,14 @@ class TestKlaiKnowledgeHookOpenMode:
 
         sys_content = self._system_msg(result)
         self._assert_open_kb_foundation(sys_content)
-        assert "lage relevantie in Open modus" in sys_content
+        assert "low relevance in Open mode" in sys_content
         assert "Knowledge-base images only" in sys_content
         # Screenshot = standalone user content, usable in any mode.
         assert "[User-provided content]" in sys_content
         assert "you may read and reason about" in sys_content
-        assert "Open mode blijft actief" in sys_content
+        assert "Open mode stays active" in sys_content
         assert (
-            "Antwoord vanuit algemene kennis of zichtbare gebruikerscontext"
+            "Answer from general knowledge or visible user context"
             in sys_content
         )
         assert "no image is available in the knowledge base" not in sys_content

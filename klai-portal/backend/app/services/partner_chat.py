@@ -30,6 +30,7 @@ from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from klai_chat_prompts import (
     GROUNDED_CHAT_SYSTEM_PROMPT,
+    KB_CONTEXT_LANGUAGE_REMINDER,
 )
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
@@ -240,11 +241,16 @@ def _emit_language_correctness_log(
     org_id: int | str | None,
     query: str,
     response_text: str,
+    chunks_injected: int | None = None,
 ) -> None:
     """Emit chat_synthesis_complete with passive language metrics.
 
     SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07. Failure-safe: any exception
     inside detection MUST NOT block the chat completion path.
+
+    ``chunks_injected`` distinguishes chunks-present from no-chunks answers
+    so language mismatches can be attributed to KB-content anchoring
+    (``None`` = the call site could not determine the count).
     """
     try:
         query_lang = detect_language(query)
@@ -257,6 +263,7 @@ def _emit_language_correctness_log(
             response_language_detected=response_lang,
             language_correctness=correct,
             response_length_chars=len(response_text or ""),
+            chunks_injected=chunks_injected,
             service="portal-api",
         )
     except Exception:
@@ -1614,6 +1621,7 @@ async def _chat_completion_streaming_with_composed_citations(
             org_id=org_id,
             query=user_query,
             response_text=content,
+            chunks_injected=len(citation_chunks or []),
         )
         return
 
@@ -1634,6 +1642,7 @@ async def _chat_completion_streaming_with_composed_citations(
         org_id=org_id,
         query=user_query,
         response_text=content,
+        chunks_injected=len(citation_chunks or []),
     )
 
 
@@ -1692,7 +1701,7 @@ def _build_system_prompt(
             "- If several facts in one paragraph or list come from the same source_url, cite that source once.\n"
             "- If you cite multiple different documents at the same spot, separate citation numbers with commas.\n"
         )
-    return f"{base}\n\n{url_guard}\nContext:\n{context_block}"
+    return f"{base}\n\n{url_guard}\nContext:\n{context_block}\n\n{KB_CONTEXT_LANGUAGE_REMINDER}"
 
 
 def _is_retrieval_identity_assertion_error(exc: httpx.HTTPStatusError) -> bool:
@@ -2033,6 +2042,7 @@ async def chat_completion_non_streaming(
         org_id=org_id,
         query=user_query,
         response_text=response_text,
+        chunks_injected=len(citation_chunks or []),
     )
     return body
 
@@ -2098,6 +2108,7 @@ async def chat_completion_streaming(
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
         citation_output=citation_output,
+        chunks_injected=len(citation_chunks or []),
     ):
         yield chunk
 
@@ -2129,6 +2140,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     citation_source_urls: dict[int, str] | None,
     citation_source_metadata: dict[str, dict[str, str]] | None,
     citation_output: CitationOutput,
+    chunks_injected: int | None = None,
 ) -> AsyncGenerator[bytes]:
     """Legacy partner streaming path with URL sanitization and linked citations.
 
@@ -2205,6 +2217,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
                         org_id=org_id,
                         query=user_query,
                         response_text=full_text,
+                        chunks_injected=chunks_injected,
                     )
                     return
                 try:
@@ -2235,6 +2248,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
             org_id=org_id,
             query=user_query,
             response_text=safety_refusal_message(user_query),
+            chunks_injected=chunks_injected,
         )
         return
 
@@ -2265,6 +2279,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
             org_id=org_id,
             query=user_query,
             response_text=safety_refusal_message(user_query),
+            chunks_injected=chunks_injected,
         )
         return
     if full_text:
@@ -2281,5 +2296,6 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
         org_id=org_id,
         query=user_query,
         response_text=full_text,
+        chunks_injected=chunks_injected,
     )
     yield b"data: [DONE]\n\n"

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from klai_chat_prompts import KB_CONTEXT_LANGUAGE_REMINDER
 from klai_kb_context_prompt import (
     KB_ANSWER_FORMAT_INSTRUCTION,
-    KB_LANGUAGE_REMINDER,
     build_kb_context_prompt,
 )
 
@@ -42,9 +42,10 @@ def test_context_prompt_keeps_template_between_format_rules_and_chunks():
         "[Template]"
     )
     assert result.context_block.index("[Template]") < result.context_block.index("Chunk body")
-    assert result.context_block.index(KB_LANGUAGE_REMINDER) > result.context_block.index(
+    assert result.context_block.index(KB_CONTEXT_LANGUAGE_REMINDER) > result.context_block.index(
         "[End knowledge base context]"
     )
+    assert result.context_block.endswith(KB_CONTEXT_LANGUAGE_REMINDER)
     assert result.allowed_source_urls == ["https://example.com/docs/course"]
     assert result.citation_source_urls == {"1": "https://example.com/docs/course?x=1"}
     assert result.low_confidence_injection_applied is False
@@ -96,6 +97,15 @@ def test_low_confidence_injection_tracks_mode_and_disabled_flag():
     )
     assert "[open low]" in open_result.context_block
     assert "[strict low]" not in open_result.context_block
+    assert open_result.context_block.index(
+        "[End knowledge base context]"
+    ) < open_result.context_block.index("[open low]")
+    assert open_result.context_block.rindex(
+        KB_CONTEXT_LANGUAGE_REMINDER
+    ) > open_result.context_block.index("[open low]")
+    # The reminder must be the FINAL element: any block appended after it
+    # becomes the model's last language anchor and reopens the NL-bias bug.
+    assert open_result.context_block.endswith(KB_CONTEXT_LANGUAGE_REMINDER)
     assert open_result.low_confidence_injection_applied is True
 
     disabled_result = build_kb_context_prompt(
