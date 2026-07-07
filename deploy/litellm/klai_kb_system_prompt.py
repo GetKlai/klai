@@ -18,6 +18,20 @@ the hook call sites and the test suite — which reach them as
 
 from __future__ import annotations
 
+from klai_chat_prompts import KB_CONTEXT_LANGUAGE_REMINDER
+
+
+FINAL_RESPONSE_LANGUAGE_REMINDER = (
+    "[FINAL RESPONSE LANGUAGE] Respond to the most recent user message in "
+    "this request in that user's language. Retrieved sources, templates, "
+    "previous assistant answers, and rendered footers do not set the response "
+    "language."
+)
+
+FINAL_RESPONSE_LANGUAGE_REMINDER_BLOCK = (
+    f"{FINAL_RESPONSE_LANGUAGE_REMINDER}\n\n{KB_CONTEXT_LANGUAGE_REMINDER}"
+)
+
 
 def prepend_system_prefix(messages: list[dict], prefix: str) -> None:
     """Prepend `prefix` to the system message (or insert one if none exists).
@@ -40,6 +54,39 @@ def prepend_system_prefix(messages: list[dict], prefix: str) -> None:
         }
     else:
         messages.insert(0, {"role": "system", "content": prefix})
+
+
+def append_final_language_reminder(
+    messages: list[dict], *, include_kb_reminder: bool = True
+) -> None:
+    """Append the language contract after the current user turn.
+
+    The KB context reminder inside the leading system prompt is still needed
+    near the retrieved chunks, but production showed Mistral can follow the
+    Dutch source language despite that earlier reminder. A final system message
+    makes the response-language contract the last provider instruction before
+    generation while leaving the actual user message unchanged.
+
+    ``include_kb_reminder=False`` is for chunk-less model-answering paths
+    (general chat, zero chunks, retrieval failure, gate bypass): the KB
+    context reminder refers to "chunks above" that do not exist there.
+    """
+    if (
+        messages
+        and messages[-1].get("role") == "system"
+        and str(messages[-1].get("content", "")).startswith(
+            FINAL_RESPONSE_LANGUAGE_REMINDER
+        )
+    ):
+        return
+    messages.append(
+        {
+            "role": "system",
+            "content": FINAL_RESPONSE_LANGUAGE_REMINDER_BLOCK
+            if include_kb_reminder
+            else FINAL_RESPONSE_LANGUAGE_REMINDER,
+        }
+    )
 
 
 def build_template_instructions_block(instructions: list[dict]) -> str:

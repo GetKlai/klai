@@ -906,6 +906,14 @@ class TestKlaiKnowledgeHookSlugsTriState:
         assert "[CRITICAL]" in content
         assert "SUBSTANTIVE message" in content
 
+        # The final language reminder closes the prompt on the general path
+        # too — but WITHOUT the chunk-referencing KB sentence (no chunks
+        # exist here).
+        final = data["messages"][-1]
+        assert final["role"] == "system"
+        assert final["content"].startswith("[FINAL RESPONSE LANGUAGE]")
+        assert "knowledge-base chunks above" not in final["content"]
+
     @pytest.mark.asyncio
     async def test_empty_slugs_and_personal_off_web_search_tool_marks_runtime_available(
         self, monkeypatch
@@ -1965,7 +1973,9 @@ class TestKlaiKnowledgeHookProviderContext:
             )
 
         provider_messages = result["messages"]
-        assert provider_messages[-1] == {"role": "user", "content": latest}
+        last_user = [m for m in provider_messages if m["role"] == "user"][-1]
+        assert last_user == {"role": "user", "content": latest}
+        assert provider_messages[-1]["content"].startswith("[FINAL RESPONSE LANGUAGE]")
         assert all(
             not isinstance(m.get("content"), list)
             for m in provider_messages
@@ -2193,7 +2203,9 @@ class TestKlaiKnowledgeHookProviderContext:
             )
 
         provider_messages = result["messages"]
-        assert provider_messages[-1] == {"role": "user", "content": latest}
+        last_user = [m for m in provider_messages if m["role"] == "user"][-1]
+        assert last_user == {"role": "user", "content": latest}
+        assert provider_messages[-1]["content"].startswith("[FINAL RESPONSE LANGUAGE]")
         provider_text = "\n".join(
             m.get("content", "")
             for m in provider_messages
@@ -2431,7 +2443,9 @@ class TestKlaiKnowledgeHookProviderContext:
         system_msgs = [
             m for m in result.get("messages", []) if m.get("role") == "system"
         ]
-        assert len(system_msgs) == 1, "multilingual foundation must be prepended"
+        assert len(system_msgs) == 2, "multilingual foundation must be prepended"
+        assert system_msgs[1]["content"].startswith("[FINAL RESPONSE LANGUAGE]")
+        assert "knowledge-base chunks above" not in system_msgs[1]["content"]
         sys_content = system_msgs[0]["content"]
         # GROUNDED_CHAT_SYSTEM_PROMPT signature line — its presence proves the
         # multilingual contract is in effect on the bypassed path too.
@@ -3833,7 +3847,12 @@ class TestKlaiKnowledgeHookMultilingualPhase4:
 
     def _system_msg(self, result: dict) -> str:
         msgs = [m for m in result["messages"] if m["role"] == "system"]
-        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
+        assert 1 <= len(msgs) <= 2, f"expected 1-2 system messages, got {len(msgs)}"
+        if len(msgs) == 2:
+            assert msgs[1]["content"].startswith("[FINAL RESPONSE LANGUAGE]"), (
+                "second system message must be the final language reminder, "
+                f"got: {msgs[1]['content'][:80]!r}"
+            )
         return msgs[0]["content"]
 
     @pytest.mark.parametrize(
@@ -4131,7 +4150,12 @@ class TestKlaiKnowledgeHookNLBiasRegression:
 
     def _system_msg(self, result: dict) -> str:
         msgs = [m for m in result["messages"] if m["role"] == "system"]
-        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
+        assert 1 <= len(msgs) <= 2, f"expected 1-2 system messages, got {len(msgs)}"
+        if len(msgs) == 2:
+            assert msgs[1]["content"].startswith("[FINAL RESPONSE LANGUAGE]"), (
+                "second system message must be the final language reminder, "
+                f"got: {msgs[1]['content'][:80]!r}"
+            )
         return msgs[0]["content"]
 
     @pytest.mark.asyncio
@@ -4244,6 +4268,67 @@ class TestKlaiKnowledgeHookNLBiasRegression:
             "context] — last-mentioned wins for Mistral."
         )
 
+    @pytest.mark.asyncio
+    async def test_final_language_reminder_is_last_provider_instruction(
+        self, monkeypatch, _kb_chunks
+    ):
+        """Dutch KB chunks must not be the final language anchor for an English turn."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "The app does not call, just drops the call",
+                }
+            ],
+        }
+        retrieval_resp = _make_resp({"chunks": _kb_chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        messages = result["messages"]
+        assert messages[-2] == {
+            "role": "user",
+            "content": "The app does not call, just drops the call",
+        }
+        assert messages[-1]["role"] == "system"
+        assert "[FINAL RESPONSE LANGUAGE]" in messages[-1]["content"]
+        assert "NOT the language of the source documents" in messages[-1]["content"]
+
+    def test_final_language_reminder_append_is_idempotent(self, monkeypatch):
+        """Double-appending must not stack duplicate reminder messages."""
+        _load_hook(monkeypatch)
+        from klai_kb_system_prompt import append_final_language_reminder
+
+        messages = [
+            {"role": "system", "content": "prefix"},
+            {"role": "user", "content": "The app does not call"},
+        ]
+        append_final_language_reminder(messages)
+        append_final_language_reminder(messages)
+
+        reminders = [
+            m
+            for m in messages
+            if m["role"] == "system"
+            and m["content"].startswith("[FINAL RESPONSE LANGUAGE]")
+        ]
+        assert len(reminders) == 1
+        assert messages[-1] == reminders[0]
+
 
 class TestKlaiKnowledgeHookUrlImageGrounding:
     """Regression guards for fake URL/image Markdown in KB answers."""
@@ -4272,7 +4357,12 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 
     def _system_msg(self, result: dict) -> str:
         msgs = [m for m in result["messages"] if m["role"] == "system"]
-        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
+        assert 1 <= len(msgs) <= 2, f"expected 1-2 system messages, got {len(msgs)}"
+        if len(msgs) == 2:
+            assert msgs[1]["content"].startswith("[FINAL RESPONSE LANGUAGE]"), (
+                "second system message must be the final language reminder, "
+                f"got: {msgs[1]['content'][:80]!r}"
+            )
         return msgs[0]["content"]
 
     @pytest.mark.asyncio
@@ -6157,7 +6247,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert content.startswith(
             "I cannot answer this reliably from the available knowledge sources."
         )
-        assert "**Agent activiteit**" in content
+        assert "**Agent activity**" in content
         assert "**Bronnen**" not in content
 
     @pytest.mark.asyncio
@@ -6430,7 +6520,12 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
 class TestKlaiKnowledgeHookOpenMode:
     def _system_msg(self, result: dict) -> str:
         msgs = [m for m in result["messages"] if m["role"] == "system"]
-        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
+        assert 1 <= len(msgs) <= 2, f"expected 1-2 system messages, got {len(msgs)}"
+        if len(msgs) == 2:
+            assert msgs[1]["content"].startswith("[FINAL RESPONSE LANGUAGE]"), (
+                "second system message must be the final language reminder, "
+                f"got: {msgs[1]['content'][:80]!r}"
+            )
         return msgs[0]["content"]
 
     def _assert_open_kb_foundation(self, sys_content: str) -> None:
@@ -7171,7 +7266,11 @@ class TestKlaiKnowledgeHookZeroChunksMode:
 
     def _system_msg(self, result: dict) -> str:
         msgs = [m for m in result["messages"] if m["role"] == "system"]
-        assert len(msgs) == 1, f"expected exactly one system message, got {len(msgs)}"
+        assert len(msgs) == 2, f"expected prefix + language reminder, got {len(msgs)}"
+        assert msgs[1]["content"].startswith("[FINAL RESPONSE LANGUAGE]")
+        # Zero chunks in the prompt — the chunk-referencing KB reminder
+        # must NOT be appended here.
+        assert "knowledge-base chunks above" not in msgs[1]["content"]
         return msgs[0]["content"]
 
     @pytest.mark.asyncio

@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import DUTCH_QUERY_MARKERS, no_citable_sources_message
 from klai_citations import (
     compose_answer_with_trusted_sources,
     strip_model_citation_artifacts,
@@ -373,34 +373,65 @@ def _prepend_primary_upload_source(
     return relabelled
 
 
-def _plural_nl(count: int, singular: str, plural: str) -> str:
+_TOKEN_RE = re.compile(r"[a-zA-ZÀ-ÿ]+")
+
+
+def _visible_trace_language(kb_meta: dict[str, Any] | None) -> str:
+    query = kb_meta.get("user_query") if isinstance(kb_meta, dict) else None
+    if not isinstance(query, str):
+        return "nl"
+    if not query.strip():
+        return "nl"
+    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
+    return "nl" if tokens & DUTCH_QUERY_MARKERS else "en"
+
+
+def _plural(count: int, singular: str, plural: str) -> str:
     return singular if count == 1 else plural
 
 
-def _format_limited_label_list(values: object, *, max_items: int = 5) -> str:
+def _format_limited_label_list(
+    values: object, *, max_items: int = 5, language: str = "nl"
+) -> str:
     if not isinstance(values, list):
         return ""
     labels = dedupe_strings(values)
     if not labels:
         return ""
     visible = labels[:max_items]
-    suffix = f", +{len(labels) - max_items} meer" if len(labels) > max_items else ""
+    more = "meer" if language == "nl" else "more"
+    suffix = f", +{len(labels) - max_items} {more}" if len(labels) > max_items else ""
     return ", ".join(visible) + suffix
 
 
-def _format_kb_scope_text(kb_meta: dict[str, Any]) -> str:
+def _format_kb_scope_text(kb_meta: dict[str, Any], *, language: str = "nl") -> str:
     scope_mode = kb_meta.get("kb_scope_mode")
-    labels_text = _format_limited_label_list(kb_meta.get("kbs_in_scope"))
+    labels_text = _format_limited_label_list(
+        kb_meta.get("kbs_in_scope"), language=language
+    )
     if labels_text:
         if scope_mode == "explicit_org_and_personal":
-            return f"{labels_text} + persoonlijke kennisbank"
+            suffix = (
+                "persoonlijke kennisbank"
+                if language == "nl"
+                else "personal knowledge base"
+            )
+            return f"{labels_text} + {suffix}"
         return labels_text
     if scope_mode == "all_org_and_personal":
-        return "alle organisatiekennisbanken + persoonlijke kennisbank"
+        return (
+            "alle organisatiekennisbanken + persoonlijke kennisbank"
+            if language == "nl"
+            else "all organization knowledge bases + personal knowledge base"
+        )
     if scope_mode == "all_org":
-        return "alle organisatiekennisbanken"
+        return (
+            "alle organisatiekennisbanken"
+            if language == "nl"
+            else "all organization knowledge bases"
+        )
     if scope_mode == "personal":
-        return "persoonlijke kennisbank"
+        return "persoonlijke kennisbank" if language == "nl" else "personal knowledge base"
     return ""
 
 
@@ -427,10 +458,12 @@ def _append_visible_sources_section(
 ) -> str:
     """Append backend-selected sources for clients that ignore structured metadata."""
     sections: list[str] = []
+    language = _visible_trace_language(kb_meta)
     if sources:
         sources_markdown = _format_visible_sources_markdown(sources).strip()
         if sources_markdown:
-            sections.append(f"**Bronnen**\n{sources_markdown}")
+            heading = "Bronnen" if language == "nl" else "Sources"
+            sections.append(f"**{heading}**\n{sources_markdown}")
     has_no_citable_reason = (
         kb_meta is not None
         and isinstance(kb_meta.get("no_citable_reason"), str)
@@ -439,9 +472,10 @@ def _append_visible_sources_section(
     if kb_meta is not None and (
         sources or has_no_citable_reason or _has_visible_agent_activity(kb_meta)
     ):
-        activity = _format_visible_agent_activity(kb_meta, sources)
+        activity = _format_visible_agent_activity(kb_meta, sources, language=language)
         if activity:
-            sections.append(f"**Agent activiteit**\n{activity}")
+            heading = "Agent activiteit" if language == "nl" else "Agent activity"
+            sections.append(f"**{heading}**\n{activity}")
     if sources:
         marker = _format_sources_metadata_marker(sources)
         if marker:
@@ -482,6 +516,8 @@ def _format_sources_metadata_marker(sources: list[dict[str, Any]]) -> str:
 def _format_visible_agent_activity(
     kb_meta: dict[str, Any],
     sources: list[dict[str, Any]],
+    *,
+    language: str = "nl",
 ) -> str:
     """Render provenance for LibreChat, which ignores structured source metadata."""
     chunks_injected = kb_meta.get("chunks_injected")
@@ -492,53 +528,110 @@ def _format_visible_agent_activity(
     confidence_band = kb_meta.get("confidence_band")
 
     lines: list[str] = []
-    lines.append(
-        "- Modus: "
-        + (
-            "Strict, alleen kennisbank."
-            if kb_narrow
-            else "Open, kennisbank met fallback."
+    if language == "nl":
+        lines.append(
+            "- Modus: "
+            + (
+                "Strict, alleen kennisbank."
+                if kb_narrow
+                else "Open, kennisbank met fallback."
+            )
         )
-    )
+    else:
+        lines.append(
+            "- Mode: "
+            + (
+                "Strict, knowledge base only."
+                if kb_narrow
+                else "Open, knowledge base with fallback."
+            )
+        )
     if isinstance(chunks_injected, int):
-        chunk_label = _plural_nl(chunks_injected, "fragment", "fragmenten")
+        chunk_label = (
+            _plural(chunks_injected, "fragment", "fragmenten")
+            if language == "nl"
+            else _plural(chunks_injected, "chunk", "chunks")
+        )
         if isinstance(retrieval_ms, int | float):
-            lines.append(
-                "- Kennisbank geraadpleegd: "
-                f"{chunks_injected} {chunk_label} opgehaald in {int(retrieval_ms)} ms."
-            )
+            if language == "nl":
+                lines.append(
+                    "- Kennisbank geraadpleegd: "
+                    f"{chunks_injected} {chunk_label} opgehaald in {int(retrieval_ms)} ms."
+                )
+            else:
+                lines.append(
+                    "- Knowledge base queried: "
+                    f"{chunks_injected} {chunk_label} retrieved in {int(retrieval_ms)} ms."
+                )
         else:
-            lines.append(
-                f"- Kennisbank geraadpleegd: {chunks_injected} {chunk_label} opgehaald."
-            )
+            if language == "nl":
+                lines.append(
+                    f"- Kennisbank geraadpleegd: {chunks_injected} {chunk_label} opgehaald."
+                )
+            else:
+                lines.append(
+                    f"- Knowledge base queried: {chunks_injected} {chunk_label} retrieved."
+                )
 
-    kb_scope_text = _format_kb_scope_text(kb_meta)
+    kb_scope_text = _format_kb_scope_text(kb_meta, language=language)
     if kb_scope_text:
-        lines.append(f"- Kennisbanken in scope: {kb_scope_text}.")
+        label = "Kennisbanken in scope" if language == "nl" else "Knowledge bases in scope"
+        lines.append(f"- {label}: {kb_scope_text}.")
 
-    kbs_with_results = _format_limited_label_list(kb_meta.get("kbs_with_results"))
+    kbs_with_results = _format_limited_label_list(
+        kb_meta.get("kbs_with_results"), language=language
+    )
     if kbs_with_results:
-        lines.append(f"- Kennisbanken met resultaat: {kbs_with_results}.")
+        label = (
+            "Kennisbanken met resultaat"
+            if language == "nl"
+            else "Knowledge bases with results"
+        )
+        lines.append(f"- {label}: {kbs_with_results}.")
 
-    kbs_used_as_sources = _format_limited_label_list(kb_meta.get("kbs_used_as_sources"))
+    kbs_used_as_sources = _format_limited_label_list(
+        kb_meta.get("kbs_used_as_sources"), language=language
+    )
     if kbs_used_as_sources:
-        lines.append(f"- Kennisbanken gebruikt als bron: {kbs_used_as_sources}.")
+        label = (
+            "Kennisbanken gebruikt als bron"
+            if language == "nl"
+            else "Knowledge bases used as sources"
+        )
+        lines.append(f"- {label}: {kbs_used_as_sources}.")
 
     if isinstance(citable_sources_count, int):
-        candidate_label = _plural_nl(
-            citable_sources_count,
-            "kandidaatbron",
-            "kandidaatbronnen",
-        )
-        selected_label = _plural_nl(len(sources), "bron", "bronnen")
-        lines.append(
-            "- Bronselectie: "
-            f"{len(sources)} {selected_label} gekoppeld uit "
-            f"{citable_sources_count} {candidate_label}."
-        )
+        if language == "nl":
+            candidate_label = _plural(
+                citable_sources_count,
+                "kandidaatbron",
+                "kandidaatbronnen",
+            )
+            selected_label = _plural(len(sources), "bron", "bronnen")
+            lines.append(
+                "- Bronselectie: "
+                f"{len(sources)} {selected_label} gekoppeld uit "
+                f"{citable_sources_count} {candidate_label}."
+            )
+        else:
+            candidate_label = _plural(
+                citable_sources_count,
+                "candidate source",
+                "candidate sources",
+            )
+            selected_label = _plural(len(sources), "source", "sources")
+            lines.append(
+                "- Source selection: "
+                f"{len(sources)} {selected_label} linked from "
+                f"{citable_sources_count} {candidate_label}."
+            )
     elif sources:
-        selected_label = _plural_nl(len(sources), "bron", "bronnen")
-        lines.append(f"- Bronselectie: {len(sources)} {selected_label} gekoppeld.")
+        if language == "nl":
+            selected_label = _plural(len(sources), "bron", "bronnen")
+            lines.append(f"- Bronselectie: {len(sources)} {selected_label} gekoppeld.")
+        else:
+            selected_label = _plural(len(sources), "source", "sources")
+            lines.append(f"- Source selection: {len(sources)} {selected_label} linked.")
 
     source_titles = [
         str(source.get("title") or "").strip()
@@ -546,20 +639,25 @@ def _format_visible_agent_activity(
         if isinstance(source.get("title"), str) and str(source.get("title")).strip()
     ]
     if source_titles:
-        lines.append(f"- Gebruikte bronnen: {', '.join(source_titles[:3])}.")
+        label = "Gebruikte bronnen" if language == "nl" else "Sources used"
+        lines.append(f"- {label}: {', '.join(source_titles[:3])}.")
 
     if isinstance(confidence_band, str) and confidence_band:
         if sources:
-            lines.append(
-                f"- Retrieval score: {confidence_band}; bronfragmenten gekoppeld."
-            )
+            suffix = "bronfragmenten gekoppeld" if language == "nl" else "source chunks linked"
+            lines.append(f"- Retrieval score: {confidence_band}; {suffix}.")
         else:
             lines.append(f"- Retrieval score: {confidence_band}.")
 
     if not sources and isinstance(no_citable_reason, str) and no_citable_reason:
-        lines.append(
-            f"- Citeerbaarheid: geen bruikbare bron geselecteerd ({no_citable_reason})."
-        )
+        if language == "nl":
+            lines.append(
+                f"- Citeerbaarheid: geen bruikbare bron geselecteerd ({no_citable_reason})."
+            )
+        else:
+            lines.append(
+                f"- Citability: no usable source selected ({no_citable_reason})."
+            )
 
     return "\n".join(lines)
 

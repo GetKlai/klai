@@ -90,6 +90,7 @@ from klai_kb_context_prompt import (
     build_kb_context_prompt as _build_kb_context_prompt,
 )
 from klai_kb_system_prompt import (
+    append_final_language_reminder as _append_final_language_reminder,
     build_template_instructions_block as _build_template_instructions_block,
     prepend_system_prefix as _prepend_system_prefix,
 )
@@ -493,6 +494,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # description per org.
         if _is_meta_query(query):
             _prepend_system_prefix(messages, _compose_meta_chat_prefix(templates_block))
+            _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
             logger.info(
                 "meta_query_detected org_id=%s user_id=%s query=%r",
@@ -560,6 +562,7 @@ class KlaiKnowledgeHook(CustomLogger):
                     templates_block,
                 ),
             )
+            _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
             return data
         if _prompt_mode_is_unavailable(chat_retrieval_policy.prompt_mode):
@@ -599,6 +602,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_unavailable_notice,
             )
             _prepend_system_prefix(messages, prefix)
+            _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
             return data
 
@@ -798,6 +802,12 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_narrow, templates_block, kb_unavailable_notice
             )
             _prepend_system_prefix(messages, prefix)
+            if not kb_narrow:
+                # Strict gets a deterministic mock_response below — the model
+                # never reads these messages. Open answers from general
+                # knowledge, so the language contract must still close the
+                # prompt.
+                _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
             original_stream = data.get("stream")
             render_strategy = _select_kb_render_strategy(original_stream)
@@ -878,6 +888,7 @@ class KlaiKnowledgeHook(CustomLogger):
             _prepend_system_prefix(
                 messages, _compose_kb_mode_chat_prefix(kb_narrow, templates_block)
             )
+            _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
             answer_policy = KbAnswerPolicy(
                 state="gate_bypassed",
@@ -1103,6 +1114,9 @@ class KlaiKnowledgeHook(CustomLogger):
                     kb_narrow, templates_block, empty_kb_header
                 ),
             )
+            # Inert when the strict branch below sets mock_response (model
+            # bypassed); every other zero-chunks branch reaches the model.
+            _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
             if has_evidence_pack:
                 original_stream = data.get("stream")
@@ -1199,6 +1213,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # templates_block again would duplicate it.
         prefix = _compose_kb_mode_chat_prefix(kb_narrow, context_block)
         _prepend_system_prefix(messages, prefix)
+        _append_final_language_reminder(messages)
         data["messages"] = messages
         original_stream = data.get("stream")
         render_strategy = _select_kb_render_strategy(original_stream)
