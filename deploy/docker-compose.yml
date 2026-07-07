@@ -1063,11 +1063,14 @@ services:
       # retrieval runs. Same pattern as klai-knowledge-mcp (Phase B).
       PORTAL_API_URL: http://portal-api:8010
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
-      # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-04 — ranking-contract
-      # rollout flag. shadow (default) serves pre-contract behavior and
-      # logs old/new orderings; flip to active per operator decision after
-      # the ≥7-day shadow review. Validated at boot (shadow|active only).
-      RANKING_CONTRACT_MODE: ${RANKING_CONTRACT_MODE:-shadow}
+      # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK — ranking contract ACTIVE
+      # since 2026-07-08: serving order follows the post-rerank
+      # final_rank_score truth. Activated early (day-1 shadow diffs showed
+      # strictly more sensible source picks in every logged case; e.g.
+      # request 4a5608fc: old S1 0.44 → new S1 0.87). Rollback = set this
+      # back to shadow and recreate retrieval-api. Validated at boot
+      # (shadow|active only).
+      RANKING_CONTRACT_MODE: ${RANKING_CONTRACT_MODE:-active}
     networks:
       - klai-net
       - net-postgres
