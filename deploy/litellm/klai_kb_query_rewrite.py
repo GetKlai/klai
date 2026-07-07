@@ -39,6 +39,13 @@ _QUERY_REWRITE_PROMPT = (
     "current question so it makes sense as a stand-alone search query — "
     "resolve pronouns and references using the conversation history. If the "
     "question is already clear and self-contained, return it unchanged.\n\n"
+    "Brand-bridging: if the question mentions a third-party brand or product "
+    "name (e.g. Salesforce, HubSpot, Pipedrive, Zoom, Microsoft Teams, "
+    "Outlook), also include 2–4 broader category or related-brand terms in "
+    "the rewritten query so search can find category-specific or partner-brand "
+    "pages even when the original brand string is absent. If no third-party "
+    "brand is mentioned, leave the rewrite unchanged beyond standard pronoun "
+    "resolution.\n\n"
     "Conversation history (oldest → newest):\n{history}\n\n"
     "User's current question: {raw_query}\n\n"
     "Reply with ONLY the rewritten question, no preamble, no explanation, "
@@ -114,17 +121,18 @@ async def rewrite_query(
     raw_query: str,
     history: list[dict],
     *,
+    allow_empty_history: bool = False,
     _transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[str, dict]:
     """Return ``(rewritten_query, debug_meta)`` — falls back to ``raw_query`` on failure."""
-    meta: dict = {"was_changed": False, "rewrite_ms": 0}
+    meta: dict = {"was_changed": False, "rewrite_ms": 0, "prompt_variant": "plain"}
     if not raw_query or not raw_query.strip():
         meta["skipped"] = "empty_query"
         return raw_query, meta
     if not QUERY_REWRITE_ENABLED:
         meta["skipped"] = "disabled"
         return raw_query, meta
-    if not history:
+    if not history and not allow_empty_history:
         meta["skipped"] = "no_history"
         return raw_query, meta
     if not MISTRAL_API_KEY:
@@ -339,7 +347,7 @@ async def rewrite_and_classify(
     _transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[str, list[int], dict]:
     """Return ``(rewritten_query, classified_node_ids, debug_meta)`` in one LLM call."""
-    meta: dict = {"was_changed": False, "rewrite_ms": 0}
+    meta: dict = {"was_changed": False, "rewrite_ms": 0, "prompt_variant": "classify"}
 
     if not raw_query or not raw_query.strip():
         meta["skipped"] = "empty_query"
@@ -353,13 +361,12 @@ async def rewrite_and_classify(
 
     flat_tree = flatten_trees(taxonomy_trees)
 
-    if not history and not flat_tree:
-        meta["skipped"] = "no_history_no_tree"
-        return raw_query, [], meta
-
     if not flat_tree:
         rewritten, rewrite_meta = await rewrite_query(
-            raw_query, history, _transport=_transport
+            raw_query,
+            history,
+            allow_empty_history=True,
+            _transport=_transport,
         )
         return rewritten, [], rewrite_meta
 

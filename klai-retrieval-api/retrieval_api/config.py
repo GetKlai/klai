@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     source_quota_enabled: bool = True
     source_quota_max_per_source: int = 2
 
+    # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-04 — ranking-contract rollout
+    # flag. "shadow" (default) serves the pre-contract behavior byte-identical
+    # and logs old/new orderings in the decision record; "active" serves by
+    # the post-rerank ``final_rank_score`` contract. Flip via the
+    # RANKING_CONTRACT_MODE env var after ≥7 days of shadow-diff review.
+    ranking_contract_mode: str = "shadow"
+
     # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07 — defence-in-depth floor.
     # Chunks with ``quality_score < retrieval_quality_floor`` are removed
     # immediately after rerank, before source-aware-select + quality_boost.
@@ -144,6 +151,21 @@ class Settings(BaseSettings):
                 "confidence_band thresholds invalid: "
                 f"low={low}, high={high}; require 0 <= low < high <= 1"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_ranking_contract_mode(self) -> Settings:
+        """SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-04: only ``shadow`` and
+        ``active`` are valid. Fail loud at startup — a typo like ``Active ``
+        silently degrading to shadow would defeat an intentional activation.
+        """
+        normalized = self.ranking_contract_mode.strip().lower()
+        if normalized not in {"shadow", "active"}:
+            raise ValueError(
+                "ranking_contract_mode invalid: "
+                f"{self.ranking_contract_mode!r}; require 'shadow' or 'active'"
+            )
+        self.ranking_contract_mode = normalized
         return self
 
     @model_validator(mode="after")

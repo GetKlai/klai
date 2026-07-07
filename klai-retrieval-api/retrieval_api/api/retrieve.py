@@ -44,7 +44,7 @@ from retrieval_api.quality_floor import filter_quality_floor
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
-from retrieval_api.services.evidence_pack import build_evidence_pack
+from retrieval_api.services.evidence_pack import build_evidence_pack, chunk_source_key
 from retrieval_api.services.features import extract_features
 from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
@@ -65,6 +65,60 @@ _RETRIEVAL_QUERY_SCOPE = "klai:internal:retrieval:query"
 # Module-level singleton — avoids ruff B008 ("Depends in default arg") and
 # is the FastAPI-recommended pattern for repeated dependencies.
 _REQUIRE_RETRIEVAL_SCOPE = Depends(require_scope(_RETRIEVAL_QUERY_SCOPE))
+
+
+def _set_final_rank_scores(chunks: list[dict]) -> None:
+    """Stamp the single post-rerank ranking truth (REQ-RANK-01).
+
+    Called ONLY when the ranking contract is active — and on the shadow
+    preview copies. In shadow mode the serving chunks deliberately carry NO
+    ``final_rank_score``, so every downstream sort falls back to its
+    pre-contract key and serving stays byte-identical (REQ-RANK-04).
+    """
+    for chunk in chunks:
+        if isinstance(chunk.get("reranker_score"), (int, float)):
+            chunk["final_rank_score"] = chunk["reranker_score"]
+        else:
+            chunk["final_rank_score"] = chunk.get("score", 0.0)
+
+
+# Fields the shadow preview needs to replay the post-rerank pipeline
+# (boosts, quality-floor, source-aware-select, quality-boost) plus the
+# snapshot projection. Chunk text and enrichment payloads stay out — the
+# preview exists for ordering comparison only.
+_SHADOW_PREVIEW_KEYS = (
+    "chunk_id",
+    "source_url",
+    "artifact_id",
+    "source_label",
+    "reranker_score",
+    "score",
+    "quality_score",
+    "feedback_count",
+    "incoming_link_count",
+    "_link_expanded",
+)
+
+
+def _ranking_contract_snapshot(chunks: list[dict]) -> dict[str, list]:
+    """Project a serving list onto the shadow-comparison shape (REQ-RANK-04).
+
+    ``evidence_source_keys`` mirrors ``build_evidence_pack``'s source-slot
+    assignment exactly (first 3 DISTINCT source keys, URL-or-artifact) via
+    the shared ``chunk_source_key`` helper — first-N raw source_urls would
+    double-count multi-chunk sources and miss URL-less uploads.
+    """
+    source_keys: list[str] = []
+    for chunk in chunks:
+        key = chunk_source_key(chunk)
+        if key and key not in source_keys:
+            source_keys.append(key)
+        if len(source_keys) >= 3:
+            break
+    return {
+        "top5_chunk_ids": [chunk.get("chunk_id") for chunk in chunks[:5]],
+        "evidence_source_keys": source_keys,
+    }
 
 
 def _caller_pre_resolved(req: RetrieveRequest) -> bool:
@@ -155,6 +209,10 @@ async def retrieve(
     # decision_record accumulates timing + decision data throughout the pipeline
     # and is emitted as retrieval_decision_record at the end of the request.
     decision_record: dict = {}
+    # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-04 — validated pydantic
+    # setting (config.py), not a raw env read: invalid values fail at boot.
+    ranking_contract_mode = settings.ranking_contract_mode
+    decision_record["ranking_contract_mode"] = ranking_contract_mode
 
     # 1. Coreference resolution. Skip when the caller already resolved
     # coreference — signalled by a distinct ``raw_query`` (the pre-rewrite
@@ -377,8 +435,10 @@ async def retrieve(
                 new_chunks=link_expand_count,
             )
 
-        # 4c. Authority boost (SPEC-CRAWLER-003 R17)
-        if settings.link_expand_enabled and raw_results:
+        # 4c. Authority boost (SPEC-CRAWLER-003 R17), retained only for
+        # ranking-contract shadow comparison. Active mode serves by the
+        # post-rerank final_rank_score contract instead.
+        if ranking_contract_mode == "shadow" and settings.link_expand_enabled and raw_results:
             for r in raw_results:
                 incoming = r.get("incoming_link_count") or 0
                 if incoming > 0:
@@ -407,6 +467,19 @@ async def retrieve(
         else:
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
+
+        # REQ-RANK-01/04: in active mode every serving chunk gets the single
+        # ranking truth; in shadow mode the field stays ABSENT on serving
+        # chunks (downstream sorts then use their pre-contract keys) and a
+        # slim preview copy replays the active pipeline for the shadow diff.
+        ranking_shadow_preview: list[dict] | None = None
+        if ranking_contract_mode == "active":
+            _set_final_rank_scores(reranked)
+        else:
+            ranking_shadow_preview = [
+                {key: chunk.get(key) for key in _SHADOW_PREVIEW_KEYS} for chunk in reranked
+            ]
+            _set_final_rank_scores(ranking_shadow_preview)
 
         # 5a-ter. SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 — link-expand
         # reranker boost. Applied AFTER rerank and BEFORE quality-floor so
@@ -462,10 +535,37 @@ async def retrieve(
         decision_record["source_select"] = source_meta
 
         # 5c. Quality score boost (SPEC-KB-015 REQ-KB-015-19,20,21)
-        reranked = quality_boost(reranked)
+        reranked = quality_boost(reranked, contract_active=ranking_contract_mode == "active")
         decision_record["quality_boost_applied"] = any(
             r.get("feedback_count", 0) >= 3 for r in reranked
         )
+        if ranking_shadow_preview is not None:
+            # REQ-RANK-04 shadow diff: replay the FULL post-rerank pipeline
+            # (same steps, same settings) on the preview so "new" is what
+            # active mode would actually serve — not a partial projection.
+            # "old" is captured from the real ``serving`` list further down.
+            ranking_shadow_preview = _apply_link_expand_boost(
+                ranking_shadow_preview,
+                boost=settings.link_expand_score_boost,
+                enabled=settings.link_expand_enabled,
+            )
+            if settings.reranker_enabled:
+                ranking_shadow_preview, _ = _apply_page_context_boost(
+                    ranking_shadow_preview,
+                    page_context,
+                )
+            ranking_shadow_preview, _ = filter_quality_floor(
+                ranking_shadow_preview, floor=settings.retrieval_quality_floor
+            )
+            if settings.source_quota_enabled:
+                ranking_shadow_preview, _ = source_aware_select(
+                    ranking_shadow_preview,
+                    query_resolved,
+                    top_n=req.top_k,
+                    max_per_source=settings.source_quota_max_per_source,
+                    router_selected=router_selected,
+                )
+            ranking_shadow_preview = quality_boost(ranking_shadow_preview, contract_active=True)
 
         # @MX:NOTE: [AUTO] Shadow mode (R9): runs evidence scoring on every
         # request but serves flat results. Diffs logged as shadow_eval to
@@ -501,6 +601,15 @@ async def retrieve(
             serving = reranked
         else:
             serving = scored
+
+        # REQ-RANK-04 shadow diff: "old" is the ACTUAL served list (this
+        # request's response), "new" is the replayed active-contract
+        # pipeline — the ≥7-day shadow review compares real serving deltas.
+        if ranking_shadow_preview is not None:
+            decision_record["ranking_contract_shadow"] = {
+                "old": _ranking_contract_snapshot(serving),
+                "new": _ranking_contract_snapshot(ranking_shadow_preview),
+            }
 
         # F3 phase 1 instrumentation: emit link-expansion contribution to
         # the served top-k. Lets us answer "did the extra Qdrant scroll
@@ -566,7 +675,9 @@ async def retrieve(
                     text=display_text,
                     context_prefix=r.get("context_prefix"),
                     heading_path=r.get("heading_path"),
-                    score=r["score"],
+                    score=r.get("final_rank_score", r["score"])
+                    if ranking_contract_mode == "active"
+                    else r["score"],
                     reranker_score=r.get("reranker_score"),
                     scope=r.get("scope"),
                     valid_at=r.get("valid_at"),

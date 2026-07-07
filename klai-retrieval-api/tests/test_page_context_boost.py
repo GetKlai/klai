@@ -8,12 +8,14 @@ def test_page_context_boost_promotes_exact_source_url_match():
             "source_url": "https://example.com/docs/other",
             "score": 0.9,
             "reranker_score": 0.9,
+            "final_rank_score": 0.9,
         },
         {
             "chunk_id": "current",
             "source_url": "https://example.com/docs/widget#section",
             "score": 0.85,
             "reranker_score": 0.85,
+            "final_rank_score": 0.85,
         },
     ]
 
@@ -24,6 +26,8 @@ def test_page_context_boost_promotes_exact_source_url_match():
 
     assert boosted_count == 1
     assert boosted[0]["chunk_id"] == "current"
+    assert boosted[0]["final_rank_score"] > 0.9
+    assert boosted[0]["reranker_score"] == 0.85
     assert boosted[0]["_page_context_boosted"] is True
 
 

@@ -402,6 +402,16 @@ def test_query_rewrite_prompt_contains_brand_bridging_instruction(monkeypatch) -
     assert "no third-party brand" in prompt.lower() or "if no" in prompt.lower()
 
 
+def test_plain_query_rewrite_prompt_contains_brand_bridging_instruction(monkeypatch) -> None:
+    """Brand-bridging must also apply when no taxonomy tree is available."""
+    klai_knowledge = _load_hook(monkeypatch)
+    prompt = klai_knowledge._QUERY_REWRITE_PROMPT
+    assert "brand-bridging" in prompt.lower()
+    assert "HubSpot" in prompt
+    assert "2–4" in prompt
+    assert "no third-party brand" in prompt.lower()
+
+
 def test_query_rewrite_prompt_stays_within_size_budget(monkeypatch) -> None:
     """Prompt extension must not balloon klai-fast's input cost. Pre-SPEC
     baseline was ~600 tokens; the new instruction adds ~150 tokens of

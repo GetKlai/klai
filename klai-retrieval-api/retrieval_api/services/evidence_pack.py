@@ -121,6 +121,26 @@ def _make_item(
     )
 
 
+def chunk_source_key(chunk: ChunkResult | dict[str, Any]) -> str:
+    """Stable dedup key for a chunk's source.
+
+    PUBLIC sources (web crawl, MS-Docs, Notion) key on the normalised URL;
+    PRIVATE uploads (no public URL) fall back to ``artifact:<id>`` so all
+    chunks of one document collapse into one source. This is THE key
+    ``build_evidence_pack`` assigns source slots with — external callers
+    (e.g. the ranking-contract shadow snapshot in retrieve.py) reuse it so
+    their "first N distinct sources" projection can never drift from the
+    pack's own assembly.
+    """
+    source_url = _source_url(chunk)
+    if source_url:
+        return source_url_key(source_url)
+    artifact_id = _string_value(_chunk_value(chunk, "artifact_id"))
+    if artifact_id:
+        return f"artifact:{artifact_id}"
+    return ""
+
+
 def build_evidence_pack(
     chunks: list[ChunkResult | dict[str, Any]],
     *,
@@ -142,27 +162,16 @@ def build_evidence_pack(
     below_threshold_count = 0
     for chunk in chunks:
         source_url = _source_url(chunk)
-        # Derive a stable source_key. PUBLIC sources (web crawl, MS-Docs,
-        # Notion) carry a real URL — use the URL's normalised key. PRIVATE
-        # uploads (PDFs, plain-text snippets a user pastes into their
-        # personal KB) have NO public URL; their chunks land in qdrant
-        # with ``source_url=None``. Before 2026-05-27 those chunks were
-        # filtered out entirely below ("if not source_url: continue"),
-        # which meant a user's CV / contract / handbook could be
-        # retrieved by the reranker but disappeared from the evidence
-        # pack — and therefore from the citation list — leaving the
-        # model answering "Dat staat niet in de kennisbank" from chunks
-        # that explicitly mention the requested content. Fall back to
-        # the chunk's ``artifact_id`` (always present for uploads): all
-        # chunks from the same PDF share one artifact and therefore
-        # collapse into one source in the citations panel.
-        artifact_id = _string_value(_chunk_value(chunk, "artifact_id"))
-        if source_url:
-            source_key = source_url_key(source_url)
-        elif artifact_id:
-            source_key = f"artifact:{artifact_id}"
-        else:
-            source_key = ""
+        # Stable source_key via chunk_source_key: URL key for public
+        # sources, ``artifact:<id>`` fallback for private uploads. The
+        # fallback exists because before 2026-05-27 URL-less chunks were
+        # filtered out entirely ("if not source_url: continue"), which
+        # meant a user's CV / contract / handbook could be retrieved by
+        # the reranker but disappeared from the evidence pack — and
+        # therefore from the citation list — leaving the model answering
+        # "Dat staat niet in de kennisbank" from chunks that explicitly
+        # mention the requested content.
+        source_key = chunk_source_key(chunk)
         title = _title(chunk, source_url)
         if not source_key:
             continue

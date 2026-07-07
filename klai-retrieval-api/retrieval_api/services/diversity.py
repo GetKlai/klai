@@ -16,6 +16,8 @@ import re
 
 import structlog
 
+from retrieval_api.util.scores import ranking_score
+
 logger = structlog.get_logger()
 
 _UNKNOWN = "_unknown"
@@ -122,7 +124,7 @@ def source_aware_select(
 
     if mentioned:
         # Query is source-specific → give mentioned sources all slots.
-        # Still sorted by reranker score (reranked is already score-desc).
+        # Still sorted by the retrieval pipeline's final ranking score.
         from_mentioned = [c for c in reranked if c.get("source_label") in mentioned]
         selected = from_mentioned[:top_n]
 
@@ -178,7 +180,10 @@ def source_aware_select(
             label = chunk.get("source_label") or _UNKNOWN
             per_source[label] = per_source.get(label, 0) + 1
 
-    selected.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    # Legacy fallback key is the raw ``score`` — the pre-contract diversify
+    # sort. ``final_rank_score`` is only present when the ranking contract
+    # is active (REQ-RANK-01), so shadow mode keeps the old ordering.
+    selected.sort(key=lambda c: ranking_score(c, "score"), reverse=True)
 
     logger.debug(
         "source_aware_select",

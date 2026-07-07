@@ -1,0 +1,12 @@
+## Task Decomposition
+SPEC: SPEC-RAG-EVIDENCE-INTEGRITY-001
+
+| Task ID | Description | Requirement | Dependencies | Planned Files | Status |
+|---------|-------------|-------------|--------------|---------------|--------|
+| T-001 | Split citation rejection reasons and add rescue shadow/active metadata | REQ-OBS-01, REQ-CIT-01..04 | - | `klai-libs/citations/klai_citations/__init__.py`, `klai-libs/citations/tests/test_citations.py` | done |
+| T-002 | Propagate retrieval request ID into path-A citation render logs | REQ-OBS-02 | - | `deploy/litellm/klai_knowledge.py`, `deploy/litellm/klai_kb_answer_policy.py`, `deploy/litellm/klai_kb_citation_render.py`, `deploy/litellm/tests/test_kb_answer_policy.py` | done |
+| T-003 | Emit query rewrite prompt variant and skip metadata; run plain rewrite on first-turn/no-tree requests | REQ-OBS-03, REQ-BRIDGE-01..03 | - | `deploy/litellm/klai_kb_query_rewrite.py`, `deploy/litellm/klai_knowledge.py`, `deploy/litellm/tests/test_taxonomy_classify.py`, `deploy/litellm/tests/test_low_confidence_injection.py` | done |
+| T-004 | Preserve crawl source domain through bulk crawl and enrichment payload | REQ-SRC-01, REQ-SRC-02 | - | `klai-knowledge-ingest/knowledge_ingest/adapters/crawler.py`, `klai-knowledge-ingest/tests/test_extra_payload_contract.py` | done |
+| T-005 | Introduce post-rerank `final_rank_score` ranking contract and shadow logging | REQ-RANK-01..05 | - | `klai-retrieval-api/retrieval_api/api/retrieve.py`, `klai-retrieval-api/retrieval_api/api/ranking.py`, `klai-retrieval-api/retrieval_api/api/page_context.py`, `klai-retrieval-api/retrieval_api/services/diversity.py`, `klai-retrieval-api/retrieval_api/quality_boost.py`, `klai-retrieval-api/tests/test_diversity.py`, `klai-retrieval-api/tests/test_quality_boost.py`, `klai-retrieval-api/tests/test_page_context_boost.py`, `klai-retrieval-api/tests/test_confidence_band.py` | done |
+| T-006 | Add gated dry-run/apply backfill helper for crawl source identity and stale taxonomy cleanup | REQ-SRC-03, REQ-SRC-04 | T-004, T-005 production gate | `klai-knowledge-ingest/knowledge_ingest/scripts/backfill_crawl_source_identity.py`, `klai-knowledge-ingest/tests/test_backfill_crawl_source_identity.py` | done |
+| T-007 | Add Grafana panel for weekly citation decision reason distribution | REQ-OBS-04 | T-001, deployed logs datasource query format | `deploy/grafana/provisioning/dashboards/rag-quality.json` | pending |

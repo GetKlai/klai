@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse, urlunparse
 
+from retrieval_api.util.scores import ranking_score
+
 _PAGE_CONTEXT_SCORE_BOOST = 1.08
 
 
@@ -61,20 +63,31 @@ def _apply_page_context_boost(
             continue
 
         boosted_count += 1
+        # ``final_rank_score`` is only present when the ranking contract is
+        # active (REQ-RANK-01) — the boost then mutates the single ranking
+        # truth. In shadow mode the field is absent and the boost hits the
+        # pre-contract targets (reranker_score post-rerank, raw score on the
+        # pre-rerank candidate pass), keeping serving byte-identical.
         score_key = (
-            "reranker_score" if isinstance(chunk.get("reranker_score"), (int, float)) else "score"
+            "final_rank_score"
+            if isinstance(chunk.get("final_rank_score"), (int, float))
+            else "reranker_score"
+            if isinstance(chunk.get("reranker_score"), (int, float))
+            else "score"
         )
         if isinstance(chunk.get(score_key), (int, float)):
             boosted_score = chunk[score_key] * _PAGE_CONTEXT_SCORE_BOOST
             chunk[score_key] = (
-                min(boosted_score, 1.0) if score_key == "reranker_score" else boosted_score
+                min(boosted_score, 1.0)
+                if score_key in {"final_rank_score", "reranker_score"}
+                else boosted_score
             )
             if mark:
                 chunk["_page_context_boosted"] = True
 
     if boosted_count:
         chunks.sort(
-            key=lambda c: c.get("reranker_score") or c.get("score") or 0.0,
+            key=lambda c: ranking_score(c, "reranker_score", "score"),
             reverse=True,
         )
     return chunks, boosted_count

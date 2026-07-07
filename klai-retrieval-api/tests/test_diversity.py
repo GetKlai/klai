@@ -55,6 +55,16 @@ class TestDiversifyMode:
         scores = [c["score"] for c in selected]
         assert scores == sorted(scores, reverse=True)
 
+    def test_preserves_final_rank_score_order_when_present(self):
+        reranked = [
+            {**_chunk("a1", "src-a", 0.95), "final_rank_score": 0.20},
+            {**_chunk("b1", "src-b", 0.40), "final_rank_score": 0.90},
+            {**_chunk("a2", "src-a", 0.85), "final_rank_score": 0.80},
+            {**_chunk("b2", "src-b", 0.30), "final_rank_score": 0.70},
+        ]
+        selected, _ = source_aware_select(reranked, "query", top_n=4, max_per_source=2)
+        assert [c["chunk_id"] for c in selected] == ["b1", "a2", "b2", "a1"]
+
     def test_empty_input(self):
         selected, meta = source_aware_select([], "query")
         assert selected == []

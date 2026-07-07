@@ -579,17 +579,30 @@ def log_kb_citation_render(
         if stats.no_citable_sources
         else "kb_citations_rendered_structured"
     )
+    reason_counts: dict[str, int] = {}
+    for decision in stats.citation_decisions:
+        if not isinstance(decision, dict):
+            continue
+        for entry in (decision.get("rejected") or []) + (decision.get("selected") or []):
+            if not isinstance(entry, dict):
+                continue
+            reason = entry.get("reason")
+            if isinstance(reason, str) and reason:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
     logger.warning(
-        "%s org_id=%s user_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_decisions=%s",
+        "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s",
         event,
         kb_meta.get("org_id"),
         kb_meta.get("user_id"),
+        kb_meta.get("request_id"),
         kb_meta.get("render_mode"),
         stream,
         stats.rendered_messages,
         stats.rendered_sources,
         kb_meta.get("chunks_injected"),
         kb_meta.get("no_citable_reason"),
+        reason_counts,
         stats.citation_decisions,
     )
 

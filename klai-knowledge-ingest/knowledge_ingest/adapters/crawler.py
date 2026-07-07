@@ -14,6 +14,7 @@ import hashlib
 import json
 import time
 from collections import Counter
+from urllib.parse import urlparse
 
 import asyncpg
 import httpx
@@ -959,6 +960,7 @@ async def _ingest_crawl_result(
             path=url,
             content=text,
             source_type="crawl",
+            source_domain=urlparse(url).netloc,
             content_type=content_type,
             synthesis_depth=1,
             extra=extra,

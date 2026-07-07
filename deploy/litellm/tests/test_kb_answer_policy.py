@@ -100,6 +100,7 @@ _EXPECTED_KEYS = {
     "retrieval_ms",
     "gate_bypassed",
     "retrieval_failure",
+    "request_id",
     "kb_scope_mode",
     "kbs_in_scope",
     "kbs_with_results",
@@ -131,6 +132,17 @@ def test_to_kb_meta_key_set_is_identical_across_every_state():
         assert set(meta) == _EXPECTED_KEYS, (
             f"state={state} diverged: {set(meta) ^ _EXPECTED_KEYS}"
         )
+        assert meta["request_id"] is None
+
+
+def test_to_kb_meta_carries_retrieval_request_id():
+    meta = _policy("chunks_present").to_kb_meta(
+        org_id="o",
+        user_id="u",
+        retrieval_ms=1,
+        retrieval_request_id="req-123",
+    )
+    assert meta["request_id"] == "req-123"
 
 
 def test_policy_module_declares_every_pre_call_answer_state():
