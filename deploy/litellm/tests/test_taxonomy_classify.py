@@ -164,6 +164,13 @@ def _llm_json_response(rewritten_query: str, taxonomy_node_ids: list) -> dict:
     }
 
 
+def _llm_text_response(content: str) -> dict:
+    return {
+        "choices": [{"message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": 80, "completion_tokens": 20},
+    }
+
+
 # Multi-KB sample: support and billing each have their own subtree.
 # Node IDs are globally unique (single PK), so the merged set covers both.
 _TREES_MULTI = {
@@ -243,21 +250,34 @@ class TestRewriteAndClassifySkips:
         assert meta["skipped"] == "no_api_key"
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_history_and_empty_dict(self, monkeypatch):
+    async def test_plain_rewrite_runs_when_no_history_and_empty_dict(self, monkeypatch):
         hook = _load_hook(monkeypatch)
-        rewritten, ids, meta = await hook._rewrite_and_classify("Wat is SAML?", [], {})
-        assert rewritten == "Wat is SAML?"
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_text_response("Wat is SAML identity provider?"),
+        )
+        rewritten, ids, meta = await hook._rewrite_and_classify(
+            "Wat is SAML?", [], {}, _transport=transport
+        )
+        assert rewritten == "Wat is SAML identity provider?"
         assert ids == []
-        assert meta["skipped"] == "no_history_no_tree"
+        assert meta["prompt_variant"] == "plain"
+        assert "skipped" not in meta
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_history_and_empty_list(self, monkeypatch):
-        """Legacy list shape: empty list also triggers the no-tree skip."""
+    async def test_plain_rewrite_runs_when_no_history_and_empty_list(self, monkeypatch):
+        """Legacy list shape: empty list also uses the plain rewrite path."""
         hook = _load_hook(monkeypatch)
-        rewritten, ids, meta = await hook._rewrite_and_classify("Wat is SAML?", [], [])
-        assert rewritten == "Wat is SAML?"
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_text_response("Wat is SAML identity provider?"),
+        )
+        rewritten, ids, meta = await hook._rewrite_and_classify(
+            "Wat is SAML?", [], [], _transport=transport
+        )
+        assert rewritten == "Wat is SAML identity provider?"
         assert ids == []
-        assert meta["skipped"] == "no_history_no_tree"
+        assert meta["prompt_variant"] == "plain"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_plain_rewrite_when_dict_empty_with_history(

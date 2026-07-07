@@ -7,6 +7,7 @@ small structured citation contract that clients can render safely.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -70,6 +71,8 @@ _DEFAULT_MAX_SOURCES = 4
 _SIMPLE_ANSWER_SOURCE_TOKEN_LIMIT = 20
 _COMPLEX_ANSWER_SOURCE_TOKEN_LIMIT = 30
 _EXTRA_SOURCE_KEEP_RATIO = 0.85
+_RESCUE_ANSWER_SCORE_THRESHOLD = 19
+_RESCUE_RETRIEVAL_RATIO = 0.4
 _MAX_SOURCE_EVIDENCE_ITEMS = 3
 _MAX_SOURCE_EVIDENCE_TEXT_CHARS = 320
 _LOW_RETRIEVAL_QUERY_SUPPORT_THRESHOLD = 0.4
@@ -442,14 +445,9 @@ def _renumber_ordered_list_runs(text: str) -> str:
             return
         numbers = [int(match.group(2)) for line in run if (match := _ORDERED_LIST_LINE_RE.match(line))]
         starts_fresh = numbers == list(range(1, len(run) + 1))
-        continues_document_list = numbers == list(
-            range(last_list_number + 1, last_list_number + 1 + len(run))
-        )
+        continues_document_list = numbers == list(range(last_list_number + 1, last_list_number + 1 + len(run)))
         continues_form_sequence = (
-            len(run) == 1
-            and followed_by_text
-            and last_list_number > 0
-            and numbers[0] > last_list_number
+            len(run) == 1 and followed_by_text and last_list_number > 0 and numbers[0] > last_list_number
         )
         if starts_fresh or continues_document_list or continues_form_sequence:
             output.extend(run)
@@ -598,26 +596,108 @@ def _effective_max_sources(cleaned_answer: str, max_sources: int | None) -> int 
     return max_sources
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+@dataclass(frozen=True)
+class _RescueSettings:
+    """Resolved citation-rescue configuration (SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-CIT).
+
+    Resolved ONCE per selection call. Callers (litellm hook, portal-api,
+    synthesis) can pass explicit values through
+    ``compose_answer_with_trusted_sources``; when they don't, the env vars
+    ``CITATION_RESCUE_MODE`` / ``RESCUE_ANSWER_SCORE_THRESHOLD`` /
+    ``RESCUE_RETRIEVAL_RATIO`` are the per-service fallback.
+    """
+
+    mode: str
+    answer_score_threshold: float
+    retrieval_ratio: float
+
+
+def _resolve_rescue_settings(
+    mode: str | None = None,
+    answer_score_threshold: float | None = None,
+    retrieval_ratio: float | None = None,
+) -> _RescueSettings:
+    if mode is None:
+        mode = os.getenv("CITATION_RESCUE_MODE", "shadow")
+    mode = mode.strip().lower()
+    if mode not in {"shadow", "active"}:
+        mode = "shadow"
+    if answer_score_threshold is None:
+        answer_score_threshold = _env_float(
+            "RESCUE_ANSWER_SCORE_THRESHOLD",
+            float(_RESCUE_ANSWER_SCORE_THRESHOLD),
+        )
+    if retrieval_ratio is None:
+        retrieval_ratio = _env_float("RESCUE_RETRIEVAL_RATIO", _RESCUE_RETRIEVAL_RATIO)
+    return _RescueSettings(
+        mode=mode,
+        answer_score_threshold=answer_score_threshold,
+        retrieval_ratio=retrieval_ratio,
+    )
+
+
 def _split_selected_by_quality(
     scored: list[tuple[float, int, int, int, int, CitationSource]],
+    requested_max_sources: int | None,
     max_sources: int | None,
+    rescue: _RescueSettings,
 ) -> tuple[
-    list[tuple[float, int, int, int, int, CitationSource]],
-    list[tuple[float, int, int, int, int, CitationSource]],
+    list[tuple[tuple[float, int, int, int, int, CitationSource], str, bool]],
+    list[tuple[tuple[float, int, int, int, int, CitationSource], str, bool]],
 ]:
     if max_sources is None:
-        return scored, []
-    selected: list[tuple[float, int, int, int, int, CitationSource]] = []
-    overflow: list[tuple[float, int, int, int, int, CitationSource]] = []
+        return [(item, "supported", False) for item in scored], []
+    selected: list[tuple[tuple[float, int, int, int, int, CitationSource], str, bool]] = []
+    overflow: list[tuple[tuple[float, int, int, int, int, CitationSource], str, bool]] = []
     best_retrieval_score = scored[0][0] if scored else 0.0
     has_retrieval_scores = any(source.retrieval_score is not None for *_rest, source in scored)
+
+    def cap_reason() -> str:
+        if requested_max_sources is not None and max_sources < requested_max_sources:
+            return "answer_length_clamp"
+        return "max_reached"
+
+    def reject_at_cap(item: tuple[float, int, int, int, int, CitationSource]) -> None:
+        # The cap is reached, so no rescue slot exists — ``would_rescue``
+        # MUST be False here or shadow telemetry counts rescues that active
+        # mode can structurally never perform (review finding 5).
+        overflow.append((item, cap_reason(), False))
+
+    def reject_below_keep_ratio(item: tuple[float, int, int, int, int, CitationSource]) -> None:
+        retrieval_score, answer_score, query_score, _required_query_score, _index, _source = item
+        # This branch is only reachable while a slot is free (the cap check
+        # at the loop top already continued), so the score-based rescue
+        # criterion is also the slot-accurate ``would_rescue`` signal.
+        would_rescue = (
+            best_retrieval_score > 0
+            and query_score > 0
+            and answer_score >= rescue.answer_score_threshold
+            and retrieval_score >= best_retrieval_score * rescue.retrieval_ratio
+        )
+        if would_rescue and rescue.mode == "active" and max_sources <= _DEFAULT_MAX_SOURCES:
+            # Appended after the regular picks: the order of already-selected
+            # sources never changes (REQ-CIT-04).
+            selected.append((item, "rescued", True))
+        else:
+            overflow.append((item, "below_keep_ratio", would_rescue))
+
     for item in scored:
         retrieval_score, answer_score, query_score, _required_query_score, _index, _source = item
         if len(selected) >= max_sources:
-            overflow.append(item)
+            reject_at_cap(item)
             continue
         if not selected:
-            selected.append(item)
+            selected.append((item, "supported", False))
             continue
         if has_retrieval_scores and best_retrieval_score > 0:
             if (
@@ -625,23 +705,17 @@ def _split_selected_by_quality(
                 and answer_score > 0
                 and query_score > 0
             ):
-                selected.append(item)
+                selected.append((item, "supported", False))
             else:
-                overflow.append(item)
+                reject_below_keep_ratio(item)
             continue
         if len(selected) < 2:
-            selected.append(item)
+            selected.append((item, "supported", False))
             continue
-        if (
-            has_retrieval_scores
-            and best_retrieval_score > 0
-            and retrieval_score >= best_retrieval_score * _EXTRA_SOURCE_KEEP_RATIO
-            and answer_score > 0
-            and query_score > 0
-        ):
-            selected.append(item)
-            continue
-        overflow.append(item)
+        # Score-less candidate set past the implicit 2-cap. Grouped under
+        # ``max_reached`` deliberately: the operative cap for score-less
+        # sources is 2, and REQ-OBS-01 defines exactly three overflow labels.
+        overflow.append((item, "max_reached", False))
     return selected, overflow
 
 
@@ -720,14 +794,23 @@ def _select_supported_sources_with_decision(
     query_text: str | None,
     max_sources: int | None,
     retrieval_confidence_band: object = None,
+    rescue_mode: str | None = None,
+    rescue_answer_score_threshold: float | None = None,
+    rescue_retrieval_ratio: float | None = None,
 ) -> tuple[list[CitationSource], dict[str, Any]]:
     confidence_band = _normalise_retrieval_confidence_band(retrieval_confidence_band)
+    rescue = _resolve_rescue_settings(
+        mode=rescue_mode,
+        answer_score_threshold=rescue_answer_score_threshold,
+        retrieval_ratio=rescue_retrieval_ratio,
+    )
     decision: dict[str, Any] = {
         "mode": "document_level_supported_sources",
         "candidate_count": len(sources),
         "selected": [],
         "rejected": [],
         "retrieval_confidence_band": confidence_band or None,
+        "citation_rescue_mode": rescue.mode,
     }
     if max_sources is not None and max_sources <= 0:
         decision["rejected"] = [
@@ -786,30 +869,43 @@ def _select_supported_sources_with_decision(
         scored.append((retrieval_score, answer_score, query_score, required_query_score, index, source))
     scored.sort(key=lambda item: (-item[0], -item[1], -item[2], item[4]))
     effective_max_sources = _effective_max_sources(cleaned_answer, max_sources)
-    selected_scored, overflow_scored = _split_selected_by_quality(scored, effective_max_sources)
-    for _, answer_score, query_score, required_query_score, _, source in selected_scored:
+    selected_scored, overflow_scored = _split_selected_by_quality(
+        scored,
+        max_sources,
+        effective_max_sources,
+        rescue,
+    )
+    for item, reason, would_rescue in selected_scored:
+        _, answer_score, query_score, required_query_score, _, source = item
         decision["selected"].append(
-            _source_decision_entry(
-                source,
-                selected=True,
-                reason="supported",
-                query_score=query_score,
-                answer_score=answer_score,
-                required_query_score=required_query_score,
-            )
+            {
+                **_source_decision_entry(
+                    source,
+                    selected=True,
+                    reason=reason,
+                    query_score=query_score,
+                    answer_score=answer_score,
+                    required_query_score=required_query_score,
+                ),
+                "would_rescue": would_rescue,
+            }
         )
-    for _, answer_score, query_score, required_query_score, _, source in overflow_scored:
+    for item, reason, would_rescue in overflow_scored:
+        _, answer_score, query_score, required_query_score, _, source = item
         decision["rejected"].append(
-            _source_decision_entry(
-                source,
-                selected=False,
-                reason="max_sources_exceeded",
-                query_score=query_score,
-                answer_score=answer_score,
-                required_query_score=required_query_score,
-            )
+            {
+                **_source_decision_entry(
+                    source,
+                    selected=False,
+                    reason=reason,
+                    query_score=query_score,
+                    answer_score=answer_score,
+                    required_query_score=required_query_score,
+                ),
+                "would_rescue": would_rescue,
+            }
         )
-    selected = [source for _, _, _, _, _, source in selected_scored]
+    selected = [item[-1] for item, _, _ in selected_scored]
     return selected, decision
 
 
@@ -900,10 +996,7 @@ def render_structured_sources(
     max_sources: int | None = _DEFAULT_MAX_SOURCES,
 ) -> list[dict[str, str]]:
     sources = registry.sources if max_sources is None else registry.sources[:max_sources]
-    return [
-        {"label": str(index), "title": source.title, "url": source.url}
-        for index, source in enumerate(sources, 1)
-    ]
+    return [{"label": str(index), "title": source.title, "url": source.url} for index, source in enumerate(sources, 1)]
 
 
 def _compact_text(value: object, *, max_chars: int = _MAX_SOURCE_EVIDENCE_TEXT_CHARS) -> str:
@@ -922,9 +1015,7 @@ def _source_evidence_items_from_pack(
     max_items: int = _MAX_SOURCE_EVIDENCE_ITEMS,
 ) -> list[dict[str, Any]]:
     evidence_ids = {
-        str(evidence_id)
-        for evidence_id in source.get("evidence_ids") or []
-        if isinstance(evidence_id, str | int)
+        str(evidence_id) for evidence_id in source.get("evidence_ids") or [] if isinstance(evidence_id, str | int)
     }
     if not evidence_ids:
         return []
@@ -1045,9 +1136,7 @@ def _source_evidence_texts(
     evidence_chunks: list[dict[str, Any]],
 ) -> list[str]:
     evidence_ids = {
-        str(evidence_id)
-        for evidence_id in source.get("evidence_ids") or []
-        if isinstance(evidence_id, str | int)
+        str(evidence_id) for evidence_id in source.get("evidence_ids") or [] if isinstance(evidence_id, str | int)
     }
     source_url = source_url_key(source.get("url"))
     texts: list[str] = []
@@ -1071,9 +1160,7 @@ def _source_evidence_scores(
     evidence_chunks: list[dict[str, Any]],
 ) -> list[float]:
     evidence_ids = {
-        str(evidence_id)
-        for evidence_id in source.get("evidence_ids") or []
-        if isinstance(evidence_id, str | int)
+        str(evidence_id) for evidence_id in source.get("evidence_ids") or [] if isinstance(evidence_id, str | int)
     }
     source_url = source_url_key(source.get("url"))
     scores: list[float] = []
@@ -1171,6 +1258,9 @@ def compose_answer_with_trusted_sources(
     evidence_chunks: list[dict[str, Any]] | None = None,
     max_sources: int | None = _DEFAULT_MAX_SOURCES,
     retrieval_confidence_band: object = None,
+    rescue_mode: str | None = None,
+    rescue_answer_score_threshold: float | None = None,
+    rescue_retrieval_ratio: float | None = None,
 ) -> ComposedCitations:
     """Clean model text and attach already-selected document sources.
 
@@ -1178,6 +1268,10 @@ def compose_answer_with_trusted_sources(
     model-authored URLs or raw chunks. Source URLs must already have come from
     the EvidencePack contract; ``evidence_chunks`` are used only to validate and
     rank those candidate sources against the final answer text.
+
+    The ``rescue_*`` parameters configure the citation-rescue rule
+    (SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-CIT); when omitted they resolve from
+    the CITATION_RESCUE_MODE / RESCUE_* env vars of the calling service.
     """
     evidence_chunks = evidence_chunks or []
     candidate_sources = _trusted_candidate_sources(trusted_sources, evidence_chunks)
@@ -1192,6 +1286,9 @@ def compose_answer_with_trusted_sources(
         query_text=query_text,
         max_sources=max_sources,
         retrieval_confidence_band=retrieval_confidence_band,
+        rescue_mode=rescue_mode,
+        rescue_answer_score_threshold=rescue_answer_score_threshold,
+        rescue_retrieval_ratio=rescue_retrieval_ratio,
     )
     sources = render_structured_sources(CitationRegistry(sources=selected), max_sources=None)
     return ComposedCitations(content=cleaned, sources=sources, decision=decision)

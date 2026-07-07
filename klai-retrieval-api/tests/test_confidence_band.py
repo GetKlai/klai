@@ -173,7 +173,8 @@ def test_boost_noop_when_factor_is_one() -> None:
 
 
 def test_boost_applies_to_link_expanded_only() -> None:
-    """Chunks WITHOUT _link_expanded flag must NOT be boosted."""
+    """Shadow (no final_rank_score present): pre-contract behavior — the
+    boost mutates reranker_score directly; unflagged chunks stay untouched."""
     chunks = [
         {"chunk_id": "a", "_link_expanded": True, "reranker_score": 0.5},
         {"chunk_id": "b", "reranker_score": 0.5},  # no flag
@@ -182,6 +183,7 @@ def test_boost_applies_to_link_expanded_only() -> None:
     boosted = next(c for c in out if c["chunk_id"] == "a")
     not_boosted = next(c for c in out if c["chunk_id"] == "b")
     assert boosted["reranker_score"] == pytest.approx(0.6)
+    assert "final_rank_score" not in boosted
     assert not_boosted["reranker_score"] == 0.5
 
 
@@ -206,6 +208,25 @@ def test_boost_resorts_results() -> None:
     assert out[0]["reranker_score"] == pytest.approx(0.60)
 
 
+def test_boost_targets_final_rank_score_when_contract_active() -> None:
+    """Active (final_rank_score present, REQ-RANK-01): the boost writes the
+    single ranking truth and leaves reranker_score untouched."""
+    chunks = [
+        {"chunk_id": "a", "reranker_score": 0.55, "final_rank_score": 0.55},
+        {
+            "chunk_id": "b",
+            "_link_expanded": True,
+            "reranker_score": 0.50,
+            "final_rank_score": 0.50,
+        },
+    ]
+    out = _apply_link_expand_boost(chunks, boost=1.20, enabled=True)
+    boosted = next(c for c in out if c["chunk_id"] == "b")
+    assert boosted["final_rank_score"] == pytest.approx(0.60)
+    assert boosted["reranker_score"] == 0.50
+    assert [c["chunk_id"] for c in out] == ["b", "a"]
+
+
 def test_boost_skips_chunks_with_none_score() -> None:
     """Reranker-fallback chunks have reranker_score=None — boost must skip
     them to avoid TypeError on multiplication.
@@ -218,6 +239,7 @@ def test_boost_skips_chunks_with_none_score() -> None:
     a = next(c for c in out if c["chunk_id"] == "a")
     b = next(c for c in out if c["chunk_id"] == "b")
     assert a["reranker_score"] is None
+    assert "final_rank_score" not in a
     assert b["reranker_score"] == pytest.approx(0.6)
 
 
@@ -226,6 +248,31 @@ def test_boost_returns_same_list_for_chaining() -> None:
     chunks: list[dict] = []
     out = _apply_link_expand_boost(chunks, boost=1.10, enabled=True)
     assert out is chunks
+
+
+def test_band_prefers_final_rank_score_when_present() -> None:
+    """Active mode: boosts write final_rank_score; the band must reflect
+    them (REQ-3 'boosted scores must be reflected')."""
+    band = _compute_confidence_band(
+        [{"reranker_score": 0.55, "final_rank_score": 0.70}],
+        high_threshold=0.60,
+        low_threshold=0.30,
+        reranker_enabled=True,
+    )
+    assert band == "high"
+
+
+def test_band_stays_unknown_on_reranker_fallback_despite_final_rank_score() -> None:
+    """Active mode + reranker fallback: final_rank_score falls back to the
+    RRF score, but no chunk was cross-encoder-scored — the band must stay
+    'unknown' instead of misreading RRF-scale values as low confidence."""
+    band = _compute_confidence_band(
+        [{"reranker_score": None, "final_rank_score": 0.02, "score": 0.02}],
+        high_threshold=0.60,
+        low_threshold=0.30,
+        reranker_enabled=True,
+    )
+    assert band == "unknown"
 
 
 # ---------------------------------------------------------------------------

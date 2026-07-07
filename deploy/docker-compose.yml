@@ -314,6 +314,13 @@ services:
       # which 401'd retrieve calls every time the two secrets diverged.
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
       RETRIEVAL_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
+      # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-CIT — citation-rescue flag +
+      # thresholds for klai_citations (path A). Portal-api carries the SAME
+      # three vars for path B; keep them in sync or the two chat surfaces
+      # show diverging citations for identical KB answers.
+      CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-shadow}
+      RESCUE_ANSWER_SCORE_THRESHOLD: ${RESCUE_ANSWER_SCORE_THRESHOLD:-19}
+      RESCUE_RETRIEVAL_RATIO: ${RESCUE_RETRIEVAL_RATIO:-0.4}
     depends_on:
       postgres:
         condition: service_healthy
@@ -615,6 +622,12 @@ services:
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       RETRIEVAL_API_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
+      # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-CIT — citation-rescue config
+      # for klai_citations on path B (widget/partner chat). Mirrors the
+      # litellm block (path A); keep the two in sync.
+      CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-shadow}
+      RESCUE_ANSWER_SCORE_THRESHOLD: ${RESCUE_ANSWER_SCORE_THRESHOLD:-19}
+      RESCUE_RETRIEVAL_RATIO: ${RESCUE_RETRIEVAL_RATIO:-0.4}
       # ─── Mailer (notifications, onboarding drip) ────────────────
       # Internal Docker-network URL for klai-mailer's /internal/send.
       # Auth is X-Internal-Secret: ${PORTAL_API_INTERNAL_SECRET}; mailer
@@ -1050,6 +1063,11 @@ services:
       # retrieval runs. Same pattern as klai-knowledge-mcp (Phase B).
       PORTAL_API_URL: http://portal-api:8010
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-04 — ranking-contract
+      # rollout flag. shadow (default) serves pre-contract behavior and
+      # logs old/new orderings; flip to active per operator decision after
+      # the ≥7-day shadow review. Validated at boot (shadow|active only).
+      RANKING_CONTRACT_MODE: ${RANKING_CONTRACT_MODE:-shadow}
     networks:
       - klai-net
       - net-postgres

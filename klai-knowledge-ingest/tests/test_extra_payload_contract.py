@@ -163,6 +163,7 @@ def _build_request(
     source_type: str = "upload",
     source_connector_id: str | None = None,
     source_ref: str | None = None,
+    source_domain: str | None = None,
 ) -> IngestRequest:
     return IngestRequest(
         org_id="org-contract",
@@ -173,6 +174,7 @@ def _build_request(
         content_type="kb_article",
         source_connector_id=source_connector_id,
         source_ref=source_ref,
+        source_domain=source_domain,
     )
 
 
@@ -376,6 +378,22 @@ async def test_connector_path_extra_payload_carries_connector_keys():
     # request, not the defaults the request model picked up.
     assert extra_payload["source_connector_id"] == "connector-uuid-contract"
     assert extra_payload["source_ref"] == "page-uuid-contract"
+
+
+@pytest.mark.asyncio
+async def test_crawl_path_extra_payload_carries_source_domain_and_label():
+    """Bulk crawl source_domain must survive into Phase-2 enrichment payload."""
+    req = _build_request(
+        source_type="crawl",
+        source_domain="wiki.example.cloud",
+    )
+    proc_app = _MockProcApp()
+
+    _, update_extra_mock = await _run_with_mocks(req, proc_app)
+
+    extra_payload = _captured_extra_payload(update_extra_mock)
+    assert extra_payload["source_domain"] == "wiki.example.cloud"
+    assert extra_payload["source_label"] == "wiki.example.cloud"
 
 
 @pytest.mark.asyncio

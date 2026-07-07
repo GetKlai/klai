@@ -1,4 +1,6 @@
 from klai_citations import (
+    CitationSource,
+    _select_supported_sources_with_decision,
     build_citation_registry,
     compose_answer_with_trusted_sources,
     compose_citations,
@@ -14,6 +16,164 @@ from klai_citations import (
     render_structured_sources,
     trusted_sources_from_evidence_pack,
 )
+
+
+def _terms(count: int) -> list[str]:
+    return [f"term{index}" for index in range(count)]
+
+
+def _decision_sources() -> list[CitationSource]:
+    answer_terms = _terms(17)
+    return [
+        CitationSource(
+            key="https://docs.example.com/alpha",
+            url="https://docs.example.com/alpha",
+            title="Alpha",
+            chunk_texts=["hubspot freedom " + " ".join(answer_terms + _terms(30))],
+            retrieval_score=0.9836,
+        ),
+        CitationSource(
+            key="https://docs.example.com/beta",
+            url="https://docs.example.com/beta",
+            title="Beta",
+            chunk_texts=["hubspot freedom " + " ".join(answer_terms)],
+            retrieval_score=0.4369,
+        ),
+    ]
+
+
+def _long_answer() -> str:
+    return "hubspot freedom " + " ".join(_terms(17) + [f"extra{index}" for index in range(20)])
+
+
+def test_supported_source_decision_labels_keep_ratio_overflow() -> None:
+    selected, decision = _select_supported_sources_with_decision(
+        _long_answer(),
+        _decision_sources(),
+        query_text="hubspot freedom",
+        max_sources=4,
+    )
+
+    assert [source.title for source in selected] == ["Alpha"]
+    assert decision["rejected"][0]["reason"] == "below_keep_ratio"
+    assert decision["rejected"][0]["reason"] != "max_sources_exceeded"
+
+
+def test_supported_source_decision_labels_answer_length_clamp() -> None:
+    sources = _decision_sources()
+    sources[1].retrieval_score = 0.95
+
+    selected, decision = _select_supported_sources_with_decision(
+        "hubspot freedom term0 term1",
+        sources,
+        query_text="hubspot freedom",
+        max_sources=4,
+    )
+
+    assert [source.title for source in selected] == ["Alpha"]
+    assert decision["rejected"][0]["reason"] == "answer_length_clamp"
+    # The clamp means the effective max is already full, so active mode can
+    # never rescue this source — the shadow signal must say so honestly.
+    assert decision["rejected"][0]["would_rescue"] is False
+
+
+def test_citation_rescue_shadow_logs_would_rescue_without_selecting(monkeypatch) -> None:
+    monkeypatch.setenv("CITATION_RESCUE_MODE", "shadow")
+
+    selected, decision = _select_supported_sources_with_decision(
+        _long_answer(),
+        _decision_sources(),
+        query_text="hubspot freedom",
+        max_sources=4,
+    )
+
+    assert [source.title for source in selected] == ["Alpha"]
+    assert decision["rejected"][0]["reason"] == "below_keep_ratio"
+    assert decision["rejected"][0]["would_rescue"] is True
+
+
+def test_citation_rescue_active_selects_with_rescued_reason(monkeypatch) -> None:
+    monkeypatch.setenv("CITATION_RESCUE_MODE", "active")
+
+    selected, decision = _select_supported_sources_with_decision(
+        _long_answer(),
+        _decision_sources(),
+        query_text="hubspot freedom",
+        max_sources=4,
+    )
+
+    assert [source.title for source in selected] == ["Alpha", "Beta"]
+    assert decision["selected"][1]["reason"] == "rescued"
+    assert decision["selected"][1]["would_rescue"] is True
+    assert len(selected) <= 4
+
+
+def test_citation_rescue_mode_via_parameter_overrides_env(monkeypatch) -> None:
+    """Callers can wire their own Settings: params win over (absent) env vars."""
+    monkeypatch.delenv("CITATION_RESCUE_MODE", raising=False)
+
+    selected, decision = _select_supported_sources_with_decision(
+        _long_answer(),
+        _decision_sources(),
+        query_text="hubspot freedom",
+        max_sources=4,
+        rescue_mode="active",
+    )
+
+    assert [source.title for source in selected] == ["Alpha", "Beta"]
+    assert decision["selected"][1]["reason"] == "rescued"
+    assert decision["citation_rescue_mode"] == "active"
+
+
+def test_citation_rescue_thresholds_via_parameters(monkeypatch) -> None:
+    monkeypatch.delenv("RESCUE_ANSWER_SCORE_THRESHOLD", raising=False)
+
+    _, decision = _select_supported_sources_with_decision(
+        _long_answer(),
+        _decision_sources(),
+        query_text="hubspot freedom",
+        max_sources=4,
+        rescue_mode="active",
+        rescue_answer_score_threshold=25,
+    )
+
+    assert decision["rejected"][0]["reason"] == "below_keep_ratio"
+    assert decision["rejected"][0]["would_rescue"] is False
+
+
+def test_citation_rescue_edges_do_not_rescue(monkeypatch) -> None:
+    monkeypatch.setenv("CITATION_RESCUE_MODE", "active")
+    sources = _decision_sources()
+    sources[1].chunk_texts = ["freedom " + " ".join(_terms(18))]
+
+    _, query_decision = _select_supported_sources_with_decision(
+        _long_answer(),
+        sources,
+        query_text="hubspot",
+        max_sources=4,
+    )
+    assert query_decision["rejected"][0]["would_rescue"] is False
+
+    sources = _decision_sources()
+    sources[1].chunk_texts = ["hubspot freedom " + " ".join(_terms(16))]
+    _, answer_decision = _select_supported_sources_with_decision(
+        _long_answer(),
+        sources,
+        query_text="hubspot freedom",
+        max_sources=4,
+    )
+    assert answer_decision["rejected"][0]["answer_score"] == 18
+    assert answer_decision["rejected"][0]["would_rescue"] is False
+
+    sources = _decision_sources()
+    sources[1].retrieval_score = 0.38
+    _, ratio_decision = _select_supported_sources_with_decision(
+        _long_answer(),
+        sources,
+        query_text="hubspot freedom",
+        max_sources=4,
+    )
+    assert ratio_decision["rejected"][0]["would_rescue"] is False
 
 
 def test_render_markdown_answer_uses_retrieved_source_urls_not_model_links() -> None:
@@ -517,9 +677,7 @@ def test_trusted_source_composition_supports_uploaded_documents_without_url() ->
         ],
     )
 
-    assert composed.sources == [
-        {"label": "1", "title": "CV_Jantine_Doornbos.pdf", "url": ""}
-    ]
+    assert composed.sources == [{"label": "1", "title": "CV_Jantine_Doornbos.pdf", "url": ""}]
     assert format_sources_markdown(composed.sources) == "- CV_Jantine_Doornbos.pdf"
 
 
@@ -576,10 +734,7 @@ def test_trusted_source_composition_filters_unsupported_evidence_pack_sources() 
 
 def test_trusted_source_composition_uses_query_support_not_surface_overlap() -> None:
     composed = compose_answer_with_trusted_sources(
-        (
-            "Open Admin > Users, click Invite, enter the work email, "
-            "and pick a starting role."
-        ),
+        ("Open Admin > Users, click Invite, enter the work email, and pick a starting role."),
         [
             {
                 "label": "1",
@@ -600,17 +755,13 @@ def test_trusted_source_composition_uses_query_support_not_surface_overlap() -> 
                 "evidence_id": "E1",
                 "source_url": "https://getklai.getklai.com/docs/klai-help/the-five-roles",
                 "text": (
-                    "Promoting and demoting. Open Admin > Users. "
-                    "Click a user. Pick a new role from the dropdown."
+                    "Promoting and demoting. Open Admin > Users. Click a user. Pick a new role from the dropdown."
                 ),
             },
             {
                 "evidence_id": "E2",
                 "source_url": "https://getklai.getklai.com/docs/klai-help/invite-and-remove-people",
-                "text": (
-                    "Invite a colleague. Click Invite. Enter their work email. "
-                    "Pick a starting role."
-                ),
+                "text": ("Invite a colleague. Click Invite. Enter their work email. Pick a starting role."),
             },
         ],
     )
@@ -702,8 +853,7 @@ def test_trusted_source_composition_does_not_cite_generic_voys_page_for_esim_ans
             },
         ],
         query_text=(
-            "Leg kort uit wat een eSIM is en vermeld alleen Voys-bronnen "
-            "als onze kennisbank daar iets over zegt."
+            "Leg kort uit wat een eSIM is en vermeld alleen Voys-bronnen als onze kennisbank daar iets over zegt."
         ),
         evidence_chunks=[
             {
@@ -780,10 +930,7 @@ def test_trusted_source_composition_keeps_high_score_cross_language_source() -> 
 
 def test_trusted_source_composition_keeps_simple_answers_to_best_source() -> None:
     composed = compose_answer_with_trusted_sources(
-        (
-            "Ga naar Admin > Users, klik op Invite and remove people en voeg de "
-            "nieuwe gebruiker toe met de juiste rol."
-        ),
+        ("Ga naar Admin > Users, klik op Invite and remove people en voeg de nieuwe gebruiker toe met de juiste rol."),
         [
             {
                 "label": "1",
@@ -921,7 +1068,7 @@ def test_trusted_source_composition_allows_more_sources_for_complex_supported_an
         "Billing policy",
     ]
     rejected = {item["title"]: item["reason"] for item in composed.decision["rejected"]}
-    assert rejected["Support policy"] == "max_sources_exceeded"
+    assert rejected["Support policy"] == "max_reached"
 
 
 def test_trusted_source_composition_rejects_weak_retrieval_side_source() -> None:
@@ -972,11 +1119,9 @@ def test_trusted_source_composition_rejects_weak_retrieval_side_source() -> None
         ],
     )
 
-    assert composed.sources == [
-        {"label": "1", "title": "Verantwoordelijkheden per bouwblok.pdf", "url": ""}
-    ]
+    assert composed.sources == [{"label": "1", "title": "Verantwoordelijkheden per bouwblok.pdf", "url": ""}]
     rejected = {item["title"]: item["reason"] for item in composed.decision["rejected"]}
-    assert rejected["AI-Blueprint.pdf"] == "max_sources_exceeded"
+    assert rejected["AI-Blueprint.pdf"] == "answer_length_clamp"
 
 
 def test_trusted_source_composition_uses_evidence_items_and_strips_model_source_bullets() -> None:
@@ -1058,11 +1203,7 @@ def test_strip_preserves_blank_lines_between_paragraphs() -> None:
     """
     from klai_citations import strip_model_citation_artifacts
 
-    text = (
-        "Hello BT,\n\n"
-        "1. What is the name of your company?\nVOYS TELECOM\n\n"
-        "2. What is your Corp ID?\n01003911"
-    )
+    text = "Hello BT,\n\n1. What is the name of your company?\nVOYS TELECOM\n\n2. What is your Corp ID?\n01003911"
 
     assert strip_model_citation_artifacts(text) == text
 

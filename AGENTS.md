@@ -55,6 +55,40 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
   paths from intuition. Require evidence from code, tests, logs, docs, or an
   explicit user confirmation.
 
+## Conductor handoff contract
+
+Conductor workspaces are isolated git worktrees. Do not assume another agent,
+workspace, or chat can see this chat history, this workspace's `.context`
+directory, local uncommitted files, attachments, browser state, VictoriaLogs
+queries, or terminal output.
+
+- When asking another Conductor session/agent to continue work, provide a fully
+  self-contained handoff: task, current branch/workspace, exact files, relevant
+  request IDs/log query keys, commands already run, findings, assumptions,
+  remaining questions, and current git diff summary.
+- If the handoff depends on generated artifacts, either put them in a tracked
+  repo path or paste their relevant contents into the handoff. A `.context/*`
+  path is valid only after explicitly confirming the receiving agent is in the
+  same workspace and can read that path.
+- Public share links, screenshots, and product URLs are context only. They do
+  not replace request IDs, logs, DB/Qdrant evidence, or source-code references.
+- Before sending a handoff prompt, sanity-check it as if pasted into a brand-new
+  workspace with zero prior conversation. If it would not be actionable there,
+  rewrite it before sending.
+- When the user asks for a prompt for another agent/session, the thread is the
+  primary deliverable: output the complete prompt directly in the thread first.
+  Do not rely on a summary, attachment, markdown file, omitted sections, or
+  "same as above" references. Create a handoff file only when the user
+  explicitly asks for a file, or as an additional artifact after the full prompt
+  has already been posted in the thread.
+- If the user says a prompt is wrong or incomplete, respond with the full
+  corrected prompt. Do not answer only with agreement, diagnosis, or a partial
+  replacement snippet.
+- If the user corrects the collaboration format itself, update the documented
+  workflow rule immediately and then continue using the corrected format in the
+  same turn. Do not repeat the previous delivery mechanism after the user has
+  rejected it.
+
 ## Codex + Serena
 
 Codex only auto-loads `AGENTS.md` files. It does not automatically read

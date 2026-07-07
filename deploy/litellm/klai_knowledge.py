@@ -100,6 +100,7 @@ from klai_kb_chat_mode import (
 from klai_kb_query_rewrite import (
     KLAI_TAXONOMY_COVERAGE_THRESHOLD,
     TAXONOMY_ENABLED,
+    _QUERY_REWRITE_PROMPT,
     _QUERY_REWRITE_AND_CLASSIFY_PROMPT,
     fetch_taxonomy_coverage as _fetch_taxonomy_coverage,
     fetch_taxonomy_trees as _fetch_taxonomy_trees,
@@ -227,6 +228,7 @@ __all__ = [
     "_format_taxonomy_for_prompt",
     "_flatten_trees",
     "_rewrite_query",
+    "_QUERY_REWRITE_PROMPT",
     "_QUERY_REWRITE_AND_CLASSIFY_PROMPT",
     "_LOW_CONFIDENCE_INJECTION_TEXT",
     "_LOW_CONFIDENCE_OPEN_CONTEXT_TEXT",
@@ -687,10 +689,12 @@ class KlaiKnowledgeHook(CustomLogger):
         # see literal customer text.
         telemetry_level = feature.get("telemetry_level", "shadow")
         try:
+            # REQ-OBS-03: ``skipped`` IS the skip reason (empty when the
+            # rewrite ran); ``prompt_variant`` distinguishes plain/classify.
             if telemetry_level == "full":
                 logger.info(
                     "query_rewrite org_id=%s user_id=%s raw_query=%r rewritten_query=%r "
-                    "rewrite_ms=%d was_changed=%s skipped=%s",
+                    "rewrite_ms=%d was_changed=%s skipped=%s prompt_variant=%s",
                     org_id,
                     user_id,
                     query,
@@ -698,16 +702,18 @@ class KlaiKnowledgeHook(CustomLogger):
                     rewrite_meta.get("rewrite_ms", 0),
                     rewrite_meta.get("was_changed", False),
                     rewrite_meta.get("skipped", ""),
+                    rewrite_meta.get("prompt_variant", ""),
                 )
             else:
                 logger.info(
                     "query_rewrite_metadata org_id=%s user_id=%s "
-                    "rewrite_ms=%d was_changed=%s skipped=%s",
+                    "rewrite_ms=%d was_changed=%s skipped=%s prompt_variant=%s",
                     org_id,
                     user_id,
                     rewrite_meta.get("rewrite_ms", 0),
                     rewrite_meta.get("was_changed", False),
                     rewrite_meta.get("skipped", ""),
+                    rewrite_meta.get("prompt_variant", ""),
                 )
         except Exception:
             # Logging itself must never abort the hook (REQ-2 fail-open).
@@ -763,13 +769,16 @@ class KlaiKnowledgeHook(CustomLogger):
         # body is verified by retrieval-api against portal. See ``_retrieve``.
         t0 = time.monotonic()
         retrieval_failure: str | None = None
+        retrieval_request_id: str | None = None
         result: dict[str, Any] = {}
         try:
             async with httpx.AsyncClient(timeout=RETRIEVE_TIMEOUT) as client:
                 resp = await _retrieve(client, retrieve_body)
+                retrieval_request_id = resp.headers.get("X-Request-ID")
                 resp.raise_for_status()
                 result = resp.json()
         except httpx.HTTPStatusError as exc:
+            retrieval_request_id = exc.response.headers.get("X-Request-ID")
             # @MX:WARN: 4xx from /retrieve is a config error, not a transient
             # failure. Surface to the user — silent-degrade hid the
             # caller-service-header regression in production for 7 days.
@@ -831,6 +840,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 original_stream=original_stream,
                 render_mode=render_strategy.mode,
                 retrieval_failure=retrieval_failure,
+                retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
             )
@@ -876,6 +886,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 original_stream=original_stream,
                 render_mode=render_strategy.mode,
                 retrieval_failure=strict_bypass_failure,
+                retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
             )
@@ -900,6 +911,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 user_id=user_id,
                 retrieval_ms=retrieval_ms,
                 gate_bypassed=True,
+                retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
             )
@@ -940,6 +952,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 no_citable_reason="missing_evidence_pack",
                 original_stream=original_stream,
                 render_mode=render_strategy.mode,
+                retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
                 kbs_with_results=kbs_with_results,
@@ -1074,6 +1087,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 no_citable_reason="strict_low_confidence_no_direct_evidence",
                 original_stream=original_stream,
                 render_mode=render_strategy.mode,
+                retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
                 kbs_with_results=kbs_with_results,
@@ -1160,6 +1174,7 @@ class KlaiKnowledgeHook(CustomLogger):
                         ),
                         original_stream=original_stream,
                         render_mode=render_strategy.mode,
+                        retrieval_request_id=retrieval_request_id,
                         kb_scope_mode=kb_scope_mode,
                         kbs_in_scope=kbs_in_scope,
                         kbs_with_results=kbs_with_results,
@@ -1244,6 +1259,7 @@ class KlaiKnowledgeHook(CustomLogger):
             confidence_band=confidence_band,
             original_stream=original_stream,
             render_mode=render_strategy.mode,
+            retrieval_request_id=retrieval_request_id,
             kb_scope_mode=kb_scope_mode,
             kbs_in_scope=kbs_in_scope,
             kbs_with_results=kbs_with_results,

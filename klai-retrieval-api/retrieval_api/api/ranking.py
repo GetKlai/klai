@@ -14,6 +14,7 @@ unchanged.
 from __future__ import annotations
 
 from retrieval_api.models import ConfidenceBand
+from retrieval_api.util.scores import ranking_score
 
 
 def _compute_confidence_band(
@@ -24,8 +25,16 @@ def _compute_confidence_band(
     reranker_enabled: bool,
 ) -> ConfidenceBand:
     """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: bucket the served result by
-    max(reranker_score). Driven by the litellm-hook anti-hallucination
-    injection (REQ-2).
+    the max post-rerank ranking score. Driven by the litellm-hook
+    anti-hallucination injection (REQ-2).
+
+    A chunk only contributes when its ``reranker_score`` is numeric — that
+    is the validity signal that the cross-encoder actually scored it. The
+    contributed VALUE is ``final_rank_score`` when present (ranking contract
+    active: reflects the REQ-3 link-expand and page-context boosts, which
+    write to that field) and ``reranker_score`` otherwise (shadow: the
+    legacy boosts mutate reranker_score directly, so it already reflects
+    them — the pre-contract behavior).
 
     Returns:
         - ``unknown`` when reranker is disabled, every chunk's reranker_score
@@ -40,8 +49,11 @@ def _compute_confidence_band(
     """
     if not reranker_enabled or not chunks:
         return "unknown"
-    scores = [c.get("reranker_score") for c in chunks]
-    valid_scores = [s for s in scores if isinstance(s, (int, float))]
+    valid_scores = [
+        ranking_score(c, "reranker_score")
+        for c in chunks
+        if isinstance(c.get("reranker_score"), (int, float))
+    ]
     if not valid_scores:
         return "unknown"
     max_score = max(valid_scores)
@@ -58,7 +70,7 @@ def _apply_link_expand_boost(
     boost: float,
     enabled: bool,
 ) -> list[dict]:
-    """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3: multiplicative reranker-score
+    """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3: multiplicative final-rank
     boost (capped at 1.0) for chunks whose ``_link_expanded`` flag is set.
 
     Applied AFTER rerank and BEFORE source-aware-select + quality-boost so
@@ -72,12 +84,22 @@ def _apply_link_expand_boost(
     if not enabled or boost <= 1.0:
         return chunks
     for chunk in chunks:
-        if chunk.get("_link_expanded") and isinstance(chunk.get("reranker_score"), (int, float)):
-            boosted = chunk["reranker_score"] * boost
-            chunk["reranker_score"] = min(boosted, 1.0)
-    # Re-sort by boosted reranker_score so downstream pickers see the new order.
+        if not chunk.get("_link_expanded"):
+            continue
+        # Boost writes back to the field it read: ``final_rank_score`` when
+        # the ranking contract is active (REQ-RANK-01), ``reranker_score``
+        # in shadow — the exact pre-contract behavior (REQ-RANK-04).
+        if isinstance(chunk.get("final_rank_score"), (int, float)):
+            score_key = "final_rank_score"
+        elif isinstance(chunk.get("reranker_score"), (int, float)):
+            score_key = "reranker_score"
+        else:
+            continue
+        chunk[score_key] = min(chunk[score_key] * boost, 1.0)
+    # Re-sort so downstream pickers see the new order; fallback chain is the
+    # pre-contract sort key for shadow mode.
     chunks.sort(
-        key=lambda c: c.get("reranker_score") or c.get("score") or 0.0,
+        key=lambda c: ranking_score(c, "reranker_score", "score"),
         reverse=True,
     )
     return chunks
