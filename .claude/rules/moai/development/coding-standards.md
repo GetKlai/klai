@@ -46,6 +46,44 @@ Single source of truth principle:
 - Use references (@file) instead of copying content
 - Update source file, not copies
 
+## Thin Command Pattern
+
+All slash command files MUST be thin routing wrappers (under 20 LOC body).
+
+Rules:
+- Commands route to skills via `Skill("moai")` -- they never contain workflow logic
+- All workflow logic belongs in `.claude/skills/moai/workflows/` or skill body
+- YAML frontmatter must include: description, argument-hint, allowed-tools (CSV string)
+- Root commands may contain router tables but no implementation logic
+
+Template:
+```
+---
+description: [One-sentence action description]
+argument-hint: "[Optional arg]"
+allowed-tools: Skill
+---
+
+Use Skill("moai") with arguments: [subcommand] $ARGUMENTS
+```
+
+Enforcement: `internal/template/commands_audit_test.go` verifies this pattern on every `go test`.
+
+Source: SPEC-THIN-CMDS-001
+
+## Claude Code Version Compatibility
+
+Settings fields introduced by specific Claude Code versions:
+
+| Field | Version | Notes |
+|-------|---------|-------|
+| `effortLevel` | v2.1.110 | Sets CLAUDE_CODE_EFFORT_LEVEL; values: low/medium/high/xhigh/max |
+| `disableBypassPermissionsMode` | v2.1.111 | Prevents agents from using bypassPermissions mode when true |
+| `Bash(timeout=N)` | v2.1.110 | Per-command Bash timeout in ms; max 600,000ms |
+
+When adding new settings fields, update `internal/template/templates/.claude/settings.json.tmpl`
+and this compatibility table.
+
 ## Paths Frontmatter
 
 Use paths frontmatter for conditional rule loading:

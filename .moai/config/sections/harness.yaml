@@ -3,6 +3,9 @@
 # The system automatically selects the appropriate level based on SPEC complexity.
 
 harness:
+  # Default evaluator profile (used when SPEC has no evaluator_profile field)
+  default_profile: "default"
+
   # Execution mode defaults
   mode_defaults:
     solo: auto            # Sub-agent mode: auto-detect level
@@ -36,6 +39,14 @@ harness:
       - test_coverage_low    # Coverage < 70% -> escalate to standard+
     max_escalations: 2
 
+  # Effort level mapping
+  # Maps harness depth to CLAUDE_CODE_EFFORT_LEVEL for Opus 4.7 adaptive thinking.
+  # Deeper harness = more extended reasoning budget for evaluator and planner agents.
+  effort_mapping:
+    minimal: "medium"   # Fast iteration: no extended reasoning
+    standard: "high"    # Balanced quality: moderate reasoning budget
+    thorough: "xhigh"   # Critical features: maximum reasoning budget
+
   # Level definitions
   levels:
     minimal:
@@ -43,6 +54,8 @@ harness:
       skip_phases: [0, 0.5, 2.0, 2.5, 2.75, 2.8a, 2.9, 2.10]
       evaluator: false
       sprint_contract: false
+      plan_audit:
+        enabled: false
 
     standard:
       description: "Balanced quality for most development"
@@ -50,6 +63,10 @@ harness:
       evaluator: true
       evaluator_mode: "final-pass"
       sprint_contract: false
+      plan_audit:
+        enabled: true
+        max_iterations: 3
+        require_must_pass: true
 
     thorough:
       description: "Maximum quality for critical features"
@@ -59,6 +76,11 @@ harness:
       evaluator_profile: "strict"
       sprint_contract: true
       playwright_testing: true
+      plan_audit:
+        enabled: true
+        max_iterations: 3
+        require_must_pass: true
+        cross_validate_with_evaluator_active: true
 
   # Model Upgrade Review Process
   # When Claude model is upgraded, review harness components for simplification.

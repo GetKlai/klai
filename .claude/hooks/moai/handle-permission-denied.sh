@@ -17,10 +17,6 @@ if command -v moai &> /dev/null; then
 	exec moai hook permission-denied < "$temp_file" 2>/dev/null
 fi
 
-# Try detected Go bin path from initialization
-if [ -f "/Users/mark/go/bin/moai" ]; then
-	exec "/Users/mark/go/bin/moai" hook permission-denied < "$temp_file" 2>/dev/null
-fi
 
 # Try default ~/go/bin/moai
 if [ -f "$HOME/go/bin/moai" ]; then

@@ -31,7 +31,7 @@ hooks:
         - type: command
           command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" ddd-post-transformation"
           timeout: 10
-  Stop:
+  SubagentStop:
     - hooks:
         - type: command
           command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" ddd-completion"
@@ -135,6 +135,18 @@ For each transformation:
 - Auto-checkpoint on memory pressure
 - Resume from any checkpoint with `--resume latest`
 - Adaptive context trimming to prevent memory overflow
+
+## @MX Tag Obligations
+
+During ANALYZE and IMPROVE phases, maintain @MX tags:
+
+- ANALYZE: Scan for functions meeting ANCHOR criteria (fan_in >= 3) and WARN criteria (goroutines, complexity >= 15). Add missing tags.
+- PRESERVE: Do not remove existing @MX tags during characterization test creation.
+- IMPROVE: Update @MX:ANCHOR if fan_in changes after refactoring. Remove @MX:WARN if dangerous pattern is eliminated. Add @MX:NOTE for discovered business rules.
+
+Tag format: `// @MX:TYPE: [AUTO] description` (use language-appropriate comment syntax).
+All ANCHOR and WARN tags MUST include a `@MX:REASON` sub-line.
+Respect per-file limits: max 3 ANCHOR, 5 WARN, 10 NOTE, 5 TODO.
 
 ## DDD vs TDD Decision Guide
 

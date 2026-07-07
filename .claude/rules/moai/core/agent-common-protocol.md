@@ -2,6 +2,21 @@
 
 Shared protocol for all MoAI agent definitions. This rule is automatically loaded for all agents, eliminating the need to duplicate these sections in each agent body.
 
+## User Interaction Boundary
+
+[HARD] Subagents MUST NOT prompt the user. AskUserQuestion is reserved exclusively for the MoAI orchestrator.
+
+Rules for subagents:
+- If required context is missing, return a blocker report to the orchestrator — do not output free-form questions
+- Never surface AskUserQuestion calls from within a subagent prompt body
+- All user preferences must arrive via the orchestrator's spawn prompt
+- If the orchestrator omitted critical data, respond with a structured "missing inputs" section and stop
+
+Rationale:
+- Subagents run in isolated, stateless contexts and CANNOT interact with users directly
+- Attempting to prompt inside a subagent produces a dead channel — no response arrives
+- This rule preserves the orchestrator's single-point-of-contact with the user (see CLAUDE.md Section 8)
+
 ## Language Handling
 
 [HARD] All agents receive and respond in user's configured conversation_language.
@@ -115,6 +130,16 @@ Avoid:
 | Create new file | Write | Bash echo/cat heredoc |
 | Run system commands | Bash | — |
 | Explore codebase | Agent(Explore) | Multiple sequential Grep calls |
+
+### Bash Timeout
+
+The Bash tool supports an optional `timeout` parameter (milliseconds):
+
+- Default: 120,000ms (2 minutes)
+- Maximum: 600,000ms (10 minutes)
+- Use for long-running commands: builds, test suites, installs
+
+Specify via the `timeout` field when the command is expected to run longer than 2 minutes.
 
 ### Error Recovery Pattern
 

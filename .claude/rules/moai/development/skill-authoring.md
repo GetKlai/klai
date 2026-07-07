@@ -22,7 +22,7 @@ Optional standard fields:
 - allowed-tools: Comma-separated string of tool names the skill can use (experimental)
 - user-invocable: Boolean to control slash command menu visibility (default: true, set to false to hide from / menu)
 - disable-model-invocation: Boolean, when true only user can invoke (not Claude). Use for workflows with side effects (default: false)
-- effort: Session effort override: low, medium, high, max (max is Opus 4.6 only)
+- effort: Session effort override: low, medium, high, xhigh, max (xhigh/max require Opus 4.7+)
 - model: Model override when skill is active (sonnet, opus, haiku)
 - shell: Shell for command injection: bash (default) or powershell
 - context: Set to "fork" to run skill in forked subagent context (isolated execution)
@@ -103,10 +103,10 @@ triggers:
 
 ### Key Format Rules
 
-allowed-tools format: Comma-separated string (recommended) or YAML array (supported since v2.1.0).
-- Recommended: `allowed-tools: Read, Grep, Glob, Bash`
-- Also valid: YAML-style list syntax (supported since v2.1.0)
-- MoAI convention: Use CSV format for consistency with existing skills
+allowed-tools format: [HARD] Comma-separated string ONLY. Space-separated values are PROHIBITED.
+- Correct: `allowed-tools: Read, Grep, Glob, Bash`
+- WRONG: `allowed-tools: Read Grep Glob Bash` (YAML parses as single string scalar, silently breaks tool permissions)
+- YAML arrays also supported since v2.1.0 but CSV is the MoAI convention
 
 metadata values: All values must be quoted strings.
 - Correct: `version: "1.0.0"`

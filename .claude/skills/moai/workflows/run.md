@@ -256,6 +256,17 @@ Implementation guard: [HARD] During Phase 1 (Analysis and Planning), the manager
 
 ### Decision Point 1: Plan Approval
 
+<!-- moai:evolvable-start id="gate-run-1" -->
+### HUMAN GATE: Plan Approval
+
+**Previous phase output:** Analysis and implementation plan with task decomposition
+**Approval question:** Is the implementation plan correct and complete?
+**Cannot proceed until:**
+- [ ] Plan covers all SPEC acceptance criteria
+- [ ] Task decomposition respects Multi-File Decomposition rule (>3 files = split)
+- [ ] User has approved the approach
+<!-- moai:evolvable-end -->
+
 Tool: AskUserQuestion (at orchestrator level)
 
 Before presenting options, verify the plan against these criteria:
@@ -375,26 +386,6 @@ Purpose: Scan files that will be modified during implementation to build an MX c
 
 See .claude/rules/moai/workflow/mx-tag-protocol.md for tag type definitions.
 
-### Batch Mode Decision [MANDATORY EVALUATION]
-
-Before routing to Phase 2, MoAI MUST evaluate whether to use Skill("batch") for parallel implementation.
-
-Evaluate ALL of the following conditions:
-
-- Condition A: task_count >= 5 (from Phase 1.5 decomposition)
-- Condition B: predicted_file_changes >= 10 (estimated from SPEC scope)
-- Condition C: independent_tasks >= 3 (tasks with no inter-dependencies)
-
-Decision:
-
-- If ANY condition is met: Execute Skill("batch") directly. Batch mode replaces sequential Phase 2. Each batch unit executes one atomic task in an isolated git worktree, runs tests, and creates a PR. MoAI collects all PRs and merges in dependency order via manager-git.
-- If NO condition is met: Continue to standard sequential Phase 2 below.
-
-Batch execution instructions when triggered:
-1. Provide Skill("batch") with the full task list from Phase 1.5, the SPEC document content, and the development_mode from quality.yaml
-2. Each batch agent MUST follow the same DDD/TDD cycle defined in the Development Mode Routing section
-3. After all batch agents complete, collect results and jump directly to Phase 2.5 (Quality Validation)
-
 ### Development Mode Routing
 
 Before Phase 2, determine the development methodology by reading `.moai/config/sections/quality.yaml`:
@@ -431,6 +422,31 @@ Mode-specific deployment:
 - CG mode: Leader performs contract negotiation inline
 
 **Output**: `.moai/specs/SPEC-{ID}/contract.md`
+
+### Delta Marker Detection (Brownfield Pre-Check)
+
+Before routing to Phase 2A or 2B, scan the loaded SPEC for `[DELTA]` section markers:
+
+1. Check spec.md (or spec-compact.md) for any line matching `[EXISTING]`, `[MODIFY]`, `[NEW]`, or `[REMOVE]`
+2. If NO delta markers found: skip this section, proceed to Phase 2A/2B normally (greenfield path)
+3. If delta markers found: activate delta-aware routing as follows
+
+**Delta-aware routing rules (applied within DDD or TDD mode):**
+
+| Marker | Treatment | Action |
+|--------|-----------|--------|
+| `[EXISTING]` | Context only — do not modify | Generate characterization tests to document current behavior; no code changes |
+| `[MODIFY]` | Modify with safety net | Generate characterization tests FIRST, verify they pass, THEN apply modifications |
+| `[NEW]` | Full implementation | Apply complete DDD ANALYZE-PRESERVE-IMPROVE or TDD RED-GREEN-REFACTOR cycle |
+| `[REMOVE]` | Safe deletion | Check all callers and dependents; confirm no active references; then remove |
+
+**Delta processing order** (prevents regression):
+1. Process all `[EXISTING]` items — characterization tests only
+2. Process all `[MODIFY]` items — characterization tests → modification → verify tests still pass
+3. Process all `[NEW]` items — full implementation cycle
+4. Process all `[REMOVE]` items — dependency analysis → safe deletion
+
+If no delta markers are present in the SPEC, delta processing is silently skipped and the standard implementation flow proceeds unchanged (backward compatible with greenfield SPECs).
 
 ### Phase 2: Implementation (Mode-Dependent)
 
@@ -622,6 +638,18 @@ Mode-specific deployment:
 
 Output: evaluation_report with per-dimension PASS/FAIL/UNVERIFIED verdicts and findings list.
 
+<!-- moai:evolvable-start id="gate-run-2" -->
+### HUMAN GATE: Implementation Complete
+
+**Previous phase output:** Implementation with TRUST 5 validation passed
+**Approval question:** Is the implementation ready for git operations?
+**Cannot proceed until:**
+- [ ] All tests pass (show evidence)
+- [ ] TRUST 5 validation complete
+- [ ] @MX tags updated if needed
+- [ ] User has reviewed post-implementation issues list
+<!-- moai:evolvable-end -->
+
 ### Phase 2.8b: TRUST 5 Static Verification (manager-quality) [MANDATORY]
 
 Purpose: Multi-dimensional review iteration for high-quality output. This phase is ALWAYS executed to ensure consistent code quality.
@@ -646,9 +674,16 @@ Iteration behavior:
 
 Output: review_findings per dimension, iterations_completed count, final review status.
 
-### Phase 2.9: MX Tag Update
+### Phase 2.9: MX Tag Update [HARD]
 
 Purpose: Update @MX code annotations for modified files. See .claude/rules/moai/workflow/mx-tag-protocol.md for tag rules.
+
+[HARD] This phase is MANDATORY. MoAI MUST scan all files modified during Phase 2 and verify @MX tag coverage before proceeding to Phase 3. If implementation agents did not add required tags during their work, MoAI adds them here.
+
+**Validation criteria (blocking):**
+- P1: Every new exported function with fan_in >= 3 MUST have `@MX:ANCHOR`
+- P2: Every new goroutine/async pattern MUST have `@MX:WARN`
+- P1/P2 violations block Phase 3 until resolved
 
 **TDD Mode:**
 - Remove `@MX:TODO` tags for tests that now pass
@@ -662,25 +697,6 @@ Purpose: Update @MX code annotations for modified files. See .claude/rules/moai/
 - Convert `@MX:LEGACY` to `@MX:SPEC` if SPEC retroactively created
 
 Output: MX_TAG_REPORT with tags added, updated, removed by type.
-
-### Phase 2.10: Simplify Pass [MANDATORY]
-
-Purpose: Apply a parallel quality pass to all files modified during implementation. This phase is ALWAYS executed after Phase 2.9 — it is not optional.
-
-Action: MoAI MUST call Skill("simplify") at this phase. Do not delegate to a subagent. Call it directly.
-
-Skill("simplify") will:
-- Use parallel agents to review all modified files for reuse opportunities, quality issues, and efficiency improvements
-- Enforce CLAUDE.md coding standards compliance
-- Fix discovered issues automatically
-
-Scope: Only files listed in the implementation output (files_created + files_modified). Do not run on unrelated files.
-
-Output: simplify_report with files_improved count, issues_fixed list, and compliance_status.
-
-If simplify_report contains remaining unfixed issues:
-- Include them in the quality findings passed to Phase 2.5 re-evaluation
-- Do NOT block progress for suggestion-level issues; only block for critical issues
 
 ### LSP Quality Gates
 

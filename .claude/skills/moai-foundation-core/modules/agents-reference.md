@@ -5,6 +5,12 @@ Purpose: Complete reference catalog of MoAI-ADK's 26 specialized agents with `{d
 Last Updated: 2025-11-25
 Version: 2.0.0
 
+> Klai overlay note (2026-07-07): this upstream reference is stale relative to
+> the actual MoAI-ADK v2.14.0 `.claude/agents/moai/` catalog. Mentions of
+> `ai-codex` below are upstream documentation drift and do not mean official
+> MoAI Codex support. Klai's Codex behavior lives in `AGENTS.md` and
+> `.agents/codex/README.md`.
+
 ---
 
 ## Quick Reference (30 seconds)

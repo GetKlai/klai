@@ -8,6 +8,7 @@ description: |
   KO: 플러그인생성, 플러그인, 플러그인검증, 플러그인구조, 마켓플레이스, 새플러그인, 마켓플레이스 생성, 플러그인 배포
   JA: プラグイン作成, プラグイン, プラグイン検証, プラグイン構造, マーケットプレイス, マーケットプレイス作成, プラグイン配布
   ZH: 创建插件, 插件, 插件验证, 插件结构, 市场, 市场创建, 插件分发
+  NOT for: agent creation (use builder-agent), skill creation (use builder-skill), code implementation, testing, documentation
 tools: Read, Write, Edit, Grep, Glob, WebFetch, WebSearch, Bash, TodoWrite, Agent, Skill, mcp__sequential-thinking__sequentialthinking, mcp__context7__resolve-library-id, mcp__context7__get-library-docs
 model: sonnet
 permissionMode: bypassPermissions
@@ -100,7 +101,7 @@ For each component type:
 - **Commands**: Create .md with YAML frontmatter (name, description, argument-hint, allowed-tools, model, skills). Namespaced as /plugin-name:command-name
 - **Agents**: Create .md with frontmatter (name, description, tools, model, permissionMode, skills). Follow single responsibility principle
 - **Skills**: Create directory with SKILL.md. Progressive disclosure structure, 500-line limit
-- **Hooks**: Create hooks.json with event handlers (PreToolUse, PostToolUse, Stop, etc.)
+- **Hooks**: Create hooks.json with event handlers (PreToolUse, PostToolUse, SubagentStop, etc.)
 - **MCP Servers**: Create .mcp.json with transport configuration (stdio, http, sse)
 - **LSP Servers**: Create .lsp.json with language server config (command, extensionToLanguage, transport)
 - **Settings**: Create settings.json for plugin-specific env vars and permissions (v2.1.49+)
@@ -116,7 +117,8 @@ For each component type:
 ### PHASE 6: Marketplace Setup (Optional)
 
 - Create marketplace.json with name, description, plugins array
-- Configure plugin distribution: GitHub URL, Git URL, or local path
+- Plugins are referenced by `source` field: git repos (GitHub URL), or local paths
+- Official marketplace: anthropics/claude-plugins-official (reference for structure and naming)
 - Set up team/enterprise configuration if needed
 - Each plugin entry: name, git (URL), description, optional version tag
 
@@ -126,6 +128,15 @@ For each component type:
 - Create CHANGELOG.md with initial version entry
 - Add LICENSE file
 - Final validation: all components pass, documentation complete, structure compliant
+
+## Plugin Agent Limitations
+
+Agents defined inside plugins have restricted frontmatter support. The following fields are IGNORED when loading agents from plugins:
+- hooks: Agent-scoped hooks do not apply in plugin context
+- mcpServers: MCP server references in agent frontmatter are ignored
+- permissionMode: Permission mode field has no effect for plugin agents
+
+These fields only work for project-level and personal-level agent definitions.
 
 ## Quality Checklist
 

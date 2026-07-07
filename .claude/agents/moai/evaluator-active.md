@@ -3,16 +3,22 @@ name: evaluator-active
 description: |
   Skeptical code evaluator for independent quality assessment. Actively tests implementations
   against SPEC acceptance criteria. Tuned toward finding defects, not rationalizing acceptance.
+  MUST INVOKE when ANY of these keywords appear in user request:
+  EN: evaluate, quality assessment, independent review, code audit, defect analysis, acceptance criteria test
+  KO: 평가, 품질 평가, 독립 검토, 코드 감사, 결함 분석, 인수 기준 테스트
+  JA: 評価, 品質評価, 独立レビュー, コード監査, 欠陥分析, 受入基準テスト
+  ZH: 评估, 质量评估, 独立审查, 代码审计, 缺陷分析, 验收标准测试
   NOT for: code implementation, architecture design, documentation writing, git operations
 tools: Read, Grep, Glob, Bash, mcp__sequential-thinking__sequentialthinking
 model: sonnet
+effort: high
 permissionMode: plan
 memory: project
 skills:
   - moai-foundation-core
   - moai-foundation-quality
 hooks:
-  Stop:
+  SubagentStop:
     - hooks:
         - type: command
           command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" evaluator-completion"
@@ -69,6 +75,18 @@ Overall Verdict: PASS | FAIL
 ### Recommendations
 - {actionable fix suggestion}
 ```
+
+## Evaluator Profile Loading
+
+At invocation, load the active evaluator profile to determine dimension weights and thresholds:
+
+1. Check if the SPEC file contains an `evaluator_profile` field in its frontmatter
+2. If present: load `.moai/config/evaluator-profiles/{evaluator_profile}.md`
+3. If absent: load `.moai/config/evaluator-profiles/{harness.default_profile}.md` (from harness.yaml)
+4. If profile file not found: use built-in default weights (Functionality 40%, Security 25%, Craft 20%, Consistency 15%)
+
+Profile determines: dimension weights, pass thresholds, must-pass criteria, and hard thresholds.
+The "Evaluation Dimensions" table above reflects the built-in default profile. When a non-default profile is loaded, its weights and thresholds override these defaults.
 
 ## Sprint Contract Negotiation (Phase 2.0, thorough only)
 

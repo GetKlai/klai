@@ -31,7 +31,7 @@ hooks:
         - type: command
           command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" tdd-post-implementation"
           timeout: 10
-  Stop:
+  SubagentStop:
     - hooks:
         - type: command
           command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" tdd-completion"
@@ -115,6 +115,18 @@ For each improvement:
 - Checkpoint after every RED-GREEN-REFACTOR cycle to `.moai/state/checkpoints/tdd/`
 - Auto-checkpoint on memory pressure
 - Resume: `--resume latest`
+
+## @MX Tag Obligations
+
+During GREEN and REFACTOR phases, maintain @MX tags:
+
+- RED: Add `@MX:TODO` for new public functions that lack tests (resolved in GREEN).
+- GREEN: Add `@MX:ANCHOR` for new exported functions with expected fan_in >= 3. Add `@MX:WARN` for goroutines or complex patterns introduced.
+- REFACTOR: Update @MX:ANCHOR if fan_in changes. Remove @MX:WARN if dangerous pattern is eliminated. Remove @MX:TODO when tests pass.
+
+Tag format: `// @MX:TYPE: [AUTO] description` (use language-appropriate comment syntax).
+All ANCHOR and WARN tags MUST include a `@MX:REASON` sub-line.
+Respect per-file limits: max 3 ANCHOR, 5 WARN, 10 NOTE, 5 TODO.
 
 ## TDD vs DDD Decision Guide
 

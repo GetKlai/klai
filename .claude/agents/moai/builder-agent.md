@@ -8,6 +8,7 @@ description: |
   KO: 에이전트생성, 새에이전트, 에이전트블루프린트, 서브에이전트, 에이전트정의, 커스텀에이전트
   JA: エージェント作成, 新エージェント, エージェントブループリント, サブエージェント
   ZH: 创建代理, 新代理, 代理蓝图, 子代理, 代理定义
+  NOT for: skill creation (use builder-skill), plugin creation (use builder-plugin), code implementation, testing, documentation
 tools: Read, Write, Edit, Grep, Glob, WebFetch, WebSearch, Bash, TodoWrite, Agent, Skill, mcp__sequential-thinking__sequentialthinking, mcp__context7__resolve-library-id, mcp__context7__get-library-docs
 model: sonnet
 permissionMode: bypassPermissions
@@ -82,9 +83,14 @@ Configure using official Claude Code YAML frontmatter fields:
 - tools: Comma-separated list, apply least-privilege
 - disallowedTools: Denylist approach (mutually exclusive with tools)
 - model: sonnet, opus, haiku, or inherit
-- permissionMode: default, acceptEdits, dontAsk, bypassPermissions, plan
+- permissionMode: default, acceptEdits, auto, delegate, dontAsk, bypassPermissions, plan
 - skills: Skills to preload (NOT inherited from parent)
-- hooks: PreToolUse, PostToolUse, Stop lifecycle events
+- hooks: PreToolUse, PostToolUse, SubagentStop lifecycle events
+- color: Display color in UI (red/blue/green/yellow/purple/orange/pink/cyan)
+- effort: Session effort override (low/medium/high/xhigh/max; xhigh/max require Opus 4.7+)
+- isolation: "worktree" creates isolated git worktree per agent (v2.1.49+)
+- initialPrompt: Auto-submitted first turn when agent runs via --agent flag (v2.1.83+)
+- maxContextSize: Maximum context size before stopping (replaces deprecated maxTurns, v2.1.69+)
 
 ### Phase 4: Integration and Validation
 
@@ -100,6 +106,7 @@ Configure using official Claude Code YAML frontmatter fields:
 - Skills are NOT inherited from parent — must list explicitly in frontmatter
 - Background sub-agents auto-deny non-pre-approved permissions
 - Each sub-agent gets independent context window — pass only essential info
+- maxTurns is deprecated since v2.1.69+; use maxContextSize instead
 
 ## Delegation Protocol
 

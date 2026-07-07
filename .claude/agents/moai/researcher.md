@@ -1,15 +1,22 @@
 ---
 name: researcher
-description: >
+description: |
   Active self-research agent that optimizes moai-adk components
   (skills, agents, rules, CLAUDE.md) through iterative experimentation
   with binary eval criteria. Uses worktree isolation for safe mutation.
   Implements the autoresearch pattern adapted for multi-tier component types.
+  MUST INVOKE when ANY of these keywords appear in user request:
+  EN: research, self-research, optimize component, experiment, binary eval, autoresearch
+  KO: 연구, 자체 연구, 컴포넌트 최적화, 실험, 바이너리 평가, 오토리서치
+  JA: リサーチ, 自己研究, コンポーネント最適化, 実験, バイナリ評価, オートリサーチ
+  ZH: 研究, 自研究, 组件优化, 实验, 二元评估, 自动研究
+  NOT for: production code implementation, feature development, documentation writing, git operations, security audits
 tools: Read, Write, Edit, Grep, Glob, Bash
 model: opus
 permissionMode: acceptEdits
 memory: project
 skills:
+  - moai-foundation-core
   - moai-workflow-research
 ---
 

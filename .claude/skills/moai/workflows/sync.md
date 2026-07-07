@@ -124,6 +124,18 @@ Pre-execution commands: git status, git diff, git branch, git log, find .moai/sp
 
 ### Phase 0: Pre-Sync Quality Gate
 
+<!-- moai:evolvable-start id="gate-sync-1" -->
+### HUMAN GATE: Pre-Sync Quality
+
+**Previous phase output:** Completed SPEC implementation
+**Approval question:** Is the project in a state where documentation can be synced?
+**Cannot proceed until:**
+- [ ] Working tree is clean or only expected changes present
+- [ ] All tests pass
+- [ ] MX tags validated
+- [ ] No HARD rule violations
+<!-- moai:evolvable-end -->
+
 Purpose: Run the gate workflow (workflows/gate.md) as a fast pre-check before the full deployment readiness verification. Catches lint/format/type errors early and auto-fixes them.
 
 #### Step 0.0.1: Gate Execution
@@ -136,6 +148,51 @@ Purpose: Run the gate workflow (workflows/gate.md) as a fast pre-check before th
   - Abort: Exit sync workflow
 
 Output: gate_report with pass/fail per check category.
+
+### Phase 0.08: DB Schema Doc Check (Conditional)
+
+Purpose: Refresh `.moai/project/db/` derived documents (schema.md, erd.mmd, migrations.md) when the sync scope includes migration file changes. Replaces the per-event PostToolUse hook with a batch refresh at milestone boundary — eliminates the ~30-60ms/edit overhead the hook used to incur.
+
+Source SPEC: SPEC-DB-SYNC-RELOC-001.
+
+#### Step 0.08.1: Activation Gate
+
+Evaluate all conditions in order; skip the phase if any fails:
+
+1. `.moai/config/sections/db.yaml` exists (project opted into DB doc management)
+2. `db.enabled: true` in that file
+3. `db.auto_sync: true` in that file
+
+If any condition is not met, skip Phase 0.08 silently and proceed to Phase 0.1.
+
+#### Step 0.08.2: Migration File Diff Detection
+
+Compute the list of migration files changed since the base branch:
+
+- Use `git diff --name-only <base-branch>..HEAD` to collect changed files
+- Filter by the glob patterns in `db.migration_patterns` (typically Prisma schema, Alembic versions, Rails migrations, raw SQL, Supabase, custom)
+- Further exclude paths matching `db.excluded_patterns` (defaults: `.moai/project/db/**`, `.moai/cache/**`, `.moai/logs/**`) to prevent recursion
+
+If the filtered list is empty, skip to Phase 0.1 with log line: "Phase 0.08: no migration files changed, skipping DB doc refresh".
+
+#### Step 0.08.3: Refresh Invocation
+
+Invoke the existing `moai-domain-db-docs` skill with `refresh` mode:
+
+- Input: filtered migration file list, project language, `db.yaml` config
+- Output: updated `.moai/project/db/schema.md`, `erd.mmd`, `migrations.md`; refresh report
+- Changes are staged for the sync commit — no separate commit is created
+
+On refresh failure (parser error, template conflict): log the error, include in sync report under "DB doc refresh warnings", and continue to Phase 0.1. Non-blocking by contract.
+
+#### Step 0.08.4: Advisory Path
+
+When migration files changed but `db.auto_sync: false`:
+
+- Emit one-line advisory to the sync report: "N migration files changed but db.auto_sync is disabled — run `/moai db refresh` manually to update derived docs"
+- Do not invoke refresh automatically — respect user opt-out
+
+Output: phase_result with one of `skipped | refreshed | advised | failed` and the migration file count.
 
 ### Phase 0.1: Deployment Readiness Check
 
@@ -522,6 +579,17 @@ For each SPEC associated with the current sync:
   - Level 3 (spec-as-source): Flag discrepancies as warnings (implementation should match SPEC exactly)
 
 #### Step 1.6: User Approval
+
+<!-- moai:evolvable-start id="gate-sync-2" -->
+### HUMAN GATE: Documentation Scope
+
+**Previous phase output:** Divergence analysis showing doc/code drift
+**Approval question:** Which documents should be regenerated?
+**Cannot proceed until:**
+- [ ] User has reviewed divergence report
+- [ ] User has approved document regeneration scope
+- [ ] User has confirmed PR description draft
+<!-- moai:evolvable-end -->
 
 Tool: AskUserQuestion
 
@@ -1116,6 +1184,6 @@ All of the following must be verified:
 
 ---
 
-Version: 3.6.0
+Version: 3.7.0
 Updated: 2026-03-30
 Changes: Added test scenarios.

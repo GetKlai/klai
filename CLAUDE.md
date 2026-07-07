@@ -53,7 +53,7 @@ Core Skills (load when needed):
 
 Route request based on command type:
 
-- **Workflow Subcommands**: /moai project, /moai plan, /moai run, /moai sync
+- **Workflow Subcommands**: /moai project, /moai plan, /moai run, /moai sync, /moai design, /moai db
 - **Utility Subcommands**: /moai (default), /moai fix, /moai loop, /moai clean, /moai mx
 - **Quality Subcommands**: /moai review, /moai coverage, /moai e2e, /moai codemaps
 - **Feedback Subcommand**: /moai feedback
@@ -82,14 +82,30 @@ Integrate and report results:
 
 Definition: Single entry point for all MoAI development workflows.
 
-Subcommands: plan, run, sync, project, fix, loop, mx, feedback, review, clean, codemaps, coverage, e2e
+Subcommands: plan, run, sync, design, db, project, fix, loop, mx, feedback, review, clean, codemaps, coverage, e2e
 Default (natural language): Routes to autonomous workflow (plan -> run -> sync pipeline)
 
 Allowed Tools: Full access (Agent, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet, Bash, Read, Write, Edit, Glob, Grep)
 
+### Unified Skill: /moai design
+
+Definition: Hybrid design workflow — Claude Design import or code-based brand/design implementation.
+
+Subcommands: design (unified entry point)
+Default (natural language): Routes to /moai design with path selection between design import and code-based design.
+
+For detailed design rules, see .claude/rules/moai/design/constitution.md
+
+### Unified Skill: /moai db
+
+Definition: Database documentation and migration-context workflow.
+
+Subcommands: db init, db refresh, db verify, db list
+Default (natural language): Routes to the database documentation workflow.
+
 ### Unified Skill: /agency
 
-Definition: Self-evolving creative production system for websites, landing pages, and web applications.
+Definition: Legacy Klai creative production system for websites, landing pages, and web applications. Prefer /moai design for new MoAI work; keep this section because Klai still has local agency agents and commands.
 
 Subcommands: brief, build, review, learn, evolve, resume, profile, phase, sync-upstream, rollback, config
 Default (natural language): Routes to agency pipeline (Planner -> Copywriter/Designer -> Builder -> Evaluator -> Learner)
@@ -122,9 +138,10 @@ backend, frontend, security, devops, performance, debug, testing, refactoring
 
 agent, skill, plugin
 
-### Evaluator Agents (1)
+### Evaluator Agents (2)
 
 evaluator-active (independent skeptical quality assessment, 4-dimension scoring)
+plan-auditor (independent plan-phase document audit, bias prevention, EARS compliance)
 
 ### Agency Agents (6)
 
@@ -572,8 +589,8 @@ Large PDFs (>10 pages) return a lightweight reference when @-mentioned. Always s
 
 ---
 
-Version: 14.0.0 (Agency v3.2 + Harness Design Integration)
-Last Updated: 2026-04-03
+Version: 14.0.0-klai (MoAI-ADK v2.14.0 local overlay)
+Last Updated: 2026-07-07
 Language: English
 Core Rule: MoAI is an orchestrator; direct implementation is prohibited
 
