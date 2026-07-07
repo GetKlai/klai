@@ -200,7 +200,7 @@ async def test_widget_config_passes_valid_client_session_id_to_token():
     org = FakeOrg()
     db = _make_db_chain(widget, org, [1])
     request = _make_request("https://example.com")
-    request.query_params = {"session_id": "client-session_1234567890"}
+    request.headers["x-klai-widget-session-id"] = "client-session_1234567890"
 
     with (
         patch("app.api.partner.settings") as mock_settings,
@@ -214,6 +214,28 @@ async def test_widget_config_passes_valid_client_session_id_to_token():
         await widget_config(id=widget.widget_id, request=request, db=db)
 
     assert generate_token.call_args.kwargs["session_id"] == "client-session_1234567890"
+
+
+@pytest.mark.asyncio
+async def test_widget_config_keeps_legacy_query_session_id_fallback():
+    widget = FakeWidget()
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+    request.query_params = {"session_id": "client-session_legacy123"}
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token") as generate_token,
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert generate_token.call_args.kwargs["session_id"] == "client-session_legacy123"
 
 
 @pytest.mark.asyncio

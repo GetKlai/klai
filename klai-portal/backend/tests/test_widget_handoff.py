@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
+from app.api.partner import (
+    StartHubSpotHandoffRequest,
+    start_widget_hubspot_handoff,
+    stream_widget_hubspot_handoff_events,
+)
+from app.api.partner_dependencies import PartnerAuthContext
 from app.services.widget_handoff import build_handoff_context_text, record_hubspot_agent_reply
 
 
@@ -13,6 +21,200 @@ class _Result:
 
     def first(self):
         return self._row
+
+
+@dataclass
+class _FakeWidget:
+    id: str = "widget-uuid-1"
+    org_id: int = 42
+    widget_id: str = "wgt_abcdef1234567890abcdef1234567890abcdef12"
+    widget_config: dict = field(
+        default_factory=lambda: {
+            "integrations": {
+                "hubspot": {
+                    "status": "connected",
+                    "channel_account_id": "3307400689",
+                }
+            }
+        }
+    )
+
+
+@dataclass
+class _FakeOrg:
+    id: int = 42
+    slug: str = "getklai"
+
+
+def _widget_auth() -> PartnerAuthContext:
+    return PartnerAuthContext(
+        key_id="wgt_abcdef1234567890abcdef1234567890abcdef12",
+        org_id=42,
+        zitadel_org_id="zitadel-org-123",
+        permissions={"chat": True},
+        kb_access={1: "read"},
+        rate_limit_rpm=60,
+        session_key="session-key-1",
+    )
+
+
+def _widget_request(origin: str = "https://getklai.getklai.com"):
+    request = AsyncMock()
+    request.headers = {"origin": origin}
+    return request
+
+
+class _SessionLocal:
+    def __init__(self, order: list[str], db: AsyncMock):
+        self.order = order
+        self.db = db
+
+    async def __aenter__(self):
+        self.order.append("db_enter")
+        return self.db
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.order.append("db_exit")
+
+
+class _FakeRedis:
+    def __init__(self, order: list[str]):
+        self.order = order
+
+    def pubsub(self):
+        return _FakePubSub(self.order)
+
+
+class _FakePubSub:
+    def __init__(self, order: list[str]):
+        self.order = order
+
+    async def subscribe(self, channel: str) -> None:
+        self.order.append("subscribe")
+
+    async def get_message(self, *, ignore_subscribe_messages: bool, timeout: int):
+        self.order.append("get_message")
+        return None
+
+    async def unsubscribe(self, channel: str | None) -> None:
+        self.order.append("unsubscribe")
+
+    async def aclose(self) -> None:
+        self.order.append("close_pubsub")
+
+
+@pytest.mark.asyncio
+async def test_start_handoff_rejects_non_getklai_tenant() -> None:
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_Result((_FakeWidget(), _FakeOrg(slug="voys"))))
+
+    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+        with pytest.raises(HTTPException) as exc_info:
+            await start_widget_hubspot_handoff(
+                http_request=_widget_request(),
+                request=StartHubSpotHandoffRequest(summary="Help nodig"),
+                auth=_widget_auth(),
+                db=db,
+            )
+
+    assert exc_info.value.status_code == 403
+    start_handoff.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_handoff_rejects_widget_without_hubspot_integration() -> None:
+    db = AsyncMock()
+    widget = _FakeWidget(widget_config={"integrations": {"hubspot": {"status": "disconnected"}}})
+    db.execute = AsyncMock(return_value=_Result((widget, _FakeOrg(slug="getklai"))))
+
+    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+        with pytest.raises(HTTPException) as exc_info:
+            await start_widget_hubspot_handoff(
+                http_request=_widget_request(),
+                request=StartHubSpotHandoffRequest(summary="Help nodig"),
+                auth=_widget_auth(),
+                db=db,
+            )
+
+    assert exc_info.value.status_code == 403
+    start_handoff.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handoff_events_subscribes_before_replay_and_closes_db_before_stream() -> None:
+    order: list[str] = []
+    db = AsyncMock()
+
+    async def fake_get_partner_key(request, db):
+        order.append("auth")
+        return _widget_auth()
+
+    async def fake_require_enabled(*, db, auth, request) -> None:
+        order.append("gate")
+
+    async def fake_get_active_handoff_session_id(*args, **kwargs) -> int:
+        order.append("active")
+        return 123
+
+    async def fake_get_redis_pool():
+        order.append("redis")
+        return _FakeRedis(order)
+
+    async def fake_list_visible_handoff_messages(*args, **kwargs):
+        order.append("replay")
+        return [{"id": 4, "content": "Hallo", "direction": "agent"}]
+
+    with (
+        patch("app.api.partner.AsyncSessionLocal", return_value=_SessionLocal(order, db)),
+        patch("app.api.partner.get_partner_key", side_effect=fake_get_partner_key),
+        patch("app.api.partner._require_hubspot_widget_handoff_enabled", side_effect=fake_require_enabled),
+        patch("app.api.partner.get_active_handoff_session_id", side_effect=fake_get_active_handoff_session_id),
+        patch("app.api.partner.get_redis_pool", side_effect=fake_get_redis_pool),
+        patch("app.api.partner.list_visible_handoff_messages", side_effect=fake_list_visible_handoff_messages),
+    ):
+        response = await stream_widget_hubspot_handoff_events(request=_widget_request(), last_event_id=3)
+
+        assert response.status_code == 200
+        assert order == ["db_enter", "auth", "gate", "active", "db_exit"]
+
+        iterator = response.body_iterator
+        chunk = await anext(iterator)
+        assert b"id: 4" in chunk
+        if hasattr(iterator, "aclose"):
+            await iterator.aclose()
+
+    assert order == [
+        "db_enter",
+        "auth",
+        "gate",
+        "active",
+        "db_exit",
+        "redis",
+        "subscribe",
+        "db_enter",
+        "replay",
+        "db_exit",
+        "unsubscribe",
+        "close_pubsub",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_handoff_rejects_wrong_origin() -> None:
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_Result((_FakeWidget(), _FakeOrg(slug="getklai"))))
+
+    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+        with pytest.raises(HTTPException) as exc_info:
+            await start_widget_hubspot_handoff(
+                http_request=_widget_request("https://voys.getklai.com"),
+                request=StartHubSpotHandoffRequest(summary="Help nodig"),
+                auth=_widget_auth(),
+                db=db,
+            )
+
+    assert exc_info.value.status_code == 403
+    start_handoff.assert_not_awaited()
 
 
 def test_build_handoff_context_text_includes_summary_and_recent_transcript() -> None:

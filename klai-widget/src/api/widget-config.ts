@@ -62,13 +62,15 @@ export async function fetchWidgetConfig(
 
   try {
     const params = new URLSearchParams({ id: widgetId });
+    const headers: Record<string, string> = {};
     if (options.sessionId) {
-      params.set("session_id", options.sessionId);
+      headers["X-Klai-Widget-Session-Id"] = options.sessionId;
     }
     response = await fetch(
       `${WIDGET_CONFIG_BASE_URL}/partner/v1/widget-config?${params.toString()}`,
       {
         method: "GET",
+        headers,
         // No credentials — Origin header sent automatically by browser
         // No Authorization header — wgt_... ID is the public identifier
       }

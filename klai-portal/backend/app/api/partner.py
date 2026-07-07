@@ -30,7 +30,7 @@ from app.api.partner_dependencies import (
     validate_kb_access,
 )
 from app.core.config import settings
-from app.core.database import get_db, set_tenant
+from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.core.permissions import assert_platform_unlocked
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
@@ -1977,13 +1977,63 @@ def _require_widget_auth(auth: PartnerAuthContext) -> None:
         )
 
 
+def _request_origin(request: Request | None) -> str | None:
+    headers = getattr(request, "headers", None)
+    if headers is None or not hasattr(headers, "get"):
+        return None
+    value = headers.get("origin") or headers.get("Origin")
+    return value if isinstance(value, str) and value else None
+
+
+def _hubspot_handoff_forbidden() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"error": {"type": "permission_error", "message": "HubSpot handoff is not enabled for this widget"}},
+    )
+
+
+async def _require_hubspot_widget_handoff_enabled(
+    *,
+    db: AsyncSession,
+    auth: PartnerAuthContext,
+    request: Request | None,
+) -> None:
+    _require_widget_auth(auth)
+    if _request_origin(request) != _HUBSPOT_HANDOFF_DEV_ORIGIN:
+        raise _hubspot_handoff_forbidden()
+
+    result = await db.execute(
+        select(Widget, PortalOrg)
+        .join(PortalOrg, PortalOrg.id == Widget.org_id)
+        .where(
+            Widget.widget_id == str(auth.key_id),
+            Widget.org_id == auth.org_id,
+            Widget.deleted_at.is_(None),
+        )
+    )
+    row = result.first()
+    if row is None:
+        raise _hubspot_handoff_forbidden()
+
+    widget_row = row[0]
+    org = row[1]
+    widget_config_data = widget_row.widget_config or {}
+    if not _hubspot_handoff_enabled_for_widget(
+        org=org,
+        widget_config_data=widget_config_data,
+        origin=_request_origin(request),
+    ):
+        raise _hubspot_handoff_forbidden()
+
+
 @router.post("/widget-handoffs/hubspot/start", response_model=HubSpotHandoffResponse)
 async def start_widget_hubspot_handoff(
+    http_request: Request,
     request: StartHubSpotHandoffRequest,
     auth: PartnerAuthContext = Depends(get_partner_key),
     db: AsyncSession = Depends(get_db),
 ) -> HubSpotHandoffResponse:
-    _require_widget_auth(auth)
+    await _require_hubspot_widget_handoff_enabled(db=db, auth=auth, request=http_request)
     try:
         result = await start_hubspot_handoff(
             db,
@@ -2006,11 +2056,12 @@ async def start_widget_hubspot_handoff(
 
 @router.post("/widget-handoffs/hubspot/messages", response_model=HubSpotHandoffMessageResponse)
 async def send_widget_hubspot_handoff_message(
+    http_request: Request,
     request: SendHubSpotHandoffMessageRequest,
     auth: PartnerAuthContext = Depends(get_partner_key),
     db: AsyncSession = Depends(get_db),
 ) -> HubSpotHandoffMessageResponse:
-    _require_widget_auth(auth)
+    await _require_hubspot_widget_handoff_enabled(db=db, auth=auth, request=http_request)
     try:
         result = await send_handoff_visitor_message(
             db,
@@ -2036,42 +2087,52 @@ async def send_widget_hubspot_handoff_message(
 
 @router.get("/widget-handoffs/hubspot/events")
 async def stream_widget_hubspot_handoff_events(
+    request: Request,
     last_event_id: int = 0,
-    auth: PartnerAuthContext = Depends(get_partner_key),
-    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    _require_widget_auth(auth)
-    handoff_session_id = await get_active_handoff_session_id(
-        db,
-        org_id=auth.org_id,
-        widget_public_id=str(auth.key_id),
-        session_key=auth.session_key or "",
-    )
-    if handoff_session_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"type": "handoff_error", "message": "No active HubSpot handoff"}},
+    async with AsyncSessionLocal() as db:
+        auth = await get_partner_key(request=request, db=db)
+        await _require_hubspot_widget_handoff_enabled(db=db, auth=auth, request=request)
+        handoff_session_id = await get_active_handoff_session_id(
+            db,
+            org_id=auth.org_id,
+            widget_public_id=str(auth.key_id),
+            session_key=auth.session_key or "",
         )
+        if handoff_session_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"type": "handoff_error", "message": "No active HubSpot handoff"}},
+            )
+
+    channel = f"widget_handoff:{handoff_session_id}"
 
     async def _events() -> AsyncGenerator[bytes]:
         seen_id = last_event_id
-        for message in await list_visible_handoff_messages(
-            db,
-            handoff_session_id=handoff_session_id,
-            after_id=last_event_id,
-        ):
-            seen_id = max(seen_id, int(message["id"]))
-            yield f"id: {message['id']}\nevent: message\ndata: {json.dumps(message)}\n\n".encode()
-
         redis = await get_redis_pool()
-        if redis is None:
-            while True:
-                await asyncio.sleep(15)
-                yield b": heartbeat\n\n"
-
-        pubsub = redis.pubsub()
-        await pubsub.subscribe(f"widget_handoff:{handoff_session_id}")
+        pubsub: Any | None = None
         try:
+            if redis is not None:
+                pubsub = redis.pubsub()
+                await pubsub.subscribe(channel)
+
+            async with AsyncSessionLocal() as replay_db:
+                replay_messages = await list_visible_handoff_messages(
+                    replay_db,
+                    handoff_session_id=handoff_session_id,
+                    after_id=last_event_id,
+                )
+
+            for message in replay_messages:
+                seen_id = max(seen_id, int(message["id"]))
+                yield f"id: {message['id']}\nevent: message\ndata: {json.dumps(message)}\n\n".encode()
+
+            if pubsub is None:
+                while True:
+                    await asyncio.sleep(15)
+                    yield b": heartbeat\n\n"
+
+            assert pubsub is not None
             while True:
                 event = await pubsub.get_message(ignore_subscribe_messages=True, timeout=15)
                 if event is None:
@@ -2091,8 +2152,9 @@ async def stream_widget_hubspot_handoff_events(
                     seen_id = event_id
                 yield f"id: {event_id}\nevent: message\ndata: {json.dumps(payload)}\n\n".encode()
         finally:
-            await pubsub.unsubscribe(f"widget_handoff:{handoff_session_id}")
-            await pubsub.aclose()
+            if pubsub is not None:
+                await pubsub.unsubscribe(channel)
+                await pubsub.aclose()
 
     return StreamingResponse(_events(), media_type="text/event-stream")
 
@@ -2276,7 +2338,7 @@ def _widget_cors_headers(origin: str, *, preflight: bool) -> dict[str, str]:
     }
     if preflight:
         headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-        headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Klai-Widget-Session-Id"
         headers["Access-Control-Max-Age"] = "86400"
     return headers
 
@@ -2284,6 +2346,11 @@ def _widget_cors_headers(origin: str, *, preflight: bool) -> dict[str, str]:
 def _widget_client_session_id(request: Request | None) -> str | None:
     if request is None:
         return None
+    headers = getattr(request, "headers", None)
+    if headers is not None and hasattr(headers, "get"):
+        header_value = headers.get("x-klai-widget-session-id") or headers.get("X-Klai-Widget-Session-Id")
+        if isinstance(header_value, str) and header_value:
+            return header_value if _WIDGET_CLIENT_SESSION_RE.fullmatch(header_value) else None
     query_params = getattr(request, "query_params", None)
     if query_params is None or not hasattr(query_params, "get"):
         return None

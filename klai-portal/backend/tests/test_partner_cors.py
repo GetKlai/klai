@@ -157,9 +157,11 @@ async def test_partner_cors_preflight_no_credentials() -> None:
 
     acao = response.headers.get("access-control-allow-origin", "")
     acac = response.headers.get("access-control-allow-credentials", "")
+    allow_headers = response.headers.get("access-control-allow-headers", "")
 
     assert acao == "https://customer.example", f"ACAO must echo origin in preflight, got {acao!r} (AC-9 preflight)"
     assert acac.lower() != "true", f"ACAC must NOT be true in preflight, got {acac!r} (AC-9 / REQ-2.2)"
+    assert "x-klai-widget-session-id" in allow_headers.lower()
 
 
 # ---------------------------------------------------------------------------
