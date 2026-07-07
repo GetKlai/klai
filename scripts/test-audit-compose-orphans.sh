@@ -23,8 +23,10 @@ FAIL=0
 assert() {
     local desc="$1" expected_exit="$2" compose="$3" caddy="$4"
     local actual
-    actual=$(AUDIT_COMPOSE_FILE="$compose" AUDIT_CADDYFILE="$caddy" bash "$AUDIT" 2>&1 || true)
+    set +e
+    actual=$(AUDIT_COMPOSE_FILE="$compose" AUDIT_CADDYFILE="$caddy" bash "$AUDIT" 2>&1)
     local exit_code=$?
+    set -e
     if [ "$exit_code" = "$expected_exit" ]; then
         echo "OK   ($exit_code) $desc"
         PASS=$((PASS + 1))

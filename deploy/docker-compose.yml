@@ -58,7 +58,6 @@ volumes:
   grafana-data:
   gitea-data:
   qdrant-data:
-  vexa-recordings-data:
   vexa-redis-data:
   scribe-audio-data:
   runtime-api-docker-socket:   # SPEC-SEC-021 socat bridge socket (runtime-api <-> docker-socket-proxy)

@@ -179,6 +179,7 @@ secret-*.*
 # ===========================================
 # Local-Only Files (never sync via git pull)
 # ===========================================
+.context/
 .moai/status_line.sh
 .moai/memory/
 .moai/worktrees/

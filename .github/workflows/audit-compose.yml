@@ -6,10 +6,12 @@ on:
       - 'deploy/docker-compose.yml'
       - 'deploy/caddy/Caddyfile'
       - 'deploy/volume-mounts.yaml'
+      - 'deploy/tests/**'
       - 'scripts/audit-compose-volumes.sh'
       - 'scripts/audit-compose-orphans.sh'
       - 'scripts/test-audit-compose.sh'
       - 'scripts/test-audit-compose-orphans.sh'
+      - 'klai-scribe/scribe-api/app/core/config.py'
       - '.github/workflows/audit-compose.yml'
   push:
     branches: [main]
@@ -17,10 +19,12 @@ on:
       - 'deploy/docker-compose.yml'
       - 'deploy/caddy/Caddyfile'
       - 'deploy/volume-mounts.yaml'
+      - 'deploy/tests/**'
       - 'scripts/audit-compose-volumes.sh'
       - 'scripts/audit-compose-orphans.sh'
       - 'scripts/test-audit-compose.sh'
       - 'scripts/test-audit-compose-orphans.sh'
+      - 'klai-scribe/scribe-api/app/core/config.py'
 
 jobs:
   audit:
@@ -46,8 +50,13 @@ jobs:
           yq --version
           jq --version
 
+      - uses: astral-sh/setup-uv@v7
+
       - name: Run volume audit
         run: bash scripts/audit-compose-volumes.sh
+
+      - name: Run deploy contract tests
+        run: uv run --with pytest --with pyyaml pytest deploy/tests -q
 
       - name: Volume regression test — bug must be caught
         run: bash scripts/test-audit-compose.sh
