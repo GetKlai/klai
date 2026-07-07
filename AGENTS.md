@@ -17,6 +17,11 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
 - You may NOT claim "fixed / done / deployed" without evidence per claim.
   "Looks correct" / "should work" / "reviewed the code" is not evidence — it
   scores zero. Prove it, don't assert it.
+- If the user asks to ship, merge, push, or get work live on `main`, do not stop
+  at an open PR. Either get the intended commit reachable from `origin/main` and
+  verify main CI/deploy/E2E/live health, or report the exact blocker. Production
+  host-specific proof steps live in the private `klai-infra` runbook
+  `docs/runbooks/ship-public-klai-to-main.md`.
 
 ## Always-on engineering discipline
 
