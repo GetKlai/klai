@@ -72,6 +72,7 @@ CADDY_WHITELIST=(
     '^admin-api$'                # Vexa internal
     '^meeting-api$'              # Vexa internal
     '^runtime-api$'              # Vexa internal
+    '^portal-api-dev$'           # protected dev environment outside prod compose
 )
 
 is_whitelisted() {
@@ -121,7 +122,7 @@ if [[ -f "$CADDYFILE" ]]; then
                 if (t ~ /^@/) continue       # named matcher
                 if (t ~ /^-/) continue       # flag
                 if (t ~ /^\{/) continue      # caddy placeholder
-                sub(/^https?:\/\//, "", t)   # strip scheme
+                sub(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, "", t)   # strip scheme
                 sub(/\/.*$/, "", t)          # strip path
                 sub(/:.*$/, "", t)           # strip port
                 if (length(t) > 0) print t

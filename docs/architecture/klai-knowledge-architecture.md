@@ -1617,7 +1617,7 @@ SearXNG's privacy posture is fine — self-hosted, queries routed via server IP,
 
 ### 13.9 Whisper/transcription → Knowledge pipeline [OPEN QUESTION]
 
-`whisper-server` is deployed on core-01 and used by the klai-portal Scribe/Transcribe features (audio → transcript). These transcripts are a natural feed into the helpdesk extraction adapter (§4.3). The connection between the transcription pipeline and the Knowledge ingestion pipeline is not yet designed.
+Scribe/Transcribe features use the speech-to-text backend configured through `WHISPER_SERVER_URL` / Vexa `TRANSCRIPTION_SERVICE_URL` (audio → transcript). These transcripts are a natural feed into the helpdesk extraction adapter (§4.3). The connection between the transcription pipeline and the Knowledge ingestion pipeline is not yet designed.
 
 **Open question:** Does the transcription service write transcripts to a store that the Knowledge ingestion pipeline can poll, or does it POST directly to the Unified Ingest API? The answer depends on whether the transcript pipeline is batch (end-of-call) or streaming. Design this interface before building the helpdesk adapter.
 
