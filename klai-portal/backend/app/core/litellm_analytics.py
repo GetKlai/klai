@@ -33,7 +33,7 @@ def _get_engine() -> AsyncEngine:
 async def execute_litellm_analytics(
     sql: str,
     params: Mapping[str, Any] | None = None,
-) -> list[Mapping[str, Any]]:
+) -> list[dict[str, Any]]:
     """Run one read-only LiteLLM analytics query.
 
     The configured database role is expected to have SELECT only on
@@ -44,4 +44,4 @@ async def execute_litellm_analytics(
 
     async with _get_engine().connect() as conn:
         result = await conn.execute(text(sql), dict(params or {}))
-        return list(result.mappings().all())
+        return [dict(row) for row in result.mappings().all()]
