@@ -8,6 +8,7 @@ import pytest
 
 from knowledge_ingest.db import _parse_dsn
 from knowledge_ingest.routes.ingest import _parse_knowledge_fields
+from knowledge_ingest.source_profiles import resolve_source_knowledge_profile
 
 _SENTINEL = 253402300800
 
@@ -30,6 +31,21 @@ class TestParseKnowledgeFieldsDefaults:
 
     def test_source_type_connector_defaults_synthesis_depth_0(self):
         result = _parse_knowledge_fields("No frontmatter.", "connector")
+        assert result["synthesis_depth"] == 0
+
+    def test_source_profile_allowed_modes_do_not_assign_assertion_mode(self):
+        profile = resolve_source_knowledge_profile(
+            source_type="connector",
+            content_type="meeting_transcript",
+            allowed_assertion_modes=["quoted"],
+        )
+        result = _parse_knowledge_fields(
+            "No frontmatter.",
+            "connector",
+            source_profile=profile,
+        )
+
+        assert result["assertion_mode"] == "unknown"
         assert result["synthesis_depth"] == 0
 
     def test_empty_frontmatter_returns_defaults(self):

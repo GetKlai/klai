@@ -18,6 +18,7 @@ Identity:  X-User-ID, X-Org-ID, X-Org-Slug, Authorization: Bearer <user_jwt>
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import os
 import re
@@ -543,12 +544,14 @@ async def _save_to_ingest(
         "org_id": org_id,
         "kb_slug": kb_slug,
         "path": title,
-        "content": content.strip(),
-        "metadata": {
-            "tags": tags[:5],
-            "assertion_mode": assertion_mode,
-            **({"source_note": source_note} if source_note else {}),
-        },
+        "content": _content_with_knowledge_frontmatter(
+            content=content,
+            assertion_mode=assertion_mode,
+            tags=tags,
+            source_note=source_note,
+        ),
+        "source_type": "mcp",
+        "content_type": "kb_article",
     }
     if user_id is not None:
         payload["user_id"] = user_id
@@ -568,6 +571,35 @@ async def _save_to_ingest(
         return False
 
     return resp.status_code in (200, 201, 202)
+
+
+def _content_with_knowledge_frontmatter(
+    *,
+    content: str,
+    assertion_mode: str,
+    tags: list[str],
+    source_note: str | None,
+) -> str:
+    body = _strip_existing_frontmatter(content.strip())
+    frontmatter = [
+        "---",
+        f"assertion_mode: {assertion_mode}",
+        f"tags: {json.dumps(tags[:5])}",
+    ]
+    if source_note:
+        frontmatter.append(f"source_note: {json.dumps(source_note)}")
+    frontmatter.append("---")
+    frontmatter.append(body)
+    return "\n".join(frontmatter)
+
+
+def _strip_existing_frontmatter(content: str) -> str:
+    if not content.startswith("---"):
+        return content
+    end = content.find("\n---", 3)
+    if end == -1:
+        return content
+    return content[end + 4 :].lstrip("\r\n")
 
 
 def _validate_page_path(page_path: str) -> None:

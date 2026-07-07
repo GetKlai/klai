@@ -97,9 +97,11 @@ class TestParseKnowledgeFieldsNewTaxonomy:
 
 
 class TestQdrantStoreAssertionModeAllowed:
-    """assertion_mode must be in _ALLOWED_METADATA_FIELDS (already present, verify kept)."""
+    """Only assigned assertion_mode is returned as retrieval metadata."""
 
     def test_assertion_mode_in_allowed_fields(self):
         from knowledge_ingest.qdrant_store import _ALLOWED_METADATA_FIELDS
 
         assert "assertion_mode" in _ALLOWED_METADATA_FIELDS
+        assert "allowed_assertion_modes" not in _ALLOWED_METADATA_FIELDS
+        assert "source_knowledge_profile" not in _ALLOWED_METADATA_FIELDS

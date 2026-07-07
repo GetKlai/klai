@@ -182,3 +182,71 @@ class TestMissingAssertionModeDefaultsToUnknown:
             )
 
         assert captured_mode.get("value") == "unknown"
+
+
+class TestIngestPayload:
+    @pytest.mark.asyncio
+    async def test_save_to_ingest_sends_frontmatter_without_capability_hint(self, _patch_env):
+        from main import _save_to_ingest
+
+        captured = {}
+
+        class _Response:
+            status_code = 201
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def post(self, url, json, headers):
+                captured["url"] = url
+                captured["json"] = json
+                captured["headers"] = headers
+                return _Response()
+
+        with patch("main.httpx.AsyncClient", return_value=_Client()):
+            ok = await _save_to_ingest(
+                org_id="org1",
+                kb_slug="personal-user1",
+                title="Test",
+                content="Remember this",
+                assertion_mode="belief",
+                tags=["product", "roadmap"],
+                source_note="user said so",
+                user_id="user1",
+            )
+
+        assert ok is True
+        payload = captured["json"]
+        assert payload["source_type"] == "mcp"
+        assert payload["content_type"] == "kb_article"
+        assert "allowed_assertion_modes" not in payload
+        assert payload["user_id"] == "user1"
+        assert payload["content"].startswith("---\nassertion_mode: belief\n")
+        assert 'tags: ["product", "roadmap"]' in payload["content"]
+        assert 'source_note: "user said so"' in payload["content"]
+
+    def test_content_frontmatter_is_not_nested(self, _patch_env):
+        from main import _content_with_knowledge_frontmatter
+
+        content = """---
+title: Existing
+tags: [old]
+---
+# Heading
+Body"""
+
+        result = _content_with_knowledge_frontmatter(
+            content=content,
+            assertion_mode="factual",
+            tags=["new"],
+            source_note=None,
+        )
+
+        assert result.count("\n---") == 1
+        assert result.startswith("---\nassertion_mode: factual\n")
+        assert "title: Existing" not in result
+        assert "# Heading\nBody" in result

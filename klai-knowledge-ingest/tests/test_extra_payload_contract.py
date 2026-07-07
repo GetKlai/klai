@@ -85,6 +85,8 @@ REQUIRED_BASE_KEYS: frozenset[str] = frozenset(
         "artifact_id",
         "content_type",
         "assertion_mode",
+        "allowed_assertion_modes",
+        "source_knowledge_profile",
         "belief_time_start",
         "belief_time_end",
         "source_label",
@@ -334,6 +336,15 @@ async def test_upload_path_extra_payload_carries_required_keys():
         f"producer (knowledge_ingest/routes/ingest.py) AND this test "
         f"together if you intentionally drop a field."
     )
+    assert extra_payload["source_knowledge_profile"] == "upload:kb_article"
+    assert extra_payload["allowed_assertion_modes"] == [
+        "factual",
+        "belief",
+        "hypothesis",
+        "procedural",
+        "quoted",
+        "unknown",
+    ]
 
 
 @pytest.mark.asyncio
@@ -382,7 +393,12 @@ async def test_extra_payload_visibility_is_authoritative_from_kb_config():
         content="# Hello\nWorld",
         source_type="upload",
         content_type="kb_article",
-        extra={"visibility": "public"},  # adversarial — must NOT win
+        extra={
+            "visibility": "public",  # adversarial — must NOT win
+            "assertion_mode": "factual",
+            "allowed_assertion_modes": ["factual"],
+            "source_knowledge_profile": "adapter-forged",
+        },
     )
     proc_app = _MockProcApp()
 
@@ -396,6 +412,16 @@ async def test_extra_payload_visibility_is_authoritative_from_kb_config():
         f"connector adapter accidentally widening visibility on an "
         f"internal KB."
     )
+    assert extra_payload["assertion_mode"] == "unknown"
+    assert extra_payload["allowed_assertion_modes"] == [
+        "factual",
+        "belief",
+        "hypothesis",
+        "procedural",
+        "quoted",
+        "unknown",
+    ]
+    assert extra_payload["source_knowledge_profile"] == "upload:kb_article"
 
 
 @pytest.mark.asyncio

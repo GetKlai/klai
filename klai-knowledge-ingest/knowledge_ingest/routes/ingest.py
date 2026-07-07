@@ -54,6 +54,10 @@ from knowledge_ingest.models import (
     UpdateKBVisibilityRequest,
 )
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
+from knowledge_ingest.source_profiles import (
+    SourceKnowledgeProfile,
+    resolve_source_knowledge_profile,
+)
 from knowledge_ingest.taxonomy_classifier import classify_document
 
 _SENTINEL = 253402300800  # 9999-12-31
@@ -179,32 +183,31 @@ def _parse_derived_from(value: object) -> list[str]:
 def _parse_knowledge_fields(
     content: str,
     source_type: str | None,
-    allowed_assertion_modes: list[str] | None = None,
+    source_profile: SourceKnowledgeProfile | None = None,
 ) -> dict:
     """Extract knowledge model fields from YAML frontmatter. Returns defaults if absent.
 
-    If ``allowed_assertion_modes`` is provided (connector-level hint) and the content
-    has no frontmatter assertion_mode, the hint is applied:
-    - Exactly one valid mode in the list → use it as default.
-    - Multiple modes → keep "unknown" (too ambiguous to auto-assign).
-    - Invalid values in the list are silently ignored.
+    Source profiles describe what a source can contain; they do not assign a
+    per-document assertion mode. Without frontmatter, assertion_mode stays
+    "unknown".
     """
+    default_provenance_type = "observed"
+    default_confidence = None
+    default_synthesis_depth = 4 if source_type == "docs" else 0
+    if source_profile is not None:
+        default_provenance_type = source_profile.default_provenance_type
+        default_confidence = source_profile.default_confidence
+        default_synthesis_depth = source_profile.default_synthesis_depth
+
     defaults: dict = {
-        "provenance_type": "observed",
+        "provenance_type": default_provenance_type,
         "assertion_mode": "unknown",
-        "synthesis_depth": 4 if source_type == "docs" else 0,
-        "confidence": None,
+        "synthesis_depth": default_synthesis_depth,
+        "confidence": default_confidence,
         "belief_time_start": int(time.time()),
         "belief_time_end": _SENTINEL,
         "derived_from": [],
     }
-
-    # Apply connector-level hint before frontmatter: hint sets the default,
-    # frontmatter can always override it.
-    if allowed_assertion_modes:
-        valid_hints = [m for m in allowed_assertion_modes if m in _VALID_ASSERTION_MODES]
-        if len(valid_hints) == 1:
-            defaults["assertion_mode"] = valid_hints[0]
 
     if not content.startswith("---"):
         return defaults
@@ -435,9 +438,18 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     vectors = await embedder.embed(texts)
 
     title = _extract_title(indexable_content, req.path, req.title)
-    kf = _parse_knowledge_fields(indexable_content, req.source_type, req.allowed_assertion_modes)
-
-    # Apply synthesis_depth override from adapter if provided
+    source_profile = resolve_source_knowledge_profile(
+        source_type=req.source_type,
+        content_type=req.content_type,
+        connector_type=req.connector_type,
+        allowed_assertion_modes=req.allowed_assertion_modes,
+        synthesis_depth=req.synthesis_depth,
+    )
+    kf = _parse_knowledge_fields(
+        indexable_content,
+        req.source_type,
+        source_profile=source_profile,
+    )
     if req.synthesis_depth is not None:
         kf["synthesis_depth"] = req.synthesis_depth
 
@@ -541,6 +553,8 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         pg_extra["source_type"] = req.source_type
     if req.source_ref:
         pg_extra["source_ref"] = req.source_ref
+    pg_extra["source_knowledge_profile"] = source_profile.profile_name
+    pg_extra["allowed_assertion_modes"] = list(source_profile.allowed_assertion_modes)
     # SPEC-RAG-REBUILD-KB-001 follow-up: persist the document body on
     # the artifact row so rebuild_kb can replay against the original
     # source instead of reconstructing from Qdrant chunks. Bounded by
@@ -640,6 +654,10 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # Merge adapter extra metadata
     if req.extra:
         extra_payload.update(req.extra)
+    # Canonical evidence/profile fields are derived by ingest, not adapter extra.
+    extra_payload["assertion_mode"] = kf["assertion_mode"]
+    extra_payload["source_knowledge_profile"] = source_profile.profile_name
+    extra_payload["allowed_assertion_modes"] = list(source_profile.allowed_assertion_modes)
     # Adapter extras are untrusted for canonical display title. Portal and
     # connector callers pass the user-facing title explicitly on the request.
     extra_payload["title"] = title
