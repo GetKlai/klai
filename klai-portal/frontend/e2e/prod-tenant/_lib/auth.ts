@@ -6,7 +6,7 @@
  *
  * docs/testing/test-suite-plan.md §4.2 + §4.3.
  */
-import { authenticator } from 'otplib'
+import { generate } from 'otplib'
 import type { Page } from '@playwright/test'
 import { expect } from '@playwright/test'
 
@@ -56,7 +56,7 @@ export async function loginAsE2EBot(page: Page): Promise<void> {
     timeout: 10_000,
   })
 
-  const code = authenticator.generate(totpSecret)
+  const code = await generate({ secret: totpSecret })
   // Try both common selectors for the OTP input.
   const totpInput = page.locator('input[name="totp"], input[autocomplete="one-time-code"]').first()
   await totpInput.fill(code)
