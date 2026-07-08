@@ -1321,3 +1321,68 @@ def test_strip_removes_agent_activity_heading_block_nl_en() -> None:
         cleaned = strip_model_citation_artifacts(text)
         assert cleaned == "Het antwoord blijft staan.", f"heading={heading!r} -> {cleaned!r}"
         assert "Knowledge base queried" not in cleaned
+
+
+def test_strip_removes_atx_heading_footer_imitation() -> None:
+    """SPEC-CHAT-SOURCE-DISCLOSURE-001 review finding 1.
+
+    A model that imitates the footer with markdown ATX headings (## Sources /
+    ## Agent activity) previously bypassed both strippers while the client
+    disclosure script wraps H1-H6 — promoting a fabricated footer to a
+    native-looking panel. ATX variants must strip like bold ones.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    for sources, activity in (
+        ("## Sources", "## Agent activity"),
+        ("### Bronnen", "### Agent activiteit"),
+        ("## **Sources**", "## **Agent activity**"),
+    ):
+        text = (
+            f"The answer is 42.\n\n{sources}\n"
+            "- Internal pricing memo, section 3\n\n"
+            f"{activity}\n"
+            "- Mode: Strict, knowledge base only."
+        )
+        cleaned = strip_model_citation_artifacts(text)
+        assert cleaned == "The answer is 42.", f"{sources!r} -> {cleaned!r}"
+
+
+def test_strip_keeps_legitimate_references_prose_section() -> None:
+    """SPEC-CHAT-SOURCE-DISCLOSURE-001 review finding 2.
+
+    A drafted document with a plain "References:" heading followed by prose is
+    real content, not a footer imitation. Only list-shaped sections (or bold
+    headings mirroring our exact emission shape) may be stripped.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "Per your request, the report ends with:\n\n"
+        "References:\n"
+        "Smith found X in the 2021 survey.\n"
+        "Jones confirmed Y a year later.\n\n"
+        "Let me know if you want changes."
+    )
+    cleaned = strip_model_citation_artifacts(text)
+    assert "Smith found X in the 2021 survey." in cleaned
+    assert "Jones confirmed Y a year later." in cleaned
+
+
+def test_strip_keeps_legitimate_agent_activity_explainer() -> None:
+    """SPEC-CHAT-SOURCE-DISCLOSURE-001 review finding 2.
+
+    An answer explaining the "Agent activity" panel writes that heading with
+    prose below it. That section is content and must survive the stripper.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "The dashboard has three tabs.\n\n"
+        "Agent activity\n"
+        "This tab shows each retrieval step the agent performed.\n\n"
+        "Settings\n"
+        "This tab configures the agent."
+    )
+    cleaned = strip_model_citation_artifacts(text)
+    assert "This tab shows each retrieval step the agent performed." in cleaned

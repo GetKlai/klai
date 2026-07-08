@@ -18,6 +18,7 @@ issue_number: 0
 | 0.1.0 | 2026-07-08 | Eerste draft n.a.v. de Engelse-footer-bug (share aZIY-N3YZSqGHh3qsrcs1) |
 | 0.2.0 | 2026-07-08 | REQ-DISC-06 reproductie-notitie: flush-pad vereist géén extra fix (zie onder). |
 | 0.3.0 | 2026-07-08 | Fase 3 herzien na architectuur-vondst (`stream.cjs` + LibreChat-rendering). Marker-rename/footer-reductie descoped; taal-neutraal client-script i.p.v. marker-driven. Zie "Fase 3 architectuurbesluit". |
+| 0.4.0 | 2026-07-08 | Review-hardening (adversarial review): (1) ATX-heading-imitatie (`## Sources`) wordt nu door beide strippers verwijderd; (2) plain headings gevolgd door proza (legitieme "References:"/"Agent activity"-secties) worden niet langer over-gestript — footer-skip vereist bold of lijst-vormige body; (3) history-stripper anchort op de LAATSTE activity-heading met footer-vormige tail (fail-open bij proza); (4) canary asserteert byte-identiteit van beide v9-blokken; (5) nieuwe CI-workflow `librechat-tests.yml` draait de volledige `deploy/librechat/tests/*.test.cjs`-suite op PR's. Rehype-raw-aanname geverifieerd tegen upstream LibreChat v0.8.6 (`Markdown.tsx`: alleen rehypeKatex+rehypeHighlight). |
 
 ## Reproductie-notitie (REQ-DISC-06, 2026-07-08)
 

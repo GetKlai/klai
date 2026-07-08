@@ -142,6 +142,21 @@ function assertEntrypointIsNullSafe(fileName, source) {
 assertEntrypointIsNullSafe('deploy/librechat/getklai/entrypoint.sh', entrypoint);
 assertEntrypointIsNullSafe('deploy/librechat/klai-entrypoint.sh', globalEntrypoint);
 
+// The disclosure style+script block is duplicated in both entrypoints; any
+// edit to one and not the other drifts silently. Enforce byte-identity.
+function extractDisclosureBlock(fileName, source) {
+  const match = source.match(
+    /<style id="klai-kb-disclosure-style">[\s\S]*?<\/script>/,
+  );
+  assert.ok(match, `${fileName}: disclosure block not found`);
+  return match[0];
+}
+assert.equal(
+  extractDisclosureBlock('deploy/librechat/getklai/entrypoint.sh', entrypoint),
+  extractDisclosureBlock('deploy/librechat/klai-entrypoint.sh', globalEntrypoint),
+  'disclosure blocks drifted between getklai/entrypoint.sh and klai-entrypoint.sh',
+);
+
 // SPEC-CHAT-SOURCE-DISCLOSURE-001 Fase 3: the v9 disclosure script must render
 // panels from a footer in BOTH nl and en, with count labels keyed on
 // navigator.language. Runs the injected script against a minimal fake DOM
