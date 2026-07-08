@@ -58,10 +58,7 @@ def _find_route_by_path(path: str):
             for r in app.routes
             for child_path in (
                 [getattr(r, "path", "")]
-                + [
-                    getattr(child, "path", "")
-                    for child in getattr(getattr(r, "original_router", None), "routes", [])
-                ]
+                + [getattr(child, "path", "") for child in getattr(getattr(r, "original_router", None), "routes", [])]
             )
             if "widget" in child_path
         }
