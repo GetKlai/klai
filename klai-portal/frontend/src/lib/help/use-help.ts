@@ -44,7 +44,7 @@ export function useHelp() {
             destroyDriver(driverRef.current)
             driverRef.current = createDriver()
             driverRef.current.highlight({
-              element: el as HTMLElement,
+              element: el,
               popover: {
                 title: step.title(),
                 description: step.description(),

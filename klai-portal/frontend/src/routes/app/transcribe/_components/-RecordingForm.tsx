@@ -64,7 +64,7 @@ export function RecordingForm({
     } catch {
       setMicPermission('denied')
       try {
-        const status = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+        const status = await navigator.permissions.query({ name: 'microphone' })
         setMicBlocked(status.state === 'denied')
       } catch {
         // Permissions API unavailable, so the UI falls back to retry.

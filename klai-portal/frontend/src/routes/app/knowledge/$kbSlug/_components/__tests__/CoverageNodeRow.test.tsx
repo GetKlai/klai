@@ -184,10 +184,11 @@ describe('CoverageNodeRow - delete-confirm', () => {
     expect(props.onStartDelete).toHaveBeenCalledTimes(1)
   })
 
-  it('shows confirm + cancel controls when isConfirmingDelete is true; trash icon hidden', () => {
+  it('shows confirm + cancel controls when isConfirmingDelete is true; trash icon spacer retained', () => {
     render(<CoverageNodeRow node={node()} {...defaultProps()} isConfirmingDelete />)
-    // The icon-button trash is gone; only the destructive confirm Button text remains.
-    expect(screen.queryByLabelText('Delete')).toBeNull()
+    // InlineDeleteConfirm keeps the original icon buttons in the DOM as
+    // invisible spacers to avoid row layout shift.
+    expect(screen.getAllByRole('button', { name: 'Delete' }).length).toBe(2)
     expect(screen.getByText('Delete')).toBeDefined()
     expect(screen.getByText('Cancel')).toBeDefined()
   })

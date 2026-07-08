@@ -317,7 +317,12 @@ async def _totp_pending_get(token: str) -> dict[str, str] | None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication unavailable, please retry",
         ) from None
-    return data or None
+    if not data:
+        return None
+    return {
+        key.decode() if isinstance(key, bytes) else key: value.decode() if isinstance(value, bytes) else value
+        for key, value in data.items()
+    }
 
 
 async def _totp_pending_incr_failures(token: str) -> int:

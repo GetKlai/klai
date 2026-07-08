@@ -65,7 +65,7 @@ function NewApiKeyPage() {
         ? prev.kb_access
         : prev.kb_access.map((row) =>
             row.access_level === 'read_write'
-              ? { ...row, access_level: 'read' as AccessLevel }
+              ? { ...row, access_level: 'read' }
               : row,
           ),
     }))

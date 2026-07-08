@@ -134,7 +134,7 @@ describe('useProtectedRoute', () => {
       search: '?thread=1',
       hash: '#reply',
       replace,
-    } as unknown as Location)
+    })
     mockQuery = {
       user: userFixture({ workspace_url: 'https://voys.getklai.com' }),
       isPending: false,
@@ -154,7 +154,7 @@ describe('useProtectedRoute', () => {
       search: '',
       hash: '',
       replace,
-    } as unknown as Location)
+    })
     mockQuery = {
       user: userFixture({ workspace_url: 'https://voys.getklai.com' }),
       isPending: false,
@@ -168,7 +168,7 @@ describe('useProtectedRoute', () => {
 
   it('redirects to /setup/mfa when requires_2fa_setup is true', () => {
     const replace = vi.fn()
-    vi.stubGlobal('location', { pathname: '/app', replace } as unknown as Location)
+    vi.stubGlobal('location', { pathname: '/app', replace })
     mockQuery = { user: userFixture({ requires_2fa_setup: true }), isPending: false }
     const { result } = renderHook(() => useProtectedRoute(), {
       wrapper: wrapperFor(makeAuth({ isLoading: false, isAuthenticated: true })),
@@ -179,7 +179,7 @@ describe('useProtectedRoute', () => {
 
   it('allows the setup route to render when requires_2fa_setup is true', () => {
     const replace = vi.fn()
-    vi.stubGlobal('location', { pathname: '/setup/mfa', replace } as unknown as Location)
+    vi.stubGlobal('location', { pathname: '/setup/mfa', replace })
     mockQuery = { user: userFixture({ requires_2fa_setup: true }), isPending: false }
     const { result } = renderHook(() => useProtectedRoute(), {
       wrapper: wrapperFor(makeAuth({ isLoading: false, isAuthenticated: true })),

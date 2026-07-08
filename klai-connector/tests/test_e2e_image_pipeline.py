@@ -17,6 +17,8 @@ from klai_image_storage import (
 from klai_image_storage import (
     download_and_upload_adapter_images as download_and_upload_images,
 )
+from klai_image_storage import pipeline as image_pipeline
+from klai_image_storage.url_guard import ValidatedURL
 
 from app.adapters.base import DocumentRef, ImageRef
 from app.adapters.notion import _extract_image_blocks
@@ -49,11 +51,31 @@ def _mock_image_store() -> MagicMock:
 def _mock_http_ok(content: bytes = b"") -> AsyncMock:
     """Create a mock httpx client that returns 200 with given content."""
     client = AsyncMock()
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.content = content or _png_bytes()
-    client.get = AsyncMock(return_value=resp)
+
+    async def _get(url: str):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = content or (_png_bytes() + url.encode())
+        return resp
+
+    client.get = AsyncMock(side_effect=_get)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _mock_image_url_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep these E2E tests network-free while still exercising the pipeline."""
+
+    async def _validate(url: str, *, dns_timeout: float = 2.0) -> ValidatedURL:
+        hostname = url.split("://", 1)[1].split("/", 1)[0].split("?", 1)[0]
+        return ValidatedURL(
+            url=url,
+            hostname=hostname,
+            pinned_ips=frozenset({"203.0.113.10"}),
+            preferred_ip="203.0.113.10",
+        )
+
+    monkeypatch.setattr(image_pipeline, "validate_image_url", _validate)
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +386,7 @@ class TestIngestPayloadE2E:
             image_urls=["https://garage/org-1/img1.png", "https://garage/org-1/img2.jpg"],
         )
 
-        assert payload["org_id"] == "org-1"
+        assert payload["org_id"] == "100000000000000001"
         assert payload["extra"]["source_url"] == "https://github.com/acme/repo/blob/main/guide.md"
         assert payload["extra"]["image_urls"] == ["https://garage/org-1/img1.png", "https://garage/org-1/img2.jpg"]
         assert "content" in payload

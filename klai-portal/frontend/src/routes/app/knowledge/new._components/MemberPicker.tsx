@@ -82,7 +82,7 @@ export function MemberPicker({
           ref={groupRef}
           onFocusCapture={() => setGroupFocused(true)}
           onBlurCapture={(e) => {
-            if (!groupRef.current?.contains(e.relatedTarget as Node)) {
+            if (!groupRef.current?.contains(e.relatedTarget)) {
               setGroupFocused(false)
             }
           }}
@@ -155,7 +155,7 @@ export function MemberPicker({
           ref={userRef}
           onFocusCapture={() => setUserFocused(true)}
           onBlurCapture={(e) => {
-            if (!userRef.current?.contains(e.relatedTarget as Node)) {
+            if (!userRef.current?.contains(e.relatedTarget)) {
               setUserFocused(false)
             }
           }}

@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
-import type { AccessLevel, ApiKeyDetailResponse } from '../../-types'
+import type { ApiKeyDetailResponse } from '../../-types'
 import { useUpdateApiKey } from '../../-hooks'
 import { KbAccessEditor } from '../KbAccessEditor'
 
@@ -47,7 +47,7 @@ export function KnowledgeBasesTab({ apiKey }: Props) {
         </p>
         <KbAccessEditor
           value={kbAccess}
-          onChange={(v) => setKbAccess(v as { kb_id: number; access_level: AccessLevel }[])}
+          onChange={(v) => setKbAccess(v)}
           knowledgeAppendEnabled={apiKey.permissions.knowledge_append}
         />
       </section>

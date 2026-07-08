@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
 import { useEffect } from 'react'
-import { useLocale, type Locale } from '@/lib/locale'
+import { useLocale } from '@/lib/locale'
 
 const VALID_LOCALES = ['nl', 'en'] as const
 
@@ -19,7 +19,7 @@ function LocaleLayout() {
 
   useEffect(() => {
     if ((paramLocale === 'nl' || paramLocale === 'en') && paramLocale !== locale) {
-      switchLocale(paramLocale as Locale)
+      switchLocale(paramLocale)
     }
   }, [paramLocale, locale, switchLocale])
 

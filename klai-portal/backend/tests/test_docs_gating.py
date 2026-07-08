@@ -97,7 +97,7 @@ def test_settings_allows_debug_in_development(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("DEBUG", "true")
     monkeypatch.setenv("PORTAL_ENV", "development")
 
-    s = Settings()
+    s = Settings(_env_file=None)
     assert s.debug is True
     assert s.portal_env == "development"
 
@@ -109,7 +109,7 @@ def test_settings_default_portal_env_is_production(monkeypatch: pytest.MonkeyPat
     monkeypatch.delenv("PORTAL_ENV", raising=False)
     monkeypatch.delenv("DEBUG", raising=False)
 
-    s = Settings()
+    s = Settings(_env_file=None)
     assert s.portal_env == "production"
     # Default debug=False is still the production default; the validator
     # only fires when both flags align catastrophically.

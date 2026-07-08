@@ -105,11 +105,18 @@ async def find_correlated_log(
         if not entries:
             return None
 
+        parsed_entries: list[dict] = []
+        for raw in entries:
+            if not isinstance(raw, (str, bytes, bytearray)):
+                continue
+            entry = json.loads(raw)
+            if isinstance(entry, dict):
+                parsed_entries.append(entry)
+
         # Select closest-before: entry with retrieved_at closest to and <= message_created_at
         best = None
         best_diff = float("inf")
-        for raw in entries:
-            entry = json.loads(raw)
+        for entry in parsed_entries:
             retrieved_epoch = entry.get("retrieved_at", 0)
             diff = msg_epoch - retrieved_epoch
             if diff >= 0 and diff < best_diff:
@@ -118,8 +125,7 @@ async def find_correlated_log(
 
         # If no entry before message time, pick the closest overall
         if best is None:
-            for raw in entries:
-                entry = json.loads(raw)
+            for entry in parsed_entries:
                 retrieved_epoch = entry.get("retrieved_at", 0)
                 diff = abs(msg_epoch - retrieved_epoch)
                 if diff < best_diff:

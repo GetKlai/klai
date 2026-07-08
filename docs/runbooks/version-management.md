@@ -255,7 +255,7 @@ Two additional gates for major bumps:
 
 | Layer | Rule | Example |
 |---|---|---|
-| External Docker image | Explicit version tag | `redis:8-alpine` ✓ `redis:latest` ✗ |
+| External Docker image | Explicit version tag | `redis:8.8.0-alpine` ✓ `redis:latest` ✗ |
 | Internal CI-deployed image | `:latest` OK (CI also pushes `:sha`) | `ghcr.io/getklai/portal-api:latest` ✓ |
 | Locally-built image | `:klai` or similar + source SHA in comment | `vexa-meeting-api:klai` (comment: `built from feature/agentic-runtime @ 600cba04`) |
 | Python dep in pyproject | Floor with upper bound for known-breaking | `fastapi>=0.136` ✓; `graphiti-core>=0.28,<0.30` ✓ |
@@ -479,7 +479,7 @@ Five independent mechanisms detect vulnerabilities. The goal is defence in depth
 | `pip-audit` in CI | Python deps in `uv.lock` | Every push + PR to `main` per service | PR status check (blocks merge) |
 | `npm audit` in CI | Node deps in `package-lock.json` | Every push + PR to `main` per frontend | PR status check (blocks merge) |
 | Trivy on internal image build | OS layer + installed packages in our `ghcr.io/getklai/*` images | Every internal image build | Security tab → Code scanning alerts |
-| Trivy on external pinned images | OS layer + installed packages in `mongo:8.2.10`, `redis:8-alpine`, etc. | Weekly (`scan-pinned-images.yml`) + on compose change | Security tab → Code scanning alerts |
+| Trivy on external pinned images | OS layer + installed packages in `mongo:8.2.11`, `redis:8.8.0-alpine`, etc. | Weekly (`scan-pinned-images.yml`) + on compose change | Security tab → Code scanning alerts |
 | Dependabot security updates | Python + Node deps across the whole repo | Real-time (GitHub's vulnerability DB) | Auto-PR + Security tab → Dependabot alerts |
 | Secret scanning + push protection | Accidentally committed API keys, tokens, credentials | On every push | Security tab → Secret scanning alerts + push block |
 

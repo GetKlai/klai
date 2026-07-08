@@ -14,8 +14,8 @@ dependencies = [
     "structlog>=25.0",
     "prometheus-client>=0.21",
     "asyncpg>=0.30",
-    # SPEC-SEC-010 — Zitadel JWT validation (matches research-api) + Redis sliding-window rate limiter.
-    "python-jose[cryptography]>=3.3",
+    # SPEC-SEC-010 — Zitadel JWT validation + Redis sliding-window rate limiter.
+    "pyjwt[crypto]>=2.13",
     "redis>=5.0",
     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4 (Phase D): re-verify internal-secret
     # callers' body identity against portal-api. Editable install — same

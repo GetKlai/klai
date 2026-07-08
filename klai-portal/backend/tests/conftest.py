@@ -38,6 +38,11 @@ sys.unraisablehook = _hook
 # Env vars for pydantic-settings validation (read at module import time)
 # ---------------------------------------------------------------------------
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
+os.environ.setdefault("DOMAIN", "getklai.com")
+os.environ.setdefault("PORTAL_ENV", "production")
+os.environ.setdefault("DEBUG", "false")
+os.environ.setdefault("FRONTEND_URL", "")
+os.environ.setdefault("MOCK_BILLING", "false")
 os.environ.setdefault("ZITADEL_PAT", "test-pat")
 os.environ.setdefault("SSO_COOKIE_KEY", "R1c1-s96uO9Yz7k1E0kN6qz52gzd9PwNbAeZaks_PIc=")
 os.environ.setdefault("PORTAL_SECRETS_KEY", "0" * 64)  # 64-char hex; test placeholder only

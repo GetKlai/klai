@@ -6,8 +6,6 @@
     "description": "Generate a Klai concept reply for this Help Desk ticket.",
     "location": "helpdesk.sidebar",
     "entrypoint": "/app/cards/NewCard.tsx",
-    "objectTypes": [
-      "tickets"
-    ]
+    "objectTypes": ["tickets"]
   }
 }
