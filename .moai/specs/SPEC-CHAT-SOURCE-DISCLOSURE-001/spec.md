@@ -1,6 +1,6 @@
 ---
 id: SPEC-CHAT-SOURCE-DISCLOSURE-001
-version: 0.1.0
+version: 0.2.0
 status: draft
 created: 2026-07-08
 updated: 2026-07-08
@@ -16,6 +16,44 @@ issue_number: 0
 | Versie | Datum | Wijziging |
 |---|---|---|
 | 0.1.0 | 2026-07-08 | Eerste draft n.a.v. de Engelse-footer-bug (share aZIY-N3YZSqGHh3qsrcs1) |
+| 0.2.0 | 2026-07-08 | REQ-DISC-06 reproductie-notitie: flush-pad vereist géén extra fix (zie onder). |
+
+## Reproductie-notitie (REQ-DISC-06, 2026-07-08)
+
+Bron: request `a8e26845-f23a-4670-acd0-5f5bac858890` (org `368884765035593759`).
+Getraceerd via VictoriaLogs (retrieval-api) + directe source-analyse van
+`deploy/litellm/klai_kb_citation_render.py`.
+
+**Bewezen (source):**
+1. De zichtbare footer wordt geëmit door `_append_visible_sources_section`
+   (`:453`). De koppen zijn taal-afhankelijk: `_visible_trace_language`
+   (`:379`) is een **query-token-heuristiek** — een vraag zónder Nederlandse
+   markers levert `"en"` → backend schrijft `**Sources**` / `**Agent activity**`.
+   De aanleiding-tekst ("hardcoded Nederlands") is dus achterhaald: de footer
+   is al server-side tweetalig; dát is precies de bron van de mismatch met het
+   NL-only script (`H=new Set(["Bronnen","Agent activiteit"])`, v8).
+2. Het streaming-flush-pad zet `stream_flush_alignment` op één van
+   `replacement_appended` (`:1003`), `raw_remainder` (`:1025`) of `prefix_cut`
+   (`:1027`). **Alle drie de takken convergeren op `:1033`**, waar de footer
+   wordt aangehangen. `raw_remainder` bepaalt alleen hoe de *antwoordtekst*
+   wordt uitgelijnd (Voys #21-regressie), niet hoe de footer wordt toegevoegd.
+3. De footer landt in één finale delta (`set_message_content`, `:1036`) met een
+   dubbel-append-guard (`_citation_stream_sources_appended`, `:1037`). Het
+   opgeslagen bericht == het gestreamde bericht, footer incluis. De history-
+   stripper `KLAI_BACKEND_FOOTER_HEADING_RE` matcht alleen NL en verwijdert de
+   EN-footer dus niet uit history.
+
+**Conclusie:** het streaming-flush-pad heeft **geen** extra fix nodig. De bug is
+puur presentatie-taal (EN-kop onherkend door NL-only script) + strip-taal
+(NL-only strippers). **REQ-DISC-05** (bold-tolerant + meertalige strippers) en de
+structurele marker-omzetting (**REQ-DISC-01/02/03/04**, Fase 3) volstaan.
+
+**Niet geverifieerd:** de exacte bytes van het opgeslagen bericht en een live
+EN-Playwright-reproductie zijn niet apart opgehaald; dit wordt gedekt door de
+Fase 3-acceptance (Playwright nl+en panelen) en de nieuwe unit-tests. De
+litellm `citation_decisions` (waarin `stream_flush_alignment` zit) worden als
+printf-`_msg` gelogd (`:691`), niet als los queryable veld — vandaar dat een
+field-query op `stream_flush_alignment` leeg blijft.
 
 ## Aanleiding (bewezen, 2026-07-08)
 

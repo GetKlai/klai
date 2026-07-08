@@ -64,7 +64,18 @@ _PAREN_CITATION_RE = re.compile(r"\(\s*\d{1,3}(?:\s*[,;]\s*\d{1,3})*\s*\)")
 _MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)")
 _BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?=(?:[.!?])?(?:\s|$))")
 _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
-_SOURCE_HEADING_RE = re.compile(r"^\s*(?:bronnen?|sources?|references?)\s*:?\s*$", re.IGNORECASE)
+# Bold-tolerant + multilingual: the model imitates our footer with bold and/or
+# English headings (**Sources**, **Bronnen**). Match those the same as a plain
+# Dutch heading so a fabricated footer never survives into the saved answer.
+# SPEC-CHAT-SOURCE-DISCLOSURE-001 REQ-DISC-05.
+_SOURCE_HEADING_RE = re.compile(
+    r"^\s*(?:\*\*|__)?\s*(?:bronnen?|sources?|references?)\s*:?\s*(?:\*\*|__)?\s*$",
+    re.IGNORECASE,
+)
+_ACTIVITY_HEADING_RE = re.compile(
+    r"^\s*(?:\*\*|__)?\s*agent\s+(?:activiteit|activity)\s*:?\s*(?:\*\*|__)?\s*$",
+    re.IGNORECASE,
+)
 _SOURCE_LIST_LINE_RE = re.compile(r"^\s*(?:\(\s*\d{1,3}\s*\)|\[\s*\d{1,3}\s*\]|\d{1,3}[.)])\s*(.+)$")
 _BULLET_LINE_RE = re.compile(r"^\s*[-*+•]\s+(.+?)\s*$")
 _DEFAULT_MAX_SOURCES = 4
@@ -502,14 +513,14 @@ def strip_model_citation_artifacts(
         return match.group(1).strip() or "[image unavailable in knowledge base]"
 
     kept_lines: list[str] = []
-    skipping_source_section = False
+    skipping_footer_section = False
     for line in _MARKDOWN_IMAGE_RE.sub(_replace_image, text).splitlines():
-        if _SOURCE_HEADING_RE.match(line):
-            skipping_source_section = True
+        if _SOURCE_HEADING_RE.match(line) or _ACTIVITY_HEADING_RE.match(line):
+            skipping_footer_section = True
             continue
-        if skipping_source_section:
+        if skipping_footer_section:
             if not line.strip():
-                skipping_source_section = False
+                skipping_footer_section = False
             continue
         if _looks_like_source_list_line(line) or _looks_like_model_source_title_line(line, normalised_source_titles):
             continue
