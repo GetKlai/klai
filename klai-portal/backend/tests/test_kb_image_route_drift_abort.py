@@ -36,6 +36,14 @@ def test_assertion_passes_on_canonical_routes() -> None:
     _assert_kb_image_routes_match_value_class(app)  # should not raise
 
 
+def test_assertion_passes_on_real_portal_app_routes() -> None:
+    """The production app must expose the canonical routes through FastAPI's
+    real include_router representation, not only a minimal test app."""
+    from app.main import app
+
+    _assert_kb_image_routes_match_value_class(app)
+
+
 def test_assertion_aborts_on_4_segment_drift() -> None:
     """The exact v1 regression: route uses {org_id}/{kb_slug}/{filename}
     (4 segments) instead of {zitadel_org_id}/images/{kb_slug}/{filename}

@@ -1,5 +1,5 @@
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -95,11 +95,23 @@ def _assert_kb_image_routes_match_value_class(app: FastAPI) -> None:
     """
     from app.core.kb_image_url import KbImage
 
-    declared_paths = {
-        getattr(route, "path", None)
-        for route in app.routes
-        if getattr(route, "path", "") and "kb-images" in getattr(route, "path", "")
-    }
+    def iter_route_paths(routes: Iterable[object], prefix: str = "") -> Iterable[str]:
+        for route in routes:
+            route_path = getattr(route, "path", None)
+            if route_path:
+                yield f"{prefix}{route_path}"
+
+            original_router = getattr(route, "original_router", None)
+            if original_router is not None:
+                include_context = getattr(route, "include_context", None)
+                child_prefix = getattr(include_context, "prefix", "") or ""
+                yield from iter_route_paths(getattr(original_router, "routes", ()), f"{prefix}{child_prefix}")
+
+            child_routes = getattr(route, "routes", None)
+            if child_routes:
+                yield from iter_route_paths(child_routes, prefix)
+
+    declared_paths = {route_path for route_path in iter_route_paths(app.routes) if "kb-images" in route_path}
     expected = {KbImage.ROUTE_TEMPLATE, KbImage.UPLOAD_ROUTE_TEMPLATE}
     if declared_paths != expected:
         raise RuntimeError(
