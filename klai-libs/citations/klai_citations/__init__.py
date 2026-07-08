@@ -64,16 +64,17 @@ _PAREN_CITATION_RE = re.compile(r"\(\s*\d{1,3}(?:\s*[,;]\s*\d{1,3})*\s*\)")
 _MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)")
 _BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?=(?:[.!?])?(?:\s|$))")
 _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
-# Bold-tolerant + multilingual: the model imitates our footer with bold and/or
-# English headings (**Sources**, **Bronnen**). Match those the same as a plain
-# Dutch heading so a fabricated footer never survives into the saved answer.
+# Bold/ATX-tolerant + multilingual: the model imitates our footer with bold,
+# markdown headings (## Sources) and/or English headings (**Sources**,
+# **Bronnen**). Match those the same as a plain Dutch heading so a fabricated
+# footer never survives into the saved answer.
 # SPEC-CHAT-SOURCE-DISCLOSURE-001 REQ-DISC-05.
 _SOURCE_HEADING_RE = re.compile(
-    r"^\s*(?:\*\*|__)?\s*(?:bronnen?|sources?|references?)\s*:?\s*(?:\*\*|__)?\s*$",
+    r"^\s*(?:#{1,6}\s+)?(?:\*\*|__)?\s*(?:bronnen?|sources?|references?)\s*:?\s*(?:\*\*|__)?\s*$",
     re.IGNORECASE,
 )
 _ACTIVITY_HEADING_RE = re.compile(
-    r"^\s*(?:\*\*|__)?\s*agent\s+(?:activiteit|activity)\s*:?\s*(?:\*\*|__)?\s*$",
+    r"^\s*(?:#{1,6}\s+)?(?:\*\*|__)?\s*agent\s+(?:activiteit|activity)\s*:?\s*(?:\*\*|__)?\s*$",
     re.IGNORECASE,
 )
 _SOURCE_LIST_LINE_RE = re.compile(r"^\s*(?:\(\s*\d{1,3}\s*\)|\[\s*\d{1,3}\s*\]|\d{1,3}[.)])\s*(.+)$")
@@ -407,6 +408,30 @@ def build_citation_registry(chunks: list[dict]) -> CitationRegistry:
     return CitationRegistry(sources=citation_sources_from_chunks(chunks))
 
 
+def _heading_starts_footer_section(lines: list[str], index: int) -> bool:
+    """Distinguish an imitated footer from legitimate prose under the heading.
+
+    A bold heading mirrors our exact emission shape (``**Sources**``) and is
+    always treated as a footer. A plain or ATX heading only starts a footer
+    when the first non-blank line below it is list-shaped — a heading followed
+    by prose (e.g. a drafted report's "References:" section, or an explainer
+    about the "Agent activity" panel) is real content and must be kept.
+    """
+    heading = lines[index]
+    if "**" in heading or "__" in heading:
+        return True
+    for next_line in lines[index + 1 :]:
+        if not next_line.strip():
+            continue
+        return bool(
+            _BULLET_LINE_RE.match(next_line)
+            or _SOURCE_LIST_LINE_RE.match(next_line)
+            or _SOURCE_HEADING_RE.match(next_line)
+            or _ACTIVITY_HEADING_RE.match(next_line)
+        )
+    return False
+
+
 def _looks_like_source_list_line(line: str) -> bool:
     match = _SOURCE_LIST_LINE_RE.match(line)
     if not match:
@@ -512,10 +537,13 @@ def strip_model_citation_artifacts(
             return placeholder
         return match.group(1).strip() or "[image unavailable in knowledge base]"
 
+    lines = _MARKDOWN_IMAGE_RE.sub(_replace_image, text).splitlines()
     kept_lines: list[str] = []
     skipping_footer_section = False
-    for line in _MARKDOWN_IMAGE_RE.sub(_replace_image, text).splitlines():
-        if _SOURCE_HEADING_RE.match(line) or _ACTIVITY_HEADING_RE.match(line):
+    for index, line in enumerate(lines):
+        if (
+            _SOURCE_HEADING_RE.match(line) or _ACTIVITY_HEADING_RE.match(line)
+        ) and _heading_starts_footer_section(lines, index):
             skipping_footer_section = True
             continue
         if skipping_footer_section:

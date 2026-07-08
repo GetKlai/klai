@@ -1,0 +1,36 @@
+name: LibreChat patch & entrypoint tests
+
+# Gate for deploy/librechat/**: the .test.cjs suite (canary config, stream
+# patches, entrypoint disclosure script) previously ran only on developer
+# machines, so none of its assertions gated merges.
+# SPEC-CHAT-SOURCE-DISCLOSURE-001 review finding 4.
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/librechat/**'
+      - 'deploy/docker-compose.yml'
+      - '.github/workflows/librechat-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/librechat/**'
+      - 'deploy/docker-compose.yml'
+      - '.github/workflows/librechat-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run LibreChat test suite
+        run: |
+          set -e
+          for test in deploy/librechat/tests/*.test.cjs; do
+            echo "== $test"
+            node "$test"
+          done

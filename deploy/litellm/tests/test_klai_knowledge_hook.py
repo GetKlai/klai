@@ -492,6 +492,66 @@ class TestKlaiKnowledgeHookLegacy:
             "The answer itself stays available."
         )
 
+    def test_history_stripper_keeps_legit_agent_activity_prose(self, monkeypatch):
+        """SPEC-CHAT-SOURCE-DISCLOSURE-001 review finding 3.
+
+        A bare "Agent activity" line inside real prose (e.g. an answer
+        explaining the panel) previously anchored the cut and swallowed the
+        rest of the answer from model history. The cut must anchor on the
+        LAST activity heading whose tail is footer-shaped.
+        """
+        mod = _load_hook(monkeypatch)
+
+        content = (
+            "Intro.\n\n"
+            "Agent activity\n"
+            "This tab shows each retrieval step.\n\n"
+            "More content after.\n\n"
+            "**Bronnen**\n"
+            "- [Handleiding](https://docs.example/manual)\n\n"
+            "**Agent activiteit**\n"
+            "- Modus: Strict, alleen kennisbank."
+        )
+
+        assert mod._strip_klai_backend_footer_from_text(content) == (
+            "Intro.\n\n"
+            "Agent activity\n"
+            "This tab shows each retrieval step.\n\n"
+            "More content after."
+        )
+
+    def test_history_stripper_fails_open_without_footer_shaped_tail(self, monkeypatch):
+        """A legit activity heading with prose below and no real footer must
+        leave the message untouched instead of eating the answer."""
+        mod = _load_hook(monkeypatch)
+
+        content = (
+            "Intro.\n\n"
+            "Agent activity\n"
+            "This tab shows each retrieval step.\n\n"
+            "More content after."
+        )
+
+        assert mod._strip_klai_backend_footer_from_text(content) == content
+
+    def test_history_stripper_removes_atx_heading_footer_imitation(self, monkeypatch):
+        """SPEC-CHAT-SOURCE-DISCLOSURE-001 review finding 1: an ATX-heading
+        footer imitation (## Sources / ## Agent activity) stored in history
+        must be stripped before the next model input."""
+        mod = _load_hook(monkeypatch)
+
+        content = (
+            "The answer is 42.\n\n"
+            "## Sources\n"
+            "- Internal pricing memo, section 3\n\n"
+            "## Agent activity\n"
+            "- Mode: Strict, knowledge base only."
+        )
+
+        assert mod._strip_klai_backend_footer_from_text(content) == (
+            "The answer is 42."
+        )
+
     def test_sanitizes_assistant_history_content_parts(self, monkeypatch):
         """LibreChat can send text content as parts; strip those too."""
         mod = _load_hook(monkeypatch)

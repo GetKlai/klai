@@ -17,6 +17,8 @@ issue_number: 0
 |---|---|---|
 | 0.1.0 | 2026-07-08 | Eerste draft n.a.v. de Engelse-footer-bug (share aZIY-N3YZSqGHh3qsrcs1) |
 | 0.2.0 | 2026-07-08 | REQ-DISC-06 reproductie-notitie: flush-pad vereist géén extra fix (zie onder). |
+| 0.3.0 | 2026-07-08 | Fase 3 herzien na architectuur-vondst (`stream.cjs` + LibreChat-rendering). Marker-rename/footer-reductie descoped; taal-neutraal client-script i.p.v. marker-driven. Zie "Fase 3 architectuurbesluit". |
+| 0.4.0 | 2026-07-08 | Review-hardening (adversarial review): (1) ATX-heading-imitatie (`## Sources`) wordt nu door beide strippers verwijderd; (2) plain headings gevolgd door proza (legitieme "References:"/"Agent activity"-secties) worden niet langer over-gestript — footer-skip vereist bold of lijst-vormige body; (3) history-stripper anchort op de LAATSTE activity-heading met footer-vormige tail (fail-open bij proza); (4) canary asserteert byte-identiteit van beide v9-blokken; (5) nieuwe CI-workflow `librechat-tests.yml` draait de volledige `deploy/librechat/tests/*.test.cjs`-suite op PR's. Rehype-raw-aanname geverifieerd tegen upstream LibreChat v0.8.6 (`Markdown.tsx`: alleen rehypeKatex+rehypeHighlight). |
 
 ## Reproductie-notitie (REQ-DISC-06, 2026-07-08)
 
@@ -54,6 +56,64 @@ Fase 3-acceptance (Playwright nl+en panelen) en de nieuwe unit-tests. De
 litellm `citation_decisions` (waarin `stream_flush_alignment` zit) worden als
 printf-`_msg` gelogd (`:691`), niet als los queryable veld — vandaar dat een
 field-query op `stream_flush_alignment` leeg blijft.
+
+## Fase 3 architectuurbesluit (2026-07-08)
+
+Tijdens Fase 3-grounding bleek de oorspronkelijke aanpak (REQ-DISC-01/02/03:
+gestructureerde marker die het client-script uit de DOM leest) **niet haalbaar
+in pad A**, om drie in de code bewezen redenen:
+
+1. **`stream.cjs` is de echte marker-consumer, server-side.** De LibreChat-patch
+   `deploy/librechat/patches/stream.cjs` (+ `getklai/patches/stream.cjs`) bevat
+   `KLAI_SOURCES_MARKER_RE` en `extractKlaiSourcesFromText` (`:612-633`): hij
+   stript de `<!-- klai_sources -->`-comment **vóór** rendering en hangt
+   `sources` aan het bericht. De marker bereikt de client-DOM dus nooit.
+2. **LibreChat rendert model-markdown zonder `rehype-raw`** (bewuste
+   security-keuze: geen rauwe HTML/comments uit model-output). Een
+   HTML-comment wordt niet als comment-node in de DOM opgenomen. Een
+   client-side script kan `klai_kb_meta_v1` daardoor principieel niet uit een
+   assistant-bericht lezen — REQ-DISC-03 zoals geschreven is onuitvoerbaar.
+3. **De enige betrouwbare client-carrier is de zichtbare tekstfooter.** Het
+   v8-script parseert die juist daarom (en werkt vandaag voor NL).
+
+### Besluit (proportioneel + robuust)
+
+De gerapporteerde bug is: een Engelse chat toont een Engelse footer die het
+NL-only v8-script niet herkent → platte markdown i.p.v. panelen. De mooiste
+*redelijke* oplossing gegeven de pad-A-constraints:
+
+- **REQ-DISC-03 (herzien):** het disclosure-script wordt **taal-neutraal**
+  (v8→v9). Het herkent de footer-koppen in een compacte set
+  (`Bronnen|Sources`, `Agent activiteit|Agent activity`) en kiest de
+  telwoord-labels ("1 bron"/"1 source", "1 stap"/"1 step") op
+  `navigator.language` (fallback `nl`). De NL-only `new Set([...])` en de
+  NL-only `label()` vervallen. Tekst-parsing blijft — dat is de enige
+  betrouwbare pad-A-carrier — maar is niet langer taal-fragiel.
+- **REQ-DISC-01 / REQ-DISC-02 (descoped):** marker-rename naar
+  `klai_kb_meta_v1`, footer-reductie tot één bronregel en de
+  `stream.cjs`-herschrijving vervallen. Reden: (a) er is geen consumer voor
+  gestructureerde activity-data (activity wordt uit de zichtbare tekst
+  gerenderd), (b) `stream.cjs` levert `sources` al gestructureerd voor
+  persistentie, (c) het raakt een niet-in-scope bestand (`stream.cjs`, 2
+  kopieën) met deploy-risico voor een cosmetisch paneel. YAGNI +
+  proportionaliteit.
+- **REQ-DISC-04 (behouden):** fail-open — geen herkende footer → script doet
+  niets; oude NL-berichten blijven renderen (NL blijft herkend).
+- **REQ-DISC-05 (geleverd, Fase 2):** meertalige bold-tolerante strippers
+  dekken de model-imitatie-verdediging al af, onafhankelijk van dit script.
+
+### Herziene acceptance (Fase 3)
+
+1. NL-chat én EN-chat tonen identiek gestylede inklap-panelen; telwoord-labels
+   volgen `navigator.language` (getest via de canary vm-harness met een NL- en
+   een EN-footer; live Playwright-verificatie ná deploy).
+2. Bericht zonder footer → script doet niets, geen console-fouten (bestaande
+   null-safety-assert blijft).
+3. Canary `getklai_canary_config.test.cjs` asserteert de v9-marker, herkenning
+   van NL+EN koppen, `navigator.language`-labels, en afwezigheid van de
+   NL-only `new Set(["Bronnen","Agent activiteit"])`.
+4. Beide entrypoint-bestanden (`klai-entrypoint.sh` + `getklai/entrypoint.sh`)
+   dragen het identieke v9-blok.
 
 ## Aanleiding (bewezen, 2026-07-08)
 

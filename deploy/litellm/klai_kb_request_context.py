@@ -70,15 +70,17 @@ KLAI_SOURCES_METADATA_MARKER_RE = re.compile(
     r"\n?<!--\s*klai_sources=[A-Za-z0-9_-]+={0,2}\s*-->\n?",
     re.IGNORECASE,
 )
-# Multilingual: an English chat emits an English footer (**Sources** / **Agent
-# activity**). Match those too so a backend or model-imitated English footer is
-# stripped from history before the next model input.
+# Multilingual + bold/ATX-tolerant: an English chat emits an English footer
+# (**Sources** / **Agent activity**) and a model imitation may use markdown
+# headings (## Sources). Match those too so a backend or model-imitated footer
+# is stripped from history before the next model input.
 # SPEC-CHAT-SOURCE-DISCLOSURE-001 REQ-DISC-05.
 KLAI_BACKEND_FOOTER_HEADING_RE = re.compile(
-    r"(?im)^[ \t]*(?:\*\*)?(Bronnen|Sources|Agent activiteit|Agent activity)(?:\*\*)?[ \t]*$"
+    r"(?im)^[ \t]*(?:#{1,6}[ \t]+)?(?:\*\*)?(Bronnen|Sources|Agent activiteit|Agent activity)(?:\*\*)?[ \t]*$"
 )
 _FOOTER_SOURCES_HEADINGS = {"bronnen", "sources"}
 _FOOTER_ACTIVITY_HEADINGS = {"agent activiteit", "agent activity"}
+_FOOTER_BODY_BULLET_RE = re.compile(r"^[ \t]*[-*+•][ \t]+")
 
 
 def is_trivial(text: str) -> bool:
@@ -263,26 +265,52 @@ def last_user_message(messages: list[dict]) -> str | None:
     return None
 
 
+def _is_footer_region(text: str) -> bool:
+    """A footer region contains only headings, bullet lines, and blanks."""
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if KLAI_BACKEND_FOOTER_HEADING_RE.match(line):
+            continue
+        if _FOOTER_BODY_BULLET_RE.match(line):
+            continue
+        return False
+    return True
+
+
 def strip_klai_backend_footer_from_text(text: str) -> str:
-    """Remove Klai-managed citation/provenance footer from assistant history."""
+    """Remove Klai-managed citation/provenance footer from assistant history.
+
+    The footer is always the tail of the message. Cut at the LAST activity
+    heading (extended back to its adjoining sources heading) and only when
+    everything from the cut point onward is footer-shaped — a bare "Agent
+    activity" line inside real prose must not swallow the rest of the answer.
+    """
     without_marker = KLAI_SOURCES_METADATA_MARKER_RE.sub("\n", text)
     matches = list(KLAI_BACKEND_FOOTER_HEADING_RE.finditer(without_marker))
-    first_activity_index = next(
+    last_activity_index = next(
         (
             index
-            for index, match in enumerate(matches)
+            for index, match in enumerate(reversed(matches))
             if match.group(1).lower() in _FOOTER_ACTIVITY_HEADINGS
         ),
         None,
     )
-    if first_activity_index is None:
+    if last_activity_index is None:
         return without_marker.rstrip() if without_marker != text else text
+    last_activity_index = len(matches) - 1 - last_activity_index
 
-    cut_match = matches[first_activity_index]
-    for match in reversed(matches[:first_activity_index]):
+    activity_match = matches[last_activity_index]
+    cut_match = activity_match
+    for match in reversed(matches[:last_activity_index]):
         if match.group(1).lower() in _FOOTER_SOURCES_HEADINGS:
-            cut_match = match
+            if _is_footer_region(
+                without_marker[match.start() : activity_match.start()]
+            ):
+                cut_match = match
             break
+    if not _is_footer_region(without_marker[cut_match.start() :]):
+        return without_marker.rstrip() if without_marker != text else text
     return without_marker[: cut_match.start()].rstrip()
 
 
