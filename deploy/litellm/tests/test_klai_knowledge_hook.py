@@ -468,6 +468,30 @@ class TestKlaiKnowledgeHookLegacy:
             "Het antwoord zelf blijft beschikbaar."
         )
 
+    def test_strips_backend_footer_english_variant_from_history_text(self, monkeypatch):
+        """SPEC-CHAT-SOURCE-DISCLOSURE-001 REQ-DISC-05.
+
+        An English chat emits an English footer (**Sources** / **Agent
+        activity**). The history stripper must remove it too, otherwise a
+        model-imitated or backend English footer survives into the next
+        model input.
+        """
+        mod = _load_hook(monkeypatch)
+
+        content = (
+            "The answer itself stays available.\n\n"
+            "**Sources**\n"
+            "- [Manual](https://docs.example/manual)\n\n"
+            "**Agent activity**\n"
+            "- Mode: Strict, knowledge base only.\n"
+            "- Knowledge base queried: 9 chunks retrieved in 1004 ms.\n\n"
+            "<!-- klai_sources=eyJ0ZXN0IjpbXX0 -->"
+        )
+
+        assert mod._strip_klai_backend_footer_from_text(content) == (
+            "The answer itself stays available."
+        )
+
     def test_sanitizes_assistant_history_content_parts(self, monkeypatch):
         """LibreChat can send text content as parts; strip those too."""
         mod = _load_hook(monkeypatch)

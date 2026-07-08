@@ -70,9 +70,15 @@ KLAI_SOURCES_METADATA_MARKER_RE = re.compile(
     r"\n?<!--\s*klai_sources=[A-Za-z0-9_-]+={0,2}\s*-->\n?",
     re.IGNORECASE,
 )
+# Multilingual: an English chat emits an English footer (**Sources** / **Agent
+# activity**). Match those too so a backend or model-imitated English footer is
+# stripped from history before the next model input.
+# SPEC-CHAT-SOURCE-DISCLOSURE-001 REQ-DISC-05.
 KLAI_BACKEND_FOOTER_HEADING_RE = re.compile(
-    r"(?im)^[ \t]*(?:\*\*)?(Bronnen|Agent activiteit)(?:\*\*)?[ \t]*$"
+    r"(?im)^[ \t]*(?:\*\*)?(Bronnen|Sources|Agent activiteit|Agent activity)(?:\*\*)?[ \t]*$"
 )
+_FOOTER_SOURCES_HEADINGS = {"bronnen", "sources"}
+_FOOTER_ACTIVITY_HEADINGS = {"agent activiteit", "agent activity"}
 
 
 def is_trivial(text: str) -> bool:
@@ -265,7 +271,7 @@ def strip_klai_backend_footer_from_text(text: str) -> str:
         (
             index
             for index, match in enumerate(matches)
-            if match.group(1).lower() == "agent activiteit"
+            if match.group(1).lower() in _FOOTER_ACTIVITY_HEADINGS
         ),
         None,
     )
@@ -274,7 +280,7 @@ def strip_klai_backend_footer_from_text(text: str) -> str:
 
     cut_match = matches[first_activity_index]
     for match in reversed(matches[:first_activity_index]):
-        if match.group(1).lower() == "bronnen":
+        if match.group(1).lower() in _FOOTER_SOURCES_HEADINGS:
             cut_match = match
             break
     return without_marker[: cut_match.start()].rstrip()

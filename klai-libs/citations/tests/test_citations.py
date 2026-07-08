@@ -1279,3 +1279,45 @@ def test_strip_still_renumbers_unanchored_mid_document_excerpt() -> None:
     assert "1. Typ het werk-emailadres." in cleaned
     assert "2. Selecteer de startrol." in cleaned
     assert "3. De gebruiker klikt op de link." in cleaned
+
+
+def test_strip_removes_bold_and_multilingual_source_heading_block() -> None:
+    """SPEC-CHAT-SOURCE-DISCLOSURE-001 REQ-DISC-05.
+
+    A model that imitates our footer with a bold and/or English source heading
+    (**Sources** / **Bronnen** / Sources / Bronnen) must have that block
+    stripped exactly like a plain Dutch one, so a fabricated footer never
+    survives into the saved answer regardless of chat language or bold markers.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    for heading in ("**Sources**", "**Bronnen**", "Sources", "Bronnen"):
+        text = f"Klai is steward-owned.\n\n{heading}\n- [Doc](https://made-up.example/doc)"
+        cleaned = strip_model_citation_artifacts(text)
+        assert cleaned == "Klai is steward-owned.", f"heading={heading!r} -> {cleaned!r}"
+        assert "made-up.example" not in cleaned
+
+
+def test_strip_removes_agent_activity_heading_block_nl_en() -> None:
+    """SPEC-CHAT-SOURCE-DISCLOSURE-001 REQ-DISC-05.
+
+    'Agent activity' / 'Agent activiteit' is a footer heading the model can
+    imitate; there is no strip pattern for it today. It must be removed in NL
+    and EN, with and without bold, keeping the answer body intact.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    for heading in (
+        "**Agent activity**",
+        "Agent activity",
+        "**Agent activiteit**",
+        "Agent activiteit",
+    ):
+        text = (
+            f"Het antwoord blijft staan.\n\n{heading}\n"
+            "- Mode: Strict, knowledge base only.\n"
+            "- Knowledge base queried: 9 chunks retrieved in 1004 ms."
+        )
+        cleaned = strip_model_citation_artifacts(text)
+        assert cleaned == "Het antwoord blijft staan.", f"heading={heading!r} -> {cleaned!r}"
+        assert "Knowledge base queried" not in cleaned
