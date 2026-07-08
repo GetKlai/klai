@@ -1,5 +1,5 @@
 import matter from "gray-matter";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 
 export type KnowledgeFrontmatter = {
   provenance_type?: "observed" | "extracted" | "synthesized" | "revised";

@@ -9,6 +9,24 @@ from klai_image_storage import (
 from klai_image_storage import (
     download_and_upload_adapter_images as download_and_upload_images,
 )
+from klai_image_storage import pipeline as image_pipeline
+from klai_image_storage.url_guard import ValidatedURL
+
+
+@pytest.fixture(autouse=True)
+def _mock_image_url_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep these unit tests focused on connector orchestration, not DNS."""
+
+    async def _validate(url: str, *, dns_timeout: float = 2.0) -> ValidatedURL:
+        hostname = url.split("://", 1)[1].split("/", 1)[0].split("?", 1)[0]
+        return ValidatedURL(
+            url=url,
+            hostname=hostname,
+            pinned_ips=frozenset({"203.0.113.10"}),
+            preferred_ip="203.0.113.10",
+        )
+
+    monkeypatch.setattr(image_pipeline, "validate_image_url", _validate)
 
 
 class TestDownloadAndUploadImages:
@@ -45,7 +63,7 @@ class TestDownloadAndUploadImages:
         )
 
         assert len(result) == 1
-        assert result[0] == "/kb-images/org/img/hash.png"
+        assert result[0].startswith("/kb-images/100000000000000001/images/kb-1/")
 
     @pytest.mark.asyncio
     async def test_skips_failed_downloads(self):
@@ -162,7 +180,7 @@ class TestDownloadAndUploadImages:
         )
 
         assert len(result) == 1
-        assert result[0] == "/kb-images/key"
+        assert result[0].startswith("/kb-images/100000000000000001/images/kb-1/")
 
 
 class TestUploadImagesIsConnectorAgnostic:
@@ -196,6 +214,7 @@ class TestUploadImagesIsConnectorAgnostic:
         resp.content = png_bytes
         mock_http.get = AsyncMock(return_value=resp)
         engine._image_http = mock_http
+        engine._image_transport = None
 
         ref = SimpleNamespace(
             path="docs/guide.md",
@@ -225,6 +244,7 @@ class TestUploadImagesIsConnectorAgnostic:
         engine = SyncEngine.__new__(SyncEngine)
         engine._image_store = MagicMock()
         engine._image_http = AsyncMock()
+        engine._image_transport = None
 
         ref = SimpleNamespace(path="x", source_url="", images=None)
 

@@ -422,7 +422,11 @@ async def test_openai_non_streaming_fails_closed_without_general_chat_key():
     with pytest.raises(HTTPException) as exc:
         await openai_chat_completion_non_streaming(
             {"messages": [{"role": "user", "content": "hi"}]},
-            Settings(litellm_base_url="http://litellm.test", litellm_master_key="sk-master"),
+            Settings(
+                litellm_base_url="http://litellm.test",
+                litellm_master_key="sk-master",
+                litellm_general_chat_key="",
+            ),
         )
 
     assert exc.value.status_code == 503

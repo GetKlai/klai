@@ -24,10 +24,10 @@ function getInitialLocale(): Locale {
   }
   // 2. localStorage (explicit user choice on this device)
   const saved = localStorage.getItem(STORAGE_KEYS.locale)
-  if (saved === 'nl' || saved === 'en') return saved as Locale
+  if (saved === 'nl' || saved === 'en') return saved
   // 3. Browser preference
   const browserLang = navigator.language.slice(0, 2).toLowerCase()
-  const resolved: Locale = (browserLang === 'nl' || browserLang === 'en') ? browserLang as Locale : 'nl'
+  const resolved: Locale = (browserLang === 'nl' || browserLang === 'en') ? browserLang : 'nl'
   // Always persist so subsequent page loads (e.g. after OIDC redirect) find a consistent value
   localStorage.setItem(STORAGE_KEYS.locale, resolved)
   return resolved

@@ -63,7 +63,7 @@ export function InviteSection({
           ref={rootRef}
           onFocusCapture={() => onFocusedChange(true)}
           onBlurCapture={(e) => {
-            if (!rootRef.current?.contains(e.relatedTarget as Node)) {
+            if (!rootRef.current?.contains(e.relatedTarget)) {
               onFocusedChange(false)
             }
           }}

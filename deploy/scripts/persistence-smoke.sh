@@ -164,7 +164,7 @@ DELETE FROM __smoke.ping WHERE ts < now() - INTERVAL '1 hour';
 SQL
 
   # PGDATA lives in different subdirs depending on image:
-  #   pgvector/pgvector:pg18 → /var/lib/postgresql/18/docker/pg_wal
+  #   pgvector/pgvector:0.8.4-pg18 → /var/lib/postgresql/18/docker/pg_wal
   #   vanilla postgres:X     → /var/lib/postgresql/data/pg_wal
   #   legacy layouts         → /var/lib/postgresql/pg_wal
   # Find it.

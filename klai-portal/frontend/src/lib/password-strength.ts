@@ -21,7 +21,7 @@ async function loadZxcvbn() {
     import('@zxcvbn-ts/language-common'),
     import('@zxcvbn-ts/language-en'),
   ]).then(([core, commonPackage, enPackage]) => {
-    core.zxcvbnOptions.setOptions({
+    const zxcvbn = new core.ZxcvbnFactory({
       translations: enPackage.translations,
       graphs: commonPackage.adjacencyGraphs,
       dictionary: {
@@ -29,7 +29,7 @@ async function loadZxcvbn() {
         ...enPackage.dictionary,
       },
     })
-    return core.zxcvbn
+    return (password, userInputs) => zxcvbn.check(password, userInputs)
   })
   return zxcvbnLoader
 }

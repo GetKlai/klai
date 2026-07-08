@@ -47,7 +47,25 @@ def _find_route_by_path(path: str):
     for route in app.routes:
         if getattr(route, "path", None) == path:
             return route
-    widget_paths = sorted({getattr(r, "path", "") for r in app.routes if "widget" in getattr(r, "path", "")})
+        original_router = getattr(route, "original_router", None)
+        if original_router is not None:
+            for child in getattr(original_router, "routes", []):
+                if getattr(child, "path", None) == path:
+                    return child
+    widget_paths = sorted(
+        {
+            child_path
+            for r in app.routes
+            for child_path in (
+                [getattr(r, "path", "")]
+                + [
+                    getattr(child, "path", "")
+                    for child in getattr(getattr(r, "original_router", None), "routes", [])
+                ]
+            )
+            if "widget" in child_path
+        }
+    )
     raise AssertionError(f"Route {path!r} not registered on app.routes. widget-related paths found: {widget_paths}")
 
 

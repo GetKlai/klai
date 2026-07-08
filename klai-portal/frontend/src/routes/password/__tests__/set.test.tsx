@@ -75,6 +75,8 @@ vi.mock("@/paraglide/messages", () => ({
   signup_password_strength_good: () => "Good",
   signup_password_strength_label: () => "Strength",
   signup_password_strength_strong: () => "Strong",
+  signup_password_strength_too_short: ({ strength }: { strength: string }) =>
+    strength,
   signup_password_strength_very_weak: () => "Very weak",
   signup_password_strength_weak: () => "Weak",
   signup_password_too_short: ({ minLength }: { minLength: string }) =>

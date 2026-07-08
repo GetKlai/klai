@@ -34,9 +34,9 @@ import hmac
 from dataclasses import dataclass, field
 from typing import Any
 
+import jwt
 import structlog
 from fastapi import HTTPException, Request, status
-from jose import ExpiredSignatureError, JWTError, jwt
 from klai_identity_assert import KNOWN_CALLER_SERVICES, IdentityAsserter
 from klai_service_auth import project_role_scopes
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -225,7 +225,7 @@ async def _decode_jwt(token: str) -> tuple[dict[str, Any], str | None]:
     try:
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
-    except JWTError:
+    except jwt.PyJWTError:
         return {}, "invalid_jwt_signature"
 
     try:
@@ -246,18 +246,19 @@ async def _decode_jwt(token: str) -> tuple[dict[str, Any], str | None]:
     # research-api F-004 where ``verify_aud=False`` was opt-in). Startup config
     # validation in :mod:`retrieval_api.config` guarantees a non-empty audience.
     try:
+        signing_key = jwt.PyJWK.from_dict(key).key
         payload = jwt.decode(
             token,
-            key,
+            signing_key,
             algorithms=["RS256"],
             issuer=settings.zitadel_issuer,
             audience=settings.zitadel_api_audience,
         )
         return payload, None
-    except ExpiredSignatureError:
+    except jwt.ExpiredSignatureError:
         return {}, "expired_jwt"
-    except JWTError as exc:
-        # python-jose merges audience / issuer / signature failures into JWTError.
+    except jwt.PyJWTError as exc:
+        # PyJWT groups audience / issuer / signature failures under PyJWTError.
         msg = str(exc).lower()
         if "audience" in msg:
             return {}, "invalid_jwt_audience"

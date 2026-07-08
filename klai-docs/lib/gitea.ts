@@ -192,7 +192,7 @@ export type NavNode = {
   children?: NavNode[];
 };
 
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 import { parseSidebar, type SidebarEntry } from "./markdown";
 
 // ─── Sidebar-based nav tree ───────────────────────────────────────────────────
