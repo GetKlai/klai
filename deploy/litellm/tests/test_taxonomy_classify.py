@@ -302,6 +302,33 @@ class TestRewriteAndClassifySkips:
         assert ids == []
         assert meta["was_changed"] is True
 
+    @pytest.mark.asyncio
+    async def test_rejects_destructive_rewrite_and_drops_classification(
+        self, monkeypatch
+    ):
+        """A bad rewrite and its taxonomy IDs must not narrow retrieval."""
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_json_response(
+                "Hoe stel ik een Yealink toestel in en openingstijden configureren",
+                [1, 2],
+            ),
+        )
+
+        rewritten, ids, meta = await hook._rewrite_and_classify(
+            "Wat weet je over klai?",
+            _HISTORY,
+            _TREES_MULTI,
+            _transport=transport,
+        )
+
+        assert rewritten == "Wat weet je over klai?"
+        assert ids == []
+        assert meta["skipped"] == "destructive_rewrite"
+        assert meta["was_changed"] is False
+        assert meta["dropped_salient_tokens"] == ["klai"]
+
 
 # ---------------------------------------------------------------------------
 # _rewrite_and_classify — multi-KB happy path

@@ -190,6 +190,50 @@ async def test_rewrite_query_was_changed_false_when_identical(monkeypatch):
     assert meta["was_changed"] is False
 
 
+@pytest.mark.asyncio
+async def test_rewrite_query_rejects_destructive_rewrite(monkeypatch):
+    """A self-contained query must not be rewritten to an unrelated history topic."""
+    hook = _load_hook(monkeypatch)
+    raw = "Wat weet je over klai?"
+    transport = _MockTransport(
+        status_code=200,
+        json_body=_ok_response(
+            "Hoe stel ik een Yealink toestel in en welke instellingen zijn er mogelijk?"
+        ),
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        raw,
+        _HISTORY_3_TURNS,
+        _transport=transport,
+    )
+
+    assert rewritten == raw
+    assert meta["skipped"] == "destructive_rewrite"
+    assert meta["was_changed"] is False
+    assert meta["dropped_salient_tokens"] == ["klai"]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_allows_followup_resolution(monkeypatch):
+    """Follow-up queries may pull missing subject context from history."""
+    hook = _load_hook(monkeypatch)
+    rewritten_content = "Wat is de status van de portering-aanvraag van Jansen B.V.?"
+    transport = _MockTransport(
+        status_code=200, json_body=_ok_response(rewritten_content)
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        "Wat is de status van de aanvraag?",
+        _HISTORY_3_TURNS,
+        _transport=transport,
+    )
+
+    assert rewritten == rewritten_content
+    assert meta["was_changed"] is True
+    assert "skipped" not in meta
+
+
 # ---------------------------------------------------------------------------
 # Failure modes — all fall back to raw_query
 # ---------------------------------------------------------------------------

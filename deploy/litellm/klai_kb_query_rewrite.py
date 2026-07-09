@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 
 import httpx
@@ -84,6 +85,77 @@ _QUERY_REWRITE_AND_CLASSIFY_PROMPT = (
 _TAXONOMY_TREES_TTL_S = 300
 _TAXONOMY_COVERAGE_TTL_S = 300
 _MAX_KBS_FOR_TAXONOMY = 5
+_TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+_DEICTIC_REWRITE_TOKENS = {
+    "aanvraag",
+    "daar",
+    "daarover",
+    "dat",
+    "deze",
+    "die",
+    "dit",
+    "doe",
+    "er",
+    "hij",
+    "hem",
+    "hier",
+    "hierover",
+    "his",
+    "it",
+    "its",
+    "je",
+    "that",
+    "them",
+    "these",
+    "they",
+    "this",
+    "those",
+    "what",
+    "welke",
+    "wie",
+    "zij",
+}
+_QUERY_REWRITE_STOPWORDS = _DEICTIC_REWRITE_TOKENS | {
+    "about",
+    "also",
+    "and",
+    "anything",
+    "are",
+    "can",
+    "could",
+    "een",
+    "eens",
+    "for",
+    "from",
+    "gaat",
+    "give",
+    "heb",
+    "hebt",
+    "heeft",
+    "hoe",
+    "iets",
+    "jij",
+    "jullie",
+    "kan",
+    "kun",
+    "kunt",
+    "me",
+    "meer",
+    "met",
+    "mij",
+    "naar",
+    "over",
+    "please",
+    "status",
+    "tell",
+    "the",
+    "van",
+    "voor",
+    "wat",
+    "weet",
+    "with",
+    "you",
+}
 
 
 def _retrieve_legacy_headers() -> dict[str, str]:
@@ -115,6 +187,50 @@ def format_history_for_rewrite(history: list[dict], max_chars: int = 1000) -> st
         lines.append(line)
         used += len(line) + 1
     return "\n".join(lines) if lines else "(none)"
+
+
+def _rewrite_salient_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in (match.group(0).lower() for match in _TOKEN_RE.finditer(text))
+        if len(token) >= 3 and token not in _QUERY_REWRITE_STOPWORDS
+    }
+
+
+def _is_followup_query(text: str) -> bool:
+    tokens = {
+        match.group(0).lower() for match in _TOKEN_RE.finditer(text) if match.group(0)
+    }
+    return bool(tokens & _DEICTIC_REWRITE_TOKENS) and not (
+        tokens - _QUERY_REWRITE_STOPWORDS
+    )
+
+
+def _rewrite_preserves_current_query(raw_query: str, rewritten: str) -> bool:
+    """Reject rewrites that drop the current query's explicit subject.
+
+    LLM rewrite may resolve short follow-ups from history, but a clear current
+    question must keep at least one salient token from that question. This
+    fails closed for the observed incident class: "Wat weet je over klai?" was
+    rewritten to an unrelated Yealink/IP-telefonie query and then retrieved low
+    confidence chunks.
+    """
+    if _is_followup_query(raw_query):
+        return True
+    raw_tokens = _rewrite_salient_tokens(raw_query)
+    if not raw_tokens:
+        return True
+    rewritten_tokens = _rewrite_salient_tokens(rewritten)
+    return bool(raw_tokens & rewritten_tokens)
+
+
+def _apply_rewrite_guard(raw_query: str, rewritten: str, meta: dict) -> str:
+    if _rewrite_preserves_current_query(raw_query, rewritten):
+        return rewritten
+    meta["skipped"] = "destructive_rewrite"
+    meta["was_changed"] = False
+    meta["dropped_salient_tokens"] = sorted(_rewrite_salient_tokens(raw_query))[:8]
+    return raw_query
 
 
 async def rewrite_query(
@@ -180,6 +296,7 @@ async def rewrite_query(
         meta["skipped"] = "empty_response"
         return raw_query, meta
     rewritten = rewritten[:500]
+    rewritten = _apply_rewrite_guard(raw_query, rewritten, meta)
     meta["was_changed"] = rewritten.lower() != raw_query.strip().lower()
     return rewritten, meta
 
@@ -418,9 +535,14 @@ async def rewrite_and_classify(
         meta["skipped"] = "empty_rewritten_query"
         return raw_query, [], meta
     rewritten = rewritten[:500]
+    rewritten = _apply_rewrite_guard(raw_query, rewritten, meta)
     meta["was_changed"] = rewritten.lower() != raw_query.strip().lower()
 
-    raw_ids = parsed.get("taxonomy_node_ids") or []
+    raw_ids = (
+        []
+        if meta.get("skipped") == "destructive_rewrite"
+        else parsed.get("taxonomy_node_ids") or []
+    )
     classified: list[int] = []
     for item in raw_ids:
         try:
