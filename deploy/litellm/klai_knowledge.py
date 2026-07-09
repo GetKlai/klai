@@ -108,6 +108,7 @@ from klai_kb_query_rewrite import (
     format_history_for_rewrite as _format_history_for_rewrite,
     format_taxonomy_for_prompt as _format_taxonomy_for_prompt,
     rewrite_and_classify as _rewrite_and_classify,
+    rewrite_decided as _rewrite_decided,
     rewrite_query as _rewrite_query,
 )
 from klai_kb_request_context import (
@@ -689,6 +690,24 @@ class KlaiKnowledgeHook(CustomLogger):
         # see literal customer text.
         telemetry_level = feature.get("telemetry_level", "shadow")
         try:
+            # Guard-fire is warning-level on purpose: the info-level
+            # query_rewrite telemetry below does not reach VictoriaLogs in
+            # production, and an invisible guard cannot be monitored for
+            # hijacks or false positives. Dropped tokens are literal customer
+            # text → full-telemetry orgs only.
+            if rewrite_meta.get("skipped") == "destructive_rewrite":
+                dropped = rewrite_meta.get("dropped_salient_tokens", [])
+                logger.warning(
+                    "query_rewrite_destructive_blocked org_id=%s user_id=%s "
+                    "rewrite_ms=%d prompt_variant=%s dropped_token_count=%d "
+                    "dropped_salient_tokens=%s",
+                    org_id,
+                    user_id,
+                    rewrite_meta.get("rewrite_ms", 0),
+                    rewrite_meta.get("prompt_variant", ""),
+                    len(dropped),
+                    dropped if telemetry_level == "full" else "<redacted>",
+                )
             # REQ-OBS-03: ``skipped`` IS the skip reason (empty when the
             # rewrite ran); ``prompt_variant`` distinguishes plain/classify.
             if telemetry_level == "full":
@@ -755,6 +774,7 @@ class KlaiKnowledgeHook(CustomLogger):
         retrieve_body = _build_retrieve_body(
             rewritten_query=rewritten_query,
             raw_query=query,
+            coreference_resolved=_rewrite_decided(rewrite_meta),
             org_id=org_id,
             user_id=user_id,
             top_k=RETRIEVE_TOP_K,

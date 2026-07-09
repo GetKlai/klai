@@ -25,6 +25,12 @@ class RetrieveRequest(BaseModel):
     # retrieval. Evidence/source matching uses both so a rewrite cannot make
     # otherwise relevant citable chunks look unrelated.
     raw_query: str | None = None
+    # Explicit signal that the caller's rewrite step already made the
+    # coreference decision — True even when it decided the raw query IS the
+    # right query (litellm's destructive-rewrite guard, identity rewrites).
+    # None = older caller without the field: ``_caller_pre_resolved`` falls
+    # back to the legacy raw_query != query heuristic.
+    coreference_resolved: bool | None = None
     org_id: str
     scope: Literal["personal", "org", "both"] = "org"
     user_id: str | None = None

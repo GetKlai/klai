@@ -20,7 +20,10 @@ _SYSTEM_PROMPT = (
     "user query, rewrite the query so it is fully standalone -- all pronouns and "
     "references resolved. Return ONLY the rewritten query, nothing else. "
     "Keep the same language as the input query. If no rewriting is needed, return "
-    "the original query unchanged."
+    "the original query unchanged. The rewrite MUST keep the subject of the "
+    "latest query: history may only supply referents for pronouns, ellipsis, or "
+    "follow-up phrases -- never replace the query's topic with a topic from "
+    "history. When the latest query introduces a new topic, return it unchanged."
 )
 
 

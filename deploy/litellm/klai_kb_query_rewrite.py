@@ -40,6 +40,11 @@ _QUERY_REWRITE_PROMPT = (
     "current question so it makes sense as a stand-alone search query — "
     "resolve pronouns and references using the conversation history. If the "
     "question is already clear and self-contained, return it unchanged.\n\n"
+    "The rewrite MUST keep the subject of the user's CURRENT question. "
+    "History may only supply referents for pronouns, ellipsis, or follow-up "
+    "phrases — never replace the current question's topic with a topic from "
+    "history. When the current question introduces a new topic, ignore the "
+    "history and return the question unchanged.\n\n"
     "Brand-bridging: if the question mentions a third-party brand or product "
     "name (e.g. Salesforce, HubSpot, Pipedrive, Zoom, Microsoft Teams, "
     "Outlook), also include 2–4 broader category or related-brand terms in "
@@ -58,7 +63,12 @@ _QUERY_REWRITE_AND_CLASSIFY_PROMPT = (
     "Tasks (combined, single JSON response):\n"
     "1. Rewrite the user's current question into a self-contained search query "
     "— resolve pronouns and references using the conversation history. "
-    "If already clear, return it unchanged.\n"
+    "If already clear, return it unchanged. The rewrite MUST keep the subject "
+    "of the CURRENT question: history may only supply referents for pronouns, "
+    "ellipsis, or follow-up phrases — never replace the current question's "
+    "topic with a topic from history. Example: history about Yealink "
+    "toestellen, current question 'Wat weet je over klai?' → "
+    "'Wat weet je over klai?' (new topic — history ignored).\n"
     "2. SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-5 — Brand-bridging: if the "
     "question mentions a third-party brand or product name (e.g. Salesforce, "
     "HubSpot, Pipedrive, Zoom, Microsoft Teams, Outlook), ALSO include "
@@ -224,6 +234,20 @@ def _rewrite_preserves_current_query(raw_query: str, rewritten: str) -> bool:
     return bool(raw_tokens & rewritten_tokens)
 
 
+def rewrite_decided(meta: dict) -> bool:
+    """Whether the rewrite step made the coreference decision for this query.
+
+    True when the rewrite ran to completion (changed or not) or when the
+    destructive-rewrite guard explicitly chose the raw query. False for
+    infrastructure skips (disabled, no API key, timeout, empty response):
+    retrieval-api may then run its own coreference resolver as fallback.
+    Drives the ``coreference_resolved`` field on the /retrieve body — without
+    it, a guard-fire (raw_query == query) would re-trigger retrieval-api's
+    unguarded rewrite and reopen the incident the guard blocked.
+    """
+    return meta.get("skipped") in (None, "destructive_rewrite")
+
+
 def _apply_rewrite_guard(raw_query: str, rewritten: str, meta: dict) -> str:
     if _rewrite_preserves_current_query(raw_query, rewritten):
         return rewritten
@@ -282,7 +306,9 @@ async def rewrite_query(
     except Exception as exc:
         meta["rewrite_ms"] = int((time.monotonic() - t_start) * 1000)
         meta["skipped"] = "exception"
-        meta["error"] = str(exc)[:120]
+        # repr, not str: httpx timeout exceptions stringify to "" which
+        # produced unusable `error=` log lines in production.
+        meta["error"] = repr(exc)[:120]
         logger.warning(
             "query_rewrite_failed error=%s rewrite_ms=%d",
             meta["error"],
@@ -520,7 +546,8 @@ async def rewrite_and_classify(
     except Exception as exc:
         meta["rewrite_ms"] = int((time.monotonic() - t_start) * 1000)
         meta["skipped"] = "exception"
-        meta["error"] = str(exc)[:120]
+        # repr, not str: httpx timeout exceptions stringify to "".
+        meta["error"] = repr(exc)[:120]
         logger.warning(
             "query_rewrite_and_classify_failed error=%s rewrite_ms=%d",
             meta["error"],

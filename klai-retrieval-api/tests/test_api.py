@@ -185,12 +185,27 @@ class TestRetrieveEndpoint:
         assert "Refund policy" in decision_attrs
         assert "top_item_chunk_ids" in decision_attrs
 
+    @pytest.mark.parametrize(
+        "pre_resolved_shape",
+        [
+            pytest.param("legacy_distinct_raw_query", id="legacy-distinct-raw-query"),
+            pytest.param("explicit_flag_guard_fire", id="explicit-flag-guard-fire"),
+        ],
+    )
     def test_retrieve_skips_coreference_when_caller_pre_resolved(
-        self, client, sample_retrieve_request
+        self, client, sample_retrieve_request, pre_resolved_shape
     ):
-        """raw_query != query → caller pre-resolved → retrieval-api does NOT
-        run a second coreference rewrite (kills the double rewrite), responds
-        200, and uses the caller's query verbatim as query_resolved.
+        """Caller pre-resolved → retrieval-api does NOT run a second
+        coreference rewrite (kills the double rewrite), responds 200, and uses
+        the caller's query verbatim as query_resolved.
+
+        Two shapes signal pre-resolution:
+        - legacy: raw_query present and != query (older litellm hook builds);
+        - explicit: ``coreference_resolved: true`` — REQUIRED for the
+          guard-fire case where the litellm destructive-rewrite guard discards
+          the rewrite and sends raw_query == query. Without the flag that
+          shape re-triggered retrieval-api's own unguarded rewrite (the
+          2026-07-09 "Wat weet je over klai?" → Yealink incident class).
 
         Regression: the skip branch previously left ``coref_ms`` unbound,
         crashing every pre-resolved request with UnboundLocalError.
@@ -239,10 +254,17 @@ class TestRetrieveEndpoint:
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
             mock_settings.link_expand_score_boost = 1.00
-            request = {
-                **sample_retrieve_request,
-                "raw_query": "totally different pre-rewrite text",
-            }
+            if pre_resolved_shape == "legacy_distinct_raw_query":
+                request = {
+                    **sample_retrieve_request,
+                    "raw_query": "totally different pre-rewrite text",
+                }
+            else:
+                request = {
+                    **sample_retrieve_request,
+                    "raw_query": sample_retrieve_request["query"],
+                    "coreference_resolved": True,
+                }
             resp = client.post("/retrieve", json=request)
 
         assert resp.status_code == 200

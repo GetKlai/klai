@@ -124,12 +124,19 @@ def _ranking_contract_snapshot(chunks: list[dict]) -> dict[str, list]:
 def _caller_pre_resolved(req: RetrieveRequest) -> bool:
     """Whether the caller already resolved coreference for this request.
 
-    True when a non-empty ``raw_query`` is present AND differs from ``query`` —
-    the litellm hook's contract: it sends the rewritten query as ``query`` and
-    the user's pre-rewrite text as ``raw_query``. knowledge-mcp sends
-    ``raw_query == query`` (no rewrite) and partner/focus omit ``raw_query``, so
-    both fall through to retrieval-side coreference resolution.
+    Preferred signal: the explicit ``coreference_resolved`` flag. The litellm
+    hook sets it True whenever its rewrite step made a decision — including
+    the destructive-rewrite guard discarding a bad rewrite, in which case
+    ``raw_query == query`` on purpose. Re-resolving that shape here would rerun
+    the exact history-hijack the guard just blocked.
+
+    Legacy fallback (flag absent): a non-empty ``raw_query`` that differs from
+    ``query`` — older litellm hook builds. knowledge-mcp sends
+    ``raw_query == query`` (no rewrite) and partner/focus omit ``raw_query``,
+    so both fall through to retrieval-side coreference resolution.
     """
+    if req.coreference_resolved is not None:
+        return req.coreference_resolved
     return bool(req.raw_query) and req.raw_query != req.query
 
 

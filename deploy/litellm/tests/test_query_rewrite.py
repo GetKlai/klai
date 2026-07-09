@@ -214,6 +214,32 @@ async def test_rewrite_query_rejects_destructive_rewrite(monkeypatch):
     assert meta["dropped_salient_tokens"] == ["klai"]
 
 
+def test_rewrite_decided_semantics(monkeypatch):
+    """``rewrite_decided`` drives the /retrieve ``coreference_resolved`` field.
+
+    True when the rewrite pipeline made the coreference decision (successful
+    rewrite OR guard fallback to raw); False on infrastructure skips so
+    retrieval-api may run its own resolver as fallback. The guard-fire case is
+    the regression: without an explicit True, ``raw_query == query`` made
+    retrieval-api re-run an unguarded rewrite of the exact query the guard
+    just protected (2026-07-09 incident class).
+    """
+    hook = _load_hook(monkeypatch)
+
+    assert hook._rewrite_decided({}) is True  # successful rewrite, no skip
+    assert hook._rewrite_decided({"skipped": "destructive_rewrite"}) is True
+    for infra_skip in (
+        "disabled",
+        "no_api_key",
+        "exception",
+        "empty_response",
+        "empty_rewritten_query",
+        "no_history",
+        "empty_query",
+    ):
+        assert hook._rewrite_decided({"skipped": infra_skip}) is False, infra_skip
+
+
 @pytest.mark.asyncio
 async def test_rewrite_query_allows_followup_resolution(monkeypatch):
     """Follow-up queries may pull missing subject context from history."""

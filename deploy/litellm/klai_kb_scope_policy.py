@@ -170,6 +170,7 @@ def build_retrieve_body(
     *,
     rewritten_query: str,
     raw_query: str,
+    coreference_resolved: bool,
     org_id: object,
     user_id: object,
     top_k: int,
@@ -179,13 +180,22 @@ def build_retrieve_body(
     taxonomy_applied: bool,
     classified_node_ids: list,
 ) -> dict:
-    """Build the retrieval-api request body from resolved policy state."""
+    """Build the retrieval-api request body from resolved policy state.
+
+    ``coreference_resolved`` tells retrieval-api explicitly whether the
+    rewrite step made the coreference decision (see
+    ``klai_kb_query_rewrite.rewrite_decided``). Without it retrieval-api
+    infers pre-resolution from ``raw_query != query`` — which re-triggers its
+    own unguarded rewrite exactly when the destructive-rewrite guard fired
+    and deliberately kept ``raw_query == query``.
+    """
     if scope_decision.action != "continue" or scope_decision.scope is None:
         raise ValueError("retrieve body requires a continuing KB scope decision")
 
     body: dict = {
         "query": rewritten_query,
         "raw_query": raw_query,
+        "coreference_resolved": coreference_resolved,
         "org_id": org_id,
         "user_id": user_id,
         "scope": scope_decision.scope,

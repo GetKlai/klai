@@ -280,6 +280,7 @@ def test_build_retrieve_body_uses_resolved_scope_contract():
     body = policy.build_retrieve_body(
         rewritten_query="rewritten",
         raw_query="raw",
+        coreference_resolved=True,
         org_id="org",
         user_id="user",
         top_k=20,
@@ -293,6 +294,7 @@ def test_build_retrieve_body_uses_resolved_scope_contract():
     assert body == {
         "query": "rewritten",
         "raw_query": "raw",
+        "coreference_resolved": True,
         "org_id": "org",
         "user_id": "user",
         "scope": "both",
@@ -313,6 +315,7 @@ def test_build_retrieve_body_adds_owned_private_flag_for_all_collections():
     body = policy.build_retrieve_body(
         rewritten_query="q",
         raw_query="q",
+        coreference_resolved=True,
         org_id="org",
         user_id="user",
         top_k=20,
@@ -337,6 +340,7 @@ def test_build_retrieve_body_for_org_explicit_subset():
     body = policy.build_retrieve_body(
         rewritten_query="q",
         raw_query="q",
+        coreference_resolved=True,
         org_id="org",
         user_id="user",
         top_k=20,
@@ -362,6 +366,7 @@ def test_build_retrieve_body_rejects_non_continuing_scope():
         policy.build_retrieve_body(
             rewritten_query="q",
             raw_query="q",
+            coreference_resolved=True,
             org_id="org",
             user_id="user",
             top_k=20,
