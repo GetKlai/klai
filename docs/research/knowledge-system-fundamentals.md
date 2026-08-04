@@ -22,7 +22,7 @@
 | 9 | [Monitoring](#bevinding-9-hoe-je-weet-of-het-systeem-goed-werkt) | Vier monitoringlagen, staleness-detectie, RAGAS metrics, prioriteitsvolgorde |
 | 10 | [Intentionele laag](#bevinding-10-de-intentionele-laag--het-waarom-vastleggen) | Decision als zesde entiteitstype; waarom automatische extractie niet werkt |
 | 11 | [Omgaan met onzekerheid](#bevinding-11-hoe-het-systeem-omgaat-met-onzekerheid) | OWA vs. CWA spanning; confidence-scored provenance; rol van assertion_mode en confidence |
-| 12 | [Communicatie als kennisbron](#bevinding-12-communicatie-als-kennisbron) | E-mail, chat, calls, vergaderingen, 1-op-1; per type de extractie-aanpak |
+| 12 | [Communicatie als kennisbron](#bevinding-12-communicatie-als-kennisbron) | E-mail, chat, calls, vergaderingen, 1-op-1; per type de extractie-aanpak; casestudy Cerebras Knowledge, onafhankelijk getoetst tegen specialisten + literatuur (aug 2026) |
 | 13 | [Retrieval-verrijking: empirische bevindingen](#bevinding-13-retrieval-verrijking--wat-het-onderzoek-zegt) | Contextual Retrieval vs. HyPE; Dual-Index Fusion in Qdrant; selectieve toepassing; bulk LLM-architectuur |
 | 14 | [Retrieval-strategie: wat het onderzoek zegt](#bevinding-14-retrieval-strategie--wat-het-onderzoek-zegt) | Sparse embeddings voor jargon; hybrid search fusion; reranking tradeoffs; heterogene content; temporele retrieval |
 | 15 | [Query routing en interface-architectuur](#bevinding-15-query-routing-en-interface-architectuur) | Gemeten routing-accuraatheid per methode; pre-retrieval gate; multi-turn coreference; twee-endpoint architectuur |
@@ -744,6 +744,8 @@ Die twee moeten expliciet gescheiden zijn in het datamodel. Een concurrent is ge
 
 **Voys-voordeel:** Voys is een telecomplatform met bestaande call recording-infrastructuur en de juridische randvoorwaarden (GDPR-grondslag, consent-flows) zijn al geregeld op platformniveau. De connector is een integratie op bestaande opnames — geen nieuw opnamesysteem nodig.
 
+**Verdieping (aug 2026):** de volledige keten audio → transcript → structuur → patronen → evaluatie is uitgewerkt in §5.5 van `knowledge-pipeline-architecture.md`, inclusief realistische telefonie-WER-cijfers (20–30%, niet de marketing-6–10%), het dual-channel-alternatief voor diarisatie, de aggregatie-architectuur (HDBSCAN + outlier-cluster-trenddetectie + bi-temporele patroonknopen in Graphiti) en de evaluatie-aanscherpingen (field- vs. record-level, LLM-judge-kalibratie).
+
 ---
 
 ### Vergadering (groep)
@@ -828,6 +830,41 @@ Dat zijn drie LLM-calls in plaats van twee — maar valse attributie (de meest s
 6. Opslaan in alle drie lagen: PostgreSQL + Qdrant + FalkorDB
 
 **De rode draad:** automatische extractie haalt 60-80%. Menselijke mini-validatie direct na afloop maakt het compleet. De kwaliteit wordt bepaald bij opslag — niet bij zoeken.
+
+---
+
+### Casestudy: Cerebras Knowledge (juli 2026) — onafhankelijk getoetst (aug 2026)
+
+Cerebras publiceerde in juli 2026 een casestudy van precies deze communicatie-inputlaag: een interne kennisbank die drie maanden na launch **15.000 vragen per dag** verwerkt, met Slack als belangrijkste bron.
+
+> **Bewijsweging vooraf.** Dit is n=1: één vendor-blog, zonder gepubliceerde metingen ("accuracy increased significantly" is geen cijfer), over een intern single-tenant systeem — en kennissystemen zijn niet Cerebras' specialisatie. Daarom is elke ontwerpkeuze in augustus 2026 getoetst aan (a) partijen waarvoor dit wél de kernbusiness is — Slack AI zelf, Glean, Microsoft 365 Copilot, Atlassian Rovo, Notion, Uber, Coveo, Discord — en (b) de academische IR/NLP-literatuur. De status hieronder per claim is het resultaat van die toetsing; behandel Cerebras' concrete drempelwaarden en mechanieken als startpunt voor eigen kalibratie, nooit als gevalideerde defaults.
+
+| # | Cerebras-keuze | Status na onafhankelijke toetsing |
+|---|---|---|
+| 1 | **Thread als indexeer-eenheid** (niet losse berichten) | **Bevestigd.** Glean verwoordt het vrijwel letterlijk identiek ("think about threads as documents"); Rovo groepeert gerelateerde berichten; Slack AI redeneert op threadniveau. Academisch: hele-thread-als-één-blob én los-bericht zijn beide inferieur aan fijnmaziger indexeren met aggregatie — met de kanttekening dat géén vaste granulariteit optimaal blijkt; adaptieve multi-granulariteit is de opkomende best practice (ICLR 2026-lijn). |
+| 2 | **Distillatie embedden i.p.v. ruwe tekst** (vraag/samenvatting/resolutie) | **Tegengesproken.** Geen enkele specialist doet dit voor chat; Notion embed expliciet ruwe spans; multi-paper academische consensus dat summarize-then-index verliest op conversationele data (LoCoMo-ablaties arXiv:2603.02473, arXiv:2601.00821, plus onafhankelijke 2026-memory-papers). Het houdbare deel: een synthetische zoekvraag als **éxtra lexicale leg** — de doc2query-lijn meet dat generatieve toevoeging van vocabulaire betrouwbaar helpt (MS MARCO MRR@10 0,184 → 0,277), terwijl comprimeren detail vernietigt. Ruwe tekst embedden + zoekvraag ernaast, dus. |
+| 3 | **Bursting met kwaliteitsdrempel** (IDF ≥ 4.0, ≥ 200 tekens, of reacties) | **Richting bevestigd, invulling n=1.** Laag-signaal-filtering vóór indexeren is bewezen nuttig (settled; Slack AI weegt beslispunten/actiepunten zwaarder, Glean filtert op kanaalniveau). Maar **reacties als kwaliteitssignaal is academisch tegengesproken**: het meest geciteerde onderzoek (Anderson et al., KDD 2012, Stack Overflow) vond dat votes langetermijnwaarde nauwelijks beter dan willekeur voorspellen, en vote-gebaseerd ranken benadeelt structureel nieuwe kwaliteitscontent (cold-start bias). De drempelwaarden zelf zijn Cerebras' interne tuning, nergens gevalideerd. |
+| 4 | **Socket Mode real-time + hele-thread-herschrijf per event** | **Deels tegengesproken.** Slack's eigen developer-documentatie raadt Socket Mode af voor productie (webhooks zijn de productieroute). De specialisten kiezen bovendien anders: Glean's productie-Slackpad is federated live-query (helemaal geen persistente content-index), Discord koos op schaal bewust voor batched indexing, en Notion doet het omgekeerde van hele-thread-herschrijven (hash-vergelijking per span om herverwerking te vermijden). Wat overeind blijft: push-boven-poll als principe (Notion's Kafka-pad, Microsoft webhooks) en dedup op stabiel event-ID. |
+| 5 | **Per kanaal eigen sync-cadans** (incident-kanaal vaker) | **Zwak bevestigd.** Per-source frequentie-configuratie is standaard (Microsoft-connectors); kanaalniveau-inclusie/exclusie ook (Glean, Coveo). Maar per-kanaal *cadans* op deze granulariteit documenteert niemand anders. Plausibel, niet onafhankelijk bewezen. |
+| 6 | **Hybride retrieval: exacte lexicale leg + embeddings + IDF + age decay, gewogen RRF** | **Bevestigd als categorie, details afwijkend.** Hybride lexicaal+semantisch is industriestandaard (Rovo's BM25+KNN+cross-encoder is de dichtstbijzijnde architectuur; Uber meet +27% acceptabele antwoorden na toevoegen BM25-leg; Glean: 60–70% van enterprise-queries lost lexicaal op — de exacte-match-les is dus stevig). Twee details doet niemand na: IDF als áparte vierde leg (iedereen vouwt IDF in BM25), en naïeve age decay — Glean waarschuwt daar expliciet tegen en weegt recency met citatie-/tevredenheidssignalen. Extra confound: een LLM-reranker heeft zijn éígen ongecontroleerde recency-bias (tot 95 rangposities verschuiving, arXiv:2509.11353) — vendor-observaties over age decay kunnen dat effect niet scheiden van de ontworpen decay. |
+| 7 | **`who_knows` expertise-tool** | **Bevestigd als categorie.** Glean (Enterprise Graph) en Microsoft (Viva People Skills) bouwen en vermarkten hetzelfde — beide op bredere signalen dan chat alleen (documenten, tickets, org-chart, meetings). Academisch fundament: document-centrische aggregatie verslaat kandidaat-centrisch (settled, TREC Enterprise/Balog); recency- en participatiebias zijn benoemde faalmodi om in het ontwerp mee te nemen; chat als expertise-substraat is peer-reviewed vrijwel onbestudeerd, en expert-finding-benchmarks blijken zelf constructie-vertekend (arXiv:2410.05018). |
+| 8 | **Smalle, LLM-vrije retrieval-primitieven via MCP; agent orkestreert** | **Bevestigd als richting.** Federated/MCP-gebaseerde live-tools zijn precies de beweging bij specialisten (Glean RTS, Microsoft federated connectors, Guru's MCP-integratie), en het sluit aan op Anthropics eigen MCP-guidance. Consequentie voor ons blijft: elk nieuw communicatietype idealiter als eigen retrieval-primitief, niet als extra bron achter één brede search-tool. |
+
+**Wat de specialisten tonen dat Cerebras níét doet** — de betere referentiepatronen voor een multi-tenant product: Notion's hash-and-skip (alleen gewijzigde spans herverwerken, permission-only-wijzigingen als PATCH zonder re-embedding), Glean's near-real-time ACL-sync via webhooks, en Notion's query-time permissie-hercheck met een gebonden staleness-venster (≤ 1 uur). Voor Klai — waar tenant-isolatie en ACL's contractueel zijn — zijn dát de maatgevende voorbeelden, niet een interne single-tenant tool.
+
+**Wat Cerebras níét oplost — en ons onderzoek wel vereist:**
+
+| Onze eis | Cerebras' situatie |
+|---|---|
+| PII-redactie + GDPR-grondslag (blocker in SPEC-KB-BACKLOG O6) | Intern, single-tenant, engineers — niet van toepassing |
+| Correctievenster / menselijke validatie (60-80% → 100%) | Afwezig; volledig automatisch |
+| Sprekerattributie via diarisatie (calls) | Niet nodig — Slack heeft expliciete auteurs |
+| Consensus-type en dissent-behoud (vergaderingen) | Buiten scope |
+| Multi-tenant isolatie, citatiecontract | Niet van toepassing |
+
+**Implicatie voor implementatievolgorde.** Van de vijf communicatietypen blijft **chat (Teams/Slack) de goedkoopste eerste stap** — op eigen structurele gronden: expliciete auteurs (geen diarisatie), expliciete thread-structuur (geen JWZ-reconstructie), en event-API's. Kanttekening: Cerebras' signaalprofiel (engineers, Slack-cultuur) is niet ons ICP — kanaal-signaaldichtheden bij Nederlandse MKB-klanten moeten opnieuw gemeten worden, niet overgenomen. Calls hebben het Voys-voordeel maar blijven geblokkeerd op PII-redactie; e-mail draagt de zone-filtering-complexiteit. De aggregatie-inzichten (patroonwaarde, expertise-mapping) gelden voor alle drie.
+
+*Primaire bron: [How Cerebras Built Its Enterprise Knowledge Base](https://www.cerebras.ai/blog/how-we-built-our-knowledge-base) (juli 2026). Toetsingsbronnen (aug 2026): Slack Engineering ("How We Built Slack AI", "Search at Slack"), Glean-connectordocs + engineering-interviews, Microsoft Learn (Semantic Index, Copilot-connectors, Viva People Skills), Atlassian Engineering (Rovo search relevance), Notion Engineering ("Two years of vector search"), Uber Engineering (Enhanced Agentic-RAG), Discord Engineering; academisch o.a. LoCoMo-ablaties (arXiv:2603.02473, arXiv:2601.00821), Anderson et al. KDD 2012, doc2query/docTTTTTquery, TREC Enterprise/Balog, expert-finding-benchmarkbias (arXiv:2410.05018), LLM-reranker-recency-bias (arXiv:2509.11353).*
 
 ---
 

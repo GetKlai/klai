@@ -34,6 +34,8 @@
 > - Welke foutcodes zijn herkenbaar en de moeite van extractie waard?
 >
 > Begin met dit schema als hypothese. Evalueer op 50--100 echte gesprekken. Pas de enums, beschrijvingen en few-shot voorbeelden aan op basis van wat het model consistent en bruikbaar kan extraheren voor deze specifieke tenant.
+>
+> **Casestudy-referentie (jul/aug 2026):** Cerebras' interne kennisbank past een verwant patroon toe op Slack-threads — LLM-distillatie naar een consistent format (one-line vraag, samenvatting, `resolution`, genoemde systemen). Let op: hun keuze om de distillatie te embedden *in plaats van* de ruwe tekst is bij onafhankelijke toetsing tegengesproken (zie §5.5.2 hieronder en de per-claim-toetsing in "Casestudy: Cerebras Knowledge" onder Bevinding 12 in `knowledge-system-fundamentals.md`); het houdbare deel is het consistente extractieformat als rapportagelaag plus een synthetische zoekvraag als extra lexicale leg.
 
 ### Kernvelden voor KB-gap-detectie
 
@@ -546,6 +548,103 @@ De volledige unified ingest API-specificatie staat in Appendix B.
 5. Implementeer gleaning pass voor `unanswered_questions`
 6. Koppel aan de unified ingest API (niet direct aan Qdrant)
 7. Koppel daarna pas aan de similarity-pipeline
+
+---
+
+## 5.5 Aanvullend onderzoek (augustus 2026): de volledige keten van telefoongesprek naar informatie
+
+> Dit hoofdstuk vult secties 1–5 aan op basis van een uitgebreide literatuur- en productiesysteem-review (augustus 2026, drie parallelle onderzoekssporen). Secties 1–5 nemen het transcript als gegeven; dit hoofdstuk dekt de keten ervóór (audio → transcript), scherpt de extractie-aanpak aan met nieuwe metingen, en voegt het ontbrekende sluitstuk toe: aggregatie van individuele gesprekken naar patronen, en de evaluatie daarvan.
+>
+> **Meta-les die alles hieronder kleurt:** publieke benchmarkcijfers voor deze keten spreken elkaar tot een factor 2 tegen, afhankelijk van meetprotocol (pyannote CALLHOME: 12,4% vs. 28,5% DER voor hetzelfde model; Whisper telefonie: "6–10%" marketing vs. 26–29% onafhankelijk gemeten). Geen enkel extern cijfer vervangt meting op eigen, representatieve Nederlandse gespreksopnames.
+
+### 5.5.1 Upstream: audio → transcript
+
+> **Twee integratiescenario's.** Mogelijk levert de Voys API de transcripten direct aan (scenario A) en doen we de ASR-keten niet zelf; alleen bij ruwe audio (scenario B) bouwen we deze laag. In scenario A verandert deze sectie van bouwplan in **leverancierschecklist** — de kwaliteit van de transcriptie bepaalt nog steeds de kwaliteit van elke stap erna, dus de volgende vragen moeten dan aan de Voys-kant beantwoord worden:
+>
+> 1. **Gemeten WER op Nederlandse telefonie** (niet een leaderboard-cijfer — zie hieronder waarom die tot 4× flatteren), of anders een sample van ~50 transcripten om zelf te meten.
+> 2. **Sprekerscheiding**: zijn agent en klant gelabeld per uiting (idealiter via dual-channel-opname), en hoe betrouwbaar? Zonder betrouwbare attributie valt commitment-extractie (§5.5.2) grotendeels weg.
+> 3. **ITN toegepast?** Worden gesproken nummers/datums/bedragen als geschreven vorm geleverd ("0623…" i.p.v. "nul zes twee drie")? Zo niet, dan blijft een eigen ITN-stap nodig vóór veld-extractie.
+> 4. **Formaat en metadata**: tijdstempels per uiting, confidence-scores per woord/segment, taaldetectie — confidence-scores maken de gegate GEC-pass en `transcript_quality`-veld (sectie 1) mogelijk.
+> 5. **Wijzigbaarheid**: kunnen wij het ASR-model of de configuratie beïnvloeden (bijv. domein-woordenlijst met productnamen), of is het een black box?
+>
+> De rest van deze sectie beschrijft de kennis die in béíde scenario's nodig is: in scenario B als bouwinstructie, in scenario A als maatstaf om de geleverde kwaliteit te beoordelen.
+
+**Telefonie-WER is 3–4× slechter dan de leaderboard-cijfers.** Whisper large-v3 scoort 7,4% WER op schone leesspraak (Open ASR Leaderboard), maar **26,4% op CallHome-telefoongesprekken** (Deepgram-testsuite, 2.703 bestanden) en **28,7% op echte 8kHz-supportcalls** (arXiv:2606.18659, onafhankelijk). De "6–10% op telefonie"-claims die online circuleren zijn SEO-content die leesspraak-cijfers op telefonie plakt. Zelfs professionele menselijke transcribenten zitten op 6,8–11,3% op CallHome. **Budgetteer 20–30% WER op Nederlandse telefonie tot in-house gemeten.**
+
+**Nederlands specifiek:** modelgrootte en fine-tuning domineren. Whisper tiny → large-v2 op Common Voice NL: 51% → 7,8% WER; fine-tuning op Nederlandse corpora (JASMIN-CGN) levert 65–81% relatieve verbetering per subpopulatie (arXiv:2502.17284). Maar: fine-tunes op Common Voice tonen een **33–43 WER-punt generalisatiegat** naar FLEURS — Common Voice is voorgelezen spraak en géén proxy voor spontane, accentrijke telefonie. Er bestaat geen publiek gemeten "Whisper op echte Nederlandse telefoongesprekken"-cijfer; dit gat moeten we zelf dichten. Alternatieven voor Whisper: NVIDIA Parakeet-TDT / Canary (CC-BY-4.0, self-hostable, veel hogere throughput) — maar hun geclaimde minimale 8kHz-degradatie is gemeten op synthetisch gedownsamplede leesspraak en moet op echte telefonie gevalideerd worden.
+
+**WER → extractiekwaliteit: gradueel, geen klif.** EMNLP 2024 (arXiv:2404.09754): bij ~17% WER verliest ChatGPT-3.5 ~3,8 punt absolute accuracy; Mistral-7B ~1–2%. Kernbevinding: **een groter/beter extractie-LLM compenseert ASR-ruis niet** — schonere input is de enige remedie. Praktijkheuristiek (Deepgram): onder ~5% WER is ASR transparant voor downstream taken, boven ~15% begint intent/entity-extractie te breken. Onze telefonie-realiteit zit precies in de risicozone.
+
+**Diarisatie: dual-channel is de ontsnappingsroute.** Word-level sprekerfout springt van 2,68% (2 sprekers) naar 11,65% (3 sprekers) — en een telefoongesprek ís het makkelijke 2-sprekergeval. Maar belangrijker: als het telefonieplatform **agent en klant op gescheiden kanalen** oplevert (stereo/dual-channel), is diarisatie een non-probleem — split op kanaal, plus gedocumenteerd ~10% transcriptie-accuratesse-winst doordat crosstalk verdwijnt (AssemblyAI, Deepgram). **Actiepunt vóór elke modelkeuze: verifieer of Voys-opnames dual-channel geleverd kunnen worden.** Alleen bij mono-opnames is een diarisatiemodel nodig: pyannote Community-1 (open source, self-hostable) als baseline, NVIDIA Streaming Sortformer als benchmark-kandidaat — beide in-house meten, want publieke CALLHOME-DER-cijfers zijn protocolafhankelijk (12,4% vs. 28,5% voor nominaal hetzelfde model).
+
+**Preprocessing: minimaal en getest, niet op geloof.** Het bewijs dat disfluency-verwijdering en interpunctie-herstel helpen stamt uit het klassieke-NLP-tijdperk (QA −0,5 tot −1,6 punt, MT −2 tot −4,7 BLEU); of het moderne instructie-getunede LLM-extractie nog meetbaar helpt is **niet gemeten in de literatuur** — een A/B-vraag voor onze eigen eval-set, geen aanname. LLM's zijn bovendien zelf slecht in disfluency-verwijdering als losse stap (DRES, arXiv:2509.20321: over-deletion, misinterpretatie). Uitzondering: **ITN (inverse text normalization) is wél een gedocumenteerde productienoodzaak** voor gestructureerde velden — "nul zes twee drie" moet een telefoonnummer worden vóór het in `entities` of `error_codes` landt.
+
+**LLM-gebaseerde ASR-correctie (GEC): lonend in óns regime, mits gegate.** Generative error correction levert weinig op bij lage baseline-WER (5,7% relatief op LibriSpeech-clean) maar veel bij hoge baseline en entity-zware content (8–46% relatieve entity-WER-reductie, DeRAGEC) — precies het Nederlandse-telefonie-regime. Voorwaarde (fail-loud-principe): constrain de correctie tot informatie uit de N-best-hypotheses (information bottleneck) en gate op confidence — nooit stil herschrijven wat een klant gezegd heeft.
+
+### 5.5.2 Transcript → structuur: aanscherpingen op secties 1–2
+
+**Fase-segmentatie als zacht prior, niet als harde poort.** Segmentatie in gespreksfasen (opening → probleem → troubleshooting → resolutie → afronding) verbetert downstream samenvatting meetbaar (HyperSeg; GPT-Calls draait in productie in Dynamics 365 Sales). Maar exact fase-grenzen detecteren blijft zwak, en grensfouten stapelen (INSURE-Dial, arXiv:2602.18448). Dus: fase-tags meegeven als context in de extractieprompt, nooit velden hard aan fasen koppelen. Kanttekening: Call2Instruct (arXiv:2601.14263) haalde 3.120 valide Q&A-paren uit 3.000+ telecomcalls **zónder** fase-segmentatie — voor support-Q&A-extractie is het geen vereiste.
+
+**Distilleren-en-embedden is omstreden — de belangrijkste correctie in dit hoofdstuk.** De Cerebras-casestudy (zie Bevinding 12 in `knowledge-system-fundamentals.md`) claimt kwalitatief dat een LLM-distillaat embedden beter werkt dan ruwe tekst. Twee 2026-ablatiestudies op de LoCoMo conversational-memory-benchmark (1.540 vragen) spreken dat tegen voor semantische retrieval:
+
+| Schrijfstrategie | Cosine | BM25 | Hybrid |
+|---|---|---|---|
+| Ruwe chunks (0 LLM-calls bij opslag) | **77,9%** | 59,2% | **81,1%** |
+| Geëxtraheerde facts | 72,2% | 49,4% | 77,3% |
+| Samengevatte episodes | 70,1% | **62,7%** | 73,3% |
+
+(arXiv:2603.02473; bevestigd door arXiv:2601.00821 "Fidelity Before Structure".) Retrieval-methode verschuift accuracy ~20 punt; schrijfstrategie maar 3–8 punt — en distillatie **verliest** op cosine en hybrid, en wint alléén op BM25. Cerebras' echte winst is dus vermoedelijk de synthetische "zoekvraag" als lexicale sleutel, niet de semantische distillatie — hun eigen bursting-fallback (ruwe spans alsnog embedden) is impliciet dezelfde conclusie.
+
+**Consequentie voor onze pipeline:** de gestructureerde `CallExtraction`-JSON (sectie 1) is een **rapportage- en aggregatielaag, niet het enige retrieval-artefact**. Embed de ruwe (gepseudonimiseerde) gespreksspans voor recall, en indexeer daarnaast een korte synthetische zoekvraag (`information_sought` is er in feite al) als extra sparse/lexicale leg in de hybrid-fusie. Dit matcht ook wat alle productie-vendors doen: typed fields voor dashboards/CRM, een apart search-index-artefact voor retrieval.
+
+**Actiepunten en commitments: attributie is de dominante foutbron, niet de extractielogica.** Diarisatiefouten produceren verkeerde eigenaren — de schadelijkste fout in gespreksextractie (zie ook Bevinding 12's sprekerattributie-waarschuwing). Minimaal veldenschema uit de productieliteratuur: `owner_speaker_id`, `task`, `deadline` (ISO-8601), `source_utterance_ids`, `confidence` — en de promptregel "alleen expliciete commitments; geen suggesties zonder eigenaar, geen retorische vragen". Dual-channel-opnames (§5.5.1) lossen dit voor telefonie grotendeels structureel op. Er bestaat geen geaccepteerde accuracy-benchmark voor actiepunt-extractie; vendorclaims van "88–94%" zijn ongeverifieerd.
+
+**FRAME kwantificeert de claims-eerst-aanpak.** De vier-staps pipeline uit Bevinding 12 is nu getraceerd naar de bron: "Re-FRAME the Meeting Summarization SCOPE" (EMNLP 2025 Findings, arXiv:2509.15901). Gemeten: hallucinatie van 3→1 (QMSum) en 4→1 (FAME) op een 5-puntsschaal; stap 2 behoudt ~40% van de geëxtraheerde claims. De concurrerende filosofie is decompose-then-verify (vrij genereren, daarna claim-voor-claim NLI-verificatie); geen head-to-head studie beschikbaar. Voor ons schema-gebaseerde use case is de bestaande single-prompt + gleaning-aanpak functioneel al FRAME-achtig; een harde feit-verificatiepoort is de escalatie als hallucinatie meetbaar een probleem wordt.
+
+**Call-type-schema's:** Gong's 21 voorgetrainde trackers (Budget, Champion, Decision criteria, Customer objection, Next steps, Pricing reactions, …) zijn de kruisgevalideerde referentietaxonomie voor sálescalls — niet zelf uitvinden als we die kant op gaan. Voor support blijft ons sectie-1-schema passend. Meest directe vervolgpaper om te lezen: "AI Knowledge Assist" (arXiv:2510.08149) — supporttranscripten → KB-entries, exact ons probleem.
+
+**Post-call blijft de consensus** (2026-bronnen unaniem): streaming-extractie alleen voor live agent-assist; batch-transcriptie is bovendien 2–5 WER-punt beter (15+ op ruizige audio). Bevestigt Bevinding 12; geen architectuurwijziging.
+
+### 5.5.3 Van gesprekken naar patronen: de aggregatielaag
+
+Bevinding 12 stelt "de waarde zit in het patroon, niet het individuele gesprek" maar liet het *hoe* open. Het onderzoek convergeert op één architectuur:
+
+**Embed → cluster → LLM-label.** Drie onafhankelijke validaties: Anthropic's Clio (arXiv:2412.13678; 94% reconstructie-accuratesse op synthetische ground truth, 96–97% per pipeline-stap), TopicGPT (NAACL 2024; topic-purity 0,74 vs. 0,64 beste baseline), en — meest direct toepasbaar — een contact-center-paper (arXiv:2503.19090): per call een "call driver"-samenvatting van 15–20 woorden → embedden → **HDBSCAN**-clustering (niet k-means: ongelijke clustergroottes + ingebouwde outlier-afhandeling). Emerging issues detecteren ze via een apart outlier-cluster dat greedy gesubclusterd wordt: **een klein cluster dat gestaag groeit = opkomende trend**. Kosten op 500k transcripten: $2–5 met een gefinetuned Mistral-7B (LoRA, 4-bit, één A10G) vs. $142 met GPT-4o — 71× verschil.
+
+**Twee statistische regimes uit elkaar houden.** Thema-óntdekking satureert snel (12 interviews dekken 92% van de thema's; ~50–300 eenheden volstaan), maar prevalentie-/trendclaims ("X% van de klanten noemt Y") vragen ~1.000 gesprekken voor ±3pp betrouwbaarheidsmarge. Product-consequentie: onderscheid **kandidaat-patroon** (tientallen calls, outlier-clustergroei) van **bevestigde trend** (honderden+, met betrouwbaarheidsinterval erbij) in de UI. Ons "340 klachten in 6 maanden"-voorbeeld zit ruim in het betrouwbare regime.
+
+**Patroonknopen: geen kant-en-klaar precedent — bouw op Graphiti-communities.** Nergens in de literatuur bestaat een uitgewerkt "periodiek herberekende aggregaat-knopen"-patroon. Het dichtstbijzijnde is Zep/Graphiti's community-detectie (label propagation, incrementeel bijgewerkt, mét de expliciete erkenning dat periodieke volledige refresh nodig blijft omdat incrementele updates driften — arXiv:2501.13956). Ontwerp: een `IssuePattern`-knoop met `computed_at` + `source_call_ids`-provenance, geïmplementeerd als Graphiti-community met LLM-samenvatting en trend-metadata, herberekend op schema. Zep's cijfers onderbouwen dat materialiseren loont: 90% latency-reductie, context van 115k → 1,6k tokens versus alles-bij-query-tijd.
+
+**Dedup/consolidatie over gesprekken:** streaming-toewijzing van elke nieuwe call-samenvatting aan bestaande cluster-centroids boven een cosine-drempel (startpunt ~0,75–0,85, kalibreren op eigen data — geen universeel getal in de literatuur); wat onder de drempel valt naar de outlier-pool; periodieke batch-herclustering tegen centroid-drift.
+
+**Lifecycle: bi-temporeel invalideren, nooit verwijderen.** Issues worden gefixt, acties verlopen — call-derived kennis veroudert sneller dan documenten. Niet-temporele RAG serveert 15–40% verouderde feiten op evoluerende kennis. Graphiti's bi-temporele model (al in onze stack, zie Bevinding 6/8) is het kant-en-klare mechanisme: nieuw bewijs dat een patroon tegenspreekt zet `t_invalid` op de oude edge in plaats van te verwijderen — "huidige patronen" en "patronen per datum X" blijven beide bevraagbaar. Staleness-trigger: dalende mention-rate in het cluster (semantisch signaal), niet alleen ouderdom — pure recency-decay kan echte trends niet van hercirculatie onderscheiden (arXiv:2509.19376).
+
+### 5.5.4 Evaluatie en feedback: het stappenplan aangescherpt
+
+**Field-level en record-level metrics rapporteren — allebei.** ExtractBench (arXiv:2602.12247): op complexe schema's is field-level accuracy 65–80% terwijl de record-level pass rate ("álle velden goed") maar 4,6% is — een gat van ruim een orde van grootte. Field-level alleen overschat de bruikbaarheid van een `CallExtraction`-record systematisch. Per veldtype passende metric (exact voor identifiers, semantisch voor vrije tekst) en expliciet onderscheid aanwezig / expliciet-leeg / ontbrekend (omissie vs. hallucinatie).
+
+**LLM-as-judge: pas na kalibratie vertrouwen.** Ruwe agreement van 79–85% verbergt chance-corrected κ van slechts 0,38–0,51 (arXiv:2606.19544, 21 modellen). Minimaal validatieprotocol vóór productie-inzet: κ rapporteren (niet ruwe %), position-bias meten (A/B + B/A), ≥3 runs op temperature 0, en schema-constrained judging (dat alleen al +15% judge-accuratesse op extractietaken). Voor menselijke ground truth: target inter-annotator κ 0,70–0,85; bij zeldzame labels (<10% prevalentie) Gwet's AC1 naast κ rapporteren (kappa-paradox); lage agreement betekent vrijwel altijd een vaag rubriek, geen slechte annotators.
+
+**De "50–100 gesprekken" uit het stappenplan: gevalideerd voor kwaliteits-gating, onvoldoende voor trendclaims.** Consistent met OpenAI's golden-set-richtlijn (50–200, diversiteit boven volume). Maar n=50–100 geeft ±10pp foutmarge — rapporteer met Wilson-intervallen (geen naïeve puntschattingen), en gebruik voor roadmap-grade prevalentiecijfers het ~1.000-regime uit §5.5.3.
+
+**Feedbackloop: in-workflow correctie verslaat offline labelen — gemeten.** Agent-in-the-Loop (arXiv:2510.06674, productie-casestudy, 40 supportagents, 5.000+ annotaties à ~11/dag zonder productiviteitsverlies): retrieval-recall +11,7%, citation accuracy +38,1%, en — opvallendst — de annotatiekwaliteit zelf steeg toen labeling in de werkflow kwam (agreement 0,436 → 0,923). Vertaling naar ons: vang "klopt deze extractie / wat mist er" op de plek waar een mens het gesprek tóch al beoordeelt (de gaps-inbox, agent-QA), niet als aparte labeltaak. Lange termijn: het gecorrigeerde corpus is het trainingsmateriaal om de extractie naar een klein zelfgehost model te distilleren (98% kostenreductie in NVIDIA's flywheel-casus; zelfde patroon als de Mistral-7B-finetune in arXiv:2503.19090).
+
+### 5.5.5 Delta's op het stappenplan van sectie 5
+
+| # | Wijziging | Bron |
+|---|---|---|
+| 0 (nieuw, vóór alles) | Bepaal het integratiescenario met Voys: levert de API kant-en-klare transcripten (scenario A → leverancierschecklist §5.5.1 doorlopen: WER-sample, sprekerlabels, ITN, confidence-scores) of ruwe audio (scenario B → dual-channel verifiëren, eigen WER-meetset van ~50 echte Nederlandse calls) | §5.5.1 |
+| Stap 3 | Evalueer field-level ÉN record-level, met Wilson-intervallen | §5.5.4 |
+| Stap 6–7 | Embed ruwe (gepseudonimiseerde) spans + `information_sought` als lexicale leg; JSON-extractie is rapportagelaag, niet het retrieval-artefact | §5.5.2 |
+| Nieuw spoor A | Aggregatie: HDBSCAN over call-driver-samenvattingen + outlier-cluster-trenddetectie + `IssuePattern`-knopen in Graphiti (bi-temporeel) | §5.5.3 |
+| Nieuw spoor B | Feedback-capture in de bestaande gap-review-workflow | §5.5.4 |
+| Optioneel | Gegate GEC-pass en ITN-stap; disfluency/interpunctie-preprocessing alleen na A/B-bewijs | §5.5.1 |
+
+### Belangrijkste bronnen bij dit hoofdstuk
+
+**Upstream:** Deepgram WER-testsuite 2025; Responsible ASR (arXiv:2606.18659); ML6 Whisper-NL; JASMIN-CGN fine-tuning (arXiv:2502.17284); LLM-robuustheid tegen ASR-ruis (arXiv:2404.09754, EMNLP 2024); pyannote Community-1; Deepgram "Multichannel vs Diarization"; DRES (arXiv:2509.20321); DeRAGEC (arXiv:2506.07510).
+**Extractie:** LoCoMo-ablaties (arXiv:2603.02473; arXiv:2601.00821); Re-FRAME (arXiv:2509.15901, EMNLP 2025); Call2Instruct (arXiv:2601.14263); INSURE-Dial (arXiv:2602.18448); GPT-Calls (arXiv:2306.07941); AI Knowledge Assist (arXiv:2510.08149, nog te lezen); Deepgram Conversation Intelligence Guide 2026.
+**Aggregatie & evaluatie:** Clio (arXiv:2412.13678); TopicGPT (arXiv:2311.01449); contact-center insight extraction (arXiv:2503.19090); Zep/Graphiti (arXiv:2501.13956); temporal-RAG freshness (arXiv:2509.19376); ExtractBench (arXiv:2602.12247); LLM-judge-betrouwbaarheid (arXiv:2606.19544); Agent-in-the-Loop (arXiv:2510.06674).
 
 ---
 
