@@ -22,7 +22,7 @@
 | 9 | [Monitoring](#bevinding-9-hoe-je-weet-of-het-systeem-goed-werkt) | Vier monitoringlagen, staleness-detectie, RAGAS metrics, prioriteitsvolgorde |
 | 10 | [Intentionele laag](#bevinding-10-de-intentionele-laag--het-waarom-vastleggen) | Decision als zesde entiteitstype; waarom automatische extractie niet werkt |
 | 11 | [Omgaan met onzekerheid](#bevinding-11-hoe-het-systeem-omgaat-met-onzekerheid) | OWA vs. CWA spanning; confidence-scored provenance; rol van assertion_mode en confidence |
-| 12 | [Communicatie als kennisbron](#bevinding-12-communicatie-als-kennisbron) | E-mail, chat, calls, vergaderingen, 1-op-1; per type de extractie-aanpak |
+| 12 | [Communicatie als kennisbron](#bevinding-12-communicatie-als-kennisbron) | E-mail, chat, calls, vergaderingen, 1-op-1; per type de extractie-aanpak; praktijkvalidatie Cerebras Knowledge (jul 2026) |
 | 13 | [Retrieval-verrijking: empirische bevindingen](#bevinding-13-retrieval-verrijking--wat-het-onderzoek-zegt) | Contextual Retrieval vs. HyPE; Dual-Index Fusion in Qdrant; selectieve toepassing; bulk LLM-architectuur |
 | 14 | [Retrieval-strategie: wat het onderzoek zegt](#bevinding-14-retrieval-strategie--wat-het-onderzoek-zegt) | Sparse embeddings voor jargon; hybrid search fusion; reranking tradeoffs; heterogene content; temporele retrieval |
 | 15 | [Query routing en interface-architectuur](#bevinding-15-query-routing-en-interface-architectuur) | Gemeten routing-accuraatheid per methode; pre-retrieval gate; multi-turn coreference; twee-endpoint architectuur |
@@ -744,6 +744,8 @@ Die twee moeten expliciet gescheiden zijn in het datamodel. Een concurrent is ge
 
 **Voys-voordeel:** Voys is een telecomplatform met bestaande call recording-infrastructuur en de juridische randvoorwaarden (GDPR-grondslag, consent-flows) zijn al geregeld op platformniveau. De connector is een integratie op bestaande opnames — geen nieuw opnamesysteem nodig.
 
+**Verdieping (aug 2026):** de volledige keten audio → transcript → structuur → patronen → evaluatie is uitgewerkt in §5.5 van `knowledge-pipeline-architecture.md`, inclusief realistische telefonie-WER-cijfers (20–30%, niet de marketing-6–10%), het dual-channel-alternatief voor diarisatie, de aggregatie-architectuur (HDBSCAN + outlier-cluster-trenddetectie + bi-temporele patroonknopen in Graphiti) en de evaluatie-aanscherpingen (field- vs. record-level, LLM-judge-kalibratie).
+
 ---
 
 ### Vergadering (groep)
@@ -828,6 +830,42 @@ Dat zijn drie LLM-calls in plaats van twee — maar valse attributie (de meest s
 6. Opslaan in alle drie lagen: PostgreSQL + Qdrant + FalkorDB
 
 **De rode draad:** automatische extractie haalt 60-80%. Menselijke mini-validatie direct na afloop maakt het compleet. De kwaliteit wordt bepaald bij opslag — niet bij zoeken.
+
+---
+
+### Praktijkvalidatie: Cerebras Knowledge (juli 2026)
+
+Cerebras publiceerde in juli 2026 een productie-casestudy van precies deze communicatie-inputlaag: een interne kennisbank die drie maanden na launch **15.000 vragen per dag** verwerkt, gebruikt door mensen, automations en agents. Slack is er de belangrijkste bron — "waar de meest actuele engineering-discussies plaatsvinden." Het is een van de weinige publieke bronnen die de aanpak uit deze bevinding op schaal bevestigt, en het voegt vijf productielessen toe die in het oorspronkelijke onderzoek ontbraken.
+
+**Wat het bevestigt:**
+
+- **Thread als extractie-eenheid.** Vector search over ruwe berichten faalde in hun tests; pas na thread-aggregatie werd retrieval betrouwbaar. Exact onze regel hierboven.
+- **Distillatie vóór embedden.** Een LLM extraheert per thread: een one-line vraag "zoals een engineer die zou intypen", een korte samenvatting, de resolutie, en genoemde systemen/code-referenties. Die distillatie wordt embed — het ruwe transcript **niet**. "Accuracy increased significantly when the thread was normalized into a consistent format." Dit is Bevinding 3 (kwaliteit bij opslag) toegepast op chat, en het `resolution`-veld matcht ons helpdesk-extractieschema in `knowledge-pipeline-architecture.md`. *Kanttekening (aug 2026): twee LoCoMo-ablatiestudies (arXiv:2603.02473, arXiv:2601.00821) spreken dit tegen voor semantische retrieval — ruwe chunks winnen op cosine/hybrid; distillatie wint alleen op BM25/lexicaal. Cerebras' winst is vermoedelijk de synthetische zoekvraag als lexicale sleutel, niet de distillatie zelf. Zie §5.5.2 in `knowledge-pipeline-architecture.md` voor de cijfers en het hybride advies (ruwe spans embedden + zoekvraag als sparse-leg).*
+- **Reacties als kwaliteitssignaal.** Emoji-reacties geven een "social boost" in hun ingest-drempel — ons lichtgewicht-goedkeuringssignaal, in productie bevestigd.
+- **Geen "single source of truth"-platform.** Hun openingsargument is letterlijk het onze: informatie ontstaat waar het ergonomisch is; het systeem moet data ophalen waar die leeft, niet gedrag veranderen.
+- **Expertise-mapping als product.** Ons Pad B (`Person -[KNOWS_ABOUT]-> Topic`) is bij hen een eindgebruikerstool: `who_knows` — een van hun meest genoemde use cases ("Wie is de expert in Y?").
+
+**Vijf productielessen die deze bevinding aanvullen:**
+
+1. **Bursting: een kwaliteitsgedrempelde berichtlaag naast de threadlaag.** Hun thread-samenvattingen misten belangrijke tangent-berichten binnen lange threads. Oplossing: een *burst* (run van opeenvolgende berichten van dezelfde auteur) wordt apart embed met het threadonderwerp als context-prefix — maar alléén boven een drempel: een zeldzaam token (IDF ≥ 4.0), ≥ 200 tekens gecombineerd, óf berichten met reacties. Dit verfijnt onze regel "embed op thread-niveau, niet bericht-niveau" tot: **threadniveau als basis, plus een gegate burst-laag voor de uitzonderingen.** De drempel voorkomt dat "ja prima, doen we" de index vervuilt.
+2. **Real-time events in plaats van polling, met thread-herschrijf.** Slack Socket Mode (persistente WebSocket) in plaats van API-polling. Bij elke reply wordt de **hele thread opnieuw opgehaald en als één rij teruggeschreven** — content, deelnemerslijst en last-activity blijven altijd consistent, en dedup loopt via het stabiele event-ID. Simpeler en robuuster dan incrementele message-appends. Voor Teams is het equivalent Microsoft Graph change notifications.
+3. **Per kanaal een eigen data source met eigen sync-cadans.** Kanaalnaam is bij ons al een signaal-prior; bij Cerebras is het kanaal óók de freshness-knop — een incident-kanaal wordt vaker geïngest dan een archiefkanaal. Dat maakt de kanaal-prior tweedimensionaal: signaaldichtheid én verversingsfrequentie.
+4. **Exacte lexicale match als aparte retrieval-leg.** Hun hardste retrieval-les: als iemand een letterlijke foutmelding, flagnaam of hostname plakt, "should no amount of semantic similarity outrank an exact lexical match." Zij draaien vier scorers naast elkaar — full-text (Postgres GIN), embeddings, IDF-weging, age decay — elk als eigen ranked view, gefuseerd met gewogen RRF (`weight/(60+rank)`). Relevant voor Klai: onze lexicale leg (BGE-M3 sparse) is geleerd-lexicaal en garandeert géén exacte match. Zodra chat- en call-corpora technische strings bevatten, is een echte exact-match-leg in de fusie nodig.
+5. **Retrieval-primitieven als smalle, LLM-vrije tools; de agent orkestreert.** Hun MCP-laag exposeert `search_slack`, `search_code`, `who_knows` en `recent_prs` als aparte, goedkope tools zonder ingebakken LLM-orkestratie; alleen de web-UI draait een eigen planner → executor → synthese-pipeline. Consequentie voor ons: elk nieuw communicatietype wordt idealiter een eigen retrieval-primitief, niet een extra bron achter één brede search-tool.
+
+**Wat Cerebras níét oplost — en ons onderzoek wel vereist:**
+
+| Onze eis | Cerebras' situatie |
+|---|---|
+| PII-redactie + GDPR-grondslag (blocker in SPEC-KB-BACKLOG O6) | Intern, single-tenant, engineers — niet van toepassing |
+| Correctievenster / menselijke validatie (60-80% → 100%) | Afwezig; volledig automatisch |
+| Sprekerattributie via diarisatie (calls) | Niet nodig — Slack heeft expliciete auteurs |
+| Consensus-type en dissent-behoud (vergaderingen) | Buiten scope |
+| Multi-tenant isolatie, citatiecontract | Niet van toepassing |
+
+**Implicatie voor implementatievolgorde.** Van de vijf communicatietypen is **chat (Teams/Slack) de goedkoopste eerste stap**: expliciete auteurs (geen diarisatie), expliciete thread-structuur (geen JWZ-reconstructie), real-time event-API's, en met deze casestudy een compleet productie-receptenboek voor precies dit type. Calls hebben het Voys-voordeel maar blijven geblokkeerd op PII-redactie; e-mail draagt de zone-filtering-complexiteit. De aggregatie-inzichten (patroonwaarde, expertise-mapping) gelden voor alle drie.
+
+*Bron: [How Cerebras Built Its Enterprise Knowledge Base](https://www.cerebras.ai/blog/how-we-built-our-knowledge-base) (juli 2026). Hun referentielijst — Anthropic Contextual Retrieval, RRF (SIGIR 2009), Lost in the Middle (arXiv:2307.03172) — overlapt grotendeels met de bronnen onder Bevinding 13 en 14: onafhankelijke convergentie op dezelfde technieken.*
 
 ---
 
