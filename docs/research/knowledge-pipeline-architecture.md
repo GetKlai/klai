@@ -35,7 +35,7 @@
 >
 > Begin met dit schema als hypothese. Evalueer op 50--100 echte gesprekken. Pas de enums, beschrijvingen en few-shot voorbeelden aan op basis van wat het model consistent en bruikbaar kan extraheren voor deze specifieke tenant.
 >
-> **Praktijkvalidatie (jul 2026):** Cerebras' interne kennisbank past ditzelfde patroon toe op Slack-threads — LLM-distillatie naar een consistent format (one-line vraag, samenvatting, `resolution`, genoemde systemen) dat wordt embed in plaats van het ruwe transcript, met "significantly" hogere accuracy als resultaat. Zie de sectie "Praktijkvalidatie: Cerebras Knowledge" onder Bevinding 12 in `knowledge-system-fundamentals.md` voor de vijf productielessen (o.a. bursting met kwaliteitsdrempel en exacte lexicale match als aparte retrieval-leg).
+> **Casestudy-referentie (jul/aug 2026):** Cerebras' interne kennisbank past een verwant patroon toe op Slack-threads — LLM-distillatie naar een consistent format (one-line vraag, samenvatting, `resolution`, genoemde systemen). Let op: hun keuze om de distillatie te embedden *in plaats van* de ruwe tekst is bij onafhankelijke toetsing tegengesproken (zie §5.5.2 hieronder en de per-claim-toetsing in "Casestudy: Cerebras Knowledge" onder Bevinding 12 in `knowledge-system-fundamentals.md`); het houdbare deel is het consistente extractieformat als rapportagelaag plus een synthetische zoekvraag als extra lexicale leg.
 
 ### Kernvelden voor KB-gap-detectie
 
