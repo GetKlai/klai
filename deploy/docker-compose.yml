@@ -1671,12 +1671,22 @@ services:
         condition: service_healthy
 
   # ─── Crawl4AI (internal web crawler for klai-connector) ─────────────────────
+  # Klai-built image (deploy/crawl4ai/Dockerfile, built on core-01): stock
+  # 0.8.9 plus an env-tunable body-visibility wait. Stock crawl4ai burns a
+  # fixed 30s per page on sites whose <body> never becomes visible
+  # (AngularJS ng-cloak et al.) and then discards the result. Upstream
+  # report: https://github.com/unclecode/crawl4ai/issues/2129 — drop this
+  # local build when a configurable timeout ships upstream.
   crawl4ai:
-    image: unclecode/crawl4ai:0.8.9
+    image: ghcr.io/getklai/crawl4ai:0.8.9-local-260806-1448
     restart: unless-stopped
     environment:
       CRAWL4AI_API_TOKEN: ${CRAWL4AI_INTERNAL_KEY}
       CRAWL4AI_HOOKS_ENABLED: "false"
+      # Max ms to wait for <body> visibility. 2000 measured byte-identical
+      # to the stock 30000 on affected sites, ~5x faster wall-clock; pages
+      # with a visible body exit this wait immediately and are unaffected.
+      CRAWL4AI_BODY_VISIBILITY_TIMEOUT: "2000"
     networks:
       - klai-net
     deploy:

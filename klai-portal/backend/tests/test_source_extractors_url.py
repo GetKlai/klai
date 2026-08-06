@@ -272,3 +272,26 @@ def test_crawl4ai_timeout_covers_slow_javascript_sites() -> None:
         f"_CRAWL4AI_TIMEOUT={_CRAWL4AI_TIMEOUT}s is at or below the measured "
         f"{measured_worst_case_seconds}s worst case; slow JS sites will 502 again"
     )
+
+
+# ---------------------------------------------------------------------------
+# Unrendered template residue (see also knowledge-ingest's twin helper)
+# ---------------------------------------------------------------------------
+
+
+def test_strip_unrendered_template_lines_drops_token_junk() -> None:
+    from app.services.source_extractors.url import strip_unrendered_template_lines
+
+    md = (
+        "# Welcome\n"
+        "Real prose stays here.\n"
+        "* {{item.Name}}\n"
+        "{{selectedCountryPhone.countryCode}} {{selectedCountryPhone.text}}\n"
+        "Use {{name}} to insert the customer name into the template.\n"
+    )
+    cleaned = strip_unrendered_template_lines(md)
+    assert "{{item.Name}}" not in cleaned
+    assert "{{selectedCountryPhone" not in cleaned
+    assert "Real prose stays here." in cleaned
+    # Prose that merely mentions a token is kept unchanged.
+    assert "Use {{name}} to insert the customer name into the template." in cleaned

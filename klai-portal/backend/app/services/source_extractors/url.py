@@ -40,6 +40,43 @@ _TITLE_MAX_CHARS = 120
 # First ATX-style H1 in the markdown — greedy match on the heading line only.
 _H1_PATTERN = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
 
+# Unrendered client-side template token: ``{{item.Name}}``, ``{{ x }}``.
+_MUSTACHE_TOKEN_RE = re.compile(r"\{\{[^{}]*\}\}")
+_MD_LINK_URL_RE = re.compile(r"\]\([^)]*\)")
+
+
+def strip_unrendered_template_lines(markdown: str) -> str:
+    """Drop lines that are (almost) entirely unrendered ``{{...}}`` tokens.
+
+    AngularJS/Vue/Handlebars pages whose app fails to render in the crawler
+    browser leave literal template tokens in the DOM; those lines are markup
+    residue, never content. A line is removed only when, after taking out
+    template tokens and markdown link URLs, at most two words remain. Lines
+    with real prose are kept unchanged, as is fenced code.
+
+    Keep in sync with the same-named helper in
+    ``klai-knowledge-ingest/knowledge_ingest/crawl4ai_client.py``.
+    """
+    if "{{" not in markdown:
+        return markdown
+    kept: list[str] = []
+    in_fence = False
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            kept.append(line)
+            continue
+        if in_fence or "{{" not in line:
+            kept.append(line)
+            continue
+        remainder = _MUSTACHE_TOKEN_RE.sub(" ", _MD_LINK_URL_RE.sub("]", line))
+        words = re.findall(r"\w+", remainder, flags=re.UNICODE)
+        if len(words) <= 2:
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
 
 def _crawl_config() -> dict[str, Any]:
     """Crawler config for a single user-supplied URL source.
@@ -115,7 +152,7 @@ def _extract_markdown_from_response(payload: dict[str, Any]) -> str:
     if not raw:
         raw = md_v2.get("raw_markdown") or ""
 
-    return fit or raw
+    return strip_unrendered_template_lines(fit or raw)
 
 
 def _derive_title(markdown: str, hostname: str | None) -> str:

@@ -623,6 +623,48 @@ async def _crawl_sync(
     return resp.json()
 
 
+# Unrendered client-side template token: ``{{item.Name}}``, ``{{ x }}``.
+# Left behind by AngularJS/Vue/Handlebars pages whose app failed to render
+# in the crawler browser — the tokens are markup residue, never content.
+_MUSTACHE_TOKEN_RE = re.compile(r"\{\{[^{}]*\}\}")
+_MD_LINK_URL_RE = re.compile(r"\]\([^)]*\)")
+
+
+def strip_unrendered_template_lines(markdown: str) -> str:
+    """Drop lines that are (almost) entirely unrendered ``{{...}}`` tokens.
+
+    Conservative by design: a line is removed only when, after taking out
+    template tokens and markdown link URLs, at most two words remain — i.e.
+    the line carries no prose of its own. Lines with real prose that merely
+    mention a token are kept UNCHANGED (think documentation about
+    templating), as is everything inside fenced code blocks.
+
+    Keep in sync with the same-named helper in
+    ``klai-portal/backend/app/services/source_extractors/url.py``.
+    """
+    if "{{" not in markdown:
+        return markdown
+    kept: list[str] = []
+    in_fence = False
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            kept.append(line)
+            continue
+        if in_fence or "{{" not in line:
+            kept.append(line)
+            continue
+        # Words that remain once tokens and link URLs are gone — the text a
+        # human would actually read on this line.
+        remainder = _MUSTACHE_TOKEN_RE.sub(" ", _MD_LINK_URL_RE.sub("]", line))
+        words = re.findall(r"\w+", remainder, flags=re.UNICODE)
+        if len(words) <= 2:
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
     """Parse a single page result from the REST API response."""
     md = page.get("markdown", "")
@@ -638,6 +680,9 @@ def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
         fit = md_v2.get("fit_markdown", "") or ""
     if not raw:
         raw = md_v2.get("raw_markdown", "") or ""
+
+    fit = strip_unrendered_template_lines(fit)
+    raw = strip_unrendered_template_lines(raw)
 
     text = fit or raw
     return CrawlResult(
