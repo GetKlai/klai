@@ -202,11 +202,11 @@ async def preview_crawl(
                 **get_trace_headers(),
             },
             # Seed crawl (page_timeout 30s upstream) plus, when the seed reads
-            # thin, a site sample capped at 15s on the ingest side. 20s used to
-            # cut the seed crawl off on slow sites; 50s covers both phases so a
+            # thin, a site sample capped at 25s on the ingest side. 20s used to
+            # cut the seed crawl off on slow sites; 60s covers both phases so a
             # slow-but-working site returns a verdict instead of "Preview
             # service did not respond".
-            timeout=50.0,
+            timeout=60.0,
         ) as client:
             payload: dict = {
                 "url": url,

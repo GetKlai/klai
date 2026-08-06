@@ -198,13 +198,17 @@ _AI_SELECTOR_CANDIDATE_LIMIT = 6
 # ---------------------------------------------------------------------------
 _SAMPLE_PAGE_BUDGET = 8
 _SAMPLE_DEPTH = 1
-# Hard wall-clock budget for the sample. portal-api gives the whole preview
-# call 20s by default, and the seed crawl has already spent part of that
-# before we get here. Without this ceiling a slow site turns a working
-# preview into "Preview service did not respond" — strictly worse than the
-# thin-content verdict we are trying to improve on. On expiry we keep the
-# single-page verdict.
-_SAMPLE_TIMEOUT_SECONDS = 15.0
+# Hard wall-clock budget for the sample. Without a ceiling a slow site turns
+# a working preview into "Preview service did not respond" — strictly worse
+# than the thin-content verdict the sample is meant to improve on. On expiry
+# we keep the single-page verdict.
+#
+# 25s is sized against crawl4ai, not raw HTTP: pages are rendered in a
+# browser, so a page that curls in 200ms can take seconds. crawl4ai's bulk
+# endpoint dispatches the batch in parallel, so the cost is roughly the
+# slowest page rather than the sum — bounded by its own 30s page_timeout.
+# 25s therefore covers the normal case and cuts off the pathological one.
+_SAMPLE_TIMEOUT_SECONDS = 25.0
 # Two usable pages is enough signal that the site has real content behind the
 # hub. One could be a fluke (e.g. a single "about" page on an empty shell).
 _SAMPLE_MIN_USABLE = 2
