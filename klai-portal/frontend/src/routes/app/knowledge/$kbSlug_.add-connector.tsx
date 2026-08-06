@@ -23,7 +23,6 @@ import type {
   ConnectorType,
   GitHubConfig,
   NotionAddConfig,
-  PreviewClassification,
   PreviewResult,
   WcStep,
   WebCrawlerConfig,
@@ -283,13 +282,10 @@ function AddConnectorPage() {
 
   const previewMutation = useMutation({
     mutationFn: async ({ url, content_selector, try_ai, cookies }: { url: string; content_selector?: string; try_ai?: boolean; cookies?: unknown[] }) => {
-      return apiFetch<{
-        fit_markdown: string; word_count: number; warnings: string[]; url: string
-        content_selector: string | null; selector_source: string | null
-        auth_guard: AuthGuardSuggestion | null
-        classification: PreviewClassification
-        classification_reason: string | null
-      }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
+      // Use PreviewResult itself rather than restating its shape: this
+      // duplicate silently drifted when the backend gained the site-sample
+      // counts, and only surfaced as a type error at build time.
+      return apiFetch<PreviewResult & { url: string }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
         method: 'POST',
         body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false, cookies: cookies || null }),
       })
