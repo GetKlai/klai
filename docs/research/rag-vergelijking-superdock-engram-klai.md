@@ -3,7 +3,7 @@
 *Casus: superdock/TalkWithData (Jantine Doornbos) vs. Engram (Mark Vletter) vs. Klai — juli 2026*
 
 > **Positie in de research-set** (toegevoegd aug 2026): dit rapport is het derde communicatie-onderzoeksdocument en levert de laag die de andere twee missen — het **datamodel** (conversation/message/participant, canonical entity layer, ontology-registry) en het elf-dimensies-toetsingskader.
-> - `knowledge-system-fundamentals.md` — Bevinding 12: extractie-aanpak per communicatietype + de onafhankelijk getoetste Cerebras-casestudy. De daar bevestigde verdicten (thread als indexeer-eenheid; expertise-features vereisen canonieke personen) onderbouwen D2/D3 hieronder.
+> - `communicatie-als-kennisbron.md` — het basisdocument: extractie-aanpak per communicatietype + de onafhankelijk getoetste Cerebras-casestudy. De daar bevestigde verdicten (thread als indexeer-eenheid; expertise-features vereisen canonieke personen) onderbouwen D2/D3 hieronder.
 > - `knowledge-pipeline-architecture.md` — §1–5: helpdesk-extractieschema; §5.5: de volledige telefonie-keten (ASR, aggregatie, evaluatie). De structure-first-route uit §7–8 hieronder gaat vooráf aan die pipelines: eerst het conversatiemodel, dan extractie, dan de bestaande RAG-stack.
 
 ## 1. Doel en gebruik
