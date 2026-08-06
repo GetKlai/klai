@@ -632,6 +632,8 @@ Naast documenten en websites is communicatie de tweede grote ingest-bron. Empiri
 
 **Universele regel:** elk communicatietype heeft een eigen signaal/ruis-verhouding en vraagt om een type-specifieke extractiepipeline. Dezelfde aanpak voor alles werkt niet.
 
+> **Zie ook:** `rag-vergelijking-superdock-engram-klai.md` voor de laag die vooráf gaat aan de extractie-aanpak hieronder — het datamodel (conversation → messages → participants), de canonical entity layer ("Martijn" in Slack = "M. Aslander" in e-mail = `person_123`) en het elf-dimensies-toetsingskader waarop Klai's grootste gat D2/D3 (conversatiemodel + identiteit) blijkt te zijn, niet retrieval.
+
 ---
 
 ### E-mail
