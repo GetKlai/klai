@@ -556,6 +556,8 @@ De volledige unified ingest API-specificatie staat in Appendix B.
 > Dit hoofdstuk vult secties 1–5 aan op basis van een uitgebreide literatuur- en productiesysteem-review (augustus 2026, drie parallelle onderzoekssporen). Secties 1–5 nemen het transcript als gegeven; dit hoofdstuk dekt de keten ervóór (audio → transcript), scherpt de extractie-aanpak aan met nieuwe metingen, en voegt het ontbrekende sluitstuk toe: aggregatie van individuele gesprekken naar patronen, en de evaluatie daarvan.
 >
 > **Meta-les die alles hieronder kleurt:** publieke benchmarkcijfers voor deze keten spreken elkaar tot een factor 2 tegen, afhankelijk van meetprotocol (pyannote CALLHOME: 12,4% vs. 28,5% DER voor hetzelfde model; Whisper telefonie: "6–10%" marketing vs. 26–29% onafhankelijk gemeten). Geen enkel extern cijfer vervangt meting op eigen, representatieve Nederlandse gespreksopnames.
+>
+> **Zie ook:** `rag-vergelijking-superdock-engram-klai.md` voor de structuurlaag die vooráf gaat aan deze keten: het conversation/message/participant-datamodel en de canonical entity layer. Volgorde daar: eerst structuur bewaren (onomkeerbaar als je het weggooit), dan extractie (altijd later toevoegbaar), dan de bestaande RAG-stack als execution engine.
 
 ### 5.5.1 Upstream: audio → transcript
 
