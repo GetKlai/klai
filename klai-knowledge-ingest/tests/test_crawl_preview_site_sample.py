@@ -165,6 +165,36 @@ def test_healthy_seed_never_triggers_site_sample(client: TestClient) -> None:
     sample_mock.assert_not_awaited()
 
 
+def test_site_sample_timeout_falls_back_to_single_page_verdict(
+    client: TestClient,
+) -> None:
+    """A slow site must not turn a working preview into "did not respond".
+
+    portal-api caps the whole preview call, and the seed crawl has already
+    spent part of that budget. If the sample ran unbounded it would push slow
+    sites past that ceiling — replacing an actionable thin-content verdict
+    with a generic service error, which is strictly worse than before.
+    """
+    with (
+        patch(
+            "knowledge_ingest.routes.crawl.crawl_page",
+            new=AsyncMock(return_value=_hub()),
+        ),
+        patch(
+            "knowledge_ingest.routes.crawl.crawl_site",
+            new=AsyncMock(side_effect=TimeoutError()),
+        ),
+    ):
+        resp = client.post(
+            "/ingest/v1/crawl/preview",
+            json={"url": "https://example.com/app/main"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["classification"] == "selector_returns_empty", body
+    assert body["sample_pages_crawled"] == 0
+
+
 def test_site_sample_failure_falls_back_to_single_page_verdict(
     client: TestClient,
 ) -> None:

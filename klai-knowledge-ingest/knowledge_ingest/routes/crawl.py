@@ -198,6 +198,13 @@ _AI_SELECTOR_CANDIDATE_LIMIT = 6
 # ---------------------------------------------------------------------------
 _SAMPLE_PAGE_BUDGET = 8
 _SAMPLE_DEPTH = 1
+# Hard wall-clock budget for the sample. portal-api gives the whole preview
+# call 20s by default, and the seed crawl has already spent part of that
+# before we get here. Without this ceiling a slow site turns a working
+# preview into "Preview service did not respond" — strictly worse than the
+# thin-content verdict we are trying to improve on. On expiry we keep the
+# single-page verdict.
+_SAMPLE_TIMEOUT_SECONDS = 15.0
 # Two usable pages is enough signal that the site has real content behind the
 # hub. One could be a fluke (e.g. a single "about" page on an empty shell).
 _SAMPLE_MIN_USABLE = 2
@@ -222,13 +229,23 @@ async def _sample_site_for_classification(
     slow sample degrades to today's behaviour instead of erroring the preview.
     """
     try:
-        results, _outcomes = await crawl_site(
-            url,
-            selector,
-            max_depth=_SAMPLE_DEPTH,
-            max_pages=_SAMPLE_PAGE_BUDGET,
-            cookies=cookies,
+        results, _outcomes = await asyncio.wait_for(
+            crawl_site(
+                url,
+                selector,
+                max_depth=_SAMPLE_DEPTH,
+                max_pages=_SAMPLE_PAGE_BUDGET,
+                cookies=cookies,
+            ),
+            timeout=_SAMPLE_TIMEOUT_SECONDS,
         )
+    except TimeoutError:
+        logger.info(
+            "crawl_preview_site_sample_timeout",
+            url=url,
+            budget_seconds=_SAMPLE_TIMEOUT_SECONDS,
+        )
+        return (0, 0)
     except Exception as exc:
         logger.warning("crawl_preview_site_sample_failed", url=url, error=str(exc))
         return (0, 0)
