@@ -72,7 +72,10 @@ export function PreviewClassificationFeedback({
   if (classification === 'success') {
     return (
       <Alert variant="success" size="sm">
-        <span>Selector matches real article content. You can save the connector.</span>
+        {/* When the verdict came from the site sample, `reason` explains that the
+            entry page is navigation while the pages behind it hold content. Without
+            it a green check above an empty preview body reads as a bug. */}
+        <span>{reason ?? 'Selector matches real article content. You can save the connector.'}</span>
       </Alert>
     )
   }
@@ -104,6 +107,15 @@ export function PreviewClassificationFeedback({
       <Alert variant="warning" size="sm">
         <span>{message}</span>
       </Alert>
+      {/* The check is advice, not a verdict. A crawl that looks poor on the entry
+          page can still index the site, and the user — not the preview — decides
+          whether this source belongs in their knowledge base. */}
+      {classification !== 'auth_wall_detected' && classification !== 'unknown' && (
+        <p className="text-xs text-gray-500">
+          You can still save this connector. Klai will crawl the pages it can reach and
+          report what it indexed after the first sync.
+        </p>
+      )}
       {classification === 'unknown' && onRetry && (
         <button
           type="button"

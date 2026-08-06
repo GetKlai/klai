@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from knowledge_ingest import pg_store
-from knowledge_ingest.crawl4ai_client import crawl_dom_summary, crawl_page
+from knowledge_ingest.crawl4ai_client import crawl_dom_summary, crawl_page, crawl_site
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.domain_selectors import (
     extract_domain,
@@ -128,6 +128,11 @@ class CrawlPreviewResponse(BaseModel):
     # when the upstream crawl service errors before classification runs.
     classification: str = "unknown"
     classification_reason: str | None = None
+    # Site-sample fallback: how many pages a shallow crawl of the site
+    # reached, and how many of those carried usable content. Both stay 0
+    # when the seed page already classified as success (no sample is run).
+    sample_pages_crawled: int = 0
+    sample_pages_usable: int = 0
 
 
 # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 — distinguish "selector matched
@@ -178,6 +183,58 @@ _AI_SELECTOR_EMPTY_REASON = (
     "Try a different URL or enter a selector manually."
 )
 _AI_SELECTOR_CANDIDATE_LIMIT = 6
+
+# ---------------------------------------------------------------------------
+# Site-sample fallback
+#
+# The seed URL a user types is almost always a homepage or hub, which is
+# navigation by nature and therefore fails the single-page thresholds above.
+# ``crawl_site()`` handles such seeds correctly (links are followed even when
+# the seed itself is not ingestable), so the preview must ask the same
+# question the sync does: does this SITE yield usable pages?
+#
+# Budget: one shallow crawl. crawl4ai parallelises server-side, so 8 pages
+# cost roughly one page's wall-clock, not eight.
+# ---------------------------------------------------------------------------
+_SAMPLE_PAGE_BUDGET = 8
+_SAMPLE_DEPTH = 1
+# Two usable pages is enough signal that the site has real content behind the
+# hub. One could be a fluke (e.g. a single "about" page on an empty shell).
+_SAMPLE_MIN_USABLE = 2
+# Classifications worth a second opinion from a site sample. ``auth_wall_detected``
+# is deliberately absent: that is a real blocker the user must resolve with
+# cookies, and sampling would both waste crawls and hide the cause.
+_SAMPLE_ELIGIBLE_CLASSIFICATIONS = frozenset(
+    {"selector_required", "selector_returns_empty", "requires_javascript"}
+)
+
+
+async def _sample_site_for_classification(
+    *,
+    url: str,
+    selector: str | None,
+    cookies: list[dict] | None,
+) -> tuple[int, int]:
+    """Shallow-crawl the site and count pages carrying usable content.
+
+    Returns ``(pages_crawled, pages_usable)``. Returns ``(0, 0)`` on any
+    failure — the caller then keeps the single-page verdict, so a broken or
+    slow sample degrades to today's behaviour instead of erroring the preview.
+    """
+    try:
+        results, _outcomes = await crawl_site(
+            url,
+            selector,
+            max_depth=_SAMPLE_DEPTH,
+            max_pages=_SAMPLE_PAGE_BUDGET,
+            cookies=cookies,
+        )
+    except Exception as exc:
+        logger.warning("crawl_preview_site_sample_failed", url=url, error=str(exc))
+        return (0, 0)
+
+    usable = sum(1 for r in results if r.word_count >= _MIN_WORD_COUNT)
+    return (len(results), usable)
 
 
 def _dom_word_count(item: dict) -> int:
@@ -506,6 +563,32 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
         }:
             classification_reason = _AI_SELECTOR_EMPTY_REASON
 
+        # Site-sample fallback. The seed page failed the single-page bar, but
+        # that bar answers the wrong question for a hub URL. Ask whether the
+        # SITE yields content — the same thing the sync crawl will do.
+        sample_pages_crawled = 0
+        sample_pages_usable = 0
+        if classification in _SAMPLE_ELIGIBLE_CLASSIFICATIONS:
+            sample_pages_crawled, sample_pages_usable = await _sample_site_for_classification(
+                url=body.url,
+                selector=effective_selector,
+                cookies=body.cookies,
+            )
+            if sample_pages_usable >= _SAMPLE_MIN_USABLE:
+                classification = "success"
+                classification_reason = (
+                    f"The entry page is mostly navigation, but {sample_pages_usable} of "
+                    f"{sample_pages_crawled} linked pages contain real content. "
+                    "Crawling this site will index those pages."
+                )
+            logger.info(
+                "crawl_preview_site_sample",
+                url=body.url,
+                pages_crawled=sample_pages_crawled,
+                pages_usable=sample_pages_usable,
+                classification=classification,
+            )
+
         # SPEC-CONNECTOR-INPUT-VALIDATION-001 — completion log for production
         # debugging. Without this, a 200 with classification='unknown' or
         # 'requires_javascript' is invisible in logs (only the 'started' event
@@ -531,6 +614,8 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
             auth_guard=auth_guard,
             classification=classification,
             classification_reason=classification_reason,
+            sample_pages_crawled=sample_pages_crawled,
+            sample_pages_usable=sample_pages_usable,
         )
     except Exception as exc:
         logger.warning("crawl_preview_failed", url=body.url, error=str(exc))

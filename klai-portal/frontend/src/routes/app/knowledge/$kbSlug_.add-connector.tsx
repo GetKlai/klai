@@ -1183,7 +1183,7 @@ function AddConnectorPage() {
                       <Button
                         type="button"
                         size="sm"
-                        disabled={previewResult?.classification !== 'success'}
+                        disabled={!previewResult || previewResult.classification === 'auth_wall_detected'}
                         onClick={() => setWcStep('settings')}
                       >
                         {m.admin_connectors_webcrawler_next()}
