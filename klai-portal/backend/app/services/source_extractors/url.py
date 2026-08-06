@@ -23,8 +23,17 @@ from app.services.source_extractors.exceptions import SourceFetchError
 
 logger = structlog.get_logger()
 
-# crawl4ai returns within ~15s for most pages; 30 is a safety ceiling.
-_CRAWL4AI_TIMEOUT = 30.0
+# Most pages come back in ~15s, but heavy JS apps are far slower and the old
+# 30s ceiling cut them off mid-flight. Measured on support.ascendcloud.com
+# (Oracle B2C / AngularJS) 2026-08-06: crawl4ai logged [COMPLETE] ✓ at
+# 34-35s on six consecutive attempts while portal-api gave up at 30s, 4-6s
+# short each time. The crawl succeeded every time; only the client quit
+# early, and the user saw "Pagina onbereikbaar - probeer opnieuw".
+#
+# 60s keeps a comfortable margin above that measured worst case. It is a
+# client-side ceiling only — a genuinely unreachable host still fails fast
+# via connect error rather than burning the full budget.
+_CRAWL4AI_TIMEOUT = 60.0
 
 _TITLE_MAX_CHARS = 120
 

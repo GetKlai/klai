@@ -246,3 +246,29 @@ class TestSourceRef:
         mock_httpx_factory(_crawl_response("# Page"))
         _, _, source_ref = await extract_url("https://example.com/archive?page=2")
         assert source_ref == "https://example.com/archive?page=2"
+
+
+# ---------------------------------------------------------------------------
+# Client timeout budget
+# ---------------------------------------------------------------------------
+
+
+def test_crawl4ai_timeout_covers_slow_javascript_sites() -> None:
+    """The client ceiling must sit above real-world slow-render timings.
+
+    Regression (2026-08-06, support.ascendcloud.com): the budget was 30s while
+    crawl4ai logged [COMPLETE] ✓ at 34-35s on six consecutive attempts. The
+    crawl succeeded every time; portal-api quit 4-6s early and the user got
+    "Pagina onbereikbaar - probeer opnieuw" — a fetch-failure message for a
+    fetch that worked.
+
+    Pinned so a future "tighten the timeout" cleanup has to confront the
+    measurement instead of the intuition that 30s is generous.
+    """
+    from app.services.source_extractors.url import _CRAWL4AI_TIMEOUT
+
+    measured_worst_case_seconds = 35.0
+    assert _CRAWL4AI_TIMEOUT > measured_worst_case_seconds, (
+        f"_CRAWL4AI_TIMEOUT={_CRAWL4AI_TIMEOUT}s is at or below the measured "
+        f"{measured_worst_case_seconds}s worst case; slow JS sites will 502 again"
+    )
