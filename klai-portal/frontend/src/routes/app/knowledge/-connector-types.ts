@@ -63,6 +63,10 @@ export type PreviewResult = {
   auth_guard: AuthGuardSuggestion | null
   classification: PreviewClassification
   classification_reason: string | null
+  // Set when the seed page was thin and the backend sampled pages behind it.
+  // Both 0 when the seed passed on its own (no sample was run).
+  sample_pages_crawled: number
+  sample_pages_usable: number
 }
 
 // Per-connector form-state shapes.

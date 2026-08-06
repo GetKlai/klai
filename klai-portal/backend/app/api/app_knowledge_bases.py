@@ -2080,6 +2080,11 @@ class CrawlPreviewResponse(BaseModel):
     # never be treated as success.
     classification: str = "unknown"
     classification_reason: str | None = None
+    # Site-sample fallback: a hub/homepage seed is thin by nature, so the
+    # preview also samples pages behind it. These counts back the wizard's
+    # explanation of why a green verdict can accompany empty preview text.
+    sample_pages_crawled: int = 0
+    sample_pages_usable: int = 0
 
 
 async def _load_saved_web_crawler_cookies(
@@ -2207,6 +2212,8 @@ async def crawl_preview(
         selector_source=result.get("selector_source"),
         classification=result.get("classification", "unknown"),
         classification_reason=result.get("classification_reason"),
+        sample_pages_crawled=result.get("sample_pages_crawled", 0),
+        sample_pages_usable=result.get("sample_pages_usable", 0),
     )
 
 

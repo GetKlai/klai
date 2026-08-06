@@ -1175,7 +1175,7 @@ function EditConnectorPage() {
                     <Button
                       type="button"
                       size="sm"
-                      disabled={previewResult?.classification !== 'success'}
+                      disabled={!previewResult || previewResult.classification === 'auth_wall_detected'}
                       onClick={() => setWcStep('settings')}
                     >
                       {m.admin_connectors_webcrawler_next()}
@@ -1205,7 +1205,8 @@ function EditConnectorPage() {
                       size="sm"
                       disabled={
                         updateMutation.isPending ||
-                        previewResult?.classification !== 'success' ||
+                        !previewResult ||
+                        previewResult.classification === 'auth_wall_detected' ||
                         (requiresLogin === true && authProbeResult?.classification !== 'auth_ok')
                       }
                     >
