@@ -26,7 +26,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from knowledge_ingest import pg_store
-from knowledge_ingest.crawl4ai_client import crawl_dom_summary, crawl_page, crawl_site
+from knowledge_ingest.crawl4ai_client import (
+    CrawlResult,
+    crawl_dom_summary,
+    crawl_page,
+    sample_linked_pages,
+)
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.domain_selectors import (
     extract_domain,
@@ -189,26 +194,25 @@ _AI_SELECTOR_CANDIDATE_LIMIT = 6
 #
 # The seed URL a user types is almost always a homepage or hub, which is
 # navigation by nature and therefore fails the single-page thresholds above.
-# ``crawl_site()`` handles such seeds correctly (links are followed even when
-# the seed itself is not ingestable), so the preview must ask the same
-# question the sync does: does this SITE yield usable pages?
+# The sync crawl handles such seeds correctly (links are followed even when
+# the seed itself is not ingestable), so the preview asks the same question:
+# does this SITE yield usable pages?
 #
-# Budget: one shallow crawl. crawl4ai parallelises server-side, so 8 pages
-# cost roughly one page's wall-clock, not eight.
+# ``sample_linked_pages`` reuses the links the seed crawl already returned and
+# issues ONE parallel bulk request — the seed is not re-fetched and no sitemap
+# probing happens, so the sample costs roughly one page's wall-clock.
 # ---------------------------------------------------------------------------
-_SAMPLE_PAGE_BUDGET = 8
-_SAMPLE_DEPTH = 1
+_SAMPLE_PAGE_BUDGET = 5
 # Hard wall-clock budget for the sample. Without a ceiling a slow site turns
 # a working preview into "Preview service did not respond" — strictly worse
 # than the thin-content verdict the sample is meant to improve on. On expiry
 # we keep the single-page verdict.
 #
-# 25s is sized against crawl4ai, not raw HTTP: pages are rendered in a
-# browser, so a page that curls in 200ms can take seconds. crawl4ai's bulk
-# endpoint dispatches the batch in parallel, so the cost is roughly the
-# slowest page rather than the sum — bounded by its own 30s page_timeout.
-# 25s therefore covers the normal case and cuts off the pathological one.
-_SAMPLE_TIMEOUT_SECONDS = 25.0
+# The sample is ONE bulk request that crawl4ai dispatches in parallel, so the
+# cost is roughly the slowest page (bounded by crawl4ai's own 30s
+# page_timeout) rather than the sum. 35s leaves headroom above that ceiling
+# for request overhead without letting a pathological page stall the preview.
+_SAMPLE_TIMEOUT_SECONDS = 35.0
 # Two usable pages is enough signal that the site has real content behind the
 # hub. One could be a fluke (e.g. a single "about" page on an empty shell).
 _SAMPLE_MIN_USABLE = 2
@@ -222,40 +226,38 @@ _SAMPLE_ELIGIBLE_CLASSIFICATIONS = frozenset(
 
 async def _sample_site_for_classification(
     *,
-    url: str,
+    seed: CrawlResult,
     selector: str | None,
     cookies: list[dict] | None,
 ) -> tuple[int, int]:
-    """Shallow-crawl the site and count pages carrying usable content.
+    """Sample pages linked from the seed and count those carrying content.
 
     Returns ``(pages_crawled, pages_usable)``. Returns ``(0, 0)`` on any
     failure — the caller then keeps the single-page verdict, so a broken or
     slow sample degrades to today's behaviour instead of erroring the preview.
     """
     try:
-        results, _outcomes = await asyncio.wait_for(
-            crawl_site(
-                url,
-                selector,
-                max_depth=_SAMPLE_DEPTH,
-                max_pages=_SAMPLE_PAGE_BUDGET,
+        sample = await asyncio.wait_for(
+            sample_linked_pages(
+                seed,
+                selector=selector,
                 cookies=cookies,
+                max_pages=_SAMPLE_PAGE_BUDGET,
             ),
             timeout=_SAMPLE_TIMEOUT_SECONDS,
         )
     except TimeoutError:
         logger.info(
             "crawl_preview_site_sample_timeout",
-            url=url,
+            url=seed.url,
             budget_seconds=_SAMPLE_TIMEOUT_SECONDS,
         )
         return (0, 0)
-    except Exception as exc:
-        logger.warning("crawl_preview_site_sample_failed", url=url, error=str(exc))
+    except Exception:
+        logger.warning("crawl_preview_site_sample_failed", url=seed.url, exc_info=True)
         return (0, 0)
 
-    usable = sum(1 for r in results if r.word_count >= _MIN_WORD_COUNT)
-    return (len(results), usable)
+    return (sample.pages_crawled, sample.pages_usable)
 
 
 def _dom_word_count(item: dict) -> int:
@@ -591,7 +593,7 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
         sample_pages_usable = 0
         if classification in _SAMPLE_ELIGIBLE_CLASSIFICATIONS:
             sample_pages_crawled, sample_pages_usable = await _sample_site_for_classification(
-                url=body.url,
+                seed=last_result,
                 selector=effective_selector,
                 cookies=body.cookies,
             )

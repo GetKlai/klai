@@ -1048,6 +1048,83 @@ def _relax_seed_crawl_config(crawler_config: dict[str, Any]) -> dict[str, Any]:
     return relaxed
 
 
+@dataclass
+class LinkedPageSample:
+    """Outcome of sampling pages linked from an already-crawled page."""
+
+    pages_crawled: int
+    pages_usable: int
+
+
+def _sample_candidates(seed: CrawlResult, *, base_domain: str, limit: int) -> list[str]:
+    """Pick which linked URLs to sample, deepest-looking pages first.
+
+    A hub links to both sibling hubs (``/support``) and leaf articles
+    (``/articles/detail/a_id/123``). Leaves answer "does this site hold real
+    content?" far better than more hubs, and they are what a sync would
+    actually index — so prefer more path segments, then declaration order for
+    a stable, testable result.
+    """
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for href in _extract_bfs_seeds(seed, base_domain=base_domain):
+        canonical = _canonicalise_url(href)
+        if canonical in seen or canonical == _canonicalise_url(seed.url):
+            continue
+        seen.add(canonical)
+        candidates.append(href)
+    candidates.sort(key=lambda u: -len(_path_segments(u)))
+    return candidates[:limit]
+
+
+async def sample_linked_pages(
+    seed: CrawlResult,
+    *,
+    selector: str | None = None,
+    cookies: list[dict[str, Any]] | None = None,
+    max_pages: int = 5,
+) -> LinkedPageSample:
+    """Fetch pages linked from ``seed`` and count how many carry real content.
+
+    Answers "is this SITE worth crawling?" when the seed page alone cannot —
+    a navigation hub is thin by nature, yet the pages behind it are exactly
+    what a sync would index.
+
+    Deliberately reuses ``seed``'s already-extracted links and issues a
+    SINGLE bulk request. Routing this through :func:`crawl_site` instead
+    would re-crawl the seed and probe sitemaps first — three sequential
+    network phases for a question one parallel batch answers.
+
+    Never raises: a transport failure yields a zero sample so callers can
+    fall back to their single-page verdict.
+    """
+    base_domain = urlparse(seed.url).netloc.lower()
+    candidates = _sample_candidates(seed, base_domain=base_domain, limit=max_pages)
+    if not candidates:
+        return LinkedPageSample(0, 0)
+
+    raw_results, transport_error = await _chunked_bulk_fetch(
+        urls=candidates,
+        crawler_config=build_crawl_config(selector),
+        cookies=cookies,
+    )
+    results, _outcomes = _combine_bulk_responses(
+        candidates=candidates,
+        raw_results=raw_results,
+        transport_error=transport_error,
+        base_domain=base_domain,
+    )
+    usable = sum(1 for r in results if r.word_count >= _THIN_CONTENT_WORD_COUNT)
+    logger.info(
+        "crawl_sample_linked_pages",
+        seed_url=seed.url,
+        candidates=len(candidates),
+        fetched=len(results),
+        usable=usable,
+    )
+    return LinkedPageSample(pages_crawled=len(results), pages_usable=usable)
+
+
 async def crawl_site(
     start_url: str,
     selector: str | None = None,

@@ -7,7 +7,7 @@ rendering the hub yields ~92 visible words — eight short of
 ``_MIN_WORD_COUNT`` — while its ~20 outgoing links each lead to articles of
 900-1600 words. The single-page classifier returned
 ``selector_returns_empty`` and the wizard refused to save the connector,
-even though ``crawl_site()`` indexes such a site without trouble (see
+even though the sync crawl indexes such a site without trouble (see
 ``test_crawl_site_frontier_fetches_listing_children``, which follows links
 from a seed of word_count=1).
 
@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from knowledge_ingest.crawl4ai_client import CrawlResult
+from knowledge_ingest.crawl4ai_client import CrawlResult, LinkedPageSample
 
 # The hub: rich raw HTML (so it is not classified as an SPA shell), thin
 # rendered text. Mirrors the measured ascendcloud /app/main page.
@@ -45,6 +45,12 @@ def _page(url: str, *, words: int, text: str | None = None) -> CrawlResult:
         metadata={"status_code": 200},
         response_headers={},
     )
+
+
+def _as_sample(pages: list[CrawlResult]) -> LinkedPageSample:
+    """Mirror what ``sample_linked_pages`` reports for these pages."""
+    usable = sum(1 for p in pages if p.word_count >= 100)
+    return LinkedPageSample(pages_crawled=len(pages), pages_usable=usable)
 
 
 def _hub() -> CrawlResult:
@@ -74,8 +80,8 @@ def test_thin_hub_seed_is_success_when_site_sample_has_usable_pages(
             new=AsyncMock(return_value=_hub()),
         ),
         patch(
-            "knowledge_ingest.routes.crawl.crawl_site",
-            new=AsyncMock(return_value=(sample, [])),
+            "knowledge_ingest.routes.crawl.sample_linked_pages",
+            new=AsyncMock(return_value=_as_sample(sample)),
         ),
     ):
         resp = client.post(
@@ -102,8 +108,8 @@ def test_thin_seed_stays_blocked_when_site_sample_is_also_thin(
             new=AsyncMock(return_value=_hub()),
         ),
         patch(
-            "knowledge_ingest.routes.crawl.crawl_site",
-            new=AsyncMock(return_value=(sample, [])),
+            "knowledge_ingest.routes.crawl.sample_linked_pages",
+            new=AsyncMock(return_value=_as_sample(sample)),
         ),
     ):
         resp = client.post(
@@ -128,13 +134,13 @@ def test_auth_wall_seed_never_triggers_site_sample(client: TestClient) -> None:
         metadata={"status_code": 401},
         response_headers={},
     )
-    sample_mock = AsyncMock(return_value=([], []))
+    sample_mock = AsyncMock(return_value=LinkedPageSample(0, 0))
     with (
         patch(
             "knowledge_ingest.routes.crawl.crawl_page",
             new=AsyncMock(return_value=walled),
         ),
-        patch("knowledge_ingest.routes.crawl.crawl_site", new=sample_mock),
+        patch("knowledge_ingest.routes.crawl.sample_linked_pages", new=sample_mock),
     ):
         resp = client.post(
             "/ingest/v1/crawl/preview",
@@ -148,13 +154,13 @@ def test_auth_wall_seed_never_triggers_site_sample(client: TestClient) -> None:
 def test_healthy_seed_never_triggers_site_sample(client: TestClient) -> None:
     """A seed that already passes must not pay for an extra crawl."""
     md = "Real article with proper prose. " * 60
-    sample_mock = AsyncMock(return_value=([], []))
+    sample_mock = AsyncMock(return_value=LinkedPageSample(0, 0))
     with (
         patch(
             "knowledge_ingest.routes.crawl.crawl_page",
             new=AsyncMock(return_value=_page("https://example.com/a", words=600)),
         ),
-        patch("knowledge_ingest.routes.crawl.crawl_site", new=sample_mock),
+        patch("knowledge_ingest.routes.crawl.sample_linked_pages", new=sample_mock),
     ):
         resp = client.post(
             "/ingest/v1/crawl/preview",
@@ -181,7 +187,7 @@ def test_site_sample_timeout_falls_back_to_single_page_verdict(
             new=AsyncMock(return_value=_hub()),
         ),
         patch(
-            "knowledge_ingest.routes.crawl.crawl_site",
+            "knowledge_ingest.routes.crawl.sample_linked_pages",
             new=AsyncMock(side_effect=TimeoutError()),
         ),
     ):
@@ -205,7 +211,7 @@ def test_site_sample_failure_falls_back_to_single_page_verdict(
             new=AsyncMock(return_value=_hub()),
         ),
         patch(
-            "knowledge_ingest.routes.crawl.crawl_site",
+            "knowledge_ingest.routes.crawl.sample_linked_pages",
             new=AsyncMock(side_effect=RuntimeError("crawl4ai down")),
         ),
     ):
