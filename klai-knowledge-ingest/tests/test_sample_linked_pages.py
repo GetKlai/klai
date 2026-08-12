@@ -108,6 +108,15 @@ def test_all_template_urls_yield_no_candidates() -> None:
     assert _sample_candidates(seed, base_domain="example.com", limit=5) == []
 
 
+def test_percent_encoded_braces_are_kept() -> None:
+    """A correctly percent-encoded URL is valid and must NOT be filtered — the
+    guard rejects literal ``{``/``}`` (unrendered tokens), not encoded ones."""
+    seed = _seed("https://example.com/a/b?state=%7B%22x%22%3A1%7D")
+    assert _sample_candidates(seed, base_domain="example.com", limit=5) == [
+        "https://example.com/a/b?state=%7B%22x%22%3A1%7D"
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Sampling behaviour
 # ---------------------------------------------------------------------------
@@ -152,6 +161,21 @@ async def test_seed_without_links_costs_no_request() -> None:
     bulk = AsyncMock(return_value=([], None))
     with patch("knowledge_ingest.crawl4ai_client._chunked_bulk_fetch", new=bulk):
         sample = await sample_linked_pages(_seed(), max_pages=5)
+    assert (sample.pages_crawled, sample.pages_usable) == (0, 0)
+    bulk.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seed_with_only_template_links_costs_no_request() -> None:
+    """The ascendcloud case end-to-end: all links are unrendered tokens, so no
+    bulk request fires and the sample returns instantly (no wasted budget)."""
+    seed = _seed(
+        "https://example.com/euf/themes/standard/{{item.URL}}",
+        "https://example.com/euf/themes/standard/{{item.SeoTitle}}",
+    )
+    bulk = AsyncMock(return_value=([], None))
+    with patch("knowledge_ingest.crawl4ai_client._chunked_bulk_fetch", new=bulk):
+        sample = await sample_linked_pages(seed, max_pages=5)
     assert (sample.pages_crawled, sample.pages_usable) == (0, 0)
     bulk.assert_not_awaited()
 
