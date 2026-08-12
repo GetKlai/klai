@@ -159,7 +159,10 @@ class TestAutoJoinPath:
             await select_workspace(body=SelectWorkspaceRequest(ref="r", org_id=1), db=db)
         rows = [r for r in added if isinstance(r, PortalUser)]
         assert len(rows) == 1
-        assert rows[0].role == "member"
+        # SPEC-AUTH-010 R6.1: "member" is not a portal_user_role enum label;
+        # auto-join inserts role="personal" (RBAC-REFACTOR-001 REQ-11).
+        assert rows[0].role == "personal"
+        assert rows[0].seat_type == "chat"
         assert rows[0].status == "active"
 
 

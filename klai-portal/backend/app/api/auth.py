@@ -253,6 +253,8 @@ async def _totp_pending_create(
     session_token: str,
     ua_hash: str,
     ip_subnet: str,
+    zitadel_user_id: str = "",
+    email: str = "",
 ) -> str:
     """Allocate a fresh ``temp_token`` and store the pending state in Redis.
 
@@ -281,6 +283,10 @@ async def _totp_pending_create(
                     "session_token": session_token,
                     "ua_hash": ua_hash,
                     "ip_subnet": ip_subnet,
+                    # SPEC-AUTH-010 R7/C7.5: carried so totp_login can run the
+                    # same domain-match routing as login() after TOTP succeeds.
+                    "zitadel_user_id": zitadel_user_id,
+                    "email": email,
                 },
             )
             pipe.expire(state_key, ttl)
@@ -931,6 +937,81 @@ async def _resolve_and_enforce_mfa(
 
 
 # ---------------------------------------------------------------------------
+# SPEC-AUTH-010 R7: domain-match routing for password login
+# ---------------------------------------------------------------------------
+
+
+async def _maybe_select_workspace_ref(
+    *,
+    zitadel_user_id: str,
+    email: str,
+    auth_request_id: str,
+    session_id: str,
+    session_token: str,
+    db: AsyncSession,
+) -> str | None:
+    """Return a pending-session ref when password login should show the picker.
+
+    Fires only for users with ZERO portal_users rows whose email is verified
+    and matches ≥1 workspace primary_domain. Every other case — including any
+    lookup/Redis failure — returns None so login falls through to the existing
+    finalize path (C7.1..C7.4: this routing must never break login).
+    """
+    from app.services.domain_match import find_domain_match_orgs
+    from app.services.pending_session import PendingSessionService
+
+    if not zitadel_user_id or not email:
+        return None
+    try:
+        # no rid filter: intentional cross-org existence check (ANY membership
+        # disqualifies the picker), not identity resolution — same shape as the
+        # SPEC-AUTH-009 matrix query in idp_callback.
+        member_rows = (
+            (await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))).scalars().all()
+        )
+        if member_rows:
+            # C7.1: existing members keep the direct-finalize flow unchanged.
+            return None
+        domain_orgs = await find_domain_match_orgs(db, email)
+        if not domain_orgs:
+            return None
+        # C7.3: joining requires a proven mailbox; unverified emails see the
+        # normal flow (finalize → /no-account) until they click the mail link.
+        if not await _is_email_already_verified(zitadel_user_id):
+            return None
+        entries = [
+            {
+                "org_id": org.id,
+                "name": org.name,
+                "slug": org.slug,
+                "kind": "domain_match",
+                "auto_accept": bool(org.auto_accept_same_domain),
+            }
+            for org in domain_orgs
+        ]
+        ref = await PendingSessionService().store(
+            session_id=session_id,
+            session_token=session_token,
+            zitadel_user_id=zitadel_user_id,
+            email=email,
+            auth_request_id=auth_request_id,
+            entries=entries,
+        )
+        _emit_auth_event(
+            "login_domain_match_picker",
+            reason="zero_membership_domain_match",
+            outcome="select_workspace",
+            email=email,
+            level="info",
+        )
+        return ref
+    except Exception:
+        # C7.4: Redis/DB/Zitadel hiccups degrade to the pre-SPEC login flow.
+        _slog.warning("login_domain_match_routing_failed", exc_info=True)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------
 
@@ -944,9 +1025,13 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     # Normal login: callback_url is set, status = "ok"
     # TOTP required: status = "totp_required", temp_token is set
+    # SPEC-AUTH-010 R7: status = "select_workspace", ref is set — the user has
+    # no workspace yet but ≥1 org matches their verified email domain; the
+    # frontend navigates to /select-workspace?ref={ref}.
     callback_url: str | None = None
     status: str = "ok"
     temp_token: str | None = None
+    ref: str | None = None
 
 
 class TOTPLoginRequest(BaseModel):
@@ -1451,8 +1536,26 @@ async def login(
             session_token=session["sessionToken"],
             ua_hash=ua_hash,
             ip_subnet=ip_subnet,
+            zitadel_user_id=zitadel_user_id or "",
+            email=str(body.email),
         )
         return LoginResponse(status="totp_required", temp_token=temp_token)
+
+    # 3b. SPEC-AUTH-010 R7: zero-membership user with a verified email that
+    # matches an existing workspace domain → workspace picker instead of
+    # finalizing straight into /no-account. Skipped when a portal_users row is
+    # already known from the MFA resolve (member → direct finalize, C7.1).
+    if zitadel_user_id and portal_user_for_mfa is None:
+        picker_ref = await _maybe_select_workspace_ref(
+            zitadel_user_id=zitadel_user_id,
+            email=str(body.email),
+            auth_request_id=body.auth_request_id,
+            session_id=session["sessionId"],
+            session_token=session["sessionToken"],
+            db=db,
+        )
+        if picker_ref:
+            return LoginResponse(status="select_workspace", ref=picker_ref)
 
     # 4. No TOTP — finalize and set cookie
     return await _finalize_and_set_cookie(
@@ -1572,6 +1675,20 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
 
     # Clean up pending token (REQ-1.6)
     await _totp_pending_delete(body.temp_token)
+
+    # SPEC-AUTH-010 R7/C7.5: same domain-match routing as login() step 3b.
+    # Pending entries created before this deploy lack the identity fields;
+    # .get() defaults make the helper skip cleanly.
+    picker_ref = await _maybe_select_workspace_ref(
+        zitadel_user_id=pending.get("zitadel_user_id", ""),
+        email=pending.get("email", ""),
+        auth_request_id=body.auth_request_id,
+        session_id=session_id,
+        session_token=session_token,
+        db=db,
+    )
+    if picker_ref:
+        return LoginResponse(status="select_workspace", ref=picker_ref)
 
     # Finalize and set cookie
     return await _finalize_and_set_cookie(
@@ -2133,8 +2250,44 @@ async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
     return IDPIntentResponse(auth_url=auth_url)
 
 
+async def _create_idp_session_with_cqrs_retry(
+    user_id: str,
+    intent_id: str,
+    intent_token: str,
+) -> tuple[dict | None, int, Exception | None]:
+    """Create a Zitadel session for a user + completed IdP intent, retrying on 404.
+
+    Zitadel is event-sourced (CQRS): a just-created user may not be visible on
+    the sessions read side yet, so POST /v2/sessions can briefly 404. Shared by
+    idp_callback (SPEC-AUTH-010 R3) and idp_signup_callback.
+
+    Returns (session, attempts, last_exc); session is None when all attempts
+    failed — callers emit their own flow-specific failure events.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(4):
+        if attempt > 0:
+            await asyncio.sleep(attempt * 1.5)
+        try:
+            session = await zitadel.create_session_for_user_idp(user_id, intent_id, intent_token)
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            if exc.response.status_code == 404 and attempt < 3:
+                _slog.warning("idp_session_create_404_retry", attempt=attempt + 1)
+                continue
+            return None, attempt + 1, exc
+        except Exception as exc:  # network blips (httpx.RequestError) included
+            # Parity with the pre-SPEC-AUTH-010 catch-all: a transient failure
+            # must surface as (None, …) so callers 302 to their failure_url
+            # instead of leaking a raw 500 mid-OIDC redirect.
+            return None, attempt + 1, exc
+        else:
+            return session, attempt + 1, None
+    return None, 4, last_exc
+
+
 @router.get("/auth/idp-callback")
-async def idp_callback(
+async def idp_callback(  # noqa: C901 - callback flow has many external failure legs.
     id: str,
     token: str,
     auth_request_id: str,
@@ -2144,16 +2297,19 @@ async def idp_callback(
     """Handle the redirect back from a social IDP after authentication.
 
     Zitadel appends ?id=<intentId>&token=<intentToken> to the success_url.
-    We create a session from the intent, look up portal_users, auto-provision
-    if an allowed domain matches, finalize the auth request, set the SSO cookie,
-    and redirect to the OIDC callback URL.
+    We retrieve the intent, provision a Zitadel user when the intent has no
+    linked account yet (SPEC-AUTH-010 R3 — first-time social login), create a
+    session, look up portal_users, run the SPEC-AUTH-009 R3 domain-match
+    matrix, finalize the auth request, set the SSO cookie, and redirect to the
+    OIDC callback URL.
     """
     failure_url = f"/login?authRequest={auth_request_id}"
 
+    # 1. Retrieve the completed IdP intent once (intents are single-use).
     try:
-        session = await zitadel.create_session_with_idp_intent(id, token)
+        intent_data = await zitadel.retrieve_idp_intent(id, token)
     except httpx.HTTPStatusError as exc:
-        _slog.exception("idp_callback_create_session_failed", zitadel_status=exc.response.status_code)
+        _slog.exception("idp_callback_retrieve_intent_failed", zitadel_status=exc.response.status_code)
         _emit_auth_event(
             "idp_callback_failed",
             reason="session_creation_5xx",
@@ -2163,10 +2319,43 @@ async def idp_callback(
         )
         return RedirectResponse(url=failure_url, status_code=302)
     except Exception:
-        _slog.exception("idp_callback_create_session_failed_unexpected")
+        _slog.exception("idp_callback_retrieve_intent_failed_unexpected")
         _emit_auth_event(
             "idp_callback_failed",
             reason="session_creation_unexpected",
+            outcome="302→failure_url",
+            level="error",
+        )
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    # 1b. SPEC-AUTH-010 R3: no linked Zitadel account means a brand-new person
+    # chose "log in with Google/Microsoft". Pre-SPEC this raised and bounced
+    # them back to /login with no explanation; now we provision the user (same
+    # path as idp_signup_callback) so they reach the domain-match matrix below.
+    idp_user_id: str | None = intent_data.get("userId")
+    if not idp_user_id:
+        try:
+            idp_user_id = await zitadel.create_zitadel_user_from_idp(intent_data, settings.zitadel_portal_org_id)
+            _slog.info("idp_callback_user_created", zitadel_user_id=idp_user_id)
+        except Exception:
+            _slog.exception("idp_callback_create_user_failed")
+            _emit_auth_event(
+                "idp_callback_failed",
+                reason="create_user_failed",
+                outcome="302→failure_url",
+                level="error",
+            )
+            return RedirectResponse(url=failure_url, status_code=302)
+
+    # 1c. Create the session (with CQRS 404-retry for just-created users).
+    session, attempts, last_exc = await _create_idp_session_with_cqrs_retry(idp_user_id, id, token)
+    if session is None:
+        zitadel_status = last_exc.response.status_code if isinstance(last_exc, httpx.HTTPStatusError) else None
+        _slog.error("idp_callback_create_session_failed", attempts=attempts, last_exc=str(last_exc))
+        _emit_auth_event(
+            "idp_callback_failed",
+            reason="session_creation_5xx",
+            zitadel_status=zitadel_status,
             outcome="302→failure_url",
             level="error",
         )
@@ -2432,7 +2621,7 @@ async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
 
 
 @router.get("/auth/idp-signup-callback")
-async def idp_signup_callback(  # noqa: C901 - existing callback flow has many external failure legs.
+async def idp_signup_callback(
     id: str,
     token: str,
     request: Request,
@@ -2498,42 +2687,31 @@ async def idp_signup_callback(  # noqa: C901 - existing callback flow has many e
             return RedirectResponse(url=failure_url, status_code=302)
 
     # 1c. Create Zitadel session with the resolved user_id + IDP intent.
-    # Zitadel uses event sourcing (CQRS): the user is written to the command side but the
-    # read side (queried by POST /v2/sessions) may lag briefly after creation. Retry on 404.
-    session = None
-    last_exc: Exception | None = None
-    for attempt in range(4):
-        if attempt > 0:
-            await asyncio.sleep(attempt * 1.5)
-        try:
-            session = await zitadel.create_session_for_user_idp(idp_user_id, id, token)
-            break
-        except httpx.HTTPStatusError as exc:
-            last_exc = exc
-            if exc.response.status_code == 404 and attempt < 3:
-                _slog.warning(
-                    "idp_signup_callback_create_session_404_retry",
-                    attempt=attempt + 1,
-                )
-                continue
-            _slog.exception("idp_signup_callback_create_session_failed", zitadel_status=exc.response.status_code)
+    # CQRS 404-retry shared with idp_callback (SPEC-AUTH-010 R3).
+    session, attempts, last_exc = await _create_idp_session_with_cqrs_retry(idp_user_id, id, token)
+    if session is None:
+        if isinstance(last_exc, httpx.HTTPStatusError):
+            _slog.error(
+                "idp_signup_callback_create_session_failed",
+                zitadel_status=last_exc.response.status_code,
+                attempts=attempts,
+            )
             _emit_auth_event(
                 "idp_signup_callback_failed",
                 reason="create_session_5xx",
-                zitadel_status=exc.response.status_code,
-                attempts=attempt + 1,
+                zitadel_status=last_exc.response.status_code,
+                attempts=attempts,
                 outcome="302→failure_url",
                 level="error",
             )
-            return RedirectResponse(url=failure_url, status_code=302)
-    if session is None:
-        _slog.error("idp_signup_callback_create_session_retries_exhausted", last_exc=str(last_exc))
-        _emit_auth_event(
-            "idp_signup_callback_failed",
-            reason="create_session_retries_exhausted",
-            outcome="302→failure_url",
-            level="error",
-        )
+        else:
+            _slog.error("idp_signup_callback_create_session_retries_exhausted", last_exc=str(last_exc))
+            _emit_auth_event(
+                "idp_signup_callback_failed",
+                reason="create_session_retries_exhausted",
+                outcome="302→failure_url",
+                level="error",
+            )
         return RedirectResponse(url=failure_url, status_code=302)
 
     session_id: str | None = session.get("sessionId")

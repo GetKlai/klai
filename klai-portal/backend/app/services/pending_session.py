@@ -63,11 +63,13 @@ class PendingSessionService:
         )
 
         pool = await get_redis_pool()
-        if pool:
-            await pool.set(f"{_KEY_PREFIX}{ref}", data, ex=_PENDING_SESSION_TTL)
-        else:
+        if not pool:
+            # SPEC-AUTH-010 L3: a ref that can never be consumed strands the
+            # user on an error picker. Fail loud so callers take their degrade
+            # path (idp_callback → back to login; password login → finalize).
             logger.warning("Redis not available -- pending session cannot be stored")
-
+            raise RuntimeError("Redis unavailable: pending session cannot be stored")
+        await pool.set(f"{_KEY_PREFIX}{ref}", data, ex=_PENDING_SESSION_TTL)
         return ref
 
     async def retrieve(self, ref: str) -> dict | None:

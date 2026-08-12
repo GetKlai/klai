@@ -305,7 +305,11 @@ async def test_idp_callback_no_session_in_response(respx_zitadel: respx.MockRout
         capture_logs() as captured,
         _audit_log_patch() as audit_log,
         patch(
-            "app.api.auth.zitadel.create_session_with_idp_intent",
+            "app.api.auth.zitadel.retrieve_idp_intent",
+            AsyncMock(return_value={"userId": "uid-x"}),
+        ),
+        patch(
+            "app.api.auth.zitadel.create_session_for_user_idp",
             AsyncMock(return_value={}),  # no sessionId / sessionToken
         ),
     ):
@@ -348,7 +352,11 @@ async def test_idp_callback_finalize_5xx(respx_zitadel: respx.MockRouter) -> Non
         capture_logs() as captured,
         _audit_log_patch() as audit_log,
         patch(
-            "app.api.auth.zitadel.create_session_with_idp_intent",
+            "app.api.auth.zitadel.retrieve_idp_intent",
+            AsyncMock(return_value={"userId": "uid-x"}),
+        ),
+        patch(
+            "app.api.auth.zitadel.create_session_for_user_idp",
             AsyncMock(return_value={"sessionId": "sess-1", "sessionToken": "tok-x"}),
         ),
         patch(

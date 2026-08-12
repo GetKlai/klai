@@ -56,6 +56,14 @@ function SignupPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+  // SPEC-AUTH-010 R4: phase-1 answer "a workspace exists for this domain".
+  const [domainMatch, setDomainMatch] = useState<string | null>(null)
+  // SPEC-AUTH-010 R4: user chose "join" — account created, org join follows
+  // after email verification + first login.
+  const [joinPending, setJoinPending] = useState(false)
+  // SPEC-AUTH-010 R5: founder's auto-accept choice (default on).
+  const [autoAccept, setAutoAccept] = useState(true)
+  const emailDomain = form.email.includes('@') ? form.email.split('@').pop() ?? '' : ''
   const [passwordPolicy, setPasswordPolicy] = useState<SignupPasswordPolicy | null>(null)
   const passwordInputs = useMemo(
     () => [form.email, form.first_name, form.last_name, form.company_name, 'Klai'],
@@ -120,8 +128,7 @@ function SignupPage() {
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function submitSignup(domainChoice?: 'join' | 'create') {
     setError(null)
 
     let policy: SignupPasswordPolicy
@@ -137,6 +144,7 @@ function SignupPage() {
     setPasswordStrength(latestPasswordStrength)
     if (!latestPasswordStrength.isAcceptable) {
       setError(passwordPolicyIssueMessage(latestPasswordStrength.issues[0], policy))
+      setDomainMatch(null)
       return
     }
 
@@ -149,6 +157,10 @@ function SignupPage() {
         body: JSON.stringify({
           ...form,
           preferred_language: locale,
+          auto_accept_same_domain: autoAccept,
+          // SPEC-AUTH-010 R4: undefined = phase 1 (server may answer with
+          // kind=domain_match); "join"/"create" = the user's explicit choice.
+          ...(domainChoice ? { domain_choice: domainChoice } : {}),
           // SPEC-LAUNCH-SOFTLAUNCH-001 B-2: forward invite token if present.
           // Backend verifies HMAC + email match; absence is normal for
           // unsolicited signups (those still go through the free-email block).
@@ -163,15 +175,30 @@ function SignupPage() {
         }
         const data = await resp.json().catch(() => ({}))
         setError(readSignupError(data, resp.status))
+        setDomainMatch(null)
         return
       }
 
+      const data = await resp.json().catch(() => ({}))
+      if (data?.kind === 'domain_match' && typeof data.domain === 'string') {
+        setDomainMatch(data.domain)
+        return
+      }
+      if (data?.kind === 'join_pending') {
+        setJoinPending(true)
+      }
+      setDomainMatch(null)
       setDone(true)
     } catch {
       setError(m.signup_error_connection())
     } finally {
       setLoading(false)
     }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    await submitSignup()
   }
 
   const leftContent = (
@@ -198,7 +225,9 @@ function SignupPage() {
             {m.signup_confirm_heading()}
           </p>
           <p className="text-sm text-gray-400">
-            {m.signup_confirm_body({ email: form.email })}
+            {joinPending
+              ? m.signup_join_confirm_body({ email: form.email })
+              : m.signup_confirm_body({ email: form.email })}
           </p>
           <p className="text-xs text-gray-400 opacity-70">
             {m.signup_confirm_hint()}
@@ -210,6 +239,58 @@ function SignupPage() {
             {m.signup_confirm_back()}
           </Link>
         </div>
+      </AuthPageLayout>
+    )
+  }
+
+  // SPEC-AUTH-010 R4 phase 1: a workspace exists for this domain — let the
+  // user choose between joining colleagues and starting a separate workspace.
+  if (domainMatch) {
+    return (
+      <AuthPageLayout leftContent={leftContent} showLocale>
+        <div className="space-y-2">
+          <h2 className="text-xl font-semibold text-gray-900">
+            {m.signup_domain_match_heading()}
+          </h2>
+          <p className="text-sm text-gray-400">
+            {m.signup_domain_match_body({ domain: domainMatch })}
+          </p>
+        </div>
+
+        {error && (
+          <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
+        )}
+
+        <div className="space-y-2">
+          <Button
+            size="lg"
+            className="w-full gap-2"
+            disabled={loading}
+            onClick={() => void submitSignup('join')}
+          >
+            {loading ? m.signup_submit_loading() : m.signup_domain_match_join_cta()}
+            {!loading && <ArrowRight size={16} />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="lg"
+            className="w-full"
+            disabled={loading}
+            onClick={() => void submitSignup('create')}
+          >
+            {m.signup_domain_match_create_cta()}
+          </Button>
+        </div>
+
+        <p className="text-center text-xs text-gray-400">
+          <button
+            type="button"
+            onClick={() => { setDomainMatch(null); setError(null) }}
+            className="text-[var(--color-rl-accent-dark)] hover:underline"
+          >
+            {m.signup_domain_match_back()}
+          </button>
+        </p>
       </AuthPageLayout>
     )
   }
@@ -322,6 +403,23 @@ function SignupPage() {
           estimated={passwordStrength.estimated}
           policy={passwordPolicy}
         />
+
+        {/* SPEC-AUTH-010 R5: founder's auto-accept choice. Server-side
+            guarded — free-email domains never get auto-accept. */}
+        {emailDomain && (
+          <label className="flex items-start gap-2 text-sm text-gray-900">
+            <input
+              type="checkbox"
+              checked={autoAccept}
+              onChange={(e) => setAutoAccept(e.target.checked)}
+              className="mt-0.5 accent-[var(--color-rl-accent)]"
+            />
+            <span>
+              {m.signup_auto_accept_label({ domain: emailDomain })}
+              <span className="block text-xs text-gray-400">{m.signup_auto_accept_hint()}</span>
+            </span>
+          </label>
+        )}
 
         {error && (
           <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>

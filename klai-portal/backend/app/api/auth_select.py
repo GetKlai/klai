@@ -47,6 +47,10 @@ class PendingSessionOrg(BaseModel):
     id: int
     name: str
     slug: str
+    # SPEC-AUTH-010 R8: expose join semantics so the picker can label the CTA
+    # ("Word lid" vs "Vraag toegang aan"). Defaults keep old cached refs valid.
+    kind: str = "member"
+    auto_accept: bool = False
 
 
 class PendingSessionResponse(BaseModel):
@@ -114,7 +118,9 @@ async def notify_auto_join_admins(
         result = await db.execute(
             select(PortalUser).where(
                 PortalUser.org_id == org_id,
-                PortalUser.role.in_(["admin", "group-admin"]),
+                # SPEC-AUTH-010 R6.2: "group-admin" is not a portal_user_role
+                # enum label — the old value aborted the query on live Postgres.
+                PortalUser.role.in_(["admin", "group_manager"]),
                 PortalUser.status == "active",
             )
         )
@@ -161,9 +167,15 @@ async def get_pending_session(
 
     return PendingSessionResponse(
         orgs=[
-            PendingSessionOrg(id=oid, name=orgs_by_id[oid].name, slug=orgs_by_id[oid].slug)
-            for oid in org_ids
-            if oid in orgs_by_id
+            PendingSessionOrg(
+                id=e["org_id"],
+                name=orgs_by_id[e["org_id"]].name,
+                slug=orgs_by_id[e["org_id"]].slug,
+                kind=e.get("kind", "member"),
+                auto_accept=bool(e.get("auto_accept", False)),
+            )
+            for e in entries
+            if e["org_id"] in orgs_by_id
         ]
     )
 
@@ -310,12 +322,18 @@ async def _handle_auto_join(
     await set_tenant(db, org_id)
 
     # INSERT portal_users
+    from app.core.seats import suggest_seat
+
     new_user: PortalUser | None = None
     try:
+        # SPEC-AUTH-010 R6.1: "member" is not a portal_user_role enum label —
+        # the old value made every production auto-join INSERT fail.
+        # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-11: new users join as "personal".
         new_user = PortalUser(
             zitadel_user_id=zitadel_user_id,
             org_id=org_id,
-            role="member",
+            role="personal",
+            seat_type=str(suggest_seat("personal")),
             status="active",
             email=email,
         )
@@ -326,6 +344,9 @@ async def _handle_auto_join(
         logger.info("auto_join_duplicate_ignored", zitadel_user_id=zitadel_user_id, org_id=org_id)
         new_user = None
         await db.rollback()
+        # SET LOCAL is transaction-scoped: the rollback cleared the tenant GUC,
+        # so restore it before the admin-notify SELECT below (SPEC-AUTH-010).
+        await set_tenant(db, org_id)
 
     # Notify all admins (non-blocking)
     await notify_auto_join_admins(
@@ -403,7 +424,8 @@ async def _handle_join_request(
         result = await db.execute(
             select(PortalUser).where(
                 PortalUser.org_id == org_id,
-                PortalUser.role.in_(["admin", "group-admin"]),
+                # SPEC-AUTH-010 R6.2: valid enum labels only (see notify_auto_join_admins).
+                PortalUser.role.in_(["admin", "group_manager"]),
                 PortalUser.status == "active",
             )
         )

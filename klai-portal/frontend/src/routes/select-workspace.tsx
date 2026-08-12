@@ -19,6 +19,9 @@ interface Workspace {
   id: number
   name: string
   slug: string
+  // SPEC-AUTH-010 R8: join semantics so the CTA can be labelled correctly.
+  kind?: 'member' | 'domain_match'
+  auto_accept?: boolean
 }
 
 function SelectWorkspacePage() {
@@ -132,7 +135,11 @@ function SelectWorkspacePage() {
               {org.name}
             </span>
             <span className="block text-xs text-gray-400">
-              {org.slug}
+              {org.kind === 'domain_match'
+                ? org.auto_accept
+                  ? m.select_workspace_join_auto_hint()
+                  : m.select_workspace_request_hint()
+                : org.slug}
             </span>
           </button>
         ))}
@@ -152,8 +159,17 @@ function SelectWorkspacePage() {
         size="lg"
         className="w-full"
       >
-        {selectMutation.isPending ? '…' : m.select_workspace_continue()}
+        {selectMutation.isPending ? '…' : ctaLabel(data.orgs, selectedOrg)}
       </Button>
     </AuthPageLayout>
   )
+}
+
+// SPEC-AUTH-010 R8: CTA reflects what selecting the workspace will do.
+function ctaLabel(orgs: Workspace[], selectedOrg: number | null): string {
+  const org = orgs.find((o) => o.id === selectedOrg)
+  if (org?.kind === 'domain_match') {
+    return org.auto_accept ? m.select_workspace_join_cta() : m.select_workspace_request_cta()
+  }
+  return m.select_workspace_continue()
 }

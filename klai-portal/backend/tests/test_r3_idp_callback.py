@@ -63,8 +63,12 @@ def _make_portal_org(
 
 
 def _zitadel_mocks(email: str = "test@acme.nl") -> MagicMock:
+    # SPEC-AUTH-010 R3: idp_callback now retrieves the intent itself and
+    # creates the session for the linked user (create_session_with_idp_intent
+    # was removed).
     zit = MagicMock()
-    zit.create_session_with_idp_intent = AsyncMock(return_value={"sessionId": "sid", "sessionToken": "stk"})
+    zit.retrieve_idp_intent = AsyncMock(return_value={"userId": "zuser1"})
+    zit.create_session_for_user_idp = AsyncMock(return_value={"sessionId": "sid", "sessionToken": "stk"})
     zit.get_session_details = AsyncMock(return_value={"zitadel_user_id": "zuser1", "email": email})
     zit.finalize_auth_request = AsyncMock(return_value="https://acme.getklai.com/callback")
     return zit
