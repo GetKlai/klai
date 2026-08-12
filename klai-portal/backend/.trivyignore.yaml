@@ -25,3 +25,32 @@ vulnerabilities:
     expired_at: 2026-09-01
     purls:
       - "pkg:pypi/pip@26.0.1"
+
+  - id: GHSA-6v7p-g79w-8964
+    statement: |
+      msgpack 1.1.2 lives in the python:3.13-slim base-image site-packages
+      (bundled interpreter tooling), NOT in portal-api's uv.lock — the app
+      venv is built by uv and contains no msgpack. The vulnerable code path
+      (Unpacker reuse after a caught error) requires the application to
+      deserialise msgpack input, which portal-api never does.
+
+      Re-evaluate when the python:3.13-slim base image ships msgpack >= 1.2.1
+      or drops the package.
+    expired_at: 2026-11-01
+    purls:
+      - "pkg:pypi/msgpack@1.1.2"
+
+  - id: CVE-2025-47273
+    statement: |
+      setuptools 70.3.0 lives in the python:3.13-slim base-image
+      site-packages (interpreter tooling), NOT in portal-api's uv.lock. The
+      vulnerable path (PackageIndex.download path traversal) only triggers
+      when installing packages at runtime; the container never invokes
+      setuptools/pip after the image is built — uv resolves everything at
+      build time. Same reasoning as the existing CVE-2026-6357 pip entry.
+
+      Re-evaluate when the python:3.13-slim base image ships
+      setuptools >= 78.1.1.
+    expired_at: 2026-11-01
+    purls:
+      - "pkg:pypi/setuptools@70.3.0"

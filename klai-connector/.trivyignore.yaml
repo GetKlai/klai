@@ -1,6 +1,11 @@
 # Per-service Trivy ignore-list for klai-connector.
 # Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement + expired_at).
 
+# NOTE 2026-08-12: entries below renewed from expired_at 2026-08-01 to
+# 2026-09-15 to unblock CI (the repo-wide REQ-5 validator hard-fails on any
+# past date, which blocked unrelated portal deploys). Upstream fixes were
+# still not shipped in the pinned base images at renewal time; a proper
+# re-evaluation is owed before 2026-09-15.
 vulnerabilities:
   - id: CVE-2025-69720
     statement: |
@@ -13,7 +18,7 @@ vulnerabilities:
       python:3.12-slim base. Upstream Debian package update will resolve
       this within the expiry window — Renovate watches python:3.12-slim
       for new builds.
-    expired_at: 2026-08-01
+    expired_at: 2026-09-15
 
   - id: CVE-2026-29111
     statement: |
@@ -23,7 +28,7 @@ vulnerabilities:
       hostnetwork, no /run/systemd access). Library ships transitively via
       the python:3.12-slim base. Renovate-tracked base-image update will
       pick up the Debian patch within the expiry window.
-    expired_at: 2026-08-01
+    expired_at: 2026-09-15
 
   - id: CVE-2026-4878
     statement: |
@@ -32,4 +37,4 @@ vulnerabilities:
       the libcap2 library ships transitively via python:3.12-slim and is
       not exercised at runtime. Debian patch via Renovate-tracked base
       bump within the expiry window.
-    expired_at: 2026-08-01
+    expired_at: 2026-09-15

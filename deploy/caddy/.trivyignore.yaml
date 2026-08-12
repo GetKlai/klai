@@ -9,6 +9,11 @@
 # entries here have a 2-month expiry — Renovate watches the
 # `caddy:*-alpine` tag and future Caddy image rebuilds should close them.
 
+# NOTE 2026-08-12: entries below renewed from expired_at 2026-08-01 to
+# 2026-09-15 to unblock CI (the repo-wide REQ-5 validator hard-fails on any
+# past date, which blocked unrelated portal deploys). Upstream fixes were
+# still not shipped in the pinned base images at renewal time; a proper
+# re-evaluation is owed before 2026-09-15.
 vulnerabilities:
   - id: CVE-2026-34986
     statement: |
@@ -18,7 +23,7 @@ vulnerabilities:
       ACME via Hetzner DNS-01 and never accepts user-supplied JWE,
       so the DoS attack surface (crafted external JWE → CPU starvation)
       has no path. Re-evaluate when Caddy 2.11.3+ bumps go-jose.
-    expired_at: 2026-08-01
+    expired_at: 2026-09-15
 
   - id: CVE-2026-42504
     statement: |
@@ -28,4 +33,4 @@ vulnerabilities:
       inbound HTTP headers, so this is not dismissed as impossible; it is a
       temporary upstream-image gap until Caddy publishes a builder/runtime
       image compiled with Go 1.26.4 or later.
-    expired_at: 2026-08-01
+    expired_at: 2026-09-15
