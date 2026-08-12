@@ -41,7 +41,12 @@ contactPoints:
         settings:
           addresses: hello@getklai.com
           singleEmail: false
-          subject: '[KLAI-ALERT fallback] {{ .CommonLabels.alertname | default "unknown" }}'
+          # NOTE: `| default "x"` is a Sprig function that Grafana's alert
+          # templating does NOT provide — it fails with `function "default"
+          # not defined` on EVERY notification through this receiver and the
+          # email falls back to partial/default content (found 2026-08-12 by
+          # live-firing the mail-chain alert). Use if/else instead.
+          subject: '[KLAI-ALERT fallback] {{ if .CommonLabels.alertname }}{{ .CommonLabels.alertname }}{{ else }}unknown{{ end }}'
         disableResolveMessage: false
 
   - orgId: 1
@@ -76,7 +81,9 @@ contactPoints:
         settings:
           addresses: hello@getklai.com
           singleEmail: false
-          subject: '[KLAI-ALERT-{{ .CommonLabels.severity | default "info" }}] {{ .CommonLabels.alertname }}'
+          # See the `default`-is-not-a-Grafana-template-function note on the
+          # fallback receiver above — same fix applied here (2026-08-12).
+          subject: '[KLAI-ALERT-{{ if .CommonLabels.severity }}{{ .CommonLabels.severity }}{{ else }}info{{ end }}] {{ .CommonLabels.alertname }}'
           message: |
             {{ range .Alerts -}}
             [{{ .Status | toUpper }}] {{ .Labels.alertname }}
