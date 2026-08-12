@@ -157,6 +157,9 @@ function EditConnectorPage() {
   const [wcAuthMode, setWcAuthMode] = useState<WebCrawlerAuthMode>('replace')
   const [clearSavedCredentials, setClearSavedCredentials] = useState(false)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
+  // Discovery seed stored on the connector (a validated interior page used as a
+  // fallback crawl seed). Tracked so a re-save without a fresh preview keeps it.
+  const [savedDiscoverySeedUrl, setSavedDiscoverySeedUrl] = useState('')
   // Cookies live as structured {name, value} rows - same shape as the
   // backend persists and the cron-sync consumes. No parser layer.
   const [wcCookieRows, setWcCookieRows] = useState<CookieRow[]>([])
@@ -232,8 +235,11 @@ function EditConnectorPage() {
     if (connector.connector_type === 'web_crawler') {
       const cfg = connector.config as {
         base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string
-        cookies?: unknown[]; login_indicator_selector?: string
+        cookies?: unknown[]; login_indicator_selector?: string; discovery_seed_url?: string
       }
+      // Remember any stored discovery seed so a re-save that doesn't re-run the
+      // preview does not silently drop it.
+      setSavedDiscoverySeedUrl(String(cfg.discovery_seed_url ?? ''))
       setWebcrawlerConfig({
         base_url: String(cfg.base_url ?? ''),
         path_prefix: String(cfg.path_prefix ?? ''),
@@ -263,7 +269,10 @@ function EditConnectorPage() {
       // Existing encrypted web-crawler credentials are an explicit signal that
       // this connector uses login; the edit wizard can skip the auth question.
       if (cfg.content_selector) setShowAdvancedSelector(true)
-      setWcPreviewUrl(String(cfg.base_url ?? ''))
+      // Show the stored discovery seed in the preview field when present, so
+      // the operator sees the known-good interior page we fall back to; else
+      // default to the base URL.
+      setWcPreviewUrl(String(cfg.discovery_seed_url || cfg.base_url || ''))
     }
     if (connector.connector_type === 'github') {
       const cfg = connector.config as { installation_id?: number; repo_owner?: string; repo_name?: string; branch?: string; path_filter?: string }
@@ -349,6 +358,20 @@ function EditConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages) config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
+        // Discovery seed (fallback crawl seed). A freshly validated interior
+        // page this session wins; otherwise keep the stored one, but only if it
+        // is still inside the (possibly edited) base URL scope.
+        const base = webcrawlerConfig.base_url
+        const validatedSeed =
+          wcPreviewUrl && wcPreviewUrl !== base && previewResult?.classification === 'success'
+            ? wcPreviewUrl
+            : ''
+        const carriedSeed =
+          savedDiscoverySeedUrl && savedDiscoverySeedUrl !== base && savedDiscoverySeedUrl.startsWith(base)
+            ? savedDiscoverySeedUrl
+            : ''
+        const discoverySeed = validatedSeed || carriedSeed
+        if (discoverySeed) config.discovery_seed_url = discoverySeed
         // SPEC-CRAWL-004: auth guard from ``authGuard`` state - initialized from
         // auth-probe at step 4 → 5 bridge, refreshed by preview onSuccess,
         // mutated by the operator-editable form on step 5.

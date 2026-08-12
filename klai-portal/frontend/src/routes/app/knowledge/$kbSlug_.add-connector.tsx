@@ -166,6 +166,18 @@ function AddConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
+        // Discovery seed: when the operator validated a specific interior page
+        // in the preview (a detail page, distinct from the base URL), remember
+        // it as a fallback crawl seed. The sync starts from base_url; only if
+        // that discovers nothing does it fall back to this known-good page.
+        // The preview URL stays a render-test — this is a separate config value.
+        if (
+          wcPreviewUrl &&
+          wcPreviewUrl !== webcrawlerConfig.base_url &&
+          previewResult?.classification === 'success'
+        ) {
+          config.discovery_seed_url = wcPreviewUrl
+        }
         const cookies = buildCookies()
         if (cookies) config.cookies = cookies
         // SPEC-CRAWL-004: include auto-detected auth guard values. Source is

@@ -261,3 +261,41 @@ class TestWebcrawlerConfigExistingFields:
         assert cfg.canary_url is None
         assert cfg.canary_fingerprint is None
         assert cfg.login_indicator_selector is None
+
+
+class TestWebcrawlerConfigDiscoverySeed:
+    """discovery_seed_url: optional fallback crawl seed, scoped within base_url."""
+
+    def test_seed_within_base_url_accepted(self) -> None:
+        cfg = WebcrawlerConfig(
+            base_url="https://wiki.example.com",
+            discovery_seed_url="https://wiki.example.com/articles/detail/a_id/1",
+        )
+        assert cfg.discovery_seed_url == "https://wiki.example.com/articles/detail/a_id/1"
+
+    def test_seed_within_path_prefix_accepted(self) -> None:
+        cfg = WebcrawlerConfig(
+            base_url="https://wiki.example.com",
+            path_prefix="/kb",
+            discovery_seed_url="https://wiki.example.com/kb/article-1",
+        )
+        assert cfg.discovery_seed_url == "https://wiki.example.com/kb/article-1"
+
+    def test_seed_outside_base_url_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="discovery_seed_url must start with"):
+            WebcrawlerConfig(
+                base_url="https://wiki.example.com",
+                discovery_seed_url="https://other.example.com/article",
+            )
+
+    def test_seed_outside_path_prefix_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="discovery_seed_url must start with"):
+            WebcrawlerConfig(
+                base_url="https://wiki.example.com",
+                path_prefix="/kb",
+                discovery_seed_url="https://wiki.example.com/blog/post-1",
+            )
+
+    def test_no_seed_is_fine(self) -> None:
+        cfg = WebcrawlerConfig(base_url="https://wiki.example.com")
+        assert cfg.discovery_seed_url is None

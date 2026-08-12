@@ -39,10 +39,13 @@ class TestValidateWebCrawlerConfigStrict:
 
     def test_canary_url_rejected_even_if_base_url_is_fine(self) -> None:
         # base_url resolves to public, canary_url is docker-internal.
-        with patch(
-            "klai_image_storage.url_guard._resolve_blocking",
-            return_value=("93.184.216.34",),
-        ), pytest.raises(PersistedUrlRejectedError) as excinfo:
+        with (
+            patch(
+                "klai_image_storage.url_guard._resolve_blocking",
+                return_value=("93.184.216.34",),
+            ),
+            pytest.raises(PersistedUrlRejectedError) as excinfo,
+        ):
             validate_web_crawler_config_strict(
                 {
                     "base_url": "https://example.com/",
@@ -51,6 +54,25 @@ class TestValidateWebCrawlerConfigStrict:
                 connector_id="abc",
             )
         assert "canary_url" in str(excinfo.value)
+
+    def test_discovery_seed_url_rejected_even_if_base_url_is_fine(self) -> None:
+        # base_url resolves to public, discovery_seed_url is docker-internal.
+        # The fallback crawl would fetch this URL, so it gets the same guard.
+        with (
+            patch(
+                "klai_image_storage.url_guard._resolve_blocking",
+                return_value=("93.184.216.34",),
+            ),
+            pytest.raises(PersistedUrlRejectedError) as excinfo,
+        ):
+            validate_web_crawler_config_strict(
+                {
+                    "base_url": "https://example.com/",
+                    "discovery_seed_url": "https://redis:6379/",
+                },
+                connector_id="abc",
+            )
+        assert "discovery_seed_url" in str(excinfo.value)
 
     def test_rfc1918_literal_rejected(self) -> None:
         with pytest.raises(PersistedUrlRejectedError):

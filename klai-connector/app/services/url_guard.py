@@ -87,7 +87,7 @@ def validate_web_crawler_config_strict(
             message=f"{field}: {message}",
         )
 
-    for field in ("base_url", "canary_url"):
+    for field in ("base_url", "canary_url", "discovery_seed_url"):
         raw = config.get(field)
         if raw is None:
             continue
