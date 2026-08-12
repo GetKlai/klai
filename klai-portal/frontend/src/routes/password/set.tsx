@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { KeyRound } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { useLocale } from '@/lib/locale'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { API_BASE } from '@/lib/api'
 import { readCsrfCookie } from '@/lib/auth'
@@ -34,6 +35,10 @@ export const Route = createFileRoute('/password/set')({
 })
 
 function PasswordSetPage() {
+  // Subscribe to the locale context so the NL/EN switcher re-renders this
+  // page's m.* strings. Without this the toggle silently does nothing here
+  // (2026-08-12 user report) — same bare-call pattern as verify.tsx.
+  useLocale()
   const { userID, code } = Route.useSearch()
 
   const [password, setPassword] = useState('')

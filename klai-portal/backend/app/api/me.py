@@ -493,6 +493,13 @@ async def update_my_language(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    # portal_users is Category-A RLS: the SELECT above is allowed without
+    # tenant context (permissive IS-NULL branch), but the UPDATE below is
+    # checked against the strict WITH CHECK policy — without set_tenant the
+    # commit raises InsufficientPrivilegeError and every language save 500s
+    # ("Save failed", 2026-08-12 user report).
+    await set_tenant(db, user.org_id)
+
     user.preferred_language = body.preferred_language
     await db.commit()
 
