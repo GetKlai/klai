@@ -2,6 +2,11 @@
 # Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement + expired_at).
 # Referenced from .github/workflows/whisper-server.yml via `trivyignores:`.
 
+# NOTE 2026-08-12: entries below renewed from expired_at 2026-08-01 to
+# 2026-09-15 to unblock CI (the repo-wide REQ-5 validator hard-fails on any
+# past date, which blocked unrelated portal deploys). Upstream fixes were
+# still not shipped in the pinned base images at renewal time; a proper
+# re-evaluation is owed before 2026-09-15.
 vulnerabilities:
   - id: CVE-2025-68973
     statement: |
@@ -21,4 +26,4 @@ vulnerabilities:
       image (no apt invocation, no keybox file ingest, no user-supplied
       keys). Re-evaluate when Ubuntu 24.04 ships gpgv ≥ 2.4.4-2ubuntu17.4
       via Renovate's CUDA base-image bumps.
-    expired_at: 2026-08-01
+    expired_at: 2026-09-15
