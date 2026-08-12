@@ -26,6 +26,17 @@ from app.services.signup_email_rl import (
     normalise_email,
 )
 
+
+@pytest.fixture(autouse=True)
+def _no_domain_match_by_default():
+    """SPEC-AUTH-010: signup endpoints query domain-match orgs; default to none."""
+    from unittest.mock import AsyncMock as _AM
+    from unittest.mock import patch as _patch
+
+    with _patch("app.api.signup.find_domain_match_orgs", _AM(return_value=[])):
+        yield
+
+
 # REQ-19.3: email normalisation -------------------------------------------- #
 
 

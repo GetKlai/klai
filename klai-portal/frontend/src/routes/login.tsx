@@ -156,6 +156,13 @@ function LoginPage() {
         return
       }
 
+      // SPEC-AUTH-010 R7: no workspace yet, but the verified email domain
+      // matches existing workspace(s) - show the picker to join or request.
+      if (data.status === 'select_workspace' && data.ref) {
+        window.location.href = `/select-workspace?ref=${encodeURIComponent(data.ref)}`
+        return
+      }
+
       // Navigate to the OIDC callback URL - react-oidc-context picks it up from there
       window.location.href = data.callback_url
     } catch (err) {
@@ -194,8 +201,15 @@ function LoginPage() {
         return
       }
 
-      const { callback_url } = await resp.json()
-      window.location.href = callback_url
+      const data = await resp.json()
+
+      // SPEC-AUTH-010 R7/C7.5: same domain-match routing after TOTP.
+      if (data.status === 'select_workspace' && data.ref) {
+        window.location.href = `/select-workspace?ref=${encodeURIComponent(data.ref)}`
+        return
+      }
+
+      window.location.href = data.callback_url
     } catch (err) {
       authLogger.warn('TOTP verification request failed', err)
       setError(m.error_connection())

@@ -247,8 +247,10 @@
     }
 
     # Portal API — stricter limit on sensitive provisioning endpoints
+    # /api/signup/* covers the SPEC-AUTH-010 social domain-match join endpoints
+    # (cookie-gated but replayable within the 10-min pending-cookie TTL).
     @portal-api-sensitive {
-        path /api/signup /api/billing/*
+        path /api/signup /api/signup/* /api/billing/*
     }
     handle @portal-api-sensitive {
         rate_limit {

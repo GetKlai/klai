@@ -1002,28 +1002,10 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def create_session_with_idp_intent(self, idp_intent_id: str, idp_intent_token: str) -> dict:
-        """Create a Zitadel session from a completed IDP intent. Returns { sessionId, sessionToken }.
-
-        Retrieves the linked userId from the intent first — required since newer versions of the
-        Zitadel sessions API require an explicit user check alongside the IDP intent check.
-        Raises ValueError if no userId is linked (e.g. first-time social signup — caller must
-        create the Zitadel user first via create_zitadel_user_from_idp).
-        """
-        intent = await self.retrieve_idp_intent(idp_intent_id, idp_intent_token)
-        user_id: str | None = intent.get("userId")
-        if not user_id:
-            logger.error(
-                "IDP intent %s returned no userId — cannot create session",
-                idp_intent_id,
-            )
-            raise ValueError(f"No user linked to IDP intent {idp_intent_id}")
-        return await self.create_session_for_user_idp(user_id, idp_intent_id, idp_intent_token)
-
     async def get_session(self, session_id: str, session_token: str) -> dict:
         """Fetch full session details including factors.user.id and IDP profile data.
 
-        Used after create_session_with_idp_intent to retrieve the Zitadel user ID
+        Used after create_session_for_user_idp to retrieve the Zitadel user ID
         and profile (firstName, lastName, email) from the IDP.
         """
         resp = await self._http.get(

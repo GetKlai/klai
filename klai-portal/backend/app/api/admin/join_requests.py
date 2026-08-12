@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import bearer
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.core.permissions import (
     ProfileRole,
     UserPermissions,
@@ -129,6 +129,11 @@ async def approve_join_request(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="This request has no organisation assigned. Approve it from the admin panel.",
             )
+        # SPEC-AUTH-010 R6.3: the email-link path has no resolved caller, so no
+        # tenant GUC is set. The portal_users INSERT and join-request UPDATE
+        # below both carry a strict RLS WITH CHECK (org_id = GUC) that rejects
+        # every row without this.
+        await set_tenant(db, org_id)
     else:
         # Bearer-based approval (admin UI). The endpoint accepts an OPTIONAL
         # Bearer (the token-based path needs no auth) so we can't use a
