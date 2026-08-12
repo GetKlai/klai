@@ -43,6 +43,7 @@ from app.services.kb_offboarding import (
     revoke_user_credentials,
 )
 from app.services.mcp_role_notifier import fire_role_change_notification
+from app.services.notifications import notify_user_join_approved
 from app.services.user_deletion_orchestrator import delete_user_with_state_machine
 from app.services.user_memberships import get_user_membership_summary
 from app.services.zitadel import _sync_zitadel_role_grant, zitadel
@@ -272,6 +273,12 @@ async def _reuse_existing_zitadel_user_for_invite(
     )
 
 
+def _is_already_initialized_error(exc: httpx.HTTPStatusError) -> bool:
+    """True when Zitadel refused an invite code because the account already
+    completed setup (400, COMMAND-EF34g "User is already initialized")."""
+    return exc.response.status_code == 400 and "already initialized" in exc.response.text.lower()
+
+
 def _invite_failure_detail(failure_step: str) -> str:
     if failure_step == "invite_mail":
         return "Uitnodigingsmail kon niet worden verstuurd. Probeer het opnieuw."
@@ -327,7 +334,33 @@ async def _persist_invited_user_and_send_code(
             await zitadel.unlock_user(zitadel_user_id, settings.zitadel_portal_org_id)
             reactivated_zitadel_user = True
         failure_step = "invite_mail"
-        await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
+        try:
+            await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
+        except httpx.HTTPStatusError as invite_exc:
+            if not _is_already_initialized_error(invite_exc):
+                raise
+            # Existing fully-initialized account (self-signup, or a member of
+            # another tenant): Zitadel refuses invite codes for accounts that
+            # already completed setup, and there is nothing to activate — the
+            # membership row above IS the actual grant. Send a "you've been
+            # added" notification instead (best-effort, same mail as
+            # join-request approval) and continue to the commit. 2026-08-12
+            # report: a voys.be self-signup could not be invited (400
+            # "User is already initialized" surfaced as a raw 500).
+            _slog.info(
+                "invite_existing_initialized_membership_added",
+                zitadel_user_id=zitadel_user_id,
+                email_hash=email_hash_for_log(str(body.email)),
+                org_id=org.id,
+            )
+            try:
+                await notify_user_join_approved(
+                    email=str(body.email),
+                    display_name=f"{body.first_name} {body.last_name}".strip() or str(body.email),
+                    workspace_url=f"https://{settings.domain}",
+                )
+            except Exception:
+                _slog.warning("invite_existing_initialized_notify_failed", exc_info=True)
         failure_step = "portal_commit"
         await db.commit()
     except Exception as exc:
