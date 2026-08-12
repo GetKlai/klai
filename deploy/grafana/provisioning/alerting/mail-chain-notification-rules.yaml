@@ -48,7 +48,13 @@
 # Pitfalls inherited from caddy-rules.yaml / mailer-rules.yaml:
 #   - Always go through `reduce` between LogsQL output and SSE math
 #   - SSE math has no max(), no ternary
-#   - execErrState: OK so plugin hiccups don't false-fire
+#   - LogsQL queries feeding SSE MUST end in `| stats count() ...` with
+#     queryType `stats` — a bare filter query returns log-row frames that
+#     error the reduce step precisely when rows match (2026-08-12 live
+#     test; see mailer-rules.yaml M1). This file deviates from the older
+#     execErrState: OK convention for the same reason: with the stats
+#     shape the known error class is gone, so eval errors are real and
+#     fail-loud (Alerting).
 
 apiVersion: 1
 
@@ -74,7 +80,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 900
               to: 0
@@ -83,8 +89,15 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:klai-mailer AND level:error'
-              queryType: instant
+              # `| stats count()` + queryType `stats` is REQUIRED — the
+              # bare-filter + instant + reduce:count shape errors with
+              # "input data must be a wide series but got type long" as
+              # soon as the query matches rows. Live-verified 2026-08-12
+              # via /api/ds/query (plugin v0.31.0): matches → Value=N,
+              # zero matches → Value=0 (no NoData). See mailer-rules.yaml
+              # M1 for the full analysis.
+              expr: 'service:klai-mailer AND level:error | stats count() as errors'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -93,7 +106,9 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              # `last`, not `count`: the stats query already returns the
+              # count as a single Time/Value point.
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -109,8 +124,10 @@ groups:
                   operator: { type: and }
                   reducer: { params: [], type: last }
                   type: query
-        noDataState: OK
-        execErrState: OK
+        # Fail-loud for the mail-chain rules — a masked eval error is how
+        # M1's defect stayed invisible for 3.5 months (see mailer-rules.yaml).
+        noDataState: Alerting
+        execErrState: Alerting
         for: 0s
         keepFiringFor: 30m
         isPaused: false

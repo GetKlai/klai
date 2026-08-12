@@ -111,7 +111,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 900
               to: 0
@@ -134,8 +134,22 @@ groups:
               # ever exists (e.g. Slack incident-bridge), revisit this
               # filter to add target narrowing (as an additional
               # unqualified phrase, not a field qualifier).
-              expr: 'service:zitadel AND "sending notification failed"'
-              queryType: instant
+              #
+              # `| stats count()` + queryType `stats` is REQUIRED, not
+              # style: a live-fire test on 2026-08-12 (10 real failure
+              # lines injected via a controlled mailer stop) proved that
+              # the bare-filter + `queryType: instant` + `reduce: count`
+              # shape ERRORS at evaluation with "input data must be a
+              # wide series but got type long" the moment the query
+              # matches rows — i.e. exactly when the alert must fire —
+              # and `execErrState: OK` then masked that error as Normal.
+              # With plugin v0.31.0, `| stats count()` + queryType
+              # `stats` returns a numeric Time/Value frame (verified via
+              # /api/ds/query: 10 matches → Value=10, zero matches →
+              # Value=0, no NoData), which the reduce/threshold chain
+              # consumes correctly.
+              expr: 'service:zitadel AND "sending notification failed" | stats count() as failures'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -144,7 +158,10 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              # `last`, not `count`: the stats query already returns the
+              # count as a single Time/Value point; `count` here would
+              # count frame rows (always 1) instead of reading the value.
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -160,8 +177,14 @@ groups:
                   operator: { type: and }
                   reducer: { params: [], type: last }
                   type: query
-        noDataState: OK
-        execErrState: OK
+        # Fail-loud (Alerting), deviating from the execErrState: OK
+        # convention in this file's other rules: for the mail-chain rules
+        # specifically, a broken evaluation masked as Normal is exactly how
+        # this alert's own defect stayed invisible for 3.5 months. The
+        # stats-shape fix above removes the known plugin error class, so a
+        # remaining eval error or missing data is a real signal.
+        noDataState: Alerting
+        execErrState: Alerting
         for: 0s
         keepFiringFor: 30m
         isPaused: false
