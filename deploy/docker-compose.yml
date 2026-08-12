@@ -229,14 +229,29 @@ services:
       ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "false"
       # Zitadel >= v4.15.2 routes ALL outgoing HTTP (incl. the klai-mailer
       # notification webhook) through an SSRF denylist that blocks RFC1918
-      # by default (CVE-2026-55671 hardening). klai-mailer lives on the
-      # Docker network inside 172.16.0.0/12, so every invite/password-reset
-      # email was silently dropped. This override is the upstream default
-      # list MINUS 172.16.0.0/12 — there is no allowlist mechanism
-      # (zitadel/zitadel#12326). Residual risk: Zitadel Actions can reach
-      # Docker-internal services in 172.16.0.0/12; acceptable because only
-      # Klai operators can configure Actions on this instance.
-      ZITADEL_HTTPCLIENT_DENYLIST: "localhost,0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,192.168.0.0/16,198.18.0.0/15,::/128,::1/128,fc00::/7,fe80::/10"
+      # by default (CVE-2026-55671 hardening). klai-mailer and zitadel both
+      # live on the klai-net Docker network, verified subnet 172.18.0.0/16
+      # (docker network inspect klai-net, 2026-08-12; mailer=172.18.0.16,
+      # zitadel=172.18.0.49). This override re-denies as much of the
+      # upstream 172.16.0.0/12 RFC1918 block as possible, opening ONLY the
+      # verified klai-net subnet — computed as 172.16.0.0/12 minus
+      # 172.18.0.0/16 via Python ipaddress.address_exclude(): 172.16.0.0/15,
+      # 172.19.0.0/16, 172.20.0.0/14, 172.24.0.0/13. There is no allowlist
+      # mechanism (zitadel/zitadel#12326), so this is the narrowest
+      # denylist that still lets the mailer webhook (and any other klai-net
+      # service) through. Residual risk: Zitadel Actions can still reach
+      # any other service on klai-net (172.18.0.0/16), not just the
+      # mailer; acceptable because only Klai operators can configure
+      # Actions on this instance. FRAGILITY WARNING: this hardcodes the
+      # klai-net subnet rather than pinning it via the network's ipam
+      # config — a live compose network's subnet cannot be changed without
+      # recreating the entire stack (all containers down), which is not
+      # worth it for this hardening. If klai-net is ever recreated with a
+      # different subnet, Zitadel notification mails silently break again
+      # exactly like the original 5-week outage; the Grafana alert on
+      # "sending notification failed" (added in a sibling PR) is the
+      # detection net for that regression.
+      ZITADEL_HTTPCLIENT_DENYLIST: "localhost,0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/15,172.19.0.0/16,172.20.0.0/14,172.24.0.0/13,192.168.0.0/16,198.18.0.0/15,::/128,::1/128,fc00::/7,fe80::/10"
     networks:
       - klai-net
       - net-postgres
