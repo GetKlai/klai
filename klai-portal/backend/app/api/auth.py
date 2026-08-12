@@ -2286,6 +2286,52 @@ async def _create_idp_session_with_cqrs_retry(
     return None, 4, last_exc
 
 
+async def _create_or_link_idp_user(intent_data: dict) -> str:
+    """Resolve a Zitadel user id for an IdP intent that has no linked user.
+
+    Create-first; on 409 "User already exists" attach the IdP identity to the
+    existing account with the intent's email and return that account's id. The
+    409 leg is the invited-but-not-yet-activated collision: the portal invite
+    already created the Zitadel account (username = email), so "log in with
+    Google" must link instead of failing (2026-08-12 incident). Also heals
+    dangling identities and password users choosing social for the first time.
+
+    Trust model matches ``create_zitadel_user_from_idp``, which already accepts
+    the IdP-asserted email as a verified mailbox (Google/Microsoft verify it).
+
+    Raises the original error when no account matches the intent email, so
+    callers keep their flow-specific failure events unchanged.
+    """
+    try:
+        return await zitadel.create_zitadel_user_from_idp(intent_data, settings.zitadel_portal_org_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 409:
+            raise
+        conflict = exc
+    idp_info = intent_data.get("idpInformation", {})
+    raw_user = idp_info.get("rawInformation", {}).get("User", {})
+    email: str = raw_user.get("email", "") or idp_info.get("userName", "")
+    found = await zitadel.find_user_by_email(email) if email else None
+    if found is None:
+        raise conflict
+    existing_user_id, _ = found
+    try:
+        await zitadel.link_idp_to_user(existing_user_id, intent_data)
+    except httpx.HTTPStatusError as link_exc:
+        # 409 = this IdP identity is already linked (half-completed earlier
+        # attempt) — the session check will succeed, so continue.
+        if link_exc.response.status_code != 409:
+            raise
+    _slog.info("idp_linked_existing_user", zitadel_user_id=existing_user_id)
+    _emit_auth_event(
+        "idp_linked_existing_user",
+        reason="create_user_409_existing_account",
+        outcome="link-and-continue",
+        level="info",
+    )
+    return existing_user_id
+
+
 @router.get("/auth/idp-callback")
 async def idp_callback(  # noqa: C901 - callback flow has many external failure legs.
     id: str,
@@ -2332,11 +2378,13 @@ async def idp_callback(  # noqa: C901 - callback flow has many external failure 
     # chose "log in with Google/Microsoft". Pre-SPEC this raised and bounced
     # them back to /login with no explanation; now we provision the user (same
     # path as idp_signup_callback) so they reach the domain-match matrix below.
+    # An existing unlinked account (invited-not-activated, password user) gets
+    # the IdP linked instead — see _create_or_link_idp_user.
     idp_user_id: str | None = intent_data.get("userId")
     if not idp_user_id:
         try:
-            idp_user_id = await zitadel.create_zitadel_user_from_idp(intent_data, settings.zitadel_portal_org_id)
-            _slog.info("idp_callback_user_created", zitadel_user_id=idp_user_id)
+            idp_user_id = await _create_or_link_idp_user(intent_data)
+            _slog.info("idp_callback_user_resolved", zitadel_user_id=idp_user_id)
         except Exception:
             _slog.exception("idp_callback_create_user_failed")
             _emit_auth_event(
@@ -2661,11 +2709,13 @@ async def idp_signup_callback(
 
     idp_user_id: str | None = intent_data.get("userId")
 
-    # 1b. New user — no Zitadel account yet. Create one from the IDP profile.
+    # 1b. New user — no Zitadel account yet. Create one from the IDP profile;
+    # an existing unlinked account (invited-not-activated) gets the IdP linked
+    # instead — see _create_or_link_idp_user.
     if not idp_user_id:
         try:
-            idp_user_id = await zitadel.create_zitadel_user_from_idp(intent_data, settings.zitadel_portal_org_id)
-            _slog.info("idp_signup_callback_user_created", zitadel_user_id=idp_user_id)
+            idp_user_id = await _create_or_link_idp_user(intent_data)
+            _slog.info("idp_signup_callback_user_resolved", zitadel_user_id=idp_user_id)
         except httpx.HTTPStatusError as exc:
             _slog.exception("idp_signup_callback_create_user_failed", zitadel_status=exc.response.status_code)
             _emit_auth_event(

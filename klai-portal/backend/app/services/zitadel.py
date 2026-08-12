@@ -921,6 +921,28 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def link_idp_to_user(self, user_id: str, intent_data: dict) -> None:
+        """Link the IdP identity from a completed intent to an existing Zitadel user.
+
+        POST /v2/users/{userId}/links — used when ``create_zitadel_user_from_idp``
+        hits 409 "User already exists": the account was created earlier (portal
+        invite, password signup) without this IdP link, so social login must
+        attach the identity instead of failing. After linking, a session can be
+        created from the same intent via ``create_session_for_user_idp``.
+        """
+        idp_info = intent_data.get("idpInformation", {})
+        resp = await self._http.post(
+            f"/v2/users/{user_id}/links",
+            json={
+                "idpLink": {
+                    "idpId": idp_info.get("idpId", ""),
+                    "userId": idp_info.get("userId", ""),
+                    "userName": idp_info.get("userName", ""),
+                }
+            },
+        )
+        resp.raise_for_status()
+
     async def create_zitadel_user_from_idp(self, intent_data: dict, org_id: str) -> str:
         """Create a Zitadel human user from IDP intent data. Returns the new Zitadel userId.
 
