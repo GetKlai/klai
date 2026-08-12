@@ -1056,18 +1056,21 @@ class LinkedPageSample:
     pages_usable: int
 
 
-def _is_fetchable_candidate(url: str) -> bool:
-    """Reject links that no crawl could ever resolve.
+def _is_unrendered_template_href(url: str) -> bool:
+    """True when an ``<a href>`` is a literal, unrendered template token.
 
     A client-rendered site whose framework fails to bootstrap in the crawler
-    browser leaves its ``<a href>`` values as literal template expressions —
+    browser leaves its link targets as the template expression itself —
     ``.../{{item.URL}}`` on Oracle RightNow (support.ascendcloud.com), the
-    Angular equivalents on Vue/Handlebars sites. Fetching those wastes the
-    sample's whole time budget on URLs that 404 or hang, then reports nothing.
-    A ``{`` or ``}`` in a URL is never valid (RFC 3986), so this also screens
-    any other unrendered-token shape without enumerating frameworks.
+    Vue/Handlebars equivalents elsewhere. Those never resolve, so sampling
+    them wastes the time budget on URLs that 404 or hang.
+
+    Scoped to the ``{{`` / ``}}`` double-brace token shape on purpose: that is
+    specifically a templating marker, not a generic bracket. A lone ``{`` in a
+    URL (rare, but it happens) is left alone. Mirrors the double-brace shape
+    that ``strip_unrendered_template_lines`` strips from markdown.
     """
-    return "{" not in url and "}" not in url
+    return "{{" in url or "}}" in url
 
 
 def _sample_candidates(seed: CrawlResult, *, base_domain: str, limit: int) -> list[str]:
@@ -1085,7 +1088,7 @@ def _sample_candidates(seed: CrawlResult, *, base_domain: str, limit: int) -> li
     seen: set[str] = set()
     candidates: list[str] = []
     for href in _extract_bfs_seeds(seed, base_domain=base_domain):
-        if not _is_fetchable_candidate(href):
+        if _is_unrendered_template_href(href):
             continue
         canonical = _canonicalise_url(href)
         if canonical in seen or canonical == _canonicalise_url(seed.url):

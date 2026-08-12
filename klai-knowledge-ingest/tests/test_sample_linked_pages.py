@@ -110,10 +110,20 @@ def test_all_template_urls_yield_no_candidates() -> None:
 
 def test_percent_encoded_braces_are_kept() -> None:
     """A correctly percent-encoded URL is valid and must NOT be filtered — the
-    guard rejects literal ``{``/``}`` (unrendered tokens), not encoded ones."""
+    guard rejects only literal ``{{``/``}}`` template tokens, not encoded ones."""
     seed = _seed("https://example.com/a/b?state=%7B%22x%22%3A1%7D")
     assert _sample_candidates(seed, base_domain="example.com", limit=5) == [
         "https://example.com/a/b?state=%7B%22x%22%3A1%7D"
+    ]
+
+
+def test_single_brace_url_is_kept() -> None:
+    """The guard is scoped to double-brace template tokens. A lone ``{`` in a
+    URL (unusual but valid enough that some servers accept it) is left alone —
+    we don't filter generic brackets, only unrendered ``{{...}}`` tokens."""
+    seed = _seed("https://example.com/a/b/weird{path")
+    assert _sample_candidates(seed, base_domain="example.com", limit=5) == [
+        "https://example.com/a/b/weird{path"
     ]
 
 

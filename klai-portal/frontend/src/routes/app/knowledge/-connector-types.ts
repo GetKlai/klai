@@ -51,6 +51,10 @@ export type PreviewClassification =
   | 'selector_required'
   | 'selector_returns_empty'
   | 'requires_javascript'
+  // Entry page yielded no content and neither did the pages linked from it —
+  // a client-rendered homepage/hub the crawler can't follow. Guide the user
+  // to paste a specific deeper URL. Backend: knowledge_ingest routes/crawl.py.
+  | 'entry_point_empty'
   | 'auth_wall_detected'
   | 'unknown'
 
