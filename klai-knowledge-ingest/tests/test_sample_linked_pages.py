@@ -84,6 +84,30 @@ def test_candidates_respect_the_limit() -> None:
     assert len(_sample_candidates(seed, base_domain="example.com", limit=5)) == 5
 
 
+def test_candidates_drop_unrendered_template_urls() -> None:
+    """A client-rendered site whose framework never boots leaves ``{{...}}``
+    tokens in its hrefs. Those are unfetchable — sampling them would burn the
+    whole time budget for nothing (support.ascendcloud.com, 2026-08-12)."""
+    seed = _seed(
+        "https://example.com/euf/themes/standard/{{item.URL}}",
+        "https://example.com/euf/themes/standard/{{item.SeoTitle}}",
+        "https://example.com/app/articles/detail/a_id/16781",
+    )
+    candidates = _sample_candidates(seed, base_domain="example.com", limit=5)
+    assert candidates == ["https://example.com/app/articles/detail/a_id/16781"]
+
+
+def test_all_template_urls_yield_no_candidates() -> None:
+    """The full ascendcloud base-URL shape: every link is a template token, so
+    there is nothing to sample and the caller must not issue a bulk request."""
+    seed = _seed(
+        "https://example.com/euf/themes/standard/{{item.URL}}",
+        "https://example.com/euf/themes/standard/{{item.SeoTitle}}",
+        "https://example.com/euf/themes/standard/{{selectedLanguage.text}}",
+    )
+    assert _sample_candidates(seed, base_domain="example.com", limit=5) == []
+
+
 # ---------------------------------------------------------------------------
 # Sampling behaviour
 # ---------------------------------------------------------------------------

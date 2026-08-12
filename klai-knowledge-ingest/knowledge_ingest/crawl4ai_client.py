@@ -1056,6 +1056,20 @@ class LinkedPageSample:
     pages_usable: int
 
 
+def _is_fetchable_candidate(url: str) -> bool:
+    """Reject links that no crawl could ever resolve.
+
+    A client-rendered site whose framework fails to bootstrap in the crawler
+    browser leaves its ``<a href>`` values as literal template expressions —
+    ``.../{{item.URL}}`` on Oracle RightNow (support.ascendcloud.com), the
+    Angular equivalents on Vue/Handlebars sites. Fetching those wastes the
+    sample's whole time budget on URLs that 404 or hang, then reports nothing.
+    A ``{`` or ``}`` in a URL is never valid (RFC 3986), so this also screens
+    any other unrendered-token shape without enumerating frameworks.
+    """
+    return "{" not in url and "}" not in url
+
+
 def _sample_candidates(seed: CrawlResult, *, base_domain: str, limit: int) -> list[str]:
     """Pick which linked URLs to sample, deepest-looking pages first.
 
@@ -1064,10 +1078,15 @@ def _sample_candidates(seed: CrawlResult, *, base_domain: str, limit: int) -> li
     content?" far better than more hubs, and they are what a sync would
     actually index — so prefer more path segments, then declaration order for
     a stable, testable result.
+
+    Unfetchable links (unrendered template tokens) are dropped: sampling them
+    only burns the time budget and returns nothing.
     """
     seen: set[str] = set()
     candidates: list[str] = []
     for href in _extract_bfs_seeds(seed, base_domain=base_domain):
+        if not _is_fetchable_candidate(href):
+            continue
         canonical = _canonicalise_url(href)
         if canonical in seen or canonical == _canonicalise_url(seed.url):
             continue
