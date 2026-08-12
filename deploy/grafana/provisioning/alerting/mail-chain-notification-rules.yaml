@@ -1,0 +1,145 @@
+# SPEC-OBS-001 follow-up — klai-mailer error-log alert (LogsQL via
+# VictoriaLogs).
+#
+# Routed via spec=SPEC-OBS-001 → klai-ops-alerts-email (see policies.yaml).
+#
+#   Z2  mailer_error_log_count_high   CRIT  Any level:error line from
+#                                            klai-mailer in the last 15m.
+#
+# Incident context (2026-08-12): Zitadel v4.15.2+ ships a default SSRF
+# denylist that blocks outbound HTTP to RFC1918 ranges, including the
+# klai-mailer webhook target on the internal Docker network
+# (172.16.0.0/12). Every notification webhook call — invite codes,
+# password-reset codes, email verification — was silently dropped from
+# 8 July until discovery on 12 August 2026 (~5 weeks). Root cause is
+# already fixed via the `ZITADEL_HTTPCLIENT_DENYLIST` override in
+# deploy/docker-compose.yml (removes 172.16.0.0/12 from the denylist).
+#
+# The Zitadel-side detection half of this incident response
+# (zitadel_notification_failed_count_high, previously drafted here as
+# "Z1") was folded into the EXISTING `mailer-rules.yaml` instead of
+# shipping as a new parallel rule. That file already had an alert with
+# the identical intent — M1 `mailer_zitadel_webhook_failed` — but its
+# query was dead: field-qualified `msg:"..."` against a field Alloy
+# never extracts from Zitadel's logfmt log lines (see mailer-rules.yaml
+# header for the full analysis, externally verified via VictoriaLogs MCP
+# against the real outage window: field-qualified query = 0 hits,
+# unqualified query = 140 hits over 13 Jul – 12 Aug). Fixing M1's `expr`
+# and threshold in place — keeping its UID
+# `obs-001-mailer-zitadel-webhook-failed` — avoids shipping a working
+# alert next to a permanently-dead duplicate with the same intent
+# ("old and new flow living side by side").
+#
+# This file now carries ONLY Z2, which is genuinely new coverage: M2 (in
+# mailer-rules.yaml) watches mailer's uvicorn ACCESS log for 5xx on
+# /notify; Z2 watches mailer's own structlog ERROR-level lines directly
+# (SMTP send failures, Redis fail-closed 503s, template/render
+# exceptions) — a request can fail inside mailer without necessarily
+# producing a 5xx access-log line matched by M2 (e.g. an async
+# post-response failure), so Z2 is complementary, not redundant.
+#
+# Field shape for Z2: klai-mailer emits structlog JSON, so `level` is a
+# real extracted field via Alloy's `loki.process "extract_level"` stage
+# (deploy/alloy/config.alloy, `stage.json` + `stage.labels`) —
+# consistent with the documented pattern `service:portal-api AND
+# level:error` in .claude/rules/klai/infra/observability.md. Unlike
+# Zitadel's logfmt output, this field-qualified filter is safe.
+#
+# Pitfalls inherited from caddy-rules.yaml / mailer-rules.yaml:
+#   - Always go through `reduce` between LogsQL output and SSE math
+#   - SSE math has no max(), no ternary
+#   - execErrState: OK so plugin hiccups don't false-fire
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: mail-chain-notification-failures
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── Z2: mailer_error_log_count_high ──────────────────────────────────
+      #
+      # Direct signal from klai-mailer's own error-level logs (SMTP send
+      # failures, Redis fail-closed 503s, template/render errors). Same
+      # shape as M1's fixed threshold: unbounded threshold (>0), 15m
+      # window, immediate fire. Independent of zitadel's logging so this
+      # still fires if the failure originates purely on the mailer side
+      # (e.g. SMTP provider outage) with no corresponding zitadel-side
+      # symptom.
+      - uid: obs-mailer-error-log-high
+        title: mailer_error_log_count_high
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:klai-mailer AND level:error'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: mailer-chain
+        annotations:
+          summary: 'klai-mailer logged an error (>0 in 15m)'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#mailer-zitadel-webhook-failed'
+          description: |
+            At least one `level:error` log line appeared from klai-mailer
+            in the last 15 minutes — SMTP send failure, Redis fail-closed
+            503 (nonce/idempotency store unreachable), template render
+            error, or any other unhandled exception in the mail-send path.
+
+            This complements `mailer_zitadel_webhook_failed` (M1, in
+            mailer-rules.yaml): M1 catches failures BEFORE the request
+            reaches mailer (network, SSRF denylist, DNS); Z2 catches
+            failures INSIDE mailer once the request arrives. Both firing
+            together points at a mailer-side root cause. Only Z2 firing
+            (M1 quiet) points at a mailer-internal issue with no upstream
+            symptom (e.g. SMTP provider outage while Zitadel's own
+            webhook call still succeeds with a 2xx and mailer fails
+            asynchronously).
+
+            Investigate (Grafana → Explore → VictoriaLogs, or the
+            VictoriaLogs MCP `query` tool):
+              service:klai-mailer AND level:error
+
+            For a live trace while reproducing:
+              ssh core-01 "docker logs --tail 0 -f klai-core-klai-mailer-1"

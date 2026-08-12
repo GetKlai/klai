@@ -2,10 +2,12 @@
 #
 # Routed via spec=SPEC-OBS-001 → klai-ops-alerts-email.
 #
-#   M1  mailer_zitadel_webhook_failed   CRIT  Zitadel notification → klai-mailer
-#                                              returned non-2xx >5 times in 5m.
+#   M1  mailer_zitadel_webhook_failed   CRIT  Any Zitadel notification →
+#                                              klai-mailer failure in 15m.
 #                                              The 2026-04-29 four-hour outage
-#                                              would have fired in 5 minutes.
+#                                              would have fired in minutes;
+#                                              the 2026-08-12 finding (below)
+#                                              is why threshold is now >0.
 #   M2  mailer_notify_5xx_count_high   CRIT  >5 mailer access-log lines with
 #                                              5xx status on /notify in 5m.
 #                                              Direct mailer-side signal,
@@ -20,11 +22,41 @@
 # notification-channel log line. M2 doubles the signal from the mailer
 # side (now that uvicorn access logs are visible via the FU#2 logging fix).
 #
-# Field shapes verified against production VictoriaLogs (2026-04-30):
-#   service:zitadel AND msg:"sending notification failed"
+# 2026-08-12 finding — M1's query was DEAD from the day it was added:
+#
+# Zitadel had been silently dropping ALL notification emails (invite codes,
+# password-reset codes, email verification) from 8 July until discovery on
+# 12 August 2026 — a v4.15.2+ SSRF denylist blocked the internal-network
+# webhook call to klai-mailer (172.16.0.0/12 RFC1918 range; fixed via
+# `ZITADEL_HTTPCLIENT_DENYLIST` in deploy/docker-compose.yml). M1's original
+# query — `service:zitadel AND msg:"sending notification failed"` — is
+# FIELD-QUALIFIED against `msg`. Zitadel emits `logfmt` lines to stdout
+# (`time=... level=WARN msg="..." error="..."`), not JSON. Alloy's
+# `loki.process "extract_level"` stage (deploy/alloy/config.alloy) only
+# runs `stage.json`, which is a no-op on a non-JSON line — no `msg` field
+# is ever lifted out of a Zitadel log line, only the raw line lands in
+# `_msg`. A field-qualified filter against a field that was never
+# extracted matches zero rows.
+#
+# Externally verified via VictoriaLogs MCP (orchestrator session,
+# 2026-08-12) against the actual 13 Jul – 12 Aug outage window:
+#   service:zitadel AND msg:"sending notification failed"   → 0 hits
+#   service:zitadel AND "sending notification failed"       → 140 hits
+#
+# M1 has been a dead alert since it was added on 2026-04-30. The `expr`
+# below is now the unqualified form (searches `_msg` directly, per the
+# LogsQL pitfall documented at the bottom of this header and in
+# README.md) — this is the fix, applied in place so the alert-rule UID
+# stays stable and no orphaned rule is left behind in Grafana's DB.
+#
+# Field shapes verified against production VictoriaLogs (2026-04-30,
+# re-verified 2026-08-12):
+#   service:zitadel AND "sending notification failed"
 #     → matches Zitadel's `webhook didn't return a success status` log
 #       across notification types (user.human.password.code.added,
-#       user.human.invite.code.added, etc.)
+#       user.human.invite.code.added, etc.) — unqualified phrase filter,
+#       see 2026-08-12 finding above for why the field-qualified form
+#       never worked.
 #   service:klai-mailer AND _msg:"POST /notify"
 #     → matches uvicorn's access log for /notify requests after the
 #       FU#2 logging fix (PR #233) re-enabled access logs at INFO.
@@ -33,6 +65,11 @@
 #   - Always go through `reduce` between LogsQL output and SSE math
 #   - SSE math has no max(), no ternary
 #   - execErrState: OK so plugin hiccups don't false-fire
+#   - Unqualified text-search only scans `_msg` — a third-party service
+#     that logs logfmt (not JSON) will never populate a named field
+#     unless a `| unpack_logfmt` (or ingest-time extraction) is added to
+#     the query. Do not field-qualify against a field that was never
+#     extracted — this is exactly the class of bug M1 shipped with.
 
 apiVersion: 1
 
@@ -51,9 +88,23 @@ groups:
       #
       # On 2026-04-29 the broken-redis-URL outage produced ~14k of these log
       # lines over 4 hours (~1Hz retry loop), entirely invisible to existing
-      # alerts. Threshold of 5 in 5m is conservative — Zitadel retries up
-      # to ~5 times per individual notification, so 5 failures across 5
-      # minutes is the very bottom of "real outage" signal.
+      # alerts.
+      #
+      # 2026-08-12 FIX: the original `expr` here was field-qualified
+      # (`msg:"..."`) against a field Alloy never extracts from Zitadel's
+      # logfmt output — see file header for the full analysis. Verified via
+      # VictoriaLogs MCP against the real 13 Jul – 12 Aug outage window:
+      # the field-qualified query returned 0 hits, the unqualified form
+      # below returned all 140 failure lines. This rule was a dead alert
+      # for the entire 3.5 months it existed prior to this fix.
+      #
+      # Threshold is now `> 0` (was `> 5` in a 5m window) — one dropped
+      # notification produces roughly 10 retry lines from Zitadel's own
+      # retry loop, so `> 5` would still have fired eventually, but the
+      # correct contract for this signal is "any failure is abnormal",
+      # not "wait for a retry storm". Window widened to 15m to match the
+      # sibling zitadel/mailer-chain alert and give the query a larger
+      # sample without needing a tighter eval interval.
       - uid: obs-001-mailer-zitadel-webhook-failed
         title: mailer_zitadel_webhook_failed
         condition: threshold
@@ -62,29 +113,33 @@ groups:
             datasourceUid: victorialogs
             queryType: instant
             relativeTimeRange:
-              from: 300
+              from: 900
               to: 0
             model:
               refId: query
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              # Match every Zitadel notification-channel failure regardless
-              # of target host:port. The earlier shape (`error:"klai-mailer:8000"`)
-              # was a literal substring on the error message that would
-              # silently break if mailer ever moves to a different host or
-              # port — exactly the regression class this SPEC is meant to
-              # close. Mailer is the only registered webhook channel today,
-              # so a Zitadel notification-failed event implies the mailer
-              # is broken; if a second channel ever exists (e.g. Slack
-              # incident-bridge), revisit this filter to restore the target
-              # narrowing.
-              expr: 'service:zitadel AND msg:"sending notification failed"'
+              # UNQUALIFIED phrase filter — searches `_msg` directly.
+              # Matches every Zitadel notification-channel failure
+              # regardless of target host:port. Do NOT change this back
+              # to a field-qualified `msg:"..."` filter: Zitadel logs
+              # logfmt (not JSON), Alloy's extract_level stage only runs
+              # `stage.json` (a no-op on logfmt input), so no `msg` field
+              # is ever populated for these log lines — a field-qualified
+              # filter here silently matches zero rows (see file header,
+              # 2026-08-12 finding). Mailer is the only registered
+              # webhook channel today, so a Zitadel notification-failed
+              # event implies the mailer is broken; if a second channel
+              # ever exists (e.g. Slack incident-bridge), revisit this
+              # filter to add target narrowing (as an additional
+              # unqualified phrase, not a field qualifier).
+              expr: 'service:zitadel AND "sending notification failed"'
               queryType: instant
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 300
+              from: 900
               to: 0
             model:
               refId: reduce
@@ -94,52 +149,70 @@ groups:
           - refId: threshold
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 300
+              from: 900
               to: 0
             model:
               refId: threshold
               type: threshold
               expression: reduce
               conditions:
-                - evaluator: { params: [5], type: gt }
+                - evaluator: { params: [0], type: gt }
                   operator: { type: and }
                   reducer: { params: [], type: last }
                   type: query
         noDataState: OK
         execErrState: OK
-        for: 5m
-        keepFiringFor: 10m
+        for: 0s
+        keepFiringFor: 30m
         isPaused: false
         labels:
           severity: critical
           spec: SPEC-OBS-001
           service_group: mailer
         annotations:
-          summary: 'Zitadel cannot deliver notifications to klai-mailer (>5 failures in 5m)'
+          summary: 'Zitadel notification webhook to klai-mailer failed (>0 in 15m)'
           runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#mailer-zitadel-webhook-failed'
           description: |
-            Zitadel logged more than 5 `sending notification failed` events
-            targeting klai-mailer in the last 5 minutes. This means at
-            least one user-facing email flow is broken: password reset,
-            invitations, email-OTP codes, MFA setup mails.
+            At least one `sending notification failed` line was logged by
+            zitadel in the last 15 minutes. This means invite codes,
+            password-reset codes, or email-verification codes are not
+            reaching klai-mailer.
 
             The 2026-04-29 broken-redis-URL outage emitted ~14k of these
             log lines over 4 hours before a user reported "email not
-            arriving". This alert closes that signal gap.
+            arriving" — the incident this alert was originally built to
+            close. It then silently failed to fire on a second, much
+            longer outage: from 8 July until discovery on 12 August 2026
+            (~5 weeks), Zitadel v4.15.2+'s SSRF denylist blocked the
+            internal-network webhook call to klai-mailer
+            (172.16.0.0/12 RFC1918 range) and this rule's field-qualified
+            query never matched a single row. Root cause is fixed via
+            `ZITADEL_HTTPCLIENT_DENYLIST` in deploy/docker-compose.yml;
+            the query here is fixed to actually match Zitadel's real log
+            shape (see file header) so any recurrence pages within
+            minutes instead of weeks.
+
+            Investigate (Grafana → Explore → VictoriaLogs, or the
+            VictoriaLogs MCP `query` tool):
+              service:zitadel AND "sending notification failed"
+
+            The `error=` field on the matching log lines contains the
+            HTTP status/dial error and target URL — that tells you which
+            webhook target and failure mode this is (SSRF denylist
+            block, connection refused, timeout, non-2xx from mailer,
+            etc.). If the error text mentions "address is denied by" —
+            this is the SSRF-denylist class again; check
+            ZITADEL_HTTPCLIENT_DENYLIST is still present and correctly
+            scoped on the deployed container:
+              docker exec klai-core-zitadel-1 printenv ZITADEL_HTTPCLIENT_DENYLIST
 
             Triage:
-              1. Check the actual error from Zitadel's view:
-                   service:zitadel AND msg:"sending notification failed"
-                 The error= field on the matching log lines contains the
-                 HTTP status, target URL, and a partial reason from the
-                 receiving service's response — that tells you which
-                 webhook target is broken.
-              2. Inspect mailer's own logs for the same window (now
-                 visible after the FU#2 access-log fix):
-                   service:klai-mailer AND _time:5m
-                 If access logs show requests reaching mailer but every
-                 one returns 5xx, see step 3. If no access logs show a
-                 request reaching mailer, see step 4.
+              1. Check the actual error from Zitadel's view (query above).
+              2. Inspect mailer's own logs for the same window:
+                   service:klai-mailer AND level:error
+                 If mailer logs show requests reaching it but failing
+                 internally, see step 3. If no mailer-side error appears,
+                 see step 4.
               3. Mailer-internal failure: pull the live ASGI traceback
                  by tailing mailer logs while triggering a fresh
                  password reset:
