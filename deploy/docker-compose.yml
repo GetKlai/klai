@@ -227,6 +227,16 @@ services:
       ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_EMAIL_VERIFIED: "true"
       ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_PASSWORD: ${ZITADEL_ADMIN_PASSWORD}
       ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "false"
+      # Zitadel >= v4.15.2 routes ALL outgoing HTTP (incl. the klai-mailer
+      # notification webhook) through an SSRF denylist that blocks RFC1918
+      # by default (CVE-2026-55671 hardening). klai-mailer lives on the
+      # Docker network inside 172.16.0.0/12, so every invite/password-reset
+      # email was silently dropped. This override is the upstream default
+      # list MINUS 172.16.0.0/12 — there is no allowlist mechanism
+      # (zitadel/zitadel#12326). Residual risk: Zitadel Actions can reach
+      # Docker-internal services in 172.16.0.0/12; acceptable because only
+      # Klai operators can configure Actions on this instance.
+      ZITADEL_HTTPCLIENT_DENYLIST: "localhost,0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,192.168.0.0/16,198.18.0.0/15,::/128,::1/128,fc00::/7,fe80::/10"
     networks:
       - klai-net
       - net-postgres
