@@ -28,12 +28,12 @@ from dataclasses import dataclass
 import structlog
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer
 from app.core.config import settings as _app_settings
-from app.core.database import get_db, set_tenant
+from app.core.database import get_db, set_request_actor, set_tenant
 from app.core.features import derive_user_products
 from app.core.plan_limits import KBLimits
 from app.core.profiles import (
@@ -288,22 +288,18 @@ async def _resolve_caller_with_options(
 
     await set_tenant(db, perms.org_id)
 
-    # SPEC-PORTAL-PRICING-PER-USER-001 Phase 2: propagate the caller's
-    # zitadel_user_id into ``klai.changed_by_user_id``. The
-    # ``portal_users_seat_history_trg`` trigger reads this GUC and stores
-    # it into ``portal_user_seat_history.changed_by`` so the audit trail
-    # carries the WHO. Empty GUC -> trigger writes NULL ("no acting
-    # admin" — correct semantics for signup flows and internal callers).
-    await db.execute(
-        text("SELECT set_config('klai.changed_by_user_id', :uid, false)"),
-        {"uid": zitadel_user_id},
-    )
-
-    # SPEC-INFRA-TENANT-DELETE-001 R6: enable platform-admin RLS on
-    # tenant_lifecycle_events when caller is in the platform org. Same value
-    # as `admin/__init__::_get_caller_org` — must remain '1' (text), not 'true'.
-    if perms.is_platform_admin:
-        await db.execute(text("SELECT set_config('app.is_platform_admin', '1', true)"))
+    # Bind the acting identity for this request task. Feeds two GUCs, both
+    # re-applied transaction-locally at every BEGIN:
+    #
+    #   * ``klai.changed_by_user_id`` (SPEC-PORTAL-PRICING-PER-USER-001 Phase 2)
+    #     — read by ``portal_users_seat_history_trg`` and stored into
+    #     ``portal_user_seat_history.changed_by`` so the audit trail carries the
+    #     WHO. Empty -> trigger writes NULL ("no acting admin", correct for
+    #     signup flows and internal callers).
+    #   * ``app.is_platform_admin`` (SPEC-INFRA-TENANT-DELETE-001 R6) — unlocks
+    #     the platform-admin branch of the tenant_lifecycle_events policies.
+    #     Same '1' (text, not 'true') value as `admin/__init__::_get_caller_org`.
+    await set_request_actor(db, zitadel_user_id, perms.is_platform_admin)
 
     structlog.contextvars.bind_contextvars(org_id=str(perms.org_id), user_id=zitadel_user_id)
     return perms

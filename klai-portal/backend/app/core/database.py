@@ -2,13 +2,25 @@ import contextlib
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextvars import ContextVar
 
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session, SessionTransaction
 
 from app.core.config import settings
 
 # Tracks the current request's org_id so RLS context can be set once per request.
 current_org_id: ContextVar[int | None] = ContextVar("current_org_id", default=None)
+
+# Actor identity for the current asyncio task. Task-scoped (contextvar) rather
+# than session-scoped because "who is acting" is a property of the request, not
+# of a particular DB session: a request that opens a `tenant_scoped_session`
+# or `cross_org_session` block must carry the same actor into those sessions.
+#
+# Feeds `klai.changed_by_user_id`, read by `portal_users_seat_history_trg`.
+current_changed_by_user_id: ContextVar[str | None] = ContextVar("current_changed_by_user_id", default=None)
+# Feeds `app.is_platform_admin`, read by the tenant_lifecycle_events policies.
+current_is_platform_admin: ContextVar[bool] = ContextVar("current_is_platform_admin", default=False)
 
 engine = create_async_engine(
     settings.database_url,
@@ -19,25 +31,123 @@ engine = create_async_engine(
     pool_pre_ping=settings.db_pool_pre_ping,
 )
 
+# One statement, four transaction-local GUCs. `is_local=true` (the third
+# set_config argument) is the whole point: the values vanish at COMMIT/ROLLBACK
+# so a pooled connection can never carry them into the next request.
+_TENANT_CONTEXT_SQL = (
+    "SELECT set_config('app.current_org_id', :org_id, true), "
+    "set_config('app.cross_org_admin', :cross_org_admin, true), "
+    "set_config('klai.changed_by_user_id', :changed_by_user_id, true), "
+    "set_config('app.is_platform_admin', :is_platform_admin, true)"
+)
+
+
+def _tenant_context_params(session: Session | AsyncSession) -> dict[str, str]:
+    """Render the four RLS GUC values from Python-side state.
+
+    Tenant scope comes from `session.info` (per-session, so a request session
+    and a nested `cross_org_session` block cannot contaminate each other).
+    Actor identity comes from contextvars (per-task, so it flows into nested
+    session blocks opened by the same request).
+
+    Empty string is the "unset" value for every policy — they all wrap the GUC
+    in `NULLIF(..., '')`. Values are always rendered, even when everything is
+    empty: a deterministic override also neutralises any legacy session-level
+    GUC left on the pooled connection by older code or by a manual `psql`
+    session.
+
+    Note the two different truthy literals: `app.cross_org_admin` uses `'true'`
+    and `app.is_platform_admin` uses `'1'`. Both are pre-existing conventions
+    baked into deployed RLS policies — do not "normalise" them.
+    """
+    # Mocked sessions in tests do not carry a real info dict; a non-dict means
+    # no tenant scope (and avoids `.get()` returning a coroutine on AsyncMock).
+    info = session.info if isinstance(getattr(session, "info", None), dict) else {}
+    org_id = info.get("tenant_org_id")
+    return {
+        "org_id": str(org_id) if org_id is not None else "",
+        "cross_org_admin": "true" if info.get("cross_org_admin") else "",
+        "changed_by_user_id": current_changed_by_user_id.get() or "",
+        "is_platform_admin": "1" if current_is_platform_admin.get() else "",
+    }
+
+
+class _SyncPooledTenantSession(Session):
+    """Sync `Session` used underneath `PooledTenantSession`.
+
+    Exists purely so the `after_begin` listener below can be registered on a
+    class that ONLY portal-api's pooled sessions use. Registering on the stock
+    `Session` would also fire for third-party / test-fixture sessions that have
+    no tenant contract.
+    """
+
+
+@event.listens_for(_SyncPooledTenantSession, "after_begin")
+def _apply_tenant_context_on_begin(
+    session: Session,
+    transaction: SessionTransaction,
+    connection: Connection,
+) -> None:
+    """Re-apply the four RLS GUCs transaction-locally at every BEGIN.
+
+    This is the invariant that makes post-commit queries safe: `commit()`
+    releases the pooled connection, and the next statement checks one out again
+    with no tenant guarantee. Because every transaction begins by re-declaring
+    its own context, it does not matter which physical connection it lands on
+    or what the previous tenant left behind.
+
+    SQLAlchemy docs require emitting SQL through the supplied `Connection` here,
+    not through the `Session` — the session is mid-begin and re-entering it
+    would recurse.
+    """
+    if transaction.nested:
+        # SAVEPOINT: inherits the enclosing transaction's GUCs, so there is
+        # nothing to establish. PostgreSQL DOES restore SET LOCAL values on
+        # ROLLBACK TO SAVEPOINT (verified: 33 before, 22 set inside, 33 after
+        # rollback). That makes skipping correct today, and also flags a latent
+        # mismatch: if a mutator changed session.info / the actor contextvars
+        # INSIDE a nested transaction that later rolls back, PostgreSQL would
+        # restore the old GUC while the Python-side state keeps the new value.
+        # The mismatch heals at the next top-level BEGIN. No `begin_nested()`
+        # call site exists under app/ today, so this is latent, not live.
+        return
+    if connection.dialect.name != "postgresql":
+        # SQLite/in-memory rigs used by some tests have no set_config().
+        return
+    connection.execute(text(_TENANT_CONTEXT_SQL), _tenant_context_params(session))
+
+
+async def _apply_tenant_context(session: AsyncSession) -> None:
+    """Apply the four RLS GUCs to the session's ALREADY-OPEN transaction.
+
+    `after_begin` fired for that transaction before the caller mutated
+    `session.info` / the actor contextvars, so it ran with the previous state.
+    Every mutator (`set_tenant`, `set_request_actor`, `cross_org_session`) calls
+    this immediately afterwards so the current transaction picks the new context
+    up without waiting for the next BEGIN.
+    """
+    await session.execute(text(_TENANT_CONTEXT_SQL), _tenant_context_params(session))
+
 
 class PooledTenantSession(AsyncSession):
     """AsyncSession that auto-pins + resets RLS tenant context on `__aenter__`.
 
     Every `async with AsyncSessionLocal() as s:` block starts with:
-      1. a pinned pooled connection (session-level `set_config` survives awaits); and
-      2. both RLS GUCs (`app.current_org_id`, `app.cross_org_admin`) cleared.
+      1. a pinned pooled connection; and
+      2. all RLS GUCs cleared on that connection.
 
-    This is a defense-in-depth layer on top of the explicit
-    `_pin_and_reset_connection` calls in `get_db`, `tenant_scoped_session`,
-    `pin_session`, `cross_org_session`. A new helper that forgets to call the
-    explicit pin+reset would previously re-introduce the 2026-04-24 pool
-    pollution bug. With this subclass as the session base, forgetting is
-    harmless — every session-maker exit point runs pin+reset unconditionally.
+    The authoritative mechanism is `sync_session_class`: it wires in
+    `_SyncPooledTenantSession`, whose `after_begin` listener re-applies the
+    tenant context transaction-locally at the start of EVERY transaction. That
+    is what makes post-commit statements (`db.refresh()` after `db.commit()`)
+    safe regardless of which pooled connection they land on.
 
-    The explicit `_pin_and_reset_connection` calls stay in place so the
-    behaviour remains visible at the call site (and idempotent — a repeat
-    reset is three cheap no-op SQL statements).
+    The pin + checkout reset below stays as defense-in-depth: it neutralises any
+    session-level GUC that older code, a manual `psql` session, or a future
+    regression might leave on a pooled connection.
     """
+
+    sync_session_class = _SyncPooledTenantSession
 
     async def __aenter__(self) -> AsyncSession:  # type: ignore[override]
         session = await super().__aenter__()
@@ -67,10 +177,11 @@ async def _pin_and_reset_connection(session: AsyncSession) -> None:
 
     Two jobs, both at checkout time:
 
-    1. Pin the pooled connection via `session.connection()`. After this call
-       every subsequent statement on the session uses the same physical
-       connection, so PostgreSQL session-level `set_config()` values stay
-       visible across awaits.
+    1. Pin the pooled connection via `session.connection()`. Tenant context no
+       longer depends on this (it is re-applied per transaction by the
+       `after_begin` listener), but pinning keeps a session's statements on one
+       physical connection, which keeps advisory locks and `SELECT … FOR UPDATE`
+       semantics predictable across awaits.
 
     2. Clear any stale `app.current_org_id` / `app.cross_org_admin` inherited
        from a prior request. `_reset_tenant_context` already runs at cleanup,
@@ -94,6 +205,11 @@ async def _reset_tenant_context(session: AsyncSession) -> None:
 
     Called before the connection returns to the pool so the next request /
     task that picks it up starts with a clean RLS context.
+
+    Since tenant context became transaction-local (`after_begin` listener),
+    portal-api writes no session-level GUCs at all and this reset is pure
+    defense-in-depth: it neutralises anything a manual `psql` session, a legacy
+    deployment, or a future regression might leave behind. Keep it.
 
     Rolls back FIRST. If the session is in an aborted-transaction state (e.g.
     after a 42501 RLS failure from the fail-loud policy), PostgreSQL rejects
@@ -129,16 +245,10 @@ async def _reset_tenant_context(session: AsyncSession) -> None:
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """Yield an async DB session with a pinned connection.
 
-    Calling session.connection() at the start pins a single pooled connection
-    for the entire session lifetime. This guarantees that set_tenant() and all
-    subsequent queries run on the SAME connection — required for PostgreSQL
-    session-level set_config() to be visible to RLS policies.
-
-    Without pinning, AsyncSession lazily checks out connections per-statement,
-    and the async event loop can hand out different connections for sequential
-    awaits. This caused set_tenant() to set app.current_org_id on connection A
-    while the next query ran on connection B (where the setting was empty),
-    making RLS block all rows.
+    Tenant context is carried by the session (`session.info`) and re-declared
+    transaction-locally at every BEGIN by the `after_begin` listener, so RLS no
+    longer depends on which pooled connection a statement lands on. Pinning via
+    `session.connection()` remains for lock/transaction predictability.
 
     The explicit `_pin_and_reset_connection` below is intentionally double work
     with `PooledTenantSession.__aenter__`. Rationale:
@@ -158,24 +268,54 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
 
 
 async def set_tenant(session: AsyncSession, org_id: int) -> None:
-    """Set PostgreSQL session-level tenant context for RLS.
+    """Bind this session's tenant scope for RLS.
 
-    Uses set_config with is_local=false so the setting survives commits within
-    the same connection checkout. get_db() resets it on cleanup.
+    The scope is stored on `session.info` — Python-side state, not a
+    connection-level GUC. From here on, EVERY transaction this session opens
+    re-declares `app.current_org_id` transaction-locally via the `after_begin`
+    listener, so the context follows the session across commits and across
+    pooled-connection checkouts. That is what makes `db.refresh()` immediately
+    after `db.commit()` safe.
 
-    The caller is responsible for ensuring the session's connection is pinned
-    (via session.connection() or a pinned dependency). Otherwise the
-    SET may land on a different pooled connection than later queries and RLS
-    will silently filter rows. Use `tenant_scoped_session()` below if you
-    don't already have a pinned session.
+    `session.info` (rather than a contextvar) is deliberate: a request session
+    and a `tenant_scoped_session` / `cross_org_session` block opened inside the
+    same asyncio task can hold different scopes without contaminating each
+    other.
 
-    Called once per request by _get_caller_org after authentication.
+    The immediate `_apply_tenant_context` call covers the transaction that is
+    already open right now — `after_begin` fired for it before this scope
+    existed.
+
+    Called once per request by `_get_caller_org` / `get_caller` after
+    authentication.
     """
-    await session.execute(
-        text("SELECT set_config('app.current_org_id', :org_id, false)"),
-        {"org_id": str(org_id)},
-    )
+    session.info["tenant_org_id"] = org_id
     current_org_id.set(org_id)
+    await _apply_tenant_context(session)
+
+
+async def set_request_actor(
+    session: AsyncSession,
+    changed_by_user_id: str | None,
+    is_platform_admin: bool,
+) -> None:
+    """Bind the acting identity for this asyncio task.
+
+    Feeds two GUCs:
+      * `klai.changed_by_user_id` — read by `portal_users_seat_history_trg` to
+        record WHO changed a seat. Empty means "no acting admin" (signup flows,
+        internal callers), which the trigger stores as NULL.
+      * `app.is_platform_admin` — unlocks the platform-admin branch of the
+        `tenant_lifecycle_events` policies.
+
+    Contextvars (not `session.info`) because identity is a property of the task:
+    a background write opened via `tenant_scoped_session` inside a request must
+    attribute to the same admin. `_reset_tenant_context` still clears the GUCs
+    on the connection as defense-in-depth.
+    """
+    current_changed_by_user_id.set(changed_by_user_id)
+    current_is_platform_admin.set(is_platform_admin)
+    await _apply_tenant_context(session)
 
 
 async def assert_portal_users_rls_ready() -> None:
@@ -408,9 +548,10 @@ async def assert_product_updates_rls_ready() -> None:
 async def tenant_scoped_session(org_id: int) -> AsyncIterator[AsyncSession]:
     """Yield an RLS-aware session for background tasks and fire-and-forget writes.
 
-    Opens a fresh AsyncSession, pins its pooled connection, sets
-    app.current_org_id via set_config(), yields for use, and resets the
-    tenant context on exit before the connection returns to the pool.
+    Opens a fresh AsyncSession, pins its pooled connection, binds the tenant
+    scope via `set_tenant` (re-applied transaction-locally at every BEGIN),
+    yields for use, and resets the connection's tenant context on exit before
+    it returns to the pool.
 
     Use this instead of `async with AsyncSessionLocal() as db` anywhere
     you need to read or write an RLS-protected table outside of a request
@@ -440,10 +581,9 @@ async def pin_session(session: AsyncSession) -> None:
     """Pin an externally-provided session's pooled connection.
 
     For code paths that accept a session as a parameter (e.g. provisioning
-    orchestrator) and need to guarantee that later set_config() calls on
-    that session remain visible. Idempotent — calling session.connection()
-    twice is safe, and re-clearing the tenant GUC is a no-op when already
-    clear.
+    orchestrator) and want a single physical connection for the duration plus a
+    clean starting RLS context. Idempotent — calling session.connection() twice
+    is safe, and re-clearing the tenant GUC is a no-op when already clear.
     """
     await _pin_and_reset_connection(session)
 
@@ -478,10 +618,20 @@ async def cross_org_session() -> AsyncIterator[AsyncSession]:
 
     Anything new you add here must have a written @MX:REASON justifying
     why tenant scoping is not possible.
+
+    Do NOT call this from a handler that already holds a session (webhook
+    handlers, FastAPI routes with `Depends(get_db)`) — it checks out a SECOND
+    pooled connection while the first is still held, so a burst of concurrent
+    requests can exhaust the pool. Use `cross_org_scope(session)` there.
     """
     async with AsyncSessionLocal() as session:
         await _pin_and_reset_connection(session)
-        await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
+        # Session-scoped flag: the `after_begin` listener re-declares
+        # `app.cross_org_admin` transaction-locally on every transaction this
+        # session opens, so the bypass survives the commits that multi-step
+        # cross-org blocks (invite_scheduler, KEK rotation) perform.
+        session.info["cross_org_admin"] = True
+        await _apply_tenant_context(session)
         try:
             yield session
         finally:
@@ -490,3 +640,31 @@ async def cross_org_session() -> AsyncIterator[AsyncSession]:
             # so the pool cannot inherit the cross-org bypass flag from a
             # session that aborted before reaching this finally.
             await _reset_tenant_context(session)
+
+
+@contextlib.asynccontextmanager
+async def cross_org_scope(session: AsyncSession) -> AsyncIterator[AsyncSession]:
+    """Temporarily enable the cross-org RLS bypass on an EXISTING session.
+
+    Unlike `cross_org_session()` this does NOT check out a second pooled
+    connection — use it when the caller already holds a session (webhook
+    handlers, any route with `Depends(get_db)`). Opening a nested
+    `cross_org_session()` there doubles connection usage per request; a burst
+    can exhaust the pool while each outer session still holds its connection.
+
+    Safe only because tenant context is transaction-local: the flag lives in
+    `session.info` and is applied via `set_config(..., true)`, so no
+    session-level GUC can leak onto the pooled connection. The `finally`
+    clears the flag and re-applies immediately, so the bypass cannot outlive
+    the block even if the body raises.
+
+    Scope it as tightly as possible — ideally one lookup. Everything inside
+    sees ALL tenants' rows.
+    """
+    session.info["cross_org_admin"] = True
+    await _apply_tenant_context(session)
+    try:
+        yield session
+    finally:
+        session.info["cross_org_admin"] = False
+        await _apply_tenant_context(session)

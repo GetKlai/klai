@@ -6,9 +6,9 @@ File-content regex checks on the Phase 2 migration that extends
 ``portal_user_seat_history.changed_by``.
 
 Also pins the matching change in ``permissions.py``: the authenticated
-caller dependency MUST issue ``set_config('klai.changed_by_user_id', ...)``
-right after ``set_tenant`` so the GUC is bound before any subsequent
-UPDATE on portal_users fires the trigger.
+caller dependency MUST bind the actor identity (via ``set_request_actor``)
+right after ``set_tenant`` so ``klai.changed_by_user_id`` is set before any
+subsequent UPDATE on portal_users fires the trigger.
 """
 
 from __future__ import annotations
@@ -108,24 +108,55 @@ class TestTriggerBodyReadsActorGuc:
 
 class TestCallerDependencyBindsActorGuc:
     """The matching code side: ``_resolve_caller_with_options`` in
-    permissions.py MUST issue ``set_config('klai.changed_by_user_id', ...)``
-    right after ``set_tenant`` so the trigger sees the actor on the next
-    portal_users UPDATE within the same request.
+    permissions.py MUST bind the actor identity right after ``set_tenant`` so
+    the trigger sees it on the next portal_users UPDATE within the same request.
+
+    The 2026-08-13 per-transaction-RLS-context change moved the raw
+    ``set_config('klai.changed_by_user_id', :uid, false)`` out of permissions.py
+    and into ``database.set_request_actor``, which writes a contextvar and
+    re-applies all four GUCs transaction-locally at every BEGIN. The guarantee
+    under test is unchanged — the actor is bound before any trigger fires — so
+    these assertions now pin the wiring rather than the literal SQL.
     """
 
-    def test_permissions_sets_changed_by_user_id_guc(self, permissions_src: str) -> None:
-        # The exact statement we expect:
-        #   await db.execute(
-        #       text("SELECT set_config('klai.changed_by_user_id', :uid, false)"),
-        #       {"uid": zitadel_user_id},
-        #   )
+    def test_permissions_binds_actor_via_set_request_actor(self, permissions_src: str) -> None:
+        # The exact call we expect:
+        #   await set_request_actor(db, zitadel_user_id, perms.is_platform_admin)
         assert re.search(
-            r"set_config\('klai\.changed_by_user_id',\s*:uid,\s*false\)",
+            r"await\s+set_request_actor\(\s*db,\s*zitadel_user_id,\s*perms\.is_platform_admin\s*\)",
             permissions_src,
         ), (
-            "permissions.py must bind klai.changed_by_user_id on the request "
-            "connection — without this the trigger writes NULL changed_by "
-            "for every admin action."
+            "permissions.py must bind the actor identity via set_request_actor "
+            "— without this the trigger writes NULL changed_by for every admin "
+            "action."
+        )
+        assert re.search(r"from app\.core\.database import .*\bset_request_actor\b", permissions_src), (
+            "set_request_actor must be imported from app.core.database"
+        )
+
+    def test_permissions_no_longer_writes_session_level_actor_guc(self, permissions_src: str) -> None:
+        """No `is_local=false` GUC writes may remain in permissions.py.
+
+        A session-level write survives on the pooled connection past the
+        request, which is the whole class of bug the transaction-local model
+        removes. See tests/test_rls_txn_context_postgres.py for the runtime
+        proof.
+        """
+        assert not re.search(r"set_config\([^)]*,\s*false\s*\)", permissions_src), (
+            "permissions.py must not write session-level (is_local=false) GUCs"
+        )
+
+    def test_set_request_actor_binds_changed_by_user_id(self, database_src: str) -> None:
+        """database.py's combined statement must still carry the actor GUC."""
+        assert re.search(
+            r"set_config\('klai\.changed_by_user_id',\s*:changed_by_user_id,\s*true\)",
+            database_src,
+        ), (
+            "database.py's transaction-local context statement must bind "
+            "klai.changed_by_user_id, or the seat-history trigger records NULL."
+        )
+        assert re.search(r"async def set_request_actor\(", database_src), (
+            "database.py must expose set_request_actor as the actor-binding entry point"
         )
 
 

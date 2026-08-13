@@ -456,6 +456,8 @@ async def test_cross_org_session_delegates_reset_to_shared_helper(
     fake_session.rollback = AsyncMock()
     fake_session.execute = AsyncMock(return_value=MagicMock())
     fake_session.connection = AsyncMock()
+    # `cross_org_session` records the bypass in session.info before applying it.
+    fake_session.info = {}
 
     class FakeSessionCM:
         async def __aenter__(self) -> AsyncMock:

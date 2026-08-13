@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, patch
 
@@ -238,18 +239,64 @@ def test_build_handoff_context_text_includes_summary_and_recent_transcript() -> 
     assert "Klai: Waarmee kan ik helpen?" in text
 
 
+def _tracking_cross_org_scope(events: list[str]):
+    """Stand-in for `app.core.database.cross_org_scope`.
+
+    The real helper flips `session.info["cross_org_admin"]` and re-applies the
+    transaction-local context. It runs on the CALLER'S session — no second
+    pooled connection. This fake records enter/exit so a test can assert the
+    bypass is live during the lookup and cleared afterwards, and it asserts it
+    was handed the very session the handler was called with.
+    """
+
+    @asynccontextmanager
+    async def _cm(session):
+        session.info["cross_org_admin"] = True
+        events.append("scope_enter")
+        try:
+            yield session
+        finally:
+            session.info["cross_org_admin"] = False
+            events.append("scope_exit")
+
+    return _cm
+
+
+def _explode_if_second_session():
+    """`cross_org_session()` must NOT be reachable from the webhook path.
+
+    Opening it there would hold a second pooled connection for the duration of
+    every webhook request — a HubSpot burst then exhausts the pool.
+    """
+
+    @asynccontextmanager
+    async def _cm():
+        raise AssertionError("record_hubspot_agent_reply must not open a second pooled session")
+        yield  # pragma: no cover — unreachable, keeps this a generator
+
+    return _cm
+
+
 @pytest.mark.asyncio
 async def test_record_hubspot_agent_reply_records_and_publishes() -> None:
+    events: list[str] = []
     db = AsyncMock()
-    db.execute = AsyncMock(
-        side_effect=[
-            _Result(None),  # enable cross-org lookup
-            _Result((42, 7)),
-            _Result(None),  # disable cross-org lookup
-            _Result(None),  # set_tenant
-            _Result((99, "2026-05-27T13:05:31Z")),
-        ]
-    )
+    db.info = {}  # set_tenant / cross_org_scope record their state here
+
+    async def _execute(stmt, params=None):
+        sql = str(stmt)
+        if "widget_handoff_sessions" in sql:
+            # The bypass must be LIVE while the globally-unique thread id is
+            # mapped to a tenant — that row belongs to another org's scope.
+            events.append(f"lookup:cross_org={db.info.get('cross_org_admin')}")
+            return _Result((42, 7))
+        if "INSERT INTO widget_handoff_messages" in sql:
+            events.append(f"insert:cross_org={db.info.get('cross_org_admin')}")
+            return _Result((99, "2026-05-27T13:05:31Z"))
+        events.append("set_config")
+        return _Result(None)
+
+    db.execute = AsyncMock(side_effect=_execute)
     db.commit = AsyncMock()
     payload = {
         "message": {
@@ -262,27 +309,30 @@ async def test_record_hubspot_agent_reply_records_and_publishes() -> None:
 
     with (
         patch("app.services.widget_handoff.get_redis_pool", AsyncMock(return_value=None)),
+        patch("app.services.widget_handoff.cross_org_scope", _tracking_cross_org_scope(events)),
+        patch("app.core.database.cross_org_session", _explode_if_second_session()),
     ):
         result = await record_hubspot_agent_reply(db, payload)
 
     assert result["status"] == "recorded"
     assert result["handoff_session_id"] == 42
     assert result["id"] == 99
-    assert db.execute.await_count == 5
-    assert db.execute.await_args_list[4].args[1]["agent_name"] == "Mark Vletter"
+    # Everything runs on the ONE session the handler was given.
+    assert "lookup:cross_org=True" in events, events
+    assert "insert:cross_org=False" in events, events
+    assert events.index("scope_exit") < events.index("insert:cross_org=False"), events
+    assert db.info["cross_org_admin"] is False, "bypass must not outlive the lookup"
+    insert_call = next(c for c in db.execute.await_args_list if "INSERT INTO" in str(c.args[0]))
+    assert insert_call.args[1]["agent_name"] == "Mark Vletter"
     db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_record_hubspot_agent_reply_ignores_unmapped_thread() -> None:
     db = AsyncMock()
-    db.execute = AsyncMock(
-        side_effect=[
-            _Result(None),  # enable cross-org lookup
-            _Result(None),
-            _Result(None),  # disable cross-org lookup
-        ]
-    )
+    events: list[str] = []
+    db.info = {}
+    db.execute = AsyncMock(return_value=_Result(None))
     db.commit = AsyncMock()
     payload = {
         "message": {
@@ -292,8 +342,16 @@ async def test_record_hubspot_agent_reply_ignores_unmapped_thread() -> None:
         }
     }
 
-    result = await record_hubspot_agent_reply(db, payload)
+    with (
+        patch("app.services.widget_handoff.cross_org_scope", _tracking_cross_org_scope(events)),
+        patch("app.core.database.cross_org_session", _explode_if_second_session()),
+    ):
+        result = await record_hubspot_agent_reply(db, payload)
 
     assert result == {"status": "ignored", "reason": "unmapped_thread"}
-    assert db.execute.await_count == 3
+    # Exactly one statement (the lookup), on the request session, inside the scope.
+    assert db.execute.await_count == 1
+    assert "widget_handoff_sessions" in str(db.execute.await_args_list[0].args[0])
+    assert events == ["scope_enter", "scope_exit"], events
+    assert db.info["cross_org_admin"] is False
     db.commit.assert_not_awaited()

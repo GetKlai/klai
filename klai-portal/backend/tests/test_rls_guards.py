@@ -45,6 +45,10 @@ async def test_tenant_scoped_session_pins_before_set_tenant(monkeypatch):
     calls: list[str] = []
 
     class FakeSession:
+        def __init__(self):
+            # `set_tenant` writes the tenant scope here before applying it to SQL.
+            self.info: dict = {}
+
         async def connection(self):
             calls.append("pin")
 
@@ -54,8 +58,10 @@ async def test_tenant_scoped_session_pins_before_set_tenant(monkeypatch):
         async def execute(self, stmt, params=None):
             sql = str(stmt)
             if "set_config" in sql:
-                if params and params.get("org_id") == "42":
-                    calls.append("set_tenant:42")
+                # The combined transaction-local apply carries all four GUCs as
+                # bound params; the cleanup resets are single-GUC literals.
+                if params and "changed_by_user_id" in params:
+                    calls.append(f"set_tenant:{params['org_id']}")
                 elif "current_org_id" in sql:
                     calls.append("reset_current_org_id")
                 elif "cross_org_admin" in sql:
@@ -105,6 +111,9 @@ async def test_tenant_scoped_session_resets_on_exception(monkeypatch):
     calls: list[str] = []
 
     class FakeSession:
+        def __init__(self):
+            self.info: dict = {}
+
         async def connection(self):
             calls.append("pin")
 
@@ -114,7 +123,7 @@ async def test_tenant_scoped_session_resets_on_exception(monkeypatch):
         async def execute(self, stmt, params=None):
             sql = str(stmt)
             if "set_config" in sql:
-                if params and params.get("org_id") == "7":
+                if params and "changed_by_user_id" in params:
                     calls.append("set")
                 elif "current_org_id" in sql:
                     calls.append("reset_current_org_id")
@@ -177,6 +186,10 @@ async def test_cross_org_session_sets_and_resets_bypass_flag(monkeypatch):
     calls: list[str] = []
 
     class FakeSession:
+        def __init__(self):
+            # `cross_org_session` writes {"cross_org_admin": True} here, then applies.
+            self.info: dict = {}
+
         async def connection(self):
             calls.append("pin")
 
@@ -185,8 +198,12 @@ async def test_cross_org_session_sets_and_resets_bypass_flag(monkeypatch):
 
         async def execute(self, stmt, params=None):
             sql = str(stmt)
-            if "set_config" in sql and "cross_org_admin" in sql:
-                calls.append("bypass_on" if "'true'" in sql else "bypass_off")
+            if params and "changed_by_user_id" in params:
+                # Combined transaction-local apply: the bypass is on iff the
+                # bound cross_org_admin param renders as 'true'.
+                calls.append("bypass_on" if params["cross_org_admin"] == "true" else "bypass_off")
+            elif "set_config" in sql and "cross_org_admin" in sql:
+                calls.append("bypass_off")
             elif "set_config" in sql and "current_org_id" in sql:
                 calls.append("tenant_reset")
             return SimpleNamespace(rowcount=-1)
@@ -230,13 +247,16 @@ async def test_cross_org_session_clears_bypass_on_exception(monkeypatch):
     calls: list[str] = []
 
     class FakeSession:
+        def __init__(self):
+            self.info: dict = {}
+
         async def connection(self):
             calls.append("pin")
 
         async def execute(self, stmt, params=None):
             sql = str(stmt)
-            if "cross_org_admin" in sql and "'true'" in sql:
-                calls.append("bypass_on")
+            if params and "changed_by_user_id" in params:
+                calls.append("bypass_on" if params["cross_org_admin"] == "true" else "bypass_off")
             elif "cross_org_admin" in sql:
                 calls.append("bypass_off")
             return SimpleNamespace(rowcount=-1)

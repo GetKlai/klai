@@ -124,8 +124,9 @@ asyncio_mode = "auto"
 pythonpath = [".", "tests"]
 markers = [
     "benchmark: constant-time regression benchmarks (run with: pytest -m benchmark)",
+    "postgres: real-PostgreSQL RLS regression tests (need RLS_TEST_DATABASE_URL)",
 ]
-addopts = "-m 'not benchmark'"
+addopts = "-m 'not benchmark and not postgres'"
 
 [tool.ruff]
 line-length = 120
