@@ -70,6 +70,9 @@ const sandbox = {
         },
       };
     }
+    if (id === '../common/index.cjs') {
+      return {};
+    }
     if (id === '../utils/events.cjs') {
       return { emitAgentLog() {} };
     }
@@ -78,6 +81,9 @@ const sandbox = {
         toLangChainContent: (parts) => parts,
         toLangChainMessageFields: (message) => message,
       };
+    }
+    if (id === '../llm/anthropic/utils/message_inputs.cjs') {
+      return { normalizeAnthropicToolCallId: (toolCallId) => toolCallId };
     }
     throw new Error(`Unexpected require: ${id}`);
   },
