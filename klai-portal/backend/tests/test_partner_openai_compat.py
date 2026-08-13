@@ -142,6 +142,162 @@ async def test_openai_compatible_chat_defaults_output_cap(monkeypatch):
     assert forwarded.await_args.args[0]["max_tokens"] == 2048
 
 
+def test_openai_passthrough_metadata_translates_prompt_cache_key_to_extra_body():
+    from app.services.partner_chat import _with_openai_passthrough_metadata
+
+    body = {"prompt_cache_key": "abc", "messages": [{"role": "user", "content": "hi"}]}
+
+    forwarded = _with_openai_passthrough_metadata(body)
+
+    assert forwarded["extra_body"] == {"prompt_cache_key": "abc"}
+    assert "prompt_cache_key" not in forwarded
+    assert body["prompt_cache_key"] == "abc"
+
+
+def test_openai_passthrough_metadata_overwrites_caller_extra_body():
+    from app.services.partner_chat import _with_openai_passthrough_metadata
+
+    body = {
+        "prompt_cache_key": "abc",
+        "extra_body": {"api_key": "sk-attacker", "prompt_cache_key": "other"},
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+    forwarded = _with_openai_passthrough_metadata(body)
+
+    assert forwarded["extra_body"] == {"prompt_cache_key": "abc"}
+
+
+def test_openai_passthrough_metadata_no_extra_body_when_key_absent():
+    from app.services.partner_chat import _with_openai_passthrough_metadata
+
+    forwarded = _with_openai_passthrough_metadata({"messages": [{"role": "user", "content": "hi"}]})
+
+    assert "extra_body" not in forwarded
+
+
+@pytest.mark.asyncio
+async def test_openai_non_streaming_sends_prompt_cache_key_as_extra_body_to_litellm(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services import partner_chat
+
+    captured: dict = {}
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"choices": []}
+    resp.raise_for_status = MagicMock()
+
+    client = MagicMock()
+
+    async def post(url, json=None, headers=None):
+        captured["json"] = json
+        return resp
+
+    client.post = post
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(partner_chat.httpx, "AsyncClient", MagicMock(return_value=client))
+
+    settings = SimpleNamespace(
+        litellm_base_url="http://litellm",
+        litellm_general_chat_key="general-key",
+        litellm_master_key="master-key",
+    )
+
+    await partner_chat.openai_chat_completion_non_streaming(
+        {"messages": [{"role": "user", "content": "hi"}], "prompt_cache_key": "abc"},
+        settings,
+    )
+
+    assert captured["json"]["extra_body"] == {"prompt_cache_key": "abc"}
+    assert "prompt_cache_key" not in captured["json"]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_chat_forwards_prompt_cache_key(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    await partner.openai_compatible_chat_completions(
+        http_request=_request(
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "prompt_cache_key": "partner-1-conv-42",
+            }
+        ),
+        auth=_auth(),
+    )
+
+    sent = forwarded.await_args.args[0]
+    assert sent["prompt_cache_key"] == "partner-1-conv-42"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["", 123, "x" * 257])
+async def test_openai_compatible_chat_rejects_invalid_prompt_cache_key(value):
+    from app.api.partner import openai_compatible_chat_completions
+
+    with pytest.raises(HTTPException) as exc:
+        await openai_compatible_chat_completions(
+            http_request=_request(
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "prompt_cache_key": value,
+                }
+            ),
+            auth=_auth(),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["error"]["type"] == "invalid_request"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_chat_absent_prompt_cache_key_sends_no_extra_body(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    await partner.openai_compatible_chat_completions(
+        http_request=_request({"messages": [{"role": "user", "content": "hi"}]}),
+        auth=_auth(),
+    )
+
+    sent = forwarded.await_args.args[0]
+    assert "prompt_cache_key" not in sent
+    assert "extra_body" not in sent
+
+    from app.services.partner_chat import _with_openai_passthrough_metadata
+
+    assert "extra_body" not in _with_openai_passthrough_metadata(sent)
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_chat_drops_caller_extra_body(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    await partner.openai_compatible_chat_completions(
+        http_request=_request(
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "extra_body": {"prompt_cache_key": "attacker", "api_key": "sk-attacker"},
+            }
+        ),
+        auth=_auth(),
+    )
+
+    sent = forwarded.await_args.args[0]
+    assert "extra_body" not in sent
+
+
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_rejects_invalid_json():
     from app.api.partner import openai_compatible_chat_completions
