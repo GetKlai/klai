@@ -53,7 +53,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 | Service | Image | Rationale |
 |---|---|---|
-| `meilisearch` | `getmeili/meilisearch:v1.45.2` | Search index for LibreChat conversations. **Data migration required on minor bumps** — v1.42.1 refused to boot directly on v1.45.2 and required dump/import. Pin explicitly and keep `MEILI_DB_PATH=/meili_data`; v1.45.2 otherwise starts on `./data.ms` and ignores the mounted volume. |
+| `meilisearch` | `getmeili/meilisearch:v1.53.0` | Search index for LibreChat conversations. **Data migration required on minor bumps** — v1.42.1 refused to boot directly on v1.45.2, and 1.45.2 -> 1.53.0 (2026-08-13) was likewise migrated via dump/import (baseline archived at /opt/klai/backups/meili-pre-1.53.0-*). Pin explicitly and keep `MEILI_DB_PATH=/meili_data`; v1.45.2 otherwise starts on `./data.ms` and ignores the mounted volume. |
 | `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.30.0` | Document parsing (PDF, DOCX → structured). |
 | `searxng` | `searxng/searxng:2026.8.12-cdfdaa5a8` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
 | `gitea` | `gitea/gitea:1.27.1` | Self-hosted git for klai-docs. Bumped 2026-08-13: 1.27.1 patches CVE-2026-59774 (critical, unauthenticated file read → RCE) + CVE-2026-60004 (critical, RCE via diffpatch hooks); 1.27.0 patches the high SSRF + PAT-scope CVEs. 1.27.0 breaking changes (Actions reusable workflows, CSP script nonce) do not affect us — Gitea is git-hosting only here. |
@@ -86,7 +86,7 @@ issues locally.
 | `postgres` | `pgvector/pgvector:0.8.6-pg18` | Same as prod. |
 | `redis` | `redis:8.10.0-alpine` | Aligned with prod (was `redis:alpine`). |
 | `mongodb` | `mongo:8.2.12` | Same as prod. |
-| `meilisearch` | `getmeili/meilisearch:v1.45.2` | Aligned with prod; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
+| `meilisearch` | `getmeili/meilisearch:v1.53.0` | Aligned with prod; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
 | `litellm` | `ghcr.io/berriai/litellm:v1.96.2` | Same as prod. |
 
 ---

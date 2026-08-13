@@ -178,7 +178,7 @@ services:
 
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
-    image: getmeili/meilisearch:v1.45.2
+    image: getmeili/meilisearch:v1.53.0
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
