@@ -12,8 +12,10 @@ and the contract surfaces in CI before live debugging is needed.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import tempfile
 
 import pytest
 
@@ -75,11 +77,18 @@ def test_wait_for_predicate_is_valid_javascript(selector) -> None:
     assert js.startswith("js:")
     node = shutil.which("node")
     assert node is not None
-    proc = subprocess.run(  # noqa: S603 — fixed argv, test-only syntax check
-        [node, "--check", "/dev/stdin"],
-        input=f"const f = {js[3:]};",
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    assert proc.returncode == 0, proc.stderr
+    # A real temp file, not /dev/stdin — node --check on a stdin pipe fails
+    # with ENOENT on Linux CI runners (it reopens /proc/<pid>/fd/pipe:[...]).
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(f"const f = {js[3:]};")
+        path = fh.name
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed argv, test-only syntax check
+            [node, "--check", path],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert proc.returncode == 0, proc.stderr
+    finally:
+        os.unlink(path)
