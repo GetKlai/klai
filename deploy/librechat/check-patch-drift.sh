@@ -11,7 +11,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 MANIFEST="$ROOT_DIR/deploy/librechat/patch-manifest.txt"
 GETKLAI_MANIFEST="$ROOT_DIR/deploy/librechat/getklai/patch-manifest.txt"
-LIBRECHAT_IMAGE="${LIBRECHAT_IMAGE:-ghcr.io/danny-avila/librechat:v0.8.6}"
+LIBRECHAT_IMAGE="${LIBRECHAT_IMAGE:-ghcr.io/danny-avila/librechat:v0.8.7}"
 FAIL=0
 
 COMPOSE_IMAGE=$(awk '
