@@ -20,12 +20,12 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 | Service | Image | Rationale |
 |---|---|---|
-| `postgres` | `pgvector/pgvector:0.8.4-pg18` | PostgreSQL major version upgrades require dump/restore. pg18 is the current stable (since Sept 2025). Upgrade path: `pg_dumpall` → stop services → change image → delete volume → restore dump. |
+| `postgres` | `pgvector/pgvector:0.8.6-pg18` | pgvector 0.8.6 on pg18 (bumped 2026-08-13, same Postgres major — data-compatible). PostgreSQL major version upgrades require dump/restore. pg18 is the current stable (since Sept 2025). Upgrade path: `pg_dumpall` → stop services → change image → delete volume → restore dump. |
 | `firecrawl-postgres` | `postgres:18.4-alpine` | Firecrawl-internal queue DB (NUQ schema). Pinned to match main postgres major. Data is transient (queue state), so cross-major migration is just a volume delete. |
 | `listmonk-db` | `postgres:17.10-alpine` | Dedicated database for listmonk campaigns, subscribers, templates, and admin users. Kept on the upstream listmonk Docker Compose default; dump/restore before any major PostgreSQL bump. |
 | `mongodb` | `mongo:8.2.11` | MongoDB 8 is the current stable major. LibreChat tenants depend on this. Major upgrades require replica-set-aware migration. |
-| `redis` | `redis:8.8.0-alpine` | Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. Previously on `redis:alpine` which silently rolled to 8 anyway — now explicit. |
-| `vexa-redis` | `redis:8.8.0-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
+| `redis` | `redis:8.10.0-alpine` | Bumped 2026-08-13: 8.8.1 was a security release on our 8.8.0 pin; 8.10.0 is current stable on the same major. Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. |
+| `vexa-redis` | `redis:8.10.0-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
 | `qdrant` | `qdrant/qdrant:v1.18.2` | Vector store for Klai Knowledge. Binary-incompatible on major bumps — pin explicitly. |
 | `falkordb` | `falkordb/falkordb:v4.18.11` | Knowledge graph (Graphiti backend). v4.x has stable RediSearch + graph engine integration. |
 
@@ -34,7 +34,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 | Service | Image | Rationale |
 |---|---|---|
 | `zitadel` | `ghcr.io/zitadel/zitadel:v4.17.0` | OIDC IdP. Bumped 2026-08-13 for the 4.16.x security batch: 2× critical (unauthenticated account takeover via passkey enrollment; account pre-hijacking via forged external-IdP callback) + MFA-bypass + Actions sandbox escape, all patched ≤4.16.2. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
-| `victoriametrics` | `victoriametrics/victoria-metrics:v1.147.0` | Metrics TSDB. |
+| `victoriametrics` | `victoriametrics/victoria-metrics:v1.149.0` | Metrics TSDB. Bumped 2026-08-13 (includes the vmrestore path-traversal fix, CVE-2026-61625). |
 | `victorialogs` | `victoriametrics/victoria-logs:v1.51.0` | Log aggregation (replaces Loki). LogsQL syntax differs from LogQL. |
 | `cadvisor` | `ghcr.io/google/cadvisor:v0.60.3` | Container metrics. Registry moved from `gcr.io` to `ghcr.io`; verify dashboards that depend on container start/creation timestamps after this bump. |
 | `alloy` | `grafana/alloy:v1.17.1` | Log and metric collection. Config format stable on minor bumps. |
@@ -56,7 +56,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 | `meilisearch` | `getmeili/meilisearch:v1.45.2` | Search index for LibreChat conversations. **Data migration required on minor bumps** — v1.42.1 refused to boot directly on v1.45.2 and required dump/import. Pin explicitly and keep `MEILI_DB_PATH=/meili_data`; v1.45.2 otherwise starts on `./data.ms` and ignores the mounted volume. |
 | `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.26.0` | Document parsing (PDF, DOCX → structured). |
 | `searxng` | `searxng/searxng:2026.7.7-f69b22c45` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
-| `gitea` | `gitea/gitea:1.26.4` | Self-hosted git for klai-docs. |
+| `gitea` | `gitea/gitea:1.27.1` | Self-hosted git for klai-docs. Bumped 2026-08-13: 1.27.1 patches CVE-2026-59774 (critical, unauthenticated file read → RCE) + CVE-2026-60004 (critical, RCE via diffpatch hooks); 1.27.0 patches the high SSRF + PAT-scope CVEs. 1.27.0 breaking changes (Actions reusable workflows, CSP script nonce) do not affect us — Gitea is git-hosting only here. |
 | `crawl4ai` | `unclecode/crawl4ai:0.8.9` | Web crawler for klai-connector. Hooks are explicitly disabled in compose; Klai uses crawl request config, not Crawl4AI server hooks. |
 
 ### Ops
@@ -83,8 +83,8 @@ issues locally.
 
 | Service | Image | Notes |
 |---|---|---|
-| `postgres` | `pgvector/pgvector:0.8.4-pg18` | Same as prod. |
-| `redis` | `redis:8.8.0-alpine` | Aligned with prod (was `redis:alpine`). |
+| `postgres` | `pgvector/pgvector:0.8.6-pg18` | Same as prod. |
+| `redis` | `redis:8.10.0-alpine` | Aligned with prod (was `redis:alpine`). |
 | `mongodb` | `mongo:8.2.11` | Same as prod. |
 | `meilisearch` | `getmeili/meilisearch:v1.45.2` | Aligned with prod; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
 | `litellm` | `ghcr.io/berriai/litellm:v1.91.0` | Same as prod. |
