@@ -97,6 +97,18 @@ _KNOWLEDGE_CHAT_TRIGGER_FIELDS = {
     "web_search",
     "web_search_query",
 }
+# General-passthrough-only fields: ChatCompletionsRequest (the knowledge-path
+# Pydantic model) silently drops unknown fields, so a partner sending these
+# alongside a knowledge field would get HTTP 200 with their schema/tools
+# quietly ignored instead of an error. Fail loudly instead — see
+# canonical_chat_completions.
+_PASSTHROUGH_ONLY_FIELDS = {
+    "parallel_tool_calls",
+    "prompt_cache_key",
+    "response_format",
+    "tool_choice",
+    "tools",
+}
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _HUBSPOT_HANDOFF_DEV_TENANT_SLUG = "getklai"
 _HUBSPOT_HANDOFF_DEV_ORIGIN = "https://getklai.getklai.com"
@@ -1505,6 +1517,17 @@ async def canonical_chat_completions(
     body = await _openai_compatible_request_body(http_request)
     if _openai_compatible_enabled(auth) and not _uses_knowledge_chat(body):
         return await _openai_compatible_chat_completions_from_body(body, auth=auth)
+
+    offending_fields = sorted(_PASSTHROUGH_ONLY_FIELDS & body.keys())
+    if offending_fields:
+        fields_str = ", ".join(offending_fields)
+        raise _openai_error(
+            status.HTTP_400_BAD_REQUEST,
+            f"{fields_str} is/are only supported on the general passthrough path. "
+            "Remove knowledge fields (knowledge_base_ids, page_context, web_search, "
+            'web_search_query; knowledge: {"enabled": false} is allowed) to use them, '
+            "or drop the field(s) for knowledge-grounded chat.",
+        )
 
     knowledge_request = _parse_knowledge_chat_request(body)
     return await chat_completions(

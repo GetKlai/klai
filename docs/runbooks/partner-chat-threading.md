@@ -97,5 +97,6 @@ For passthrough requests (structured output, tool calling, prompt-grounded
 tasks): omit `web_search`, `web_search_query`, `page_context` and
 `knowledge_base_ids` entirely; `knowledge: {"enabled": false}` is allowed.
 Any of those fields present — even `web_search: false` — routes the request
-to the knowledge path, where `response_format`, `tools` and
-`prompt_cache_key` do not apply.
+to the knowledge path, where `response_format`, `tools`, `tool_choice`,
+`parallel_tool_calls` and `prompt_cache_key` are rejected with a 400
+(fail-loud) instead of being silently ignored.
