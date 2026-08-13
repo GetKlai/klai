@@ -23,7 +23,64 @@ paths:
 - Use `text()` raw SQL for inserts on RLS-protected tables where the inserting role differs from the reading role.
 - `::jsonb` casts conflict with SQLAlchemy `:param` — use `CAST(:param AS jsonb)` instead.
 
-## Pool-GUC pollution — reset at checkout AND cleanup (CRIT)
+## Pool-GUC pollution — tenant context is per-TRANSACTION (CRIT)
+
+**Current model (2026-08-13, SPEC-less structural fix).** Tenant context is a
+property of the *transaction*, not of the pooled connection. `app/core/database.py`
+registers an `after_begin` listener on `_SyncPooledTenantSession` (wired into
+`PooledTenantSession` via `sync_session_class`). At the start of EVERY
+transaction it emits one combined statement setting all four RLS GUCs
+**transaction-locally** (`set_config(..., true)`):
+
+| GUC | Source | Truthy literal |
+|---|---|---|
+| `app.current_org_id` | `session.info["tenant_org_id"]` (via `set_tenant`) | — |
+| `app.cross_org_admin` | `session.info["cross_org_admin"]` (via `cross_org_session`) | `'true'` |
+| `klai.changed_by_user_id` | `current_changed_by_user_id` contextvar (via `set_request_actor`) | — |
+| `app.is_platform_admin` | `current_is_platform_admin` contextvar (via `set_request_actor`) | `'1'` |
+
+Tenant scope lives on `session.info` (per-session, so a request session and a
+`tenant_scoped_session` / `cross_org_session` block opened inside it hold
+different scopes without contaminating each other). Actor identity lives in
+contextvars (per-task, so a background write opened inside a request attributes
+to the same admin). The statement is always emitted, even when every value is
+empty — a deterministic override also neutralises any legacy session-level GUC.
+
+Consequences:
+- portal-api writes **zero** `is_local=false` GUCs. Grep guard: the only
+  `set_config(..., false)` calls left in `app/` are the three `''` resets inside
+  `_reset_tenant_context`.
+- A post-commit statement (`db.refresh()` right after `db.commit()`) is safe on
+  whatever pooled connection it lands on — its transaction re-declares the
+  context before the first query.
+- Transaction-local GUCs vanish at COMMIT/ROLLBACK, so pool pollution is
+  structurally impossible rather than defended against.
+
+**Incident that forced this (2026-08-13).** `PATCH .../connectors/{id}` returned
+500: `sqlalchemy.exc.InvalidRequestError: Could not refresh instance
+'<PortalConnector>'` at `app/api/connectors.py:802` — `await db.refresh(connector)`
+directly after `await db.commit()`. `commit()` releases the pooled connection;
+the refresh checks one out again with no tenant guarantee. The cleanup reset in
+`_reset_tenant_context` runs inside a transaction that is rolled back at session
+close, so the reset never durably landed and pooled connections carried the last
+COMMITTED tenant GUC. A connection polluted with a foreign org made the
+freshly-updated row invisible under `org_id = GUC OR GUC IS NULL` → zero rows →
+500. Same class, earlier symptom: widget-create 500 `InsufficientPrivilegeError`
+post-commit (worked around locally in `app/api/admin_widgets.py` by loading
+before commit). An audit found 17 post-commit-query sites, 4 with cross-tenant
+READ risk; all are safe under the new invariant and were left untouched.
+
+Regression proof: `tests/test_rls_txn_context_postgres.py` (marker `postgres`,
+real PostgreSQL + real policies + non-superuser role, gated in CI by the
+`rls-policy-smoke-test` job). Unit coverage of the listener:
+`tests/test_rls_txn_context.py`.
+
+### Historical layers (still in place, now defense-in-depth)
+
+The three layers below predate the per-transaction model and remain deliberately
+active. They no longer carry the tenant contract, but they neutralise anything a
+manual `psql` session, a legacy deployment, or a future regression might leave
+on a pooled connection. Do not remove them as "dead code".
 
 PostgreSQL `set_config('app.current_org_id', ...)` persists for the lifetime
 of the pooled connection. `app/core/database.py` resets both RLS GUCs on

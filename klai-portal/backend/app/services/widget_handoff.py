@@ -8,7 +8,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import set_tenant
+from app.core.database import cross_org_scope, set_tenant
 from app.services.hubspot_custom_channel import ensure_channel_account, publish_incoming_message
 from app.services.redis_client import get_redis_pool
 
@@ -476,11 +476,16 @@ async def record_hubspot_agent_reply(db: AsyncSession, payload: dict[str, Any]) 
         return {"status": "ignored", "reason": "missing_required_fields"}
 
     # HubSpot webhooks are not tenant-authenticated requests. We must first map
-    # the globally unique HubSpot thread id to a Klai tenant, then switch back to
-    # normal tenant RLS before writing the visible agent message.
-    await db.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
-    try:
-        session = (
+    # the globally unique HubSpot thread id to a Klai tenant, then write the
+    # visible agent message under normal tenant RLS.
+    #
+    # The bypass is scoped to the single lookup via `cross_org_scope`, which
+    # flips a `session.info` flag applied transaction-locally. It reuses the
+    # request's own session — opening a second `cross_org_session()` here would
+    # hold TWO pooled connections per webhook, and a HubSpot burst can exhaust
+    # the pool. The `finally` clears the flag before the INSERT below runs.
+    async with cross_org_scope(db):
+        row = (
             await db.execute(
                 text(
                     """
@@ -496,9 +501,8 @@ async def record_hubspot_agent_reply(db: AsyncSession, payload: dict[str, Any]) 
                 {"provider": _PROVIDER, "thread_id": thread_id},
             )
         ).first()
-    finally:
-        await db.execute(text("SELECT set_config('app.cross_org_admin', '', false)"))
-    if session is None:
+
+    if row is None:
         logger.info(
             "hubspot_custom_channel_webhook_unmapped",
             conversations_thread_id=thread_id,
@@ -506,8 +510,8 @@ async def record_hubspot_agent_reply(db: AsyncSession, payload: dict[str, Any]) 
         )
         return {"status": "ignored", "reason": "unmapped_thread"}
 
-    session_id = int(session[0])
-    org_id = int(session[1])
+    session_id = int(row[0])
+    org_id = int(row[1])
     await set_tenant(db, org_id)
     inserted = (
         await db.execute(

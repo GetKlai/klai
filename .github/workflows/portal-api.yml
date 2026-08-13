@@ -310,6 +310,27 @@ jobs:
         working-directory: klai-portal/backend
         run: psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 < alembic/versions/post_deploy_rls_rollback_to_nullif_pattern.sql
 
+      # 2026-08-13 per-transaction RLS context (incident: `db.refresh()` after
+      # `db.commit()` 500'd because the pooled connection carried another
+      # tenant's session-level GUC). These tests need a REAL PostgreSQL with
+      # REAL policies and a non-superuser role — mocks cannot express the
+      # failure. They create and drop their own throwaway role + tables, so
+      # they are independent of the smoke-test schema above and of its
+      # rollback step.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        working-directory: klai-portal/backend
+        run: uv sync --group dev
+
+      - name: Run real-PostgreSQL RLS transaction-context tests
+        working-directory: klai-portal/backend
+        env:
+          RLS_TEST_DATABASE_URL: postgresql+asyncpg://klai:klai@localhost:5432/klai
+        run: uv run pytest -m postgres -q --tb=short
+
   zitadel-password-policy-drift:
     # Deployment gate for the fail-loud startup guard in
     # app.services.password_policy_guard. Without this, a Zitadel drift would
