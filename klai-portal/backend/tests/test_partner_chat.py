@@ -2525,6 +2525,154 @@ async def test_retrieve_context_uses_explicit_query_and_top_k(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_retrieve_context_clips_oversized_last_user_message_query(monkeypatch):
+    """An unbounded last-user-message fallback query must be clipped before
+    it reaches retrieval-api — retrieval-api has no max length on `query`,
+    and downstream it feeds coreference + BGE-M3 embedding (8192-token
+    sequence limit) verbatim. See partner-retrieval-query-clip finding."""
+    from app.services.partner_chat import _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS, retrieve_context
+
+    captured: dict = {}
+
+    class _MockResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"chunks": []}
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, json=None, headers=None):
+            captured["body"] = json
+            return _MockResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    fake_settings.retrieval_api_internal_secret = "secret"
+    fake_settings.internal_secret = "fallback"
+
+    oversized_query = "q" * 130_000
+
+    await retrieve_context(
+        org_id=42,
+        zitadel_org_id="z-1",
+        kb_slugs=["support"],
+        messages=[
+            {"role": "system", "content": "Draft a support reply."},
+            {"role": "user", "content": oversized_query},
+        ],
+        settings=fake_settings,
+    )
+
+    assert len(captured["body"]["query"]) <= _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_clips_oversized_explicit_retrieval_query(monkeypatch):
+    """The `knowledge.query` (retrieval_query) override must be clipped the
+    same way as the last-user-message fallback."""
+    from app.services.partner_chat import _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS, retrieve_context
+
+    captured: dict = {}
+
+    class _MockResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"chunks": []}
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, json=None, headers=None):
+            captured["body"] = json
+            return _MockResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    fake_settings.retrieval_api_internal_secret = "secret"
+    fake_settings.internal_secret = "fallback"
+
+    oversized_query = "z" * 130_000
+
+    await retrieve_context(
+        org_id=42,
+        zitadel_org_id="z-1",
+        kb_slugs=["support"],
+        messages=[
+            {"role": "system", "content": "Draft a support reply."},
+            {"role": "user", "content": "short generation message"},
+        ],
+        settings=fake_settings,
+        retrieval_query=oversized_query,
+    )
+
+    assert len(captured["body"]["query"]) <= _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_short_query_passes_through_unchanged(monkeypatch):
+    """Queries under the clip threshold must reach retrieval-api verbatim."""
+    from app.services.partner_chat import retrieve_context
+
+    captured: dict = {}
+
+    class _MockResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"chunks": []}
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, json=None, headers=None):
+            captured["body"] = json
+            return _MockResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    fake_settings.retrieval_api_internal_secret = "secret"
+    fake_settings.internal_secret = "fallback"
+
+    await retrieve_context(
+        org_id=42,
+        zitadel_org_id="z-1",
+        kb_slugs=["support"],
+        messages=[
+            {"role": "system", "content": "Draft a support reply."},
+            {"role": "user", "content": "What are your opening hours?"},
+        ],
+        settings=fake_settings,
+        retrieval_query="short customer question",
+    )
+
+    assert captured["body"]["query"] == "short customer question"
+
+
+@pytest.mark.asyncio
 async def test_retrieve_context_can_disable_retrieval(monkeypatch):
     """knowledge.enabled=false must not call retrieval-api."""
     from app.services.partner_chat import retrieve_context

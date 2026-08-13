@@ -1859,7 +1859,12 @@ async def retrieve_context(
     conversation_history = _build_conversation_history(messages)
 
     retrieve_body: dict = {
-        "query": query,
+        # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
+        # REQ-2.5) using the same helper as conversation_history entries. An
+        # unclipped query has no real bound short of the 128 KB request-body
+        # cap, sends garbage into coreference + BGE-M3 embedding (8192-token
+        # sequence limit), and can surface as an upstream 502 for partners.
+        "query": _clip_retrieval_history_content(query),
         "org_id": zitadel_org_id,  # retrieval-api expects string org_id
         "scope": "org",
         "top_k": top_k,
