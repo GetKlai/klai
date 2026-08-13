@@ -1628,7 +1628,7 @@ async def regenerate_librechat_configs(
     skipped: list[str] = []
 
     # Step 1: Regenerate all tenant configs from the updated base template.
-    updated, slugs_to_restart, errors = _regenerate_tenant_yaml_configs(tenants, base_yaml_path)
+    updated, slugs_to_restart, errors = _regenerate_tenant_yaml_configs(list(tenants), base_yaml_path)
 
     if not slugs_to_restart:
         # Cross-tenant operation — no resolvable org_id. Use 0 per REQ-2.6.

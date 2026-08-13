@@ -690,7 +690,7 @@ def _start_librechat_container(
     old_image_ref: str | None = None
     try:
         old = client.containers.get(container_name)
-        if rollback_on_failure:
+        if rollback_on_failure and old.image is not None:
             tags = old.image.tags
             old_image_ref = tags[0] if tags else old.image.id
         old.remove(force=True)
