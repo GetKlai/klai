@@ -344,3 +344,85 @@ def test_sql_is_wrapped_in_begin_commit() -> None:
     )
     assert first_stmt.rstrip(";") == "BEGIN", f"First executable line must be BEGIN, got: {first_stmt!r}"
     assert lines[-1].strip() == "COMMIT;"
+
+
+# ---------------------------------------------------------------------------
+# Per-transaction tenant context (2026-08-13) — fail-loud source tripwires
+# ---------------------------------------------------------------------------
+#
+# The 2026-08-13 cleanup collapsed tenant context onto ONE model: the
+# `after_begin` listener applies all four RLS GUCs transaction-locally at every
+# BEGIN. The reset/pin machinery that used to sit alongside it was deleted —
+# the cleanup-time reset never durably landed (session close rolls it back) and
+# the checkout-time reset defended against a pollution source that no longer
+# exists.
+#
+# With the defense-in-depth layers gone, these three source-level checks are the
+# guard: a reintroduced session-level GUC, an unregistered listener, or a GUC
+# dropped from the combined statement now fails CI instead of failing silently
+# in production.
+
+_APP_DIR = Path(__file__).resolve().parents[1] / "app"
+
+
+def test_no_session_level_set_config_anywhere_in_app() -> None:
+    """ZERO ``set_config(..., false)`` calls may exist under ``app/``.
+
+    ``is_local=false`` writes survive COMMIT on the pooled connection and are
+    exactly the mechanism behind the 2026-04-24 pool-pollution 404s and the
+    2026-08-13 post-commit refresh 500. Nothing in portal-api needs one: the
+    combined transaction-local statement is the single writer of every RLS GUC.
+
+    Count must stay at 0 — this is the tripwire against reintroduction.
+    """
+    offenders: list[str] = []
+    for path in sorted(_APP_DIR.rglob("*.py")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if re.search(r"set_config\([^)]*,\s*false\s*\)", line):
+                offenders.append(f"{path.relative_to(_APP_DIR.parent)}:{lineno}: {line.strip()}")
+    assert offenders == [], (
+        "session-level (is_local=false) set_config calls found under app/. "
+        "Tenant context is per-transaction; use the combined statement in "
+        "app/core/database.py instead:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_after_begin_listener_is_wired_to_the_tenant_session_class() -> None:
+    """The listener must be registered on ``_SyncTenantContextSession`` AND that
+    class must be the one ``TenantContextSession`` actually uses.
+
+    Both halves matter. A listener registered on a class no session uses is
+    dead code; a ``sync_session_class`` pointing elsewhere silently drops the
+    tenant context on every transaction.
+    """
+    src = _read_database_py()
+    assert '@event.listens_for(_SyncTenantContextSession, "after_begin")' in src, (
+        "the after_begin listener must be registered on _SyncTenantContextSession"
+    )
+    assert re.search(r"sync_session_class\s*=\s*_SyncTenantContextSession", src), (
+        "TenantContextSession.sync_session_class must point at _SyncTenantContextSession"
+    )
+
+
+def test_tenant_context_statement_sets_all_four_gucs_transaction_locally() -> None:
+    """``_TENANT_CONTEXT_SQL`` must bind all four GUCs with ``is_local=true``.
+
+    Dropping one silently disables a policy branch: ``app.current_org_id`` is
+    tenant isolation, ``app.cross_org_admin`` the platform bypass,
+    ``klai.changed_by_user_id`` the seat-history attribution, and
+    ``app.is_platform_admin`` the tenant_lifecycle_events admin branch.
+    """
+    src = _read_database_py()
+    m = re.search(r"_TENANT_CONTEXT_SQL = \((.*?)\n\)\n", src, re.DOTALL)
+    assert m, "_TENANT_CONTEXT_SQL not found in database.py"
+    stmt = m.group(1)
+    for guc, param in (
+        ("app.current_org_id", ":org_id"),
+        ("app.cross_org_admin", ":cross_org_admin"),
+        ("klai.changed_by_user_id", ":changed_by_user_id"),
+        ("app.is_platform_admin", ":is_platform_admin"),
+    ):
+        assert re.search(rf"set_config\('{re.escape(guc)}',\s*{re.escape(param)},\s*true\)", stmt), (
+            f"{guc} must be bound with is_local=true in _TENANT_CONTEXT_SQL. Got: {stmt}"
+        )
+    assert stmt.count("set_config(") == 4, f"expected exactly four set_config calls, got: {stmt}"

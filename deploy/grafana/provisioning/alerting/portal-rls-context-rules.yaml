@@ -1,0 +1,125 @@
+# Per-transaction RLS tenant context (2026-08-13) — failure-class alert.
+#
+# Routing: policies.yaml has no route for spec=SPEC-PORTAL-RLS-TXN-CONTEXT, so
+# this rule falls through to the default receiver (grafana-default-email). The
+# label is set so a dedicated route can be added there without touching this
+# file. Adding that route is deliberately out of scope for this change.
+#
+# UID convention: rls-ctx-001-* — kept well under Grafana's hard 40-char UID
+# limit (see .claude/rules/klai/pitfalls/process-rules.md
+# grafana-uid-40-char-limit; a longer UID crashloops Grafana on provisioning).
+#
+# Context: tenant context is now applied transaction-locally by the
+# `after_begin` listener in app/core/database.py, and the reset/pin
+# defense-in-depth layers were removed. That trade is only safe if the failure
+# class is loud, so this rule watches the three symptoms of a statement running
+# with missing or wrong tenant context:
+#
+#   "Could not refresh instance"  — SQLAlchemy could not re-SELECT a row it just
+#                                   wrote (the 2026-08-13 incident signature:
+#                                   db.refresh() after db.commit() filtered out
+#                                   by RLS).
+#   "InsufficientPrivilegeError"  — asyncpg's class for the fail-loud Cat-D
+#                                   helper `_rls_current_org_id()`.
+#   "42501"                        — the raw SQLSTATE, for log lines that carry
+#                                   the code but not the Python class name.
+#
+# All three are zero in steady state, so the threshold is > 0 rather than a
+# ratio. Count-based shape mirrors identity-assert-003-rules.yaml.
+#
+# execErrState: OK — the VictoriaLogs plugin + Grafana SSE combo intermittently
+# trips "long vs wide" on LogsQL reduce chains. Miss-on-hiccup beats
+# false-page-on-plugin-error (same call as every other LogsQL rule here).
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: rls-ctx-001-tenant-context
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── portal-api RLS tenant-context failures ──────────────────────
+      - uid: rls-ctx-001-tenant-context-failure
+        title: portal_api_rls_tenant_context_failures
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:10m service:portal-api AND ("Could not refresh instance" OR "InsufficientPrivilegeError" OR "42501")'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-PORTAL-RLS-TXN-CONTEXT
+          service_group: portal-api
+        annotations:
+          summary: |
+            portal-api statements running without correct RLS tenant context.
+          description: |
+            One or more portal-api log lines in the last 10 minutes matched a
+            tenant-context failure signature. Baseline is zero — any fire means
+            a statement executed with missing or foreign tenant context.
+
+            What each signature means:
+              - "Could not refresh instance": a post-commit re-SELECT returned
+                zero rows. The 2026-08-13 incident signature (db.refresh() right
+                after db.commit() on PATCH .../connectors/{id}).
+              - "InsufficientPrivilegeError" / "42501": the fail-loud Cat-D
+                helper `_rls_current_org_id()` raised because
+                app.current_org_id was unset and app.cross_org_admin was not
+                true.
+
+            Investigation:
+              1. Find the request chain:
+                   service:portal-api AND ("Could not refresh instance" OR "InsufficientPrivilegeError" OR "42501")
+                 then trace the full chain with request_id:<uuid>.
+              2. Identify the endpoint and check whether it queries an
+                 RLS-protected table BEFORE set_tenant / get_caller runs.
+              3. Confirm the session came from get_db / tenant_scoped_session /
+                 cross_org_session — a raw AsyncSession from another factory has
+                 no `after_begin` listener and therefore no tenant context.
+              4. Check the listener is still wired:
+                   uv run pytest tests/test_rls_hygiene.py -k after_begin
+
+            Reference: app/core/database.py,
+            tests/test_rls_txn_context_postgres.py,
+            .claude/rules/klai/projects/portal-backend.md
+            ("Pool-GUC pollution — tenant context is per-TRANSACTION").

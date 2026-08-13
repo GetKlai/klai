@@ -1,25 +1,27 @@
 """Regression tests for the RLS silent-filter guards.
 
-Covers three defensive layers that prevent the 2026-04-16 Voys provisioning
+Covers two defensive layers that prevent the 2026-04-16 Voys provisioning
 incident class of bug from re-occurring:
 
-  1. `tenant_scoped_session` pins the connection and calls set_tenant in the
-     right order, so set_config('app.current_org_id', ...) is visible to
-     later statements on the same session.
+  1. `tenant_scoped_session` / `cross_org_session` bind their scope on
+     `session.info` before yielding, so every transaction the session opens
+     re-declares it via the `after_begin` listener.
 
-  2. `pin_session` does the same for an externally-provided session
-     (provisioning orchestrator path).
-
-  3. The `rls_guard` after_cursor_execute listener detects rowcount=0 DML
+  2. The `rls_guard` after_cursor_execute listener detects rowcount=0 DML
      on known RLS-scoped tables and logs an error (or raises in strict
      mode for tests).
+
+The pin/reset ordering these helpers used to guarantee is gone (2026-08-13):
+connections are checked out per transaction, and the tenant GUCs are
+transaction-local, so there is nothing to pin and nothing to reset. What is
+asserted here now is the *state* the helper leaves on the session plus the
+conditional immediate apply.
 """
 
 from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -30,143 +32,114 @@ from app.core.rls_guard import (
     _on_after_cursor_execute,
 )
 
-# ---------------------------------------------------------------------------
-# tenant_scoped_session — ordering guarantees
-# ---------------------------------------------------------------------------
 
+class FakeSession:
+    """Stand-in for an AsyncSession handed out by ``AsyncSessionLocal``.
 
-@pytest.mark.asyncio
-async def test_tenant_scoped_session_pins_before_set_tenant(monkeypatch):
-    """The helper must call session.connection() BEFORE set_config.
-
-    Ordering matters: if set_config fires before pinning, it lands on a
-    different pooled connection and RLS silently filters subsequent rows.
+    ``in_transaction`` is parameterised because it is what decides whether the
+    helpers issue an immediate ``set_config`` at block entry: a fresh session
+    has no open transaction, so `_apply_tenant_context` returns early and the
+    context lands at the next BEGIN instead.
     """
-    calls: list[str] = []
 
-    class FakeSession:
-        def __init__(self):
-            # `set_tenant` writes the tenant scope here before applying it to SQL.
-            self.info: dict = {}
+    def __init__(self, *, in_transaction: bool = False, calls: list[str] | None = None):
+        # `set_tenant` / `cross_org_session` write the scope here before applying it.
+        self.info: dict = {}
+        self.calls: list[str] = calls if calls is not None else []
+        self._in_transaction = in_transaction
 
-        async def connection(self):
-            calls.append("pin")
+    def in_transaction(self) -> bool:
+        return self._in_transaction
 
-        async def rollback(self):
-            calls.append("rollback")
+    def in_nested_transaction(self) -> bool:
+        return False
 
-        async def execute(self, stmt, params=None):
-            sql = str(stmt)
-            if "set_config" in sql:
-                # The combined transaction-local apply carries all four GUCs as
-                # bound params; the cleanup resets are single-GUC literals.
-                if params and "changed_by_user_id" in params:
-                    calls.append(f"set_tenant:{params['org_id']}")
-                elif "current_org_id" in sql:
-                    calls.append("reset_current_org_id")
-                elif "cross_org_admin" in sql:
-                    calls.append("reset_cross_org_admin")
-            return SimpleNamespace(rowcount=-1)
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "set_config" in sql and params:
+            self.calls.append(f"apply:org={params['org_id']!r},cross={params['cross_org_admin']!r}")
+        return SimpleNamespace(rowcount=-1)
 
-        async def __aenter__(self):
-            return self
+    async def __aenter__(self):
+        return self
 
-        async def __aexit__(self, *exc):
-            return False
+    async def __aexit__(self, *exc):
+        return False
 
-    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: FakeSession())
 
-    async with db_module.tenant_scoped_session(42) as session:
-        assert session is not None
-        calls.append("yield")
-
-    # Critical invariants:
-    #   1. pin happens before set_tenant (set_config must see pinned connection)
-    #   2. at checkout, the tenant context is reset BEFORE set_tenant runs —
-    #      defense-in-depth against a pooled connection whose prior cleanup
-    #      silently failed and leaked a stale GUC (2026-04-24 getklai incident).
-    #   3. on exit, rollback runs BEFORE set_config resets — otherwise an aborted
-    #      transaction from a 42501 RLS fail-loud would trap the reset and leak
-    #      app.current_org_id to the next pooled request (2026-04-23 incident).
-    #   4. both GUCs are cleared on exit.
-    assert calls == [
-        # Checkout: pin + reset (rollback + both GUCs).
-        "pin",
-        "rollback",
-        "reset_current_org_id",
-        "reset_cross_org_admin",
-        # Caller sets the tenant.
-        "set_tenant:42",
-        "yield",
-        # Cleanup: rollback + both GUCs.
-        "rollback",
-        "reset_current_org_id",
-        "reset_cross_org_admin",
-    ]
+# ---------------------------------------------------------------------------
+# tenant_scoped_session — scope binding
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_tenant_scoped_session_resets_on_exception(monkeypatch):
-    """Tenant context must be reset even if the body raises."""
-    calls: list[str] = []
+async def test_tenant_scoped_session_binds_scope_before_yield(monkeypatch):
+    """The tenant scope must be on `session.info` by the time the body runs.
 
-    class FakeSession:
-        def __init__(self):
-            self.info: dict = {}
+    That is the whole contract now: `after_begin` reads `session.info` at every
+    BEGIN, so a scope present before the first statement is a scope applied to
+    every transaction — including the ones after a commit.
+    """
+    session = FakeSession()
+    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: session)
 
-        async def connection(self):
-            calls.append("pin")
+    async with db_module.tenant_scoped_session(42) as scoped:
+        assert scoped is session
+        assert session.info["tenant_org_id"] == 42
+        session.calls.append("yield")
 
-        async def rollback(self):
-            calls.append("rollback")
+    # No transaction was open at entry, so no immediate apply fired — and there
+    # is no cleanup step at all. Anything else here would be leftover machinery.
+    assert session.calls == ["yield"]
 
-        async def execute(self, stmt, params=None):
-            sql = str(stmt)
-            if "set_config" in sql:
-                if params and "changed_by_user_id" in params:
-                    calls.append("set")
-                elif "current_org_id" in sql:
-                    calls.append("reset_current_org_id")
-                elif "cross_org_admin" in sql:
-                    calls.append("reset_cross_org_admin")
-            return SimpleNamespace(rowcount=-1)
 
-        async def __aenter__(self):
-            return self
+@pytest.mark.asyncio
+async def test_tenant_scoped_session_applies_immediately_when_transaction_open(monkeypatch):
+    """With a transaction already open, `set_tenant` must patch it in place.
 
-        async def __aexit__(self, *exc):
-            return False
+    `after_begin` fired for that transaction before the scope existed, so it ran
+    with empty values; without the immediate apply the rest of the transaction
+    would keep running under no tenant context.
+    """
+    session = FakeSession(in_transaction=True)
+    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: session)
 
-    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: FakeSession())
+    async with db_module.tenant_scoped_session(42):
+        pass
+
+    assert session.calls == ["apply:org='42',cross=''"]
+
+
+@pytest.mark.asyncio
+async def test_tenant_scoped_session_scope_survives_a_raising_body(monkeypatch):
+    """A raising body must not trigger any teardown SQL.
+
+    The scope is Python-side state on a session that is about to be closed, and
+    the GUCs are transaction-local — the exception path has nothing to undo.
+    """
+    session = FakeSession()
+    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: session)
 
     with pytest.raises(RuntimeError, match="boom"):
         async with db_module.tenant_scoped_session(7):
             raise RuntimeError("boom")
 
-    # Checkout reset runs first, then set, then on exception cleanup reset fires again.
-    assert calls == [
-        "pin",
-        "rollback",
-        "reset_current_org_id",
-        "reset_cross_org_admin",
-        "set",
-        "rollback",
-        "reset_current_org_id",
-        "reset_cross_org_admin",
-    ]
-
-
-# ---------------------------------------------------------------------------
-# pin_session — idempotent pin helper
-# ---------------------------------------------------------------------------
+    assert session.info["tenant_org_id"] == 7
+    assert session.calls == []
 
 
 @pytest.mark.asyncio
-async def test_pin_session_calls_connection():
-    session = MagicMock()
-    session.connection = AsyncMock()
-    await db_module.pin_session(session)
-    session.connection.assert_awaited_once()
+async def test_set_tenant_rejects_savepoint_mutation():
+    """Mutating tenant scope inside a SAVEPOINT must fail loud.
+
+    PostgreSQL restores SET LOCAL on ROLLBACK TO SAVEPOINT, so the database
+    would revert to the enclosing scope while `session.info` keeps the new one.
+    """
+    session = FakeSession(in_transaction=True)
+    session.in_nested_transaction = lambda: True  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="SAVEPOINT"):
+        await db_module.set_tenant(session, 42)
 
 
 # ---------------------------------------------------------------------------
@@ -175,111 +148,52 @@ async def test_pin_session_calls_connection():
 
 
 @pytest.mark.asyncio
-async def test_cross_org_session_sets_and_resets_bypass_flag(monkeypatch):
-    """Sets app.cross_org_admin=true on entry and clears it on exit.
+async def test_cross_org_session_sets_bypass_flag(monkeypatch):
+    """Records `cross_org_admin` on session.info for the whole block.
 
-    The SQL helper _rls_current_org_id() reads this flag and returns NULL
-    (policy IS NULL branch matches everything). Reset on exit is critical —
-    otherwise a pooled connection that next serves a tenant request would
-    carry the bypass into user code.
+    The SQL helper `_rls_current_org_id()` reads the rendered GUC and returns
+    NULL (policy IS NULL branch matches everything). No reset on exit: the flag
+    is bound transaction-locally, so closing the session ends the bypass.
     """
-    calls: list[str] = []
+    session = FakeSession()
+    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: session)
 
-    class FakeSession:
-        def __init__(self):
-            # `cross_org_session` writes {"cross_org_admin": True} here, then applies.
-            self.info: dict = {}
+    async with db_module.cross_org_session() as scoped:
+        assert scoped is session
+        assert session.info["cross_org_admin"] is True
+        session.calls.append("yield")
 
-        async def connection(self):
-            calls.append("pin")
-
-        async def rollback(self):
-            calls.append("rollback")
-
-        async def execute(self, stmt, params=None):
-            sql = str(stmt)
-            if params and "changed_by_user_id" in params:
-                # Combined transaction-local apply: the bypass is on iff the
-                # bound cross_org_admin param renders as 'true'.
-                calls.append("bypass_on" if params["cross_org_admin"] == "true" else "bypass_off")
-            elif "set_config" in sql and "cross_org_admin" in sql:
-                calls.append("bypass_off")
-            elif "set_config" in sql and "current_org_id" in sql:
-                calls.append("tenant_reset")
-            return SimpleNamespace(rowcount=-1)
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: FakeSession())
-
-    async with db_module.cross_org_session() as session:
-        assert session is not None
-        calls.append("yield")
-
-    # After the 2026-04-23 pool-leak fix, cleanup delegates to
-    # _reset_tenant_context which rolls back first, then clears both GUCs
-    # (current_org_id before cross_org_admin). An aborted transaction from
-    # a 42501 inside the cross-org body would otherwise leak the bypass
-    # flag to the next pooled request.
-    # After the 2026-04-24 checkout-reset fix, the same helper runs BEFORE
-    # bypass_on is set — so the sequence is pin → reset → bypass_on →
-    # yield → cleanup reset.
-    assert calls == [
-        "pin",
-        "rollback",
-        "tenant_reset",
-        "bypass_off",
-        "bypass_on",
-        "yield",
-        "rollback",
-        "tenant_reset",
-        "bypass_off",
-    ]
+    assert session.calls == ["yield"]
 
 
 @pytest.mark.asyncio
-async def test_cross_org_session_clears_bypass_on_exception(monkeypatch):
-    """Bypass flag MUST be cleared even if the body raises."""
-    calls: list[str] = []
+async def test_cross_org_session_applies_immediately_when_transaction_open(monkeypatch):
+    """An already-open transaction must pick the bypass up right away."""
+    session = FakeSession(in_transaction=True)
+    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: session)
 
-    class FakeSession:
-        def __init__(self):
-            self.info: dict = {}
+    async with db_module.cross_org_session():
+        pass
 
-        async def connection(self):
-            calls.append("pin")
+    assert session.calls == ["apply:org='',cross='true'"]
 
-        async def execute(self, stmt, params=None):
-            sql = str(stmt)
-            if params and "changed_by_user_id" in params:
-                calls.append("bypass_on" if params["cross_org_admin"] == "true" else "bypass_off")
-            elif "cross_org_admin" in sql:
-                calls.append("bypass_off")
-            return SimpleNamespace(rowcount=-1)
 
-        async def __aenter__(self):
-            return self
+@pytest.mark.asyncio
+async def test_cross_org_session_bypass_does_not_outlive_the_block(monkeypatch):
+    """Even when the body raises, the bypass cannot reach another request.
 
-        async def __aexit__(self, *exc):
-            return False
-
-    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: FakeSession())
+    It never leaves this session: the flag lives on `session.info` (discarded at
+    close) and reaches PostgreSQL only as a transaction-local GUC.
+    """
+    session = FakeSession(in_transaction=True)
+    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: session)
 
     with pytest.raises(RuntimeError, match="kaboom"):
         async with db_module.cross_org_session():
             raise RuntimeError("kaboom")
 
-    assert "bypass_on" in calls and "bypass_off" in calls
-    # The checkout reset clears bypass BEFORE the body sets it, so the first
-    # bypass_off precedes bypass_on. What we care about is that the LAST
-    # bypass_off (cleanup) runs after bypass_on — i.e. the pool never returns
-    # with the bypass flag still lit.
-    last_off_idx = len(calls) - 1 - calls[::-1].index("bypass_off")
-    assert calls.index("bypass_on") < last_off_idx
+    # One apply (the bypass), no teardown statement.
+    assert session.calls == ["apply:org='',cross='true'"]
 
 
 # ---------------------------------------------------------------------------

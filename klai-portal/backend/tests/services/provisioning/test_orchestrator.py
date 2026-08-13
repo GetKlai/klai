@@ -256,7 +256,6 @@ class TestProvisionUsesDBSlug:
                 new=AsyncMock(side_effect=RuntimeError("STOP — fail after slug read")),
             ),
             patch("app.services.provisioning.orchestrator.transition_state", new=AsyncMock()),
-            patch("app.services.provisioning.orchestrator.pin_session", new=AsyncMock()),
             patch("app.services.provisioning.orchestrator.logger") as mock_logger,
         ):
             db = AsyncMock()

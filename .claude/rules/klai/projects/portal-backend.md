@@ -23,19 +23,18 @@ paths:
 - Use `text()` raw SQL for inserts on RLS-protected tables where the inserting role differs from the reading role.
 - `::jsonb` casts conflict with SQLAlchemy `:param` — use `CAST(:param AS jsonb)` instead.
 
-## Pool-GUC pollution — tenant context is per-TRANSACTION (CRIT)
+## Tenant context is per-TRANSACTION (CRIT)
 
-**Current model (2026-08-13, SPEC-less structural fix).** Tenant context is a
-property of the *transaction*, not of the pooled connection. `app/core/database.py`
-registers an `after_begin` listener on `_SyncPooledTenantSession` (wired into
-`PooledTenantSession` via `sync_session_class`). At the start of EVERY
+**One model, no layers.** `app/core/database.py` registers an `after_begin`
+listener on `_SyncTenantContextSession` (wired into `TenantContextSession` via
+`sync_session_class`, which `AsyncSessionLocal` uses). At the start of EVERY
 transaction it emits one combined statement setting all four RLS GUCs
 **transaction-locally** (`set_config(..., true)`):
 
 | GUC | Source | Truthy literal |
 |---|---|---|
 | `app.current_org_id` | `session.info["tenant_org_id"]` (via `set_tenant`) | — |
-| `app.cross_org_admin` | `session.info["cross_org_admin"]` (via `cross_org_session`) | `'true'` |
+| `app.cross_org_admin` | `session.info["cross_org_admin"]` (via `cross_org_session` / `cross_org_scope`) | `'true'` |
 | `klai.changed_by_user_id` | `current_changed_by_user_id` contextvar (via `set_request_actor`) | — |
 | `app.is_platform_admin` | `current_is_platform_admin` contextvar (via `set_request_actor`) | `'1'` |
 
@@ -47,96 +46,92 @@ to the same admin). The statement is always emitted, even when every value is
 empty — a deterministic override also neutralises any legacy session-level GUC.
 
 Consequences:
-- portal-api writes **zero** `is_local=false` GUCs. Grep guard: the only
-  `set_config(..., false)` calls left in `app/` are the three `''` resets inside
-  `_reset_tenant_context`.
-- A post-commit statement (`db.refresh()` right after `db.commit()`) is safe on
-  whatever pooled connection it lands on — its transaction re-declares the
-  context before the first query.
 - Transaction-local GUCs vanish at COMMIT/ROLLBACK, so pool pollution is
   structurally impossible rather than defended against.
+- A post-commit statement (`db.refresh()` right after `db.commit()`) is safe on
+  whatever pooled connection it lands on — its transaction re-declares the
+  context before the first query. An audit found 17 post-commit-query sites, 4
+  with cross-tenant READ risk; all are safe under this invariant.
+- Connections are checked out per transaction, not held for a session lifetime.
+  `SELECT … FOR UPDATE` and `pg_advisory_xact_lock` are transaction-scoped, so
+  their semantics are unaffected. There are no session-level advisory locks,
+  temp tables, or prepared-statement affinity assumptions under `app/`.
 
-**Incident that forced this (2026-08-13).** `PATCH .../connectors/{id}` returned
-500: `sqlalchemy.exc.InvalidRequestError: Could not refresh instance
-'<PortalConnector>'` at `app/api/connectors.py:802` — `await db.refresh(connector)`
-directly after `await db.commit()`. `commit()` releases the pooled connection;
-the refresh checks one out again with no tenant guarantee. The cleanup reset in
-`_reset_tenant_context` runs inside a transaction that is rolled back at session
-close, so the reset never durably landed and pooled connections carried the last
-COMMITTED tenant GUC. A connection polluted with a foreign org made the
-freshly-updated row invisible under `org_id = GUC OR GUC IS NULL` → zero rows →
-500. Same class, earlier symptom: widget-create 500 `InsufficientPrivilegeError`
-post-commit (worked around locally in `app/api/admin_widgets.py` by loading
-before commit). An audit found 17 post-commit-query sites, 4 with cross-tenant
-READ risk; all are safe under the new invariant and were left untouched.
+### The three mutators, and the savepoint guard
 
-Regression proof: `tests/test_rls_txn_context_postgres.py` (marker `postgres`,
-real PostgreSQL + real policies + non-superuser role, gated in CI by the
-`rls-policy-smoke-test` job). Unit coverage of the listener:
-`tests/test_rls_txn_context.py`.
+`set_tenant`, `set_request_actor` and `cross_org_scope` mutate the Python-side
+state and then call `_apply_tenant_context`, which patches the transaction that
+is ALREADY open (its `after_begin` ran before the new state existed). With no
+transaction open it is a no-op — the next BEGIN applies the state anyway.
 
-### Historical layers (still in place, now defense-in-depth)
+All three raise `RuntimeError` when called inside a SAVEPOINT
+(`session.in_nested_transaction()`). PostgreSQL restores `SET LOCAL` values on
+`ROLLBACK TO SAVEPOINT`, so mutating scope there would revert the database
+context while `session.info` / the contextvars keep the new value — later
+statements would run under a tenant the code no longer believes is active. No
+`begin_nested()` call site exists under `app/` today; the guard exists so the
+first one fails loudly.
 
-The three layers below predate the per-transaction model and remain deliberately
-active. They no longer carry the tenant contract, but they neutralise anything a
-manual `psql` session, a legacy deployment, or a future regression might leave
-on a pooled connection. Do not remove them as "dead code".
+### The fail-loud tripwires (what replaced the removed layers)
 
-PostgreSQL `set_config('app.current_org_id', ...)` persists for the lifetime
-of the pooled connection. `app/core/database.py` resets both RLS GUCs on
-cleanup, but the reset is wrapped in `suppress(Exception)` — if the session
-is in aborted-transaction state (42501 RLS fail-loud, closed connection)
-the reset silently fails and the connection returns to the pool with a
-stale tenant GUC.
+The reset/pin machinery — the two connection-reset helpers, the external-session
+pin helper, the session subclass's `__aenter__` auto-pin hook, and the
+request-scoped org-id ContextVar — was **removed on 2026-08-13**, and the session
+class was renamed `PooledTenantSession` → `TenantContextSession` (the "Pooled"
+prefix described the pinning model that is gone). This is the ONLY place the old
+name still appears; `git log -- app/core/database.py` around 2026-08-13 has the
+exact deleted symbols. Removal was safe because the layers were provably
+pointless: portal-api writes no
+session-level GUCs anymore, the cleanup-time reset never durably landed (its
+`set_config` was reverted by the rollback at session close — that was part of
+the original root cause), the checkout reset defended against a pollution source
+that no longer exists, and connection pinning existed only to keep session-level
+GUCs visible. Three mechanical guards replace it:
 
-**Symptom:** Intermittent 404 "Organisation not found" on `/api/app/*`
-endpoints with a valid session. Same cookie alternately succeeds and fails
-within seconds. Adjacent endpoints (`/api/app/knowledge-bases` vs
-`/api/app/templates`) return different statuses in the same millisecond
-because each call checks out a different pooled connection.
+1. `tests/test_rls_hygiene.py` fails CI on ANY `set_config(..., false)` under
+   `app/` (count must stay 0), on the `after_begin` listener not being wired to
+   `_SyncTenantContextSession` / `TenantContextSession.sync_session_class`, and
+   on any of the four GUCs dropping out of `_TENANT_CONTEXT_SQL`. A reintroduced
+   session-level GUC is caught here, at PR time.
+2. `tests/test_rls_txn_context_postgres.py` (marker `postgres`, real PostgreSQL +
+   real policies + non-superuser role, gated in CI by the `rls-policy-smoke-test`
+   job) proves the runtime invariant, including sequential different-org sessions
+   on a `pool_size=1` engine. Unit coverage: `tests/test_rls_txn_context.py`.
+   Startup asserts: `tests/test_rls_startup_asserts.py`.
+3. Grafana alert `rls-ctx-001-tenant-context-failure`
+   (`deploy/grafana/provisioning/alerting/portal-rls-context-rules.yaml`) fires
+   on any portal-api log line matching `"Could not refresh instance"`,
+   `"InsufficientPrivilegeError"` or `"42501"` in a 10m window. Baseline is zero.
 
-**Root cause (2026-04-24 getklai incident):** `_get_caller_org` queries
-`portal_users` (RLS: `org_id = GUC OR GUC IS NULL`) BEFORE calling
-`set_tenant`. A pooled connection with `app.current_org_id=8` (Voys, leaked
-from a prior request) serving a request for org_id=1 (getklai) filters the
-getklai user row out via RLS, and the handler raises 404.
+`assert_portal_users_rls_ready()` stays in the `main.py` lifespan: the auth
+lookup still runs before `set_tenant`, with an empty `app.current_org_id`, so the
+`portal_users` `tenant_isolation` policy MUST keep its `IS NULL` branch or every
+authenticated request 404s after deploy. Category-A tables (`portal_users`,
+`portal_connectors` — see the 4-category framework in `portal-security.md`) keep
+that branch; extend the assertion if a new Cat-A table joins the auth path.
+Never query an RLS-protected table before `_get_caller_org` / `set_tenant` in the
+same request: with an empty GUC, Cat-A is permissive, Cat-C SELECT returns zero
+rows, and Cat-D raises 42501.
 
-**Fix (three independent layers):**
+### History
 
-1. `_pin_and_reset_connection` (renamed from `_pin_and_reset_on_exit`) runs
-   `_reset_tenant_context` at checkout, before yielding the session.
-   Cleanup-time reset still runs; checkout-time reset catches any leak from
-   a prior cleanup that the suppress-blocks ate.
-2. `PooledTenantSession` — an `AsyncSession` subclass wired into
-   `async_sessionmaker(class_=PooledTenantSession)`. Every
-   `async with AsyncSessionLocal() as s:` block auto-pins + resets on
-   `__aenter__`, so a future helper that forgets the explicit
-   `_pin_and_reset_connection` call cannot re-introduce the bug.
-3. `assert_portal_users_rls_ready()` runs in the `main.py` lifespan after
-   `install_rls_guard`. It fails loud at startup if the `portal_users`
-   `tenant_isolation` policy drops its `IS NULL` branch — without that
-   branch, every authenticated request 404s after deploy (because the
-   freshly-reset GUC makes `_get_caller_org`'s user lookup return zero rows).
-
-**Prevention:**
-- Every helper that hands out a pooled session MUST call
-  `_pin_and_reset_connection(session)` before yielding. `get_db`,
-  `tenant_scoped_session`, `pin_session`, `cross_org_session` all do. This
-  layers on top of the `PooledTenantSession` auto-reset — belt + braces.
-- Category-A tables (`portal_users`, `portal_connectors` — see the 4-category
-  framework in `portal-security.md`) MUST keep the `OR current_setting(...)
-  IS NULL` branch. The startup assertion guards `portal_users`; extend it
-  if a new Category-A table joins the auth path before `set_tenant` fires.
-- Never query an RLS-protected table before `_get_caller_org` / `set_tenant`
-  in the same request. With the pool reset, empty GUC = Category-A permissive
-  only; Category-D raises 42501, Category-C SELECT returns zero rows.
-
-**Verification:**
-- `docker logs klai-core-portal-api-1 | grep "RLS policy checked"` — must
-  appear once per startup. Absence means the assertion regressed.
-- Reproduce the original bug: inject a stale GUC into the pool and fire a
-  cross-tenant burst. Before the fix: mixed 200/404. After: 100% 200.
-  Repro script lives in PR #133 description.
+- **2026-04-23** — `post_deploy_rls_raise_on_missing_context.sql` made policies
+  fail-loud (42501). A request that hit 42501 left an aborted transaction; the
+  suppressed cleanup reset silently failed and the connection returned to the
+  pool with a stale `app.current_org_id`. Admin login landed on `/no-account`.
+- **2026-04-24 (getklai)** — intermittent 404 "Organisation not found" on
+  `/api/app/*` with a valid cookie: `_get_caller_org` queries `portal_users`
+  BEFORE `set_tenant`, and a pooled connection carrying org 8's GUC filtered out
+  the org 1 user row. Adjacent endpoints returned different statuses in the same
+  millisecond because each checked out a different connection.
+- **2026-05-20 (widget)** — widget-create 500 `InsufficientPrivilegeError` on a
+  post-commit query; worked around locally in `app/api/admin_widgets.py` by
+  loading before the commit.
+- **2026-08-13 (refresh)** — `PATCH .../connectors/{id}` 500'd with
+  `sqlalchemy.exc.InvalidRequestError: Could not refresh instance
+  '<PortalConnector>'` at `app/api/connectors.py:802` — `await db.refresh(...)`
+  directly after `await db.commit()`. Same root cause, final symptom. Fixed by
+  the per-transaction model; the now-redundant layers were removed the same day.
 
 ## Prometheus metrics in tests
 - Never use the global `prometheus_client` registry in tests — causes `Duplicated timeseries`.
