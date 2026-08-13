@@ -1,0 +1,232 @@
+# SPEC-PARTNER-CACHE-001 — partner prompt-cache effectiveness alert
+# (LogsQL via VictoriaLogs).
+#
+#   P1  partner_prompt_cache_ineffective  WARNING  >=10 partner passthrough
+#                                                   completions carried a
+#                                                   `prompt_cache_key` in the
+#                                                   last 1h, AND the sum of
+#                                                   `cached_tokens` reported
+#                                                   back by LiteLLM/Mistral
+#                                                   across those same
+#                                                   completions was 0.
+#
+# Why this alert exists:
+#
+# portal-api's general partner passthrough path
+# (klai-portal/backend/app/services/partner_chat.py) forwards a caller's
+# `prompt_cache_key` to LiteLLM via `extra_body`, which LiteLLM maps onto
+# Mistral's own prompt-caching mechanism. That mapping is coupled to
+# LiteLLM-internal behaviour (see docs/runbooks/partner-chat-threading.md)
+# — a LiteLLM upgrade can silently stop forwarding the key, or Mistral can
+# change how it reports `usage.prompt_tokens_details.cached_tokens`, while
+# every request still returns 200 with a normal completion body. Nothing
+# in the request/response contract signals the regression; only the
+# `cached_tokens` field silently drops to zero. Without this alert that
+# regression is invisible until someone notices the partner's bill went up.
+#
+# `partner_openai_cache_usage` is logged on every non-streaming partner
+# passthrough completion (org_id, cache_key_present bool, prompt_tokens,
+# cached_tokens int — `_cache_usage_fields()` always returns a real int,
+# defaulting to 0, never None/NaN).
+#
+# Query shape:
+#   Two separate `| stats count()` / `| stats sum(...)` queries over the
+#   same 1h filtered log set, combined via the reduce + SSE-math bridge
+#   already proven in portal-api-rules.yaml's `caddy_traffic_drop` (R11)
+#   — see that file's header for the "why two queries, not one" rationale
+#   (LogsQL->SSE reduce chains need a single scalar per query; a combined
+#   `stats count(), sum(...)` frame with two columns is untested against
+#   this plugin's wide/long bridge, so this rule follows the ALREADY
+#   VERIFIED two-query pattern instead of introducing a new one).
+#
+# Semantics chosen (documented per the SPEC's "acceptable simpler form"
+# clause):
+#   fires when  (count of cache_key_present:true completions in 1h > 9)
+#          AND  (sum of cached_tokens across those same completions < 1)
+#   i.e. count >= 10 (expressed as `> 9` — SSE math in this plugin has no
+#   verified `>=` operator in this codebase, only `<`/`>`, see
+#   portal-api-rules.yaml drop_signal) AND sum == 0 (expressed as `< 1` —
+#   cached_tokens is always a non-negative int, so `< 1` is exactly `== 0`
+#   without relying on an unverified `==` operator).
+#
+# No-traffic guard: this is structural, not a separate condition. If there
+# is no partner cache-key traffic at all in the window, `count > 9` is
+# false and the signal never fires — "zero requests" cannot satisfy the
+# ">=10 requests" precondition. No baseline-floor trick needed (unlike
+# caddy_traffic_drop, which compares against a rolling baseline).
+#
+# VERIFIED against production VictoriaLogs (2026-08-13, via MCP `query`):
+#   - `| stats count() as n` on zero matching rows -> "n":"0" (a real
+#     zero), matching the count() behaviour already documented in
+#     mailer-rules.yaml.
+#   - `| stats sum(cached_tokens) as total_cached` on zero matching rows
+#     -> "total_cached":"NaN" — sum() returns NaN (not 0) when there are
+#     no rows to sum, per LogsQL semantics ("if all values are
+#     non-numeric, NaN is returned" — zero rows means zero numeric
+#     values). This is DIFFERENT from count()'s zero-match behaviour and
+#     is not otherwise documented in this directory.
+#   - This is harmless here specifically because `cachedsum_n` only ever
+#     feeds the second AND-term: when `keycount_n` is 0 (no traffic),
+#     `keycount_n > 9` is already false, so the overall product is 0
+#     regardless of whether `cachedsum_n < 1` evaluates true, false, or
+#     errors on NaN. When `keycount_n > 9` is true, there IS real
+#     traffic, so `cachedsum_n` is a genuine sum (0 or more), never NaN.
+#   - Confirmed with real production data: 8 cache_key_present:true
+#     completions in the last 7 days, sum(cached_tokens)=2560 (cache is
+#     currently working — this alert correctly would NOT fire today,
+#     both because count<10 in any 1h window and because the sum is
+#     nonzero).
+#
+# Pitfall avoidance:
+#   - UID is 30 chars, well under Grafana's 40-char hard limit (see
+#     `pitfalls/process-rules.md#grafana-uid-40-char-limit`). Verified via
+#     `scripts/audit-alert-uid-length.sh`.
+#   - Field-qualified LogsQL (`event:...`, `cache_key_present:true`)
+#     against portal-api's structlog JSON output, matching the pattern
+#     already verified for boolean fields in identity-assert-rules.yaml
+#     (`verified:false`) and portal-mfa-rules.yaml (`outcome:fail-open`).
+#   - noDataState/execErrState: OK — matches every sibling rule in this
+#     directory that answers "is this signal live" with reduce+math over
+#     VictoriaLogs; a plugin hiccup should never false-page (see
+#     portal-api-rules.yaml header for the "miss-on-hiccup beats
+#     false-page-on-plugin-error" rationale).
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: partner-prompt-cache
+    folder: Klai
+    interval: 5m
+    rules:
+
+      # ── P1: partner_prompt_cache_ineffective ────────────────────────────
+      - uid: spec-pcache-001-cache-hit-zero
+        title: partner_prompt_cache_ineffective
+        condition: threshold
+        data:
+          - refId: keycount
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: keycount
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:1h service:portal-api AND event:partner_openai_cache_usage AND cache_key_present:true | stats count() as n'
+              queryType: instant
+          - refId: cachedsum
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: cachedsum
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: '_time:1h service:portal-api AND event:partner_openai_cache_usage AND cache_key_present:true | stats sum(cached_tokens) as total_cached'
+              queryType: instant
+          - refId: keycount_n
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: keycount_n
+              type: reduce
+              reducer: last
+              expression: keycount
+          - refId: cachedsum_n
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: cachedsum_n
+              type: reduce
+              reducer: last
+              expression: cachedsum
+          - refId: cache_ineffective_signal
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: cache_ineffective_signal
+              type: math
+              # Boolean math (same pattern as caddy_traffic_drop's
+              # drop_signal in portal-api-rules.yaml): each comparison
+              # returns 1.0 or 0.0, multiplying gives boolean AND.
+              #   ($keycount_n > 9)     → at least 10 cache-key requests in 1h
+              #   ($cachedsum_n < 1)    → zero cached tokens across them
+              expression: '($keycount_n > 9) * ($cachedsum_n < 1)'
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: cache_ineffective_signal
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        # execErrState: OK — matches the "miss-on-hiccup beats false-page"
+        # convention already established for LogsQL reduce+math chains in
+        # this directory (see portal-api-rules.yaml header).
+        execErrState: OK
+        for: 15m
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-PARTNER-CACHE-001
+          service_group: portal-api
+        annotations:
+          summary: 'Partner prompt-cache ineffective (possible LiteLLM regression)'
+          runbook_url: 'docs/runbooks/partner-chat-threading.md'
+          description: |
+            At least 10 partner passthrough completions carried a
+            `prompt_cache_key` in the last hour, but the sum of
+            `cached_tokens` reported back across all of them was zero.
+            The cache-delivery mechanism (LiteLLM `extra_body` ->
+            Mistral `prompt_cache_key`, see
+            docs/runbooks/partner-chat-threading.md) is coupled to
+            LiteLLM-internal behaviour that can silently break on an
+            upgrade — requests keep returning 200, only the cache
+            savings disappear.
+
+            Triage:
+              1. VictoriaLogs (Grafana -> Explore):
+                   _time:1h service:portal-api AND event:partner_openai_cache_usage AND cache_key_present:true
+                 Inspect `cached_tokens` on individual rows — confirm
+                 it's genuinely 0 across the board, not a sampling
+                 artifact.
+              2. Check the LiteLLM container image/config for a recent
+                 change:
+                   ssh core-01 "docker inspect klai-core-litellm-1 --format '{{.Config.Image}}'"
+                   git log --oneline -- deploy/litellm/
+              3. Confirm Mistral is still returning
+                 `usage.prompt_tokens_details.cached_tokens` at all by
+                 hitting the passthrough endpoint directly with a
+                 repeated `prompt_cache_key` and inspecting the raw
+                 response body.
+              4. If LiteLLM's `extra_body` forwarding changed, the fix is
+                 in `_with_openai_passthrough_metadata()` /
+                 `_forward_openai_passthrough()` in
+                 klai-portal/backend/app/services/partner_chat.py — not
+                 in this alert.
+
+            This is a cost/efficiency regression, not an availability
+            incident — partner requests keep succeeding, they just stop
+            benefiting from cache discounts. Severity is warning, not
+            critical.
