@@ -359,7 +359,7 @@ services:
 
   # ─── LibreChat (tenant: getklai) ─────────────────────────────────────────
   librechat-getklai:
-    image: ghcr.io/danny-avila/librechat:v0.8.7
+    image: ghcr.io/danny-avila/librechat:v0.8.6
     container_name: librechat-getklai
     restart: unless-stopped
     # Force light theme via the Klai entrypoint wrapper (LibreChat has no
