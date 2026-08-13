@@ -1418,3 +1418,247 @@ async def test_knowledge_chat_still_rejects_klai_large():
         )
 
     assert exc.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Value-based routing for general_chat keys (breaking change, approved
+# 2026-08-13): _uses_knowledge_chat now routes on field VALUES, not
+# presence. See docs/runbooks/partner-chat-threading.md "Routing reminder".
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        # -- knowledge --------------------------------------------------
+        ({}, False),
+        ({"knowledge": None}, False),
+        ({"knowledge": {"enabled": False}}, False),
+        ({"knowledge": {"enabled": True}}, True),
+        ({"knowledge": {}}, True),  # no "enabled" key -> not explicitly False -> trigger
+        ({"knowledge": "not-a-dict"}, True),  # fails loudly downstream, not silently dropped
+        # -- knowledge_base_ids ------------------------------------------
+        ({"knowledge_base_ids": None}, False),
+        ({"knowledge_base_ids": []}, True),  # explicit [] stays a trigger (SPEC-PARTNER-KB-SCOPE-001)
+        ({"knowledge_base_ids": [1]}, True),
+        # -- page_context --------------------------------------------------
+        ({"page_context": None}, False),
+        ({"page_context": {"url": "https://example.com"}}, True),
+        ({"page_context": "not-a-dict"}, True),  # fails loudly downstream
+        # -- web_search ------------------------------------------------
+        ({"web_search": False}, False),
+        ({"web_search": None}, False),
+        ({"web_search": True}, True),
+        # -- web_search_query --------------------------------------------
+        ({"web_search_query": None}, False),
+        ({"web_search_query": ""}, False),
+        ({"web_search_query": "latest news"}, True),
+        ({"web_search_query": 123}, True),  # non-string non-null still fails loudly downstream
+    ],
+)
+def test_uses_knowledge_chat_routes_on_field_values(body, expected):
+    from app.api.partner import _uses_knowledge_chat
+
+    assert _uses_knowledge_chat(body) is expected
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_web_search_false_routes_to_passthrough(monkeypatch):
+    """web_search: false PRESENT no longer routes to the knowledge path."""
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "Return JSON"}],
+                "response_format": {"type": "json_object"},
+                "web_search": False,
+                "stream": False,
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "ok"}}]}
+    sent = forwarded.await_args.args[0]
+    assert sent["response_format"] == {"type": "json_object"}
+    assert "web_search" not in sent
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_web_search_query_null_routes_to_passthrough(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "web_search_query": None,
+                "stream": False,
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "ok"}}]}
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_page_context_null_routes_to_passthrough(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "page_context": None,
+                "stream": False,
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "ok"}}]}
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_knowledge_null_routes_to_passthrough(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "knowledge": None,
+                "stream": False,
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "ok"}}]}
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_knowledge_base_ids_null_routes_to_passthrough(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "knowledge_base_ids": None,
+                "stream": False,
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "ok"}}]}
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_knowledge_base_ids_populated_routes_to_knowledge_path(monkeypatch):
+    import app.api.partner as partner
+
+    knowledge_flow = AsyncMock(return_value={"choices": [{"message": {"content": "rag"}}]})
+    monkeypatch.setattr(partner, "chat_completions", knowledge_flow)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "klai-primary",
+                "messages": [{"role": "user", "content": "Answer from KB"}],
+                "stream": False,
+                "knowledge_base_ids": [1],
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "rag"}}]}
+    knowledge_flow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_knowledge_base_ids_empty_list_still_routes_to_knowledge_path_and_400s():
+    """Explicit [] must NOT be silently dropped by the passthrough allowlist.
+
+    It stays a knowledge-chat trigger so the existing "ambiguous empty list"
+    400 guard (SPEC-PARTNER-KB-SCOPE-001, in chat_completions) keeps firing
+    end-to-end through canonical_chat_completions.
+    """
+    import app.api.partner as partner
+
+    with pytest.raises(HTTPException) as exc:
+        await partner.canonical_chat_completions(
+            http_request=_request(
+                {
+                    "model": "klai-primary",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": False,
+                    "knowledge_base_ids": [],
+                }
+            ),
+            auth=_auth({"chat": True, "general_chat": True}),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 400
+    assert "ambiguous" in exc.value.detail["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_canonical_chat_web_search_false_with_response_format_forwards_it(monkeypatch):
+    """Integration-style: general_chat key sending web_search: false +
+    response_format routes to passthrough and forwards response_format."""
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "Return JSON"}],
+                "web_search": False,
+                "response_format": {"type": "json_object"},
+                "stream": False,
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "ok"}}]}
+    sent = forwarded.await_args.args[0]
+    assert sent["model"] == "klai-fast"
+    assert sent["response_format"] == {"type": "json_object"}
+    assert "web_search" not in sent

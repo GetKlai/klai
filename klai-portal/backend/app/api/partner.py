@@ -90,13 +90,6 @@ _OPENAI_COMPATIBLE_MODEL_ALIASES = {
     "gpt-4.1": "klai-primary",
 }
 _OPENAI_COMPATIBLE_ACCEPTED_MODELS = _OPENAI_COMPATIBLE_MODELS | set(_OPENAI_COMPATIBLE_MODEL_ALIASES)
-_KNOWLEDGE_CHAT_TRIGGER_FIELDS = {
-    "knowledge",
-    "knowledge_base_ids",
-    "page_context",
-    "web_search",
-    "web_search_query",
-}
 # General-passthrough-only fields: ChatCompletionsRequest (the knowledge-path
 # Pydantic model) silently drops unknown fields, so a partner sending these
 # alongside a knowledge field would get HTTP 200 with their schema/tools
@@ -736,10 +729,46 @@ def _openai_error(status_code: int, message: str, error_type: str = "invalid_req
 
 
 def _uses_knowledge_chat(body: dict[str, Any]) -> bool:
+    """Route to the knowledge (RAG) path iff a trigger field's VALUE means "yes".
+
+    Presence alone is no longer enough (breaking change, approved 2026-08-13
+    — see docs/runbooks/partner-chat-threading.md "Routing reminder"):
+
+    - ``knowledge``: present and not ``None``, unless it is a dict with
+      ``enabled`` exactly ``False``. A non-dict non-null value still
+      triggers so it fails loudly in the knowledge path's Pydantic
+      validation instead of being silently dropped by the passthrough
+      allowlist.
+    - ``knowledge_base_ids``: present and not ``None``. An explicit empty
+      list ``[]`` remains a trigger so the knowledge path's "ambiguous
+      empty list" 400 guard (SPEC-PARTNER-KB-SCOPE-001) keeps firing
+      instead of silently falling through to passthrough.
+    - ``page_context``: present and not ``None``. A non-dict non-null
+      value still triggers so it fails loudly downstream.
+    - ``web_search``: truthy.
+    - ``web_search_query``: a non-empty string, or any other non-null
+      value (non-string non-null values still trigger so knowledge-path
+      validation rejects them loudly).
+    """
     knowledge = body.get("knowledge")
-    if "knowledge" in body and not (isinstance(knowledge, dict) and knowledge.get("enabled") is False):
+    if "knowledge" in body and knowledge is not None:
+        if not (isinstance(knowledge, dict) and knowledge.get("enabled") is False):
+            return True
+
+    if "knowledge_base_ids" in body and body["knowledge_base_ids"] is not None:
         return True
-    return any(field in body for field in _KNOWLEDGE_CHAT_TRIGGER_FIELDS - {"knowledge"})
+
+    if "page_context" in body and body["page_context"] is not None:
+        return True
+
+    if body.get("web_search"):
+        return True
+
+    web_search_query = body.get("web_search_query")
+    if web_search_query is not None and web_search_query != "":
+        return True
+
+    return False
 
 
 def _openai_compatible_enabled(auth: PartnerAuthContext) -> bool:
