@@ -1253,9 +1253,19 @@ def _sse_error_frame(message: str) -> bytes:
 
 
 def _with_openai_passthrough_metadata(body: dict[str, Any]) -> dict[str, Any]:
-    """Mark portal-proxied OpenAI-compatible calls so LiteLLM hooks stay transparent."""
+    """Mark portal-proxied OpenAI-compatible calls so LiteLLM hooks stay transparent.
+
+    Also translates the OpenAI-style top-level ``prompt_cache_key`` into
+    ``extra_body`` so LiteLLM delivers it to Mistral (LiteLLM's mistral chat
+    transformation drops the top-level field under ``drop_params: true``).
+    The translation OVERWRITES ``extra_body`` — caller-supplied ``extra_body``
+    is never merged or forwarded.
+    """
     forwarded = dict(body)
     forwarded["metadata"] = {"_klai_openai_passthrough": True}
+    prompt_cache_key = forwarded.pop("prompt_cache_key", None)
+    if prompt_cache_key is not None:
+        forwarded["extra_body"] = {"prompt_cache_key": prompt_cache_key}
     return forwarded
 
 

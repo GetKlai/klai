@@ -105,6 +105,7 @@ _OPENAI_COMPAT_MAX_BODY_BYTES = 131_072
 _OPENAI_COMPAT_DEFAULT_MAX_TOKENS = 2048
 _OPENAI_COMPAT_MAX_TOKENS = 4096
 _OPENAI_COMPAT_MAX_N = 1
+_OPENAI_COMPAT_MAX_PROMPT_CACHE_KEY_CHARS = 256
 _OPENAI_COMPAT_FORWARD_FIELDS = {
     "frequency_penalty",
     "logit_bias",
@@ -116,6 +117,7 @@ _OPENAI_COMPAT_FORWARD_FIELDS = {
     "n",
     "parallel_tool_calls",
     "presence_penalty",
+    "prompt_cache_key",
     "reasoning_effort",
     "response_format",
     "seed",
@@ -690,6 +692,26 @@ def _validated_openai_compatible_body(body: dict[str, Any]) -> dict[str, Any]:
             )
     if forwarded.get("max_tokens") is None and forwarded.get("max_completion_tokens") is None:
         forwarded["max_tokens"] = _OPENAI_COMPAT_DEFAULT_MAX_TOKENS
+
+    if "prompt_cache_key" in forwarded:
+        prompt_cache_key = forwarded["prompt_cache_key"]
+        if (
+            not isinstance(prompt_cache_key, str)
+            or not prompt_cache_key
+            or len(prompt_cache_key) > _OPENAI_COMPAT_MAX_PROMPT_CACHE_KEY_CHARS
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": {
+                        "type": "invalid_request",
+                        "message": (
+                            "prompt_cache_key must be a non-empty string of at most "
+                            f"{_OPENAI_COMPAT_MAX_PROMPT_CACHE_KEY_CHARS} characters"
+                        ),
+                    }
+                },
+            )
 
     return forwarded
 
