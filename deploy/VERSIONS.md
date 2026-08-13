@@ -33,7 +33,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 | Service | Image | Rationale |
 |---|---|---|
-| `zitadel` | `ghcr.io/zitadel/zitadel:v4.15.3` | OIDC IdP. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
+| `zitadel` | `ghcr.io/zitadel/zitadel:v4.17.0` | OIDC IdP. Bumped 2026-08-13 for the 4.16.x security batch: 2× critical (unauthenticated account takeover via passkey enrollment; account pre-hijacking via forged external-IdP callback) + MFA-bypass + Actions sandbox escape, all patched ≤4.16.2. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
 | `victoriametrics` | `victoriametrics/victoria-metrics:v1.147.0` | Metrics TSDB. |
 | `victorialogs` | `victoriametrics/victoria-logs:v1.51.0` | Log aggregation (replaces Loki). LogsQL syntax differs from LogQL. |
 | `cadvisor` | `ghcr.io/google/cadvisor:v0.60.3` | Container metrics. Registry moved from `gcr.io` to `ghcr.io`; verify dashboards that depend on container start/creation timestamps after this bump. |
