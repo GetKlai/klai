@@ -87,11 +87,59 @@ async def test_empty_primary_falls_back_to_discovery_seed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_healthy_primary_never_uses_discovery_seed() -> None:
-    """A base_url that already yields content must not pay for a second crawl."""
-    crawl_site = AsyncMock(return_value=([_page(HUB + "a")], []))
+async def test_primary_that_reached_the_seed_skips_the_seed_pass() -> None:
+    """A healthy site whose BFS reached the seed page pays for one crawl only."""
+    crawl_site = AsyncMock(return_value=([_page(HUB + "a"), _page(ARTICLE)], []))
     await _run(crawl_site, discovery_seed_url=ARTICLE)
     assert crawl_site.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_near_dead_primary_still_crawls_from_the_seed_and_merges() -> None:
+    """THE Ascend case (2026-08-13): the client-rendered shell yields a couple
+    of junk pages (`/` and `/app/main`), so the primary crawl is NOT empty —
+    but none of its links resolve and the seed page is never reached. The old
+    `not results` trigger declared victory on those 2 shell pages and ignored
+    the operator's validated seed entirely. The trigger is "primary did not
+    reach the seed page", and the seed pass MERGES (shell pages kept, seed
+    discoveries added, dedup by canonical URL)."""
+    ingested: list[str] = []
+    crawl_site = AsyncMock(
+        side_effect=[
+            # Primary: the two junk shell pages — non-empty, seed not reached.
+            ([_page(HUB), _page(HUB + "app/main")], []),
+            # Seed pass: the article + a BFS discovery + one duplicate shell page.
+            ([_page(ARTICLE), _page(ARTICLE + "/2"), _page(HUB)], []),
+        ]
+    )
+    with (
+        patch("knowledge_ingest.adapters.crawler.crawl_site", new=crawl_site),
+        patch(
+            "knowledge_ingest.adapters.crawler.pg_store.get_crawled_page_hashes",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler._build_link_graph",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler._ingest_crawl_result",
+            new=AsyncMock(side_effect=lambda *a, **kw: ingested.append(a[1].url)),
+        ),
+    ):
+        await run_crawl_job(
+            _mock_conn(),
+            job_id="job-1",
+            org_id="org",
+            kb_slug="support",
+            start_url=HUB,
+            discovery_seed_url=ARTICLE,
+        )
+
+    assert crawl_site.await_count == 2
+    assert crawl_site.await_args_list[1].kwargs["start_url"] == ARTICLE
+    # Merged: shell pages first, seed discoveries appended, duplicate dropped.
+    assert ingested == [HUB, HUB + "app/main", ARTICLE, ARTICLE + "/2"]
 
 
 @pytest.mark.asyncio
