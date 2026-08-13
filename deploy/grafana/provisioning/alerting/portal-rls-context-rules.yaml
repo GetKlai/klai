@@ -92,20 +92,26 @@ groups:
           service_group: portal-api
         annotations:
           summary: |
-            portal-api statements running without correct RLS tenant context.
+            portal-api log lines matching an RLS tenant-context failure signature.
           description: |
             One or more portal-api log lines in the last 10 minutes matched a
-            tenant-context failure signature. Baseline is zero — any fire means
-            a statement executed with missing or foreign tenant context.
+            tenant-context failure signature. Baseline is zero, so any fire
+            deserves a look — but the signatures are INDICATIVE, not proof:
+            classify before concluding. Detection latency is ~5-6 minutes
+            (for: 5m on a 1m evaluation interval), and monitoring failures are
+            silent by design (noDataState/execErrState both OK, the house
+            pattern for LogsQL rules).
 
-            What each signature means:
+            What each signature means, and its non-tenant-context causes:
               - "Could not refresh instance": a post-commit re-SELECT returned
                 zero rows. The 2026-08-13 incident signature (db.refresh() right
-                after db.commit() on PATCH .../connectors/{id}).
-              - "InsufficientPrivilegeError" / "42501": the fail-loud Cat-D
-                helper `_rls_current_org_id()` raised because
-                app.current_org_id was unset and app.cross_org_admin was not
-                true.
+                after db.commit() on PATCH .../connectors/{id}) — but a genuine
+                concurrent DELETE of the refreshed row produces the same line.
+              - "InsufficientPrivilegeError" / "42501": raised by the fail-loud
+                Cat-D helper `_rls_current_org_id()` when app.current_org_id is
+                unset and app.cross_org_admin is not true — but ANY PostgreSQL
+                permission failure (missing GRANT after a migration, role
+                misconfiguration) carries the same class/SQLSTATE.
 
             Investigation:
               1. Find the request chain:
