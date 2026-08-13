@@ -57,7 +57,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 | `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.30.0` | Document parsing (PDF, DOCX → structured). |
 | `searxng` | `searxng/searxng:2026.8.12-cdfdaa5a8` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
 | `gitea` | `gitea/gitea:1.27.1` | Self-hosted git for klai-docs. Bumped 2026-08-13: 1.27.1 patches CVE-2026-59774 (critical, unauthenticated file read → RCE) + CVE-2026-60004 (critical, RCE via diffpatch hooks); 1.27.0 patches the high SSRF + PAT-scope CVEs. 1.27.0 breaking changes (Actions reusable workflows, CSP script nonce) do not affect us — Gitea is git-hosting only here. |
-| `crawl4ai` | `unclecode/crawl4ai:0.8.9` | Web crawler for klai-connector. Hooks are explicitly disabled in compose; Klai uses crawl request config, not Crawl4AI server hooks. |
+| `crawl4ai` | `ghcr.io/getklai/crawl4ai:0.9.2-local-260813-1211` | Klai-patched build of upstream 0.9.2 (bumped 2026-08-13): 0.9.0 patches CVE-2026-57571 + CVE-2026-57572 (both critical, RCE-class) and CVE-2026-57573 (high SSRF on /crawl/stream). The local patch (env-tunable body-visibility wait, upstream PR #2131 still open) applies cleanly on 0.9.2 — anchor-guarded build refuses if upstream drifts. 0.9.x enforces bearer auth on /crawl; knowledge-ingest + connector both carry the shared key. Hooks stay disabled in compose. |
 
 ### Ops
 
