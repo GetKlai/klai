@@ -54,6 +54,7 @@ klai-llm-safety = { path = "../klai-libs/llm-safety", editable = true }
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    "pytest-xdist>=3.6",
     "httpx>=0.27",
     "ruff>=0.8",
 ]
@@ -83,5 +84,6 @@ asyncio_mode = "auto"
 dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.6",
     "ruff>=0.15.8",
 ]
