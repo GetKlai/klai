@@ -515,6 +515,12 @@ function getChunkSources(chunk) {
 	return void 0;
 }
 const KLAI_SOURCES_MARKER_RE = /<!--\s*klai_sources=([A-Za-z0-9_-]+={0,2})\s*-->/g;
+const _klaiStreamWarned = /* @__PURE__ */ new Set();
+function klaiWarnOnce(message) {
+	if (_klaiStreamWarned.has(message)) return;
+	_klaiStreamWarned.add(message);
+	console.warn(`[klai-patch] ${message}`);
+}
 function decodeKlaiSourcesMarker(encoded) {
 	try {
 		const padded = encoded + "=".repeat((4 - encoded.length % 4) % 4);
@@ -522,9 +528,44 @@ function decodeKlaiSourcesMarker(encoded) {
 		const parsed = JSON.parse(json);
 		return Array.isArray(parsed) ? parsed : void 0;
 	} catch (_error) {
-		console.warn("[klai-patch] stream.decodeKlaiSourcesMarker decode failed");
+		klaiWarnOnce("stream.decodeKlaiSourcesMarker decode failed");
 		return void 0;
 	}
+}
+const KLAI_MARKER_HEAD = "<!-- klai_sources=";
+const KLAI_FRAMER_MAX_TAIL = 8192;
+function isPotentialPartialKlaiMarker(tail) {
+	if (tail.length > KLAI_FRAMER_MAX_TAIL) return false;
+	if (tail.length < KLAI_MARKER_HEAD.length) return KLAI_MARKER_HEAD.startsWith(tail);
+	if (!tail.startsWith(KLAI_MARKER_HEAD)) return false;
+	return /^[A-Za-z0-9_-]*={0,2}(?: ?-{0,2})?$/.test(tail.slice(KLAI_MARKER_HEAD.length));
+}
+function findPartialKlaiMarkerStart(text) {
+	if (typeof text !== "string" || text === "") return -1;
+	const idx = text.lastIndexOf("<");
+	if (idx === -1) return -1;
+	return isPotentialPartialKlaiMarker(text.slice(idx)) ? idx : -1;
+}
+function createKlaiSourcesFramer() {
+	let buffer = "";
+	return { push(fragment) {
+		const combined = buffer + (typeof fragment === "string" ? fragment : "");
+		buffer = "";
+		const extracted = extractKlaiSourcesFromText(combined);
+		let out = extracted.text;
+		const splitIdx = findPartialKlaiMarkerStart(out);
+		if (splitIdx !== -1) {
+			const tail = out.slice(splitIdx);
+			if (tail.length <= KLAI_FRAMER_MAX_TAIL) {
+				buffer = tail;
+				out = out.slice(0, splitIdx);
+			} else klaiWarnOnce("stream.klai_sources framer overflow — tail flushed as text");
+		}
+		return {
+			text: out,
+			sources: extracted.sources
+		};
+	} };
 }
 function extractKlaiSourcesFromText(text) {
 	let sources;
@@ -737,7 +778,8 @@ hasToolCallChunks: ${hasToolCallChunks}
 		if (typeof content === "string" && runStep.type === "tool_calls") return;
 		else if (hasToolCallChunks && (chunk.tool_call_chunks?.some((tc) => tc.args === content) ?? false)) return;
 		else if (typeof content === "string") {
-			const extracted = extractKlaiSourcesFromText(content);
+			agentContext._klaiSourcesFramer ?? (agentContext._klaiSourcesFramer = createKlaiSourcesFramer());
+			const extracted = agentContext._klaiSourcesFramer.push(content);
 			const textContent = extracted.text;
 			const sources = getChunkSources(chunk) ?? extracted.sources;
 			if (agentContext.currentTokenType === "text") await graph.dispatchMessageDelta(stepId, { content: [{
@@ -831,10 +873,20 @@ function createContentAggregator() {
 		}
 		if (partType.startsWith("text") && "text" in contentPart && typeof contentPart.text === "string") {
 			const currentContent = contentParts[index];
-			const extracted = extractKlaiSourcesFromText(contentPart.text);
+			// A klai_sources marker can be split across delta fragments. Any
+			// leaked partial-marker prefix sits at the END of the accumulated
+			// text (it matched nothing, so it passed through) — re-extract on
+			// the seam of accumulated tail + new fragment instead of the new
+			// fragment alone. Stateless: the "buffer" IS the accumulated text,
+			// so a stream ending mid-marker keeps its characters as plain text.
+			const accumulated = currentContent.text || "";
+			const seamIdx = findPartialKlaiMarkerStart(accumulated);
+			const head = seamIdx === -1 ? accumulated : accumulated.slice(0, seamIdx);
+			const carry = seamIdx === -1 ? "" : accumulated.slice(seamIdx);
+			const extracted = extractKlaiSourcesFromText(carry + contentPart.text);
 			const update = {
 				type: "text",
-				text: (currentContent.text || "") + extracted.text
+				text: head + extracted.text
 			};
 			if (contentPart.tool_call_ids) update.tool_call_ids = contentPart.tool_call_ids;
 			const incomingSources = contentPart.sources ?? extracted.sources;
@@ -945,7 +997,7 @@ function createContentAggregator() {
 				return;
 			}
 			const messageDeltaContent = Array.isArray(messageDelta.delta.content) ? messageDelta.delta.content : [messageDelta.delta.content];
-			if (messageDeltaContent.length > 1) console.warn("[klai-patch] stream.delta-array guard saw multi-part delta");
+			if (messageDeltaContent.length > 1) klaiWarnOnce("stream.delta-array guard saw multi-part delta (message)");
 			for (const contentPart of messageDeltaContent) {
 				if (contentPart != null) updateContent(runStep.index, contentPart);
 			}
@@ -961,7 +1013,7 @@ function createContentAggregator() {
 				return;
 			}
 			const reasoningDeltaContent = Array.isArray(reasoningDelta.delta.content) ? reasoningDelta.delta.content : [reasoningDelta.delta.content];
-			if (reasoningDeltaContent.length > 1) console.warn("[klai-patch] stream.delta-array guard saw multi-part delta");
+			if (reasoningDeltaContent.length > 1) klaiWarnOnce("stream.delta-array guard saw multi-part delta (reasoning)");
 			for (const contentPart of reasoningDeltaContent) {
 				if (contentPart != null) updateContent(runStep.index, contentPart);
 			}
@@ -1014,6 +1066,8 @@ function createContentAggregator() {
 exports.ChatModelStreamHandler = ChatModelStreamHandler;
 exports.createContentAggregator = createContentAggregator;
 exports.extractKlaiSourcesFromText = extractKlaiSourcesFromText;
+exports.createKlaiSourcesFramer = createKlaiSourcesFramer;
+exports.findPartialKlaiMarkerStart = findPartialKlaiMarkerStart;
 exports.getChunkContent = getChunkContent;
 exports.getChunkSources = getChunkSources;
 

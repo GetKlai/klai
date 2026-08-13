@@ -136,4 +136,30 @@ const guarded = ensureThinkingBlockInMessages(
 );
 assert.ok(Array.isArray(guarded));
 
+// Adversarial review 2026-08-13, finding 8: sparse entries AFTER the last
+// user message used to throw ("role" in undefined) because both scans lacked
+// the record guard. Cover before / between / after positions explicitly.
+const sparseAfter = ensureThinkingBlockInMessages(
+  [{ role: 'user', content: 'vraag' }, undefined, { role: 'assistant', content: 'antwoord' }],
+  'openai',
+);
+assert.ok(Array.isArray(sparseAfter));
+
+const sparseBetween = ensureThinkingBlockInMessages(
+  [
+    { role: 'user', content: 'vraag' },
+    { role: 'assistant', content: 'a1' },
+    null,
+    { role: 'assistant', content: 'a2' },
+  ],
+  'openai',
+);
+assert.ok(Array.isArray(sparseBetween));
+
+const sparseEverywhere = ensureThinkingBlockInMessages(
+  [undefined, { role: 'user', content: 'vraag' }, null, { role: 'assistant', content: 'a' }, undefined],
+  'openai',
+);
+assert.ok(Array.isArray(sparseEverywhere));
+
 console.log('OK: LibreChat format guards tolerate sparse message arrays.');
