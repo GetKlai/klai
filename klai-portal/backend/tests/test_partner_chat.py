@@ -197,6 +197,213 @@ async def test_kb_out_of_scope_returns_403():
     assert exc_info.value.status_code == 403
 
 
+# ---------------------------------------------------------------------------
+# SPEC-PARTNER-KB-SCOPE-001: fail-closed on empty/unresolvable KB scope
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_explicit_empty_top_level_kb_ids_returns_400():
+    """Top-level knowledge_base_ids: [] is ambiguous -> 400, never widened."""
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hello"}],
+        model="klai-primary",
+        stream=False,
+        knowledge_base_ids=[],
+    )
+
+    with (
+        patch("app.api.partner.retrieve_context") as mock_retrieve,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await chat_completions(
+            request=req,
+            http_request=_http_request_stub(),
+            auth=make_partner_auth(kb_access={10: "read"}),
+            db=AsyncMock(),
+        )
+    assert exc_info.value.status_code == 400
+    mock_retrieve.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_explicit_empty_knowledge_kb_ids_returns_400():
+    """knowledge.knowledge_base_ids: [] is ambiguous -> 400, never widened."""
+    from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hello"}],
+        model="klai-primary",
+        stream=False,
+        knowledge=KnowledgeOptions(query="hello", knowledge_base_ids=[]),
+    )
+
+    with (
+        patch("app.api.partner.retrieve_context") as mock_retrieve,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await chat_completions(
+            request=req,
+            http_request=_http_request_stub(),
+            auth=make_partner_auth(kb_access={10: "read"}),
+            db=AsyncMock(),
+        )
+    assert exc_info.value.status_code == 400
+    mock_retrieve.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_key_with_no_kb_access_returns_403_and_skips_retrieval():
+    """A key/widget with zero configured KB access -> 403, retrieval never called.
+
+    This is the confirmed defect: previously validate_kb_access() returned []
+    for a key with no kb_access rows, retrieve_context() silently omitted
+    kb_slugs, and retrieval-api widened to every KB visible to the org.
+    """
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hello"}],
+        model="klai-primary",
+        stream=False,
+    )
+
+    with (
+        patch("app.api.partner.retrieve_context") as mock_retrieve,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await chat_completions(
+            request=req,
+            http_request=_http_request_stub(),
+            auth=make_partner_auth(kb_access={}),
+            db=AsyncMock(),
+        )
+    assert exc_info.value.status_code == 403
+    mock_retrieve.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_all_authorized_kb_ids_unresolvable_returns_403_and_skips_retrieval():
+    """Authorized KB ids that all fail to resolve to slugs (e.g. deleted KB)
+
+    -> fail closed with 403 rather than widening retrieval scope.
+    """
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult(rows=[]))  # no KB rows resolve
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hello"}],
+        model="klai-primary",
+        stream=False,
+    )
+
+    with (
+        patch("app.api.partner.retrieve_context") as mock_retrieve,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await chat_completions(
+            request=req,
+            http_request=_http_request_stub(),
+            auth=make_partner_auth(kb_access={10: "read"}),
+            db=db,
+        )
+    assert exc_info.value.status_code == 403
+    mock_retrieve.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_partial_kb_id_resolution_proceeds_with_resolved_subset():
+    """2 authorized KB ids, 1 resolves -> proceeds with the resolved subset
+
+    and logs a partner_kb_ids_unresolved warning for the dropped id.
+    """
+    import structlog
+
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hello"}],
+        model="klai-primary",
+        stream=False,
+        knowledge_base_ids=[10, 20],
+    )
+
+    litellm_response = {
+        "id": "chatcmpl-123",
+        "object": "chat.completion",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+    with structlog.testing.capture_logs() as cap:
+        with (
+            patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
+            patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
+            patch("app.api.partner.asyncio"),
+        ):
+            await chat_completions(
+                request=req,
+                http_request=_http_request_stub(),
+                auth=make_partner_auth(kb_access={10: "read", 20: "read"}),
+                db=db,
+            )
+
+    call_kwargs = mock_retrieve.call_args
+    kb_slugs_arg = call_kwargs[1].get("kb_slugs") or call_kwargs[0][2]
+    assert set(kb_slugs_arg) == {"kb-alpha"}
+    assert any(entry.get("event") == "partner_kb_ids_unresolved" for entry in cap)
+
+
+@pytest.mark.asyncio
+async def test_key_with_kb_access_and_no_requested_ids_passes_slugs_to_retrieval():
+    """Regression: a key WITH kb_access and no requested ids still gets its
+
+    configured KBs passed to retrieval (non-empty kb_slugs).
+    """
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Hello"}],
+        model="klai-primary",
+        stream=False,
+    )
+
+    litellm_response = {
+        "id": "chatcmpl-123",
+        "object": "chat.completion",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+    with (
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
+        patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
+        patch("app.api.partner.asyncio"),
+    ):
+        await chat_completions(
+            request=req,
+            http_request=_http_request_stub(),
+            auth=make_partner_auth(kb_access={10: "read"}),
+            db=db,
+        )
+
+    call_kwargs = mock_retrieve.call_args
+    kb_slugs_arg = call_kwargs[1].get("kb_slugs") or call_kwargs[0][2]
+    assert kb_slugs_arg == ["kb-alpha"]
+
+
 @pytest.mark.asyncio
 async def test_retrieval_timeout_returns_502():
     """Retrieval-api timeout -> 502 Bad Gateway."""
@@ -625,11 +832,17 @@ async def test_widget_streaming_uses_structured_citation_mode():
 
 @pytest.mark.asyncio
 async def test_widget_page_context_ignored_when_disabled():
+    """Unrelated to KB scope: exercises page-context handling only.
+
+    Needs non-empty kb_access — SPEC-PARTNER-KB-SCOPE-001 fails a zero-KB-access
+    key/widget closed with 403 before this code path is reached.
+    """
     from app.api.partner import ChatCompletionsRequest, chat_completions
 
+    fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=FakeResult(rows=[]))
-    auth = make_partner_auth(kb_access={})
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
+    auth = make_partner_auth(kb_access={10: "read"})
     auth.key_id = "wgt_901"
 
     req = ChatCompletionsRequest(
