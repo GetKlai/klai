@@ -185,10 +185,9 @@ async def ensure_default_knowledge_bases(
     Raises on failure. Callers decide how to handle it — tenant provisioning
     treats it as fatal so a degraded tenant can never be marked 'ready'.
 
-    Requires a pinned DB connection on the session (caller must have awaited
-    pin_session() or session.connection()); otherwise set_tenant() below may
-    land on a different pooled connection than the subsequent INSERTs and RLS
-    will block them.
+    No connection pinning required: `set_tenant()` below binds the scope on the
+    session, and the session's `after_begin` listener re-applies it
+    transaction-locally to every transaction the INSERTs run in.
     """
     # Provisioning runs with the admin's org_id in the session; override it so
     # the RLS USING/WITH CHECK clause (`org_id = current_setting(...)`) accepts

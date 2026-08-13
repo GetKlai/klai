@@ -151,9 +151,8 @@ async def _recover_stuck_meeting(snap: _ActiveMeetingSnapshot) -> None:
 async def _load_cycle_snapshots() -> tuple[list[_ActiveMeetingSnapshot], list[_ActiveMeetingSnapshot]]:
     """Load active + stuck meetings in a cross-org pass and return primitives.
 
-    Snapshotting happens INSIDE the session context so that rollback-on-exit
-    (see `_reset_tenant_context` in `cross_org_session()`) cannot strip
-    attributes out from under us.
+    Snapshotting happens INSIDE the session context so that session close
+    cannot strip attributes out from under us.
 
     Platform-level poll: scans across every tenant via `cross_org_session`
     which sets `app.cross_org_admin=true`. The upgraded RLS policies on

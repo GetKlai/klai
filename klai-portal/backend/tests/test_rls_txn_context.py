@@ -6,7 +6,7 @@ after ``db.commit()`` ran on a pooled connection whose session-level
 ``app.current_org_id`` belonged to a different tenant.
 
 Structural fix: tenant context is a property of the TRANSACTION. The
-``after_begin`` listener on ``_SyncPooledTenantSession`` re-declares all four
+``after_begin`` listener on ``_SyncTenantContextSession`` re-declares all four
 RLS GUCs transaction-locally (``is_local=true``) from Python-side state at every
 BEGIN, so no statement can ever run under a foreign tenant's context and no GUC
 can outlive its transaction.
@@ -45,6 +45,21 @@ def _session(info: dict[str, Any] | None = None) -> SimpleNamespace:
 
 def _txn(*, nested: bool = False) -> SimpleNamespace:
     return SimpleNamespace(nested=nested)
+
+
+def _mock_session(*, in_transaction: bool = True, in_nested: bool = False) -> MagicMock:
+    """AsyncSession stand-in for the mutator tests.
+
+    ``in_transaction`` defaults to True because that is the request-flow state:
+    the auth lookup has already opened a transaction by the time `set_tenant` /
+    `set_request_actor` run, so the immediate apply fires.
+    """
+    session = MagicMock()
+    session.info = {}
+    session.execute = AsyncMock()
+    session.in_transaction = MagicMock(return_value=in_transaction)
+    session.in_nested_transaction = MagicMock(return_value=in_nested)
+    return session
 
 
 @pytest.fixture(autouse=True)
@@ -165,7 +180,7 @@ def test_after_begin_skips_non_postgresql_dialects() -> None:
 
 
 def test_listener_is_registered_on_the_pooled_sync_session_class() -> None:
-    """The listener must hang off ``_SyncPooledTenantSession``, not ``Session``.
+    """The listener must hang off ``_SyncTenantContextSession``, not ``Session``.
 
     Registering globally on ``Session`` would fire for every third-party or
     test-fixture session in the process, which have no tenant contract.
@@ -173,8 +188,8 @@ def test_listener_is_registered_on_the_pooled_sync_session_class() -> None:
     from sqlalchemy import event
     from sqlalchemy.orm import Session
 
-    assert db_module.PooledTenantSession.sync_session_class is db_module._SyncPooledTenantSession
-    assert event.contains(db_module._SyncPooledTenantSession, "after_begin", db_module._apply_tenant_context_on_begin)
+    assert db_module.TenantContextSession.sync_session_class is db_module._SyncTenantContextSession
+    assert event.contains(db_module._SyncTenantContextSession, "after_begin", db_module._apply_tenant_context_on_begin)
     assert not event.contains(Session, "after_begin", db_module._apply_tenant_context_on_begin)
 
 
@@ -187,14 +202,11 @@ def test_listener_is_registered_on_the_pooled_sync_session_class() -> None:
 async def test_set_tenant_writes_session_info_and_applies_immediately() -> None:
     """``after_begin`` already fired for the open transaction with the OLD
     state, so ``set_tenant`` must also apply the new context right away."""
-    session = MagicMock()
-    session.info = {}
-    session.execute = AsyncMock()
+    session = _mock_session()
 
     await db_module.set_tenant(session, 8)
 
     assert session.info["tenant_org_id"] == 8
-    assert db_module.current_org_id.get() == 8
     assert session.execute.await_count == 1
     sql, params = session.execute.await_args.args
     assert "app.current_org_id" in str(sql)
@@ -209,12 +221,8 @@ async def test_set_tenant_scope_is_per_session_not_per_task() -> None:
     inside it coexist; storing the scope in a contextvar instead of
     ``session.info`` would let the inner block silently retarget the outer one.
     """
-    outer = MagicMock()
-    outer.info = {}
-    outer.execute = AsyncMock()
-    inner = MagicMock()
-    inner.info = {}
-    inner.execute = AsyncMock()
+    outer = _mock_session()
+    inner = _mock_session()
 
     await db_module.set_tenant(outer, 8)
     await db_module.set_tenant(inner, 22)
@@ -230,9 +238,7 @@ async def test_set_tenant_scope_is_per_session_not_per_task() -> None:
 
 @pytest.mark.asyncio
 async def test_set_request_actor_sets_both_contextvars_and_applies() -> None:
-    session = MagicMock()
-    session.info = {}
-    session.execute = AsyncMock()
+    session = _mock_session()
 
     await db_module.set_request_actor(session, "zitadel-user-7", True)
 
@@ -248,9 +254,7 @@ async def test_set_request_actor_sets_both_contextvars_and_applies() -> None:
 async def test_set_request_actor_clears_platform_admin_for_normal_callers() -> None:
     """Non-platform callers must render '' — not the previous request's '1'."""
     db_module.current_is_platform_admin.set(True)
-    session = MagicMock()
-    session.info = {}
-    session.execute = AsyncMock()
+    session = _mock_session()
 
     await db_module.set_request_actor(session, "zitadel-user-9", False)
 
@@ -267,9 +271,7 @@ async def test_set_request_actor_actor_flows_into_nested_sessions() -> None:
     was NULL for admin actions routed through ``tenant_scoped_session``, because
     the actor GUC only ever landed on the request session's connection.
     """
-    request_session = MagicMock()
-    request_session.info = {}
-    request_session.execute = AsyncMock()
+    request_session = _mock_session()
 
     await db_module.set_request_actor(request_session, "admin-1", False)
 
@@ -294,9 +296,7 @@ async def test_cross_org_scope_sets_flag_and_applies_then_clears() -> None:
     webhook handlers already hold one, and a second checkout per request lets a
     burst exhaust the pool.
     """
-    session = MagicMock()
-    session.info = {}
-    session.execute = AsyncMock()
+    session = _mock_session()
 
     async with db_module.cross_org_scope(session) as scoped:
         assert scoped is session
@@ -319,9 +319,7 @@ async def test_cross_org_scope_clears_flag_on_exception() -> None:
     The handler keeps using that session afterwards (set_tenant + INSERT), so a
     leaked flag would give the rest of the request cross-tenant visibility.
     """
-    session = MagicMock()
-    session.info = {}
-    session.execute = AsyncMock()
+    session = _mock_session()
 
     with pytest.raises(RuntimeError, match="kaboom"):
         async with db_module.cross_org_scope(session):
@@ -342,11 +340,122 @@ async def test_cross_org_scope_does_not_open_a_new_session(monkeypatch: pytest.M
         "AsyncSessionLocal",
         lambda *a, **kw: opened.append(1),  # type: ignore[misc,return-value]
     )
-    session = MagicMock()
-    session.info = {}
-    session.execute = AsyncMock()
+    session = _mock_session()
 
     async with db_module.cross_org_scope(session):
         pass
 
     assert opened == [], "cross_org_scope must reuse the caller's session"
+
+
+# ---------------------------------------------------------------------------
+# _apply_tenant_context — only patches an ALREADY-OPEN transaction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_tenant_context_is_a_noop_without_an_open_transaction() -> None:
+    """No transaction open → nothing to patch, and nothing may be started.
+
+    Issuing SQL here would open a transaction purely to set GUCs that the next
+    `after_begin` re-declares anyway — checking a pooled connection out before
+    the session has real work to do.
+    """
+    session = _mock_session(in_transaction=False)
+    session.info["tenant_org_id"] = 8
+
+    await db_module._apply_tenant_context(session)
+
+    assert session.execute.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_apply_tenant_context_patches_an_open_transaction() -> None:
+    """Transaction open → the current transaction must pick the new context up.
+
+    `after_begin` ran before the caller mutated `session.info`, so without this
+    the rest of the transaction keeps the stale (usually empty) context.
+    """
+    session = _mock_session(in_transaction=True)
+    session.info["tenant_org_id"] = 8
+
+    await db_module._apply_tenant_context(session)
+
+    assert session.execute.await_count == 1
+    _, params = session.execute.await_args.args
+    assert params["org_id"] == "8"
+
+
+# ---------------------------------------------------------------------------
+# Savepoint guard — the documented hazard, now fail-loud
+# ---------------------------------------------------------------------------
+#
+# PostgreSQL restores SET LOCAL values on ROLLBACK TO SAVEPOINT. A mutator
+# called inside a savepoint therefore desyncs the two halves of the model on
+# rollback: PostgreSQL reverts to the enclosing transaction's GUCs while
+# session.info / the actor contextvars keep the new value, so later statements
+# run under a tenant the code no longer believes is active. No `begin_nested()`
+# call site exists under app/ today — the guard is there so the first one fails
+# immediately instead of subtly.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda s: db_module.set_tenant(s, 8), id="set_tenant"),
+        pytest.param(lambda s: db_module.set_request_actor(s, "admin-1", False), id="set_request_actor"),
+    ],
+)
+async def test_mutators_raise_inside_a_savepoint(mutate: Any) -> None:
+    session = _mock_session(in_nested=True)
+
+    with pytest.raises(RuntimeError, match="SAVEPOINT"):
+        await mutate(session)
+
+    assert session.execute.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_cross_org_scope_raises_inside_a_savepoint() -> None:
+    """The entry guard must fire before the flag is written.
+
+    A flag written then rejected would leave `session.info` claiming a bypass
+    the database never got.
+    """
+    session = _mock_session(in_nested=True)
+
+    with pytest.raises(RuntimeError, match="SAVEPOINT"):
+        async with db_module.cross_org_scope(session):
+            pass
+
+    assert "cross_org_admin" not in session.info
+    assert session.execute.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_savepoint_guard_message_explains_why() -> None:
+    """The error must name the mechanism, not just the rule.
+
+    A bare "not allowed" sends the next engineer to the wrong place; naming
+    ROLLBACK TO SAVEPOINT points straight at the desync.
+    """
+    session = _mock_session(in_nested=True)
+
+    with pytest.raises(RuntimeError) as exc:
+        await db_module.set_tenant(session, 8)
+
+    message = str(exc.value)
+    assert "ROLLBACK TO SAVEPOINT" in message
+    assert "set_tenant" in message
+
+
+@pytest.mark.asyncio
+async def test_mutators_pass_outside_a_savepoint() -> None:
+    """The guard must not fire on the normal (non-nested) path."""
+    session = _mock_session(in_nested=False)
+
+    await db_module.set_tenant(session, 8)
+
+    assert session.info["tenant_org_id"] == 8
+    assert session.execute.await_count == 1

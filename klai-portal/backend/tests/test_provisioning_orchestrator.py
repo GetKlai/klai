@@ -133,9 +133,6 @@ def mock_orchestrator_env(tmp_path, monkeypatch):
     fake_sysgroups = AsyncMock()
     monkeypatch.setattr(orchestrator, "create_system_groups", fake_sysgroups)
 
-    # Pin session is a no-op
-    monkeypatch.setattr(orchestrator, "pin_session", AsyncMock())
-
     # Secrets
     fake_secrets = MagicMock()
     fake_secrets.encrypt = lambda v: (v or "").encode() if isinstance(v, str) else v

@@ -160,18 +160,33 @@ class TestCallerDependencyBindsActorGuc:
         )
 
 
-class TestDatabaseResetsActorGuc:
-    """The connection-release path in database.py MUST clear the actor GUC
-    so a pooled connection never carries one user's identity into a
-    different user's next request.
+class TestActorGucIsTransactionLocal:
+    """The actor GUC must never outlive its transaction.
+
+    The 2026-08-13 cleanup deleted the connection-release reset that used to
+    clear ``klai.changed_by_user_id``: it never durably landed (the rollback at
+    session close reverted it) and it is unnecessary now that the value is bound
+    with ``is_local=true``. What replaces it is the absence of any session-level
+    write at all — a pooled connection cannot carry one user's identity into a
+    different user's next request because nothing writes it session-level.
     """
 
-    def test_reset_clears_changed_by_user_id(self, database_src: str) -> None:
+    def test_actor_guc_is_bound_transaction_locally(self, database_src: str) -> None:
         assert re.search(
-            r"set_config\('klai\.changed_by_user_id',\s*''\s*,\s*false\)",
+            r"set_config\('klai\.changed_by_user_id',\s*:changed_by_user_id,\s*true\)",
             database_src,
         ), (
-            "database.py _reset_tenant_context must clear "
-            "klai.changed_by_user_id at connection-release. A leaked value "
-            "here would attribute writes to the previous request's user."
+            "database.py must bind klai.changed_by_user_id with is_local=true. "
+            "Without the transaction-local flag the value survives on the pooled "
+            "connection and attributes writes to the previous request's user."
+        )
+
+    def test_database_writes_no_session_level_gucs(self, database_src: str) -> None:
+        """Zero ``is_local=false`` writes may remain in database.py.
+
+        Mirrors the permissions.py tripwire above. The broader repo-wide version
+        of this check lives in tests/test_rls_hygiene.py.
+        """
+        assert not re.search(r"set_config\([^)]*,\s*false\s*\)", database_src), (
+            "database.py must not write session-level (is_local=false) GUCs"
         )

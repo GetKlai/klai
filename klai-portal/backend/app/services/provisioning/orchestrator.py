@@ -31,7 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal, pin_session
+from app.core.database import AsyncSessionLocal
 from app.core.provisioning_names import validate_slug_for_provisioning
 from app.core.system_groups import create_system_groups
 from app.models.portal import PortalOrg, PortalUser
@@ -293,10 +293,10 @@ async def provision_tenant(org_id: int) -> None:
 
 
 async def _provision(org_id: int, db: AsyncSession) -> None:
-    # Pin the connection so session-level set_config('app.current_org_id', ...)
-    # calls from downstream helpers (ensure_default_knowledge_bases,
-    # create_system_groups) stay visible to the INSERTs that follow.
-    await pin_session(db)
+    # No connection pinning: downstream helpers (ensure_default_knowledge_bases,
+    # create_system_groups) bind their tenant scope on the session, and the
+    # session's `after_begin` listener re-applies it transaction-locally on every
+    # transaction — including after each commit.
 
     # Fetch org. This is a plain SELECT (no lock) — the state machine acquires
     # per-transition FOR UPDATE locks as needed.

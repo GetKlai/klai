@@ -7,9 +7,11 @@ alembic/versions/post_deploy_008_rls_tenant_isolation.sql.
 Session helper design mirrors klai-portal/backend/app/core/database.py.
 Key differences for klai-connector:
   - org_id is ``str`` (Zitadel resourceowner / VARCHAR(255)), not ``int``.
-  - No PooledTenantSession subclass (simpler service; no complex auth flow
-    that requires auto-pin at checkout). Helpers call _pin_and_reset_connection
-    explicitly on every session entry.
+  - No AsyncSession subclass (simpler service; no complex auth flow that
+    requires auto-pin at checkout). Helpers call _pin_and_reset_connection
+    explicitly on every session entry. NOTE: klai-portal has since replaced its
+    session-level GUC model with a per-transaction one (an ``after_begin``
+    listener); this service still uses the session-level + reset model.
   - The pool is smaller (pool_size=10, max_overflow=20) — fine for a
     background-sync service.
 

@@ -11,15 +11,15 @@ Root cause: portal-api used to set the RLS GUCs *session-level*
 (``set_config(..., is_local=false)``). ``commit()`` releases the pooled
 connection; the very next statement (the refresh) implicitly checks a
 connection out again with no tenant-context guarantee. A pooled connection
-carries whatever GUC the last COMMITTED transaction on it left behind — the
-cleanup reset in ``_reset_tenant_context`` runs inside a transaction that is
-rolled back at session close, so the reset never durably lands. A connection
+carries whatever GUC the last COMMITTED transaction on it left behind — the old
+cleanup reset ran inside a transaction that is rolled back at session close, so
+it never durably landed (which is why it was deleted). A connection
 polluted with a *different* org's GUC makes the freshly-updated row invisible
 under the policy ``org_id = GUC OR GUC IS NULL`` → refresh finds zero rows →
 500.
 
 Structural fix: tenant context is a property of the TRANSACTION, not the
-connection. The ``after_begin`` listener on ``_SyncPooledTenantSession`` applies
+connection. The ``after_begin`` listener on ``_SyncTenantContextSession`` applies
 all four RLS GUCs transaction-locally (``is_local=true``) from Python-side state
 at the start of every transaction. Pool pollution becomes structurally
 impossible (transaction-local GUCs vanish at commit/rollback) and every
@@ -49,7 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.core import database as db_module
-from app.core.database import PooledTenantSession, set_tenant
+from app.core.database import TenantContextSession, set_tenant
 
 pytestmark = pytest.mark.postgres
 
@@ -176,7 +176,7 @@ def _schema_statements() -> list[str]:
 @pytest_asyncio.fixture
 async def rls_sessionmaker() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     """Throwaway RLS-protected tables plus a session factory bound to a
-    non-superuser role, using the app's real ``PooledTenantSession`` class.
+    non-superuser role, using the app's real ``TenantContextSession`` class.
 
     ``pool_size=1, max_overflow=0`` guarantees every session in a test reuses
     the SAME physical connection — which is what makes pool-pollution
@@ -190,7 +190,7 @@ async def rls_sessionmaker() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
             await conn.execute(text(stmt))
 
     role_engine = create_async_engine(_role_dsn(superuser_dsn), pool_size=1, max_overflow=0)
-    factory = async_sessionmaker(role_engine, class_=PooledTenantSession, expire_on_commit=False)
+    factory = async_sessionmaker(role_engine, class_=TenantContextSession, expire_on_commit=False)
 
     try:
         yield factory
@@ -266,7 +266,7 @@ async def test_tenant_context_leaves_no_durable_pool_pollution(
     must carry NO session-level ``app.current_org_id``.
 
     The assertion reads the GUC over a RAW engine connection, bypassing
-    ``PooledTenantSession`` entirely. Observing through a fresh pooled session
+    ``TenantContextSession`` entirely. Observing through a fresh pooled session
     would be green by construction: its ``__aenter__`` reset clears the GUC
     before the assertion could see it. With ``pool_size=1`` the raw checkout
     returns the exact physical connection the tenant session just used — under
@@ -326,3 +326,49 @@ async def test_cross_org_flag_survives_commit(
 
         second = (await session.execute(select(func.count()).select_from(RlsTxnStrictItem))).scalar()
         assert second == first, f"cross-org visibility regressed after commit: {first} before, {second} after"
+
+
+# ---------------------------------------------------------------------------
+# Test D — sequential tenants on ONE physical connection, no reset machinery
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sequential_tenant_sessions_reuse_one_connection_without_leaking(
+    rls_sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Org 22 must not see org 8's rows on the connection org 8 just released.
+
+    This is the invariant the deleted reset/pin machinery used to claim. With
+    ``pool_size=1, max_overflow=0`` the second session is guaranteed to check out
+    the exact physical connection the first one used, and nothing runs in between
+    — no checkout reset, no cleanup reset, no pin. Isolation is carried entirely
+    by ``after_begin`` re-declaring the context at every BEGIN.
+
+    Both table shapes are asserted because they fail differently:
+      * Cat-A (permissive ``IS NULL`` branch) would leak org-8 rows into org 22's
+        result set — a silent cross-tenant READ.
+      * Cat-D (fail-loud helper) would either leak or raise 42501 depending on
+        which stale value survived.
+    """
+    async with rls_sessionmaker() as session:
+        await set_tenant(session, 8)
+        session.add(RlsTxnTestItem(org_id=8, name="org8-cat-a"))
+        session.add(RlsTxnStrictItem(org_id=8, name="org8-cat-d"))
+        await session.commit()
+
+    async with rls_sessionmaker() as session:
+        await set_tenant(session, 22)
+        session.add(RlsTxnTestItem(org_id=22, name="org22-cat-a"))
+        session.add(RlsTxnStrictItem(org_id=22, name="org22-cat-d"))
+        await session.commit()
+
+        cat_a = (await session.execute(select(RlsTxnTestItem.org_id, RlsTxnTestItem.name))).all()
+        assert [row.org_id for row in cat_a] == [22], f"org 22 saw foreign Cat-A rows: {cat_a}"
+
+        cat_d = (await session.execute(select(RlsTxnStrictItem.org_id, RlsTxnStrictItem.name))).all()
+        assert [row.org_id for row in cat_d] == [22], f"org 22 saw foreign Cat-D rows: {cat_d}"
+
+        # The reads above ran post-commit — i.e. in a transaction that began
+        # after the pooled connection was released and re-acquired.
+        assert await _current_org_guc(session) == "22"
