@@ -49,6 +49,9 @@ const sandbox = {
         LOCAL_CODING_BUNDLE_NAMES: [],
       };
     }
+    if (id === './common/index.cjs' || id === './messages/index.cjs') {
+      return {};
+    }
     if (id === './tools/handlers.cjs') {
       return {};
     }
@@ -61,6 +64,9 @@ const sandbox = {
     }
     if (id === './utils/truncation.cjs') {
       return {};
+    }
+    if (id === './utils/llm.cjs') {
+      return { isGoogleLike: () => false };
     }
     if (id === './utils/events.cjs') {
       return { emitAgentLog() {} };

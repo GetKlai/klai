@@ -61,78 +61,151 @@ const { existsSync, readFileSync, writeFileSync } = require('fs');
 const messageIndexExpr = "process.env.MEILI_MESSAGES_INDEX || 'messages'";
 const convoIndexExpr = "process.env.MEILI_CONVOS_INDEX || 'convos'";
 
-const files = [
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const messageReplacements = [
   {
-    path: '/app/packages/data-schemas/dist/models/message.cjs',
-    required: true,
-    forbidden: [{ label: 'global messages model indexName', pattern: /indexName:\s*['"]messages['"]/ }],
-    replacements: [
-      {
-        label: 'message model indexName',
-        search: /indexName:\s*['"]messages['"]/,
-        replacement: `indexName: ${messageIndexExpr}`,
-        already: new RegExp(`indexName:\\s*${escapeRegExp(messageIndexExpr)}`),
-      },
-    ],
-  },
-  {
-    path: '/app/packages/data-schemas/dist/models/convo.cjs',
-    required: true,
-    forbidden: [{ label: 'global convos model indexName', pattern: /indexName:\s*['"]convos['"]/ }],
-    replacements: [
-      {
-        label: 'conversation model indexName',
-        search: /indexName:\s*['"]convos['"]/,
-        replacement: `indexName: ${convoIndexExpr}`,
-        already: new RegExp(`indexName:\\s*${escapeRegExp(convoIndexExpr)}`),
-      },
-    ],
-  },
-  {
-    path: '/app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs',
-    required: true,
-    forbidden: [
-      { label: 'global messages client index', pattern: /client\.index\(['"]messages['"]\)/ },
-      { label: 'global convos client index', pattern: /client\.index\(['"]convos['"]\)/ },
-    ],
-    replacements: [
-      {
-        label: 'mongoMeili hard-coded messages index',
-        search: /client\.index\(['"]messages['"]\)/g,
-        replacement: `client.index(${messageIndexExpr})`,
-        already: new RegExp(`client\\.index\\(${escapeRegExp(messageIndexExpr)}\\)`),
-      },
-      {
-        label: 'mongoMeili hard-coded convos index',
-        search: /client\.index\(['"]convos['"]\)/g,
-        replacement: `client.index(${convoIndexExpr})`,
-        already: new RegExp(`client\\.index\\(${escapeRegExp(convoIndexExpr)}\\)`),
-      },
-    ],
-  },
-  {
-    path: '/app/api/db/indexSync.js',
-    required: true,
-    forbidden: [
-      { label: 'global messages client index', pattern: /client\.index\(['"]messages['"]\)/ },
-      { label: 'global convos client index', pattern: /client\.index\(['"]convos['"]\)/ },
-    ],
-    replacements: [
-      {
-        label: 'indexSync hard-coded messages index',
-        search: /client\.index\(['"]messages['"]\)/g,
-        replacement: `client.index(${messageIndexExpr})`,
-        already: new RegExp(`client\\.index\\(${escapeRegExp(messageIndexExpr)}\\)`),
-      },
-      {
-        label: 'indexSync hard-coded convos index',
-        search: /client\.index\(['"]convos['"]\)/g,
-        replacement: `client.index(${convoIndexExpr})`,
-        already: new RegExp(`client\\.index\\(${escapeRegExp(convoIndexExpr)}\\)`),
-      },
-    ],
+    label: 'message model indexName',
+    search: /indexName:\s*['"]messages['"]/,
+    replacement: `indexName: ${messageIndexExpr}`,
+    already: new RegExp(`indexName:\\s*${escapeRegExp(messageIndexExpr)}`),
   },
 ];
+const messageForbidden = [
+  { label: 'global messages model indexName', pattern: /indexName:\s*['"]messages['"]/ },
+];
+
+const convoReplacements = [
+  {
+    label: 'conversation model indexName',
+    search: /indexName:\s*['"]convos['"]/,
+    replacement: `indexName: ${convoIndexExpr}`,
+    already: new RegExp(`indexName:\\s*${escapeRegExp(convoIndexExpr)}`),
+  },
+];
+const convoForbidden = [
+  { label: 'global convos model indexName', pattern: /indexName:\s*['"]convos['"]/ },
+];
+
+const mongoMeiliReplacements = [
+  {
+    label: 'mongoMeili hard-coded messages index',
+    search: /client\.index\(['"]messages['"]\)/g,
+    replacement: `client.index(${messageIndexExpr})`,
+    already: new RegExp(`client\\.index\\(${escapeRegExp(messageIndexExpr)}\\)`),
+  },
+  {
+    label: 'mongoMeili hard-coded convos index',
+    search: /client\.index\(['"]convos['"]\)/g,
+    replacement: `client.index(${convoIndexExpr})`,
+    already: new RegExp(`client\\.index\\(${escapeRegExp(convoIndexExpr)}\\)`),
+  },
+];
+const mongoMeiliForbidden = [
+  { label: 'global messages client index', pattern: /client\.index\(['"]messages['"]\)/ },
+  { label: 'global convos client index', pattern: /client\.index\(['"]convos['"]\)/ },
+];
+
+const indexSyncReplacements = [
+  {
+    label: 'indexSync hard-coded messages index',
+    search: /client\.index\(['"]messages['"]\)/g,
+    replacement: `client.index(${messageIndexExpr})`,
+    already: new RegExp(`client\\.index\\(${escapeRegExp(messageIndexExpr)}\\)`),
+  },
+  {
+    label: 'indexSync hard-coded convos index',
+    search: /client\.index\(['"]convos['"]\)/g,
+    replacement: `client.index(${convoIndexExpr})`,
+    already: new RegExp(`client\\.index\\(${escapeRegExp(convoIndexExpr)}\\)`),
+  },
+];
+const indexSyncForbidden = [
+  { label: 'global messages client index', pattern: /client\.index\(['"]messages['"]\)/ },
+  { label: 'global convos client index', pattern: /client\.index\(['"]convos['"]\)/ },
+];
+
+// LibreChat's @librechat/data-schemas package switched its bundler to
+// rolldown between v0.8.6 and v0.8.7: pre-rolldown, the Mongoose model
+// definitions and the mongoMeili plugin lived in three separate files under
+// dist/models/; on v0.8.7 those are inlined into one dist/index.cjs bundle
+// and dist/models/ no longer exists (2026-08-13 incident: the un-updated
+// per-model patch targets threw "required LibreChat Meili patch target is
+// missing" and crashlooped the getklai canary). Both shapes are supported
+// here — not just the current one — because the entrypoint script and the
+// LibreChat image version can be out of lockstep for a window during a
+// rolling upgrade: the bind-mounted entrypoint is synced to the host ahead
+// of the container recreate, and an already-running tenant container on the
+// OLD image can be `docker restart`ed (picking up the new script live)
+// before it gets recreated onto the new image. Try the pre-rolldown
+// per-model shape first, fall back to the bundled shape, and throw if
+// neither is unambiguously present — never guess.
+const legacyModelPaths = {
+  message: '/app/packages/data-schemas/dist/models/message.cjs',
+  convo: '/app/packages/data-schemas/dist/models/convo.cjs',
+  mongoMeili: '/app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs',
+};
+const bundledPath = '/app/packages/data-schemas/dist/index.cjs';
+const indexSyncPath = '/app/api/db/indexSync.js';
+
+const legacyPathList = Object.values(legacyModelPaths);
+const legacyPresent = legacyPathList.filter((p) => existsSync(p));
+const bundledPresent = existsSync(bundledPath);
+
+let files;
+if (legacyPresent.length === legacyPathList.length) {
+  // Pre-rolldown shape (<= v0.8.6): three separate per-model files.
+  files = [
+    {
+      path: legacyModelPaths.message,
+      required: true,
+      replacements: messageReplacements,
+      forbidden: messageForbidden,
+    },
+    {
+      path: legacyModelPaths.convo,
+      required: true,
+      replacements: convoReplacements,
+      forbidden: convoForbidden,
+    },
+    {
+      path: legacyModelPaths.mongoMeili,
+      required: true,
+      replacements: mongoMeiliReplacements,
+      forbidden: mongoMeiliForbidden,
+    },
+  ];
+} else if (legacyPresent.length === 0 && bundledPresent) {
+  // Rolldown-bundled shape (>= v0.8.7): all three patch sites live in the
+  // single dist/index.cjs bundle.
+  files = [
+    {
+      path: bundledPath,
+      required: true,
+      replacements: [...messageReplacements, ...convoReplacements, ...mongoMeiliReplacements],
+      forbidden: [...messageForbidden, ...convoForbidden, ...mongoMeiliForbidden],
+    },
+  ];
+} else if (legacyPresent.length > 0) {
+  throw new Error(
+    `[klai-entrypoint] ambiguous LibreChat data-schemas dist shape: found ${legacyPresent.length}/${legacyPathList.length} pre-rolldown per-model files (missing: ${legacyPathList
+      .filter((p) => !legacyPresent.includes(p))
+      .join(', ')}), bundled ${bundledPath} present=${bundledPresent}; expected either the full pre-rolldown per-model set or the bundled file, not a partial mix`,
+  );
+} else {
+  throw new Error(
+    `[klai-entrypoint] required LibreChat Meili patch target is missing: neither pre-rolldown per-model files (${legacyPathList.join(', ')}) nor bundled ${bundledPath} were found`,
+  );
+}
+
+files.push({
+  path: indexSyncPath,
+  required: true,
+  replacements: indexSyncReplacements,
+  forbidden: indexSyncForbidden,
+});
 
 for (const file of files) {
   if (!existsSync(file.path)) {
@@ -163,10 +236,6 @@ for (const file of files) {
       throw new Error(`[klai-entrypoint] unsafe global Meili reference remains in ${file.path}: ${forbidden.label}`);
     }
   }
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 NODE
 fi
