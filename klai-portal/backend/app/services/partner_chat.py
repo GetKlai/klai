@@ -1281,7 +1281,7 @@ def _sse_error_frame(message: str) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
-def _with_openai_passthrough_metadata(body: dict[str, Any]) -> dict[str, Any]:
+def _with_openai_passthrough_metadata(body: dict[str, Any], *, org_id: int | str | None = None) -> dict[str, Any]:
     """Mark portal-proxied OpenAI-compatible calls so LiteLLM hooks stay transparent.
 
     Also translates the OpenAI-style top-level ``prompt_cache_key`` into
@@ -1289,13 +1289,44 @@ def _with_openai_passthrough_metadata(body: dict[str, Any]) -> dict[str, Any]:
     transformation drops the top-level field under ``drop_params: true``).
     The translation OVERWRITES ``extra_body`` — caller-supplied ``extra_body``
     is never merged or forwarded.
+
+    The cache key is namespaced per tenant (``org:{org_id}:{key}``) before
+    forwarding. All Klai tenants share a single upstream Mistral API key, so
+    forwarding a partner-supplied key verbatim would let two different orgs
+    collide on the same cache entry — a cross-tenant timing/billing oracle
+    (an attacker holding a victim's exact prompt prefix could infer via
+    ``usage.prompt_tokens_details.cached_tokens`` whether it was recently
+    sent by someone else). Namespacing is invisible to partners — they keep
+    sending their own short key. ``org_id=None`` still gets the literal
+    ``org:none:`` prefix — an un-namespaced key is never forwarded.
     """
     forwarded = dict(body)
     forwarded["metadata"] = {"_klai_openai_passthrough": True}
     prompt_cache_key = forwarded.pop("prompt_cache_key", None)
     if prompt_cache_key is not None:
-        forwarded["extra_body"] = {"prompt_cache_key": prompt_cache_key}
+        namespace = org_id if org_id is not None else "none"
+        forwarded["extra_body"] = {"prompt_cache_key": f"org:{namespace}:{prompt_cache_key}"}
     return forwarded
+
+
+def _cache_usage_fields(response_json: Any) -> tuple[int | None, int]:
+    """Extract prompt/cached token counts for cache-usage telemetry.
+
+    Never raises — malformed or missing usage data yields safe defaults so
+    this telemetry-only helper can never break the response to the caller.
+    """
+    try:
+        usage = response_json.get("usage") if isinstance(response_json, dict) else None
+        if not isinstance(usage, dict):
+            return None, 0
+        prompt_tokens = usage.get("prompt_tokens")
+        details = usage.get("prompt_tokens_details")
+        cached_tokens = details.get("cached_tokens") if isinstance(details, dict) else None
+        if not isinstance(cached_tokens, int):
+            cached_tokens = 0
+        return prompt_tokens, cached_tokens
+    except Exception:
+        return None, 0
 
 
 def _openai_passthrough_litellm_key(settings: Settings) -> str:
@@ -1372,7 +1403,7 @@ async def openai_chat_completion_non_streaming(
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 chat_url,
-                json=_with_openai_passthrough_metadata(request_body),
+                json=_with_openai_passthrough_metadata(request_body, org_id=org_id),
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     **get_trace_headers(),
@@ -1381,7 +1412,16 @@ async def openai_chat_completion_non_streaming(
             if 400 <= resp.status_code < 500:
                 return _json_response_from_upstream(resp)
             resp.raise_for_status()
-            return resp.json()
+            response_json = resp.json()
+            prompt_tokens, cached_tokens = _cache_usage_fields(response_json)
+            logger.info(
+                "partner_openai_cache_usage",
+                org_id=org_id,
+                cache_key_present="prompt_cache_key" in request_body,
+                prompt_tokens=prompt_tokens,
+                cached_tokens=cached_tokens,
+            )
+            return response_json
     except httpx.TransportError as exc:
         logger.warning(
             "partner_openai_chat_upstream_unreachable",
@@ -1422,7 +1462,7 @@ async def openai_chat_completion_streaming(
         stream = client.stream(
             "POST",
             chat_url,
-            json=_with_openai_passthrough_metadata(request_body),
+            json=_with_openai_passthrough_metadata(request_body, org_id=org_id),
             headers={
                 "Authorization": f"Bearer {api_key}",
                 **get_trace_headers(),
