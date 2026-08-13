@@ -35,7 +35,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 |---|---|---|
 | `zitadel` | `ghcr.io/zitadel/zitadel:v4.17.0` | OIDC IdP. Bumped 2026-08-13 for the 4.16.x security batch: 2× critical (unauthenticated account takeover via passkey enrollment; account pre-hijacking via forged external-IdP callback) + MFA-bypass + Actions sandbox escape, all patched ≤4.16.2. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
 | `victoriametrics` | `victoriametrics/victoria-metrics:v1.149.0` | Metrics TSDB. Bumped 2026-08-13 (includes the vmrestore path-traversal fix, CVE-2026-61625). |
-| `victorialogs` | `victoriametrics/victoria-logs:v1.52.0` | Log aggregation (replaces Loki). LogsQL syntax differs from LogQL. |
+| `victorialogs` | `victoriametrics/victoria-logs:v1.51.0` | Log aggregation (replaces Loki). LogsQL syntax differs from LogQL. **Pinned back from v1.52.0 (2026-08-13): that image is scratch-based — no `/bin/sh`/`wget` — which breaks our authenticated CMD-SHELL healthcheck (container flips to unhealthy). Rework the healthcheck (sidecar probe or external-only monitoring) before bumping past v1.51.0.** |
 | `cadvisor` | `ghcr.io/google/cadvisor:v0.60.5` | Container metrics. Registry moved from `gcr.io` to `ghcr.io`; verify dashboards that depend on container start/creation timestamps after this bump. |
 | `alloy` | `grafana/alloy:v1.18.1` | Log and metric collection. Config format stable on minor bumps. |
 | `grafana` | `grafana/grafana:13.1.3` | Dashboard UI. v12 → v13 had breaking dashboard JSON changes — verify dashboards after any major bump. |
