@@ -197,7 +197,7 @@ services:
 
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
-    image: ghcr.io/zitadel/zitadel:v4.15.3
+    image: ghcr.io/zitadel/zitadel:v4.17.0
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
