@@ -610,6 +610,164 @@ class TestCharacterizeStartLibrechatContainer:
                 assert labels["klai.tenant_slug"] == tenant_slug
 
 
+class TestStartLibrechatContainerRollback:
+    """Finding 3A (adversarial review 2026-08-13): ``rollback_on_failure``
+    records the running container's image before it is force-removed, and
+    attempts a best-effort restore to that image if the replacement fails to
+    create/boot/pass its OpenID readiness gate. Used only by the fleet
+    regenerate endpoint's recreate path; other callers (initial provisioning,
+    MCP-config-apply) default the flag off and keep their pre-existing
+    behaviour.
+    """
+
+    def _write_lc_files(self, tmp_path: Path, slug: str = "acme") -> None:
+        (tmp_path / "librechat.yaml").write_text("version: 1.0\n")
+        tenant_dir = tmp_path / slug
+        tenant_dir.mkdir(parents=True, exist_ok=True)
+        (tenant_dir / ".env").write_text("MONGO_URI=mongodb://example\nALLOW_IFRAME=true\nJWT_SECRET=keep-me\n")
+        patch_dir = tmp_path / "patches"
+        patch_dir.mkdir(exist_ok=True)
+        for name in ("format.cjs", "share.js", "stream.cjs", "search.cjs", "createStreamServices.ts"):
+            (patch_dir / name).write_text("// patch\n")
+        (tmp_path / "klai-entrypoint.sh").write_text('#!/bin/sh\nexec docker-entrypoint.sh "$@"\n')
+
+    def test_health_gate_failure_triggers_rollback_to_old_image(self, tmp_path):
+        """The replacement fails its readiness gate; the restore recreates
+        with the OLD image tag captured before removal, and succeeds."""
+        from app.services.provisioning import _start_librechat_container
+
+        self._write_lc_files(tmp_path)
+
+        old_container = MagicMock()
+        old_container.image.tags = ["ghcr.io/danny-avila/librechat:v0.8.6"]
+        broken_container = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.containers.get.side_effect = [old_container, broken_container]
+        mock_client.containers.create.return_value = MagicMock()
+
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+            patch(
+                "app.services.provisioning.infrastructure._wait_for_librechat_openid_ready",
+                side_effect=[RuntimeError("boot failed"), None],
+            ) as mock_ready,
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.7"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+
+            # The original failure still propagates -- rollback is best
+            # effort, it never swallows the error that triggered it.
+            with pytest.raises(RuntimeError, match=r"^boot failed$"):
+                _start_librechat_container(
+                    "acme",
+                    "/opt/klai/librechat-data/acme/.env",
+                    rollback_on_failure=True,
+                )
+
+        # Old container recorded + force-removed; the broken replacement is
+        # also force-removed before the rollback recreate attempt.
+        old_container.remove.assert_called_once_with(force=True)
+        broken_container.remove.assert_called_once_with(force=True)
+
+        # create() called twice: once with the new image (failed), once with
+        # the recorded old image (the rollback).
+        assert mock_client.containers.create.call_count == 2
+        first_image = mock_client.containers.create.call_args_list[0].kwargs["image"]
+        second_image = mock_client.containers.create.call_args_list[1].kwargs["image"]
+        assert first_image == "ghcr.io/danny-avila/librechat:v0.8.7"
+        assert second_image == "ghcr.io/danny-avila/librechat:v0.8.6"
+        assert mock_ready.call_count == 2
+
+    def test_rollback_failure_does_not_mask_original_error(self, tmp_path):
+        """Both the initial recreate AND the rollback attempt fail. The
+        exception that propagates out of _start_librechat_container is the
+        ORIGINAL failure, not the rollback's own failure -- and the restore
+        failure is logged, not silently dropped."""
+        from app.services.provisioning import _start_librechat_container
+
+        self._write_lc_files(tmp_path)
+
+        old_container = MagicMock()
+        old_container.image.tags = ["ghcr.io/danny-avila/librechat:v0.8.6"]
+        broken_container = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.containers.get.side_effect = [old_container, broken_container]
+        mock_client.containers.create.return_value = MagicMock()
+
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+            patch(
+                "app.services.provisioning.infrastructure._wait_for_librechat_openid_ready",
+                side_effect=[RuntimeError("boot failed"), RuntimeError("rollback also failed")],
+            ),
+            patch("app.services.provisioning.infrastructure.logger") as mock_logger,
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.7"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+
+            with pytest.raises(RuntimeError, match=r"^boot failed$"):
+                _start_librechat_container(
+                    "acme",
+                    "/opt/klai/librechat-data/acme/.env",
+                    rollback_on_failure=True,
+                )
+
+        assert mock_client.containers.create.call_count == 2
+        error_calls = [
+            call
+            for call in mock_logger.exception.call_args_list
+            if call.args and call.args[0] == "librechat_container_restore_failed"
+        ]
+        assert error_calls, mock_logger.exception.call_args_list
+
+    def test_no_rollback_when_flag_is_off(self, tmp_path):
+        """Default callers (initial provisioning, MCP-config-apply) keep the
+        pre-existing behaviour: no old-image capture, no restore attempt."""
+        from app.services.provisioning import _start_librechat_container
+
+        self._write_lc_files(tmp_path)
+
+        old_container = MagicMock()
+        old_container.image.tags = ["ghcr.io/danny-avila/librechat:v0.8.6"]
+
+        mock_client = MagicMock()
+        mock_client.containers.get.side_effect = [old_container]
+        mock_client.containers.create.return_value = MagicMock()
+
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+            patch(
+                "app.services.provisioning.infrastructure._wait_for_librechat_openid_ready",
+                side_effect=RuntimeError("boot failed"),
+            ),
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.7"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+
+            with pytest.raises(RuntimeError, match="boot failed"):
+                _start_librechat_container("acme", "/opt/klai/librechat-data/acme/.env")
+
+        # No rollback attempt -- create() called exactly once (the failed
+        # attempt), and containers.get() only the one time to find/remove
+        # the pre-existing container.
+        assert mock_client.containers.create.call_count == 1
+        assert mock_client.containers.get.call_count == 1
+
+
 class TestCharacterizeLibrechatOpenidReadiness:
     """Characterization tests for the post-start OpenID readiness gate."""
 

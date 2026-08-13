@@ -494,24 +494,22 @@ def _reload_caddy() -> None:
     caddy.restart(timeout=10)
 
 
-def _start_librechat_container(
+def _create_and_start_librechat_container(
+    client,
+    container_name: str,
     slug: str,
     env_file_host_path: str,
-    mcp_servers: dict | None = None,
+    mcp_servers: dict | None,
+    image: str,
 ) -> None:
-    """Start the LibreChat Docker container for a tenant (synchronous, run in executor)."""
-    _assert_safe_slug(slug)  # REQ-18 (Finding C-3)
-    names = validate_slug_for_provisioning(slug, domain=settings.domain)
-    client = docker.from_env()
-    container_name = names.librechat_container
+    """Create, network-attach, boot and health-gate a tenant's LibreChat container.
 
-    # Remove stale container if it exists (e.g. failed previous provisioning)
-    try:
-        old = client.containers.get(container_name)
-        old.remove(force=True)
-    except docker.errors.NotFound:  # type: ignore[attr-defined]
-        pass
-
+    Pure "create a working container" logic, factored out of
+    `_start_librechat_container` so the rollback path in that function can
+    replay it with a different (previous-known-good) `image`. Raises on any
+    failure, including a failed OpenID readiness gate -- callers decide what
+    to do about a failure (roll back, let it propagate, etc).
+    """
     librechat_host_base = settings.librechat_host_data_path
 
     # Generate per-tenant librechat.yaml by merging base config with tenant MCP servers
@@ -579,7 +577,7 @@ def _start_librechat_container(
     #   all networks pre-attached avoids the disruption entirely.
     #   (2026-05-22 onboarding/chat incident.)
     container = client.containers.create(  # type: ignore[call-overload]  # nosemgrep: docker-arbitrary-container-run
-        image=settings.librechat_image,
+        image=image,
         name=container_name,
         restart_policy={"Name": "unless-stopped"},  # type: ignore[arg-type]
         labels=container_labels,
@@ -603,3 +601,119 @@ def _start_librechat_container(
 
     container.start()
     _wait_for_librechat_openid_ready(client, container_name)
+
+
+def _restore_librechat_container(
+    client,
+    container_name: str,
+    slug: str,
+    env_file_host_path: str,
+    mcp_servers: dict | None,
+    old_image_ref: str,
+) -> None:
+    """Best-effort restore of a tenant's LibreChat container to its previous image.
+
+    Called only after a recreate attempt has already failed its
+    create/boot/readiness gate (see `_start_librechat_container`,
+    `rollback_on_failure=True`). Never raises: a failed restore must not mask
+    the original failure that triggered it -- the caller re-raises that
+    original exception regardless of what happens here. The outcome is
+    logged either way so an operator can see whether the tenant was left
+    running the old image or with no container at all.
+    """
+    logger.warning(
+        "librechat_container_restore_attempt",
+        slug=slug,
+        container=container_name,
+        old_image=old_image_ref,
+    )
+    try:
+        # Remove whatever half-booted container the failed attempt left behind.
+        try:
+            broken = client.containers.get(container_name)
+            broken.remove(force=True)
+        except docker.errors.NotFound:  # type: ignore[attr-defined]
+            pass
+
+        _create_and_start_librechat_container(
+            client,
+            container_name,
+            slug,
+            env_file_host_path,
+            mcp_servers,
+            image=old_image_ref,
+        )
+    except Exception as restore_exc:
+        logger.exception(
+            "librechat_container_restore_failed",
+            slug=slug,
+            container=container_name,
+            old_image=old_image_ref,
+            error=str(restore_exc),
+        )
+        return
+
+    logger.info(
+        "librechat_container_restore_succeeded",
+        slug=slug,
+        container=container_name,
+        old_image=old_image_ref,
+    )
+
+
+def _start_librechat_container(
+    slug: str,
+    env_file_host_path: str,
+    mcp_servers: dict | None = None,
+    *,
+    rollback_on_failure: bool = False,
+) -> None:
+    """Start the LibreChat Docker container for a tenant (synchronous, run in executor).
+
+    `rollback_on_failure` (finding 3A, adversarial review 2026-08-13): when
+    set, the currently-running container's image is recorded BEFORE it is
+    force-removed. If the replacement container then fails to create, boot,
+    or pass its OpenID readiness gate, a best-effort attempt is made to
+    restore the tenant on the previous image so it isn't left with nothing.
+    The restore outcome is logged; the original failure always propagates,
+    restore or no restore. Defaults to off so the initial-provisioning path
+    (no prior container to roll back to) and the MCP-config-apply recreate
+    path keep their existing behaviour unchanged.
+    """
+    _assert_safe_slug(slug)  # REQ-18 (Finding C-3)
+    names = validate_slug_for_provisioning(slug, domain=settings.domain)
+    client = docker.from_env()
+    container_name = names.librechat_container
+
+    # Remove stale container if it exists (e.g. failed previous provisioning).
+    # Record its image first so a failed replacement can be rolled back.
+    old_image_ref: str | None = None
+    try:
+        old = client.containers.get(container_name)
+        if rollback_on_failure:
+            tags = old.image.tags
+            old_image_ref = tags[0] if tags else old.image.id
+        old.remove(force=True)
+    except docker.errors.NotFound:  # type: ignore[attr-defined]
+        pass
+
+    try:
+        _create_and_start_librechat_container(
+            client,
+            container_name,
+            slug,
+            env_file_host_path,
+            mcp_servers,
+            image=settings.librechat_image,
+        )
+    except Exception:
+        if rollback_on_failure and old_image_ref:
+            _restore_librechat_container(
+                client,
+                container_name,
+                slug,
+                env_file_host_path,
+                mcp_servers,
+                old_image_ref,
+            )
+        raise

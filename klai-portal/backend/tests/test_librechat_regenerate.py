@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import docker.errors
 import pytest
+from fastapi import Response
 from redis.exceptions import RedisError
 
 
@@ -113,10 +114,23 @@ async def _regenerate_setup(
     redis_client: MagicMock,
     docker_client: MagicMock,
     base_config_exists: bool = True,
-) -> AsyncIterator[MagicMock]:
-    """Patches every external dep of regenerate_librechat_configs."""
+    generate_yaml: MagicMock | None = None,
+) -> AsyncIterator[tuple[MagicMock, Response]]:
+    """Patches every external dep of regenerate_librechat_configs.
+
+    Yields ``(request, response)`` -- ``response`` is a real ``fastapi.Response``
+    so tests can assert on ``response.status_code`` exactly as FastAPI would
+    set it for a real HTTP call (see finding 3C: fail-loud status on recreate
+    errors).
+
+    ``generate_yaml`` lets a test override config-regeneration (Step 1) per
+    tenant -- e.g. to simulate one tenant's regen failing -- by passing a
+    ``MagicMock(side_effect=...)`` keyed on the ``mcp_servers`` argument.
+    """
     request = MagicMock()
     request.state = MagicMock()
+    request.query_params = {}
+    response = Response()
 
     path_exists = MagicMock(return_value=base_config_exists)
 
@@ -128,12 +142,12 @@ async def _regenerate_setup(
         patch("app.api.internal.Path.write_text", MagicMock(return_value=None)),
         patch(
             "app.services.provisioning.generators._generate_librechat_yaml",
-            MagicMock(return_value="version: 1.3.8\n"),
+            generate_yaml or MagicMock(return_value="version: 1.3.8\n"),
         ),
         patch("app.api.internal.aioredis.Redis", MagicMock(return_value=redis_client)),
         patch("docker.from_env", MagicMock(return_value=docker_client)),
     ):
-        yield request
+        yield request, response
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +168,8 @@ class TestRegenerateUsesScanUnlink:
         )
         docker_client = _docker_client()
 
-        async with _regenerate_setup(orgs, redis_client, docker_client) as request:
-            resp = await internal_mod.regenerate_librechat_configs(request=request, db=db)
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
+            resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
 
         # SCAN with the configured pattern (default "configs:*").
         redis_client.scan_iter.assert_called_once()
@@ -203,8 +217,8 @@ class TestTargetedInvalidationLeavesUnrelatedKeys:
         )
         docker_client = _docker_client()
 
-        async with _regenerate_setup(orgs, redis_client, docker_client) as request:
-            resp = await internal_mod.regenerate_librechat_configs(request=request, db=db)
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
+            resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
 
         # Two configs:* keys unlinked, nothing else.
         unlinked_keys = [k for batch in redis_client._unlinked_calls for k in batch]
@@ -233,8 +247,8 @@ class TestRedisFailureSurfaceAndContinue:
         )
         docker_client = _docker_client()
 
-        async with _regenerate_setup(orgs, redis_client, docker_client) as request:
-            resp = await internal_mod.regenerate_librechat_configs(request=request, db=db)
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
+            resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
 
         # AC-2.4: errors list contains the cache-invalidation prefix.
         assert any(e.startswith("redis-cache-invalidation:") for e in resp.errors), resp.errors
@@ -265,13 +279,19 @@ class TestRestartIsolation:
             restart_raises={"librechat-voys": docker.errors.APIError("500 boom")},
         )
 
-        async with _regenerate_setup(orgs, redis_client, docker_client) as request:
-            resp = await internal_mod.regenerate_librechat_configs(request=request, db=db)
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
+            resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
 
         assert sorted(resp.tenants_updated) == ["acme", "getklai", "voys"]
         assert any(e.startswith("voys:") for e in resp.errors), resp.errors
         assert docker_client.containers.get.call_count == 3
         redis_client.flushall.assert_not_called()
+        # Finding 3E: restart-only mode keeps its pre-existing semantics --
+        # a per-tenant restart failure is reported but does NOT flip the
+        # endpoint to 500 (that fail-loud behaviour is reserved for the
+        # destructive recreate_containers=true path).
+        assert response.status_code == 200
+        assert resp.tenants_skipped == []
 
 
 class TestRecreateMode:
@@ -284,19 +304,21 @@ class TestRecreateMode:
         redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
         docker_client = _docker_client()
 
-        async with _regenerate_setup(orgs, redis_client, docker_client) as request:
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
             request.query_params = {"recreate_containers": "true"}
             with patch(
                 "app.services.provisioning.infrastructure._start_librechat_container",
                 MagicMock(return_value=None),
             ) as start_librechat:
-                resp = await internal_mod.regenerate_librechat_configs(request=request, db=db)
+                resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
 
         assert sorted(resp.tenants_updated) == ["getklai", "voys"]
         assert resp.errors == []
+        assert resp.tenants_skipped == []
+        assert response.status_code == 200
         assert start_librechat.call_count == 2
-        start_librechat.assert_any_call("getklai", "/opt/klai/librechat/getklai/.env", None)
-        start_librechat.assert_any_call("voys", "/opt/klai/librechat/voys/.env", None)
+        start_librechat.assert_any_call("getklai", "/opt/klai/librechat/getklai/.env", None, rollback_on_failure=True)
+        start_librechat.assert_any_call("voys", "/opt/klai/librechat/voys/.env", None, rollback_on_failure=True)
         docker_client.containers.get.assert_not_called()
         redis_client.flushall.assert_not_called()
 
@@ -310,11 +332,126 @@ class TestEmptyTenantList:
         redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
         docker_client = _docker_client()
 
-        async with _regenerate_setup([], redis_client, docker_client) as request:
-            resp = await internal_mod.regenerate_librechat_configs(request=request, db=db)
+        async with _regenerate_setup([], redis_client, docker_client) as (request, response):
+            resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
 
         redis_client.scan_iter.assert_not_called()
         redis_client.unlink.assert_not_called()
         redis_client.flushall.assert_not_called()
         docker_client.containers.get.assert_not_called()
         assert resp.tenants_updated == []
+        assert resp.tenants_skipped == []
+        # No tenants at all is not a failure -- must not be conflated with
+        # "every tenant failed config regeneration" (finding 3E).
+        assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Finding 3 (adversarial review 2026-08-13): recreate mode must abort the
+# fleet loop at the first failure instead of replaying a broken shared
+# image/config against every remaining tenant, and must fail loud (500)
+# instead of a green 200 that hides a crashlooping fleet from CI.
+# ---------------------------------------------------------------------------
+
+
+class TestRecreateModeAbortsOnFirstFailure:
+    @pytest.mark.asyncio
+    async def test_first_tenant_failure_aborts_loop_and_skips_the_rest(self):
+        """AC (finding 3B/3C): first recreate-or-health-gate failure stops the
+        loop. Later tenants are reported as skipped, never attempted. The
+        failing tenant's error is first in ``errors`` (config regen and cache
+        invalidation both succeed here, so nothing precedes it). Response is
+        500.
+        """
+        from app.api import internal as internal_mod
+
+        orgs = [_org("getklai", 1), _org("voys", 2), _org("acme", 3)]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
+            request.query_params = {"recreate_containers": "true"}
+            with patch(
+                "app.services.provisioning.infrastructure._start_librechat_container",
+                MagicMock(side_effect=RuntimeError("boot failed for getklai")),
+            ) as start_librechat:
+                resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        # Only the first tenant was attempted -- the loop aborted before
+        # touching voys or acme.
+        assert start_librechat.call_count == 1
+        start_librechat.assert_called_once_with(
+            "getklai", "/opt/klai/librechat/getklai/.env", None, rollback_on_failure=True
+        )
+
+        assert resp.errors, resp.errors
+        assert resp.errors[0].startswith("getklai:"), resp.errors
+        assert sorted(resp.tenants_skipped) == ["acme", "voys"]
+        # getklai still regenerated its config (Step 1 succeeded); the
+        # failure was in the destructive recreate step.
+        assert sorted(resp.tenants_updated) == ["acme", "getklai", "voys"]
+        assert response.status_code == 500
+
+
+class TestConfigOnlyRegenerationSemantics:
+    """Finding 3E: the non-recreate (config-only) path keeps its pre-existing
+    accumulate-and-report semantics, EXCEPT when every tenant fails config
+    regeneration -- that is always a fail-loud 500 regardless of
+    ``recreate_containers``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_partial_config_regen_failure_stays_200(self):
+        from app.api import internal as internal_mod
+
+        orgs = [_org("getklai", 1, mcp_servers=["ok"]), _org("voys", 2, mcp_servers=["boom"])]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+
+        def _generate(_base_path, mcp_servers):
+            if mcp_servers == ["boom"]:
+                raise RuntimeError("bad mcp config")
+            return "version: 1.3.8\n"
+
+        generate_yaml = MagicMock(side_effect=_generate)
+
+        async with _regenerate_setup(orgs, redis_client, docker_client, generate_yaml=generate_yaml) as (
+            request,
+            response,
+        ):
+            resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        assert resp.tenants_updated == ["getklai"]
+        assert any(e.startswith("voys:") for e in resp.errors), resp.errors
+        assert resp.tenants_skipped == []
+        # Unchanged pre-existing semantics: partial failure still reports 200.
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_total_config_regen_failure_is_500(self):
+        from app.api import internal as internal_mod
+
+        orgs = [_org("getklai", 1, mcp_servers=["boom"]), _org("voys", 2, mcp_servers=["boom"])]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+
+        generate_yaml = MagicMock(side_effect=RuntimeError("base template is broken"))
+
+        async with _regenerate_setup(orgs, redis_client, docker_client, generate_yaml=generate_yaml) as (
+            request,
+            response,
+        ):
+            resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        assert resp.tenants_updated == []
+        assert len(resp.errors) == 2
+        assert resp.tenants_skipped == []
+        # Finding 3E exception: every tenant failed config regen -- fail loud
+        # even though recreate_containers was never requested.
+        assert response.status_code == 500
+        # Cache invalidation / restart never ran -- there was nothing to apply.
+        redis_client.scan_iter.assert_not_called()
+        docker_client.containers.get.assert_not_called()
