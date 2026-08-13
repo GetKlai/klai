@@ -1143,6 +1143,133 @@ async def test_canonical_chat_with_knowledge_disabled_uses_general_passthrough(m
 
 
 @pytest.mark.asyncio
+async def test_canonical_knowledge_path_rejects_response_format():
+    import app.api.partner as partner
+
+    with pytest.raises(HTTPException) as exc:
+        await partner.canonical_chat_completions(
+            http_request=_request(
+                {
+                    "model": "klai-primary",
+                    "messages": [{"role": "user", "content": "Answer from KB"}],
+                    "stream": False,
+                    "knowledge_base_ids": [1],
+                    "response_format": {"type": "json_object"},
+                }
+            ),
+            auth=_auth({"chat": True, "general_chat": True}),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 400
+    assert "response_format" in exc.value.detail["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_canonical_knowledge_path_rejects_tools():
+    import app.api.partner as partner
+
+    with pytest.raises(HTTPException) as exc:
+        await partner.canonical_chat_completions(
+            http_request=_request(
+                {
+                    "model": "klai-primary",
+                    "messages": [{"role": "user", "content": "Answer from KB"}],
+                    "stream": False,
+                    "knowledge": {"enabled": True},
+                    "tools": [{"type": "function", "function": {"name": "lookup"}}],
+                }
+            ),
+            auth=_auth({"chat": True, "general_chat": True}),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 400
+    assert "tools" in exc.value.detail["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_canonical_knowledge_path_rejects_multiple_passthrough_fields_sorted():
+    import app.api.partner as partner
+
+    with pytest.raises(HTTPException) as exc:
+        await partner.canonical_chat_completions(
+            http_request=_request(
+                {
+                    "model": "klai-primary",
+                    "messages": [{"role": "user", "content": "Answer from KB"}],
+                    "stream": False,
+                    "knowledge_base_ids": [1],
+                    "tools": [{"type": "function", "function": {"name": "lookup"}}],
+                    "response_format": {"type": "json_object"},
+                    "tool_choice": "auto",
+                    "parallel_tool_calls": False,
+                    "prompt_cache_key": "cache-key",
+                }
+            ),
+            auth=_auth({"chat": True, "general_chat": True}),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 400
+    message = exc.value.detail["error"]["message"]
+    # Sorted alphabetically and all listed.
+    assert message.index("parallel_tool_calls") < message.index("prompt_cache_key")
+    assert message.index("prompt_cache_key") < message.index("response_format")
+    assert message.index("response_format") < message.index("tool_choice")
+    assert message.index("tool_choice") < message.index("tools")
+
+
+@pytest.mark.asyncio
+async def test_canonical_knowledge_path_without_passthrough_fields_still_works(monkeypatch):
+    import app.api.partner as partner
+
+    knowledge_flow = AsyncMock(return_value={"choices": [{"message": {"content": "rag"}}]})
+    monkeypatch.setattr(partner, "chat_completions", knowledge_flow)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "klai-primary",
+                "messages": [{"role": "user", "content": "Answer from KB"}],
+                "stream": False,
+                "knowledge_base_ids": [1],
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "rag"}}]}
+    knowledge_flow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_canonical_passthrough_with_response_format_is_unaffected_by_knowledge_guard(monkeypatch):
+    import app.api.partner as partner
+
+    forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "Return JSON"}],
+                "response_format": {"type": "json_object"},
+                "stream": False,
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "ok"}}]}
+    sent = forwarded.await_args.args[0]
+    assert sent["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
 async def test_knowledge_chat_still_rejects_klai_large():
     from app.api.partner import ChatCompletionsRequest, chat_completions
 
