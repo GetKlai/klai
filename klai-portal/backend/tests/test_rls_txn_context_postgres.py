@@ -45,6 +45,7 @@ from collections.abc import AsyncIterator
 import pytest
 import pytest_asyncio
 from sqlalchemy import Integer, String, func, select, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -372,3 +373,42 @@ async def test_sequential_tenant_sessions_reuse_one_connection_without_leaking(
         # The reads above ran post-commit — i.e. in a transaction that began
         # after the pooled connection was released and re-acquired.
         assert await _current_org_guc(session) == "22"
+
+
+# ---------------------------------------------------------------------------
+# Test E — cross_org_scope on an aborted transaction surfaces the ORIGINAL error
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cross_org_scope_db_error_surfaces_original_error(
+    rls_sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A database error inside `cross_org_scope` must surface as itself.
+
+    The failing statement aborts the transaction; a naive exit re-apply would
+    then raise 25P02 InFailedSQLTransaction and MASK the diagnostic error
+    (adversarial-review round 2, finding 1). The exit re-apply is best-effort
+    on the exception path, so the original UndefinedTable error propagates.
+    Afterwards the session must be fully usable again under its own tenant.
+    """
+    async with rls_sessionmaker() as session:
+        await set_tenant(session, 8)
+        session.add(RlsTxnTestItem(org_id=8, name="scope-error-probe"))
+        await session.commit()
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            async with db_module.cross_org_scope(session):
+                await session.execute(text("SELECT 1 FROM rls_txn_no_such_table"))
+
+        message = str(excinfo.value)
+        assert "rls_txn_no_such_table" in message, f"original error was masked: {message}"
+        assert "current transaction is aborted" not in message, f"25P02 masked the real error: {message}"
+        assert session.info["cross_org_admin"] is False
+
+        # The session recovers: rollback, then the next transaction runs under
+        # the restored org-8 scope (after_begin re-declares it).
+        await session.rollback()
+        count = (await session.execute(select(func.count()).select_from(RlsTxnTestItem))).scalar()
+        assert count == 1
+        assert await _current_org_guc(session) == "8"

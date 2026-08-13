@@ -582,18 +582,35 @@ async def cross_org_scope(session: AsyncSession) -> AsyncIterator[AsyncSession]:
 
     Safe only because tenant context is transaction-local: the flag lives in
     `session.info` and is applied via `set_config(..., true)`, so no
-    session-level GUC can leak onto the pooled connection. The `finally`
-    clears the flag and re-applies immediately, so the bypass cannot outlive
-    the block even if the body raises.
+    session-level GUC can leak onto the pooled connection. On exit the
+    PREVIOUS flag value is restored (not hardcoded off), so the scope nests
+    correctly and a session that was already cross-org stays cross-org.
+
+    When the body raises, the Python-side flag is restored and the SQL
+    re-apply is BEST-EFFORT: after a database error the transaction is
+    aborted, and any statement there (including the re-apply) raises 25P02
+    InFailedSQLTransaction — letting that propagate would MASK the original
+    error. The suppress hides nothing real: Python-side state is restored
+    either way, the aborted transaction cannot execute any further query, and
+    the next `after_begin` re-declares the restored context. For non-database
+    exceptions the transaction is healthy, so the re-apply succeeds and the
+    bypass ends immediately.
 
     Scope it as tightly as possible — ideally one lookup. Everything inside
     sees ALL tenants' rows.
     """
     _reject_savepoint_mutation(session, "cross_org_scope")
+    info = session.info if isinstance(getattr(session, "info", None), dict) else {}
+    previous = bool(info.get("cross_org_admin"))
     session.info["cross_org_admin"] = True
     await _apply_tenant_context(session)
     try:
         yield session
-    finally:
-        session.info["cross_org_admin"] = False
+    except BaseException:
+        session.info["cross_org_admin"] = previous
+        with contextlib.suppress(Exception):
+            await _apply_tenant_context(session)
+        raise
+    else:
+        session.info["cross_org_admin"] = previous
         await _apply_tenant_context(session)

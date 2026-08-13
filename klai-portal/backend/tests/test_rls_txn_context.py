@@ -332,6 +332,63 @@ async def test_cross_org_scope_clears_flag_on_exception() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cross_org_scope_restores_preexisting_bypass() -> None:
+    """A session that was ALREADY cross-org must stay cross-org after the scope.
+
+    Hardcoding the flag off on exit would silently disable an enclosing
+    cross-org context (adversarial-review round 2, finding 2). Exit restores
+    the previous value instead.
+    """
+    session = _mock_session()
+    session.info["cross_org_admin"] = True
+
+    async with db_module.cross_org_scope(session):
+        assert session.info["cross_org_admin"] is True
+
+    assert session.info["cross_org_admin"] is True
+    _, params = session.execute.await_args.args
+    assert params["cross_org_admin"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_cross_org_scope_nested_inner_exit_keeps_outer_scope() -> None:
+    """An inner scope's exit must not turn off the outer scope's bypass."""
+    session = _mock_session()
+
+    async with db_module.cross_org_scope(session):
+        async with db_module.cross_org_scope(session):
+            assert session.info["cross_org_admin"] is True
+        # Inner exit: outer scope is still active.
+        assert session.info["cross_org_admin"] is True
+
+    assert session.info["cross_org_admin"] is False
+
+
+@pytest.mark.asyncio
+async def test_cross_org_scope_db_error_is_not_masked_by_the_exit_reapply() -> None:
+    """A database error in the body must surface AS ITSELF.
+
+    After a DB error the transaction is aborted; the exit re-apply then raises
+    25P02 InFailedSQLTransaction. Letting that propagate would replace the
+    diagnostic error (adversarial-review round 2, finding 1). The re-apply is
+    best-effort on the exception path: its failure is suppressed, the flag is
+    restored Python-side, and the next after_begin re-declares the context.
+    """
+    session = _mock_session()
+    original = RuntimeError("relation does not exist")
+    aborted = RuntimeError("current transaction is aborted")
+    # Call 1 = entry apply (ok); call 2 = exit re-apply (aborted transaction).
+    session.execute = AsyncMock(side_effect=[None, aborted])
+
+    with pytest.raises(RuntimeError, match="relation does not exist"):
+        async with db_module.cross_org_scope(session):
+            raise original
+
+    assert session.info["cross_org_admin"] is False
+    assert session.execute.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_cross_org_scope_does_not_open_a_new_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """Explicit pool-usage guard: zero calls to the session factory."""
     opened: list[object] = []

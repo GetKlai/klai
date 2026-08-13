@@ -101,7 +101,11 @@ GUCs visible. Three mechanical guards replace it:
 3. Grafana alert `rls-ctx-001-tenant-context-failure`
    (`deploy/grafana/provisioning/alerting/portal-rls-context-rules.yaml`) fires
    on any portal-api log line matching `"Could not refresh instance"`,
-   `"InsufficientPrivilegeError"` or `"42501"` in a 10m window. Baseline is zero.
+   `"InsufficientPrivilegeError"` or `"42501"` in a 10m window. Baseline is
+   zero, but the signatures are indicative, not proof — 42501 also covers
+   unrelated permission failures (missing GRANT, role misconfig) and a refresh
+   failure can be a genuine concurrent delete. Classify before concluding;
+   detection latency is ~5-6 min (`for: 5m`).
 
 `assert_portal_users_rls_ready()` stays in the `main.py` lifespan: the auth
 lookup still runs before `set_tenant`, with an empty `app.current_org_id`, so the
