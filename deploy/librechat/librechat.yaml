@@ -1,4 +1,4 @@
-version: 1.3.12
+version: 1.3.13
 
 cache: true
 
@@ -9,9 +9,33 @@ registration:
 # Stripped-down UI for Klai tenants. Everything non-essential is disabled at
 # config level so new users start with the minimum surface area. Keep the list
 # exhaustive — missing keys fall back to LibreChat defaults (usually `true`),
-# and v0.8.6 has added keys that re-enabled surfaces we intentionally hid in
-# earlier versions (parameters, endpointsMenu, temporaryChat, peoplePicker,
-# fileCitations, marketplace, sidePanel).
+# and every LibreChat version so far has added interface keys that silently
+# re-enable a surface we intended to hide (parameters, temporaryChat,
+# peoplePicker, fileCitations, marketplace were all such cases pre-0.8.7).
+#
+# v0.8.7 bumped the config schema to 1.3.13 and genuinely added
+# contextUsage, contextCost, retainAgentFiles, and sharedLinks to
+# interfaceSchema (verified against the packaged
+# packages/data-provider/src/config.ts in
+# ghcr.io/danny-avila/librechat:v0.8.7, diffed against the same file in
+# :v0.8.6 -- see .claude/rules/klai/platform/librechat.md). autoSubmitFromUrl,
+# buildInfo, and skills were already present in 1.3.12's schema (not new in
+# 0.8.7) but were never explicitly pinned here either -- closed the same gap
+# while auditing. endpointsMenu and sidePanel, listed as disabled in the old
+# 1.3.12 config below this comment, were CONFIRMED STRIPPED from 0.8.7's
+# interfaceSchema entirely (zero references in config.ts) and removed here;
+# setting a key the schema no longer parses is a stale no-op, not a guard.
+#
+# sharedLinks is intentionally NOT set to false like the rest of this list:
+# Klai already relies on shared links being enabled (ALLOW_SHARED_LINKS /
+# ALLOW_SHARED_LINKS_PUBLIC forced true for every tenant in
+# klai-portal/backend/app/services/provisioning/infrastructure.py, plus the
+# dedicated public-share sanitizer in patches/share.js). Upstream's own
+# default for the new sharedLinks key is create/share/public: true, matching
+# our existing intent, so the conservative choice here is to preserve that
+# behaviour explicitly rather than accidentally regress a working feature by
+# blindly defaulting every new key to false. snapshotFiles is a genuinely NEW
+# capability with no pre-0.8.7 equivalent, so it stays false.
 #
 # Reference: https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/interface
 interface:
@@ -21,6 +45,13 @@ interface:
     use: true
     create: false
     share: false
+  # Already enabled pre-0.8.7 via ALLOW_SHARED_LINKS(_PUBLIC) env flags and
+  # the share.js patch; see comment above. snapshotFiles is new -- keep off.
+  sharedLinks:
+    create: true
+    share: true
+    public: true
+    snapshotFiles: false
 
   # Disabled surfaces — keep in this list even if the key appeared in a later
   # LibreChat version; explicit false survives schema evolutions.
@@ -43,6 +74,12 @@ interface:
     roles: false
   marketplace:
     use: false
+  # New in 0.8.7 (1.3.13) -- see comment block above.
+  skills:
+    use: false
+    create: false
+    share: false
+    defaultActiveOnShare: false
   memories: false
   bookmarks: false
   multiConvo: false
@@ -55,11 +92,24 @@ interface:
   # conversation and the composer refuses to render — only "Welkom
   # terug" shows. Confirmed live 2026-05-20 incident.
   modelSelect: true
-  endpointsMenu: false
   parameters: false
-  sidePanel: false
   temporaryChat: false
   artifacts: true
+  # Pre-existing gap (present since >=1.3.12, never pinned): a URL like
+  # ?q=<prompt> auto-submits on load. Off by default in our stripped-down UI.
+  autoSubmitFromUrl: false
+  # Pre-existing gap (present since >=1.3.12, never pinned): version/commit
+  # banner in the UI footer/about panel.
+  buildInfo: false
+  # New in 0.8.7 (1.3.13): context-window usage indicator in the composer.
+  contextUsage: false
+  # New in 0.8.7 (1.3.13): per-message cost display. Upstream already
+  # defaults this to false; pinned explicitly so a future upstream default
+  # change can't silently flip it on.
+  contextCost: false
+  # New in 0.8.7 (1.3.13): retain uploaded agent files after the run
+  # completes instead of the previous ephemeral-only behaviour.
+  retainAgentFiles: false
 
 balance:
   enabled: false

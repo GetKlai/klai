@@ -237,6 +237,98 @@ for (const file of files) {
 NODE
 fi
 
+# SPEC-KB-015: forward thumbs up/down feedback to portal-api for KB quality
+# scoring. Always attempted (like the Meili block above) -- the patch adds
+# the forwarding CODE; whether it actually fires at request time is gated by
+# PORTAL_INTERNAL_URL / PORTAL_INTERNAL_SECRET being configured in messages.js
+# itself. Fail-loud on anchor drift, unlike the old standalone
+# deploy/librechat/entrypoint.sh (removed): a LibreChat upgrade that reshapes
+# the feedback route must not silently boot with forwarding dark again (see
+# the 2026-08-13 review finding -- SPEC-KB-015 was wired nowhere for 5 weeks).
+# If this throws after a LibreChat upgrade: extract the new messages.js
+# (docker run --rm --entrypoint cat <image> /app/api/server/routes/messages.js),
+# find the new insertion point (after updateFeedback's updateMessage call,
+# after any upstream sendFeedbackScore/langfuse call, before res.json), and
+# update the FIND string below IN BOTH this file and klai-entrypoint.sh.
+FEEDBACK_TARGET=/app/api/server/routes/messages.js
+if grep -q "SPEC-KB-015" "$FEEDBACK_TARGET" 2>/dev/null; then
+  echo "[klai-entrypoint] SPEC-KB-015 feedback-forward patch already applied, skipping"
+else
+  node <<'KB_FEEDBACK_NODE'
+const { existsSync, readFileSync, writeFileSync } = require('fs');
+
+const target = '/app/api/server/routes/messages.js';
+if (!existsSync(target)) {
+  throw new Error(`[klai-entrypoint] required SPEC-KB-015 feedback-forward patch target is missing: ${target}`);
+}
+const content = readFileSync(target, 'utf8');
+
+// Unique insertion point: end of updateFeedback's updateMessage call, after
+// LibreChat's own sendFeedbackScore (langfuse) call, just before res.json.
+const FIND = "      { context: 'updateFeedback' },\n    );\n\n    // Best-effort: Assistants messages do not have deterministic AgentRun traces.\n    if (!isAssistantsEndpoint(updatedMessage.endpoint)) {\n      sendFeedbackScore({\n        traceId: traceIdForMessage(messageId),\n        feedback: updatedMessage.feedback,\n        metadata: {\n          messageId: updatedMessage.messageId ?? messageId,\n          parentMessageId: updatedMessage.parentMessageId,\n          conversationId: updatedMessage.conversationId ?? conversationId,\n          sessionId: updatedMessage.conversationId ?? conversationId,\n          userId: req?.user?.id,\n          endpoint: updatedMessage.endpoint,\n          sender: updatedMessage.sender,\n          isCreatedByUser: updatedMessage.isCreatedByUser,\n          tokenCount: updatedMessage.tokenCount,\n        },\n      }).catch((err) => logger.error('[langfuse] feedback score failed:', err));\n    }\n\n    res.json({";
+
+const REPLACE = `      { context: 'updateFeedback' },
+    );
+
+    // Best-effort: Assistants messages do not have deterministic AgentRun traces.
+    if (!isAssistantsEndpoint(updatedMessage.endpoint)) {
+      sendFeedbackScore({
+        traceId: traceIdForMessage(messageId),
+        feedback: updatedMessage.feedback,
+        metadata: {
+          messageId: updatedMessage.messageId ?? messageId,
+          parentMessageId: updatedMessage.parentMessageId,
+          conversationId: updatedMessage.conversationId ?? conversationId,
+          sessionId: updatedMessage.conversationId ?? conversationId,
+          userId: req?.user?.id,
+          endpoint: updatedMessage.endpoint,
+          sender: updatedMessage.sender,
+          isCreatedByUser: updatedMessage.isCreatedByUser,
+          tokenCount: updatedMessage.tokenCount,
+        },
+      }).catch((err) => logger.error('[langfuse] feedback score failed:', err));
+    }
+
+    // SPEC-KB-015: Forward feedback to portal-api for KB quality scoring.
+    // Fire-and-forget (REQ-KB-015-06) -- response is sent immediately below.
+    // Logs on error (REQ-KB-015-07): never surfaces to user, but visible in VictoriaLogs.
+    const portalUrl = process.env.PORTAL_INTERNAL_URL;
+    const portalSecret = process.env.PORTAL_INTERNAL_SECRET;
+    if (portalUrl && portalSecret && feedback) {
+      fetch(\`\${portalUrl}/internal/v1/kb-feedback\`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: \`Bearer \${portalSecret}\`,
+        },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          message_id: messageId,
+          message_created_at:
+            updatedMessage?.createdAt?.toISOString?.() ?? new Date().toISOString(),
+          rating: feedback.rating,
+          tag: feedback.tag ?? null,
+          text: feedback.text ?? null,
+          model_alias: updatedMessage?.model ?? null,
+          librechat_user_id: req.user?.id ?? '',
+          librechat_tenant_id: process.env.KLAI_ORG_SLUG ? \`librechat-\${process.env.KLAI_ORG_SLUG}\` : null,
+        }),
+      }).catch((err) => {
+        // REQ-KB-015-07: never surface to user, but log so failures are visible
+        logger.warn('SPEC-KB-015: kb-feedback forward failed', { error: err?.message });
+      });
+    }
+
+    res.json({`;
+
+if (!content.includes(FIND)) {
+  throw new Error(`[klai-entrypoint] could not apply SPEC-KB-015 feedback-forward patch in ${target}: expected updateFeedback/sendFeedbackScore anchor not found (LibreChat upgrade likely changed messages.js; re-derive FIND against the new image)`);
+}
+
+writeFileSync(target, content.replace(FIND, REPLACE));
+process.stdout.write(`[klai-entrypoint] SPEC-KB-015 feedback-forward patch applied: ${target}\n`);
+KB_FEEDBACK_NODE
+fi
 
 INDEX=/app/client/dist/index.html
 LIGHT_MARKER=klai-force-light

@@ -216,5 +216,13 @@ JINA_API_URL=http://infinity-reranker:7997/v1/rerank
 KLAI_ZITADEL_ORG_ID={zitadel_org_id}
 KLAI_ORG_SLUG={slug}
 KNOWLEDGE_INGEST_SECRET={settings.knowledge_ingest_secret}
+
+# SPEC-KB-015: wire the feedback-forward patch (klai-entrypoint.sh) to
+# portal-api. Same shared secret portal-api validates internal callers
+# against (settings.internal_secret / INTERNAL_SECRET); librechat_tenant_id
+# is derived by the patch from KLAI_ORG_SLUG above, not from LibreChat's JWT
+# user object (LibreChat never populates a tenantId claim there).
+PORTAL_INTERNAL_URL=http://portal-api:8010
+PORTAL_INTERNAL_SECRET={settings.internal_secret}
 {mcp_env_block}
 """
