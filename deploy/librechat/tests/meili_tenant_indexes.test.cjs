@@ -62,14 +62,14 @@ for (const target of [entrypoint, getklaiEntrypoint]) {
   assert.match(target, /\/app\/api\/db\/indexSync\.js/);
 }
 
-assert.match(dockerCompose, /image: getmeili\/meilisearch:v1\.45\.2/);
+assert.match(dockerCompose, /image: getmeili\/meilisearch:v1\.53\.0/);
 assert.match(dockerCompose, /MEILI_DB_PATH: \/meili_data/);
 assert.match(dockerCompose, /MEILI_MASTER_KEY: "\$\{GETKLAI_MEILI_API_KEY:\?set a Meili key scoped to getklai_messages,getklai_convos\}"/);
 assert.match(dockerCompose, /MEILI_MESSAGES_INDEX: getklai_messages/);
 assert.match(dockerCompose, /MEILI_CONVOS_INDEX: getklai_convos/);
 assert.match(dockerCompose, /ghcr\.io\/danny-avila\/librechat:v0\.8\.6/);
 assert.match(dockerCompose, /librechat\/getklai\/entrypoint\.sh:\/klai-entrypoint\.sh:ro/);
-assert.match(devCompose, /image: getmeili\/meilisearch:v1\.45\.2/);
+assert.match(devCompose, /image: getmeili\/meilisearch:v1\.53\.0/);
 assert.match(devCompose, /MEILI_DB_PATH: \/meili_data/);
 
 const missingEnv = spawnSync('sh', [path.join(repoRoot, 'deploy/librechat/klai-entrypoint.sh')], {
