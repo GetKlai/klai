@@ -30,6 +30,12 @@ const formatMediaMessage = ({ message, endpoint, mediaParts }) => {
 	return result;
 };
 const isRecord = (value) => value != null && typeof value === "object";
+const _klaiWarned = /* @__PURE__ */ new Set();
+const warnOnce = (message) => {
+	if (_klaiWarned.has(message)) return;
+	_klaiWarned.add(message);
+	console.warn(`[klai-patch] ${message}`);
+};
 function withMessageRole(message, role) {
 	const roleMessage = message;
 	if (roleMessage.role === role) return roleMessage;
@@ -914,6 +920,10 @@ function ensureThinkingBlockInMessages(messages, _provider, config, runStartInde
 	let lastHumanIndex = -1;
 	for (let k = messages.length - 1; k >= 0; k--) {
 		const m = messages[k];
+		if (!isRecord(m)) {
+			warnOnce("format.ensureThinkingBlockInMessages skipped non-record entry");
+			continue;
+		}
 		if (m instanceof _langchain_core_messages.HumanMessage || "role" in m && m.role === "user") {
 			lastHumanIndex = k;
 			break;
@@ -924,6 +934,12 @@ function ensureThinkingBlockInMessages(messages, _provider, config, runStartInde
 	let i = lastHumanIndex + 1;
 	while (i < messages.length) {
 		const msg = messages[i];
+		if (!isRecord(msg)) {
+			warnOnce("format.ensureThinkingBlockInMessages skipped non-record entry");
+			result.push(msg);
+			i++;
+			continue;
+		}
 		if (!(msg instanceof _langchain_core_messages.AIMessage || msg instanceof _langchain_core_messages.AIMessageChunk || "role" in msg && msg.role === "assistant")) {
 			result.push(msg);
 			i++;

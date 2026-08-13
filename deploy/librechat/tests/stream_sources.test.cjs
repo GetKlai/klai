@@ -221,3 +221,112 @@ assert.equal(toolAggregator.contentParts[1].type, 'tool_call');
 assert.equal(toolAggregator.contentParts[2].text, 'Final answer after tool.');
 
 console.log('OK: LibreChat stream aggregator preserves Klai source metadata.');
+
+// ---------------------------------------------------------------------------
+// Split-marker framing (adversarial review 2026-08-13, finding 1): a
+// klai_sources marker divided across stream chunks must neither leak marker
+// text into the answer nor lose the sources.
+// ---------------------------------------------------------------------------
+const { createKlaiSourcesFramer, findPartialKlaiMarkerStart } = sandbox.exports;
+assert.equal(typeof createKlaiSourcesFramer, 'function');
+assert.equal(typeof findPartialKlaiMarkerStart, 'function');
+
+const fullMarker = `<!-- klai_sources=${marker} -->`;
+const splitBody = `Antwoord. ${fullMarker} En verder.`;
+
+function runAggregator(fragments) {
+  const agg = createContentAggregator();
+  agg.aggregateContent({
+    event: 'on_run_step',
+    data: { id: 'step-split', index: 0, stepDetails: { type: 'message_creation' } },
+  });
+  for (const fragment of fragments) {
+    agg.aggregateContent({
+      event: 'on_message_delta',
+      data: { id: 'step-split', delta: { content: { type: 'text', text: fragment } } },
+    });
+  }
+  return agg.contentParts[0];
+}
+
+// Exhaustive two-fragment sweep: split the message at EVERY position.
+for (let cut = 1; cut < splitBody.length; cut++) {
+  const part = runAggregator([splitBody.slice(0, cut), splitBody.slice(cut)]);
+  assert.equal(
+    part.text,
+    'Antwoord.  En verder.',
+    `aggregated text leaked marker content at cut=${cut}: ${JSON.stringify(part.text)}`,
+  );
+  assert.equal(
+    JSON.stringify(part.sources),
+    JSON.stringify(sources),
+    `sources lost at cut=${cut}`,
+  );
+}
+
+// Three-way split through the base64 body.
+{
+  const a = splitBody.slice(0, 30);
+  const b = splitBody.slice(30, 60);
+  const c = splitBody.slice(60);
+  const part = runAggregator([a, b, c]);
+  assert.equal(part.text, 'Antwoord.  En verder.');
+  assert.equal(JSON.stringify(part.sources), JSON.stringify(sources));
+}
+
+// A stream that ENDS mid-marker must keep the characters as plain text —
+// never swallow user content (the aggregator is the persisted message).
+{
+  const truncated = `Antwoord. ${fullMarker.slice(0, 40)}`;
+  const part = runAggregator(['Antwoord. ', fullMarker.slice(0, 40)]);
+  assert.equal(part.text, truncated, 'truncated marker tail must remain as text');
+  assert.equal(part.sources, undefined);
+}
+
+// A '<' that is NOT a marker prefix must pass through immediately.
+{
+  const part = runAggregator(['a < b en <div> blijven ', 'gewoon staan.']);
+  assert.equal(part.text, 'a < b en <div> blijven gewoon staan.');
+}
+
+// Two interleaved aggregators must not cross-contaminate.
+{
+  const aggA = createContentAggregator();
+  const aggB = createContentAggregator();
+  for (const agg of [aggA, aggB]) {
+    agg.aggregateContent({
+      event: 'on_run_step',
+      data: { id: 's', index: 0, stepDetails: { type: 'message_creation' } },
+    });
+  }
+  aggA.aggregateContent({ event: 'on_message_delta', data: { id: 's', delta: { content: { type: 'text', text: `A. ${fullMarker.slice(0, 25)}` } } } });
+  aggB.aggregateContent({ event: 'on_message_delta', data: { id: 's', delta: { content: { type: 'text', text: 'B zonder marker. ' } } } });
+  aggA.aggregateContent({ event: 'on_message_delta', data: { id: 's', delta: { content: { type: 'text', text: `${fullMarker.slice(25)} klaar.` } } } });
+  aggB.aggregateContent({ event: 'on_message_delta', data: { id: 's', delta: { content: { type: 'text', text: 'B einde.' } } } });
+  assert.equal(aggA.contentParts[0].text, 'A.  klaar.');
+  assert.equal(JSON.stringify(aggA.contentParts[0].sources), JSON.stringify(sources));
+  assert.equal(aggB.contentParts[0].text, 'B zonder marker. B einde.');
+  assert.equal(aggB.contentParts[0].sources, undefined);
+}
+
+// The per-run framer (live-dispatch path): exhaustive sweep as well.
+for (let cut = 1; cut < splitBody.length; cut++) {
+  const framer = createKlaiSourcesFramer();
+  const first = framer.push(splitBody.slice(0, cut));
+  const second = framer.push(splitBody.slice(cut));
+  const emitted = first.text + second.text;
+  const seen = first.sources ?? second.sources;
+  assert.equal(emitted, 'Antwoord.  En verder.', `framer leaked at cut=${cut}: ${JSON.stringify(emitted)}`);
+  assert.equal(JSON.stringify(seen), JSON.stringify(sources), `framer lost sources at cut=${cut}`);
+}
+
+// Framer overflow: a never-closing marker-lookalike longer than the cap is
+// flushed as plain text instead of buffering forever.
+{
+  const framer = createKlaiSourcesFramer();
+  const hugeTail = `<!-- klai_sources=${'A'.repeat(9000)}`;
+  const out = framer.push(`tekst ${hugeTail}`);
+  assert.ok(out.text.includes(hugeTail), 'oversized tail must flush as text');
+}
+
+console.log('OK: klai_sources markers survive arbitrary stream-chunk splits without leaking or losing sources.');
