@@ -848,7 +848,7 @@ services:
       start_period: 30s
 
   victorialogs:
-    image: victoriametrics/victoria-logs:v1.52.0
+    image: victoriametrics/victoria-logs:v1.51.0
     restart: unless-stopped
     volumes:
       - victorialogs-data:/vlogs-data
