@@ -2,7 +2,7 @@
 """Patch the host-mounted getklai LibreChat config in place.
 
 This intentionally does not replace the whole file: the getklai tenant has
-host-local model specs and labels. The canary only needs to pin the v0.8.6
+host-local model specs and labels. The canary only needs to pin the v0.8.7
 config schema version and set an explicit non-default agent capability
 allowlist so Skills/Subagents/Code cannot fall back to upstream
 defaults.
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 
-CONFIG_VERSION = "1.3.12"
+CONFIG_VERSION = "1.3.13"
 CAPABILITY_BLOCK = [
     "  agents:\n",
     "    capabilities:\n",

@@ -38,7 +38,7 @@ endpoints:
 
 assert.equal(execFileSync('python3', [patcher, configPath], { encoding: 'utf8' }).trim(), 'changed');
 const patched = fs.readFileSync(configPath, 'utf8');
-assert.match(patched, /^version: 1\.3\.12$/m);
+assert.match(patched, /^version: 1\.3\.13$/m);
 assert.match(
   patched,
   /endpoints:\n  openAI:\n    disabled: true\n  agents:\n    capabilities:\n      - 'deferred_tools'\n      - 'web_search'\n      - 'artifacts'\n      - 'ocr'\n      - 'tools'\n  custom:/,

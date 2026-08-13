@@ -163,10 +163,55 @@ REPORT
   fi
 }
 
+# Dry-run stage (2026-08-13 review finding 4): validate_runtime_targets above
+# only checks that the runtime patch target FILES still exist in the image.
+# That is not enough -- upstream can keep a file's path stable while
+# reshaping its contents (renamed variable, moved anchor, different quote
+# style), which passes the existence check but breaks the patch. This stage
+# EXECUTES the actual entrypoint transform logic (extracted from
+# klai-entrypoint.sh / getklai/entrypoint.sh, not a second copy of it)
+# against files pulled from the image, so upstream syntax drift is caught
+# here instead of at container boot.
+dry_run_transforms() {
+  local image="$1"
+  local label="$2"
+
+  local tmp
+  tmp=$(mktemp -d)
+
+  local targets="
+/app/packages/data-schemas/dist/models/message.cjs
+/app/packages/data-schemas/dist/models/convo.cjs
+/app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs
+/app/packages/data-schemas/dist/index.cjs
+/app/api/db/indexSync.js
+/app/api/server/routes/messages.js
+"
+  local p dest
+  for p in $targets; do
+    dest="$tmp$p"
+    mkdir -p "$(dirname "$dest")"
+    if ! docker run --rm --entrypoint cat "$image" "$p" >"$dest" 2>/dev/null || [ ! -s "$dest" ]; then
+      rm -f "$dest"
+    fi
+  done
+
+  if ! node "$ROOT_DIR/deploy/librechat/dry-run-transforms.cjs" \
+      "$tmp" \
+      "$ROOT_DIR/deploy/librechat/klai-entrypoint.sh" \
+      "$ROOT_DIR/deploy/librechat/getklai/entrypoint.sh"; then
+    echo "ERROR: $label runtime transform dry-run failed against $image (see DRY-RUN FAIL lines above)" >&2
+    FAIL=1
+  fi
+
+  rm -rf "$tmp"
+}
+
 validate_image_pin "$LIBRECHAT_IMAGE" "Provisioned LibreChat"
 validate_image_pin "$COMPOSE_IMAGE" "librechat-getklai"
 validate_manifest "$MANIFEST" "$LIBRECHAT_IMAGE"
 validate_runtime_targets "$LIBRECHAT_IMAGE" "Provisioned LibreChat"
+dry_run_transforms "$LIBRECHAT_IMAGE" "Provisioned LibreChat"
 
 if [ -f "$GETKLAI_MANIFEST" ]; then
   validate_manifest "$GETKLAI_MANIFEST" "$COMPOSE_IMAGE"
@@ -174,6 +219,7 @@ fi
 
 if [ -n "$COMPOSE_IMAGE" ]; then
   validate_runtime_targets "$COMPOSE_IMAGE" "librechat-getklai"
+  dry_run_transforms "$COMPOSE_IMAGE" "librechat-getklai"
 fi
 
 if [ "$FAIL" -ne 0 ]; then

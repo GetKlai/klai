@@ -385,6 +385,14 @@ services:
       MEILI_MASTER_KEY: "${GETKLAI_MEILI_API_KEY:?set a Meili key scoped to getklai_messages,getklai_convos}"
       MEILI_MESSAGES_INDEX: getklai_messages
       MEILI_CONVOS_INDEX: getklai_convos
+      # SPEC-KB-015: wire the feedback-forward patch (deploy/librechat/getklai/entrypoint.sh)
+      # to portal-api. KLAI_ORG_SLUG lets the patch derive librechat_tenant_id
+      # (matches PortalOrg.librechat_container = "librechat-{slug}" naming,
+      # see klai-portal/backend/app/core/provisioning_names.py) without relying
+      # on a req.user.tenantId claim LibreChat never populates.
+      KLAI_ORG_SLUG: getklai
+      PORTAL_INTERNAL_URL: http://portal-api:8010
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     volumes:
       - ./librechat/getklai/librechat.yaml:/app/librechat.yaml:ro
       - ./librechat/getklai/images:/app/client/public/images
