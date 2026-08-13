@@ -12,6 +12,13 @@ and the contract surfaces in CI before live debugging is needed.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import tempfile
+
+import pytest
+
 from knowledge_ingest.crawl4ai_client import build_crawl_config
 
 
@@ -19,8 +26,7 @@ def test_selector_goes_to_target_elements_not_css_selector() -> None:
     cfg = build_crawl_config(selector="main")
 
     assert cfg.get("target_elements") == ["main"], (
-        "selector must be delivered as target_elements so BFS link discovery "
-        "sees the full DOM"
+        "selector must be delivered as target_elements so BFS link discovery sees the full DOM"
     )
     assert "css_selector" not in cfg, (
         "css_selector shrinks raw HTML before BFS walks the DOM — forbidden "
@@ -46,7 +52,10 @@ def test_no_selector_enables_chrome_stripping() -> None:
         "script",
         "style",
     ]
-    assert "js_code_before_wait" in cfg
+    # Chrome stripping moved into wait_for's one-time prep (crawl4ai >= 0.9
+    # forbids js_code_before_wait on network requests).
+    assert "js_code_before_wait" not in cfg
+    assert "el.remove()" in cfg["wait_for"]
 
 
 def test_selector_with_complex_css_is_passed_as_list() -> None:
@@ -56,3 +65,30 @@ def test_selector_with_complex_css_is_passed_as_list() -> None:
 
     assert cfg["target_elements"] == [".tab-structure article"]
     assert isinstance(cfg["target_elements"], list)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+@pytest.mark.parametrize("selector", [None, "article.main"])
+def test_wait_for_predicate_is_valid_javascript(selector) -> None:
+    """The wait_for prep predicate must stay parseable JS — crawl4ai evaluates
+    it in the page context, and a syntax error silently degrades every crawl."""
+    cfg = build_crawl_config(selector=selector, login_indicator_selector=".login-wall")
+    js = cfg["wait_for"]
+    assert js.startswith("js:")
+    node = shutil.which("node")
+    assert node is not None
+    # A real temp file, not /dev/stdin — node --check on a stdin pipe fails
+    # with ENOENT on Linux CI runners (it reopens /proc/<pid>/fd/pipe:[...]).
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(f"const f = {js[3:]};")
+        path = fh.name
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed argv, test-only syntax check
+            [node, "--check", path],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert proc.returncode == 0, proc.stderr
+    finally:
+        os.unlink(path)

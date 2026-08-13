@@ -31,7 +31,9 @@ class TestBuildCrawlConfigWithLoginIndicator:
 
     def test_no_login_indicator_uses_base_wait(self) -> None:
         cfg = build_crawl_config(selector=None)
-        assert "querySelector" not in cfg["wait_for"]
+        # No negation clause: the wait_for prep block uses querySelectorAll,
+        # but the login-indicator pattern (!document.querySelector) is absent.
+        assert "!document.querySelector(" not in cfg["wait_for"]
 
     def test_login_indicator_negates_wait_for(self) -> None:
         cfg = build_crawl_config(selector=None, login_indicator_selector="#login-form")

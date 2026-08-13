@@ -39,23 +39,57 @@ FetchOutcome = dict[str, Any]
 # JS scripts — single source of truth for content filtering
 # ---------------------------------------------------------------------------
 
-# Injected BEFORE wait_for: strip nav chrome so the word-count condition fires
-# only when article content is present.  Uses semantic selectors only — never
-# class/id substring selectors (see pitfalls/backend.md).
-JS_REMOVE_CHROME = """
-[
-  'nav', 'header', 'footer', 'aside',
-  '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
-  '[role="search"]',
-].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
-"""
+# crawl4ai >= 0.9 rejects ``js_code`` / ``js_code_before_wait`` on every
+# network request (the untrusted-config boundary that fixes CVE-2026-57572),
+# with no trusted-caller escape hatch. ``wait_for`` JS remains allowlisted,
+# so the one-time DOM preparation that used to live in those fields now runs
+# inside the wait_for predicate: the first poll mutates the DOM (guarded by a
+# dataset marker so repeated polling never re-runs it), later polls evaluate
+# readiness after a 300ms settle — preserving the old js_code sleep that let
+# expanded toggles render. If upstream ever locks down wait_for JS too, the
+# fallback is computing these steps server-side from the returned HTML.
 
-# Injected AFTER wait_for: open collapsed toggles (Notion / <details>).
-JS_EXPAND_TOGGLES = """
-document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
-document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
-await new Promise(r => setTimeout(r, 300));
-"""
+# Strip nav chrome so the word-count condition fires only when article
+# content is present. Semantic selectors only — never class/id substring
+# selectors (see pitfalls/backend.md).
+JS_PREP_REMOVE_CHROME = (
+    "['nav','header','footer','aside',"
+    "'[role=\"navigation\"]','[role=\"banner\"]','[role=\"contentinfo\"]',"
+    "'[role=\"complementary\"]','[role=\"search\"]'"
+    "].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));"
+)
+
+# Open collapsed toggles (Notion / <details>) so lazy content renders.
+JS_PREP_EXPAND_TOGGLES = (
+    "document.querySelectorAll('details:not([open])')"
+    ".forEach(d => d.setAttribute('open', ''));"
+    "document.querySelectorAll('.notion-toggle__summary, "
+    '[data-block-type="toggle"] > *:first-child\')'
+    ".forEach(s => s.click());"
+)
+
+
+def build_wait_for(
+    *,
+    strip_chrome: bool,
+    ready_condition: str,
+) -> str:
+    """Compose the crawl4ai ``wait_for`` predicate with one-time DOM prep.
+
+    ``ready_condition`` is a JS boolean expression evaluated on every poll
+    after the prep + 300ms settle. The prep block runs exactly once per page
+    (``data-klai-prep-ts`` marker on <html>).
+    """
+    prep = (JS_PREP_REMOVE_CHROME if strip_chrome else "") + JS_PREP_EXPAND_TOGGLES
+    return (
+        "js:() => {"
+        " const d = document.documentElement.dataset;"
+        " if (!d.klaiPrepTs) { " + prep + " d.klaiPrepTs = String(Date.now()); return false; }"
+        " if (Date.now() - Number(d.klaiPrepTs) < 300) return false;"
+        " return " + ready_condition + ";"
+        " }"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Result dataclass
@@ -189,23 +223,23 @@ def build_crawl_config(
         },
     }
 
-    base_wait = "js:() => document.body.innerText.trim().split(/\\s+/).length > 50"
+    ready_condition = "(document.body.innerText.trim().split(/\\s+/).length > 50)"
     if login_indicator_selector:
         # Escape quotes/backslashes to prevent JS injection from a stored selector.
         selector_escaped = login_indicator_selector.replace("\\", "\\\\").replace("'", "\\'")
         # Negate: page is only "ready" when base condition is met AND the
         # login indicator is NOT present. When the indicator IS present the
         # wait_for times out and crawl4ai returns success=False.
-        base_wait = (
-            "js:() => (document.body.innerText.trim().split(/\\s+/).length > 50) "
-            f"&& !document.querySelector('{selector_escaped}')"
-        )
+        ready_condition += f" && !document.querySelector('{selector_escaped}')"
 
     params: dict[str, Any] = {
         "cache_mode": "bypass",
         "word_count_threshold": 10,
-        "wait_for": base_wait,
-        "js_code": JS_EXPAND_TOGGLES,
+        # Chrome stripping runs inside wait_for's one-time prep (0.9's
+        # untrusted-config boundary forbids js_code_before_wait), and only in
+        # the no-selector pipeline — with a selector the caller vouches for
+        # the content scope, matching the old trusted-pipeline behaviour.
+        "wait_for": build_wait_for(strip_chrome=selector is None, ready_condition=ready_condition),
         "remove_consent_popups": True,
         "remove_overlay_elements": True,
         "page_timeout": 30000,
@@ -223,7 +257,7 @@ def build_crawl_config(
         params["target_elements"] = [selector]
         params["excluded_tags"] = []
     else:
-        params["js_code_before_wait"] = JS_REMOVE_CHROME
+        # Chrome stripping itself lives in wait_for's prep (see build_wait_for).
         params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]
 
     return params
@@ -1040,8 +1074,8 @@ def _relax_seed_crawl_config(crawler_config: dict[str, Any]) -> dict[str, Any]:
     relaxed = copy.deepcopy(crawler_config)
     # Some personal/portfolio sites put real content in <header>. If strict
     # chrome stripping leaves no visible text, retry the seed before treating
-    # the page as anti-bot.
-    relaxed.pop("js_code_before_wait", None)
+    # the page as anti-bot. Chrome stripping lives inside wait_for's prep, so
+    # dropping wait_for drops the stripping with it.
     relaxed.pop("wait_for", None)
     if relaxed.get("excluded_tags"):
         relaxed["excluded_tags"] = ["script", "style"]
@@ -1998,9 +2032,20 @@ async def crawl_dom_summary(url: str) -> list[dict] | None:
 })();
 """
 
+    # 0.9's untrusted-config boundary forbids js_code, so the summary
+    # injection rides in the wait_for predicate: wait for load-complete,
+    # inject the <pre> once, and report ready when it exists (matching the
+    # old js_code-after-load timing).
+    inject_wait = (
+        "js:() => {"
+        " if (document.readyState !== 'complete') return false;"
+        " if (!document.getElementById('__klai_dom_summary__')) { " + dom_js + " return false; }"
+        " return true;"
+        " }"
+    )
     config: dict[str, Any] = {
         "cache_mode": "bypass",
-        "js_code": dom_js,
+        "wait_for": inject_wait,
         "css_selector": "#__klai_dom_summary__",
         "word_count_threshold": 0,
         "page_timeout": 30000,
