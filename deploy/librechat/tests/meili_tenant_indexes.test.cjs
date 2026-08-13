@@ -51,6 +51,19 @@ assert.match(entrypoint, /client\\\.index\\\(\['"\]messages\['"\]\\\)/);
 assert.match(entrypoint, /process\.env\.MEILI_MESSAGES_INDEX \|\| 'messages'/);
 assert.match(entrypoint, /process\.env\.MEILI_CONVOS_INDEX \|\| 'convos'/);
 
+// v0.8.7 rolldown-bundled shape support (2026-08-13 retarget): the entrypoint
+// must know about the single-file bundle AND fail loud (not silently guess)
+// when neither the pre-rolldown per-model files nor the bundle are present,
+// or when only some of the three pre-rolldown files are present.
+assert.match(entrypoint, /\/app\/packages\/data-schemas\/dist\/index\.cjs/);
+assert.match(entrypoint, /legacyPresent\.length === legacyPathList\.length/);
+assert.match(entrypoint, /legacyPresent\.length === 0 && bundledPresent/);
+assert.match(entrypoint, /ambiguous LibreChat data-schemas dist shape/);
+assert.match(
+  entrypoint,
+  /required LibreChat Meili patch target is missing: neither pre-rolldown per-model files/,
+);
+
 for (const target of [entrypoint, getklaiEntrypoint]) {
   assert.match(target, /MEILI_MESSAGES_INDEX/);
   assert.match(target, /MEILI_CONVOS_INDEX/);
@@ -60,6 +73,8 @@ for (const target of [entrypoint, getklaiEntrypoint]) {
   assert.match(target, /\/app\/packages\/data-schemas\/dist\/models\/convo\.cjs/);
   assert.match(target, /\/app\/packages\/data-schemas\/dist\/models\/plugins\/mongoMeili\.cjs/);
   assert.match(target, /\/app\/api\/db\/indexSync\.js/);
+  assert.match(target, /\/app\/packages\/data-schemas\/dist\/index\.cjs/);
+  assert.match(target, /ambiguous LibreChat data-schemas dist shape/);
 }
 
 assert.match(dockerCompose, /image: getmeili\/meilisearch:v1\.53\.0/);
@@ -82,6 +97,20 @@ assert.match(missingEnv.stderr, /SEARCH=true requires MEILI_MESSAGES_INDEX and M
 
 const meiliPatchBlock = entrypoint.match(/node <<'NODE'\n([\s\S]*?)\nNODE\nfi/)[1];
 
+// All runtime paths the patch block can reference, across both LibreChat
+// data-schemas shapes (pre-rolldown per-model files and the v0.8.7+
+// rolldown-bundled dist/index.cjs), plus the shape-independent indexSync.js
+// target. runMeiliPatch remaps every one of these into a tmp dir so the
+// script's existsSync()-based shape detection sees exactly the fixtures the
+// test provided — nothing more.
+const ALL_RUNTIME_PATHS = [
+  '/app/packages/data-schemas/dist/models/message.cjs',
+  '/app/packages/data-schemas/dist/models/convo.cjs',
+  '/app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs',
+  '/app/packages/data-schemas/dist/index.cjs',
+  '/app/api/db/indexSync.js',
+];
+
 function runMeiliPatch(fixtures) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'klai-meili-entrypoint-'));
   for (const [filePath, content] of Object.entries(fixtures)) {
@@ -91,12 +120,7 @@ function runMeiliPatch(fixtures) {
   }
 
   let script = meiliPatchBlock;
-  for (const runtimePath of [
-    '/app/packages/data-schemas/dist/models/message.cjs',
-    '/app/packages/data-schemas/dist/models/convo.cjs',
-    '/app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs',
-    '/app/api/db/indexSync.js',
-  ]) {
+  for (const runtimePath of ALL_RUNTIME_PATHS) {
     script = script.replaceAll(runtimePath, path.join(tmp, runtimePath.slice(1)));
   }
 
@@ -106,25 +130,166 @@ function runMeiliPatch(fixtures) {
   };
 }
 
-const patched = runMeiliPatch({
+// --- Pre-rolldown shape (<= v0.8.6): three separate per-model files. ---
+
+const legacyPatched = runMeiliPatch({
   'app/packages/data-schemas/dist/models/message.cjs': "module.exports = { indexName: 'messages' };\n",
   'app/packages/data-schemas/dist/models/convo.cjs': "module.exports = { indexName: 'convos' };\n",
   'app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs': "client.index('messages');\nclient.index('convos');\n",
   'app/api/db/indexSync.js': "client.index('messages');\nclient.index('convos');\n",
 });
-assert.equal(patched.result.status, 0, patched.result.stderr);
+assert.equal(legacyPatched.result.status, 0, legacyPatched.result.stderr);
 assert.doesNotMatch(
-  fs.readFileSync(path.join(patched.tmp, 'app/api/db/indexSync.js'), 'utf8'),
+  fs.readFileSync(path.join(legacyPatched.tmp, 'app/api/db/indexSync.js'), 'utf8'),
   /client\.index\(['"](messages|convos)['"]\)/,
 );
+assert.match(
+  fs.readFileSync(
+    path.join(legacyPatched.tmp, 'app/packages/data-schemas/dist/models/message.cjs'),
+    'utf8',
+  ),
+  /indexName: process\.env\.MEILI_MESSAGES_INDEX \|\| 'messages'/,
+);
 
-const mixed = runMeiliPatch({
+// Re-running against already-patched legacy fixtures must be a no-op (idempotent).
+const legacyRerun = runMeiliPatch({
+  'app/packages/data-schemas/dist/models/message.cjs': fs.readFileSync(
+    path.join(legacyPatched.tmp, 'app/packages/data-schemas/dist/models/message.cjs'),
+    'utf8',
+  ),
+  'app/packages/data-schemas/dist/models/convo.cjs': fs.readFileSync(
+    path.join(legacyPatched.tmp, 'app/packages/data-schemas/dist/models/convo.cjs'),
+    'utf8',
+  ),
+  'app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs': fs.readFileSync(
+    path.join(legacyPatched.tmp, 'app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs'),
+    'utf8',
+  ),
+  'app/api/db/indexSync.js': fs.readFileSync(
+    path.join(legacyPatched.tmp, 'app/api/db/indexSync.js'),
+    'utf8',
+  ),
+});
+assert.equal(legacyRerun.result.status, 0, legacyRerun.result.stderr);
+assert.equal(legacyRerun.result.stdout, '');
+
+const legacyMixed = runMeiliPatch({
   'app/packages/data-schemas/dist/models/message.cjs': "module.exports = { indexName: process.env.MEILI_MESSAGES_INDEX || 'messages' };\n",
   'app/packages/data-schemas/dist/models/convo.cjs': "module.exports = { indexName: process.env.MEILI_CONVOS_INDEX || 'convos' };\n",
   'app/packages/data-schemas/dist/models/plugins/mongoMeili.cjs': "client.index(process.env.MEILI_MESSAGES_INDEX || 'messages');\nclient.index('messages');\nclient.index('convos');\n",
   'app/api/db/indexSync.js': "client.index(process.env.MEILI_MESSAGES_INDEX || 'messages');\nclient.index('messages');\nclient.index('convos');\n",
 });
-assert.notEqual(mixed.result.status, 0);
-assert.match(mixed.result.stderr, /unsafe global Meili reference remains/);
+assert.notEqual(legacyMixed.result.status, 0);
+assert.match(legacyMixed.result.stderr, /unsafe global Meili reference remains/);
 
-console.log('OK: LibreChat Meili search is wired to tenant-scoped indexes.');
+// --- Rolldown-bundled shape (>= v0.8.7): single dist/index.cjs. ---
+// Fixture mirrors the real shape confirmed against
+// ghcr.io/danny-avila/librechat:v0.8.7 (double-quoted indexName/client.index
+// call sites; two client.index('convos') call sites, one client.index('messages')).
+
+const BUNDLED_FIXTURE = `
+function mongoMeili(schema, options) {
+	const { indexName } = options;
+	const index = client.index(indexName);
+	schema.pre("deleteMany", async function (next) {
+		const convoIndex = client.index("convos");
+		const messageIndex = client.index("messages");
+	});
+	schema.post("findOneAndUpdate", async function (doc, next) {
+		meiliDoc = await client.index("convos").getDocument(doc.conversationId);
+	});
+}
+function createConversationModel(mongoose) {
+	convoSchema.plugin(mongoMeili, {
+		indexName: "convos",
+		primaryKey: "conversationId"
+	});
+}
+function createMessageModel(mongoose) {
+	messageSchema.plugin(mongoMeili, {
+		indexName: "messages",
+		primaryKey: "messageId"
+	});
+}
+`;
+
+const bundledPatched = runMeiliPatch({
+  'app/packages/data-schemas/dist/index.cjs': BUNDLED_FIXTURE,
+  'app/api/db/indexSync.js': "client.index('messages');\nclient.index('convos');\n",
+});
+assert.equal(bundledPatched.result.status, 0, bundledPatched.result.stderr);
+const bundledPatchedContent = fs.readFileSync(
+  path.join(bundledPatched.tmp, 'app/packages/data-schemas/dist/index.cjs'),
+  'utf8',
+);
+assert.doesNotMatch(bundledPatchedContent, /indexName: "messages"/);
+assert.doesNotMatch(bundledPatchedContent, /indexName: "convos"/);
+assert.doesNotMatch(bundledPatchedContent, /client\.index\("messages"\)/);
+assert.doesNotMatch(bundledPatchedContent, /client\.index\("convos"\)/);
+assert.match(bundledPatchedContent, /indexName: process\.env\.MEILI_MESSAGES_INDEX \|\| 'messages'/);
+assert.match(bundledPatchedContent, /indexName: process\.env\.MEILI_CONVOS_INDEX \|\| 'convos'/);
+// mongoMeili's deleteMany hook has 2 client.index('convos') call sites plus
+// findOneAndUpdate's — all three must be rewritten (global-flag replace).
+assert.equal(
+  (bundledPatchedContent.match(/client\.index\(process\.env\.MEILI_CONVOS_INDEX \|\| 'convos'\)/g) || [])
+    .length,
+  2,
+);
+assert.match(
+  bundledPatchedContent,
+  /client\.index\(process\.env\.MEILI_MESSAGES_INDEX \|\| 'messages'\)/,
+);
+
+// Re-running against already-patched bundled fixture must be a no-op (idempotent).
+const bundledRerun = runMeiliPatch({
+  'app/packages/data-schemas/dist/index.cjs': bundledPatchedContent,
+  'app/api/db/indexSync.js': fs.readFileSync(
+    path.join(bundledPatched.tmp, 'app/api/db/indexSync.js'),
+    'utf8',
+  ),
+});
+assert.equal(bundledRerun.result.status, 0, bundledRerun.result.stderr);
+assert.equal(bundledRerun.result.stdout, '');
+
+const bundledMixed = runMeiliPatch({
+  'app/packages/data-schemas/dist/index.cjs': BUNDLED_FIXTURE.replace(
+    'client.index("messages");',
+    "client.index(process.env.MEILI_MESSAGES_INDEX || 'messages');\n\t\tclient.index(\"messages\");",
+  ),
+  'app/api/db/indexSync.js': "client.index('messages');\nclient.index('convos');\n",
+});
+assert.notEqual(bundledMixed.result.status, 0);
+assert.match(bundledMixed.result.stderr, /unsafe global Meili reference remains/);
+
+// --- Fail-loud: neither shape present. ---
+
+const missingShape = runMeiliPatch({
+  'app/api/db/indexSync.js': "client.index('messages');\nclient.index('convos');\n",
+});
+assert.notEqual(missingShape.result.status, 0);
+assert.match(
+  missingShape.result.stderr,
+  /required LibreChat Meili patch target is missing: neither pre-rolldown per-model files/,
+);
+
+// --- Fail-loud: ambiguous partial legacy shape (some but not all per-model files). ---
+
+const partialShape = runMeiliPatch({
+  'app/packages/data-schemas/dist/models/message.cjs': "module.exports = { indexName: 'messages' };\n",
+  'app/api/db/indexSync.js': "client.index('messages');\nclient.index('convos');\n",
+});
+assert.notEqual(partialShape.result.status, 0);
+assert.match(partialShape.result.stderr, /ambiguous LibreChat data-schemas dist shape/);
+
+// --- Fail-loud: indexSync.js missing regardless of which model shape is present. ---
+
+const missingIndexSync = runMeiliPatch({
+  'app/packages/data-schemas/dist/index.cjs': BUNDLED_FIXTURE,
+});
+assert.notEqual(missingIndexSync.result.status, 0);
+assert.match(
+  missingIndexSync.result.stderr,
+  /required LibreChat Meili patch target is missing: .*indexSync\.js/,
+);
+
+console.log('OK: LibreChat Meili search is wired to tenant-scoped indexes across both data-schemas shapes.');
