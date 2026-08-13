@@ -23,7 +23,7 @@ from klai_image_storage import ImageStore, download_and_upload_crawl_images
 
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
-from knowledge_ingest.crawl4ai_client import CrawlResult, crawl_site
+from knowledge_ingest.crawl4ai_client import CrawlResult, _canonicalise_url, crawl_site
 from knowledge_ingest.models import IngestRequest
 from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
 from knowledge_ingest.utils.auth_wall_detector import (
@@ -339,10 +339,18 @@ async def run_crawl_job(
     canary_url: str | None = None,
     canary_fingerprint: str | None = None,
     connector_id: str | None = None,
+    discovery_seed_url: str | None = None,
 ) -> None:
     """
     Crawl a website and ingest each page into the knowledge pipeline.
     Updates knowledge.crawl_jobs progress as pages are processed.
+
+    ``discovery_seed_url`` is a known-good interior page (typically validated
+    in the connector preview). When the crawl from ``start_url`` yields no
+    ingestable pages — a client-rendered homepage/hub whose links the crawler
+    can't follow — the crawl retries from this seed instead. The domain scope
+    still comes from the seed's host (same site), so the same
+    include/exclude patterns apply and nothing outside the site is reached.
 
     Seeds the crawl with start_url + sitemap.xml, then lets crawl_site's
     Klai-owned frontier schedule same-domain links to max_depth.
@@ -387,6 +395,42 @@ async def run_crawl_job(
             login_indicator_selector=login_indicator_selector,
             cookies=cookies,
         )
+
+        # Dead-entry-point fallback. A client-rendered homepage/hub can yield
+        # zero ingestable pages because the crawler can't follow its links
+        # (they arrive as unrendered template tokens). When that happens and
+        # the operator validated a specific interior page in the preview, seed
+        # the crawl from there instead — its links DO render, so BFS discovers
+        # the rest of the site. Only triggered on a genuinely empty primary
+        # crawl, so healthy sites pay nothing.
+        if (
+            not results
+            and discovery_seed_url
+            and _canonicalise_url(discovery_seed_url) != _canonicalise_url(start_url)
+        ):
+            logger.info(
+                "crawl_retry_from_discovery_seed",
+                job_id=job_id,
+                start_url=start_url,
+                discovery_seed_url=discovery_seed_url,
+            )
+            results, fetch_outcomes = await crawl_site(
+                start_url=discovery_seed_url,
+                selector=content_selector,
+                max_depth=max_depth,
+                max_pages=max_pages,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
+                login_indicator_selector=login_indicator_selector,
+                cookies=cookies,
+            )
+            logger.info(
+                "crawl_discovery_seed_result",
+                job_id=job_id,
+                discovery_seed_url=discovery_seed_url,
+                pages=len(results),
+            )
+
         crawl_outcome_warning = _build_crawl_outcome_warning(
             fetch_outcomes,
             max_pages=max_pages,
@@ -504,12 +548,15 @@ async def run_crawl_job(
         elif auth_wall_pages and (cookies or login_indicator_selector):
             terminal_status = "failed_partial"
             summary_json = json.dumps(
-                _attach_crawl_warning({
-                    "reason": AUTH_WALL_DETECTED_REASON,
-                    "login_walls_skipped": len(auth_wall_pages),
-                    "sample_urls": auth_wall_pages[:10],
-                    "suggestion": _AUTH_WALL_WITH_AUTH_SUGGESTION,
-                }, crawl_outcome_warning)
+                _attach_crawl_warning(
+                    {
+                        "reason": AUTH_WALL_DETECTED_REASON,
+                        "login_walls_skipped": len(auth_wall_pages),
+                        "sample_urls": auth_wall_pages[:10],
+                        "suggestion": _AUTH_WALL_WITH_AUTH_SUGGESTION,
+                    },
+                    crawl_outcome_warning,
+                )
             )
             await conn.execute(
                 "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
@@ -537,10 +584,13 @@ async def run_crawl_job(
         elif auth_wall_pages and pages_done == 0:
             terminal_status = "failed_partial"
             summary_json = json.dumps(
-                _attach_crawl_warning({
-                    "login_walls_skipped": len(auth_wall_pages),
-                    "sample_urls": auth_wall_pages[:10],
-                }, crawl_outcome_warning)
+                _attach_crawl_warning(
+                    {
+                        "login_walls_skipped": len(auth_wall_pages),
+                        "sample_urls": auth_wall_pages[:10],
+                    },
+                    crawl_outcome_warning,
+                )
             )
             await conn.execute(
                 "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
@@ -553,10 +603,13 @@ async def run_crawl_job(
         elif auth_wall_pages:
             terminal_status = "completed"
             summary_json = json.dumps(
-                _attach_crawl_warning({
-                    "login_walls_skipped": len(auth_wall_pages),
-                    "sample_urls": auth_wall_pages[:10],
-                }, crawl_outcome_warning)
+                _attach_crawl_warning(
+                    {
+                        "login_walls_skipped": len(auth_wall_pages),
+                        "sample_urls": auth_wall_pages[:10],
+                    },
+                    crawl_outcome_warning,
+                )
             )
             await conn.execute(
                 "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "

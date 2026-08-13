@@ -97,10 +97,15 @@ def test_thin_hub_seed_is_success_when_site_sample_has_usable_pages(
     assert "3" in body["classification_reason"]
 
 
-def test_thin_seed_stays_blocked_when_site_sample_is_also_thin(
+def test_thin_seed_and_thin_sample_guides_to_specific_url(
     client: TestClient,
 ) -> None:
-    """A genuinely empty site must still surface the actionable classification."""
+    """Entry page empty AND nothing usable behind it → a dead-end entry point.
+
+    Rather than the cryptic ``selector_returns_empty``, the user gets
+    ``entry_point_empty`` with a reason telling them to paste a specific
+    deeper URL to crawl outward from.
+    """
     sample = [_page("https://example.com/a", words=10)]
     with (
         patch(
@@ -117,8 +122,46 @@ def test_thin_seed_stays_blocked_when_site_sample_is_also_thin(
             json={"url": "https://example.com/app/main"},
         )
     body = resp.json()
-    assert body["classification"] == "selector_returns_empty", body
+    assert body["classification"] == "entry_point_empty", body
     assert body["sample_pages_usable"] == 0
+    # The reason must actually guide: mention a specific URL.
+    assert "specific" in (body["classification_reason"] or "").lower()
+
+
+def test_selector_required_seed_is_not_relabelled_entry_point_empty(
+    client: TestClient,
+) -> None:
+    """``selector_required`` means the page HAS content but is nav-heavy — the
+    fix is a selector, not a different URL. It must not be turned into the
+    entry-point-empty guidance even when the sample finds nothing usable."""
+    nav_md = "[Home](/h) [About](/a) [Contact](/c) [Docs](/d) [Blog](/b) " * 8
+    nav_heavy = CrawlResult(
+        url="https://example.com/app/main",
+        fit_markdown=nav_md,
+        raw_markdown=nav_md,
+        html=_HUB_HTML,
+        word_count=200,  # over the min, but mostly links → selector_required
+        success=True,
+        metadata={"status_code": 200},
+        response_headers={},
+    )
+    thin_sample = [_page("https://example.com/a", words=10)]
+    with (
+        patch(
+            "knowledge_ingest.routes.crawl.crawl_page",
+            new=AsyncMock(return_value=nav_heavy),
+        ),
+        patch(
+            "knowledge_ingest.routes.crawl.sample_linked_pages",
+            new=AsyncMock(return_value=_as_sample(thin_sample)),
+        ),
+    ):
+        resp = client.post(
+            "/ingest/v1/crawl/preview",
+            json={"url": "https://example.com/app/main"},
+        )
+    body = resp.json()
+    assert body["classification"] == "selector_required", body
 
 
 def test_auth_wall_seed_never_triggers_site_sample(client: TestClient) -> None:

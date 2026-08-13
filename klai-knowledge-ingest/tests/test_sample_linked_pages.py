@@ -84,6 +84,49 @@ def test_candidates_respect_the_limit() -> None:
     assert len(_sample_candidates(seed, base_domain="example.com", limit=5)) == 5
 
 
+def test_candidates_drop_unrendered_template_urls() -> None:
+    """A client-rendered site whose framework never boots leaves ``{{...}}``
+    tokens in its hrefs. Those are unfetchable — sampling them would burn the
+    whole time budget for nothing (support.ascendcloud.com, 2026-08-12)."""
+    seed = _seed(
+        "https://example.com/euf/themes/standard/{{item.URL}}",
+        "https://example.com/euf/themes/standard/{{item.SeoTitle}}",
+        "https://example.com/app/articles/detail/a_id/16781",
+    )
+    candidates = _sample_candidates(seed, base_domain="example.com", limit=5)
+    assert candidates == ["https://example.com/app/articles/detail/a_id/16781"]
+
+
+def test_all_template_urls_yield_no_candidates() -> None:
+    """The full ascendcloud base-URL shape: every link is a template token, so
+    there is nothing to sample and the caller must not issue a bulk request."""
+    seed = _seed(
+        "https://example.com/euf/themes/standard/{{item.URL}}",
+        "https://example.com/euf/themes/standard/{{item.SeoTitle}}",
+        "https://example.com/euf/themes/standard/{{selectedLanguage.text}}",
+    )
+    assert _sample_candidates(seed, base_domain="example.com", limit=5) == []
+
+
+def test_percent_encoded_braces_are_kept() -> None:
+    """A correctly percent-encoded URL is valid and must NOT be filtered — the
+    guard rejects only literal ``{{``/``}}`` template tokens, not encoded ones."""
+    seed = _seed("https://example.com/a/b?state=%7B%22x%22%3A1%7D")
+    assert _sample_candidates(seed, base_domain="example.com", limit=5) == [
+        "https://example.com/a/b?state=%7B%22x%22%3A1%7D"
+    ]
+
+
+def test_single_brace_url_is_kept() -> None:
+    """The guard is scoped to double-brace template tokens. A lone ``{`` in a
+    URL (unusual but valid enough that some servers accept it) is left alone —
+    we don't filter generic brackets, only unrendered ``{{...}}`` tokens."""
+    seed = _seed("https://example.com/a/b/weird{path")
+    assert _sample_candidates(seed, base_domain="example.com", limit=5) == [
+        "https://example.com/a/b/weird{path"
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Sampling behaviour
 # ---------------------------------------------------------------------------
@@ -128,6 +171,21 @@ async def test_seed_without_links_costs_no_request() -> None:
     bulk = AsyncMock(return_value=([], None))
     with patch("knowledge_ingest.crawl4ai_client._chunked_bulk_fetch", new=bulk):
         sample = await sample_linked_pages(_seed(), max_pages=5)
+    assert (sample.pages_crawled, sample.pages_usable) == (0, 0)
+    bulk.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seed_with_only_template_links_costs_no_request() -> None:
+    """The ascendcloud case end-to-end: all links are unrendered tokens, so no
+    bulk request fires and the sample returns instantly (no wasted budget)."""
+    seed = _seed(
+        "https://example.com/euf/themes/standard/{{item.URL}}",
+        "https://example.com/euf/themes/standard/{{item.SeoTitle}}",
+    )
+    bulk = AsyncMock(return_value=([], None))
+    with patch("knowledge_ingest.crawl4ai_client._chunked_bulk_fetch", new=bulk):
+        sample = await sample_linked_pages(seed, max_pages=5)
     assert (sample.pages_crawled, sample.pages_usable) == (0, 0)
     bulk.assert_not_awaited()
 

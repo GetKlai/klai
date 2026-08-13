@@ -37,6 +37,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         connector_id: str | None = None,
         canary_url: str | None = None,
         canary_fingerprint: str | None = None,
+        discovery_seed_url: str | None = None,
     ) -> None:
         # REQ-05.4: decrypt cookies at task run-time, not at enqueue-time,
         # so Procrastinate's ``procrastinate_jobs.args`` column and the
@@ -73,6 +74,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
                 org_id=org_id,
                 kb_slug=kb_slug,
                 start_url=start_url,
+                discovery_seed_url=discovery_seed_url,
                 max_depth=max_depth,
                 max_pages=max_pages,
                 include_patterns=include_patterns,

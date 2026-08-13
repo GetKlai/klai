@@ -115,6 +115,32 @@ class WebcrawlerConfig(BaseModel):
     canary_fingerprint: str | None = None
     login_indicator_selector: str | None = None
 
+    # Known-good interior page (validated in the preview). Used as a fallback
+    # crawl seed when base_url discovers no ingestable pages — a client-rendered
+    # homepage/hub the crawler can't follow. Scoped within base_url like
+    # canary_url so a fallback can never wander off-site.
+    discovery_seed_url: str | None = None
+
+    @staticmethod
+    def _ssrf_check(field: str, url: str | None) -> None:
+        """SSRF-validate a URL the crawler will fetch (skip when unset)."""
+        if url is None:
+            return
+        try:
+            validate_url_pinned_sync(url)
+        except SsrfBlockedError as exc:
+            raise ValueError(f"{field}: {exc}") from exc
+
+    def _assert_within_scope(self, field: str, url: str | None) -> None:
+        """Require ``url`` to start with base_url + path_prefix (skip when unset)."""
+        if url is None:
+            return
+        prefix = self.base_url.rstrip("/")
+        if self.path_prefix:
+            prefix = prefix + "/" + self.path_prefix.strip("/")
+        if not url.startswith(prefix):
+            raise ValueError(f"{field} must start with {prefix!r}, got: {url!r}")
+
     @model_validator(mode="after")
     def _validate_canary_and_selector(self) -> "WebcrawlerConfig":
         """Validate canary config, fingerprint format, URL prefix, and selector safety.
@@ -132,18 +158,11 @@ class WebcrawlerConfig(BaseModel):
         malicious URL cannot trigger an internal fingerprint fetch.
         """
 
-        # REQ-2.1 / REQ-2.2 / AC-7: SSRF-validate base_url.
-        try:
-            validate_url_pinned_sync(self.base_url)
-        except SsrfBlockedError as exc:
-            raise ValueError(f"base_url: {exc}") from exc
-
-        # REQ-2.1 / AC-7 third bullet: SSRF-validate canary_url too.
-        if self.canary_url is not None:
-            try:
-                validate_url_pinned_sync(self.canary_url)
-            except SsrfBlockedError as exc:
-                raise ValueError(f"canary_url: {exc}") from exc
+        # REQ-2.1 / REQ-2.2 / AC-7: SSRF-validate every URL the crawler fetches
+        # — base_url, canary_url, and discovery_seed_url on the same footing.
+        self._ssrf_check("base_url", self.base_url)
+        self._ssrf_check("canary_url", self.canary_url)
+        self._ssrf_check("discovery_seed_url", self.discovery_seed_url)
 
         url_set = self.canary_url is not None
         fp_set = self.canary_fingerprint is not None
@@ -155,13 +174,11 @@ class WebcrawlerConfig(BaseModel):
             if not _CANARY_FINGERPRINT_RE.match(self.canary_fingerprint):
                 raise ValueError(f"canary_fingerprint must match ^[0-9a-f]{{16}}$, got: {self.canary_fingerprint!r}")
 
-        # canary_url must be within base_url + path_prefix
-        if url_set and self.canary_url is not None:
-            prefix = self.base_url.rstrip("/")
-            if self.path_prefix:
-                prefix = prefix + "/" + self.path_prefix.strip("/")
-            if not self.canary_url.startswith(prefix):
-                raise ValueError(f"canary_url must start with {prefix!r}, got: {self.canary_url!r}")
+        # canary_url and discovery_seed_url must both stay within base_url +
+        # path_prefix. discovery_seed_url is a fallback START point for the
+        # same-domain crawl, not an escape hatch to a different site.
+        self._assert_within_scope("canary_url", self.canary_url)
+        self._assert_within_scope("discovery_seed_url", self.discovery_seed_url)
 
         # login_indicator_selector: non-empty, no angle brackets, no javascript: URI.
         # SPEC intent is to block HTML/JS injection in a CSS selector field. Angle

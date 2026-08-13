@@ -66,6 +66,9 @@ class CrawlSyncRequest(BaseModel):
     canary_fingerprint: str | None = None
     login_indicator: str | None = None
     max_depth: int = Field(default=3, ge=1, le=10)
+    # Known-good interior page (validated in preview). Used as a fallback
+    # crawl seed when base_url discovers no ingestable pages.
+    discovery_seed_url: str | None = None
 
 
 class CrawlSyncResponse(BaseModel):
@@ -209,9 +212,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
     # invalid host-like URL 'https://hostblog'.
     normalized_path_prefix = _normalize_path_prefix(req.base_url, req.path_prefix)
     include_patterns = (
-        [normalized_path_prefix.rstrip("/") + "/*"]
-        if normalized_path_prefix
-        else None
+        [normalized_path_prefix.rstrip("/") + "/*"] if normalized_path_prefix else None
     )
     exclude_patterns = _default_exclude_patterns(normalized_path_prefix)
 
@@ -232,6 +233,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         org_id=req.org_id,
         kb_slug=req.kb_slug,
         start_url=start_url,
+        discovery_seed_url=req.discovery_seed_url,
         max_depth=req.max_depth,
         max_pages=req.max_pages,
         include_patterns=include_patterns,

@@ -93,6 +93,14 @@ export function PreviewClassificationFeedback({
       message =
         'Page renders via JavaScript. Configure a wait_for condition or selector for the post-render DOM.'
       break
+    case 'entry_point_empty':
+      // The reason from the backend already spells out the fix (paste a
+      // specific deeper URL); fall back defensively if it is ever absent.
+      message =
+        reason ??
+        "Couldn't read this page or the pages linked from it. If this is a homepage, " +
+          'paste a specific article or section URL instead.'
+      break
     case 'auth_wall_detected':
       message = 'This page requires authentication. Go back to step 4.'
       break
@@ -109,13 +117,17 @@ export function PreviewClassificationFeedback({
       </Alert>
       {/* The check is advice, not a verdict. A crawl that looks poor on the entry
           page can still index the site, and the user — not the preview — decides
-          whether this source belongs in their knowledge base. */}
-      {classification !== 'auth_wall_detected' && classification !== 'unknown' && (
-        <p className="text-xs text-gray-500">
-          You can still save this connector. Klai will crawl the pages it can reach and
-          report what it indexed after the first sync.
-        </p>
-      )}
+          whether this source belongs in their knowledge base. Suppressed for
+          entry_point_empty: there the crawl would index nothing, so the fix is a
+          different URL, not "save anyway". */}
+      {classification !== 'auth_wall_detected' &&
+        classification !== 'unknown' &&
+        classification !== 'entry_point_empty' && (
+          <p className="text-xs text-gray-500">
+            You can still save this connector. Klai will crawl the pages it can reach and
+            report what it indexed after the first sync.
+          </p>
+        )}
       {classification === 'unknown' && onRetry && (
         <button
           type="button"

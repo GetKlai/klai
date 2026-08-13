@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from knowledge_ingest import pg_store
 from knowledge_ingest.crawl4ai_client import (
     CrawlResult,
+    LinkedPageSample,
     crawl_dom_summary,
     crawl_page,
     sample_linked_pages,
@@ -222,6 +223,20 @@ _SAMPLE_MIN_USABLE = 2
 _SAMPLE_ELIGIBLE_CLASSIFICATIONS = frozenset(
     {"selector_required", "selector_returns_empty", "requires_javascript"}
 )
+# When the entry page yields no readable content AND a sample of the pages it
+# links to also yields nothing, the site cannot be crawled from this URL — a
+# homepage/hub that renders its content client-side (so the crawler sees an
+# empty shell and template-token links). Rather than a cryptic "selector
+# matched nothing", guide the user to a concrete deeper URL to crawl outward
+# from. Only the genuinely-empty verdicts qualify; ``selector_required`` has
+# real content and just needs a selector, so it is excluded.
+_ENTRY_POINT_EMPTY = "entry_point_empty"
+_ENTRY_POINT_EMPTY_ELIGIBLE = frozenset({"selector_returns_empty", "requires_javascript"})
+_ENTRY_POINT_EMPTY_REASON = (
+    "Couldn't read this page and found no usable pages linked from it. "
+    "If this is a homepage, paste a specific article or section URL instead — "
+    "Klai will crawl outward from there."
+)
 
 
 async def _sample_site_for_classification(
@@ -229,15 +244,17 @@ async def _sample_site_for_classification(
     seed: CrawlResult,
     selector: str | None,
     cookies: list[dict] | None,
-) -> tuple[int, int]:
+) -> LinkedPageSample | None:
     """Sample pages linked from the seed and count those carrying content.
 
-    Returns ``(pages_crawled, pages_usable)``. Returns ``(0, 0)`` on any
-    failure — the caller then keeps the single-page verdict, so a broken or
-    slow sample degrades to today's behaviour instead of erroring the preview.
+    Returns the sample, or ``None`` when it could not complete (timeout or
+    error). ``None`` is distinct from a completed-but-empty sample: only the
+    latter proves the entry point is a dead end. On ``None`` the caller keeps
+    the single-page verdict, so a broken or slow sample degrades to today's
+    behaviour instead of erroring the preview or mislabelling a slow site.
     """
     try:
-        sample = await asyncio.wait_for(
+        return await asyncio.wait_for(
             sample_linked_pages(
                 seed,
                 selector=selector,
@@ -252,12 +269,10 @@ async def _sample_site_for_classification(
             url=seed.url,
             budget_seconds=_SAMPLE_TIMEOUT_SECONDS,
         )
-        return (0, 0)
+        return None
     except Exception:
         logger.warning("crawl_preview_site_sample_failed", url=seed.url, exc_info=True)
-        return (0, 0)
-
-    return (sample.pages_crawled, sample.pages_usable)
+        return None
 
 
 def _dom_word_count(item: dict) -> int:
@@ -592,23 +607,37 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
         sample_pages_crawled = 0
         sample_pages_usable = 0
         if classification in _SAMPLE_ELIGIBLE_CLASSIFICATIONS:
-            sample_pages_crawled, sample_pages_usable = await _sample_site_for_classification(
+            sample = await _sample_site_for_classification(
                 seed=last_result,
                 selector=effective_selector,
                 cookies=body.cookies,
             )
-            if sample_pages_usable >= _SAMPLE_MIN_USABLE:
-                classification = "success"
-                classification_reason = (
-                    f"The entry page is mostly navigation, but {sample_pages_usable} of "
-                    f"{sample_pages_crawled} linked pages contain real content. "
-                    "Crawling this site will index those pages."
-                )
+            if sample is not None:
+                sample_pages_crawled = sample.pages_crawled
+                sample_pages_usable = sample.pages_usable
+                if sample_pages_usable >= _SAMPLE_MIN_USABLE:
+                    classification = "success"
+                    classification_reason = (
+                        f"The entry page is mostly navigation, but {sample_pages_usable} of "
+                        f"{sample_pages_crawled} linked pages contain real content. "
+                        "Crawling this site will index those pages."
+                    )
+                elif sample_pages_crawled > 0 and classification in _ENTRY_POINT_EMPTY_ELIGIBLE:
+                    # We actually followed links from this page and none of them
+                    # held content either — the entry point is a dead end, so
+                    # guide the user to a specific deeper URL rather than fail
+                    # cryptically. Requires pages_crawled > 0: a page with no
+                    # followable links tells us nothing new about the site, so
+                    # its single-page verdict (e.g. "wrong selector") stands. A
+                    # timeout returns None and is likewise not a dead-end signal.
+                    classification = _ENTRY_POINT_EMPTY
+                    classification_reason = _ENTRY_POINT_EMPTY_REASON
             logger.info(
                 "crawl_preview_site_sample",
                 url=body.url,
                 pages_crawled=sample_pages_crawled,
                 pages_usable=sample_pages_usable,
+                sample_completed=sample is not None,
                 classification=classification,
             )
 

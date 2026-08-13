@@ -236,6 +236,7 @@ class CrawlSyncClient:
             "canary_url": config.get("canary_url"),
             "canary_fingerprint": config.get("canary_fingerprint"),
             "login_indicator": config.get("login_indicator_selector"),
+            "discovery_seed_url": config.get("discovery_seed_url"),
         }
         resp = await self._client.post(
             "/ingest/v1/crawl/sync",
