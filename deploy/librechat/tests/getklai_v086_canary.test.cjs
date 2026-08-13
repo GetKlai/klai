@@ -96,9 +96,6 @@ function loadPatch(fileName, stubs = {}) {
       if (id === '../common/enum.cjs' || id === './common/enum.cjs') {
         return commonEnum;
       }
-      if (id === '../common/index.cjs' || id === './common/index.cjs') {
-        return {};
-      }
       if (id === '../utils/events.cjs' || id === './utils/events.cjs') {
         return { emitAgentLog() {} };
       }
@@ -108,20 +105,14 @@ function loadPatch(fileName, stubs = {}) {
           toLangChainMessageFields: (message) => message,
         };
       }
-      if (id === '../llm/anthropic/utils/message_inputs.cjs') {
-        return { normalizeAnthropicToolCallId: (toolCallId) => toolCallId };
-      }
       if (id === './tools/handlers.cjs') {
         return {};
       }
-      if (id === './messages/core.cjs' || id === './messages/ids.cjs' || id === './messages/index.cjs') {
+      if (id === './messages/core.cjs' || id === './messages/ids.cjs') {
         return {};
       }
       if (id === './utils/truncation.cjs') {
         return {};
-      }
-      if (id === './utils/llm.cjs') {
-        return { isGoogleLike: () => false };
       }
       if (id === 'uuid') {
         return {};
@@ -284,4 +275,4 @@ assert.equal(
   'Final text from the same completed delta.',
 );
 
-console.log('OK: LibreChat getklai v0.8.7 canary patches keep Klai guards and source metadata.');
+console.log('OK: LibreChat getklai v0.8.6 canary patches keep Klai guards and source metadata.');
