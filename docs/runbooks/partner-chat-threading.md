@@ -92,11 +92,20 @@ the passthrough. A one-hour call transcript usually does not fit — pattern
 
 ## Routing reminder
 
-The API picks its mode by which fields are **present**, not their values.
-For passthrough requests (structured output, tool calling, prompt-grounded
-tasks): omit `web_search`, `web_search_query`, `page_context` and
-`knowledge_base_ids` entirely; `knowledge: {"enabled": false}` is allowed.
-Any of those fields present — even `web_search: false` — routes the request
-to the knowledge path, where `response_format`, `tools`, `tool_choice`,
-`parallel_tool_calls` and `prompt_cache_key` are rejected with a 400
-(fail-loud) instead of being silently ignored.
+The API picks its mode by field **values**, not presence (breaking change,
+approved by product owner 2026-08-13). Sending
+`web_search: false`, `web_search_query: null`, `page_context: null`, or
+`knowledge: null` now routes to the general passthrough path just like
+omitting the field entirely; `knowledge: {"enabled": false}` also stays a
+passthrough. Only a "yes" value opts into the knowledge path:
+`web_search: true`, a non-empty `web_search_query`, a non-null
+`page_context` object, a `knowledge` object without `enabled: false`, or a
+present `knowledge_base_ids` (including an **explicit empty list**, `[]`,
+which is intentionally still a trigger — it is rejected with a 400
+"ambiguous" error instead of silently falling back to passthrough; omit the
+field entirely to use the key's configured knowledge bases).
+
+Fields that only make sense in the knowledge path (`response_format`,
+`tools`, `tool_choice`, `parallel_tool_calls`, `prompt_cache_key`) are
+rejected with a 400 (fail-loud) when combined with a value that routes to
+the knowledge path, instead of being silently ignored.
