@@ -124,7 +124,7 @@ services:
 
   # ─── PostgreSQL ───────────────────────────────────────────────────────────
   postgres:
-    image: pgvector/pgvector:0.8.4-pg18
+    image: pgvector/pgvector:0.8.6-pg18
     restart: unless-stopped
     volumes:
       - postgres-data:/var/lib/postgresql
@@ -143,7 +143,7 @@ services:
 
   # ─── Redis ────────────────────────────────────────────────────────────────
   redis:
-    image: redis:8.8.0-alpine
+    image: redis:8.10.0-alpine
     restart: unless-stopped
     volumes:
       - redis-data:/data
@@ -825,7 +825,7 @@ services:
   # To migrate: update Alloy endpoint URLs to point to monitor-01.
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.147.0
+    image: victoriametrics/victoria-metrics:v1.149.0
     restart: unless-stopped
     volumes:
       - victoriametrics-data:/storage
@@ -1108,7 +1108,7 @@ services:
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
   gitea:
-    image: gitea/gitea:1.26.4
+    image: gitea/gitea:1.27.1
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -1478,7 +1478,7 @@ services:
   # groups); if any fails, rollback to `redis:7.0-alpine` is a single image
   # line change. See research.md §5.3 and acceptance.md §N.
   vexa-redis:
-    image: redis:8.8.0-alpine
+    image: redis:8.10.0-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}", "--appendfsync", "everysec"]
     deploy:
