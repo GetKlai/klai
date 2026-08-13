@@ -147,9 +147,9 @@ def test_openai_passthrough_metadata_translates_prompt_cache_key_to_extra_body()
 
     body = {"prompt_cache_key": "abc", "messages": [{"role": "user", "content": "hi"}]}
 
-    forwarded = _with_openai_passthrough_metadata(body)
+    forwarded = _with_openai_passthrough_metadata(body, org_id=42)
 
-    assert forwarded["extra_body"] == {"prompt_cache_key": "abc"}
+    assert forwarded["extra_body"] == {"prompt_cache_key": "org:42:abc"}
     assert "prompt_cache_key" not in forwarded
     assert body["prompt_cache_key"] == "abc"
 
@@ -163,9 +163,36 @@ def test_openai_passthrough_metadata_overwrites_caller_extra_body():
         "messages": [{"role": "user", "content": "hi"}],
     }
 
-    forwarded = _with_openai_passthrough_metadata(body)
+    forwarded = _with_openai_passthrough_metadata(body, org_id=42)
 
-    assert forwarded["extra_body"] == {"prompt_cache_key": "abc"}
+    assert forwarded["extra_body"] == {"prompt_cache_key": "org:42:abc"}
+
+
+def test_openai_passthrough_metadata_namespaces_cache_key_per_org():
+    """Cross-tenant cache collision hardening: two orgs sending the same
+    partner-facing prompt_cache_key must never collide on the shared
+    upstream Mistral cache. See .claude/rules/klai pitfall
+    'fail-open-auth' class — a shared secret/key surface without
+    per-tenant scoping is a cross-tenant oracle."""
+    from app.services.partner_chat import _with_openai_passthrough_metadata
+
+    body = {"prompt_cache_key": "abc", "messages": [{"role": "user", "content": "hi"}]}
+
+    forwarded = _with_openai_passthrough_metadata(body, org_id=42)
+
+    assert forwarded["extra_body"] == {"prompt_cache_key": "org:42:abc"}
+
+
+def test_openai_passthrough_metadata_namespaces_cache_key_with_org_id_none():
+    """Defensive default: org_id=None must still namespace (literal
+    'org:none:' prefix) — never forward an un-namespaced key."""
+    from app.services.partner_chat import _with_openai_passthrough_metadata
+
+    body = {"prompt_cache_key": "abc", "messages": [{"role": "user", "content": "hi"}]}
+
+    forwarded = _with_openai_passthrough_metadata(body, org_id=None)
+
+    assert forwarded["extra_body"] == {"prompt_cache_key": "org:none:abc"}
 
 
 def test_openai_passthrough_metadata_no_extra_body_when_key_absent():
@@ -209,10 +236,113 @@ async def test_openai_non_streaming_sends_prompt_cache_key_as_extra_body_to_lite
     await partner_chat.openai_chat_completion_non_streaming(
         {"messages": [{"role": "user", "content": "hi"}], "prompt_cache_key": "abc"},
         settings,
+        org_id=42,
     )
 
-    assert captured["json"]["extra_body"] == {"prompt_cache_key": "abc"}
+    assert captured["json"]["extra_body"] == {"prompt_cache_key": "org:42:abc"}
     assert "prompt_cache_key" not in captured["json"]
+
+
+@pytest.mark.asyncio
+async def test_openai_non_streaming_emits_cache_usage_telemetry(monkeypatch):
+    """Observability: cache effectiveness must be visible in structlog so a
+    regression (e.g. a LiteLLM upgrade dropping extra_body handling) is
+    detectable via VictoriaLogs
+    `service:portal-api AND event:partner_openai_cache_usage`."""
+    from types import SimpleNamespace
+
+    from app.services import partner_chat
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "choices": [],
+        "usage": {
+            "prompt_tokens": 120,
+            "prompt_tokens_details": {"cached_tokens": 96},
+        },
+    }
+    resp.raise_for_status = MagicMock()
+
+    client = MagicMock()
+
+    async def post(url, json=None, headers=None):
+        return resp
+
+    client.post = post
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(partner_chat.httpx, "AsyncClient", MagicMock(return_value=client))
+
+    settings = SimpleNamespace(
+        litellm_base_url="http://litellm",
+        litellm_general_chat_key="general-key",
+        litellm_master_key="master-key",
+    )
+
+    mock_logger = MagicMock()
+    monkeypatch.setattr(partner_chat, "logger", mock_logger)
+
+    await partner_chat.openai_chat_completion_non_streaming(
+        {"messages": [{"role": "user", "content": "hi"}], "prompt_cache_key": "abc"},
+        settings,
+        org_id=42,
+    )
+
+    event_call = next(call for call in mock_logger.info.call_args_list if call.args[0] == "partner_openai_cache_usage")
+    kwargs = event_call.kwargs
+    assert kwargs["org_id"] == 42
+    assert kwargs["cache_key_present"] is True
+    assert kwargs["prompt_tokens"] == 120
+    assert kwargs["cached_tokens"] == 96
+
+
+@pytest.mark.asyncio
+async def test_openai_non_streaming_cache_usage_telemetry_defaults_zero_without_cache_key(monkeypatch):
+    """Zero-baseline emission: telemetry fires even when no prompt_cache_key
+    was sent (the baseline is useful), and cached_tokens defaults to 0 when
+    prompt_tokens_details is absent from the upstream response — telemetry
+    must never raise."""
+    from types import SimpleNamespace
+
+    from app.services import partner_chat
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"choices": [], "usage": {"prompt_tokens": 10}}
+    resp.raise_for_status = MagicMock()
+
+    client = MagicMock()
+
+    async def post(url, json=None, headers=None):
+        return resp
+
+    client.post = post
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(partner_chat.httpx, "AsyncClient", MagicMock(return_value=client))
+
+    settings = SimpleNamespace(
+        litellm_base_url="http://litellm",
+        litellm_general_chat_key="general-key",
+        litellm_master_key="master-key",
+    )
+
+    mock_logger = MagicMock()
+    monkeypatch.setattr(partner_chat, "logger", mock_logger)
+
+    await partner_chat.openai_chat_completion_non_streaming(
+        {"messages": [{"role": "user", "content": "hi"}]},
+        settings,
+        org_id=7,
+    )
+
+    event_call = next(call for call in mock_logger.info.call_args_list if call.args[0] == "partner_openai_cache_usage")
+    kwargs = event_call.kwargs
+    assert kwargs["org_id"] == 7
+    assert kwargs["cache_key_present"] is False
+    assert kwargs["prompt_tokens"] == 10
+    assert kwargs["cached_tokens"] == 0
 
 
 @pytest.mark.asyncio
