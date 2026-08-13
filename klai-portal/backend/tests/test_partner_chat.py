@@ -2956,3 +2956,66 @@ async def test_retrieve_context_omits_user_id_when_partner_user_id_none(monkeypa
     assert "user_id" not in captured["body"], (
         f"user_id leaked into body without explicit partner_user_id: {captured['body']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Retrieval conversation-history clipping (fix/partner-history-clip-502)
+# ---------------------------------------------------------------------------
+
+
+def test_build_conversation_history_clips_oversized_content():
+    """retrieval-api 422-rejects any conversation_history content > 8000 chars
+    (SPEC-SEC-010 REQ-2.5) and deliberately never truncates server-side, so
+    portal-api must clip before sending — otherwise the partner gets a 502."""
+    from app.services.partner_chat import _build_conversation_history
+
+    long_content = "A" * 4500 + "B" * 4500  # 9000 chars, distinct head/tail
+    messages = [
+        {"role": "user", "content": long_content},
+        {"role": "assistant", "content": "short answer"},
+        {"role": "user", "content": "current question"},
+    ]
+
+    history = _build_conversation_history(messages)
+
+    assert len(history) == 2
+    assert len(history[0]["content"]) <= 7800, (
+        f"history content must be clipped to <= 7800 chars, got {len(history[0]['content'])}"
+    )
+    # Mirrors clip_retrieval_history_content semantics: keep head + tail,
+    # mark the omitted middle.
+    assert history[0]["content"].startswith("A")
+    assert history[0]["content"].endswith("B")
+    assert "omitted" in history[0]["content"]
+    assert history[1]["content"] == "short answer"
+
+
+def test_build_conversation_history_keeps_content_at_clip_boundary():
+    """Content exactly at the 7800-char clip boundary passes through untouched."""
+    from app.services.partner_chat import _build_conversation_history
+
+    boundary_content = "y" * 7800
+    messages = [
+        {"role": "user", "content": boundary_content},
+        {"role": "user", "content": "current question"},
+    ]
+
+    history = _build_conversation_history(messages)
+
+    assert history[0]["content"] == boundary_content
+
+
+def test_build_conversation_history_window_and_role_filtering():
+    """Last-6 window and user/assistant role filtering are unchanged."""
+    from app.services.partner_chat import _build_conversation_history
+
+    messages: list[dict] = [{"role": "system", "content": "sys"}]
+    for i in range(5):
+        messages.append({"role": "user", "content": f"q{i}"})
+        messages.append({"role": "assistant", "content": f"a{i}"})
+    messages.append({"role": "user", "content": "current"})
+
+    history = _build_conversation_history(messages)
+
+    assert [m["content"] for m in history] == ["q2", "a2", "q3", "a3", "q4", "a4"]
+    assert all(m["role"] in ("user", "assistant") for m in history)
