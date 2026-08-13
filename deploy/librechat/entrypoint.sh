@@ -24,33 +24,11 @@ const { readFileSync, writeFileSync } = require('fs');
 const target = '/app/api/server/routes/messages.js';
 const content = readFileSync(target, 'utf8');
 
-// Unique insertion point: end of updateMessage call in feedback route, just before res.json.
-// LibreChat v0.8.7 inserted a sendFeedbackScore(...) langfuse call between the updateMessage
-// call and res.json(); the FIND string below captures that whole block so the patch still
-// fails safe (skips cleanly) if a future upgrade reshapes it again.
-const FIND = "      { context: 'updateFeedback' },\n    );\n\n    // Best-effort: Assistants messages do not have deterministic AgentRun traces.\n    if (!isAssistantsEndpoint(updatedMessage.endpoint)) {\n      sendFeedbackScore({\n        traceId: traceIdForMessage(messageId),\n        feedback: updatedMessage.feedback,\n        metadata: {\n          messageId: updatedMessage.messageId ?? messageId,\n          parentMessageId: updatedMessage.parentMessageId,\n          conversationId: updatedMessage.conversationId ?? conversationId,\n          sessionId: updatedMessage.conversationId ?? conversationId,\n          userId: req?.user?.id,\n          endpoint: updatedMessage.endpoint,\n          sender: updatedMessage.sender,\n          isCreatedByUser: updatedMessage.isCreatedByUser,\n          tokenCount: updatedMessage.tokenCount,\n        },\n      }).catch((err) => logger.error('[langfuse] feedback score failed:', err));\n    }\n\n    res.json({";
+// Unique insertion point: end of updateMessage call in feedback route, just before res.json
+const FIND = "      { context: 'updateFeedback' },\n    );\n\n    res.json({";
 
 const REPLACE = `      { context: 'updateFeedback' },
     );
-
-    // Best-effort: Assistants messages do not have deterministic AgentRun traces.
-    if (!isAssistantsEndpoint(updatedMessage.endpoint)) {
-      sendFeedbackScore({
-        traceId: traceIdForMessage(messageId),
-        feedback: updatedMessage.feedback,
-        metadata: {
-          messageId: updatedMessage.messageId ?? messageId,
-          parentMessageId: updatedMessage.parentMessageId,
-          conversationId: updatedMessage.conversationId ?? conversationId,
-          sessionId: updatedMessage.conversationId ?? conversationId,
-          userId: req?.user?.id,
-          endpoint: updatedMessage.endpoint,
-          sender: updatedMessage.sender,
-          isCreatedByUser: updatedMessage.isCreatedByUser,
-          tokenCount: updatedMessage.tokenCount,
-        },
-      }).catch((err) => logger.error('[langfuse] feedback score failed:', err));
-    }
 
     // SPEC-KB-015: Forward feedback to portal-api for KB quality scoring.
     // Fire-and-forget (REQ-KB-015-06) -- response is sent immediately below.
