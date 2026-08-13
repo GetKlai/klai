@@ -30,4 +30,19 @@ assert.match(workflow, /timeout=600\.0/);
 assert.match(drift, /LIBRECHAT_IMAGE="\$\{LIBRECHAT_IMAGE:-ghcr\.io\/danny-avila\/librechat:v0\.8\.7\}"/);
 assert.match(portalConfig, /librechat_image: str = "ghcr\.io\/danny-avila\/librechat:v0\.8\.7"/);
 
+// Finding 3D (adversarial review 2026-08-13): the deploy step must not treat
+// a bare HTTP 200 as success. It must parse the JSON body and fail the job
+// if the errors array is non-empty, even on a 200 -- belt and braces on top
+// of the non-200 status check. Pin both halves of that contract so a future
+// edit can't silently drop the errors-array check and go back to trusting
+// the status code alone.
+assert.match(workflow, /r\.status_code != 200/);
+assert.match(workflow, /errors = body\.get\("errors"\) or \[\]/);
+assert.match(workflow, /if errors:\s*\n\s*# Belt and braces/);
+assert.match(workflow, /sys\.exit\(1\)/);
+// The old bare bash-side "$HTTP_CODE" = "200" check must be gone -- that was
+// exactly the class of check that let a 200-with-errors response go green.
+assert.doesNotMatch(workflow, /HTTP_CODE.*=.*"200"/);
+
 console.log('OK: global LibreChat rollout config enables OCR/artifacts and keeps risky capabilities disabled.');
+console.log('OK: LibreChat regenerate deploy step fails loud on non-200 and on a non-empty errors array.');

@@ -75,16 +75,31 @@ jobs:
             # Python's httpx (already installed) instead of curl because the python:slim
             # base image does not ship curl. The INTERNAL_SECRET env var is already set
             # inside the container from .env.
+            #
+            # Finding 3D (adversarial review 2026-08-13): a bare "HTTP 200 = success"
+            # check is not enough -- the endpoint can report per-tenant failures in its
+            # errors array on a 200 (restart-only mode keeps that contract on purpose,
+            # see finding 3E). The script below is belt and braces: it fails on any
+            # non-200 status AND, independently, fails whenever the errors array is
+            # non-empty regardless of status code. `set -e` is active for this whole
+            # script (line 39), so a non-zero exit from the exec'd python process aborts
+            # the step and surfaces every printed line (including the errors list) in
+            # the step output.
             echo "Triggering tenant config regeneration via portal-api..."
-            set +e
-            RESPONSE=$(docker compose -f /opt/klai/docker-compose.yml exec -T \
+            docker compose -f /opt/klai/docker-compose.yml exec -T \
               -e RECREATE_CONTAINERS="$RECREATE_CONTAINERS" \
               portal-api python -c '
-            import os, sys, httpx
+            import json
+            import os
+            import sys
+
+            import httpx
+
             secret = os.environ["INTERNAL_SECRET"]
             url = "http://localhost:8010/internal/librechat/regenerate"
             if os.environ.get("RECREATE_CONTAINERS") == "true":
                 url += "?recreate_containers=true"
+
             try:
                 r = httpx.post(
                     url,
@@ -94,25 +109,35 @@ jobs:
                     },
                     timeout=600.0,
                 )
-                print(r.status_code)
-                print(r.text)
             except Exception as exc:
-                print("ERROR")
-                print(f"Request failed: {exc}", file=sys.stderr)
+                print(f"ERROR: request to {url} failed: {exc}", file=sys.stderr)
                 sys.exit(1)
-            ')
-            EXIT=$?
-            set -e
 
-            HTTP_CODE=$(echo "$RESPONSE" | head -n1)
-            BODY=$(echo "$RESPONSE" | tail -n +2)
+            print(f"HTTP {r.status_code}")
+            try:
+                body = r.json()
+            except (json.JSONDecodeError, ValueError):
+                print(r.text)
+                print("ERROR: response body was not valid JSON", file=sys.stderr)
+                sys.exit(1)
 
-            if [ "$EXIT" = "0" ] && [ "$HTTP_CODE" = "200" ]; then
-              echo "Tenant configs regenerated successfully"
-              echo "$BODY"
-            else
-              echo "ERROR: Regeneration failed (exit=$EXIT, http=$HTTP_CODE)"
-              echo "$BODY"
-              # Fail the workflow — without regeneration the YAML change is not live.
-              exit 1
-            fi
+            updated = body.get("tenants_updated") or []
+            skipped = body.get("tenants_skipped") or []
+            errors = body.get("errors") or []
+            print(f"tenants_updated ({len(updated)}): {updated}")
+            print(f"tenants_skipped ({len(skipped)}): {skipped}")
+            if errors:
+                print(f"errors ({len(errors)}):")
+                for e in errors:
+                    print(f"  - {e}")
+
+            if r.status_code != 200:
+                print(f"ERROR: regenerate endpoint returned HTTP {r.status_code}", file=sys.stderr)
+                sys.exit(1)
+            if errors:
+                # Belt and braces: some paths can report errors on a 200.
+                print("ERROR: regenerate endpoint reported a non-empty errors array on HTTP 200", file=sys.stderr)
+                sys.exit(1)
+
+            print("Tenant configs regenerated successfully")
+            '

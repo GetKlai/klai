@@ -1494,41 +1494,24 @@ async def mailing_send(
 class RegenerateResponse(BaseModel):
     tenants_updated: list[str]
     errors: list[str]
+    tenants_skipped: list[str] = []
 
 
-@router.post("/librechat/regenerate", response_model=RegenerateResponse)
-async def regenerate_librechat_configs(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> RegenerateResponse:
-    """Regenerate per-tenant librechat.yaml from the base template for all active tenants.
+def _regenerate_tenant_yaml_configs(
+    tenants: list[PortalOrg],
+    base_yaml_path: Path,
+) -> tuple[list[str], list[str], list[str]]:
+    """Step 1 of the fleet regenerate: write librechat.yaml for every tenant.
 
-    Called by CI after syncing a new base librechat.yaml to the server.
-    For each tenant: re-runs _generate_librechat_yaml with the tenant's MCP servers,
-    writes the result, flushes Redis, and restarts or recreates the container.
+    Non-destructive (file writes only) -- always attempts every tenant and
+    accumulates errors, regardless of ``recreate_containers``. Returns
+    ``(updated, slugs_to_restart, errors)``.
     """
-    await _require_internal_token(request)
-
-    import docker
-
     from app.services.provisioning.generators import _generate_librechat_yaml
 
-    base_yaml_path = Path(settings.librechat_container_data_path) / "librechat.yaml"
-    if not base_yaml_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Base config not found at {base_yaml_path}",
-        )
-
-    result = await db.execute(select(PortalOrg).where(PortalOrg.provisioning_status == "ready"))
-    tenants = result.scalars().all()
-
     updated: list[str] = []
-    errors: list[str] = []
-    loop = asyncio.get_running_loop()
-
-    # Step 1: Regenerate all tenant configs from the updated base template
     slugs_to_restart: list[str] = []
+    errors: list[str] = []
     for org in tenants:
         slug = org.slug
         if not slug:
@@ -1544,11 +1527,118 @@ async def regenerate_librechat_configs(
         except Exception as exc:
             errors.append(f"{slug}: {exc}")
             logger.warning("Config regeneration failed for %s: %s", slug, exc, exc_info=True)
+    return updated, slugs_to_restart, errors
+
+
+def _apply_librechat_container_step(
+    orgs_to_apply: list[PortalOrg],
+    recreate_containers: bool,
+) -> tuple[list[str], list[str]]:
+    """Step 3 of the fleet regenerate: restart or recreate each tenant's container.
+
+    Default remains restart-only for existing callers. CI passes
+    ``recreate_containers=true`` for LibreChat image upgrades, because
+    restart does not change a container's image.
+
+    Finding 3 (adversarial review 2026-08-13): recreate mode force-removes
+    the running container before the replacement boots (see
+    ``_start_librechat_container``). Replaying that against the whole fleet
+    after the FIRST tenant already proved the shared image/config is broken
+    would strand every remaining tenant with no container at all. So
+    recreate mode ABORTS at the first recreate-or-health-gate failure;
+    remaining tenants are reported as skipped, never attempted. Restart-only
+    mode is non-destructive and keeps the pre-existing per-tenant isolation
+    (continue on error, report every tenant).
+    """
+    import docker
+
+    client = None if recreate_containers else docker.from_env()
+    apply_errors: list[str] = []
+    apply_skipped: list[str] = []
+    for idx, org in enumerate(orgs_to_apply):
+        slug = org.slug
+        if not slug:
+            continue
+        container_name = validate_slug_for_provisioning(slug, domain=settings.domain).librechat_container
+        try:
+            if recreate_containers:
+                from app.services.provisioning.infrastructure import _start_librechat_container
+
+                env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
+                _start_librechat_container(
+                    slug,
+                    env_file_host_path,
+                    org.mcp_servers or None,
+                    rollback_on_failure=True,
+                )
+                logger.info("Recreated container %s", container_name)
+            else:
+                assert client is not None
+                ctr = client.containers.get(container_name)
+                ctr.restart(timeout=10)
+                logger.info("Restarted container %s", container_name)
+        except Exception as exc:
+            apply_errors.append(f"{slug}: {exc}")
+            logger.warning("LibreChat container apply failed for %s: %s", container_name, exc, exc_info=True)
+            if recreate_containers:
+                remaining = [o.slug for o in orgs_to_apply[idx + 1 :] if o.slug]
+                apply_skipped.extend(remaining)
+                break
+    return apply_errors, apply_skipped
+
+
+@router.post("/librechat/regenerate", response_model=RegenerateResponse)
+async def regenerate_librechat_configs(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> RegenerateResponse:
+    """Regenerate per-tenant librechat.yaml from the base template for all active tenants.
+
+    Called by CI after syncing a new base librechat.yaml to the server.
+    For each tenant: re-runs _generate_librechat_yaml with the tenant's MCP servers,
+    writes the result, flushes Redis, and restarts or recreates the container.
+
+    Fail-loud contract (adversarial review 2026-08-13, finding 3):
+    - ``recreate_containers=true`` is destructive (the running container is
+      force-removed before the replacement boots). The fleet loop therefore
+      ABORTS at the first tenant whose recreate-and-health-check fails instead
+      of replaying a broken shared config/image against the rest of the
+      fleet; remaining tenants are reported in ``tenants_skipped``, and the
+      response status is 500 whenever any error occurred in this mode, so CI
+      cannot go green while the fleet is actually broken.
+    - The default restart-only path is non-destructive and keeps its
+      pre-existing per-tenant isolation (continue on error, report, 200)
+      EXCEPT when every tenant fails config regeneration itself, which is
+      always a fail-loud 500 regardless of ``recreate_containers``.
+    """
+    await _require_internal_token(request)
+
+    base_yaml_path = Path(settings.librechat_container_data_path) / "librechat.yaml"
+    if not base_yaml_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Base config not found at {base_yaml_path}",
+        )
+
+    result = await db.execute(select(PortalOrg).where(PortalOrg.provisioning_status == "ready"))
+    tenants = result.scalars().all()
+
+    loop = asyncio.get_running_loop()
+    skipped: list[str] = []
+
+    # Step 1: Regenerate all tenant configs from the updated base template.
+    updated, slugs_to_restart, errors = _regenerate_tenant_yaml_configs(list(tenants), base_yaml_path)
 
     if not slugs_to_restart:
         # Cross-tenant operation — no resolvable org_id. Use 0 per REQ-2.6.
         await _audit_internal_call(request, org_id=0)
-        return RegenerateResponse(tenants_updated=updated, errors=errors)
+        if tenants and errors:
+            # Finding 3E: every tenant failed config regeneration (e.g. a
+            # broken base template) -- fail loud instead of a green 200 that
+            # hides a systemic break from CI.
+            response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return RegenerateResponse(tenants_updated=updated, errors=errors, tenants_skipped=skipped)
 
     # Step 2: Targeted invalidation of the LibreChat config cache via protocol
     # (NOT docker exec -- SEC-021 docker-socket-proxy denies /exec/*/start).
@@ -1599,40 +1689,23 @@ async def regenerate_librechat_configs(
     recreate_containers = request.query_params.get("recreate_containers") == "true"
 
     # Step 3: Restart or recreate all tenant containers via docker-socket-proxy.
-    # Default remains restart-only for existing callers. CI passes
-    # recreate_containers=true for LibreChat image upgrades, because restart
-    # does not change a container's image.
-    def _restart_or_recreate_all(orgs_to_apply: list[PortalOrg]) -> list[str]:
-        client = None if recreate_containers else docker.from_env()
-        apply_errors: list[str] = []
-        for org in orgs_to_apply:
-            slug = org.slug
-            if not slug:
-                continue
-            container_name = validate_slug_for_provisioning(slug, domain=settings.domain).librechat_container
-            try:
-                if recreate_containers:
-                    from app.services.provisioning.infrastructure import _start_librechat_container
-
-                    env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
-                    _start_librechat_container(slug, env_file_host_path, org.mcp_servers or None)
-                    logger.info("Recreated container %s", container_name)
-                else:
-                    assert client is not None
-                    ctr = client.containers.get(container_name)
-                    ctr.restart(timeout=10)
-                    logger.info("Restarted container %s", container_name)
-            except Exception as exc:
-                apply_errors.append(f"{slug}: {exc}")
-                logger.warning("LibreChat container apply failed for %s: %s", container_name, exc, exc_info=True)
-        return apply_errors
-
+    # See _apply_librechat_container_step for the abort-on-first-failure
+    # contract in recreate mode (finding 3, adversarial review 2026-08-13).
     orgs_to_apply = [org for org in tenants if org.slug in set(slugs_to_restart)]
-    restart_errors = await loop.run_in_executor(None, _restart_or_recreate_all, orgs_to_apply)
+    restart_errors, restart_skipped = await loop.run_in_executor(
+        None, _apply_librechat_container_step, orgs_to_apply, recreate_containers
+    )
     errors.extend(restart_errors)
+    skipped.extend(restart_skipped)
 
     await _audit_internal_call(request, org_id=0)
-    return RegenerateResponse(tenants_updated=updated, errors=errors)
+
+    if recreate_containers and errors:
+        # Finding 3C: recreate mode is destructive -- any error in this mode
+        # must fail loud so CI cannot go green while the fleet crashloops.
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    return RegenerateResponse(tenants_updated=updated, errors=errors, tenants_skipped=skipped)
 
 
 # ---------------------------------------------------------------------------
