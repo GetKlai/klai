@@ -1562,15 +1562,53 @@ async def chat_completions(  # noqa: C901
     # OpenAI-compatible request shape. Top-level knowledge_base_ids remains
     # supported for existing partner clients.
     knowledge = request.knowledge
+    retrieval_enabled = knowledge.enabled if knowledge is not None else True
     requested_kb_ids = (
         knowledge.knowledge_base_ids
         if knowledge is not None and knowledge.knowledge_base_ids is not None
         else request.knowledge_base_ids
     )
+    # SPEC-PARTNER-KB-SCOPE-001: an explicit empty list is ambiguous — it must
+    # never be treated the same as "no scope requested" (which falls back to
+    # the key's configured KBs). validate_kb_access() cannot distinguish an
+    # explicit [] from a zero-access key, so reject it here before that call.
+    if retrieval_enabled and requested_kb_ids is not None and len(requested_kb_ids) == 0:
+        raise _openai_error(
+            status.HTTP_400_BAD_REQUEST,
+            "knowledge_base_ids is empty, which is ambiguous. Omit the field to use "
+            "this key's configured knowledge bases, or set knowledge.enabled=false to "
+            "skip retrieval entirely.",
+        )
     kb_ids = validate_kb_access(auth, requested_kb_ids)
+    if retrieval_enabled and not kb_ids:
+        # No requested ids fell back to the key's/widget's own KB access,
+        # which is empty. Never let this silently widen to every KB in the
+        # org — fail closed instead. Message is intentionally generic (never
+        # reveal KB existence/names).
+        raise _openai_error(
+            status.HTTP_403_FORBIDDEN,
+            "This API key has no knowledge base access configured for chat",
+            error_type="permission_error",
+        )
 
     # 5. Translate kb_ids -> kb_slugs
     kb_slugs = await _resolve_kb_slugs(kb_ids, auth.org_id, db)
+    if retrieval_enabled and kb_ids:
+        if not kb_slugs:
+            # Every authorized/requested KB id failed to resolve (e.g. a
+            # deleted KB). Fail closed rather than letting retrieve_context
+            # silently widen scope by omitting kb_slugs entirely.
+            raise _openai_error(
+                status.HTTP_403_FORBIDDEN,
+                "This API key has no knowledge base access configured for chat",
+                error_type="permission_error",
+            )
+        if len(kb_slugs) < len(kb_ids):
+            logger.warning(
+                "partner_kb_ids_unresolved",
+                org_id=auth.org_id,
+                unresolved_kb_ids=len(kb_ids) - len(kb_slugs),
+            )
 
     # 6. Retrieve context.
     # F2 (audit retrieval-coupling-2026-05-06): pass synthetic partner_user_id
@@ -1605,6 +1643,16 @@ async def chat_completions(  # noqa: C901
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
     page_context = (
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
+    )
+
+    # SPEC-PARTNER-KB-SCOPE-001 invariant: when retrieval is enabled,
+    # kb_slugs must never be empty here — retrieve_context() only sends
+    # kb_slugs to retrieval-api when the list is truthy, and an empty list
+    # is silently treated as "no KB restriction" (widens to every KB the
+    # org can see). The 400/403 guards above must have already fired for
+    # every empty-scope case by this point.
+    assert not retrieval_enabled or kb_slugs, (
+        "chat_completions: retrieve_context must not be called with empty kb_slugs while retrieval is enabled"
     )
 
     try:
