@@ -48,7 +48,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - name: Test (pytest)
-        run: uv run --frozen --extra dev pytest -q --tb=short
+        run: uv run --frozen --extra dev pytest -q --tb=short -n auto
 
   build-push:
     needs: tests
