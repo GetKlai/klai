@@ -346,11 +346,13 @@ async def run_crawl_job(
     Updates knowledge.crawl_jobs progress as pages are processed.
 
     ``discovery_seed_url`` is a known-good interior page (typically validated
-    in the connector preview). When the crawl from ``start_url`` yields no
-    ingestable pages — a client-rendered homepage/hub whose links the crawler
-    can't follow — the crawl retries from this seed instead. The domain scope
-    still comes from the seed's host (same site), so the same
-    include/exclude patterns apply and nothing outside the site is reached.
+    in the connector preview). When the crawl from ``start_url`` does not
+    REACH that page — a client-rendered homepage/hub whose links the crawler
+    can't follow, whether it yields zero pages or a couple of junk shell
+    pages — a second crawl runs from the seed and its results merge into the
+    primary ones (dedup by canonical URL). The domain scope still comes from
+    the seed's host (same site), so the same include/exclude patterns apply
+    and nothing outside the site is reached.
 
     Seeds the crawl with start_url + sitemap.xml, then lets crawl_site's
     Klai-owned frontier schedule same-domain links to max_depth.
@@ -396,25 +398,35 @@ async def run_crawl_job(
             cookies=cookies,
         )
 
-        # Dead-entry-point fallback. A client-rendered homepage/hub can yield
-        # zero ingestable pages because the crawler can't follow its links
-        # (they arrive as unrendered template tokens). When that happens and
-        # the operator validated a specific interior page in the preview, seed
-        # the crawl from there instead — its links DO render, so BFS discovers
-        # the rest of the site. Only triggered on a genuinely empty primary
-        # crawl, so healthy sites pay nothing.
+        # Validated-seed pass. A client-rendered homepage/hub can defeat the
+        # crawler in two shapes: the truly dead entry point (zero ingestable
+        # pages) and the NEAR-dead one — the shell renders just enough junk to
+        # count as pages (Ascend, 2026-08-13: `/` and `/app/main`, one chunk
+        # each) while none of its links resolve, so the site behind it stays
+        # invisible. The original `not results` trigger only covered the first
+        # shape and declared victory on the junk pages, silently ignoring the
+        # operator's validated seed.
+        #
+        # Trigger: the primary crawl did not REACH the seed page. A healthy
+        # site whose BFS reached the seed pays nothing; otherwise we crawl
+        # from the known-good interior page (its links DO render) and MERGE:
+        # primary results kept, seed discoveries appended, dedup by canonical
+        # URL, max_pages respected. The seed page itself is therefore
+        # guaranteed to be ingested whenever it is fetchable.
+        seed_canon = _canonicalise_url(discovery_seed_url) if discovery_seed_url else None
         if (
-            not results
-            and discovery_seed_url
-            and _canonicalise_url(discovery_seed_url) != _canonicalise_url(start_url)
+            seed_canon is not None
+            and seed_canon != _canonicalise_url(start_url)
+            and seed_canon not in {_canonicalise_url(r.url) for r in results}
         ):
             logger.info(
                 "crawl_retry_from_discovery_seed",
                 job_id=job_id,
                 start_url=start_url,
                 discovery_seed_url=discovery_seed_url,
+                primary_pages=len(results),
             )
-            results, fetch_outcomes = await crawl_site(
+            seed_results, seed_outcomes = await crawl_site(
                 start_url=discovery_seed_url,
                 selector=content_selector,
                 max_depth=max_depth,
@@ -424,10 +436,19 @@ async def run_crawl_job(
                 login_indicator_selector=login_indicator_selector,
                 cookies=cookies,
             )
+            seen = {_canonicalise_url(r.url) for r in results}
+            for seed_result in seed_results:
+                canon = _canonicalise_url(seed_result.url)
+                if canon not in seen:
+                    seen.add(canon)
+                    results.append(seed_result)
+            results = results[:max_pages]
+            fetch_outcomes = fetch_outcomes + seed_outcomes
             logger.info(
                 "crawl_discovery_seed_result",
                 job_id=job_id,
                 discovery_seed_url=discovery_seed_url,
+                seed_pages=len(seed_results),
                 pages=len(results),
             )
 
