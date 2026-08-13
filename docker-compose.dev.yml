@@ -52,7 +52,7 @@ services:
       retries: 5
 
   meilisearch:
-    image: getmeili/meilisearch:v1.45.2
+    image: getmeili/meilisearch:v1.53.0
     restart: unless-stopped
     ports:
       - "127.0.0.1:7700:7700"
