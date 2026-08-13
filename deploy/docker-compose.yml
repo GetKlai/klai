@@ -1708,7 +1708,7 @@ services:
   # report: https://github.com/unclecode/crawl4ai/issues/2129 — drop this
   # local build when a configurable timeout ships upstream.
   crawl4ai:
-    image: ghcr.io/getklai/crawl4ai:0.9.2-local-260813-1211
+    image: ghcr.io/getklai/crawl4ai:0.8.9-local-260806-1448
     restart: unless-stopped
     environment:
       CRAWL4AI_API_TOKEN: ${CRAWL4AI_INTERNAL_KEY}
