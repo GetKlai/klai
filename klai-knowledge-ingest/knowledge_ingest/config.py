@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
+    # SPEC-INGEST-LLM-THROTTLE-001 — shared client-side rate limit for every
+    # klai-fast LiteLLM call (enrichment, Graphiti, taxonomy, selector-AI,
+    # labelers, RAGAS judge). See knowledge_ingest/llm_throttle.py. Default
+    # 0.6 rps = 36 rpm, under the 45 rpm klai-fast alias budget in
+    # deploy/litellm/config.yaml, leaving headroom for retries.
+    litellm_klai_fast_rps: float = 0.6
+    litellm_klai_fast_burst: float = 10.0
     enrichment_enabled: bool = True  # global kill switch
     # Seconds to wait after the last Gitea save before ingesting into the knowledge layer.
     # Prevents LLM enrichment calls on every auto-save during active editing.
@@ -81,12 +88,6 @@ class Settings(BaseSettings):
     graphiti_llm_model: str = "klai-fast"
     graphiti_max_concurrent: int = 1  # concurrent episodes; increase with paid LLM plan
     graphiti_episode_delay: float = 10.0
-    # Token bucket rate limit for LLM calls inside add_episode().
-    # Graphiti makes ~5 sequential HTTP calls per episode; this ensures they never
-    # exceed the upstream API limit regardless of LLM response time.
-    # Mistral Small is 100 RPM / 100k TPM for our production key. Keep Graphiti
-    # below that because enrichment and user-facing calls share klai-fast.
-    graphiti_llm_rps: float = 0.5
     # Portal integration for taxonomy (SPEC-KB-021)
     portal_url: str = "http://portal-api:8000"
     # Bearer token for outbound calls to portal-api internal endpoints

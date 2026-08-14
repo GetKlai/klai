@@ -59,6 +59,7 @@ from knowledge_ingest.clustering import (
 )
 from knowledge_ingest.config import settings
 from knowledge_ingest.description_generator import generate_node_description
+from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
 from knowledge_ingest.portal_client import (
     fetch_kb_metadata,
     fetch_taxonomy_nodes,
@@ -413,6 +414,7 @@ async def _group_and_assign(
         max_tokens,
     )
     t0 = time.monotonic()
+    await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(timeout=settings.taxonomy_classification_timeout) as client:
         resp = await client.post(
             f"{settings.litellm_url}/chat/completions",

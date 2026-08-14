@@ -34,6 +34,7 @@ import structlog
 
 import knowledge_ingest.qdrant_store as qdrant_store
 from knowledge_ingest.config import settings
+from knowledge_ingest.llm_throttle import TokenBucketLimiter, shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -42,31 +43,8 @@ logger = structlog.get_logger()
 _episode_semaphore: asyncio.Semaphore | None = None
 
 
-class _TokenBucketLimiter:
-    """Token bucket: enforces at most `rate` HTTP calls per second, no burst.
-
-    Applied to the AsyncOpenAI httpx transport so every LLM call Graphiti makes
-    internally (entity extraction, deduplication, etc.) is throttled — regardless
-    of how fast the upstream API responds.
-    """
-
-    def __init__(self, rate: float) -> None:
-        self._min_interval = 1.0 / rate
-        self._lock = asyncio.Lock()
-        self._next_allowed: float = 0.0
-
-    async def acquire(self) -> None:
-        async with self._lock:
-            loop = asyncio.get_event_loop()
-            now = loop.time()
-            wait = self._next_allowed - now
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._next_allowed = loop.time() + self._min_interval
-
-
 class _RateLimitedTransport(httpx.AsyncBaseTransport):
-    def __init__(self, wrapped: httpx.AsyncBaseTransport, limiter: _TokenBucketLimiter) -> None:
+    def __init__(self, wrapped: httpx.AsyncBaseTransport, limiter: TokenBucketLimiter) -> None:
         self._wrapped = wrapped
         self._limiter = limiter
 
@@ -185,7 +163,7 @@ def _graphiti_retry_delay(exc: Exception, attempt: int) -> tuple[str, float]:
         "503" in exc_str
         or "service unavailable" in exc_str
         or "internal_server_error" in exc_str
-        or "code\":\"3800" in exc_str
+        or 'code":"3800' in exc_str
         or "code': '3800" in exc_str
     ):
         return "provider_unavailable", 30.0 * (2**attempt)
@@ -217,9 +195,11 @@ def _get_graphiti() -> Graphiti:
         # max_retries=0: 429s surface immediately to our ingest_episode() retry loop
         # instead of being silently swallowed by the openai client for minutes.
         # Token bucket transport: throttles every HTTP call Graphiti makes internally
-        # (entity extraction, deduplication, embedding, etc.) to graphiti_llm_rps req/s.
-        # This prevents bursts that would exceed the upstream Mistral 1 req/s org limit.
-        _llm_limiter = _TokenBucketLimiter(rate=settings.graphiti_llm_rps)
+        # (entity extraction, deduplication, embedding, etc.) via the SHARED
+        # klai-fast budget (knowledge_ingest.llm_throttle), not a Graphiti-only
+        # rate. This prevents Graphiti's bursts from exceeding the upstream
+        # klai-fast alias budget in combination with every other klai-fast caller.
+        _llm_limiter = shared_klai_fast_limiter()
         openai_client = AsyncOpenAI(
             api_key=api_key,
             base_url=litellm_base_url,

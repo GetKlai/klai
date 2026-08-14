@@ -8,9 +8,12 @@ Returns (matched_nodes, suggested_tags):
 Threshold: confidence >= 0.5, max 5 nodes, max 5 tags.
 30-second timeout; falls back to ([], []) on error without failing the ingest.
 
-Rate limiting: uses the same _TokenBucketLimiter/_RateLimitedTransport from graph.py,
-throttled to settings.graphiti_llm_rps (default 1 req/s) to avoid 429s on LiteLLM.
+Rate limiting: acquires from the process-wide shared klai-fast token bucket
+(knowledge_ingest.llm_throttle.shared_klai_fast_limiter) so this shares the
+same 45 rpm alias budget as every other klai-fast caller instead of pacing
+against its own separate rate.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,23 +23,14 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
-from knowledge_ingest.graph import _RateLimitedTransport, _TokenBucketLimiter
+from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
 
 logger = structlog.get_logger()
-
-# Module-level rate limiter shared across all classify_document calls
-_llm_limiter: _TokenBucketLimiter | None = None
-
-
-def _get_llm_limiter() -> _TokenBucketLimiter:
-    global _llm_limiter
-    if _llm_limiter is None:
-        _llm_limiter = _TokenBucketLimiter(rate=settings.graphiti_llm_rps)
-    return _llm_limiter
 
 
 class TaxonomyNode:
     """Lightweight DTO for taxonomy nodes from the portal."""
+
     __slots__ = ("description", "id", "name")
 
     def __init__(self, id: int, name: str, description: str | None = None) -> None:
@@ -53,7 +47,7 @@ _SYSTEM_PROMPT = (
     "Only include nodes with confidence >= 0.5. Maximum 5 nodes and 5 tags. "
     "Return empty nodes list if no category matches with confidence >= 0.5. "
     "Tags should be lowercase, concise keywords describing the document content."
-    '\n\nReply with ONLY a JSON object, no markdown, no explanation: '
+    "\n\nReply with ONLY a JSON object, no markdown, no explanation: "
     '{"nodes": [{"node_id": <int>, "confidence": <float 0-1>}], '
     '"tags": ["<string>"]}'
 )
@@ -133,14 +127,10 @@ async def classify_document(
 async def _call_litellm(user_message: str) -> dict:
     """Call LiteLLM proxy for taxonomy classification.
 
-    Uses _RateLimitedTransport to throttle calls to graphiti_llm_rps (default 1/s).
+    Acquires from the shared klai-fast token bucket before calling out.
     """
-    transport = _RateLimitedTransport(
-        wrapped=httpx.AsyncHTTPTransport(),
-        limiter=_get_llm_limiter(),
-    )
+    await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(
-        transport=transport,
         timeout=settings.taxonomy_classification_timeout,
     ) as client:
         resp = await client.post(

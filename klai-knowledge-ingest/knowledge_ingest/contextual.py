@@ -40,6 +40,7 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -208,6 +209,7 @@ async def generate_document_summary(
         client_kwargs["transport"] = _transport
 
     try:
+        await shared_klai_fast_limiter().acquire()
         async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await asyncio.wait_for(
                 client.post(url, json=payload, headers=headers),
