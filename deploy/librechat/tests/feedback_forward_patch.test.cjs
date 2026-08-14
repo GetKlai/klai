@@ -108,8 +108,13 @@ assert.match(dockerCompose, /KLAI_ORG_SLUG: getklai/);
 assert.match(dockerCompose, /PORTAL_INTERNAL_URL: http:\/\/portal-api:8010/);
 assert.match(dockerCompose, /PORTAL_INTERNAL_SECRET: \$\{PORTAL_API_INTERNAL_SECRET\}/);
 
-assert.match(generator, /PORTAL_INTERNAL_URL=http:\/\/portal-api:8010/);
-assert.match(generator, /PORTAL_INTERNAL_SECRET=\{settings\.internal_secret\}/);
+// Since #887 the value lives in _reconcilable_env_vars() (single source of
+// truth, additively reconciled onto existing tenants) and is rendered into the
+// generated env by reconcilable_env_lines. Pin both halves so a refactor that
+// drops either one still fails here.
+assert.match(generator, /"PORTAL_INTERNAL_URL": "http:\/\/portal-api:8010"/);
+assert.match(generator, /reconcilable_env_lines/);
+assert.match(generator, /"PORTAL_INTERNAL_SECRET": settings\.internal_secret/);
 // KLAI_ORG_SLUG={slug} already exists for every tenant env (Meili wiring
 // depends on it too) -- assert it's still there so the feedback patch's
 // tenant-id derivation keeps a value to read.
