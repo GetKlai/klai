@@ -230,8 +230,51 @@ The F4/F6 stream fixes deliberately did NOT go out to the bind-mounted `.cjs`
 in production. Their tests assert against the built artifact, so those fixes
 reach users through the Phase 3 canary — which is what a canary is for.
 
-### Phase 3 — Migrate surfaces 1–5 to canary
+### Phase 3 — Migrate surfaces 1–5 to canary — **DONE** (2026-08-14, PRs #926 / #928)
 Point `librechat-getklai`'s image at the Klai-owned tag. Verify against `deploy/librechat/tests/*.test.cjs` plus a new integration smoke test. Remove the corresponding entries from `deploy/librechat/patches/` and `patch-manifest.txt` once verified. Deploy-time drift guard upgraded to REQ-6 (patched-artifact provenance).
+
+**Delivered.** `librechat-getklai` runs
+`ghcr.io/getklai/librechat@sha256:360770c500…` (tag
+`v0.8.7-klai.1-f415a2515817`). The other 41 tenants are untouched on
+`ghcr.io/danny-avila/librechat:v0.8.7`.
+
+Verified on the running canary: all five patches present in the image and no
+patch bind-mounts left; `cleanupOnComplete` wired at both call sites; the
+runtime cleanup transform correctly stood down ("already in place … skipping");
+the build manifest readable at `/klai-build-manifest.json`; HTTP 200 from Caddy.
+The two error lines in its log also occur on an upstream-image tenant, so they
+predate this change.
+
+Three things this phase added that the SPEC did not originally call for, each
+because Phase 2's review exposed the need:
+
+- **Digest-only pinning.** `deploy/check-klai-librechat-digest.sh` rejects any
+  reference to our image that is not a digest — including a commit-suffixed
+  tag. Immutable by convention is not immutable by construction.
+- **Idempotent runtime transforms.** The entrypoint's cleanup-on-complete
+  transform now stands down when it finds `CLEANUP_ON_COMPLETE` in the bundle,
+  so an image carrying the source patch does not get a duplicate key layered on
+  at boot. This is what makes Phase 5 a config change rather than an entrypoint
+  edit per tenant.
+- **Retirement in the safe order.** The mounts left the container definitions
+  first; `deploy/librechat/getklai/patches/` and its rsync were deleted only
+  after the canary was recreated without them, confirmed by
+  `assert-safe-to-prune.sh`.
+
+`getklai_v087_canary.test.cjs` is retired too. It re-ran the format and stream
+assertions against the canary's *copies* of the patch files; those copies are
+gone, and the same suites now run in `librechat-image-build.yml` against
+artifacts extracted from the image the canary actually runs. Coverage moved and
+tightened — it did not disappear.
+
+`getklai/patch-manifest.txt` is retired: it pinned upstream hashes of files the
+canary no longer mounts. Provenance for that container now comes from the build
+manifest inside its image.
+
+**Phase 5 note.** The fleet's provisioning default
+(`config.py::librechat_image`) still points at upstream and is a TAG. When it
+moves to the Klai image it must move to a digest, and
+`check-klai-librechat-digest.sh` already covers that file.
 
 ### Phase 4 — Migrate surface 6 (feedback), coordinated with in-flight branch
 Land after `fix/librechat-preflight-feedback-config` merges. Replace its runtime `KB_FEEDBACK_NODE` transform with the Lane B source diff against `messages.js`. Delete the runtime heredoc block from both entrypoints.
