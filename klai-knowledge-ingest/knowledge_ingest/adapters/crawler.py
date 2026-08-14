@@ -25,7 +25,7 @@ from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, _canonicalise_url, crawl_site
 from knowledge_ingest.models import IngestRequest
-from knowledge_ingest.reason_codes import FetchReasonCode
+from knowledge_ingest.reason_codes import FETCH_REASON_VALUES, FetchReasonCode
 from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
 from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
@@ -50,10 +50,18 @@ CRAWL_BUDGET_EXHAUSTED_REASON = "crawl_budget_exhausted"
 CRAWL_FRONTIER_INCOMPLETE_REASON = "crawl_frontier_incomplete"
 CRAWL_FETCH_FAILED_REASON = "crawl_fetch_failed"
 AUTH_WALL_DETECTED_REASON = "auth_wall_detected"
-# 2026-08-14: reason code for the anti-bot terminal-status guard (see
-# decide_antibot_terminal_status). Stable string — same "surfaced in UI
+# 2026-08-14, revised same day: cause-independent replacement for the
+# PR #945 "blocked_by_anti_bot"-only guard (removed — see
+# decide_fetch_failure_terminal_status). That guard never actually fired
+# in production: crawl4ai's real bulk-request 500 body is opaque
+# (``{"error":"Internal server error","correlation_id":"..."}"``), so no
+# outcome was ever classified BLOCKED_ANTI_BOT on the intermedia.com job
+# that motivated it — every one of the 17 failed pages was
+# unknown_exception instead, and a guard that only counts
+# BLOCKED_ANTI_BOT counts zero. This reason fires on ANY dominant fetch
+# failure regardless of cause. Stable string — same "surfaced in UI
 # error_summary" contract as the other *_REASON constants above.
-ANTIBOT_BLOCKED_REASON = "blocked_by_anti_bot"
+FETCH_FAILURE_DOMINANT_REASON = "fetch_failure_dominant"
 
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
 
@@ -65,11 +73,68 @@ _AUTH_WALL_WITH_AUTH_SUGGESTION = (
     "Configured authentication did not unlock all crawled pages. Refresh the "
     "saved cookies from the connector edit page before syncing again."
 )
-_ANTIBOT_BLOCKED_SUGGESTION = (
-    "Automated access to this site is being blocked by anti-bot protection "
-    "(e.g. Cloudflare). Retry the sync later — the challenge is often "
-    "intermittent — or ask the site owner to allowlist the Klai crawler."
+_FETCH_FAILURE_SUGGESTION = (
+    "A meaningful share of the discovered pages could not be fetched. The "
+    "site may be blocking automated access (e.g. anti-bot protection such as "
+    "Cloudflare), or the pages may be unreachable for another reason. Retry "
+    "the sync later — the failure is sometimes intermittent — or try a "
+    "different start URL / path_prefix, or configure a content_selector if "
+    "only part of the site is affected."
 )
+
+# Reason codes that represent a REAL fetch failure — Klai tried to fetch
+# the URL and did not get usable content back. Cause-independent by
+# design (see FETCH_FAILURE_DOMINANT_REASON): it does not matter WHETHER
+# the failure was a 5xx, a timeout, DNS, an explicit anti-bot block, or an
+# opaque unknown_exception (the intermedia.com 2026-08-14 shape) — a
+# meaningful fraction of unreachable pages is the same operator-facing
+# problem regardless of cause.
+#
+# Deliberately excludes SUCCESS / NON_CONTENT_LISTING_PAGE (real, usable
+# fetches) and every NOT_FETCHED_* code (deliberate scheduling decisions —
+# budget/depth/exclude/duplicate — not failures; a budget-exhausted crawl
+# already has its own guard via _build_crawl_outcome_warning below).
+#
+# New FetchReasonCode members MUST be added to exactly one of these two
+# sets. The assertion right after fails at import time if a new code is
+# left uncategorized — the mechanical guard that BLOCKED_ANTI_BOT-only
+# counting did not have, and the reason this fix silently under-counted
+# for weeks.
+_FETCH_FAILURE_REASON_CODES: frozenset[str] = frozenset(
+    {
+        FetchReasonCode.HTTP_4XX.value,
+        FetchReasonCode.HTTP_5XX.value,
+        FetchReasonCode.TIMEOUT.value,
+        FetchReasonCode.DNS_ERROR.value,
+        FetchReasonCode.CONNECTION_ERROR.value,
+        FetchReasonCode.AUTH_ERROR.value,
+        FetchReasonCode.PARSE_ERROR.value,
+        FetchReasonCode.RATE_LIMITED.value,
+        FetchReasonCode.UNKNOWN_EXCEPTION.value,
+        FetchReasonCode.BLOCKED_ANTI_BOT.value,
+    }
+)
+_FETCH_NON_FAILURE_REASON_CODES: frozenset[str] = frozenset(
+    {
+        FetchReasonCode.SUCCESS.value,
+        FetchReasonCode.NON_CONTENT_LISTING_PAGE.value,
+        FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value,
+        FetchReasonCode.NOT_FETCHED_DEPTH_LIMIT.value,
+        FetchReasonCode.NOT_FETCHED_DISCOVERY_LIMIT.value,
+        FetchReasonCode.NOT_FETCHED_EXCLUDED.value,
+        FetchReasonCode.NOT_FETCHED_DUPLICATE.value,
+    }
+)
+_uncategorized_fetch_reason_codes = (
+    FETCH_REASON_VALUES - _FETCH_FAILURE_REASON_CODES - _FETCH_NON_FAILURE_REASON_CODES
+)
+if _uncategorized_fetch_reason_codes:  # pragma: no cover — fails import, not a runtime path
+    raise RuntimeError(
+        "FetchReasonCode values missing from the terminal-status failure/"
+        f"non-failure classification: {sorted(_uncategorized_fetch_reason_codes)}. "
+        "Add each to _FETCH_FAILURE_REASON_CODES or _FETCH_NON_FAILURE_REASON_CODES "
+        "in knowledge_ingest/adapters/crawler.py."
+    )
 
 
 def decide_terminal_status(
@@ -128,30 +193,38 @@ def decide_terminal_status(
     return ("failed_partial", summary)
 
 
-def decide_antibot_terminal_status(
+def decide_fetch_failure_terminal_status(
     *,
-    blocked_count: int,
-    total_count: int,
+    fetch_outcomes: list[dict],
     threshold: float,
 ) -> tuple[str, dict | None]:
     """Pure decision function — sibling of :func:`decide_terminal_status`.
 
-    Decide whether a finished ``crawl_site`` run should be marked
-    ``failed_partial`` because a meaningful fraction of discovered pages
-    ended up ``BLOCKED_ANTI_BOT`` even AFTER ``crawl_site``'s sequential
-    anti-bot recovery ran (see ``crawl4ai_client._recover_antibot_batch``).
-    Without this guard, a job that only ingested 1 of ~18 discovered pages
-    because Cloudflare blocked the rest still reports ``completed`` — the
-    same "synced N days ago, X docs indexed" lie REQ-4's auth-wall guard
-    (``decide_terminal_status``) already fixes for login walls, just with
-    a different root cause (intermedia.com, 2026-08-14).
+    Cause-independent replacement for the retired ``decide_antibot_
+    terminal_status`` (PR #945, 2026-08-14). That guard counted only
+    ``reason_code == BLOCKED_ANTI_BOT`` outcomes — but crawl4ai's real
+    bulk-request 500 body is opaque
+    (``{"error":"Internal server error","correlation_id":"..."}"``), so on
+    the intermedia.com job that motivated it, all 17 failed pages
+    classified ``unknown_exception``, never ``BLOCKED_ANTI_BOT``, and the
+    guard's ``blocked_count`` was always 0 — it never fired. This version
+    decides whether a finished ``crawl_site`` run should be marked
+    ``failed_partial`` because a meaningful fraction of discovered
+    candidates ended up as a REAL fetch failure (any reason_code in
+    ``_FETCH_FAILURE_REASON_CODES`` — 5xx, timeout, DNS, connection, auth,
+    parse, rate-limited, unknown_exception, or a confirmed anti-bot block)
+    even AFTER ``crawl_site``'s sequential bulk-5xx recovery ran (see
+    ``crawl4ai_client._recover_bulk_5xx_batch``). Without this guard, a job
+    that only ingested 1 of ~18 discovered pages still reports
+    ``completed`` — the same "synced N days ago, X docs indexed" lie
+    REQ-4's auth-wall guard (``decide_terminal_status``) already fixes for
+    login walls, just with a different root cause.
 
     Args:
-        blocked_count: outcomes with ``reason_code ==
-            FetchReasonCode.BLOCKED_ANTI_BOT`` in the job's fetch_outcomes,
-            evaluated AFTER crawl_site's sequential recovery attempted to
-            resolve them.
-        total_count: total discovered candidates (``len(fetch_outcomes)``).
+        fetch_outcomes: the job's full per-candidate outcome list (same
+            shape as ``crawl_jobs.fetch_outcomes`` JSONB) — the full list
+            is needed (not just a count) so the summary can report which
+            reason codes actually dominated.
         threshold: trip-rate at or above which the guard fires (inclusive).
 
     Returns:
@@ -160,17 +233,27 @@ def decide_antibot_terminal_status(
         fire, so the caller falls through to its existing terminal-status
         logic.
     """
-    if total_count <= 0 or blocked_count <= 0:
+    total_count = len(fetch_outcomes)
+    if total_count <= 0:
         return ("", None)
-    trip_rate = round(blocked_count / total_count, 3)
+    failure_counts = Counter(
+        reason
+        for outcome in fetch_outcomes
+        if (reason := str(outcome.get("reason_code") or "")) in _FETCH_FAILURE_REASON_CODES
+    )
+    failed_count = sum(failure_counts.values())
+    if failed_count <= 0:
+        return ("", None)
+    trip_rate = round(failed_count / total_count, 3)
     if trip_rate < threshold:
         return ("", None)
     summary: dict = {
-        "reason": ANTIBOT_BLOCKED_REASON,
+        "reason": FETCH_FAILURE_DOMINANT_REASON,
         "trip_rate": trip_rate,
-        "blocked_count": blocked_count,
+        "failed_count": failed_count,
         "total_count": total_count,
-        "suggestion": _ANTIBOT_BLOCKED_SUGGESTION,
+        "top_reason_codes": dict(failure_counts.most_common(5)),
+        "suggestion": _FETCH_FAILURE_SUGGESTION,
     }
     return ("failed_partial", summary)
 
@@ -602,35 +685,32 @@ async def run_crawl_job(
             threshold=settings.ingest_authwall_dirty_trip_rate,
         )
 
-        # 2026-08-14 anti-bot guard — sibling of the REQ-4 dirty-content
-        # guard above. ``total_count`` is deliberately len(fetch_outcomes)
-        # (every discovered candidate), not len(results): blocked pages are
-        # excluded from ``results`` entirely, so using len(results) as the
-        # denominator would understate (or even exceed 100% of) the trip
-        # rate once most of the site is blocked.
-        blocked_count = sum(
-            1
-            for outcome in fetch_outcomes
-            if outcome.get("reason_code") == FetchReasonCode.BLOCKED_ANTI_BOT.value
-        )
-        antibot_status, antibot_summary = decide_antibot_terminal_status(
-            blocked_count=blocked_count,
-            total_count=len(fetch_outcomes),
-            threshold=settings.ingest_antibot_dirty_trip_rate,
+        # 2026-08-14 (revised same day) cause-independent fetch-failure
+        # guard — sibling of the REQ-4 dirty-content guard above. Passes
+        # the full ``fetch_outcomes`` list (not a pre-counted total)
+        # because the denominator AND the failure classification both need
+        # to see every discovered candidate: not just len(results), since
+        # failed pages are excluded from ``results`` entirely (using
+        # len(results) as the denominator would understate — or even
+        # exceed 100% of — the trip rate once most of the site fails).
+        fetch_failure_status, fetch_failure_summary = decide_fetch_failure_terminal_status(
+            fetch_outcomes=fetch_outcomes,
+            threshold=settings.ingest_fetch_failure_dirty_trip_rate,
         )
 
         # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.2/04.3 — terminal status:
         # - failed_partial when REQ-4 dirty-content guard tripped (loud failure)
-        # - failed_partial when the anti-bot guard tripped (loud failure)
+        # - failed_partial when the fetch-failure guard tripped (loud failure)
         # - failed_partial when 0 pages ingested AND >= 1 wall skipped
         # - completed otherwise
         #
         # Deterministic order when BOTH the auth-wall guard and the
-        # anti-bot guard would fire on the same job: auth-wall wins. An
-        # auth-wall trip means Klai reached the pages (they're just
-        # login-gated); an anti-bot trip often means Klai could not reach
-        # the site at all. The auth-wall summary is the more actionable of
-        # the two when both signals are present, so it takes priority.
+        # fetch-failure guard would fire on the same job: auth-wall wins.
+        # An auth-wall trip means Klai reached the pages (they're just
+        # login-gated); a fetch-failure trip often means Klai could not
+        # reach the site at all. The auth-wall summary is the more
+        # actionable of the two when both signals are present, so it
+        # takes priority.
         if dirty_status:
             terminal_status = dirty_status
             summary_payload = dirty_summary or {}
@@ -648,9 +728,9 @@ async def run_crawl_job(
                 int(time.time()),
                 job_id,
             )
-        elif antibot_status:
-            terminal_status = antibot_status
-            summary_payload = antibot_summary or {}
+        elif fetch_failure_status:
+            terminal_status = fetch_failure_status
+            summary_payload = fetch_failure_summary or {}
             _attach_crawl_warning(summary_payload, crawl_outcome_warning)
             summary_json = json.dumps(summary_payload)
             await conn.execute(

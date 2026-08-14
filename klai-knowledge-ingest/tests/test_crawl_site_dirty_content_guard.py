@@ -17,13 +17,13 @@ from __future__ import annotations
 import pytest
 
 from knowledge_ingest.adapters.crawler import (
-    ANTIBOT_BLOCKED_REASON,
     CRAWL_BUDGET_EXHAUSTED_REASON,
     CRAWL_FETCH_FAILED_REASON,
     DIRTY_CONTENT_REASON,
+    FETCH_FAILURE_DOMINANT_REASON,
     _build_crawl_outcome_warning,
     _crawl_warning_terminal_status,
-    decide_antibot_terminal_status,
+    decide_fetch_failure_terminal_status,
     decide_terminal_status,
 )
 
@@ -204,72 +204,112 @@ def test_trip_rate_rounded_to_three_decimals(trip_rate_input: float) -> None:
 
 
 # ---------------------------------------------------------------------------
-# decide_antibot_terminal_status — 2026-08-14 anti-bot guard, sibling of the
-# REQ-4 auth-wall guard above (intermedia.com incident).
+# decide_fetch_failure_terminal_status — 2026-08-14 cause-independent
+# fetch-failure guard, sibling of the REQ-4 auth-wall guard above
+# (intermedia.com incident). Replaces the retired decide_antibot_
+# terminal_status, which counted only BLOCKED_ANTI_BOT and therefore never
+# fired against a real crawl4ai deployment: production bulk-500 bodies are
+# opaque, so the intermedia.com failures classified unknown_exception, not
+# blocked_anti_bot — see FETCH_FAILURE_DOMINANT_REASON's module docstring.
 # ---------------------------------------------------------------------------
 
 
-def test_antibot_above_threshold_marks_failed_partial() -> None:
-    """16 of 18 discovered pages still BLOCKED_ANTI_BOT after sequential
-    recovery (intermedia.com shape) → failed_partial with the anti-bot
-    reason, not a silent 'completed'."""
-    status, summary = decide_antibot_terminal_status(
-        blocked_count=16,
-        total_count=18,
-        threshold=0.30,
+def _outcomes(*reason_codes: str) -> list[dict]:
+    """Build a minimal fetch_outcomes list from a sequence of reason codes."""
+    return [
+        {
+            "url": f"https://example.com/{i}",
+            "reason_code": reason_code,
+            "status_code": None,
+            "content_length": 0,
+        }
+        for i, reason_code in enumerate(reason_codes)
+    ]
+
+
+def test_fetch_failure_above_threshold_marks_failed_partial() -> None:
+    """16 of 18 discovered pages are real fetch failures (mixed reasons —
+    http_5xx, unknown_exception, blocked_anti_bot) → failed_partial with
+    the cause-independent reason, not a silent 'completed'. Mirrors the
+    intermedia.com incident shape, but with the reason_codes actually
+    produced in production (mostly unknown_exception/http_5xx, not
+    blocked_anti_bot)."""
+    outcomes = _outcomes(
+        *(
+            ["http_5xx"] * 10
+            + ["unknown_exception"] * 5
+            + ["blocked_anti_bot"] * 1
+            + ["success"] * 2
+        )
     )
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
     assert status == "failed_partial"
     assert summary is not None
-    assert summary["reason"] == ANTIBOT_BLOCKED_REASON
-    assert summary["reason"] == "blocked_by_anti_bot"
-    assert summary["blocked_count"] == 16
+    assert summary["reason"] == FETCH_FAILURE_DOMINANT_REASON
+    assert summary["reason"] == "fetch_failure_dominant"
+    assert summary["failed_count"] == 16
     assert summary["total_count"] == 18
     assert summary["trip_rate"] == round(16 / 18, 3)
+    assert summary["top_reason_codes"]["http_5xx"] == 10
+    assert summary["top_reason_codes"]["unknown_exception"] == 5
+    assert summary["top_reason_codes"]["blocked_anti_bot"] == 1
     assert "anti-bot" in summary["suggestion"].lower()
 
 
-def test_antibot_below_threshold_does_not_trip_guard() -> None:
-    """Only a couple of pages still blocked after recovery — not a
-    meaningful fraction of the site — guard must not fire."""
-    status, summary = decide_antibot_terminal_status(
-        blocked_count=2,
-        total_count=100,
-        threshold=0.30,
-    )
+def test_fetch_failure_below_threshold_does_not_trip_guard() -> None:
+    """Only 1 of 18 pages failed — not a meaningful fraction of the site —
+    guard must not fire."""
+    outcomes = _outcomes(*(["http_5xx"] * 1 + ["success"] * 17))
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
     assert status == ""
     assert summary is None
 
 
-def test_antibot_zero_blocked_does_not_trip_guard() -> None:
-    """Recovery cleared every blocked URL — nothing to report."""
-    status, summary = decide_antibot_terminal_status(
-        blocked_count=0,
-        total_count=100,
-        threshold=0.30,
-    )
+def test_fetch_failure_zero_failures_does_not_trip_guard() -> None:
+    """Every discovered page succeeded — nothing to report."""
+    outcomes = _outcomes(*(["success"] * 5))
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
     assert status == ""
     assert summary is None
 
 
-def test_antibot_zero_total_does_not_trip_guard() -> None:
+def test_fetch_failure_zero_total_does_not_trip_guard() -> None:
     """No discovered candidates at all — division-by-zero guard."""
-    status, summary = decide_antibot_terminal_status(
-        blocked_count=0,
-        total_count=0,
-        threshold=0.30,
-    )
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=[], threshold=0.30)
     assert status == ""
     assert summary is None
 
 
-def test_antibot_threshold_inclusive_at_exactly_thirty_percent() -> None:
+def test_fetch_failure_threshold_inclusive_at_exactly_thirty_percent() -> None:
     """trip_rate exactly 0.30 → guard MUST trip (>= is inclusive, mirrors
     the auth-wall guard's inclusive threshold contract)."""
-    status, summary = decide_antibot_terminal_status(
-        blocked_count=30,
-        total_count=100,
-        threshold=0.30,
-    )
+    outcomes = _outcomes(*(["http_5xx"] * 30 + ["success"] * 70))
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
     assert status == "failed_partial"
     assert summary is not None
-    assert summary["reason"] == ANTIBOT_BLOCKED_REASON
+    assert summary["reason"] == FETCH_FAILURE_DOMINANT_REASON
+
+
+def test_fetch_failure_excludes_not_fetched_codes() -> None:
+    """NOT_FETCHED_* outcomes are deliberate scheduling decisions (budget /
+    depth), never counted as failures — even though they dilute the
+    denominator. 5 not_fetched_budget_exhausted + 1 real failure + 4
+    success = 1/10 = 0.10 trip_rate, well under threshold. If NOT_FETCHED_*
+    were (wrongly) counted as failures this would be 6/10 = 0.60 and trip."""
+    outcomes = _outcomes(
+        *(["not_fetched_budget_exhausted"] * 5 + ["http_5xx"] * 1 + ["success"] * 4)
+    )
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
+    assert status == ""
+    assert summary is None
+
+
+def test_fetch_failure_only_not_fetched_codes_does_not_trip_guard() -> None:
+    """A crawl that discovered candidates but only ever recorded
+    not_fetched_* outcomes (budget/depth limits, zero actual fetch
+    attempts) must not trip the fetch-failure guard — that's a scheduling
+    outcome, not a failure."""
+    outcomes = _outcomes(*(["not_fetched_budget_exhausted"] * 5 + ["not_fetched_depth_limit"] * 5))
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
+    assert status == ""
+    assert summary is None
