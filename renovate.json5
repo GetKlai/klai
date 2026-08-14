@@ -95,5 +95,67 @@
       matchUpdateTypes: ['major'],
       automerge: false,
     },
+
+    // ---------------------------------------------------------------------
+    // Version ceilings for upgrades that are BLOCKED, not merely unreviewed.
+    //
+    // Each of these was attempted or analysed on 2026-08-14 and found to be
+    // impossible right now for a concrete, external reason. Without a ceiling
+    // Renovate re-proposes them every hour; the PR then either fails CI or
+    // sits open forever, and the next person rediscovers the reason from
+    // scratch. `allowedVersions` keeps patch/minor flowing inside the safe
+    // range while never offering the blocked jump.
+    //
+    // Each entry names the blocker and the tracking issue. When the blocker
+    // clears, delete the entry — do not raise the ceiling by hand, or the
+    // upgrade lands without the verification the issue asks for.
+    // ---------------------------------------------------------------------
+    {
+      description:
+        'typescript: pinned below 7 — typescript-eslint refuses TS 7 outright \
+        ("typescript-eslint does not support TS 7.0"); its peer range is \
+        <6.1.0 even on 8.67.0. Upstream: typescript-eslint#10940 (open). \
+        Note tsc -b and all 495 tests PASS under TS 7, so a typecheck-only \
+        gate would wave it through — lint and build are what break. \
+        Tracking: GetKlai/klai#942',
+      matchManagers: ['npm'],
+      matchPackageNames: ['typescript'],
+      allowedVersions: '<7.0.0',
+    },
+    {
+      description:
+        'victoria-logs: pinned at v1.51.x — v1.52.0 moved to a distroless \
+        base with no executables, which breaks the CMD-SHELL wget \
+        healthcheck. Already rolled back same-day once (25f2a5d95). Nothing \
+        waits on that healthcheck via depends_on, but it is the ONLY \
+        liveness signal: every Grafana alert queries VictoriaLogs itself and \
+        runs execErrState: OK, so they all fall silent together if it dies. \
+        Needs an external probe first. Tracking: GetKlai/klai#946',
+      matchDatasources: ['docker'],
+      matchPackageNames: ['victoriametrics/victoria-logs'],
+      allowedVersions: '<1.52.0',
+    },
+    {
+      description:
+        '@tanstack/react-table: pinned below 9 — v9 removes useReactTable and \
+        createColumnHelper from the main entry and drops the \
+        getCoreRowModel table option. This is a code migration across 3 admin \
+        pages, not a version bump, and 2 of those 3 have no test coverage. \
+        The /legacy shim exists but ships deprecated. Revisit once v9 has \
+        settled and the pages have tests.',
+      matchManagers: ['npm'],
+      matchPackageNames: ['@tanstack/react-table'],
+      allowedVersions: '<9.0.0',
+    },
+    {
+      description:
+        'python (docker base): pinned below 3.14 — spacy 3.8.14 in \
+        klai-connector publishes wheels for cp312/cp313 only, so a 3.14 base \
+        image cannot install the dependency tree at all. Lift when spacy \
+        ships cp314 wheels.',
+      matchDatasources: ['docker'],
+      matchPackageNames: ['python'],
+      allowedVersions: '<3.14',
+    },
   ],
 }
