@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # vexa-egress-capture.sh — SPEC-SEC-022 Phase 1 data collection.
 #
-# Captures outbound packets from the vexa-bots Docker bridge (172.27.0.0/16)
+# Captures outbound packets from the vexa12-bots Docker bridge (172.29.0.0/16)
 # to any destination outside klai-net (172.18.0.0/16). Produces:
 #   - a raw pcap file for forensic re-analysis
 #   - a per-destination summary with ports
@@ -18,7 +18,8 @@ set -euo pipefail
 
 DURATION="${1:-14400}"
 OUTPUT_DIR="${2:-/opt/klai/captures/vexa-egress}"
-BRIDGE_CIDR="172.27.0.0/16"           # vexa-bots
+BRIDGE_CIDR="172.29.0.0/16"           # vexa12-bots (SPEC-VEXA-004; verify with
+                                      # docker network inspect vexa12-bots)
 KLAINET_CIDR="172.18.0.0/16"          # exclude: klai-net internal
 MAX_RESOLVE_PARALLEL=10               # rDNS lookups in parallel
 
@@ -37,7 +38,7 @@ LOG="$OUTPUT_DIR/vexa-egress-$TS.log"
 
 echo "=== SPEC-SEC-022 Phase 1 capture ==="
 echo "Duration:   ${DURATION}s ($(printf "%dh%dm" $((DURATION/3600)) $(((DURATION/60)%60))))"
-echo "Source net: $BRIDGE_CIDR (vexa-bots)"
+echo "Source net: $BRIDGE_CIDR (vexa12-bots)"
 echo "Exclude:    dst net $KLAINET_CIDR (klai-net internal)"
 echo "Output:     $OUTPUT_DIR"
 echo

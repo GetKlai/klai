@@ -191,8 +191,18 @@ class VexaClient:
     async def delete_recording(self, recording_id: int) -> bool:
         """Delete a recording by ID. Returns True on success, False on failure.
 
-        404 (already gone) counts as success: nothing to delete and the caller
-        can mark the recording as cleaned up so we do not re-queue it forever.
+        404 (already gone) and 405 (route not served) both count as success:
+        nothing to delete and the caller can mark the recording as cleaned up so
+        we do not re-queue it forever.
+
+        405 is the Vexa 0.12 case. DELETE /recordings/{id} is declared in the
+        sealed api.v1 but sits on upstream's KNOWN_GAPS waiver list (issue #591),
+        so the router never registers it and FastAPI answers 405 rather than 404.
+        Treating that as a failure made recording_cleanup retry forever, logging a
+        warning per pass — observed in production right after the 0.12 cutover.
+        Blast radius stays nil because start_bot sends recording_enabled=false, so
+        no recording is ever produced; if recordings are ever enabled this must be
+        revisited together with the waiver.
         Other errors return False and are logged with traceback. Never raises.
         """
         try:
@@ -200,11 +210,11 @@ class VexaClient:
             resp.raise_for_status()
             return True
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:
+            if exc.response.status_code in (404, 405):
                 logger.info(
                     "Recording already absent on upstream, marking as deleted",
                     recording_id=recording_id,
-                    upstream_status=404,
+                    upstream_status=exc.response.status_code,
                 )
                 return True
             logger.warning(
