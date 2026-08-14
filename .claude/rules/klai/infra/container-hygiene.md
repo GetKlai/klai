@@ -56,6 +56,25 @@ tooling MUST recognise both:
   (`provisioning/orchestrator.py::deprovision_tenant`), NEVER via
   direct `docker rm`
 
+### Klasse C — upstream-managed ephemeral workloads
+
+- Created by `vexa12-runtime` — one container per meeting, named
+  `vexa-mtg-<id>`, spawned through `klai-docker-authz`
+- Carries UPSTREAM's labels, not ours: `runtime.managed=true` and
+  `runtime.workload_id=<id>`. We do not control the container spec, so we
+  cannot add `klai.*` labels to it
+- `AutoRemove=false`, so it stays on the host after the meeting. The daily
+  `docker-cleanup.timer` reaps it once exited (REQ-6, `until=24h`) — that is
+  the intended lifecycle, not a leak
+- Cleanup: leave it. Never `docker rm` a running `vexa-mtg-*`; that kills a
+  live meeting recording
+
+`docker-orphan-audit.sh` recognises this class only when the label AND a
+`vexaai/*` image both match. `runtime.managed` is upstream's generic name and
+much easier to collide with than our own `klai.*` labels, so a container
+claiming the class from another image is still reported.
+`deploy/scripts/tests/docker-orphan-audit-klasse-c.test.sh` pins both halves.
+
 A container without ANY of these labels (and without a
 `klai.adhoc=*` opt-in for ad-hoc debug — see below) is a wees and
 warrants human review before removal.

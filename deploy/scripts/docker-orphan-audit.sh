@@ -7,6 +7,7 @@
 #   1. orphan_no_managed_label
 #      Running container without klasse-A (compose-project=klai-core)
 #      OR klasse-B (klai.managed_by=portal-api-provisioning) OR
+#      klasse-C (runtime.managed=true on a vexaai/* image) OR
 #      klai.adhoc=* opt-in label.
 #
 #   2. orphan_service_removed
@@ -108,8 +109,26 @@ while read -r name; do
     adhoc=$(docker inspect "$name" --format '{{index .Config.Labels "klai.adhoc"}}' 2>/dev/null || echo "")
     image=$(docker inspect "$name" --format '{{.Config.Image}}' 2>/dev/null || echo "unknown")
 
+    # Klasse C — per-meeting Vexa bot workloads.
+    #
+    # vexa12-runtime creates one container per meeting (vexa-mtg-<id>) through
+    # klai-docker-authz. They carry upstream's labels, not ours, so before this
+    # they read as klasse-A-and-B-less: exactly the shape that got librechat-voys
+    # deleted. They are legitimate and short-lived — AutoRemove is false, and the
+    # daily docker-cleanup.timer reaps them once exited (REQ-6, until=24h).
+    #
+    # Both the label and the image namespace must match. `runtime.managed` is
+    # upstream's generic name and far more collidable than our own klai.* labels,
+    # so a container claiming the class from a non-vexaai image falls through to
+    # orphan_no_managed_label rather than being waved past.
+    runtime_managed=$(docker inspect "$name" --format '{{index .Config.Labels "runtime.managed"}}' 2>/dev/null || echo "")
+    klasse_c=""
+    if [[ "$runtime_managed" == "true" ]] && [[ "$image" == vexaai/* ]]; then
+        klasse_c="yes"
+    fi
+
     # Detection 1: no managed label
-    if [[ "$proj" != "klai-core" ]] && [[ "$managed_by" != "portal-api-provisioning" ]] && [[ -z "$adhoc" ]]; then
+    if [[ "$proj" != "klai-core" ]] && [[ "$managed_by" != "portal-api-provisioning" ]] && [[ -z "$klasse_c" ]] && [[ -z "$adhoc" ]]; then
         emit_event "orphan_no_managed_label" "warning" "$name" \
             "{\"image\":\"$image\"}"
         continue

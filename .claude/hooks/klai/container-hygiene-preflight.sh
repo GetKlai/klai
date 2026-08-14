@@ -134,12 +134,20 @@ if [[ ${#TARGETS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-# Locate klai-infra checkout once; reuse across targets
+# Locate klai-infra checkout once; reuse across targets.
+#
+# CLAUDE_PROJECT_DIR is set by Claude Code but not by anything else that might
+# run this script. Under `set -u` an unset variable aborted here — BEFORE the
+# blocking checks below — so the guard degraded to an error message and stopped
+# guarding. Derive the fallback from the script's own location: this lookup only
+# feeds the best-effort Check 3 and must never be able to take down Check 2.
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+
 KLAI_INFRA=""
 for candidate in \
-    "$CLAUDE_PROJECT_DIR/../klai-infra" \
-    "$CLAUDE_PROJECT_DIR/../../klai-infra" \
-    "$CLAUDE_PROJECT_DIR/klai-infra" \
+    "$PROJECT_DIR/../klai-infra" \
+    "$PROJECT_DIR/../../klai-infra" \
+    "$PROJECT_DIR/klai-infra" \
     "/opt/klai-infra"; do
     if [[ -d "$candidate/.git" ]]; then
         KLAI_INFRA="$candidate"
@@ -152,6 +160,15 @@ for TARGET in "${TARGETS[@]}"; do
     # Check 2: tenant-naam / klasse-B prefix pattern
     if [[ "$TARGET" =~ -voys$|-getklai$|-[a-z]+-tenant$ ]] || [[ "$TARGET" =~ ^librechat- ]]; then
         emit_block "$TARGET matches a tenant-managed naming pattern ($OPERATION). If this is a portal-api-provisioning-managed tenant container (klasse B, see SPEC REQ-2), use the deprovision flow instead: portal-api orchestrator.deprovision_tenant() — never delete directly via 'docker rm'. If this is a different match, verify customer impact and override with explicit user approval."
+    fi
+
+    # Check 2b: klasse-C — per-meeting Vexa bot workload.
+    # vexa12-runtime names these vexa-mtg-<id>. A RUNNING one is an in-progress
+    # meeting recording, so removing it destroys a transcript that has no other
+    # source. Once exited they are harmless and the daily docker-cleanup.timer
+    # reaps them (until=24h) — there is never a reason to remove one by hand.
+    if [[ "$TARGET" =~ ^vexa-mtg- ]]; then
+        emit_block "$TARGET is a Vexa per-meeting bot workload (klasse C, see infra/container-hygiene.md). If it is running, removing it destroys an in-progress meeting recording that has no other source. If it has exited, leave it — the daily docker-cleanup.timer prunes exited containers older than 24h. Override only with explicit user approval."
     fi
 
     # Check 3: compose git-history (best-effort)

@@ -19,12 +19,16 @@ on:
     paths:
       - 'deploy/scripts/**'
       - 'deploy/librechat/tests/**'
+      - '.claude/hooks/klai/container-hygiene-preflight.sh'
+      - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
   push:
     branches: [main]
     paths:
       - 'deploy/scripts/**'
       - 'deploy/librechat/tests/**'
+      - '.claude/hooks/klai/container-hygiene-preflight.sh'
+      - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
 
 permissions:
@@ -53,3 +57,12 @@ jobs:
 
       - name: klai-librechat digest guard suite
         run: sh deploy/scripts/tests/check-klai-librechat-digest.test.sh
+
+      # The orphan audit and the preflight hook are the two things standing
+      # between a cleanup pass and the librechat-voys incident. Both gained a
+      # container class today; neither had coverage before.
+      - name: orphan-audit managed-class suite
+        run: bash deploy/scripts/tests/docker-orphan-audit-klasse-c.test.sh
+
+      - name: container-hygiene preflight suite
+        run: bash .claude/hooks/klai/tests/container-hygiene-preflight.test.sh

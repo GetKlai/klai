@@ -58,6 +58,10 @@ jobs:
           # every service. This job is the only thing that installs it on
           # core-01, so its tests belong here.
           bash deploy/scripts/tests/compose-up-verify.test.sh
+          # The orphan audit decides which live containers look abandoned. A
+          # class it does not know reads as a wees — that is the librechat-voys
+          # incident. This job also installs it, so its tests belong here.
+          bash deploy/scripts/tests/docker-orphan-audit-klasse-c.test.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
