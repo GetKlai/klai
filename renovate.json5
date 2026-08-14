@@ -23,6 +23,14 @@
     'pep621',
   ],
 
+  // klai-hubspot is a sandbox-only POC (HubSpot Help Desk card, last real
+  // commit 2026-05-27) that ships through HubSpot's own `hs project deploy`
+  // lifecycle, not through this repo's CI. No workflow touches the path, so
+  // its PRs can never get the required `quality` check and would sit open
+  // forever — and merging them would not reach anything running anyway.
+  // Re-enable the moment it gets a build/deploy job here.
+  ignorePaths: ['klai-hubspot/**'],
+
   // Mirrors min-release-age=7 in klai-portal/frontend/.npmrc. Without it
   // Renovate would propose a version the npm CLI then refuses to install while
   // generating the lockfile, producing a PR that cannot build. Keep the two
