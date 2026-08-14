@@ -237,6 +237,60 @@ async def get_user_role_for_kb(
     return max(roles, key=lambda r: role_rank.get(r, 0))
 
 
+async def require_connector_manage_access(
+    kb: PortalKnowledgeBase,
+    perms: object,
+    db: AsyncSession,
+) -> None:
+    """Raise 403 unless the caller may manage connectors on this KB.
+
+    Single source of truth for connector CRUD, the wizard crawl-preview and
+    the auth-probe — before 2026-08-14 these had two diverging owner-checks
+    (connectors.py had a platform-admin bypass, crawl-preview did not) and
+    BOTH ignored the profile-capability layer: kb_manager+ holds
+    ``Capability.KB_CONNECTORS`` ("may use all connector types",
+    app/core/profiles.py) but was still rejected on any org KB it did not
+    own. On a default_org_role=contributor KB that locked out every
+    kb_manager except the KB creator (Voys/Ascend incident).
+
+    Allowed when one of:
+      1. platform admin (existing bypass, unchanged);
+      2. KB-role resolves to owner (creator, explicit grant or group grant);
+      3. org-owned KB + KB-role contributor + profile capability
+         KB_CONNECTORS_EXTERNAL (kb_manager and above — NOT the basic
+         KB_CONNECTORS capability, which personal/company also hold for
+         url/upload types). An explicit *viewer* grant still restricts:
+         intersection with the KB-role layer is preserved.
+
+    Personal KBs stay owner-only for non-platform-admins; the
+    ``get_kb_with_access`` route firewall already 404s other users'
+    personal KBs before this check runs.
+    """
+    from fastapi import HTTPException, status
+
+    from app.core.profiles import Capability, has_capability
+
+    if getattr(perms, "is_platform_admin", False):
+        return
+    user_id = perms.user_id  # type: ignore[attr-defined]
+    role = await get_user_role_for_kb(
+        kb.id,
+        user_id,
+        db,
+        default_org_role=kb.default_org_role,
+        kb_org_id=kb.org_id,
+        kb_created_by=kb.created_by,
+    )
+    if role == "owner":
+        return
+    if kb.owner_type == "org" and role == "contributor" and has_capability(perms, Capability.KB_CONNECTORS_EXTERNAL):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Owner access required to manage connectors",
+    )
+
+
 async def is_member_of_group(user_id: str, group_id: int, db: AsyncSession) -> bool:
     """Return True if user_id is a member of the given group."""
     result = await db.execute(

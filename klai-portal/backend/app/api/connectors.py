@@ -18,7 +18,7 @@ from app.core.profiles import Capability, ProfileRole, check_connector_allowed
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services import knowledge_ingest_client
-from app.services.access import get_user_role_for_kb
+from app.services.access import require_connector_manage_access
 from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
 from app.services.events import emit_event
 from app.services.kb_quota import assert_can_add_item_to_kb
@@ -371,27 +371,18 @@ class ConnectorCredentialMetadataOut(BaseModel):
 
 async def _get_kb_with_owner_check(
     kb_slug: str,
-    caller_id: str,
-    org_id: int,
+    perms: UserPermissions,
     db: AsyncSession,
-    *,
-    is_platform_admin: bool = False,
 ) -> PortalKnowledgeBase:
-    """Look up KB by slug + org_id and verify caller has owner role.
+    """Look up KB by slug + org_id and verify caller may manage connectors.
 
-    Platform admins bypass the owner check — they can manage any KB in
-    their tenant. This matches the frontend's ``isAdmin`` gate so the UI
-    surfaces the same affordances the backend will accept.
+    Delegates to ``require_connector_manage_access`` — the single source of
+    truth shared with the wizard crawl-preview/auth-probe. Platform admins
+    and KB owners always pass; kb_manager+ (Capability.KB_CONNECTORS) passes
+    on org-owned KBs where they hold at least contributor access.
     """
-    kb = await _get_kb_for_org(kb_slug, org_id, db)
-    if is_platform_admin:
-        return kb
-    role = await get_user_role_for_kb(kb.id, caller_id, db, kb_created_by=kb.created_by)
-    if role != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Owner access required to manage connectors",
-        )
+    kb = await _get_kb_for_org(kb_slug, perms.org_id, db)
+    await require_connector_manage_access(kb, perms, db)
     return kb
 
 
@@ -581,9 +572,7 @@ async def create_connector(
     # Resolve KB once — REQ-7 needs ``owner_type`` BEFORE other validation so
     # a personal caller gets the explicit ``org_kb_write_requires_company``
     # error_code instead of a downstream message.
-    kb = await _get_kb_with_owner_check(
-        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
-    )
+    kb = await _get_kb_with_owner_check(kb_slug, perms, db)
 
     # REQ-7: personal effective_role MUST NOT create connectors on org-owned KBs.
     if kb.owner_type == "org" and perms.effective_role == ProfileRole.PERSONAL:
@@ -669,9 +658,7 @@ async def get_connector_credential_metadata(
     Cookie values remain encrypted and never leave the backend. Cookie names are
     safe enough to prefill when an owner intentionally replaces expired cookies.
     """
-    kb = await _get_kb_with_owner_check(
-        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
-    )
+    kb = await _get_kb_with_owner_check(kb_slug, perms, db)
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
@@ -724,9 +711,7 @@ async def update_connector(
     REQ-02: rows in ``state='deleting'`` are not editable (return 404 to
     avoid leaking lifecycle state).
     """
-    kb = await _get_kb_with_owner_check(
-        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
-    )
+    kb = await _get_kb_with_owner_check(kb_slug, perms, db)
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
@@ -836,9 +821,7 @@ async def delete_connector(
     we revert the state back to ``'active'`` so the user can retry. The
     procrastinate-task itself has its own retry budget once enqueued.
     """
-    kb = await _get_kb_with_owner_check(
-        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
-    )
+    kb = await _get_kb_with_owner_check(kb_slug, perms, db)
     # REQ-02: only ``state='active'`` rows are addressable by user routes.
     result = await db.execute(
         select(PortalConnector).where(
@@ -907,9 +890,7 @@ async def trigger_sync(
     SyncRun immediately; sync runs in the background.
     """
     org = await _load_org_or_500(db, perms.org_id)
-    kb = await _get_kb_with_owner_check(
-        kb_slug, perms.user_id, perms.org_id, db, is_platform_admin=perms.is_platform_admin
-    )
+    kb = await _get_kb_with_owner_check(kb_slug, perms, db)
     # REQ-02.3: rows in 'deleting' state are owned by the purge worker.
     # Trigger-sync would race the cleanup; reject with 404 (do not leak
     # the lifecycle state via 409 — see "never leak existence" in
@@ -983,13 +964,7 @@ async def list_ms_docs_folders(
         502 — klai-connector unreachable or returned an unexpected error.
     """
     org = await _load_org_or_500(db, perms.org_id)
-    kb = await _get_kb_with_owner_check(
-        kb_slug,
-        perms.user_id,
-        perms.org_id,
-        db,
-        is_platform_admin=perms.is_platform_admin,
-    )
+    kb = await _get_kb_with_owner_check(kb_slug, perms, db)
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
@@ -1040,13 +1015,7 @@ async def list_google_drive_folders(
 ) -> dict[str, list[dict]]:
     """List child items for a Google Drive / Workspace connector picker."""
     org = await _load_org_or_500(db, perms.org_id)
-    kb = await _get_kb_with_owner_check(
-        kb_slug,
-        perms.user_id,
-        perms.org_id,
-        db,
-        is_platform_admin=perms.is_platform_admin,
-    )
+    kb = await _get_kb_with_owner_check(kb_slug, perms, db)
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,

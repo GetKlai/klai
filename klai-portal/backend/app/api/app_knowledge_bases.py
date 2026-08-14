@@ -27,7 +27,7 @@ from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase,
 from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, knowledge_ingest_client
-from app.services.access import get_user_role_for_kb, is_personal_kb
+from app.services.access import get_user_role_for_kb, is_personal_kb, require_connector_manage_access
 from app.services.audit import log_event
 from app.services.connector_credentials import credential_store
 from app.services.kb_quota import assert_can_create_org_kb, assert_can_create_personal_kb
@@ -2189,9 +2189,16 @@ async def crawl_preview(
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> CrawlPreviewResponse:
-    """Preview KB content for a URL using PruningContentFilter. Requires owner role."""
+    """Preview KB content for a URL. Requires connector-manage access.
+
+    Uses the same rule as connector CRUD (``require_connector_manage_access``)
+    — before 2026-08-14 this endpoint demanded KB-owner while profiles.py
+    grants kb_manager+ the KB_CONNECTORS capability, so a kb_manager walked
+    through wizard steps 1-3 and got "403: Owner access required" at the
+    preview (Voys/Ascend incident).
+    """
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
-    await _require_owner(kb, perms.user_id, db)
+    await require_connector_manage_access(kb, perms, db)
     cookies = await _resolve_web_crawler_probe_cookies(
         kb=kb,
         org_id=perms.org_id,
@@ -2265,11 +2272,11 @@ async def auth_probe(
     """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — wizard step-4 auth probe.
 
     Validates that supplied cookies actually unlock the seed URL before the
-    wizard allows the user to advance to the selector step. Owner role
-    required (mirrors crawl_preview).
+    wizard allows the user to advance to the selector step. Connector-manage
+    access required (mirrors crawl_preview).
     """
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
-    await _require_owner(kb, perms.user_id, db)
+    await require_connector_manage_access(kb, perms, db)
     cookies = await _resolve_web_crawler_probe_cookies(
         kb=kb,
         org_id=perms.org_id,
