@@ -13,10 +13,10 @@
 // ─── Docker container log collection ─────────────────────────────────────────
 
 discovery.docker "containers" {
-  // SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a: no raw socket. docker-socket-proxy-ro
-  // serves GET only (POST and DELETE unset), so log discovery and streaming work
-  // while container-create is structurally impossible from here.
-  host = "http://docker-socket-proxy-ro:2375"
+  // REVERTED 2026-08-14. Routing Alloy through docker-socket-proxy-ro stopped log
+  // collection entirely — see the REQ-U-002a note in
+  // .moai/specs/SPEC-SEC-DOCKER-AUTHZ-001/spec.md before trying again.
+  host = "unix:///var/run/docker.sock"
 }
 
 // Labels must be applied via discovery.relabel BEFORE loki.source.docker.
@@ -43,12 +43,10 @@ discovery.relabel "docker_logs" {
 }
 
 loki.source.docker "containers" {
-  // SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a. This is the SECOND host in this file:
-  // discovery.docker finds the containers, this tailer reads their logs, and
-  // they connect independently. Changing only the first left the tailer dialling
-  // a socket the container no longer mounts — discovery went green while every
-  // inspect failed, 10k errors in ten minutes.
-  host       = "http://docker-socket-proxy-ro:2375"
+  // REVERTED 2026-08-14 with the discovery host above. NOTE for the retry: this
+  // is a SECOND, independent Docker connection — discovery finds containers,
+  // this tailer reads their logs. Both must move together.
+  host       = "unix:///var/run/docker.sock"
   targets    = discovery.relabel.docker_logs.output
   forward_to = [loki.process.extract_level.receiver]
 }

@@ -26,15 +26,16 @@ EXPECTED_NETWORK_MEMBERS="docker-socket-proxy klai-docker-authz portal-api runti
 # remove or connect anything. NETWORKS is required: Alloy's docker discovery
 # computes network labels per target and 403s without it. A member that needs to
 # mutate belongs on socket-proxy, behind klai-docker-authz.
-EXPECTED_RO_NETWORK_MEMBERS="alloy docker-socket-proxy-ro"
+EXPECTED_RO_NETWORK_MEMBERS="docker-socket-proxy-ro"
 
 # ── Raw socket ───────────────────────────────────────────────────────────────
-# Only the two proxies. Alloy used to be here: it mounted the socket with `:ro`,
-# which protects the socket FILE and not the Docker API — a process that can write
-# the byte stream can still POST /containers/create. It now uses the GET-only
-# proxy, so the read-only intent is structural rather than a mount flag
-# (SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a).
-EXPECTED_SOCKET_MOUNTERS="docker-socket-proxy docker-socket-proxy-ro"
+# The two proxies, plus alloy — which is NOT where it should be. Its `:ro` mount
+# protects the socket FILE, not the Docker API: a process that can write that
+# byte stream can still POST /containers/create. Moving it to the GET-only proxy
+# was attempted on 2026-08-14 and REVERTED because it stopped log collection.
+# REQ-U-002a stays open in SPEC-SEC-DOCKER-AUTHZ-001; this entry is a known gap
+# that is pinned so it cannot silently grow, not an endorsement.
+EXPECTED_SOCKET_MOUNTERS="alloy docker-socket-proxy docker-socket-proxy-ro"
 
 network_members() {
     uv run --quiet --with pyyaml python -c "

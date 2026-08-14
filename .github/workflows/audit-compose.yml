@@ -11,7 +11,6 @@ on:
       - 'scripts/audit-compose-orphans.sh'
       - 'scripts/audit-docker-access.sh'
       - 'deploy/alloy/config.alloy'
-      - 'deploy/tests/test_alloy_docker_access.sh'
       - 'scripts/test-audit-compose.sh'
       - 'scripts/test-audit-compose-orphans.sh'
       - 'klai-scribe/scribe-api/app/core/config.py'
@@ -70,8 +69,6 @@ jobs:
       - name: Run docker-access audit (SPEC-SEC-DOCKER-AUTHZ-001)
         run: bash scripts/audit-docker-access.sh
 
-      - name: Alloy must not reach the raw Docker socket (REQ-U-002a)
-        run: bash deploy/tests/test_alloy_docker_access.sh
 
       - name: Orphan regression test — fixtures must catch known anti-patterns
         run: bash scripts/test-audit-compose-orphans.sh
