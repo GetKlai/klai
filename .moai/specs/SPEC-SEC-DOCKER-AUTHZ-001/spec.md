@@ -284,17 +284,21 @@ Both are hours, not weeks, and neither depends on which option is chosen.
       check (12 red), the `Mounts` arm (3 red), and path normalisation (1 red).
       A test that cannot fail proves nothing, so this was verified rather than
       assumed.
-- [ ] **portal-api can still provision a tenant end to end; vexa12-runtime can
-      still spawn a bot that joins a real meeting and produces a transcript.**
-      PARTIAL. Verified in production: portal-api's real docker-py client lists
-      86 containers, inspects, and resolves networks through the proxy; a bot
-      spawn ran the full chain (`docker_authz_allowed` → container on
-      `vexaai/vexa-bot:v0.12.22` → terminal event → webhook `delivered/200` →
-      dedupe receipt). NOT verified: a real tenant provisioned since the proxy
-      landed, and a real meeting producing a transcript. Neither can be
-      manufactured — one creates a customer tenant, the other needs a human in a
-      meeting. The provisioning body itself is covered by a unit test using the
-      exact shape from `_start_librechat_container`.
+- [x] **portal-api can still provision a tenant end to end.** Not a unit test —
+      the LibreChat fleet regenerate ran through the proxy on 2026-08-14 and
+      created **41 real tenant containers, 0 denied**, every one logged as
+      `docker_authz_allowed` with `principal: portal-api` and now running
+      (`librechat-youwe-…`, `librechat-yoobi-…`, `librechat-web-iq-…`, …). The
+      whole customer fleet was rebuilt through this control without a single
+      false positive, which is the strongest evidence available that the
+      allowlist matches the real provisioning shape.
+- [ ] **vexa12-runtime can spawn a bot that joins a real meeting and produces a
+      transcript.** PARTIAL. A bot spawn ran the full chain through the proxy
+      (`docker_authz_allowed` → container on `vexaai/vexa-bot:v0.12.22` →
+      terminal event → webhook `delivered/200` → dedupe receipt), but against a
+      non-existent meeting code, so no audio and no transcript. A real meeting
+      needs a human in it; it cannot be manufactured. The last real meeting
+      (2026-08-14, 8 segments) predates this control.
 - [x] **A denial emits a structured event and raises the Grafana alert.**
       Structured event verified in production (`docker_authz_denied` with
       principal, reason, container name). Alert:
