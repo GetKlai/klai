@@ -438,11 +438,55 @@ def test_bot_image_is_pinned_and_flagged_as_a_pull_prerequisite() -> None:
     assert image.startswith("vexaai/vexa-bot:"), image
     assert image.rsplit(":", 1)[1] not in ("latest", "dev", "staging"), "bot image must be immutably pinned"
 
+    # Assert the EXACT ref, not just the prefix: a tag bump that forgets the pull
+    # instruction is precisely the drift this test exists to catch, and a
+    # prefix-only match would sail straight past it.
     body = COMPOSE.read_text()
-    assert "docker pull vexaai/vexa-bot:" in body, (
-        "The pre-pull prerequisite must stay documented next to the stack — the runtime "
-        "cannot fetch the image itself (IMAGES disabled in docker-socket-proxy)."
+    assert f"docker pull {image}" in body, (
+        f"BROWSER_IMAGE is {image} but the documented pre-pull instruction does not name that "
+        "exact ref. The runtime cannot fetch the image itself (IMAGES disabled in "
+        "docker-socket-proxy), so a stale instruction means the first spawn fails."
     )
+    script = COMPOSE.resolve().parents[1] / "scripts" / "check-vexa12-deploy-preconditions.sh"
+    assert f'BOT_IMAGE="{image}"' in script.read_text(), (
+        f"check-vexa12-deploy-preconditions.sh must check for {image}, the tag actually deployed"
+    )
+
+
+def test_admin_api_is_not_reachable_from_the_bot_network() -> None:
+    """Bot containers are the least-trusted thing in the stack.
+
+    They run Chromium inside arbitrary external meetings. admin-api holds the
+    identity/token surface, and the 0.10 stack deliberately keeps its admin-api off
+    vexa-bots. meeting-api reaches it over a dedicated internal link instead.
+    """
+    services = _compose()["services"]
+    admin_nets = set(services["vexa12-admin-api"]["networks"])
+    bot_net = "vexa12-bots"
+
+    assert bot_net not in admin_nets, (
+        f"vexa12-admin-api is on {bot_net}; a spawned bot could reach it on :8001. "
+        "Use the vexa12-internal link (meeting-api <-> admin-api) instead."
+    )
+    link = admin_nets & set(services["vexa12-meeting-api"]["networks"])
+    assert link, "meeting-api has no network in common with admin-api — the schema owner is unreachable"
+    for net in link:
+        assert _compose()["networks"][net].get("internal") is True, (
+            f"the meeting-api <-> admin-api link runs over {net!r}, which is not internal"
+        )
+
+
+def test_meeting_api_and_admin_api_share_the_same_admin_token() -> None:
+    """MeetingToken is signed by meeting-api and verified by admin-api.
+
+    Two different values fail at verification time, not at boot — so nothing goes red
+    until a real meeting tries to upload. Locking the pair here makes a typo a test
+    failure instead of a runtime mystery.
+    """
+    services = _compose()["services"]
+    signer = services["vexa12-meeting-api"]["environment"]["ADMIN_TOKEN"]
+    verifier = services["vexa12-admin-api"]["environment"]["ADMIN_API_TOKEN"]
+    assert signer == verifier, f"meeting-api signs MeetingToken with {signer} but admin-api verifies with {verifier}"
 
 
 def test_the_two_stacks_do_not_share_secrets() -> None:

@@ -40,6 +40,10 @@ networks:
     name: vexa-bots
     driver: bridge
     # NOT internal — bot containers need internet egress to join meeting platforms
+  vexa12-internal:
+    name: vexa12-internal
+    driver: bridge
+    internal: true   # only vexa12-meeting-api <-> vexa12-admin-api; no bot ever joins
   vexa12-bots:
     name: vexa12-bots
     driver: bridge
@@ -1602,7 +1606,13 @@ services:
         condition: service_healthy
     networks:
       - net-postgres
-      - vexa12-bots   # meeting-api reaches it for /internal/users/{id}/bot-context
+      # NOT on vexa12-bots. Bot containers run Chromium inside arbitrary external
+      # meetings — the least-trusted thing in the stack — and admin-api holds the
+      # identity/token surface. The 0.10 stack keeps its admin-api off vexa-bots
+      # for the same reason; an earlier revision of this block put it on the bot
+      # network purely because meeting-api needed to reach it. This dedicated
+      # internal link is that reach, and nothing else.
+      - vexa12-internal
     deploy:
       resources:
         limits:
@@ -1720,6 +1730,7 @@ services:
     networks:
       klai-net: {}        # portal-api reaches this directly; no gateway in front
       net-postgres: {}
+      vexa12-internal: {} # reaches vexa12-admin-api without exposing it to bots
       vexa12-bots:
         aliases:
           - meeting-api   # the name a spawned 0.12 bot dials for its callback
