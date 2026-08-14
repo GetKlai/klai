@@ -17,6 +17,7 @@
  * usage: verify-librechat-build-manifest.mjs --image <ref>
  */
 import fs from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
@@ -32,11 +33,23 @@ import {
 /**
  * @param {object} options
  * @param {string} options.image
+ * @param {string} [options.expectUpstreamTag]  Expected upstream LibreChat tag.
+ * @param {string} [options.expectAgentsRef]    Expected @librechat/agents ref.
+ * @param {string} [options.expectPatchRevision] Expected Klai patch revision.
+ * @param {string} [options.patchesDir] Re-hash the diffs in THIS checkout and
+ *   require the manifest to have been built from exactly them.
  * @param {typeof extractFromImage} [options.extract]
  * @returns {string} success summary
  * @throws {Error} with every mismatch listed
  */
-export function verifyManifest({ image, extract = extractFromImage }) {
+export function verifyManifest({
+  image,
+  expectUpstreamTag,
+  expectAgentsRef,
+  expectPatchRevision,
+  patchesDir,
+  extract = extractFromImage,
+}) {
   const entries = [
     ...PATCHED_FILES,
     { key: 'build-manifest.json', containerPath: MANIFEST_CONTAINER_PATH },
@@ -56,6 +69,51 @@ export function verifyManifest({ image, extract = extractFromImage }) {
 
   const byKey = new Map(manifest.artifacts.map((a) => [a.key, a]));
   const failures = [];
+
+  /* Without the checks below this function is self-attesting: it only proves
+     the image is internally consistent with its own manifest, so an image
+     built from entirely different diffs and a different upstream passes as
+     long as it agrees with itself (adversarial review 2026-08-14, finding 2 --
+     a manifest claiming upstream "v999-attacker" with zeroed patch hashes
+     verified OK). Provenance has to be anchored to something OUTSIDE the
+     artifact being checked: the caller's expectations and this checkout. */
+  const expectations = [
+    ['upstream_librechat_tag', expectUpstreamTag],
+    ['agents_ref', expectAgentsRef],
+    ['klai_patch_revision', expectPatchRevision],
+  ];
+  for (const [field, expected] of expectations) {
+    if (expected === undefined) continue;
+    if (manifest[field] !== expected) {
+      failures.push(
+        `${field}: expected ${expected}, manifest claims ${manifest[field]}`
+      );
+    }
+  }
+
+  if (patchesDir) {
+    for (const entry of PATCHED_FILES) {
+      const recorded = byKey.get(entry.key);
+      if (!recorded) continue; // reported below
+      if (recorded.patch !== entry.patch) {
+        failures.push(
+          `${entry.key}: built from ${recorded.patch}, this checkout applies ${entry.patch}`
+        );
+        continue;
+      }
+      const patchPath = path.join(patchesDir, entry.patch);
+      if (!fs.existsSync(patchPath)) {
+        failures.push(`${entry.patch}: not found in ${patchesDir}`);
+        continue;
+      }
+      const actual = sha256File(patchPath);
+      if (actual !== recorded.patch_sha256) {
+        failures.push(
+          `${entry.patch}: this checkout hashes to ${actual}, the image was built from ${recorded.patch_sha256}`
+        );
+      }
+    }
+  }
 
   for (const entry of PATCHED_FILES) {
     const recorded = byKey.get(entry.key);
@@ -96,13 +154,28 @@ const invokedDirectly =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (invokedDirectly) {
-  const idx = process.argv.indexOf('--image');
-  if (idx === -1 || idx === process.argv.length - 1) {
+  const optional = (name) => {
+    const idx = process.argv.indexOf(`--${name}`);
+    return idx === -1 || idx === process.argv.length - 1
+      ? undefined
+      : process.argv[idx + 1];
+  };
+
+  const image = optional('image');
+  if (!image) {
     console.error('FATAL: missing required --image');
     process.exit(2);
   }
   try {
-    console.log(verifyManifest({ image: process.argv[idx + 1] }));
+    console.log(
+      verifyManifest({
+        image,
+        expectUpstreamTag: optional('expect-upstream-tag'),
+        expectAgentsRef: optional('expect-agents-ref'),
+        expectPatchRevision: optional('expect-patch-revision'),
+        patchesDir: optional('patches-dir'),
+      })
+    );
   } catch (error) {
     console.error(`FATAL: ${error.message}`);
     process.exit(1);
