@@ -95,6 +95,15 @@ a property of a mount flag.
 Read access to the network list is not a mutation primitive — `POST` stays unset,
 so `/networks/{id}/connect` is still refused.
 
+Alloy discards this proxy's successful GETs before shipping them
+(`stage.drop` in `config.alloy`). Without that filter the lane produces ~2.7M
+access-log lines/day — one per container inspect, every 5 seconds, all 200s —
+which briefly made it the second-largest log producer on the host. Anything that
+is NOT a successful GET still reaches VictoriaLogs, so a 403 here (something
+asking for a verb this lane does not serve) is still visible.
+`deploy/tests/test_alloy_drop_socket_proxy_noise.sh` pins that boundary in both
+directions; do not widen the regex without running it.
+
 **If you touch `config.alloy`, it has TWO Docker connections.**
 `discovery.docker` finds containers; `loki.source.docker` reads their logs. They
 connect independently. Changing only one produced ~10k
