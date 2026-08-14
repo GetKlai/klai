@@ -6,7 +6,8 @@
  * LibreChat/LiteLLM turn, and Strict must not answer a no-KB TCP/IP question
  * from general model knowledge.
  */
-import { test, expect, type Frame, type Page } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
+import { getChatFrame } from './_lib/chat'
 
 test.skip(process.env.E2E_MODE === 'voys-attached', 'Strict/Open smoke mutates the current chat user preference')
 
@@ -57,28 +58,6 @@ async function patchMode(page: Page, kbNarrow: boolean): Promise<KBPreference> {
   expect(result.ok, `PATCH kb-preference should accept kb_narrow=${kbNarrow}`).toBe(true)
   expect(result.body?.kb_narrow).toBe(kbNarrow)
   return result.body as KBPreference
-}
-
-async function getChatFrame(page: Page): Promise<Frame> {
-  await page.goto('/app/chat')
-  await page.waitForSelector('iframe', { timeout: 30_000 })
-  await page.waitForFunction(
-    () => Array.from(document.querySelectorAll('iframe')).some((iframe) => iframe.src.includes('chat-')),
-    null,
-    { timeout: 30_000 },
-  )
-
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const frame = page
-      .frames()
-      .find((candidate) => candidate.url().includes('chat-') && candidate.url().includes('/c/'))
-    if (frame && (await frame.locator('#prompt-textarea').count())) {
-      return frame
-    }
-    await page.waitForTimeout(500)
-  }
-
-  throw new Error(`chat frame/input not found; frames=${page.frames().map((frame) => frame.url()).join(' | ')}`)
 }
 
 async function askChat(page: Page, prompt: string): Promise<string> {
