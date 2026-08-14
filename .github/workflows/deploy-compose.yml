@@ -62,6 +62,7 @@ jobs:
           # class it does not know reads as a wees — that is the librechat-voys
           # incident. This job also installs it, so its tests belong here.
           bash deploy/scripts/tests/docker-orphan-audit-klasse-c.test.sh
+          bash deploy/scripts/tests/docker-orphan-audit-caddy-routes.test.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1

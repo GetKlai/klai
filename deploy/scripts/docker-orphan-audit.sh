@@ -48,8 +48,43 @@ CADDYFILE="${CADDYFILE:-/opt/klai/Caddyfile}"
 
 # Use a tempfile to count events across subshells (while|read pipelines)
 EVENT_TMP="$(mktemp)"
-trap 'rm -f "$EVENT_TMP"' EXIT
+CADDY_CONFIG="$(mktemp)"
+trap 'rm -f "$EVENT_TMP" "$CADDY_CONFIG"' EXIT
 echo 0 > "$EVENT_TMP"
+
+# ─── Assemble the full Caddy config ──────────────────────────────────────────
+#
+# /opt/klai/Caddyfile ends in `import /etc/caddy/tenants/*.caddyfile`, and every
+# tenant route lives in there — written by portal-api at provisioning time,
+# stored in a Docker volume, so the path in that import is container-internal and
+# does not exist on the host.
+#
+# Detections 5 and 6 read the config to decide whether a route exists. Reading
+# only the main file meant no tenant route was ever visible, so detection 6
+# reported EVERY tenant container as routeless: 42 warnings a week, none of them
+# true, while voys.getklai.com served 200 the whole time. A detection that always
+# fires cannot distinguish the case it exists to catch.
+#
+# Resolve the host path from the caddy container's mount rather than the volume
+# name, which carries a compose project prefix (klai-core_caddy-tenants) and
+# would silently stop matching if the project were ever renamed.
+CADDY_TENANTS_OK=""
+if [[ -f "$CADDYFILE" ]]; then
+    cat "$CADDYFILE" > "$CADDY_CONFIG"
+
+    if ! grep -qE '^\s*import\s+/etc/caddy/tenants/' "$CADDYFILE"; then
+        # No tenant import to follow — the main file is the whole config.
+        CADDY_TENANTS_OK="yes"
+    else
+        tenants_src=$(docker inspect klai-core-caddy-1 \
+            --format '{{range .Mounts}}{{if eq .Destination "/etc/caddy/tenants"}}{{.Source}}{{end}}{{end}}' \
+            2>/dev/null || echo "")
+        if [[ -n "$tenants_src" ]] && [[ -d "$tenants_src" ]] && [[ -r "$tenants_src" ]]; then
+            cat "$tenants_src"/*.caddyfile >> "$CADDY_CONFIG" 2>/dev/null || true
+            CADDY_TENANTS_OK="yes"
+        fi
+    fi
+fi
 
 emit_event() {
     local event_type="$1"
@@ -144,7 +179,7 @@ while read -r name; do
     # Caddy refers to klasse-B containers by container-name (e.g.
     # `reverse_proxy librechat-voys:3080`), so direct grep works for them.
     if [[ "$managed_by" == "portal-api-provisioning" ]] || [[ "$name" =~ ^librechat- ]]; then
-        if [[ -f "$CADDYFILE" ]] && ! grep -qE "(^|[[:space:]])${name}([[:space:]]|:|$)" "$CADDYFILE"; then
+        if [[ -n "$CADDY_TENANTS_OK" ]] && ! grep -qE "(^|[[:space:]])${name}([[:space:]]|:|$)" "$CADDY_CONFIG"; then
             emit_event "tenant_container_no_route" "warning" "$name" \
                 "{\"image\":\"$image\",\"tenant_slug\":\"$tenant\"}"
         fi
@@ -183,11 +218,20 @@ docker volume ls -f dangling=true -q | while read -r vol; do
     fi
 done
 
+# An unreadable tenant directory is not a reason to guess. Detections 5 and 6
+# both answer "does a route exist for this?", and on a partial config the answer
+# is wrong in the direction that generates work: every tenant looks routeless.
+# Say so once instead.
+if [[ -f "$CADDYFILE" ]] && [[ -z "$CADDY_TENANTS_OK" ]]; then
+    emit_event "caddy_config_unreadable" "critical" "klai-core-caddy-1" \
+        "{\"detail\":\"Caddyfile imports /etc/caddy/tenants/ but the host path behind that mount could not be read; route detections skipped rather than reported against partial config\"}"
+fi
+
 # ─── Detection 5: Caddy upstreams without matching container ─────────────────
 # Caddy upstreams reach docker services by their compose-service-name, not
 # the prefixed container-name. Build a service-name → running set and a
 # normalised running-name set to allow either form.
-if [[ -f "$CADDYFILE" ]]; then
+if [[ -n "$CADDY_TENANTS_OK" ]]; then
     # Set 1: full container-names (klai-core-portal-api-1, librechat-voys, etc.)
     RUNNING_NAMES=$(docker ps --format '{{.Names}}')
     # Set 2: compose-service-names (portal-api, redis, etc.)
@@ -209,7 +253,7 @@ if [[ -f "$CADDYFILE" ]]; then
         return 1
     }
 
-    grep -hE '^\s*reverse_proxy\s+' "$CADDYFILE" \
+    grep -hE '^\s*reverse_proxy\s+' "$CADDY_CONFIG" \
         | awk '{
             # reverse_proxy may have named matcher as first arg (@matcher)
             # then upstream(s). Iterate from $2 onward, filter out matchers

@@ -64,5 +64,8 @@ jobs:
       - name: orphan-audit managed-class suite
         run: bash deploy/scripts/tests/docker-orphan-audit-klasse-c.test.sh
 
+      - name: orphan-audit caddy-route suite
+        run: bash deploy/scripts/tests/docker-orphan-audit-caddy-routes.test.sh
+
       - name: container-hygiene preflight suite
         run: bash .claude/hooks/klai/tests/container-hygiene-preflight.test.sh
