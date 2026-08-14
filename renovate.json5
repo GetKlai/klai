@@ -31,6 +31,18 @@
   // Re-enable the moment it gets a build/deploy job here.
   ignorePaths: ['klai-hubspot/**'],
 
+  // Renovate merges through the API itself instead of arming GitHub's
+  // auto-merge. Verified on PR #920 (2026-08-14): every check green, GitHub
+  // auto-merge armed, and it still sat there — GitHub's auto-merge evaluates
+  // the branch protection generically and reports REVIEW_REQUIRED, ignoring
+  // the bypass allowance granted to the klai-renovate app. Renovate's own
+  // merge call runs AS the app, so the bypass does apply.
+  //
+  // The cost is that merges happen on a Renovate run rather than the instant
+  // checks turn green, which is why the cron below is hourly rather than
+  // weekly.
+  platformAutomerge: false,
+
   // Mirrors min-release-age=7 in klai-portal/frontend/.npmrc. Without it
   // Renovate would propose a version the npm CLI then refuses to install while
   // generating the lockfile, producing a PR that cannot build. Keep the two

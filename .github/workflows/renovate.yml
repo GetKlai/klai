@@ -6,7 +6,12 @@ on:
     # runs by 1-3h under load, so this lands mid-morning at worst. The cadence
     # lives HERE and nowhere else — renovate.json5 deliberately has no top-level
     # schedule (see the comment there for the 28-week no-op it caused).
-    - cron: '0 3 * * 1'
+    # Hourly, not weekly. Renovate merges its own PRs through the API
+    # (platformAutomerge is off — see renovate.json5 for why), so a green PR
+    # only merges on the NEXT run. Weekly would mean a dependency update sits
+    # ready-to-merge for up to seven days. A run is ~2 minutes and does
+    # nothing when there is nothing to do.
+    - cron: '7 * * * *'
   workflow_dispatch:
     inputs:
       logLevel:
