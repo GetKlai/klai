@@ -64,7 +64,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 | Service | Image | Rationale |
 |---|---|---|
 | `docker-socket-proxy` | `tecnativa/docker-socket-proxy:v0.5.0` | Limits portal-api to specific Docker API verbs (CONTAINERS, NETWORKS, POST, DELETE). Stable; rare releases. |
-| `runtime-api-socket-proxy` | `alpine/socat:1.8.0.3` | Bridges Vexa runtime-api's Unix Docker socket expectation to docker-socket-proxy TCP. Keep current with Alpine socat releases because old tags carry many fixed base-package CVEs. |
+| `runtime-api-socket-proxy` | `alpine/socat:1.8.1.3` | Bridges Vexa runtime-api's Unix Docker socket expectation to docker-socket-proxy TCP. Keep current with Alpine socat releases because old tags carry many fixed base-package CVEs. |
 | `garage` | `dxflrs/garage:v2.3.0` | S3-compatible object storage. Config field names change between minor releases — re-verify `garage.toml` after each bump. See `.claude/rules/klai/platform/garage.md`. |
 | `listmonk` | `listmonk/listmonk:v6.2.0` | Self-hosted mailing platform at `mailing.getklai.com` for campaign templates, lists, and Twenty-selected audiences. Upgrade after checking listmonk release notes and database migrations. |
 
