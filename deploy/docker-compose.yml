@@ -390,7 +390,7 @@ services:
   librechat-getklai:
     # SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 3 — the canary runs the Klai-owned
     # image, built in CI from the source diffs in deploy/librechat/patches-source/.
-    # Tag for humans: v0.8.7-klai.1-4d371b07a381 (upstream v0.8.7, agents v3.2.46).
+    # Tag for humans: v0.8.7-klai.1-7baaddde216b (upstream v0.8.7, agents v3.2.46).
     #
     # Pinned by DIGEST, and deploy/check-klai-librechat-digest.sh enforces that:
     # on 2026-08-14 the tag v0.8.7-klai.1 was pushed twice with different
@@ -398,7 +398,7 @@ services:
     #
     # Rollback: put ghcr.io/danny-avila/librechat:v0.8.7 back here and restore
     # the four patch bind-mounts removed below (git revert this commit).
-    image: ghcr.io/getklai/librechat@sha256:731263c1ae6a2496f2ccdb5b02810aa76b5e8ecb54a47e6b81bf97f939f824dc
+    image: ghcr.io/getklai/librechat@sha256:1b8fa0a19a2c7fae85b99e56b8e9a8b44fffd069e87a30705e4b23412f8485cb
     container_name: librechat-getklai
     restart: unless-stopped
     # Force light theme via the Klai entrypoint wrapper (LibreChat has no
@@ -722,7 +722,7 @@ services:
       DOCKER_HOST: tcp://klai-docker-authz:2375   # SPEC-SEC-DOCKER-AUTHZ-001
       # SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 5 — the fleet default is the
       # Klai-owned image, built in CI from deploy/librechat/patches-source/.
-      # Tag for humans: v0.8.7-klai.1-4d371b07a381 (upstream v0.8.7, agents v3.2.46).
+      # Tag for humans: v0.8.7-klai.1-7baaddde216b (upstream v0.8.7, agents v3.2.46).
       #
       # Digest-pinned; deploy/check-klai-librechat-digest.sh enforces it. The
       # default in config.py deliberately stays on upstream, so a deploy that
@@ -732,7 +732,7 @@ services:
       # Rollback: delete this line, then recreate tenants (they return to the
       # config.py default). LIBRECHAT_IMAGE_OVERRIDES can pin individual
       # tenants either way during a staged move.
-      LIBRECHAT_IMAGE: ghcr.io/getklai/librechat@sha256:731263c1ae6a2496f2ccdb5b02810aa76b5e8ecb54a47e6b81bf97f939f824dc
+      LIBRECHAT_IMAGE: ghcr.io/getklai/librechat@sha256:1b8fa0a19a2c7fae85b99e56b8e9a8b44fffd069e87a30705e4b23412f8485cb
       # SPEC-SEC-HYGIENE-001 REQ-28.4: explicit deployment-environment marker.
       # Pydantic Settings reads PORTAL_ENV; the in-code default is "production"
       # (REQ-28.2). The validator at config.py:_no_debug_in_production refuses
