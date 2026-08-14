@@ -16,7 +16,7 @@ three-month-old copy as current.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -38,6 +38,82 @@ def _make_procrastinate_app() -> MagicMock:
     app.configure_task.return_value.defer_async = AsyncMock(return_value=None)
     app.ingest_graphiti_episode.configure.return_value.defer_async = AsyncMock(return_value=None)
     return app
+
+
+@contextmanager
+def _ingest_patches(req, closed_rows, delete_document_side_effect=None):
+    """Patch ingest_document's collaborators; yield the mocks tests assert on.
+
+    ``closed_rows`` is what ``soft_delete_artifact`` returns — the
+    ``(artifact_id, path)`` pairs this ingest supersedes.
+    """
+    with ExitStack() as stack:
+
+        def _p(target, **kw):
+            return stack.enter_context(patch(target, **kw))
+
+        _p(
+            "knowledge_ingest.connector_state.connector_is_active",
+            new_callable=AsyncMock,
+            return_value=True,
+        )
+        _p("knowledge_ingest.enrichment_tasks.get_app", return_value=_make_procrastinate_app())
+        _p(
+            "knowledge_ingest.pg_store.get_active_content_hash",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        soft_delete = _p(
+            "knowledge_ingest.pg_store.soft_delete_artifact",
+            new_callable=AsyncMock,
+            return_value=closed_rows,
+        )
+        delete_document = _p(
+            "knowledge_ingest.qdrant_store.delete_document",
+            new_callable=AsyncMock,
+            side_effect=delete_document_side_effect,
+        )
+        _p(
+            "knowledge_ingest.pg_store.create_artifact",
+            new_callable=AsyncMock,
+            return_value="august-artifact-id",
+        )
+        set_superseded_by = _p(
+            "knowledge_ingest.pg_store.set_superseded_by", new_callable=AsyncMock
+        )
+        _p("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock)
+        _p(
+            "knowledge_ingest.pg_store.set_artifact_ingest_status",
+            new_callable=AsyncMock,
+            return_value={"artifact_id": "august-artifact-id", "path": req.path},
+        )
+        _p(
+            "knowledge_ingest.pg_store.insert_parent_chunks",
+            new_callable=AsyncMock,
+            return_value=[1],
+        )
+        _p("knowledge_ingest.embedder.embed", new_callable=AsyncMock, return_value=[[0.1] * 10])
+        _p("knowledge_ingest.qdrant_store.upsert_chunks", new_callable=AsyncMock)
+        _p(
+            "knowledge_ingest.org_config.is_enrichment_enabled",
+            new_callable=AsyncMock,
+            return_value=False,
+        )
+        _p(
+            "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
+            new_callable=AsyncMock,
+            return_value="internal",
+        )
+        settings = _p("knowledge_ingest.routes.ingest.settings")
+        settings.chunk_size = 1500
+        settings.chunk_overlap = 200
+        settings.enrichment_enabled = False
+
+        yield {
+            "soft_delete": soft_delete,
+            "delete_document": delete_document,
+            "set_superseded_by": set_superseded_by,
+        }
 
 
 def _make_conn() -> MagicMock:
@@ -107,73 +183,14 @@ async def test_ingest_forwards_connector_identity_when_page_is_renamed():
     )
     conn = _make_conn()
 
-    with (
-        patch(
-            "knowledge_ingest.connector_state.connector_is_active",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
-        patch(
-            "knowledge_ingest.enrichment_tasks.get_app",
-            return_value=_make_procrastinate_app(),
-        ),
-        patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
-            new_callable=AsyncMock,
-            return_value=None,
-        ),
-        patch(
-            "knowledge_ingest.pg_store.soft_delete_artifact",
-            new_callable=AsyncMock,
-            return_value=[("may-artifact-id", _OLD_PATH)],
-        ) as mock_soft_delete,
-        patch(
-            "knowledge_ingest.qdrant_store.delete_document", new_callable=AsyncMock
-        ) as mock_delete_doc,
-        patch(
-            "knowledge_ingest.pg_store.create_artifact",
-            new_callable=AsyncMock,
-            return_value="august-artifact-id",
-        ),
-        patch(
-            "knowledge_ingest.pg_store.set_superseded_by", new_callable=AsyncMock
-        ) as mock_set_superseded,
-        patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
-        patch(
-            "knowledge_ingest.pg_store.set_artifact_ingest_status",
-            new_callable=AsyncMock,
-            return_value={"artifact_id": "august-artifact-id", "path": req.path},
-        ),
-        patch(
-            "knowledge_ingest.pg_store.insert_parent_chunks",
-            new_callable=AsyncMock,
-            return_value=[1],
-        ),
-        patch(
-            "knowledge_ingest.embedder.embed",
-            new_callable=AsyncMock,
-            return_value=[[0.1] * 10],
-        ),
-        patch("knowledge_ingest.qdrant_store.upsert_chunks", new_callable=AsyncMock),
-        patch(
-            "knowledge_ingest.org_config.is_enrichment_enabled",
-            new_callable=AsyncMock,
-            return_value=False,
-        ),
-        patch(
-            "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
-            new_callable=AsyncMock,
-            return_value="internal",
-        ),
-        patch("knowledge_ingest.routes.ingest.settings") as mock_settings,
-    ):
-        mock_settings.chunk_size = 1500
-        mock_settings.chunk_overlap = 200
-        mock_settings.enrichment_enabled = False
-
+    with _ingest_patches(req, closed_rows=[("may-artifact-id", _OLD_PATH)]) as mocks:
         from knowledge_ingest.routes.ingest import ingest_document
 
         result = await ingest_document(conn, req)
+
+    mock_soft_delete = mocks["soft_delete"]
+    mock_delete_doc = mocks["delete_document"]
+    mock_set_superseded = mocks["set_superseded_by"]
 
     assert result["status"] == "ok"
     kwargs = mock_soft_delete.await_args.kwargs
@@ -186,3 +203,60 @@ async def test_ingest_forwards_connector_identity_when_page_is_renamed():
     # ...and its chunks must leave Qdrant, or the pre-rename content stays
     # retrievable under an open-ended valid_until.
     mock_delete_doc.assert_awaited_once_with("org1", "support", _OLD_PATH)
+
+
+def _renamed_request() -> IngestRequest:
+    return IngestRequest(
+        org_id="org1",
+        kb_slug="support",
+        path=_NEW_PATH,
+        content="# App troubleshooting\n" + ("body content " * 40),
+        source_type="notion",
+        content_type="kb_article",
+        source_connector_id=_CONNECTOR_ID,
+        source_ref=_SOURCE_REF,
+    )
+
+
+@pytest.mark.asyncio
+async def test_unrenamed_page_does_not_trigger_a_qdrant_delete():
+    """Same path in and out: upsert_chunks already clears those points.
+
+    Deleting here would be a redundant round-trip on the hot path — every
+    ordinary re-ingest of an unchanged title would pay for it.
+    """
+    req = _renamed_request()
+    conn = _make_conn()
+
+    with _ingest_patches(req, closed_rows=[("previous-artifact-id", _NEW_PATH)]) as mocks:
+        from knowledge_ingest.routes.ingest import ingest_document
+
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+    mocks["delete_document"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_qdrant_cleanup_failure_does_not_fail_the_ingest():
+    """A Qdrant blip must not fail an ingest whose supersede already committed.
+
+    Raising would not roll the supersede back, and a retry cannot recover:
+    the stale row is closed, so soft_delete_artifact stops returning it and
+    the cleanup never runs again. The ingest therefore completes and the
+    failure is surfaced at error level instead.
+    """
+    req = _renamed_request()
+    conn = _make_conn()
+
+    with _ingest_patches(
+        req,
+        closed_rows=[("may-artifact-id", _OLD_PATH)],
+        delete_document_side_effect=RuntimeError("qdrant unreachable"),
+    ) as mocks:
+        from knowledge_ingest.routes.ingest import ingest_document
+
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok", "a cleanup blip must not fail the whole ingest"
+    mocks["delete_document"].assert_awaited_once_with("org1", "support", _OLD_PATH)
