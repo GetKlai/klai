@@ -1695,6 +1695,19 @@ async def regenerate_librechat_configs(
     result = await db.execute(select(PortalOrg).where(PortalOrg.provisioning_status == "ready"))
     tenants = result.scalars().all()
 
+    # ?tenant=<slug> narrows the whole operation to one tenant. A canary
+    # rollout needs to recreate exactly one container; without this the only
+    # option was recreating all 42, which turns "try it on one tenant" into a
+    # fleet-wide restart and defeats the point.
+    only_tenant = request.query_params.get("tenant")
+    if only_tenant:
+        tenants = [org for org in tenants if org.slug == only_tenant]
+        if not tenants:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No ready tenant with slug {only_tenant!r}",
+            )
+
     loop = asyncio.get_running_loop()
     skipped: list[str] = []
 
