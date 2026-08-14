@@ -750,6 +750,7 @@
   "kb_status_probleem": "Issue",
   "kb_status_failed_tooltip": "Processing this source failed. Click the refresh icon to retry.",
   "kb_status_leeg": "Not synced",
+  "kb_connector_failed_items": "{count} pages failed processing",
   "knowledge_page_meta_items": "{count} items",
   "knowledge_page_meta_items_personal": "{count} items remembered",
   "knowledge_page_meta_connectors": "{count} connectors",

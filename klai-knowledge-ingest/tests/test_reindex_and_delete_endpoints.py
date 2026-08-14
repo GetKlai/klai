@@ -475,3 +475,48 @@ class TestListKbSourcesIndexStatus:
         assert len(uploads) == 1
         assert uploads[0]["index_status"] == "pending"
         assert uploads[0]["index_status_changed_at"] == 1751330000
+
+
+# ---------------------------------------------------------------------------
+# Smoke: list_kb_sources returns items_failed_count on connectors
+# ---------------------------------------------------------------------------
+class TestListKbSourcesConnectorFailedCount:
+    def test_connector_row_includes_items_failed_count(self) -> None:
+        """End-to-end: the connectors sub-list carries items_failed_count
+        from the DB row through ConnectorAggregate to the JSON response."""
+        conn = _make_mock_conn()
+
+        connector_row = {
+            "connector_id": "conn-z",
+            "items_count": 5,
+            "items_failed_count": 2,
+            "chunks_count": 30,
+        }
+        # list_kb_sources makes two fetch calls: connectors then uploads.
+        call_count = 0
+
+        async def _side_effect(sql: str, *args):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [connector_row]
+            return []
+
+        conn.fetch = AsyncMock(side_effect=_side_effect)
+
+        with patch(
+            "knowledge_ingest.routes.kb_sources.assert_caller_identity_tenant_only",
+            AsyncMock(return_value=_ORG),
+        ):
+            with _client_with_conn(conn) as client:
+                resp = client.get(
+                    f"/knowledge/v1/kb/{_KB}/sources",
+                    params={"org_id": _ORG},
+                )
+
+        assert resp.status_code == 200
+        connectors = resp.json()["connectors"]
+        assert len(connectors) == 1
+        assert connectors[0]["items_count"] == 5
+        assert connectors[0]["items_failed_count"] == 2
+        assert connectors[0]["chunks_count"] == 30

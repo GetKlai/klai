@@ -750,6 +750,7 @@
   "kb_status_probleem": "Probleem",
   "kb_status_failed_tooltip": "De verwerking van deze bron is mislukt. Klik op het refresh-icoon hiernaast om het opnieuw te proberen.",
   "kb_status_leeg": "Niet gesynct",
+  "kb_connector_failed_items": "{count} pagina's niet verwerkt",
   "knowledge_page_meta_items": "{count} items",
   "knowledge_page_meta_items_personal": "{count} items onthouden",
   "knowledge_page_meta_connectors": "{count} connectors",

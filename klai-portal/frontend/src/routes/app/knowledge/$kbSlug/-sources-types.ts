@@ -7,6 +7,8 @@ export interface Source {
   source_url?: string | null
   items_count: number
   chunks_count: number
+  /** Connector-only: pages that failed processing during the last sync. */
+  items_failed_count?: number
   status: string | null
   last_sync_at: string | null
   created_at: string | null

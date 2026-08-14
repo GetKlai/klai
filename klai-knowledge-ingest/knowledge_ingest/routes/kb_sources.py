@@ -53,6 +53,7 @@ router = APIRouter()
 class ConnectorAggregate(BaseModel):
     connector_id: str
     items_count: int = 0
+    items_failed_count: int = 0
     chunks_count: int = 0
 
 

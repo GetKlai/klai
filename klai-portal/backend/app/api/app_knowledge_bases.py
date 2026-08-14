@@ -1022,6 +1022,7 @@ class SourceOut(BaseModel):
     source_url: str | None = None  # direct URL uploads only; stable source URL for drill-down display
     items_count: int = 0  # number of artifacts under a connector; 1 for direct uploads
     chunks_count: int = 0  # parent_chunks across the bron's artifact(s)
+    items_failed_count: int = 0  # connector pages that failed processing; 0 for uploads
     status: str | None = None  # raw last_sync_status for connectors; None for uploads
     last_sync_at: datetime | None = None
     created_at: datetime | None = None  # for uploads — sort key
@@ -1219,6 +1220,7 @@ async def list_kb_sources(
                     connector_type=None,
                     items_count=int(agg.get("items_count") or 0),
                     chunks_count=int(agg.get("chunks_count") or 0),
+                    items_failed_count=int(agg.get("items_failed_count") or 0),
                     status="orphan",
                 )
             )
@@ -1232,6 +1234,7 @@ async def list_kb_sources(
                     connector_type=portal_conn.connector_type,
                     items_count=int(agg.get("items_count") or 0),
                     chunks_count=int(agg.get("chunks_count") or 0),
+                    items_failed_count=int(agg.get("items_failed_count") or 0),
                     status=portal_conn.last_sync_status,
                     last_sync_at=portal_conn.last_sync_at,
                 )
@@ -1251,6 +1254,7 @@ async def list_kb_sources(
                 connector_type=portal_conn.connector_type,
                 items_count=0,
                 chunks_count=0,
+                items_failed_count=0,
                 status=portal_conn.last_sync_status,
                 last_sync_at=portal_conn.last_sync_at,
             )

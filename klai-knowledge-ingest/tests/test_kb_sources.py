@@ -37,6 +37,7 @@ def test_chunks_summary_response_uses_canonical_source_count_key() -> None:
         "sources_by_kb": {"kb-a": 4},
     }
 
+
 # -- count_chunks_per_kb ----------------------------------------------------
 
 
@@ -127,7 +128,12 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
         side_effect=[
             # Query 1 — connectors
             [
-                {"connector_id": "conn-x", "items_count": 5, "chunks_count": 23},
+                {
+                    "connector_id": "conn-x",
+                    "items_count": 5,
+                    "items_failed_count": 0,
+                    "chunks_count": 23,
+                },
             ],
             # Query 2 — uploads
             [
@@ -149,7 +155,12 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
     result = await pg_store.list_kb_sources(conn, "org-1", "kb-a")
 
     assert result["connectors"] == [
-        {"connector_id": "conn-x", "items_count": 5, "chunks_count": 23},
+        {
+            "connector_id": "conn-x",
+            "items_count": 5,
+            "items_failed_count": 0,
+            "chunks_count": 23,
+        },
     ]
     assert result["uploads"] == [
         {
@@ -174,6 +185,66 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
     assert "display_name" in upload_sql
     assert "source_url" in upload_sql
     assert "ORDER BY a.created_at DESC" in upload_sql
+
+
+@pytest.mark.asyncio
+async def test_list_kb_sources_connector_items_failed_count() -> None:
+    """A connector with 2 failed + 3 synced active artifacts reports
+    items_failed_count == 2 (out of items_count == 5)."""
+    conn = MagicMock()
+    conn.fetch = AsyncMock(
+        side_effect=[
+            # Query 1 — connectors: DB already aggregated 2 failed of 5 items.
+            [
+                {
+                    "connector_id": "conn-y",
+                    "items_count": 5,
+                    "items_failed_count": 2,
+                    "chunks_count": 30,
+                },
+            ],
+            # Query 2 — uploads (none)
+            [],
+        ]
+    )
+
+    result = await pg_store.list_kb_sources(conn, "org-1", "kb-a")
+
+    assert result["connectors"] == [
+        {
+            "connector_id": "conn-y",
+            "items_count": 5,
+            "items_failed_count": 2,
+            "chunks_count": 30,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_kb_sources_connector_query_avoids_join_fanout_on_failed_count() -> None:
+    """items_failed_count must be COUNT(DISTINCT a.id) FILTER(...), not a plain
+    COUNT(*) FILTER(...).
+
+    The connector query LEFT JOINs knowledge.parent_chunks onto artifacts, so a
+    single failed artifact with N parent_chunks produces N joined rows. A plain
+    ``COUNT(*) FILTER (WHERE a.index_status = 'failed')`` would count that one
+    failed artifact N times. ``COUNT(DISTINCT a.id) FILTER (...)`` collapses the
+    join fanout back to one count per distinct artifact — mirroring the
+    pre-existing items_count column, which uses the same DISTINCT pattern for
+    the same reason.
+    """
+    conn = MagicMock()
+    conn.fetch = AsyncMock(side_effect=[[], []])
+
+    await pg_store.list_kb_sources(conn, "org-1", "kb-a")
+
+    connector_sql = conn.fetch.await_args_list[0].args[0]
+    assert "COUNT(DISTINCT a.id) FILTER (WHERE a.index_status = 'failed')" in (
+        " ".join(connector_sql.split())
+    )
+    # Structural guard: no un-guarded COUNT(*) FILTER on index_status, which
+    # would double-count artifacts with more than one parent_chunk row.
+    assert "COUNT(*) FILTER" not in connector_sql
 
 
 @pytest.mark.asyncio

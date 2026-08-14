@@ -32,7 +32,7 @@ import {
 import * as m from '@/paraglide/messages'
 import { SourceContent } from './-sources-content'
 import { SourceRowActions } from './-sources-row-actions'
-import { SourceIcon, StatusBadge } from './-sources-helpers'
+import { FailedItemsWarning, SourceIcon, StatusBadge } from './-sources-helpers'
 import { useSourceRename } from './-sources-hooks'
 import type { Source } from './-sources-types'
 
@@ -104,6 +104,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
             >
               <ListRowTitle className="block min-w-0">{source.name}</ListRowTitle>
               <ListRowDescription>{meta}</ListRowDescription>
+              <FailedItemsWarning source={source} />
             </button>
           </InlineEdit>
         </ListRowContent>
