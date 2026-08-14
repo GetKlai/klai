@@ -249,15 +249,30 @@ assert.ok(
   'the kb-feedback forward call is missing from the built messages.js'
 );
 // Fire-and-forget by contract (REQ-KB-015-06): the forward must never block or
-// fail the user's response.
-assert.match(
-  messagesSource,
-  /fetch\([\s\S]{0,600}kb-feedback[\s\S]{0,900}?\.catch\(/,
-  'the kb-feedback forward must be fire-and-forget with a .catch, never awaited'
+// fail the user's response. Asserted structurally -- an earlier version measured
+// the character distance between fetch( and .catch(, which broke the moment a
+// comment was added inside the block. A test that a comment can fail is
+// measuring the wrong thing.
+const forwardStart = messagesSource.indexOf('/internal/v1/kb-feedback');
+assert.ok(forwardStart !== -1, 'kb-feedback forward not found');
+// The forward sits immediately before the response is sent, so everything it
+// needs must be wired up in between.
+const responseStart = messagesSource.indexOf('res.json(', forwardStart);
+assert.ok(responseStart !== -1, 'no res.json after the kb-feedback forward');
+const forwardBlock = messagesSource.slice(forwardStart, responseStart);
+assert.ok(
+  forwardBlock.includes('.catch('),
+  'the kb-feedback forward must carry a .catch — a rejected promise would otherwise surface to the user'
 );
 assert.ok(
   !/await\s+fetch\(`\$\{portalUrl\}\/internal\/v1\/kb-feedback/.test(messagesSource),
   'the kb-feedback forward must not be awaited'
+);
+// The correlation identity has to travel with it, or the receiving end falls
+// back to the LibreChat user id and correlation silently fails again.
+assert.ok(
+  forwardBlock.includes('identity_user_id'),
+  'the forward must send identity_user_id (the Zitadel subject the retrieval log is keyed by)'
 );
 
 console.log(
