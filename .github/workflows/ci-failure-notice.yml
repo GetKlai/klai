@@ -21,7 +21,12 @@ name: CI failure notice
 
 on:
   workflow_run:
+    # Everything that publishes an image or writes to core-01. The rule for
+    # this list is "did main just fail to ship something", not "did a check go
+    # red" — a red gate is already blocking at the PR, while a red deploy has
+    # nothing else shouting about it.
     workflows:
+      # Python + frontend services
       - Build and push portal-api
       - Build and deploy portal-frontend
       - Build and push knowledge-ingest
@@ -30,8 +35,27 @@ on:
       - Build and push klai-mailer
       - Build and push scribe-api
       - Build and push klai-knowledge-mcp
+      # Images that are not a Python service but still ship
+      - Build Klai LibreChat image
+      - Build and push caddy-hetzner
+      - Build and push whisper-server
+      - Build and push klai-docker-authz
+      - Build and deploy docs
+      # Things that write directly to core-01
       - Sync docker-compose.yml + config + smoke-test to core-01
+      - Sync LibreChat base config to core-01
+      - Deploy LiteLLM hooks
     types: [completed]
+
+    # Deliberately NOT watched, so the open-issue list stays a list of real
+    # breakage:
+    #   - E2E prod-tenant — flaky enough that it would file more noise than
+    #     signal; it cancels itself constantly on concurrent main pushes.
+    #   - Semgrep / trivyignore validate / rules-tests / audit compose /
+    #     env-scope-guard / tenant-isolation / alerting checks / litellm hook
+    #     tests / LibreChat patch tests — these are PR gates. They block the
+    #     merge, so a red one on main means somebody used --admin, and the
+    #     conversation about that belongs on the PR.
 
 permissions:
   contents: read
