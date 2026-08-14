@@ -96,7 +96,7 @@ async def test_proceeds_when_content_changed():
         patch(
             "knowledge_ingest.pg_store.soft_delete_artifact",
             new_callable=AsyncMock,
-            return_value=["closed-artifact-id"],
+            return_value=[("closed-artifact-id", "docs/page.md")],
         ) as mock_soft_delete,
         patch(
             "knowledge_ingest.pg_store.create_artifact",
@@ -156,7 +156,16 @@ async def test_proceeds_when_content_changed():
         result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
-    mock_soft_delete.assert_awaited_once_with(conn, req.org_id, req.kb_slug, req.path)
+    # Connector identity is None for this plain docs request, so the close
+    # step falls back to path-only matching (see soft_delete_artifact).
+    mock_soft_delete.assert_awaited_once_with(
+        conn,
+        req.org_id,
+        req.kb_slug,
+        req.path,
+        source_connector_id=None,
+        source_ref=None,
+    )
     mock_create.assert_awaited_once()
     mock_set_superseded_by.assert_awaited_once_with(
         conn,

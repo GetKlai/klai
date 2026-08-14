@@ -376,31 +376,59 @@ async def get_personal_artifact(
 
 
 async def soft_delete_artifact(
-    conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
-) -> list[str]:
-    """Set belief_time_end = now for all active artifacts matching this path.
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    path: str,
+    source_connector_id: str | None = None,
+    source_ref: str | None = None,
+) -> list[tuple[str, str]]:
+    """Set belief_time_end = now for all active artifacts this ingest replaces.
 
-    Returns the ids of the rows that were closed, so the caller can link
-    them to their replacement via :func:`set_superseded_by`. Id-based
+    Matching is by path OR, for connector-sourced documents, by the stable
+    provider identity ``(source_connector_id, source_ref)``. Path alone is
+    not sufficient: it mirrors a user-editable title, so renaming a source
+    page produced a second active artifact under the new title while the
+    old one stayed live in PG and Qdrant (Voys ``support`` KB, 2026-08-14 —
+    "App troubleshoot & transfers" vs "App troubleshooting"). Callers with
+    no connector identity (personal KB, manual upload) keep path-only
+    semantics.
+
+    Returns ``(id, path)`` for every row that was closed. The id lets the
+    caller link it to its replacement via :func:`set_superseded_by`; id-based
     linking avoids the epoch-second collision risk of matching closed rows
-    back by timestamp (adversarial review 2026-06-11).
+    back by timestamp (adversarial review 2026-06-11). The path is needed
+    because :func:`qdrant_store.upsert_chunks` only clears points for the
+    path being written — a row closed under a DIFFERENT (old) path leaves
+    its chunks behind, still carrying an open-ended ``valid_until``, and
+    therefore still retrievable.
     """
     now = int(time.time())
     rows = await conn.fetch(
         """
         UPDATE knowledge.artifacts
         SET belief_time_end = $1
-        WHERE org_id = $2 AND kb_slug = $3 AND path = $4
+        WHERE org_id = $2 AND kb_slug = $3
           AND belief_time_end = $5
-        RETURNING id
+          AND (
+            path = $4
+            OR (
+              $6::text IS NOT NULL AND $7::text IS NOT NULL
+              AND extra->>'source_connector_id' = $6
+              AND extra->>'source_ref' = $7
+            )
+          )
+        RETURNING id, path
         """,
         now,
         org_id,
         kb_slug,
         path,
         _SENTINEL,
+        source_connector_id,
+        source_ref,
     )
-    return [str(row["id"]) for row in rows]
+    return [(str(row["id"]), str(row["path"])) for row in rows]
 
 
 async def set_superseded_by(

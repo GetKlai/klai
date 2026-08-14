@@ -292,11 +292,18 @@ async def test_list_recent_artifact_keys_covers_created_and_closed_rows():
 @pytest.mark.asyncio
 async def test_soft_delete_updates_belief_time_end_and_returns_closed_ids():
     conn = _make_conn()
-    conn.fetch = AsyncMock(return_value=[{"id": "closed-id-1"}, {"id": "closed-id-2"}])
+    conn.fetch = AsyncMock(
+        return_value=[
+            {"id": "closed-id-1", "path": "note.md"},
+            {"id": "closed-id-2", "path": "old-title.md"},
+        ]
+    )
     with patch("knowledge_ingest.pg_store.time.time", return_value=1_700_000_000):
         result = await pg_store.soft_delete_artifact(conn, "org123", "personal", "note.md")
 
-    assert result == ["closed-id-1", "closed-id-2"]
+    # (id, path) pairs: the path lets the caller clear Qdrant points that were
+    # written under a previous title.
+    assert result == [("closed-id-1", "note.md"), ("closed-id-2", "old-title.md")]
     conn.fetch.assert_called_once()
     call_args = conn.fetch.call_args[0]
     assert "UPDATE knowledge.artifacts" in call_args[0]
