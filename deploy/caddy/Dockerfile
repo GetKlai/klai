@@ -13,15 +13,34 @@
 # production once CI rebuilds and republishes ghcr.io/getklai/caddy-hetzner.
 FROM caddy:2.11.4-builder-alpine AS builder
 
-# The trailing --with pins a dependency, not a plugin: xcaddy turns it into a
-# require+replace, so the built binary links x/net 0.56.0 instead of the 0.55.0
-# Caddy 2.11.4 ships. That closes CVE-2026-46600 properly rather than adding a
-# fourth .trivyignore entry for something with an available fix.
-# Drop the pin once Caddy ships a release that already requires >= 0.56.0.
+# The two --replace lines pin transitive dependencies, not plugins. Caddy
+# 2.11.4's own graph selects versions that Trivy flags with a fix available:
+#
+#   golang.org/x/net        CVE-2026-46600       fixed in 0.56.0
+#   google.golang.org/grpc  GHSA-hrxh-6v49-42gf  fixed in 1.82.1
+#
+# Both get fixed at source rather than earning a .trivyignore entry, which is
+# reserved for findings that have no fix to apply.
+#
+# It has to be --replace, not --with: --with also writes a blank import into
+# the generated main.go, and golang.org/x/net has no root package, so the build
+# dies with "cannot find module providing package golang.org/x/net" (tried it —
+# 3ccaaddb9). --replace writes only the go.mod directive.
+#
+# x/net goes to 0.58.0 rather than the 0.56.0 minimum because that is what the
+# module graph resolves to once x/net is a direct requirement — this pins
+# forward to where the tree already wants to be, not down at the CVE floor.
+#
+# Both plugins above are deliberately unversioned, so the resolved graph drifts
+# between builds: a plain 2.11.4 build selected x/net 0.55.0 in CI and 0.57.0
+# locally on the same day. These pins make the two dependencies that actually
+# carry findings deterministic. Drop a line once Caddy ships a release that
+# already selects at or above the fix.
 RUN xcaddy build \
     --with github.com/caddy-dns/hetzner/v2 \
     --with github.com/mholt/caddy-ratelimit \
-    --with golang.org/x/net@v0.56.0
+    --replace golang.org/x/net=golang.org/x/net@v0.58.0 \
+    --replace google.golang.org/grpc=google.golang.org/grpc@v1.82.1
 
 FROM caddy:2.11.4-alpine
 
@@ -30,7 +49,9 @@ FROM caddy:2.11.4-alpine
 # through Caddy's HTTPS edge, so real package fixes are preferred over
 # ignore-entries. Keep this list targeted so the build stays reproducible;
 # broader base-image movement remains Renovate-owned.
-RUN apk update && apk upgrade --no-cache nghttp2 nghttp2-libs libcrypto3 libssl3
+RUN apk update && apk upgrade --no-cache \
+        nghttp2 nghttp2-libs libcrypto3 libssl3 \
+        curl libcurl c-ares
 
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 
