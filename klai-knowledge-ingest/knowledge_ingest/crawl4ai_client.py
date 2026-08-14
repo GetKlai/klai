@@ -600,6 +600,8 @@ def _classify_fetch_outcome(
     ``reason_codes.py`` AND extend the migration's allowed set first.
     """
     if error is not None:
+        if _is_antibot_block_error(error):
+            return FetchReasonCode.BLOCKED_ANTI_BOT.value
         msg = str(error).lower()
         if isinstance(error, httpx.TimeoutException) or "timeout" in msg:
             return FetchReasonCode.TIMEOUT.value
@@ -617,6 +619,15 @@ def _classify_fetch_outcome(
 
     status = page_result.get("status_code")
     err_msg = (page_result.get("error_message") or "").lower()
+
+    # Checked before the status-code branches: crawl4ai reports a Cloudflare
+    # JS-challenge block as a 500 with this marker in the body/error_message,
+    # same detection used for the transport-exception branch above (see
+    # _is_antibot_block_error). Applies to both the bulk per-page result
+    # shape and the seed/single-page synthesized shape built in
+    # _build_outcome_from_result / _error_message_for_result.
+    if "blocked by anti-bot protection" in err_msg:
+        return FetchReasonCode.BLOCKED_ANTI_BOT.value
 
     if status == 429:
         return FetchReasonCode.RATE_LIMITED.value
@@ -845,7 +856,7 @@ async def _crawl_page_with_config(
                 html="",
                 word_count=0,
                 success=False,
-                error_message=str(exc),
+                error_message=_error_message_for_result(exc),
             )
 
     results = data.get("results", [])
@@ -1061,13 +1072,41 @@ def _crawl_results_from_raw_results(
     return results
 
 
-def _is_minimal_content_antibot_error(exc: Exception) -> bool:
+def _is_antibot_block_error(exc: BaseException) -> bool:
+    """True when a crawl4ai transport failure's body reports an anti-bot block.
+
+    Generalised from :func:`_is_minimal_content_antibot_error` (which
+    additionally requires a thin-content marker to justify a same-page
+    relaxed-config retry). This broader check is used by the sequential
+    anti-bot recovery path in ``crawl_site``, where ANY anti-bot block —
+    not just the thin-content flavour — should trigger a one-URL-at-a-time
+    retry rather than losing the whole bulk batch.
+    """
     if not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code != 500:
         return False
+    return "blocked by anti-bot protection" in exc.response.text.lower()
+
+
+def _is_minimal_content_antibot_error(exc: Exception) -> bool:
+    if not isinstance(exc, httpx.HTTPStatusError) or not _is_antibot_block_error(exc):
+        return False
     body = exc.response.text.lower()
-    return "blocked by anti-bot protection" in body and (
-        "minimal_text" in body or "no_content_elements" in body or "0 chars visible" in body
-    )
+    return "minimal_text" in body or "no_content_elements" in body or "0 chars visible" in body
+
+
+def _error_message_for_result(exc: BaseException) -> str:
+    """Message stored on a failed ``CrawlResult.error_message``.
+
+    For an anti-bot-block 500, preserve the raw response body (which
+    carries the "blocked by anti-bot protection" marker) instead of
+    ``str(exc)`` — ``httpx.HTTPStatusError.__str__`` reports only the
+    status line, not the body, which would otherwise silently lose the
+    signal ``_classify_fetch_outcome`` needs to map the outcome to
+    ``FetchReasonCode.BLOCKED_ANTI_BOT`` on the seed / single-page paths.
+    """
+    if isinstance(exc, httpx.HTTPStatusError) and _is_antibot_block_error(exc):
+        return exc.response.text
+    return str(exc)
 
 
 def _relax_seed_crawl_config(crawler_config: dict[str, Any]) -> dict[str, Any]:
@@ -1225,6 +1264,10 @@ async def crawl_site(
     crawl_results: list[CrawlResult] = []
     outcomes: list[FetchOutcome] = []
     fetched_count = 0
+    # Crawl-job-wide budget for the anti-bot sequential-recovery fallback
+    # (see _recover_antibot_batch / _MAX_ANTIBOT_SEQUENTIAL_RECOVERY).
+    # Shared across every batch iteration below, not reset per batch.
+    antibot_recovery_budget = _MAX_ANTIBOT_SEQUENTIAL_RECOVERY
 
     start_result = await _fetch_seed_page(
         start_url=start_url,
@@ -1254,12 +1297,35 @@ async def crawl_site(
         )
         fetched_count += len(batch)
 
-        batch_results, batch_outcomes = _combine_bulk_responses(
-            candidates=batch,
-            raw_results=raw_results,
-            transport_error=transport_error,
-            base_domain=base_domain,
-        )
+        if transport_error is not None and _is_antibot_block_error(transport_error):
+            # crawl4ai's bulk endpoint failed the WHOLE batch with an
+            # anti-bot block (evidence + budget: see
+            # _MAX_ANTIBOT_SEQUENTIAL_RECOVERY). Recover what we can by
+            # retrying one URL at a time via the single-page path instead
+            # of writing off every URL in the batch as unknown_exception.
+            (
+                batch_results,
+                link_source_results,
+                batch_outcomes,
+                antibot_attempted,
+            ) = await _recover_antibot_batch(
+                batch,
+                crawler_config=crawler_config,
+                cookies=cookies,
+                base_domain=base_domain,
+                recovery_budget=antibot_recovery_budget,
+            )
+            antibot_recovery_budget -= antibot_attempted
+        else:
+            batch_results, batch_outcomes = _combine_bulk_responses(
+                candidates=batch,
+                raw_results=raw_results,
+                transport_error=transport_error,
+                base_domain=base_domain,
+            )
+            link_source_results = _crawl_results_from_raw_results(
+                raw_results, base_domain=base_domain
+            )
         # Preview↔ingest parity: the single-page preview recovers thin-but-rich
         # pages via a relaxed retry; do the same for BFS pages so site ingest
         # does not silently store them thin. Only when no selector is active
@@ -1277,7 +1343,7 @@ async def crawl_site(
         crawl_results.extend(batch_results)
 
         recovered_by_canonical = {_canonicalise_url(r.url): r for r in batch_results}
-        for result in _crawl_results_from_raw_results(raw_results, base_domain=base_domain):
+        for result in link_source_results:
             result = recovered_by_canonical.get(_canonicalise_url(result.url), result)
             source_depth = ledger.depth_for_url(result.url)
             if source_depth is not None and source_depth < max_depth:
@@ -1359,7 +1425,7 @@ async def _fetch_seed_page(
             html="",
             word_count=0,
             success=False,
-            error_message=str(exc),
+            error_message=_error_message_for_result(exc),
         )
 
     pages = _normalise_results_block(data)
@@ -1465,6 +1531,104 @@ def _result_is_ingestable(result: CrawlResult, *, base_domain: str) -> bool:
     if not (result.fit_markdown or result.raw_markdown):
         return False
     return _same_site_domain(urlparse(result.url).netloc.lower(), base_domain)
+
+
+async def _recover_antibot_batch(
+    urls: list[str],
+    *,
+    crawler_config: dict[str, Any],
+    cookies: list[dict[str, Any]] | None,
+    base_domain: str,
+    recovery_budget: int,
+) -> tuple[list[CrawlResult], list[CrawlResult], list[FetchOutcome], int]:
+    """Sequentially re-fetch a batch that failed WHOLESALE via bulk fetch.
+
+    Called from ``crawl_site`` only when ``_chunked_bulk_fetch`` returned a
+    ``transport_error`` that is an anti-bot block (see
+    ``_is_antibot_block_error``). Reuses the single-page fetch path
+    (``_crawl_page_with_config``, same one ``crawl_page`` uses) one URL at a
+    time instead of duplicating fetch logic — see module-level comment on
+    ``_MAX_ANTIBOT_SEQUENTIAL_RECOVERY`` for the supporting evidence.
+
+    Bounded by ``recovery_budget`` (the crawl-job-wide remainder of
+    ``_MAX_ANTIBOT_SEQUENTIAL_RECOVERY``). Once exhausted, remaining URLs in
+    this batch are marked ``BLOCKED_ANTI_BOT`` without a network call and
+    the cap is logged once via ``crawl_antibot_recovery_capped``.
+
+    Returns ``(crawl_results, link_source_results, outcomes, attempted)``:
+
+    - ``crawl_results``: ingestable, non-listing pages — mirrors
+      ``batch_results`` from the bulk-success path (``_combine_bulk_responses``).
+    - ``link_source_results``: every successfully fetched same-domain page,
+      including listing pages — feeds BFS link discovery, mirrors
+      ``_crawl_results_from_raw_results(raw_results, ...)`` from the
+      bulk-success path so the frontier grows the same way it would have if
+      the bulk request itself had not failed.
+    - ``attempted``: URLs actually re-fetched over the network (counts
+      against ``recovery_budget`` and against the caller's ``max_pages``
+      budget, same as any other fetch attempt).
+    """
+    crawl_results: list[CrawlResult] = []
+    link_source_results: list[CrawlResult] = []
+    outcomes: list[FetchOutcome] = []
+    attempted = 0
+    recovered = 0
+    still_blocked = 0
+
+    for i, url in enumerate(urls):
+        if attempted >= recovery_budget:
+            remaining = len(urls) - i
+            for leftover_url in urls[i:]:
+                outcomes.append(
+                    {
+                        "url": leftover_url,
+                        "reason_code": FetchReasonCode.BLOCKED_ANTI_BOT.value,
+                        "status_code": None,
+                        "content_length": 0,
+                    }
+                )
+            still_blocked += remaining
+            logger.warning(
+                "crawl_antibot_recovery_capped",
+                recovered=recovered,
+                still_blocked=still_blocked,
+                capped_at=_MAX_ANTIBOT_SEQUENTIAL_RECOVERY,
+                remaining=remaining,
+            )
+            break
+
+        attempted += 1
+        result = await _crawl_page_with_config(url, crawler_config, cookies=cookies, selector=None)
+        reason_code = _classify_fetch_outcome(
+            {
+                "success": result.success,
+                "status_code": None,
+                "error_message": result.error_message or "",
+            }
+        )
+        is_non_content_listing = result.success and _is_non_content_listing_page(result)
+        if reason_code == FetchReasonCode.SUCCESS.value and is_non_content_listing:
+            reason_code = FetchReasonCode.NON_CONTENT_LISTING_PAGE.value
+        outcomes.append(
+            {
+                "url": url,
+                "reason_code": reason_code,
+                "status_code": None,
+                "content_length": len(result.html or ""),
+            }
+        )
+
+        if reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value:
+            still_blocked += 1
+            continue
+
+        if result.success and _same_site_domain(urlparse(result.url).netloc.lower(), base_domain):
+            link_source_results.append(result)
+        if _result_is_ingestable(result, base_domain=base_domain) and not is_non_content_listing:
+            crawl_results.append(result)
+            recovered += 1
+
+    return crawl_results, link_source_results, outcomes, attempted
 
 
 def _combine_bulk_responses(
@@ -1669,6 +1833,20 @@ _BULK_CRAWL_TIMEOUT = 5 * 60.0
 # be raised in lock-step with any future crawl4ai schema relaxation.
 # Discovered live on help.voys.nl (208 sitemap entries → 422 → 1 ingested).
 _BULK_CHUNK_SIZE = 100
+
+# Total budget (per crawl_site call) for sequential one-URL-at-a-time
+# recovery of a bulk batch that failed as a whole with an anti-bot block
+# (see _recover_antibot_batch). Evidence 2026-08-14 (intermedia.com):
+# crawl4ai's bulk arun_many fails the ENTIRE concurrent batch with one
+# opaque 500 the moment ANY url in it hits Cloudflare's intermittent JS
+# challenge, while the same URLs fetched one at a time via the single-page
+# path pass the challenge for at least some of them (/products/unite
+# succeeded, /products/ai still blocked, seconds apart) — the challenge is
+# per-request intermittent, so serial retry recovers real pages. Capped so
+# a site that blocks every request cannot turn a bulk crawl into hundreds
+# of serial round-trips; once exhausted, remaining URLs are marked
+# BLOCKED_ANTI_BOT without a network call (crawl_antibot_recovery_capped).
+_MAX_ANTIBOT_SEQUENTIAL_RECOVERY = 60
 
 # Server-side BFS deep crawl polling budget. /crawl/job is async — submit,
 # get task_id, poll status. Voys-support full-depth crawl (~500 pages

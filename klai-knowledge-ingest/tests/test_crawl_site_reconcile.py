@@ -46,16 +46,10 @@ class TestCanonicaliseUrl:
         assert _canonicalise_url("https://example.com/").endswith("/")
 
     def test_strips_fragment(self) -> None:
-        assert (
-            _canonicalise_url("https://example.com/page#section")
-            == "https://example.com/page"
-        )
+        assert _canonicalise_url("https://example.com/page#section") == "https://example.com/page"
 
     def test_lowercases_scheme_and_host(self) -> None:
-        assert (
-            _canonicalise_url("HTTPS://Example.COM/Page")
-            == "https://example.com/Page"
-        )
+        assert _canonicalise_url("HTTPS://Example.COM/Page") == "https://example.com/Page"
 
     def test_preserves_query(self) -> None:
         # Query string variants are different pages by convention; we keep them.
@@ -183,6 +177,24 @@ class TestBuildCandidateSet:
 # ---------------------------------------------------------------------------
 
 
+def _antibot_http_status_error(*, extra_marker: str = "") -> httpx.HTTPStatusError:
+    """Build a 500 HTTPStatusError whose body reports an anti-bot block.
+
+    Mirrors what crawl4ai's REST API actually returns for a Cloudflare JS
+    challenge — same shape as the "minimal content" flavour covered in
+    ``test_fetch_seed_retries_relaxed_config_after_minimal_content_antibot``
+    (test_crawl4ai_filter_chain.py), generalised: no thin-content marker
+    required, just the "blocked by anti-bot protection" phrase in the body.
+    """
+    request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+    response = httpx.Response(
+        500,
+        json={"detail": f"Blocked by anti-bot protection: Cloudflare JS challenge{extra_marker}"},
+        request=request,
+    )
+    return httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+
+
 class TestClassifyFetchOutcome:
     def test_success_when_result_success_true(self) -> None:
         assert (
@@ -229,6 +241,40 @@ class TestClassifyFetchOutcome:
                 {"success": False, "status_code": None, "error_message": "DNS lookup failed"}
             )
             == FetchReasonCode.DNS_ERROR.value
+        )
+
+    def test_antibot_blocked_transport_error_classifies_blocked_anti_bot(self) -> None:
+        """2026-08-14 intermedia.com: a 500 whose body reports an anti-bot
+        block must classify as BLOCKED_ANTI_BOT, not unknown_exception."""
+        exc = _antibot_http_status_error()
+        assert _classify_fetch_outcome(None, error=exc) == FetchReasonCode.BLOCKED_ANTI_BOT.value
+
+    def test_generic_500_transport_error_still_unknown_exception(self) -> None:
+        """Regression guard: an ordinary 500 with no anti-bot marker in the
+        body must keep falling through to unknown_exception — the new
+        anti-bot check must not over-match on every 500."""
+        request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+        response = httpx.Response(500, json={"detail": "Internal Server Error"}, request=request)
+        exc = httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+        assert _classify_fetch_outcome(None, error=exc) == FetchReasonCode.UNKNOWN_EXCEPTION.value
+
+    def test_antibot_blocked_error_message_in_page_result_classifies_blocked_anti_bot(
+        self,
+    ) -> None:
+        """Seed / single-page path: the anti-bot marker preserved in
+        ``error_message`` by ``_error_message_for_result`` must classify
+        the same way as the transport-exception branch above."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": None,
+                    "error_message": (
+                        '{"detail":"Blocked by anti-bot protection: Cloudflare JS challenge"}'
+                    ),
+                }
+            )
+            == FetchReasonCode.BLOCKED_ANTI_BOT.value
         )
 
 
@@ -362,7 +408,11 @@ async def test_crawl_site_bulk_transport_failure_records_one_outcome_per_candida
 
     by_url = {o["url"]: o for o in outcomes}
     assert by_url["https://example.com"]["reason_code"] == FetchReasonCode.SUCCESS.value
-    for url in ("https://example.com/page-a", "https://example.com/page-b", "https://example.com/page-c"):
+    for url in (
+        "https://example.com/page-a",
+        "https://example.com/page-b",
+        "https://example.com/page-c",
+    ):
         assert by_url[url]["reason_code"] == FetchReasonCode.TIMEOUT.value
         assert by_url[url]["status_code"] is None
 
@@ -440,8 +490,7 @@ async def test_crawl_site_returns_one_outcome_per_candidate_on_partial_success(
     assert by_url["https://example.com/ok"]["reason_code"] == FetchReasonCode.SUCCESS.value
     assert by_url["https://example.com/missing"]["reason_code"] == FetchReasonCode.HTTP_4XX.value
     assert (
-        by_url["https://example.com/server-error"]["reason_code"]
-        == FetchReasonCode.HTTP_5XX.value
+        by_url["https://example.com/server-error"]["reason_code"] == FetchReasonCode.HTTP_5XX.value
     )
     # Two same-domain successful pages reach the ingest loop: seed + /ok.
     assert {r.url for r in results} == {"https://example.com", "https://example.com/ok"}
@@ -459,9 +508,10 @@ async def test_crawl_site_frontier_fetches_listing_children(
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
     _patch_seed(
         monkeypatch,
-        _seed("https://wiki.redcactus.cloud/nl", internal=[
-            "https://wiki.redcactus.cloud/nl/crm-software"
-        ]),
+        _seed(
+            "https://wiki.redcactus.cloud/nl",
+            internal=["https://wiki.redcactus.cloud/nl/crm-software"],
+        ),
     )
 
     async def _fake_bulk_fetch(
@@ -655,9 +705,7 @@ async def test_seed_config_carries_login_indicator(monkeypatch: pytest.MonkeyPat
         return _seed("https://wiki.example")
 
     monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed)
-    monkeypatch.setattr(
-        crawl4ai_client, "_fetch_sitemap_urls", lambda _base: _async_return([])
-    )
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", lambda _base: _async_return([]))
 
     async def _fake_post(self: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
         request = httpx.Request("POST", url)
@@ -967,3 +1015,202 @@ class TestCombineBulkResponsesPositionalGuard:
 
         assert outcomes[0]["reason_code"] == FetchReasonCode.SUCCESS.value
         assert [r.url for r in results] == ["https://example.com/blog/post"]
+
+
+# ---------------------------------------------------------------------------
+# _combine_bulk_responses — anti-bot transport_error (2026-08-14)
+# ---------------------------------------------------------------------------
+
+
+def test_combine_bulk_responses_antibot_transport_error_all_blocked_anti_bot() -> None:
+    """When the whole bulk batch fails with an anti-bot block, every
+    candidate gets BLOCKED_ANTI_BOT — not unknown_exception — so the
+    caller (crawl_site) can detect it and trigger sequential recovery."""
+    candidates = [
+        "https://intermedia.com/products/unite",
+        "https://intermedia.com/products/ai",
+    ]
+    results, outcomes = _combine_bulk_responses(
+        candidates=candidates,
+        raw_results=[],
+        transport_error=_antibot_http_status_error(),
+        base_domain="intermedia.com",
+    )
+    assert results == []
+    assert len(outcomes) == 2
+    for outcome, url in zip(outcomes, candidates, strict=True):
+        assert outcome["url"] == url
+        assert outcome["reason_code"] == FetchReasonCode.BLOCKED_ANTI_BOT.value
+        assert outcome["status_code"] is None
+
+
+# ---------------------------------------------------------------------------
+# crawl_site — sequential anti-bot recovery (2026-08-14, intermedia.com)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_recovers_batch_via_sequential_antibot_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bulk fetch anti-bot-500s the whole 3-url batch; sequential single-page
+    retry recovers the URLs that pass the (intermittent) Cloudflare
+    challenge and marks the rest BLOCKED_ANTI_BOT. Mirrors the real
+    intermedia.com incident: /products/unite passed, /products/ai stayed
+    blocked, seconds apart, via the same single-page path."""
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return [
+            "https://example.com/page-a",
+            "https://example.com/page-b",
+            "https://example.com/page-c",
+        ]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    def _success_page(url: str) -> dict[str, Any]:
+        return {
+            "url": url,
+            "success": True,
+            "status_code": 200,
+            "html": "<html><body>Real page content, plenty of words here.</body></html>",
+            "markdown": "Real page content, plenty of words here.",
+            "links": {"internal": []},
+            "media": {},
+        }
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        urls = payload["urls"]
+        if len(urls) > 1:
+            # The bulk batch request — always anti-bot-blocked wholesale.
+            request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+            response = httpx.Response(
+                500,
+                json={"detail": "Blocked by anti-bot protection: Cloudflare JS challenge"},
+                request=request,
+            )
+            raise httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+
+        # Sequential single-page recovery request.
+        (url,) = urls
+        if url == "https://example.com/page-b":
+            request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+            response = httpx.Response(
+                500,
+                json={"detail": "Blocked by anti-bot protection: Cloudflare JS challenge"},
+                request=request,
+            )
+            raise httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+        return {"results": [_success_page(url)]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com",
+        max_pages=10,
+    )
+
+    by_url = {o["url"]: o for o in outcomes}
+    assert by_url["https://example.com/page-a"]["reason_code"] == FetchReasonCode.SUCCESS.value
+    assert (
+        by_url["https://example.com/page-b"]["reason_code"]
+        == FetchReasonCode.BLOCKED_ANTI_BOT.value
+    )
+    assert by_url["https://example.com/page-c"]["reason_code"] == FetchReasonCode.SUCCESS.value
+
+    result_urls = {r.url for r in results}
+    assert "https://example.com/page-a" in result_urls
+    assert "https://example.com/page-c" in result_urls
+    assert "https://example.com/page-b" not in result_urls
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_antibot_recovery_respects_and_logs_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the sequential-recovery budget is exhausted mid-batch, the
+    remaining URLs are marked BLOCKED_ANTI_BOT WITHOUT a network call, and
+    the cap event is logged exactly once."""
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return [
+            "https://example.com/page-a",
+            "https://example.com/page-b",
+            "https://example.com/page-c",
+        ]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+    # Force the cap to trip after the very first sequential retry.
+    monkeypatch.setattr(crawl4ai_client, "_MAX_ANTIBOT_SEQUENTIAL_RECOVERY", 1)
+
+    attempted_urls: list[str] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        urls = payload["urls"]
+        if len(urls) > 1:
+            request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+            response = httpx.Response(
+                500,
+                json={"detail": "Blocked by anti-bot protection: Cloudflare JS challenge"},
+                request=request,
+            )
+            raise httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+
+        (url,) = urls
+        attempted_urls.append(url)
+        return {
+            "results": [
+                {
+                    "url": url,
+                    "success": True,
+                    "status_code": 200,
+                    "html": "<html><body>Recovered page content, several words.</body></html>",
+                    "markdown": "Recovered page content, several words.",
+                    "links": {"internal": []},
+                    "media": {},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    with patch.object(crawl4ai_client.logger, "warning") as mock_warning:
+        _results, outcomes = await crawl4ai_client.crawl_site(
+            start_url="https://example.com",
+            max_pages=10,
+        )
+
+    # Budget of 1: only the first URL in the batch is actually re-fetched.
+    assert attempted_urls == ["https://example.com/page-a"]
+
+    by_url = {o["url"]: o for o in outcomes}
+    assert by_url["https://example.com/page-a"]["reason_code"] == FetchReasonCode.SUCCESS.value
+    # Capped without a network call — both still BLOCKED_ANTI_BOT.
+    assert (
+        by_url["https://example.com/page-b"]["reason_code"]
+        == FetchReasonCode.BLOCKED_ANTI_BOT.value
+    )
+    assert (
+        by_url["https://example.com/page-c"]["reason_code"]
+        == FetchReasonCode.BLOCKED_ANTI_BOT.value
+    )
+
+    cap_log_calls = [
+        call
+        for call in mock_warning.call_args_list
+        if call.args[:1] == ("crawl_antibot_recovery_capped",)
+    ]
+    assert len(cap_log_calls) == 1
+    _, kwargs = cap_log_calls[0]
+    assert kwargs["recovered"] == 1
+    assert kwargs["still_blocked"] == 2
+    assert kwargs["capped_at"] == 1
+    assert kwargs["remaining"] == 2
