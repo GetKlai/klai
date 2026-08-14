@@ -2,20 +2,25 @@
 # "never :latest in production". Renovate watches caddy:* tags for new
 # patches.
 #
-# Note: Caddy 2.11.3 still ships a vulnerable go-jose dependency, and
-# its builder image was compiled with Go 1.26.3. Those upstream gaps are
-# documented exemptions in deploy/caddy/.trivyignore.yaml with 2-month
-# expiry — Renovate-driven Caddy bumps will close them.
-FROM caddy:2.11.3-builder-alpine AS builder
+# Note: the .trivyignore.yaml exemptions here exist because Caddy 2.11.3
+# shipped a vulnerable go-jose and a builder compiled with Go 1.26.3.
+# 2.11.4 may or may not close them — Trivy runs on the rebuilt image in CI
+# and is the arbiter. If it goes green, drop the matching entries rather
+# than letting them ride to their 2026-09-15 expiry.
+#
+# Bumping this file is NOT a pin flip: this is a custom xcaddy build with
+# the hetzner-DNS and ratelimit plugins, so the change only reaches
+# production once CI rebuilds and republishes ghcr.io/getklai/caddy-hetzner.
+FROM caddy:2.11.4-builder-alpine AS builder
 
 RUN xcaddy build \
     --with github.com/caddy-dns/hetzner/v2 \
     --with github.com/mholt/caddy-ratelimit
 
-FROM caddy:2.11.3-alpine
+FROM caddy:2.11.4-alpine
 
 # Apply Alpine package security updates that landed AFTER the
-# `caddy:2.11.3-alpine` image was published. These packages are exposed
+# `caddy:2.11.4-alpine` image was published. These packages are exposed
 # through Caddy's HTTPS edge, so real package fixes are preferred over
 # ignore-entries. Keep this list targeted so the build stays reproducible;
 # broader base-image movement remains Renovate-owned.

@@ -43,7 +43,7 @@ jobs:
     name: Validate REQ-5 fields
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6

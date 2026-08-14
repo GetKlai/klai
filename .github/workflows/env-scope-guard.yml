@@ -30,7 +30,7 @@ jobs:
   no-shared-env-file:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Forbid bare env_file&#58; .env in deploy/docker-compose.yml
         run: |

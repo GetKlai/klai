@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Forcing function — fail loud BEFORE pushing to core-01 if any
       # public self-host image reference points at a tag that is not
