@@ -604,15 +604,35 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # keep answering queries with pre-rename content (Voys support, 2026-08-14).
     for _, stale_path in closed_rows:
         if stale_path != req.path:
-            await qdrant_store.delete_document(req.org_id, req.kb_slug, stale_path)
-            logger.info(
-                "stale_renamed_path_chunks_deleted",
-                org_id=req.org_id,
-                kb_slug=req.kb_slug,
-                stale_path=stale_path,
-                new_path=req.path,
-                source_ref=req.source_ref,
-            )
+            try:
+                await qdrant_store.delete_document(req.org_id, req.kb_slug, stale_path)
+            except Exception:
+                # The supersede is already committed, so raising here would
+                # fail the ingest without undoing it — and a retry cannot
+                # recover: the stale row is closed, so soft_delete_artifact
+                # stops returning it and this cleanup never runs again. The
+                # points would then keep an open-ended valid_until and stay
+                # retrievable forever, which is the exact bug this block
+                # exists to prevent. Swallow, but log at error level so
+                # obs-001-ingest-error-rate-elevated fires and an operator
+                # can delete the points by hand.
+                logger.exception(
+                    "stale_renamed_path_chunks_delete_failed",
+                    org_id=req.org_id,
+                    kb_slug=req.kb_slug,
+                    stale_path=stale_path,
+                    new_path=req.path,
+                    source_ref=req.source_ref,
+                )
+            else:
+                logger.info(
+                    "stale_renamed_path_chunks_deleted",
+                    org_id=req.org_id,
+                    kb_slug=req.kb_slug,
+                    stale_path=stale_path,
+                    new_path=req.path,
+                    source_ref=req.source_ref,
+                )
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: record image-key
     # bookkeeping so per-connector cleanup can compute orphan keys via
