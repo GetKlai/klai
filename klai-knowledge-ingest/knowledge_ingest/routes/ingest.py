@@ -569,9 +569,15 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # (adversarial review 2026-06-11). create_artifact's internal transaction
     # nests as a SAVEPOINT, keeping its UniqueViolation recovery intact.
     async with conn.transaction():
-        superseded_ids = await pg_store.soft_delete_artifact(
-            conn, req.org_id, req.kb_slug, req.path
+        closed_rows = await pg_store.soft_delete_artifact(
+            conn,
+            req.org_id,
+            req.kb_slug,
+            req.path,
+            source_connector_id=req.source_connector_id,
+            source_ref=req.source_ref,
         )
+        superseded_ids = [row_id for row_id, _ in closed_rows]
         artifact_id = await pg_store.create_artifact(
             conn,
             org_id=req.org_id,
@@ -591,6 +597,22 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             derived_from=kf["derived_from"],
         )
         await pg_store.set_superseded_by(conn, superseded_ids, artifact_id)
+
+    # A source page that was RENAMED closes a row stored under its OLD path.
+    # upsert_chunks below only clears points for req.path, so without this the
+    # old title's chunks stay in Qdrant with an open-ended ``valid_until`` and
+    # keep answering queries with pre-rename content (Voys support, 2026-08-14).
+    for _, stale_path in closed_rows:
+        if stale_path != req.path:
+            await qdrant_store.delete_document(req.org_id, req.kb_slug, stale_path)
+            logger.info(
+                "stale_renamed_path_chunks_deleted",
+                org_id=req.org_id,
+                kb_slug=req.kb_slug,
+                stale_path=stale_path,
+                new_path=req.path,
+                source_ref=req.source_ref,
+            )
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: record image-key
     # bookkeeping so per-connector cleanup can compute orphan keys via
