@@ -1,0 +1,31 @@
+diff --git a/packages/api/src/stream/createStreamServices.ts b/packages/api/src/stream/createStreamServices.ts
+index 11fd535..eb98cab 100644
+--- a/packages/api/src/stream/createStreamServices.ts
++++ b/packages/api/src/stream/createStreamServices.ts
+@@ -45,8 +45,11 @@ export interface StreamServices {
+   jobStore: IJobStore;
+   eventTransport: IEventTransport;
+   isRedis: boolean;
++  cleanupOnComplete: boolean;
+ }
+
++const CLEANUP_ON_COMPLETE = false;
++
+ /**
+  * Create stream services (job store + event transport).
+  *
+@@ -100,6 +103,7 @@ export function createStreamServices(config: StreamServicesConfig = {}): StreamS
+         jobStore,
+         eventTransport,
+         isRedis: true,
++        cleanupOnComplete: CLEANUP_ON_COMPLETE,
+       };
+     } catch (err) {
+       logger.error(
+@@ -132,5 +136,6 @@ function createInMemoryServices(options?: StreamServicesConfig['inMemoryOptions'
+     jobStore,
+     eventTransport,
+     isRedis: false,
++    cleanupOnComplete: CLEANUP_ON_COMPLETE,
+   };
+ }

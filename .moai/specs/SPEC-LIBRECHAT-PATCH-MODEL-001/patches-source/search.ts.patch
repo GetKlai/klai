@@ -1,0 +1,87 @@
+diff --git a/src/tools/search/search.ts b/src/tools/search/search.ts
+index d18a7533..aa091920 100644
+--- a/src/tools/search/search.ts
++++ b/src/tools/search/search.ts
+@@ -22,7 +22,19 @@ const chunker = {
+     /** Cleaned up excessive spaces and tabs */
+     const cleanedSpaces = cleanedNewlines.replace(/[ \t]+/g, ' ');
+
+-    return cleanedSpaces.trim();
++    /** Strip lone surrogates: text splitter can cut inside a UTF-16 surrogate pair
++     * (bold/italic Unicode like LinkedIn fancy text encodes as surrogate pairs) */
++    const sanitized = cleanedSpaces.replace(
++      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
++      ''
++    );
++    if (sanitized.length !== cleanedSpaces.length) {
++      console.warn(
++        '[klai-patch] search.cleanText stripped lone UTF-16 surrogate(s)'
++      );
++    }
++
++    return sanitized.trim();
+   },
+   splitText: async (
+     text: string,
+@@ -42,7 +54,24 @@ const chunker = {
+       chunkOverlap,
+     });
+
+-    return await splitter.splitText(text);
++    const chunks = await splitter.splitText(text);
++
++    /** Strip lone surrogates that may result from splitting inside a surrogate pair */
++    const sanitizedChunks = chunks.map((chunk) =>
++      chunk.replace(
++        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
++        ''
++      )
++    );
++    if (
++      sanitizedChunks.some((chunk, i) => chunk.length !== chunks[i].length)
++    ) {
++      console.warn(
++        '[klai-patch] search.splitText stripped lone UTF-16 surrogate(s)'
++      );
++    }
++
++    return sanitizedChunks;
+   },
+
+   splitTexts: async (
+@@ -101,7 +130,7 @@ const getHighlights = async ({
+   query,
+   content,
+   reranker,
+-  topResults = 5,
++  topResults = 3,
+   maxContentLength = DEFAULT_MAX_CONTENT_LENGTH,
+   logger,
+ }: {
+@@ -162,7 +191,7 @@ const createSerperAPI = (
+     date,
+     country,
+     safeSearch,
+-    numResults = 8,
++    numResults = 5,
+     type,
+   }: t.GetSourcesParams): Promise<t.SearchResult> => {
+     if (!query.trim()) {
+@@ -255,7 +284,7 @@ const createSearXNGAPI = (
+
+   const getSources = async ({
+     query,
+-    numResults = 8,
++    numResults = 5,
+     safeSearch,
+     type,
+   }: t.GetSourcesParams): Promise<t.SearchResult> => {
+@@ -473,7 +502,7 @@ export const createSourceProcessor = (
+     throw new Error('Scraper instance is required');
+   }
+   const {
+-    topResults = 5,
++    topResults = 3,
+     // strategies = ['no_extraction'],
+     // filterContent = true,
+     reranker,
