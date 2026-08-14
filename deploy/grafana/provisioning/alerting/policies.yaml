@@ -7,6 +7,8 @@
 #   - spec=SPEC-OBS-001 + alert_type=heartbeat   → heartbeat-kuma (OBS-001-R22)
 #   - spec=SPEC-OBS-001                          → klai-ops-alerts-email (OBS-001-R4/R5)
 #   - spec=SPEC-INFRA-CONTAINER-HYGIENE-001      → klai-ops-alerts-email (REQ-5 orphan-audit)
+#   - spec=SPEC-INGEST-LOGIN-WALL-DETECT-001     → klai-ops-alerts-email (REQ-08 login-wall)
+#   - spec=SPEC-KB-015                           → klai-ops-alerts-email (feedback-loop health)
 #
 # Grouping + repeat_interval tuning per route:
 #   - SEC/INFRA: repeat 24h — suppress email-floods from a wedged call-path
@@ -102,4 +104,19 @@ policies:
         group_wait: 30s
         group_interval: 5m
         repeat_interval: 4h
+        continue: false
+
+      # SPEC-KB-015 — feedback-loop health. The rule evaluates a 30-day
+      # window behind a >=5-event volume gate, so it cannot burst: at most one
+      # firing state per day is meaningful. A 24h repeat matches that cadence
+      # and keeps a genuine degradation visible without re-mailing hourly
+      # about a window that barely moves between evaluations.
+      - receiver: klai-ops-alerts-email
+        matchers:
+          - spec = SPEC-KB-015
+        group_by:
+          - alertname
+        group_wait: 30s
+        group_interval: 10m
+        repeat_interval: 24h
         continue: false

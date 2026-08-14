@@ -104,6 +104,65 @@ class TestFilterQualityFloor:
         assert n_filtered == 0
 
 
+class TestFeedbackColdStartExemption:
+    """SPEC-KB-015 REQ r.182: a single data point must not affect ranking.
+
+    The scorer's running average ``(old * count + signal) / (count + 1)``
+    yields exactly ``0.0`` on the first thumbsDown (r.94-96). Without an
+    exemption the floor would then drop the chunk entirely — a far stronger
+    effect than the +-10%% boost that KB-015 deliberately gates behind
+    ``feedback_count >= 3``.
+
+    ``feedback_count == 0`` is untouched: that is the auth-wall ``degrade``
+    case this filter exists for (SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07).
+    """
+
+    def test_single_thumbs_down_is_not_filtered(self) -> None:
+        chunks = [{"chunk_id": "one-vote", "quality_score": 0.0, "feedback_count": 1}]
+        out, n_filtered = filter_quality_floor(chunks, floor=0.05)
+        assert n_filtered == 0
+        assert [c["chunk_id"] for c in out] == ["one-vote"]
+
+    def test_two_votes_still_below_cold_start_is_not_filtered(self) -> None:
+        chunks = [{"chunk_id": "two-votes", "quality_score": 0.0, "feedback_count": 2}]
+        out, n_filtered = filter_quality_floor(chunks, floor=0.05)
+        assert n_filtered == 0
+        assert [c["chunk_id"] for c in out] == ["two-votes"]
+
+    def test_established_negative_signal_is_filtered(self) -> None:
+        chunks = [{"chunk_id": "three-votes", "quality_score": 0.0, "feedback_count": 3}]
+        out, n_filtered = filter_quality_floor(chunks, floor=0.05)
+        assert n_filtered == 1
+        assert out == []
+
+    def test_auth_wall_degrade_chunk_still_filtered(self) -> None:
+        """feedback_count 0 = never voted on = the REQ-07 case. Unchanged."""
+        chunks = [{"chunk_id": "walled", "quality_score": 0.0, "feedback_count": 0}]
+        out, n_filtered = filter_quality_floor(chunks, floor=0.05)
+        assert n_filtered == 1
+        assert out == []
+
+    @pytest.mark.parametrize("invalid", ["1", None, [], {}])
+    def test_non_numeric_feedback_count_treated_as_zero(self, invalid: object) -> None:
+        """A corrupt count must not become an accidental exemption."""
+        chunks = [{"chunk_id": "corrupt", "quality_score": 0.0, "feedback_count": invalid}]
+        out, n_filtered = filter_quality_floor(chunks, floor=0.05)
+        assert n_filtered == 1
+        assert out == []
+
+    def test_exemption_does_not_rescue_a_high_floor_deployment(self) -> None:
+        """The exemption is scoped to cold-start feedback, not to floors at large.
+
+        An operator-raised floor (e.g. 0.6 to surface only boosted chunks) is a
+        recall decision, not a feedback signal — cold-start chunks sit below it
+        legitimately.
+        """
+        chunks = [{"chunk_id": "mid", "quality_score": 0.5, "feedback_count": 1}]
+        out, n_filtered = filter_quality_floor(chunks, floor=0.6)
+        assert n_filtered == 1
+        assert out == []
+
+
 class TestFloorPerformance:
     def test_p99_under_2ms_on_1k_chunks(self) -> None:
         """Floor filter is on the hot path; budget is < 2ms p99 on 1000

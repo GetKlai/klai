@@ -1,0 +1,129 @@
+# SPEC-KB-015 — feedback-loop runtime health.
+#
+#   spec-kb-015-feedback-correlation-low   WARNING
+#
+# What this catches, and what it does NOT
+# ---------------------------------------
+#
+# CATCHES: feedback keeps arriving but stops correlating. That is the silent
+# degradation mode of the loop — the endpoint returns 200, the event lands in
+# portal_feedback_events with correlated=false, and Qdrant never learns
+# anything. Causes: Redis unreachable (retrieval log missing), the identity
+# used for the Redis key drifting from the one used at retrieval time, or a
+# clock skew wider than the SPEC's [-60s, +10s] window.
+#
+# DOES NOT CATCH: feedback not arriving at all. Between 2026-04-05 and
+# 2026-08-14 production recorded ZERO feedback events (verified in both
+# product_events and portal_feedback_events) because the LibreChat bundle
+# shipped without the kb-feedback forward. A ratio has no denominator then, so
+# no ratio alert can see it. That class is guarded at BUILD time instead, by
+# deploy/librechat/tests/built_artifacts.test.cjs, which asserts the forward is
+# actually present in the compiled bundle. Do not extend this rule to try to
+# cover it: real feedback volume is single digits per month, so a "zero events"
+# liveness alert cannot distinguish a broken forward from a quiet week.
+#
+# Volume gate
+# -----------
+# The HAVING clause is the noise control. With fewer than 5 non-e2e events in
+# the window the query returns no rows at all -> noData -> OK. A 1-of-2
+# uncorrelated day cannot page anyone; only a sustained pattern can.
+#
+# The e2e tenant is excluded by slug. It drives feedback at the endpoint
+# without ever writing a retrieval log first, so 100% of its events are
+# uncorrelated by construction (70 of them on 2026-08-14 alone). Including it
+# would keep this rule permanently firing on synthetic traffic.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: kb-015-feedback-loop
+    folder: Klai
+    interval: 10m
+    rules:
+
+      - uid: spec-kb-015-feedback-correlation-low
+        title: kb_feedback_correlation_low
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: portal-postgres
+            queryType: ''
+            relativeTimeRange:
+              from: 2592000
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                SELECT count(*) FILTER (WHERE pe.correlated) * 100.0
+                         / NULLIF(count(*), 0) AS value
+                  FROM portal_feedback_events pe
+                  JOIN portal_orgs o ON o.id = pe.org_id
+                 WHERE pe.occurred_at > now() - interval '30 days'
+                   AND o.slug <> 'e2e'
+                HAVING count(*) >= 5
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 2592000
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 2592000
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [50], type: lt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 1d
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-KB-015
+          domain: knowledge
+        annotations:
+          summary: 'KB feedback is arriving but under half of it correlates'
+          description: |
+            Over the last 30 days at least 5 real (non-e2e) feedback events
+            were recorded and fewer than half carried a correlated retrieval
+            log. Uncorrelated feedback is stored but teaches Qdrant nothing:
+            no quality_score, no feedback_count, no effect on ranking.
+
+            Baseline for comparison: 2026-04-05 ran at 75% (3 of 4).
+
+            First checks, in order:
+              1. Is Redis reachable from portal-api? The retrieval log lives in
+                 rl:{org_id}:{user_id} sorted sets with a 1-hour TTL, and a
+                 missing log is indistinguishable from a missing thumb here.
+              2. Does the identity on the feedback call match the one used when
+                 the retrieval log was written? These diverged before — the
+                 forward now sends identity_user_id (the Zitadel subject)
+                 alongside the LibreChat Mongo id precisely for this reason.
+              3. Is the feedback timestamp the message's own createdAt, or the
+                 moment of the click? A click-time stamp falls outside the
+                 SPEC's [-60s, +10s] window as soon as someone rates an older
+                 message.
+
+            Inspect the split directly:
+              SELECT org_id, correlated, count(*)
+                FROM portal_feedback_events
+               WHERE occurred_at > now() - interval '30 days'
+               GROUP BY 1, 2 ORDER BY 1, 2;
