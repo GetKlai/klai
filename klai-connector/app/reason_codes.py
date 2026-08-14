@@ -46,6 +46,9 @@ class FetchReasonCode(StrEnum):
     NOT_FETCHED_EXCLUDED = "not_fetched_excluded"
     NOT_FETCHED_DUPLICATE = "not_fetched_duplicate"
     UNKNOWN_EXCEPTION = "unknown_exception"
+    # Mirror of knowledge-ingest's FetchReasonCode; the parity test
+    # (tests/test_reason_codes_parity.py) keeps both copies in lockstep.
+    BLOCKED_ANTI_BOT = "blocked_anti_bot"
 
 
 class PersistSkipReason(StrEnum):

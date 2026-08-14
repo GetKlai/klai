@@ -55,6 +55,13 @@ class FetchReasonCode(StrEnum):
     NOT_FETCHED_EXCLUDED = "not_fetched_excluded"
     NOT_FETCHED_DUPLICATE = "not_fetched_duplicate"
     UNKNOWN_EXCEPTION = "unknown_exception"
+    # 2026-08-14: distinguishes a Cloudflare/anti-bot JS-challenge block from
+    # a generic unknown_exception. Additive and safe without a migration —
+    # ``crawl_jobs.fetch_outcomes`` has no per-element Postgres CHECK on
+    # ``reason_code`` (see alembic/versions/0005_crawl_jobs_fetch_outcomes.py,
+    # "Shape guard only"); validation of individual reason codes is
+    # application-side only.
+    BLOCKED_ANTI_BOT = "blocked_anti_bot"
 
 
 class PersistSkipReason(StrEnum):

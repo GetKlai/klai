@@ -25,6 +25,7 @@ from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, _canonicalise_url, crawl_site
 from knowledge_ingest.models import IngestRequest
+from knowledge_ingest.reason_codes import FetchReasonCode
 from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
 from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
@@ -49,6 +50,10 @@ CRAWL_BUDGET_EXHAUSTED_REASON = "crawl_budget_exhausted"
 CRAWL_FRONTIER_INCOMPLETE_REASON = "crawl_frontier_incomplete"
 CRAWL_FETCH_FAILED_REASON = "crawl_fetch_failed"
 AUTH_WALL_DETECTED_REASON = "auth_wall_detected"
+# 2026-08-14: reason code for the anti-bot terminal-status guard (see
+# decide_antibot_terminal_status). Stable string — same "surfaced in UI
+# error_summary" contract as the other *_REASON constants above.
+ANTIBOT_BLOCKED_REASON = "blocked_by_anti_bot"
 
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
 
@@ -59,6 +64,11 @@ _DIRTY_CONTENT_SUGGESTION = (
 _AUTH_WALL_WITH_AUTH_SUGGESTION = (
     "Configured authentication did not unlock all crawled pages. Refresh the "
     "saved cookies from the connector edit page before syncing again."
+)
+_ANTIBOT_BLOCKED_SUGGESTION = (
+    "Automated access to this site is being blocked by anti-bot protection "
+    "(e.g. Cloudflare). Retry the sync later — the challenge is often "
+    "intermittent — or ask the site owner to allowlist the Klai crawler."
 )
 
 
@@ -114,6 +124,53 @@ def decide_terminal_status(
         "auth_wall_count": auth_wall_count,
         "total_count": total_count,
         "suggestion": _DIRTY_CONTENT_SUGGESTION,
+    }
+    return ("failed_partial", summary)
+
+
+def decide_antibot_terminal_status(
+    *,
+    blocked_count: int,
+    total_count: int,
+    threshold: float,
+) -> tuple[str, dict | None]:
+    """Pure decision function — sibling of :func:`decide_terminal_status`.
+
+    Decide whether a finished ``crawl_site`` run should be marked
+    ``failed_partial`` because a meaningful fraction of discovered pages
+    ended up ``BLOCKED_ANTI_BOT`` even AFTER ``crawl_site``'s sequential
+    anti-bot recovery ran (see ``crawl4ai_client._recover_antibot_batch``).
+    Without this guard, a job that only ingested 1 of ~18 discovered pages
+    because Cloudflare blocked the rest still reports ``completed`` — the
+    same "synced N days ago, X docs indexed" lie REQ-4's auth-wall guard
+    (``decide_terminal_status``) already fixes for login walls, just with
+    a different root cause (intermedia.com, 2026-08-14).
+
+    Args:
+        blocked_count: outcomes with ``reason_code ==
+            FetchReasonCode.BLOCKED_ANTI_BOT`` in the job's fetch_outcomes,
+            evaluated AFTER crawl_site's sequential recovery attempted to
+            resolve them.
+        total_count: total discovered candidates (``len(fetch_outcomes)``).
+        threshold: trip-rate at or above which the guard fires (inclusive).
+
+    Returns:
+        ``(terminal_status, summary_dict_or_None)`` — same contract as
+        ``decide_terminal_status``: ``("", None)`` when the guard does not
+        fire, so the caller falls through to its existing terminal-status
+        logic.
+    """
+    if total_count <= 0 or blocked_count <= 0:
+        return ("", None)
+    trip_rate = round(blocked_count / total_count, 3)
+    if trip_rate < threshold:
+        return ("", None)
+    summary: dict = {
+        "reason": ANTIBOT_BLOCKED_REASON,
+        "trip_rate": trip_rate,
+        "blocked_count": blocked_count,
+        "total_count": total_count,
+        "suggestion": _ANTIBOT_BLOCKED_SUGGESTION,
     }
     return ("failed_partial", summary)
 
@@ -545,10 +602,35 @@ async def run_crawl_job(
             threshold=settings.ingest_authwall_dirty_trip_rate,
         )
 
+        # 2026-08-14 anti-bot guard — sibling of the REQ-4 dirty-content
+        # guard above. ``total_count`` is deliberately len(fetch_outcomes)
+        # (every discovered candidate), not len(results): blocked pages are
+        # excluded from ``results`` entirely, so using len(results) as the
+        # denominator would understate (or even exceed 100% of) the trip
+        # rate once most of the site is blocked.
+        blocked_count = sum(
+            1
+            for outcome in fetch_outcomes
+            if outcome.get("reason_code") == FetchReasonCode.BLOCKED_ANTI_BOT.value
+        )
+        antibot_status, antibot_summary = decide_antibot_terminal_status(
+            blocked_count=blocked_count,
+            total_count=len(fetch_outcomes),
+            threshold=settings.ingest_antibot_dirty_trip_rate,
+        )
+
         # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.2/04.3 — terminal status:
         # - failed_partial when REQ-4 dirty-content guard tripped (loud failure)
+        # - failed_partial when the anti-bot guard tripped (loud failure)
         # - failed_partial when 0 pages ingested AND >= 1 wall skipped
         # - completed otherwise
+        #
+        # Deterministic order when BOTH the auth-wall guard and the
+        # anti-bot guard would fire on the same job: auth-wall wins. An
+        # auth-wall trip means Klai reached the pages (they're just
+        # login-gated); an anti-bot trip often means Klai could not reach
+        # the site at all. The auth-wall summary is the more actionable of
+        # the two when both signals are present, so it takes priority.
         if dirty_status:
             terminal_status = dirty_status
             summary_payload = dirty_summary or {}
@@ -556,6 +638,19 @@ async def run_crawl_job(
             # REQ-4 reason for forensic logs.
             summary_payload.setdefault("login_walls_skipped", len(auth_wall_pages))
             summary_payload.setdefault("sample_urls", auth_wall_pages[:10])
+            _attach_crawl_warning(summary_payload, crawl_outcome_warning)
+            summary_json = json.dumps(summary_payload)
+            await conn.execute(
+                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
+                "updated_at=$3 WHERE id=$4",
+                terminal_status,
+                summary_json,
+                int(time.time()),
+                job_id,
+            )
+        elif antibot_status:
+            terminal_status = antibot_status
+            summary_payload = antibot_summary or {}
             _attach_crawl_warning(summary_payload, crawl_outcome_warning)
             summary_json = json.dumps(summary_payload)
             await conn.execute(

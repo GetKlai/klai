@@ -47,6 +47,19 @@ class Settings(BaseSettings):
         default=0.30,
         validation_alias=AliasChoices("KLAI_INGEST_AUTHWALL_DIRTY_TRIP_RATE"),
     )
+    # 2026-08-14: same trip-rate contract as ingest_authwall_dirty_trip_rate,
+    # for BLOCKED_ANTI_BOT outcomes surviving crawl_site's sequential
+    # anti-bot recovery (see crawl4ai_client._recover_antibot_batch). A
+    # crawl_site run with blocked_count / total_count at or above this
+    # ratio ends with status='failed_partial' instead of silently reporting
+    # "completed" with most of the site missing (intermedia.com incident,
+    # 2026-08-14: 1 of ~18 discovered pages ingested, reported completed).
+    # Reuses the auth-wall guard's 0.30 default — same "meaningful fraction
+    # of the site is unreachable" semantics, just a different root cause.
+    ingest_antibot_dirty_trip_rate: float = Field(
+        default=0.30,
+        validation_alias=AliasChoices("KLAI_INGEST_ANTIBOT_DIRTY_TRIP_RATE"),
+    )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""

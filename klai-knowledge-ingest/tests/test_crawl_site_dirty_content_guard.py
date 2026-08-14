@@ -17,11 +17,13 @@ from __future__ import annotations
 import pytest
 
 from knowledge_ingest.adapters.crawler import (
+    ANTIBOT_BLOCKED_REASON,
     CRAWL_BUDGET_EXHAUSTED_REASON,
     CRAWL_FETCH_FAILED_REASON,
     DIRTY_CONTENT_REASON,
     _build_crawl_outcome_warning,
     _crawl_warning_terminal_status,
+    decide_antibot_terminal_status,
     decide_terminal_status,
 )
 
@@ -132,10 +134,7 @@ def test_summary_contains_actionable_suggestion() -> None:
     # Must reference both possible operator actions: re-run preview AND
     # acknowledge the source may have changed.
     assert "preview" in suggestion.lower()
-    assert (
-        "authentication" in suggestion.lower()
-        or "content_selector" in suggestion.lower()
-    )
+    assert "authentication" in suggestion.lower() or "content_selector" in suggestion.lower()
 
 
 def test_budget_exhausted_outcomes_build_failed_partial_warning() -> None:
@@ -202,3 +201,75 @@ def test_trip_rate_rounded_to_three_decimals(trip_rate_input: float) -> None:
     # Must round to 3 decimals or fewer for clean log output.
     rounded = round(summary["trip_rate"], 3)
     assert summary["trip_rate"] == rounded
+
+
+# ---------------------------------------------------------------------------
+# decide_antibot_terminal_status — 2026-08-14 anti-bot guard, sibling of the
+# REQ-4 auth-wall guard above (intermedia.com incident).
+# ---------------------------------------------------------------------------
+
+
+def test_antibot_above_threshold_marks_failed_partial() -> None:
+    """16 of 18 discovered pages still BLOCKED_ANTI_BOT after sequential
+    recovery (intermedia.com shape) → failed_partial with the anti-bot
+    reason, not a silent 'completed'."""
+    status, summary = decide_antibot_terminal_status(
+        blocked_count=16,
+        total_count=18,
+        threshold=0.30,
+    )
+    assert status == "failed_partial"
+    assert summary is not None
+    assert summary["reason"] == ANTIBOT_BLOCKED_REASON
+    assert summary["reason"] == "blocked_by_anti_bot"
+    assert summary["blocked_count"] == 16
+    assert summary["total_count"] == 18
+    assert summary["trip_rate"] == round(16 / 18, 3)
+    assert "anti-bot" in summary["suggestion"].lower()
+
+
+def test_antibot_below_threshold_does_not_trip_guard() -> None:
+    """Only a couple of pages still blocked after recovery — not a
+    meaningful fraction of the site — guard must not fire."""
+    status, summary = decide_antibot_terminal_status(
+        blocked_count=2,
+        total_count=100,
+        threshold=0.30,
+    )
+    assert status == ""
+    assert summary is None
+
+
+def test_antibot_zero_blocked_does_not_trip_guard() -> None:
+    """Recovery cleared every blocked URL — nothing to report."""
+    status, summary = decide_antibot_terminal_status(
+        blocked_count=0,
+        total_count=100,
+        threshold=0.30,
+    )
+    assert status == ""
+    assert summary is None
+
+
+def test_antibot_zero_total_does_not_trip_guard() -> None:
+    """No discovered candidates at all — division-by-zero guard."""
+    status, summary = decide_antibot_terminal_status(
+        blocked_count=0,
+        total_count=0,
+        threshold=0.30,
+    )
+    assert status == ""
+    assert summary is None
+
+
+def test_antibot_threshold_inclusive_at_exactly_thirty_percent() -> None:
+    """trip_rate exactly 0.30 → guard MUST trip (>= is inclusive, mirrors
+    the auth-wall guard's inclusive threshold contract)."""
+    status, summary = decide_antibot_terminal_status(
+        blocked_count=30,
+        total_count=100,
+        threshold=0.30,
+    )
+    assert status == "failed_partial"
+    assert summary is not None
+    assert summary["reason"] == ANTIBOT_BLOCKED_REASON
