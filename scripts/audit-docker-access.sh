@@ -21,9 +21,11 @@ FAIL=0
 EXPECTED_NETWORK_MEMBERS="docker-socket-proxy klai-docker-authz portal-api runtime-api-socket-proxy"
 
 # ── The GET-only lane ────────────────────────────────────────────────────────
-# POST and DELETE are unset on docker-socket-proxy-ro, so members here can list,
-# inspect and stream logs but cannot create, start or remove anything. A member
-# that needs to mutate belongs on socket-proxy, behind klai-docker-authz.
+# CONTAINERS and NETWORKS are GET-side reads; POST and DELETE are unset, so
+# members here can list, inspect and stream logs but cannot create, start,
+# remove or connect anything. NETWORKS is required: Alloy's docker discovery
+# computes network labels per target and 403s without it. A member that needs to
+# mutate belongs on socket-proxy, behind klai-docker-authz.
 EXPECTED_RO_NETWORK_MEMBERS="alloy docker-socket-proxy-ro"
 
 # ── Raw socket ───────────────────────────────────────────────────────────────
@@ -93,7 +95,7 @@ env = d['services'].get('docker-socket-proxy-ro', {}).get('environment') or {}
 print(' '.join(sorted(k for k, v in env.items() if str(v) == '1')))
 " "$COMPOSE"
 )
-check "socket-proxy-ro allowed verbs" "CONTAINERS" "$ro_verbs" \
+check "socket-proxy-ro allowed verbs" "CONTAINERS NETWORKS" "$ro_verbs" \
     "This proxy must stay GET-only. POST or DELETE here creates a second, unpoliced container-create path."
 
 check "raw docker.sock mounters" "$EXPECTED_SOCKET_MOUNTERS" "$(socket_mounters)" \
