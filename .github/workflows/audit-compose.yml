@@ -10,6 +10,7 @@ on:
       - 'scripts/audit-compose-volumes.sh'
       - 'scripts/audit-compose-orphans.sh'
       - 'scripts/audit-docker-access.sh'
+      - 'deploy/tests/test_alloy_docker_access.sh'
       - 'deploy/alloy/config.alloy'
       - 'scripts/test-audit-compose.sh'
       - 'scripts/test-audit-compose-orphans.sh'
@@ -68,6 +69,9 @@ jobs:
 
       - name: Run docker-access audit (SPEC-SEC-DOCKER-AUTHZ-001)
         run: bash scripts/audit-docker-access.sh
+
+      - name: Alloy must not reach the raw Docker socket (REQ-U-002a)
+        run: bash deploy/tests/test_alloy_docker_access.sh
 
 
       - name: Orphan regression test — fixtures must catch known anti-patterns
