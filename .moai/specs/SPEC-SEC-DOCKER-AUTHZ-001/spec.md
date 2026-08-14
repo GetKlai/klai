@@ -1,7 +1,7 @@
 ---
 id: SPEC-SEC-DOCKER-AUTHZ-001
-version: "0.1.0"
-status: draft
+version: "1.0.0"
+status: implemented
 created: "2026-08-14"
 updated: "2026-08-14"
 author: MoAI
@@ -13,6 +13,7 @@ issue_number: 0
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.0.0 | 2026-08-14 | MoAI | Implemented. REQ-1 spike executed and the escalation demonstrated (see §Spike result); klai-docker-authz shipped and deployed; alloy moved off the raw socket; interim guards landed. Two success criteria remain open and are named as such at the bottom. |
 | 0.1.0 | 2026-08-14 | MoAI | Initial draft. Raised by the SPEC-VEXA-004 adversarial review (finding 3), which observed that `docker-socket-proxy`'s endpoint whitelist does not constrain `HostConfig`, so `POST /containers/create` remains a host-root primitive for any principal allowed to call it. Pre-existing since SPEC-SEC-021; not introduced by the Vexa migration. |
 
 # SPEC-SEC-DOCKER-AUTHZ-001: Constrain container-create, not just the endpoint
@@ -65,11 +66,33 @@ service becomes host root, and from there every tenant's data on the box. It
 converts "one service is broken" into "the machine is gone". That is why it is
 `high` and not `critical`, and also why it should not sit open indefinitely.
 
-The review that raised it did **not** demonstrate the exploit against
-production. The mechanism is inferred from Docker's documented semantics and
-from reading the proxy's own authorisation model; that inference is strong, but
-REQ-1 below exists to convert it into evidence before anything is designed
-around it.
+The review that raised it did **not** demonstrate the exploit. The mechanism was
+inferred from Docker's documented semantics and from the proxy's own
+authorisation model. REQ-1 existed to convert that inference into evidence before
+anything was designed around it — and it did.
+
+### Spike result (REQ-1, 2026-08-14)
+
+Run on a local host, never against production, using
+`tecnativa/docker-socket-proxy:v0.5.0` with production's exact environment
+(`CONTAINERS=1 NETWORKS=1 POST=1 DELETE=1`):
+
+```
+GET  /images/json                                        -> 403   (SEC-021 intact)
+POST /exec/x/start                                       -> 403   (SEC-021 intact)
+GET  /containers/json                                    -> 200
+
+POST /containers/create
+     {"HostConfig":{"Binds":["/:/host"],
+                    "Privileged":true,"PidMode":"host"}} -> 201
+POST /containers/{id}/start                              -> 204
+container stdout: /host/etc/hostname -> "orbstack"
+docker inspect  : Privileged true, PidMode host, Binds [/:/host]
+```
+
+The escalation is real, the endpoint whitelist is intact and irrelevant to it,
+and the two facts are independent — SEC-021 does what it says; it simply cannot
+see a request body. Everything below rests on this, not on inference.
 
 ## Why this is tractable
 
@@ -253,19 +276,59 @@ Both are hours, not weeks, and neither depends on which option is chosen.
 
 ## Success criteria
 
-- [ ] REQ-1 spike: the escalation is demonstrated on a non-production host and
-      written down, or shown not to apply — no implementation starts on an
-      inferred mechanism.
-- [ ] A `HostConfig` carrying `Privileged`, `Binds: ["/:/host"]`, `PidMode:
-      host` or `CapAdd` is rejected for both principals, proven by a test that
-      fails when the policy is removed.
-- [ ] portal-api can still provision a tenant end to end; vexa12-runtime can
-      still spawn a bot that joins a real meeting and produces a transcript.
-- [ ] A denial emits a structured event and raises the Grafana alert.
-- [ ] The interim CI guards land regardless of chosen option.
-- [ ] `.claude/rules/klai/platform/docker-socket-proxy.md` documents the policy
-      layer, its allowlist per principal, and how to extend it — the existing
-      per-verb rationale table is the model.
+- [x] **REQ-1 spike** — escalation demonstrated on a local host and written up
+      above. No implementation started before it.
+- [x] **Forbidden `HostConfig` rejected for both principals, proven by tests that
+      fail when the policy is removed.** 47 tests; four mutations run against
+      `policy.py` itself — dropping the forbidden-key loop (11 red), the bind
+      check (12 red), the `Mounts` arm (3 red), and path normalisation (1 red).
+      A test that cannot fail proves nothing, so this was verified rather than
+      assumed.
+- [ ] **portal-api can still provision a tenant end to end; vexa12-runtime can
+      still spawn a bot that joins a real meeting and produces a transcript.**
+      PARTIAL. Verified in production: portal-api's real docker-py client lists
+      86 containers, inspects, and resolves networks through the proxy; a bot
+      spawn ran the full chain (`docker_authz_allowed` → container on
+      `vexaai/vexa-bot:v0.12.22` → terminal event → webhook `delivered/200` →
+      dedupe receipt). NOT verified: a real tenant provisioned since the proxy
+      landed, and a real meeting producing a transcript. Neither can be
+      manufactured — one creates a customer tenant, the other needs a human in a
+      meeting. The provisioning body itself is covered by a unit test using the
+      exact shape from `_start_librechat_container`.
+- [x] **A denial emits a structured event and raises the Grafana alert.**
+      Structured event verified in production (`docker_authz_denied` with
+      principal, reason, container name). Alert:
+      `deploy/grafana/provisioning/alerting/docker-authz-rules.yaml`, fires on
+      the FIRST denial — a threshold above zero would mean deciding how much
+      attempted privilege escalation per interval is acceptable.
+- [x] **Interim CI guards landed.** `scripts/audit-docker-access.sh`, wired into
+      `audit-compose.yml`. Pins four sets: mutating-lane membership, GET-only-lane
+      membership, the GET-only proxy's allowed verbs, and raw-socket mounters.
+      The verb check exists because mutating the script found that membership
+      alone would pass while `POST: 1` quietly turned the read-only lane into a
+      second unpoliced create path.
+- [x] **`docker-socket-proxy.md` documents the policy layer**, its per-principal
+      allowlist, how to extend it (both directions tested, and say why the
+      caller's shape changed), and why falsy values are allowed.
+
+### Also delivered beyond the original criteria
+
+- [x] **REQ-U-002a — alloy no longer bypasses the controls.** It mounted the raw
+      socket with `:ro`, which protects the socket FILE and not the Docker API. It
+      now reaches the daemon through `docker-socket-proxy-ro`, where `POST` and
+      `DELETE` are unset, so the read-only intent is structural instead of a
+      mount flag.
+
+### Still open
+
+- **REQ-U-004 — the availability answer.** `klai-docker-authz` is now on the
+  tenant-provisioning and meeting-start paths, and REQ-S-001 makes it fail
+  closed. That trade is deliberate, but "acceptable, or does it need redundancy?"
+  has not been answered. It is a single container with a healthcheck and
+  `restart: unless-stopped`; nothing more.
+- **Option C for bot workloads.** Unchanged: a separate rootless daemon remains
+  the stronger answer for the ephemeral bot containers specifically. This SPEC
+  does not block it, and the policy layer would stay useful alongside it.
 
 ## Open questions
 

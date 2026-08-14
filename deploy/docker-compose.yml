@@ -8,6 +8,10 @@ networks:
     driver: bridge
     name: klai-socket-proxy
     internal: true   # portal-api + runtime-api-socket-proxy (socat) <-> docker-socket-proxy
+  socket-proxy-ro:
+    driver: bridge
+    name: klai-socket-proxy-ro
+    internal: true   # alloy <-> docker-socket-proxy-ro (GET only, no POST/DELETE)
   inference:
     driver: bridge
     name: klai-inference
@@ -495,6 +499,33 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - socket-proxy
+
+  # ─── docker-socket-proxy-ro (read-only, for observability) ───────────────
+  # SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a. Alloy mounted the raw host socket, so
+  # it bypassed every control in this stack. Its mount was `:ro`, which protects
+  # the socket FILE and NOT the Docker API — a process that can write the byte
+  # stream can still POST /containers/create. It only ever needed to list and
+  # inspect containers to attach log streams.
+  #
+  # POST and DELETE are unset here, so this instance cannot create, start, or
+  # remove anything. That makes the read-only intent structural rather than a
+  # property of a mount flag.
+  docker-socket-proxy-ro:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1   # GET /containers/json + /containers/{id}/json — discovery
+      # POST / DELETE deliberately unset: this principal never mutates.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-proxy-ro
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
 
   # ─── klai-docker-authz (body-inspecting Docker authorization) ────────────
   # SPEC-SEC-DOCKER-AUTHZ-001. docker-socket-proxy above authorises on
@@ -1017,7 +1048,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a: no raw socket. Alloy reaches the
+      # daemon through docker-socket-proxy-ro, which serves GET only.
       # Host-side synthetic probes write JSON logs here for Alloy file scraping.
       - /opt/klai/logs:/opt/klai/logs:ro
       # SPEC-INFRA-005 Phase 6: textfile collector reads .prom files written
@@ -1039,6 +1071,7 @@ services:
     networks:
       - klai-net
       - monitoring
+      - socket-proxy-ro   # SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a: GET-only daemon access
 
   grafana:
     image: grafana/grafana:13.1.3
