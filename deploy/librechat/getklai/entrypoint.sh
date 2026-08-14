@@ -292,6 +292,10 @@ const REPLACE = `      { context: 'updateFeedback' },
     // SPEC-KB-015: Forward feedback to portal-api for KB quality scoring.
     // Fire-and-forget (REQ-KB-015-06) -- response is sent immediately below.
     // Logs on error (REQ-KB-015-07): never surfaces to user, but visible in VictoriaLogs.
+    const feedbackMessage = await db
+      .getMessage({ user: req.user?.id, messageId })
+      .catch(() => null);
+
     const portalUrl = process.env.PORTAL_INTERNAL_URL;
     const portalSecret = process.env.PORTAL_INTERNAL_SECRET;
     if (portalUrl && portalSecret && feedback) {
@@ -305,11 +309,11 @@ const REPLACE = `      { context: 'updateFeedback' },
           conversation_id: conversationId,
           message_id: messageId,
           message_created_at:
-            updatedMessage?.createdAt?.toISOString?.() ?? new Date().toISOString(),
+            feedbackMessage?.createdAt?.toISOString?.() ?? new Date().toISOString(),
           rating: feedback.rating,
           tag: feedback.tag ?? null,
           text: feedback.text ?? null,
-          model_alias: updatedMessage?.model ?? null,
+          model_alias: feedbackMessage?.model ?? updatedMessage?.model ?? null,
           librechat_user_id: req.user?.id ?? '',
           identity_user_id: req.user?.openidId ?? null,
           librechat_tenant_id: process.env.KLAI_ORG_SLUG ? \`librechat-\${process.env.KLAI_ORG_SLUG}\` : null,

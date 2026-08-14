@@ -275,6 +275,27 @@ assert.ok(
   'the forward must send identity_user_id (the Zitadel subject the retrieval log is keyed by)'
 );
 
+// db.updateMessage returns a hand-built object of nine fields with no createdAt
+// and no model, so reading those off it silently degraded to Date.now() and
+// null. That centred the correlation window on the thumb-click instead of the
+// answer and made correlation succeed only when someone clicked within 60s --
+// 3 hits in four months. Both must come from the re-fetched message.
+assert.ok(
+  /message_created_at:\s*\n?\s*feedbackMessage\?\.createdAt/.test(forwardBlock),
+  'message_created_at must come from the re-fetched message, not from updateMessage ' +
+    '(which does not return createdAt and would fall back to now())'
+);
+assert.ok(
+  forwardBlock.includes('feedbackMessage?.model'),
+  'model_alias must prefer the re-fetched message: updateMessage does not return model, ' +
+    'which is why 69 of 70 events stored model_alias = NULL'
+);
+assert.ok(
+  messagesSource.includes('db.getMessage({ user: req.user?.id, messageId })') ||
+    /getMessage\(\{\s*user:\s*req\.user\?\.id,\s*messageId\s*\}\)/.test(messagesSource),
+  'the forward must re-fetch the message to get its real createdAt'
+);
+
 console.log(
   'OK: built artifacts verified — search topResults + surrogate guards, ' +
     'index.cjs cleanupOnComplete at every call site, stream marker edge cases, ' +
