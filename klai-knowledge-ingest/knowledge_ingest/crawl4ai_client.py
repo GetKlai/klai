@@ -1325,10 +1325,16 @@ async def crawl_site(
     crawl_results: list[CrawlResult] = []
     outcomes: list[FetchOutcome] = []
     fetched_count = 0
-    # Crawl-job-wide budget for the bulk-5xx sequential-recovery fallback
-    # (see _recover_bulk_5xx_batch / _MAX_SEQUENTIAL_RECOVERY).
-    # Shared across every batch iteration below, not reset per batch.
+    # Crawl-job-wide budgets for the bulk-5xx sequential-recovery fallback
+    # (see _recover_bulk_5xx_batch / _MAX_SEQUENTIAL_RECOVERY). BOTH are
+    # shared across every batch iteration below, not reset per batch — a
+    # per-batch clock would let a many-batch crawl spend its full wall-clock
+    # allowance again and again, which is exactly the "one job holds a worker
+    # slot for over an hour" case the budget exists to prevent.
     sequential_recovery_budget = _MAX_SEQUENTIAL_RECOVERY
+    sequential_recovery_deadline = (
+        _recovery_monotonic() + settings.crawl_sequential_recovery_max_seconds
+    )
 
     start_result = await _fetch_seed_page(
         start_url=start_url,
@@ -1378,6 +1384,7 @@ async def crawl_site(
                 cookies=cookies,
                 base_domain=base_domain,
                 recovery_budget=sequential_recovery_budget,
+                deadline=sequential_recovery_deadline,
             )
             sequential_recovery_budget -= recovery_attempted
         else:
@@ -1608,6 +1615,7 @@ async def _recover_bulk_5xx_batch(
     cookies: list[dict[str, Any]] | None,
     base_domain: str,
     recovery_budget: int,
+    deadline: float | None = None,
 ) -> tuple[list[CrawlResult], list[CrawlResult], list[FetchOutcome], int]:
     """Sequentially re-fetch a batch that failed WHOLESALE via bulk fetch.
 
@@ -1651,7 +1659,12 @@ async def _recover_bulk_5xx_batch(
     cooldown = settings.crawl_sequential_recovery_cooldown_seconds
     max_consecutive = settings.crawl_sequential_recovery_max_consecutive_failures
     time_budget = settings.crawl_sequential_recovery_max_seconds
+    # ``deadline`` is the crawl-job-wide clock passed by ``crawl_site`` so a
+    # many-batch crawl cannot spend the full allowance once per batch. Direct
+    # callers (tests) may omit it and get a fresh per-call budget.
     started_at = _recovery_monotonic()
+    if deadline is None:
+        deadline = started_at + time_budget
 
     logger.info(
         "crawl_sequential_recovery_started",
@@ -1704,13 +1717,13 @@ async def _recover_bulk_5xx_batch(
             )
             break
 
-        elapsed = _recovery_monotonic() - started_at
-        if elapsed >= time_budget:
+        now = _recovery_monotonic()
+        if now >= deadline:
             remaining = _abandon_remaining(i)
             still_failing += remaining
             logger.warning(
                 "crawl_sequential_recovery_time_budget_exhausted",
-                elapsed_seconds=round(elapsed, 1),
+                elapsed_seconds=round(now - started_at, 1),
                 recovered=recovered,
                 still_failing=still_failing,
                 remaining=remaining,
