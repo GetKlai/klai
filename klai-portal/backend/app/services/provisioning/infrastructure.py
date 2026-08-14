@@ -48,6 +48,54 @@ _LIBRECHAT_PATCH_MOUNTS = {
     "patches/search.cjs": "/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs",
 }
 
+
+def assert_shared_librechat_mount_sources_intact() -> None:
+    """Refuse to start or restart a tenant when a fleet-shared bind source is broken.
+
+    Docker resolves a bind mount at container *start*, not at create. When the
+    host source no longer exists it does NOT fail -- it silently creates an
+    empty DIRECTORY there. LibreChat then boots against a directory where it
+    expects a file and exits 127.
+
+    That is what happened on 2026-08-14: a config sync ran
+    ``rsync --delete`` over ``/opt/klai/librechat/patches/`` while 42 tenant
+    containers still declared one of the removed files as a mount. Nothing
+    broke until the next start; then 36 of 42 tenants went down at once.
+
+    ``Path.exists()`` is True for the auto-created directory, so the guard that
+    used it waved the broken state straight through. ``is_file()`` is the check
+    that actually distinguishes them.
+
+    Called on BOTH paths that can arm the failure:
+
+    * create -- ``_start_librechat_container`` before handing mounts to Docker;
+    * restart -- ``_apply_librechat_container_step``, where restarting a
+      *healthy* container against a broken source is strictly worse than doing
+      nothing, because it destroys a working process.
+
+    Raises RuntimeError naming every broken source and its shape (missing vs
+    directory), so one run tells an operator the whole story.
+    """
+    base = Path(settings.librechat_container_data_path)
+    expected = [*_LIBRECHAT_PATCH_MOUNTS, "klai-entrypoint.sh"]
+
+    broken: list[str] = []
+    for rel_path in expected:
+        source = base / rel_path
+        if source.is_file():
+            continue
+        shape = "directory (Docker auto-created it — the file was deleted)" if source.is_dir() else "missing"
+        broken.append(f"{source} [{shape}]")
+
+    if broken:
+        raise RuntimeError(
+            "LibreChat shared mount sources are not usable: "
+            + "; ".join(broken)
+            + ". Restore them on the host before starting or restarting any tenant "
+            "(a directory here means a file was deleted while containers still mounted it)."
+        )
+
+
 _LIBRECHAT_OPENID_READY_BOOT_ATTEMPTS = 3
 _LIBRECHAT_OPENID_READY_BOOT_TIMEOUT_SECONDS = 45
 _LIBRECHAT_OPENID_PROBE_INTERVAL_SECONDS = 2
@@ -528,21 +576,16 @@ def _create_and_start_librechat_container(
         f"{librechat_host_base}/{slug}/librechat.yaml": {"bind": "/app/librechat.yaml", "mode": "ro"},
         f"{librechat_host_base}/{slug}/images": {"bind": "/app/client/public/images", "mode": "rw"},
     }
+    # Every fleet-shared bind source must be an actual FILE before we hand the
+    # mount list to Docker -- see assert_shared_librechat_mount_sources_intact.
+    assert_shared_librechat_mount_sources_intact()
+
     for source_rel_path, destination in _LIBRECHAT_PATCH_MOUNTS.items():
-        patch_container_path = Path(settings.librechat_container_data_path) / source_rel_path
-        if not patch_container_path.exists():
-            raise RuntimeError(f"LibreChat patch file missing: {patch_container_path}")
         volumes[f"{librechat_host_base}/{source_rel_path}"] = {"bind": destination, "mode": "ro"}
 
     # Klai entrypoint wrapper that forces light theme on every tenant (LibreChat
     # has no server-side theme config — see deploy/librechat/klai-entrypoint.sh).
     # Mounted read-only; the container `entrypoint` below runs it before boot.
-    # Fail-loud if missing: a missing bind source would make Docker create an
-    # empty directory at /klai-entrypoint.sh and the container would crash on
-    # start. The file is synced to the host by deploy-compose.yml.
-    entrypoint_container_path = Path(settings.librechat_container_data_path) / "klai-entrypoint.sh"
-    if not entrypoint_container_path.exists():
-        raise RuntimeError(f"LibreChat entrypoint wrapper missing: {entrypoint_container_path}")
     volumes[f"{librechat_host_base}/klai-entrypoint.sh"] = {
         "bind": "/klai-entrypoint.sh",
         "mode": "ro",

@@ -2080,6 +2080,39 @@ If steps 1 and 3 cannot land in the same change, keep a placeholder file at
 the path until every container has been recreated. A placeholder is cheap;
 an empty auto-created directory is an outage.
 
+**Prevention (mechanical, two layers, both fail loud):**
+
+1. **The delete is blocked at the sync.**
+   `deploy/scripts/assert-safe-to-prune.sh <repo-src-dir> <host-dst-dir>` runs
+   immediately before the `rsync --delete` in
+   `.github/workflows/deploy-librechat-config.yml`. It fires only when a file
+   is BOTH about to be deleted AND still bind-mounted by a running container,
+   so an ordinary sync never trips it. Verified against live prod: replaying
+   PR #895's tree blocks and names all 41 containers holding the file, while
+   the current tree exits 0. Own test suite (7 cases, Docker-free via
+   `KLAI_MOUNT_PAIRS_FILE`) runs in the same workflow.
+
+2. **The broken state can no longer be started or restarted.**
+   `assert_shared_librechat_mount_sources_intact()` in
+   `klai-portal/backend/app/services/provisioning/infrastructure.py` requires
+   every fleet-shared bind source to be an actual **file**. Called from both
+   the create path (`_start_librechat_container`) and, crucially, before the
+   restart loop in the regenerate endpoint — the incident's containers were
+   *restarted*, so a create-only guard would have missed it entirely.
+   Restarting a healthy container against a deleted source is strictly worse
+   than doing nothing, so the endpoint refuses fleet-wide and returns 500 in
+   BOTH restart-only and recreate mode.
+
+Note the trap that made the pre-existing guard useless: it used
+`Path.exists()`, which is **True** for the auto-created empty directory. Only
+`is_file()` distinguishes "the file is there" from "Docker put a directory
+where the file used to be".
+
+**The structural fix** is to stop bind-mounting patches at all and bake them
+into an image — SPEC-LIBRECHAT-PATCH-MODEL-001. That removes this class along
+with the two sibling bind-mount pitfalls below. Until it lands, the two guards
+above are the containment.
+
 **Generalisation.** Any resource resolved at container-start time and owned by
 a *different* deploy pipeline than the container definition has this hazard:
 bind-mount sources, named-volume contents, secret files, config files pulled

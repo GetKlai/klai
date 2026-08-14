@@ -177,6 +177,12 @@ async def _regenerate_setup(
         ),
         patch("app.api.internal.aioredis.Redis", MagicMock(return_value=redis_client)),
         patch("docker.from_env", MagicMock(return_value=docker_client)),
+        # Shared bind sources are intact unless a test says otherwise; the
+        # failure path has its own coverage in TestSharedMountPreflight.
+        patch(
+            "app.api.internal.assert_shared_librechat_mount_sources_intact",
+            MagicMock(return_value=None),
+        ),
     ):
         yield request, response
 
@@ -673,3 +679,72 @@ class TestEnvReconciliationWiring:
         )
         assert any("voys" in e for e in resp.errors), resp.errors
         assert response.status_code == 500
+
+
+class TestSharedMountPreflight:
+    """A broken fleet-shared bind source blocks the whole apply step.
+
+    Incident 2026-08-14: the containers that went down were RESTARTED, not
+    recreated -- so the create-path guard never ran. Restarting a healthy
+    container against a deleted mount source destroys a working process, so
+    the only correct move is to refuse and say why.
+
+    This is fleet-wide, not per-tenant: every tenant mounts the same patch
+    files. It therefore fails loud (500) in BOTH modes, unlike a per-tenant
+    restart failure which restart-only mode reports at 200 by design.
+    """
+
+    @staticmethod
+    def _broken_preflight():
+        return patch(
+            "app.api.internal.assert_shared_librechat_mount_sources_intact",
+            MagicMock(
+                side_effect=RuntimeError(
+                    "LibreChat shared mount sources are not usable: /librechat/patches/stream.cjs [directory ...]"
+                )
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_restart_only_refuses_and_fails_loud(self):
+        from app.api import internal as internal_mod
+
+        orgs = [_org("getklai", 1), _org("voys", 2)]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
+            with self._broken_preflight():
+                resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        # No healthy container was touched.
+        docker_client.containers.get.assert_not_called()
+        # Loud, with the offending path in the message.
+        assert response.status_code == 500
+        assert any("stream.cjs" in e for e in resp.errors)
+        assert sorted(resp.tenants_skipped) == ["getklai", "voys"]
+
+    @pytest.mark.asyncio
+    async def test_recreate_refuses_before_removing_anything(self):
+        from app.api import internal as internal_mod
+
+        orgs = [_org("getklai", 1), _org("voys", 2)]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
+            request.query_params = {"recreate_containers": "true"}
+            with self._broken_preflight():
+                with patch(
+                    "app.services.provisioning.infrastructure._start_librechat_container",
+                    MagicMock(return_value=None),
+                ) as start_librechat:
+                    resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        # Recreate force-removes before it creates. Nothing may be removed when
+        # we already know the replacement cannot boot.
+        start_librechat.assert_not_called()
+        assert response.status_code == 500
+        assert sorted(resp.tenants_skipped) == ["getklai", "voys"]

@@ -827,3 +827,128 @@ class TestCharacterizeLibrechatOpenidReadiness:
 
         assert mock_client.containers.get.call_count == 2
         assert mock_client.containers.get.return_value.restart.call_count == 2
+
+
+class TestPatchMountSourcesMustBeFiles:
+    """A bind-mount source that is a DIRECTORY is the shape of the outage.
+
+    Incident 2026-08-14: the config sync deleted a patch file from the host
+    while 42 containers still declared it as a bind mount. Docker resolves a
+    bind mount at container *start*; a missing source is silently replaced by
+    an empty directory. LibreChat then booted against a directory where it
+    expected a file and 36 of 42 tenants exited 127.
+
+    The pre-existing guard used ``Path.exists()``, which is True for that
+    auto-created directory -- it waved the broken state straight through.
+    Only ``is_file()`` distinguishes them.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _mock_openid_ready(self):
+        with patch("app.services.provisioning.infrastructure._wait_for_librechat_openid_ready") as mock:
+            yield mock
+
+    def _write_lc_files(self, tmp_path: Path, slug: str = "acme") -> None:
+        (tmp_path / "librechat.yaml").write_text("version: 1.0\n")
+        tenant_dir = tmp_path / slug
+        tenant_dir.mkdir(parents=True, exist_ok=True)
+        (tenant_dir / ".env").write_text("MONGO_URI=mongodb://example\n")
+        patch_dir = tmp_path / "patches"
+        patch_dir.mkdir(exist_ok=True)
+        for name in ("format.cjs", "share.js", "stream.cjs", "search.cjs"):
+            (patch_dir / name).write_text("// patch\n")
+        (tmp_path / "klai-entrypoint.sh").write_text('#!/bin/sh\nexec docker-entrypoint.sh "$@"\n')
+
+    def test_create_refuses_when_a_patch_source_is_a_directory(self, tmp_path):
+        from app.services.provisioning import _start_librechat_container
+
+        self._write_lc_files(tmp_path)
+        # Reproduce exactly what Docker leaves behind after the source is gone.
+        stream = tmp_path / "patches" / "stream.cjs"
+        stream.unlink()
+        stream.mkdir()
+
+        mock_client = MagicMock()
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.7"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+            mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
+
+            with pytest.raises(RuntimeError, match=r"stream\.cjs"):
+                _start_librechat_container("acme", "/opt/klai/librechat-data/acme/.env")
+
+        mock_client.containers.create.assert_not_called()
+
+    def test_create_refuses_when_the_entrypoint_wrapper_is_a_directory(self, tmp_path):
+        from app.services.provisioning import _start_librechat_container
+
+        self._write_lc_files(tmp_path)
+        wrapper = tmp_path / "klai-entrypoint.sh"
+        wrapper.unlink()
+        wrapper.mkdir()
+
+        mock_client = MagicMock()
+        with (
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            patch("app.services.provisioning.infrastructure.settings") as mock_settings,
+        ):
+            mock_settings.librechat_host_data_path = "/opt/klai/librechat-data"
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            mock_settings.librechat_image = "ghcr.io/danny-avila/librechat:v0.8.7"
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
+            mock_client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
+
+            with pytest.raises(RuntimeError, match=r"klai-entrypoint\.sh"):
+                _start_librechat_container("acme", "/opt/klai/librechat-data/acme/.env")
+
+        mock_client.containers.create.assert_not_called()
+
+
+class TestAssertSharedLibrechatMountSourcesIntact:
+    """The fleet-shared preflight used by BOTH the create and restart paths."""
+
+    def _write_shared(self, tmp_path: Path) -> None:
+        patch_dir = tmp_path / "patches"
+        patch_dir.mkdir(exist_ok=True)
+        for name in ("format.cjs", "share.js", "stream.cjs", "search.cjs"):
+            (patch_dir / name).write_text("// patch\n")
+        (tmp_path / "klai-entrypoint.sh").write_text("#!/bin/sh\n")
+
+    def test_passes_when_every_shared_source_is_a_file(self, tmp_path):
+        from app.services.provisioning.infrastructure import assert_shared_librechat_mount_sources_intact
+
+        self._write_shared(tmp_path)
+        with patch("app.services.provisioning.infrastructure.settings") as mock_settings:
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            assert_shared_librechat_mount_sources_intact()
+
+    def test_names_every_broken_source_and_its_shape(self, tmp_path):
+        from app.services.provisioning.infrastructure import assert_shared_librechat_mount_sources_intact
+
+        self._write_shared(tmp_path)
+        (tmp_path / "patches" / "format.cjs").unlink()
+        stream = tmp_path / "patches" / "stream.cjs"
+        stream.unlink()
+        stream.mkdir()
+
+        with patch("app.services.provisioning.infrastructure.settings") as mock_settings:
+            mock_settings.librechat_container_data_path = str(tmp_path)
+            with pytest.raises(RuntimeError) as exc:
+                assert_shared_librechat_mount_sources_intact()
+
+        message = str(exc.value)
+        # Both broken sources reported in one go -- an operator should not have
+        # to re-run to discover the second one.
+        assert "format.cjs" in message
+        assert "stream.cjs" in message
+        assert "missing" in message
+        assert "directory" in message
+        # The intact ones are not noise in the error.
+        assert "share.js" not in message
