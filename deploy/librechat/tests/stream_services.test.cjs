@@ -31,10 +31,6 @@ const manifest = fs.readFileSync(
   path.join(repoRoot, 'deploy/librechat/patch-manifest.txt'),
   'utf8',
 );
-const getklaiManifest = fs.readFileSync(
-  path.join(repoRoot, 'deploy/librechat/getklai/patch-manifest.txt'),
-  'utf8',
-);
 const provisioning = fs.readFileSync(
   path.join(repoRoot, 'klai-portal/backend/app/services/provisioning/infrastructure.py'),
   'utf8',
@@ -52,7 +48,15 @@ for (const deadFile of [
   );
 }
 assert.doesNotMatch(manifest, /createStreamServices\.ts/, 'patch-manifest.txt');
-assert.doesNotMatch(getklaiManifest, /createStreamServices\.ts/, 'getklai/patch-manifest.txt');
+// getklai/patch-manifest.txt is gone: the canary runs the Klai-owned image
+// (SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 3), so its provenance comes from the
+// build manifest baked into that image, not from upstream hashes of files it
+// no longer mounts. Assert it stays retired rather than quietly returning.
+assert.equal(
+  fs.existsSync(path.join(repoRoot, 'deploy/librechat/getklai/patch-manifest.txt')),
+  false,
+  'getklai/patch-manifest.txt describes a mount model the canary no longer uses',
+);
 assert.doesNotMatch(dockerCompose, /createStreamServices\.ts/, 'docker-compose.yml');
 assert.doesNotMatch(provisioning, /createStreamServices\.ts/, 'infrastructure.py');
 
