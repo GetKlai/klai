@@ -324,7 +324,12 @@ for (let cut = 1; cut < splitBody.length; cut++) {
 // flushed as plain text instead of buffering forever.
 {
   const framer = createKlaiSourcesFramer();
-  const hugeTail = `<!-- klai_sources=${'A'.repeat(9000)}`;
+  // Longer than every cap this file may run against: 8192 in the .cjs still
+  // bind-mounted in production, 65536 in the CI-built artifact (the cap was
+  // raised because a legitimately large marker split past 8192 leaked in full
+  // -- adversarial review 2026-08-14, finding 6). Sizing above both keeps this
+  // assertion true for either artifact instead of silently pinning one.
+  const hugeTail = `<!-- klai_sources=${'A'.repeat(70000)}`;
   const out = framer.push(`tekst ${hugeTail}`);
   assert.ok(out.text.includes(hugeTail), 'oversized tail must flush as text');
 }
