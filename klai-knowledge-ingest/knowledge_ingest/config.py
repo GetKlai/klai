@@ -80,8 +80,14 @@ class Settings(BaseSettings):
         default=75.0,
         validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_COOLDOWN_SECONDS"),
     )
+    # Only trips while nothing has been recovered yet (see the breaker in
+    # _recover_bulk_5xx_batch). 6 rather than 3: an intermittently-blocking
+    # site can easily open with a run of failures, and giving up there costs
+    # the whole crawl — measured on intermedia.com, 3 was the difference
+    # between recovering 7 pages and recovering none. Worst case on a truly
+    # dead site is 6 x 75s, comfortably inside the job deadline below.
     crawl_sequential_recovery_max_consecutive_failures: int = Field(
-        default=3,
+        default=6,
         validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_MAX_CONSECUTIVE_FAILURES"),
     )
     crawl_sequential_recovery_max_seconds: float = Field(

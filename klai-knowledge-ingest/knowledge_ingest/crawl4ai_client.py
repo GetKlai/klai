@@ -1701,11 +1701,19 @@ async def _recover_bulk_5xx_batch(
             )
             break
 
-        # Circuit breaker: the cooldown below buys a fresh browser session
-        # per attempt, so a run of failures despite it means the site is not
-        # recoverable — every further attempt would burn another cooldown for
-        # nothing.
-        if consecutive_failures >= max_consecutive:
+        # Circuit breaker: a run of failures despite the fresh session the
+        # cooldown buys means the site is not recoverable, so stop burning a
+        # cooldown per remaining URL.
+        #
+        # It only applies while NOTHING has been recovered yet. One success
+        # proves the site IS reachable, and from then on failures are just the
+        # intermittency this whole path exists for. Measured on intermedia.com
+        # 2026-08-14: one run recovered 7 of 12 because early successes kept
+        # resetting the counter, while the next run lost all 17 because its
+        # first three attempts happened to fail. Same site, same code — only
+        # luck differed, and the breaker turned that luck into the outcome.
+        # Attempts and the job-wide deadline still bound the patient case.
+        if consecutive_failures >= max_consecutive and recovered == 0:
             remaining = _abandon_remaining(i)
             still_failing += remaining
             logger.warning(

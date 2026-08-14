@@ -1512,3 +1512,43 @@ async def test_recovery_deadline_is_job_wide_not_per_batch(
     assert attempted == 0, "job-wide deadline already passed; no attempt may start"
     assert slept == [], "and no cooldown may be burned either"
     assert [o["reason_code"] for o in outcomes] == [FetchReasonCode.HTTP_5XX.value] * 2
+
+
+@pytest.mark.asyncio
+async def test_recovery_breaker_does_not_fire_once_a_page_was_recovered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One success proves the site is reachable, so a later run of failures
+    is intermittency — not grounds to abandon the rest of the batch. The
+    attempt budget and job deadline still bound it."""
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_consecutive_failures", 2)
+    urls = [f"https://example.com/p{i}" for i in range(6)]
+    scripted = {
+        urls[0]: _ok_result(urls[0]),  # proves reachability
+        urls[1]: _blocked_result(),
+        urls[2]: _blocked_result(),
+        urls[3]: _blocked_result(),
+        urls[4]: _blocked_result(),
+        urls[5]: _ok_result(urls[5]),  # only reached if the breaker held off
+    }
+
+    (results, _links, _outcomes, attempted), _slept = await _recover(monkeypatch, urls, scripted)
+
+    assert attempted == 6, "breaker must stay closed after a recovered page"
+    assert {r.url for r in results} == {urls[0], urls[5]}
+
+
+@pytest.mark.asyncio
+async def test_recovery_breaker_still_fires_when_nothing_was_recovered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A site that never answers must not cost a cooldown per URL."""
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_consecutive_failures", 2)
+    urls = [f"https://example.com/p{i}" for i in range(8)]
+    scripted = {u: _blocked_result() for u in urls}
+
+    (_results, _links, outcomes, attempted), slept = await _recover(monkeypatch, urls, scripted)
+
+    assert attempted == 2
+    assert len(slept) == 2
+    assert len(outcomes) == len(urls)
