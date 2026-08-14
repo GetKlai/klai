@@ -40,9 +40,14 @@
   //
   // Never automerged: a lock refresh touches the whole transitive tree, so it
   // gets human eyes even when the per-service CI gates are green.
+  // 'at any time' on purpose, and it is NOT redundant: lockFileMaintenance
+  // defaults to its own 'before 4am on monday' window, which would walk
+  // straight back into the bug described above — the cron fires at 03:00 UTC
+  // (05:00 Amsterdam) and GitHub's 1-3h delay pushes the actual run past 04:00.
+  // The workflow cron stays the only scheduler.
   lockFileMaintenance: {
     enabled: true,
-    schedule: ['before 6am on monday'],
+    schedule: ['at any time'],
     automerge: false,
     commitMessageAction: 'Refresh lock files',
   },
