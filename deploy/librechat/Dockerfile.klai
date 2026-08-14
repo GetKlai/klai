@@ -76,11 +76,11 @@ RUN git clone --quiet --filter=blob:none --branch "${LIBRECHAT_TAG}" \
       https://github.com/danny-avila/LibreChat.git librechat
 WORKDIR /build/librechat
 
-COPY patches-source/share.js.patch \
+COPY patches-source/share.js.patch patches-source/messages.js.patch \
      patches-source/createStreamServices.ts.patch /patches/
 
 RUN set -eu; \
-    for p in /patches/share.js.patch /patches/createStreamServices.ts.patch; do \
+    for p in /patches/share.js.patch /patches/messages.js.patch /patches/createStreamServices.ts.patch; do \
       echo "==> git apply --3way $p"; \
       out=$(git apply --3way --verbose "$p" 2>&1) || { \
         echo "$out" >&2; \
@@ -117,6 +117,8 @@ COPY --from=agents-build /build/agents/dist/cjs/tools/search/search.cjs \
      /app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs
 COPY --from=librechat-build /build/librechat/api/server/routes/share.js \
      /app/api/server/routes/share.js
+COPY --from=librechat-build /build/librechat/api/server/routes/messages.js \
+     /app/api/server/routes/messages.js
 COPY --from=librechat-build /build/librechat/packages/api/dist/index.cjs \
      /app/packages/api/dist/index.cjs
 

@@ -53,6 +53,17 @@ export const PATCHED_FILES = [
     patch: 'createStreamServices.ts.patch',
     lane: 'librechat',
   },
+  {
+    // SPEC-KB-015 feedback forwarding — Phase 4. Plain runtime JS like
+    // share.js, so no build step: the patched file is what runs. The runtime
+    // transform in klai-entrypoint.sh greps this file for 'SPEC-KB-015' and
+    // stands down on its own once the patch is baked in, because this file is
+    // COPYed rather than bundled and the comment survives.
+    key: 'messages.js',
+    containerPath: '/app/api/server/routes/messages.js',
+    patch: 'messages.js.patch',
+    lane: 'librechat',
+  },
 ];
 
 /** Path of the manifest baked into the image by the Dockerfile. */
