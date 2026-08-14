@@ -22,6 +22,7 @@ import httpx
 import pytest
 
 from knowledge_ingest import crawl4ai_client
+from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import (
     CrawlResult,
     _build_candidate_set,
@@ -1338,3 +1339,144 @@ async def test_crawl_site_no_sequential_recovery_on_bulk_timeout(
     by_url = {o["url"]: o for o in outcomes}
     assert by_url["https://example.com/page-a"]["reason_code"] == FetchReasonCode.TIMEOUT.value
     assert by_url["https://example.com/page-b"]["reason_code"] == FetchReasonCode.TIMEOUT.value
+
+
+# ---------------------------------------------------------------------------
+# Sequential recovery pacing: cooldown, circuit breaker, wall-clock budget
+#
+# crawl4ai reuses ONE browser per crawl, so a flagged session stays flagged:
+# measured on intermedia.com 2026-08-14, the 1st standalone fetch succeeded
+# and the 2nd and 3rd both 500'd. Its pool drops an idle browser after ~53s,
+# after which a fresh session passes again. The recovery therefore waits
+# before every attempt, and bounds that waiting three ways.
+# ---------------------------------------------------------------------------
+
+
+def _blocked_result() -> CrawlResult:
+    return CrawlResult(
+        url="",
+        fit_markdown="",
+        raw_markdown="",
+        html="",
+        word_count=0,
+        success=False,
+        status_code=500,
+        error_message="boom",
+    )
+
+
+def _ok_result(url: str) -> CrawlResult:
+    body = "Real page content with plenty of genuine words in it, enough to ingest."
+    return CrawlResult(
+        url=url,
+        fit_markdown=body,
+        raw_markdown=body,
+        html=f"<html><body><p>{body}</p></body></html>",
+        word_count=len(body.split()),
+        success=True,
+        status_code=200,
+    )
+
+
+async def _recover(monkeypatch, urls, outcomes_by_url, *, budget=60):
+    """Drive _recover_bulk_5xx_batch with scripted per-URL results."""
+    slept: list[float] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    async def _fake_fetch(url, _config, *, cookies=None, selector=None, **_kw):
+        return outcomes_by_url[url]
+
+    monkeypatch.setattr(crawl4ai_client, "_recovery_sleep", _record_sleep)
+    monkeypatch.setattr(crawl4ai_client, "_crawl_page_with_config", _fake_fetch)
+
+    result = await crawl4ai_client._recover_bulk_5xx_batch(
+        urls,
+        crawler_config={},
+        cookies=None,
+        base_domain="example.com",
+        recovery_budget=budget,
+    )
+    return result, slept
+
+
+@pytest.mark.asyncio
+async def test_recovery_cools_down_before_every_attempt_including_the_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bulk burst that just failed is what flagged the browser, so the
+    first attempt needs the recycle window as much as the rest."""
+    urls = [f"https://example.com/p{i}" for i in range(3)]
+    scripted = {u: _ok_result(u) for u in urls}
+
+    (_results, _links, outcomes, attempted), slept = await _recover(monkeypatch, urls, scripted)
+
+    assert attempted == 3
+    assert len(slept) == 3, "one cooldown per attempt, first one included"
+    assert all(s == settings.crawl_sequential_recovery_cooldown_seconds for s in slept)
+    assert all(o["reason_code"] == FetchReasonCode.SUCCESS.value for o in outcomes)
+
+
+@pytest.mark.asyncio
+async def test_recovery_circuit_opens_after_consecutive_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run of failures despite the cooldown means the site is not
+    recoverable — stop instead of burning a cooldown per remaining URL."""
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_consecutive_failures", 3)
+    urls = [f"https://example.com/p{i}" for i in range(10)]
+    scripted = {u: _blocked_result() for u in urls}
+
+    (_results, _links, outcomes, attempted), slept = await _recover(monkeypatch, urls, scripted)
+
+    assert attempted == 3, "stopped after the 3rd consecutive failure"
+    assert len(slept) == 3, "no cooldown burned on the abandoned URLs"
+    assert len(outcomes) == len(urls), "every URL still gets an honest outcome"
+    assert all(o["reason_code"] == FetchReasonCode.HTTP_5XX.value for o in outcomes)
+
+
+@pytest.mark.asyncio
+async def test_recovery_success_resets_the_consecutive_failure_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fail, fail, success, fail, fail must NOT trip a breaker set at 3 —
+    the intermittent-challenge case this recovery exists for."""
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_consecutive_failures", 3)
+    urls = [f"https://example.com/p{i}" for i in range(5)]
+    scripted = {
+        urls[0]: _blocked_result(),
+        urls[1]: _blocked_result(),
+        urls[2]: _ok_result(urls[2]),
+        urls[3]: _blocked_result(),
+        urls[4]: _blocked_result(),
+    }
+
+    (results, _links, outcomes, attempted), _slept = await _recover(monkeypatch, urls, scripted)
+
+    assert attempted == 5, "breaker must not fire; the run was never 3 in a row"
+    assert [r.url for r in results] == [urls[2]]
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert by_url[urls[2]] == FetchReasonCode.SUCCESS.value
+
+
+@pytest.mark.asyncio
+async def test_recovery_stops_when_wall_clock_budget_is_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One crawl job must not hold a worker slot indefinitely: 60 attempts
+    x 75s would be 75 minutes without this bound."""
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_seconds", 100.0)
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_consecutive_failures", 99)
+
+    ticks = iter([0.0, 40.0, 80.0, 120.0, 160.0, 200.0])
+    monkeypatch.setattr(crawl4ai_client, "_recovery_monotonic", lambda: next(ticks))
+
+    urls = [f"https://example.com/p{i}" for i in range(5)]
+    scripted = {u: _ok_result(u) for u in urls}
+
+    (_results, _links, outcomes, attempted), _slept = await _recover(monkeypatch, urls, scripted)
+
+    assert attempted == 2, "stopped once the elapsed clock passed the budget"
+    assert len(outcomes) == len(urls)
+    assert outcomes[-1]["reason_code"] == FetchReasonCode.HTTP_5XX.value
