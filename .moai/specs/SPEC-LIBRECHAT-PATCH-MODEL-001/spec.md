@@ -276,8 +276,47 @@ manifest inside its image.
 moves to the Klai image it must move to a digest, and
 `check-klai-librechat-digest.sh` already covers that file.
 
-### Phase 4 — Migrate surface 6 (feedback), coordinated with in-flight branch
+### Phase 4 — Migrate surface 6 (feedback) — **DONE** (2026-08-14, PRs #936 / #937)
 Land after `fix/librechat-preflight-feedback-config` merges. Replace its runtime `KB_FEEDBACK_NODE` transform with the Lane B source diff against `messages.js`. Delete the runtime heredoc block from both entrypoints.
+
+**Delivered.** The canary runs
+`ghcr.io/getklai/librechat@sha256:3b4fd8440c79…` (tag
+`v0.8.7-klai.1-80df95854928`) — the first image carrying all six migrated
+surfaces. Verified on the running container: `SPEC-KB-015` and the
+`/internal/v1/kb-feedback` call present in `messages.js`, and BOTH runtime
+transforms reporting that they stood down.
+
+The diff was derived by running the entrypoint's own transform against a clean
+v0.8.7 checkout and diffing the result, so it is byte-for-byte what the runtime
+version produces. Round-trip verified against a second fresh clone.
+
+No entrypoint change was needed: `messages.js` is COPYed rather than bundled, so
+the `SPEC-KB-015` comment survives and the existing skip-check finds it. The
+transform stays in both entrypoints for the 41 tenants still on upstream.
+
+**The drift guard had to learn the same thing.** It dry-runs each runtime
+transform against files extracted from the pinned image, which was correct while
+every image was upstream. Against an image that already carries a patch it tests
+a path that never runs at boot — feedback FAILED (its anchor had been consumed by
+the very patch it would apply) and stream-cleanup PASSED while proving nothing.
+Both now detect the baked-in marker and assert the behaviour instead.
+
+### Phase 5 — Production rollout + retire full-file patches — **NOT STARTED**
+
+Deliberately. The gate is not technical readiness — it is canary evidence, and
+there is none worth the name yet: the canary has served no conversations since
+the switch (it is Klai's own tenant and nobody has used it). Everything proven
+so far is structural — right image, right files, right transforms standing down,
+HTTP 200 — and structural evidence is exactly what a canary is NOT for.
+
+What unblocks it: real conversations through `getklai`, covering the surfaces
+the diffs touch — a KB answer with sources rendered (stream), a thumbs-up/down
+(messages), a web search (search), a shared link (share). Then flip
+`config.py::librechat_image` to the digest and roll the fleet.
+
+Note for that flip: `librechat_image` is currently a TAG. It must become a
+digest; `check-klai-librechat-digest.sh` already covers that file and will fail
+the build otherwise.
 
 ### Phase 5 — Production rollout + retire full-file patches
 Promote the Klai-owned image from canary to all production tenants (`provisioning/infrastructure.py::_start_librechat_container`, `klai-portal/backend/app/core/config.py::librechat_image`). Confirm `deploy/librechat/patches/` contains only the two intentionally-runtime surfaces' supporting files (if any remain) and that `getklai/patches/` mirrors accordingly.
