@@ -1549,7 +1549,7 @@ services:
   # `bm:meeting:{id}:status` / `bot_commands:meeting:{id}` channels with
   # independent id sequences). Shared: postgres, Garage, SPEC-SEC-021 socat bridge.
   #
-  # DEPLOY PREREQUISITE: `vexaai/vexa-bot:v0.12.22` must be present on the host
+  # DEPLOY PREREQUISITE: the bot image must be present on the host
   # BEFORE the first spawn. docker-socket-proxy has IMAGES disabled (SPEC-SEC-024),
   # so vexa12-runtime cannot pull it — POST /containers/create fails with
   # "No such image". The bot image is an env value, not a compose service, so

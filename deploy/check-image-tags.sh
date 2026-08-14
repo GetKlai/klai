@@ -39,7 +39,7 @@ for F in $FILES; do
     fi
 
     # Rule 2: placeholder `pending` tags indicate the file is mid-migration.
-    PENDING=$(grep -nE 'vexaai/[a-z0-9-]+:[0-9]+(\.[0-9]+){2,}-pending' "$F" || true)
+    PENDING=$(grep -nE 'vexaai/[a-z0-9-]+:v?[0-9]+(\.[0-9]+){2,}-pending' "$F" || true)
     if [ -n "$PENDING" ]; then
         echo "ERROR: placeholder tag in $F — file is not deploy-ready:" >&2
         echo "$PENDING" >&2
@@ -49,11 +49,18 @@ for F in $FILES; do
     # Rule 3: any other vexaai/* tag must match upstream version,
     #         locally-built (`<version>-local-YYMMDD-HHMM`), or legacy
     #         timestamped (`<version>-YYMMDD-HHMM`).
+    #
+    #         The leading `v` is optional because upstream changed convention
+    #         mid-flight: the 0.10 line publishes `0.10.6.3.14`, the 0.12 line
+    #         publishes ONLY `v0.12.22` (plain `0.12.22` is not on Docker Hub —
+    #         verified with `docker manifest inspect`). Accepting `v?` keeps every
+    #         other property of this rule intact: still immutable, still
+    #         version-shaped, and Rule 1 still rejects latest/dev/staging.
     BAD=$(grep -nE 'vexaai/[a-z0-9-]+:[^[:space:]#]+' "$F" \
-          | grep -vE 'vexaai/[a-z0-9-]+:[0-9]+(\.[0-9]+){2,}(-(local-)?[0-9]{6}-[0-9]{4})?$' \
-          | grep -vE 'vexaai/[a-z0-9-]+:[0-9]+(\.[0-9]+){2,}(-(local-)?[0-9]{6}-[0-9]{4})?[[:space:]]' \
+          | grep -vE 'vexaai/[a-z0-9-]+:v?[0-9]+(\.[0-9]+){2,}(-(local-)?[0-9]{6}-[0-9]{4})?$' \
+          | grep -vE 'vexaai/[a-z0-9-]+:v?[0-9]+(\.[0-9]+){2,}(-(local-)?[0-9]{6}-[0-9]{4})?[[:space:]]' \
           | grep -vE 'vexaai/[a-z0-9-]+:(latest|dev|staging)\b' \
-          | grep -vE 'vexaai/[a-z0-9-]+:[0-9]+(\.[0-9]+){2,}-pending' \
+          | grep -vE 'vexaai/[a-z0-9-]+:v?[0-9]+(\.[0-9]+){2,}-pending' \
           || true)
     if [ -n "$BAD" ]; then
         echo "ERROR: non-canonical Vexa image tag in $F:" >&2
@@ -69,7 +76,7 @@ fi
 
 echo "" >&2
 echo "Fix: update tags to one of:" >&2
-echo "     vexaai/<svc>:<version>                       (Docker Hub)" >&2
+echo "     vexaai/<svc>:<version> or :v<version>        (Docker Hub)" >&2
 echo "     vexaai/<svc>:<version>-local-YYMMDD-HHMM     (locally built)" >&2
 echo "     vexaai/<svc>:<version>-YYMMDD-HHMM           (legacy locally built)" >&2
 exit 1
