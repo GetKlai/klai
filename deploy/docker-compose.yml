@@ -40,6 +40,14 @@ networks:
     name: vexa12-internal
     driver: bridge
     internal: true   # only vexa12-meeting-api <-> vexa12-admin-api; no bot ever joins
+  vexa12-storage:
+    name: vexa12-storage
+    driver: bridge
+    internal: true
+    # ONLY garage <-> vexa12-meeting-api. meeting-api's MINIO_* config points at
+    # Garage, and its signal-tape janitor probes storage every sweep even with
+    # RECORDING_ENABLED=false. Garage lives on klai-net; reaching it via klai-net
+    # would undo the vexa12-portal boundary, so this is a dedicated two-party link.
   vexa12-portal:
     name: vexa12-portal
     driver: bridge
@@ -1513,6 +1521,7 @@ services:
       vexa12-portal: {}
       net-postgres: {}
       vexa12-internal: {} # reaches vexa12-admin-api without exposing it to bots
+      vexa12-storage: {}  # reaches garage for the S3 config it boots with
       vexa12-bots:
         aliases:
           - meeting-api   # the name a spawned 0.12 bot dials for its callback
@@ -1656,6 +1665,7 @@ services:
       GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
     networks:
       - klai-net
+      - vexa12-storage   # dedicated link to vexa12-meeting-api; see that network's comment
     healthcheck:
       test: ["CMD", "/garage", "status"]
       interval: 10s
