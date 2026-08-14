@@ -496,6 +496,41 @@ services:
     networks:
       - socket-proxy
 
+  # ─── klai-docker-authz (body-inspecting Docker authorization) ────────────
+  # SPEC-SEC-DOCKER-AUTHZ-001. docker-socket-proxy above authorises on
+  # method+path; POST /containers/create is allowed and its BODY is never parsed.
+  # HostConfig lives in that body. Proven 2026-08-14 against v0.5.0 with exactly
+  # the env above: a create carrying Binds:["/:/host"] + Privileged + PidMode:host
+  # returned 201, started 204, and read the host's /etc/hostname.
+  #
+  # This sits IN FRONT of docker-socket-proxy, which is unchanged and remains the
+  # first line of defence. One listener per principal rather than guessing
+  # identity from a TCP peer — the Vexa runtime arrives via a socat bridge and
+  # would otherwise present the sidecar's address:
+  #     :2375  portal-api      — binds confined to /opt/klai/librechat
+  #     :2376  vexa12-runtime  — no binds at all, NetworkMode vexa12-bots only
+  klai-docker-authz:
+    image: ghcr.io/getklai/klai-docker-authz:latest
+    restart: unless-stopped
+    environment:
+      DOCKER_PROXY_URL: http://docker-socket-proxy:2375
+    volumes:
+      # Read-only so the proxy can realpath() a bind source against the SAME
+      # directory the daemon will mount. Without it the prefix check is lexical
+      # only, and a symlink planted under the prefix pointing outside it passes.
+      - /opt/klai/librechat:/opt/klai/librechat:ro
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    networks:
+      - socket-proxy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    security_opt:
+      - no-new-privileges:true
+
   # ─── klai-mailer (Zitadel HTTP notification provider) ────────────────────
   klai-mailer:
     image: ghcr.io/getklai/klai-mailer:latest
@@ -648,7 +683,7 @@ services:
       # ─── Platform / domain ──────────────────────────────────────
       DOMAIN: ${DOMAIN}
       FRONTEND_URL: ${FRONTEND_URL:-}
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      DOCKER_HOST: tcp://klai-docker-authz:2375   # SPEC-SEC-DOCKER-AUTHZ-001
       # SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 5 — the fleet default is the
       # Klai-owned image, built in CI from deploy/librechat/patches-source/.
       # Tag for humans: v0.8.7-klai.1-80df95854928 (upstream v0.8.7, agents v3.2.46).
@@ -1313,11 +1348,11 @@ services:
     restart: unless-stopped
     command: >
       UNIX-LISTEN:/var/run/docker.sock,fork,reuseaddr,unlink-early,mode=0660,user=999,group=999
-      TCP:docker-socket-proxy:2375
+      TCP:klai-docker-authz:2376
     volumes:
       - runtime-api-docker-socket:/var/run   # shared with vexa12-runtime
     depends_on:
-      docker-socket-proxy:
+      klai-docker-authz:
         condition: service_started
     networks:
       - socket-proxy

@@ -1,0 +1,186 @@
+name: Build and push klai-docker-authz
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'klai-docker-authz/**'
+      - 'klai-libs/log-utils/**'
+      - '.github/workflows/klai-docker-authz.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'klai-docker-authz/**'
+      - 'klai-libs/log-utils/**'
+      - '.github/workflows/klai-docker-authz.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+env:
+  # Opt in early to Node 24 for all JS-based actions (Node 20 EOL Sept 2026)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # Quality gate: the policy module IS the security control, so its tests are
+  # config and a lockfile existed in the repo but nothing ever ran them, so
+  # dependency drift and regressions were invisible. Mirrors the portal-api /
+  # knowledge-mcp shape: lint -> vulnerability scan -> tests, all gating the
+  # image build.
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-docker-authz
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      # --skip-editable keeps the gate on external deps; internal klai-libs are
+      # editable path deps, not PyPI releases to query by distribution name.
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run --with pip-audit pip-audit --skip-editable
+
+      - name: Test (pytest)
+        run: uv run pytest -q --tb=short
+
+  build-push:
+    needs: quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # SPEC-SEC-CORS-001 REQ-6 — CORSMiddleware must be the LAST add_middleware
+      # call in this service's entry module. Rule lives at
+      # rules/cors_middleware_last.yml, configured by sgconfig.yml at repo root.
+      # `uses:` steps ignore the job's defaults.run.working-directory and run
+      # from $GITHUB_WORKSPACE, so the relative paths resolve correctly.
+      - name: Guard — CORSMiddleware must be last (SPEC-SEC-CORS-001 REQ-6)
+        uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6  # v1.5.0
+        with:
+          config: sgconfig.yml
+          paths: klai-docker-authz/app/main.py
+
+      # SPEC-SEC-INTERNAL-001 REQ-6: ban `==` / `!=` on secret-shaped variables
+      # across the whole klai-docker-authz app tree. Each rule's own `files:` filter
+      # already scopes to klai-docker-authz/app/**/*.py and ignores tests; this step
+      # broadens the action's scan path so the rules are actually exercised.
+      - name: Guard — no string-compare on secret (SPEC-SEC-INTERNAL-001 REQ-6)
+        uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6  # v1.5.0
+        with:
+          config: sgconfig.yml
+          paths: klai-docker-authz/app
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push klai-docker-authz
+        uses: docker/build-push-action@v7
+        with:
+          # SPEC-LOGGING-EXTRACT-001: build from repo root so the Dockerfile
+          # can COPY the shared klai-libs/log-utils path dep.
+          context: .
+          file: klai-docker-authz/Dockerfile
+          push: true
+          # `:latest` is published ONLY on push to main. PR builds publish
+          # only the SHA tag so a `docker pull :latest` cannot accidentally
+          # pull PR-build code. Mirrors klai-connector workflow.
+          tags: |
+            ghcr.io/getklai/klai-docker-authz:${{ github.sha }}
+            ${{ github.event_name == 'push' && 'ghcr.io/getklai/klai-docker-authz:latest' || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 2026-05-05 incident: this step previously had no `if:` gate, so
+      # PR builds also auto-deployed `:latest` to prod. PR #319's first
+      # successful docker-authz build in months pushed an image with the
+      # SPEC-SEC-WEBHOOK-001 validator into prod where MAILER_WEBHOOK_SECRET
+      # had never been migrated to global SOPS — restart-loop, no email
+      # for ~30 min until manual stabilize. Mirrors the connector workflow
+      # fix from SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR C: deploy ONLY on
+      # main-branch pushes, never from PR builds.
+      - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            source /opt/klai/.env
+            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
+            docker pull ghcr.io/getklai/klai-docker-authz:latest
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh klai-docker-authz
+
+  scan:
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+    steps:
+      # Checkout is required so trivy-action can find .trivy.yaml + the
+      # service's .trivyignore.yaml (paths are relative to repo root).
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
+      #
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action
+      # bug (0.35.0/0.36.0): with `format: sarif` the `severity` filter
+      # is honoured for the SARIF body but NOT for the exit-code, so
+      # a MEDIUM/LOW finding triggers exit-code 1 even when we asked
+      # for CRITICAL+HIGH gating. trivy CLI's `--severity` flag is
+      # honoured for both detection AND exit-code. .trivy.yaml stays
+      # in the repo as the canonical policy reference until the
+      # action lands proper config-file precedence.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1  # v0.2.5
+        with:
+          version: v0.69.3
+          cache: true
+
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            ghcr.io/getklai/klai-docker-authz:${{ github.sha }}
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'

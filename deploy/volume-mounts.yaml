@@ -526,6 +526,26 @@ mounts:
       client is fine, and docker-socket-proxy still enforces the verb whitelist.
       Like 0.10, this consumer must never bind the raw host /var/run/docker.sock.
 
+  docker-authz-librechat-prefix:
+    service: klai-docker-authz
+    kind: bind
+    host: /opt/klai/librechat
+    container_path: /opt/klai/librechat
+    image: ghcr.io/getklai/klai-docker-authz:latest
+    category: config
+    data_path_source: fixed
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: source_controlled
+    retention_enforced_by: n/a
+    notes: >-
+      SPEC-SEC-DOCKER-AUTHZ-001. Read-only, and NOT data: the proxy never writes
+      here. It needs the prefix visible so it can realpath() a bind source against
+      the same directory the daemon will mount — without it the allowed-prefix
+      check is lexical only, and a symlink planted under the prefix pointing
+      outside it would pass. Mounting it is part of the control, not a convenience.
+
   caddy-tenants-caddy:
     service: caddy
     kind: named

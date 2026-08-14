@@ -1,0 +1,30 @@
+[project]
+name = "klai-docker-authz"
+version = "0.1.0"
+description = "Body-inspecting authorization proxy in front of docker-socket-proxy (SPEC-SEC-DOCKER-AUTHZ-001)"
+requires-python = ">=3.12"
+dependencies = [
+    "starlette>=0.47",
+    "uvicorn>=0.34",
+    "httpx>=0.28",
+    "structlog>=25.0",
+    "klai-log-utils",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.9"]
+
+[tool.uv.sources]
+klai-log-utils = { path = "../klai-libs/log-utils" }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF"]
+ignore = ["E501", "S101"]
