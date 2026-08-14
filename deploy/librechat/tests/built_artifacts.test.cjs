@@ -22,14 +22,11 @@ const vm = require('node:vm');
 const artifactsDir = process.env.KLAI_BUILT_ARTIFACTS_DIR;
 
 if (!artifactsDir) {
-  if (process.env.CI) {
-    console.error(
-      'FATAL: KLAI_BUILT_ARTIFACTS_DIR is unset in CI. This suite must run ' +
-        'against artifacts extracted from the built image; skipping it would ' +
-        'restore exactly the false coverage of finding 3.'
-    );
-    process.exit(1);
-  }
+  // Skipping here is legitimate: the generic LibreChat test workflow has no
+  // built image to point at. The protection against this suite quietly falling
+  // out of CI is not a check in this file -- it is
+  // librechat-patched-files.test.mjs asserting that the image-build workflow
+  // still runs it with KLAI_BUILT_ARTIFACTS_DIR set.
   console.log(
     'SKIPPED: built_artifacts.test.cjs needs KLAI_BUILT_ARTIFACTS_DIR ' +
       '(set by .github/workflows/librechat-image-build.yml). Nothing asserted.'

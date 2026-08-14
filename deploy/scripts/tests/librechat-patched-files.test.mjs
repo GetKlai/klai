@@ -83,3 +83,20 @@ test('no diff on disk is orphaned', () => {
     );
   }
 });
+
+test('the image-build workflow still runs the built-artifact suite', () => {
+  // built_artifacts.test.cjs skips when KLAI_BUILT_ARTIFACTS_DIR is unset,
+  // which is correct for the generic LibreChat workflow (no image) but means
+  // deleting the step below would silently drop search.cjs and index.cjs back
+  // out of coverage -- adversarial review finding 3, re-armed. Assert the step
+  // exists here instead of making the test itself fatal in every workflow.
+  const workflow = fs.readFileSync(
+    path.resolve(here, '../../../.github/workflows/librechat-image-build.yml'),
+    'utf8'
+  );
+  assert.match(
+    workflow,
+    /KLAI_BUILT_ARTIFACTS_DIR=\S+\s*\\?\s*\n?\s*node --test deploy\/librechat\/tests\/built_artifacts\.test\.cjs/,
+    'librechat-image-build.yml must run built_artifacts.test.cjs with KLAI_BUILT_ARTIFACTS_DIR set'
+  );
+});
