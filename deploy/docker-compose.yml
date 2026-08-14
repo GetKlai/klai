@@ -723,7 +723,6 @@ services:
       # @MX:NOTE in config.py — no runtime reader yet; kept declared so
       # a future admin-api caller picks up the real token, matching the
       # pre-migration env-shape.
-      VEXA_ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
       # ─── Garage S3 — KB-image auth-proxy (SPEC-TI-009 + SPEC-PORTAL-DOCS-IMAGE-PASTE-001) ─
       # portal-api is the auth-proxy for /kb-images/{org_id}/{kb_slug}/{filename}
       # (read: SPEC-TI-009 GET; write: SPEC-PORTAL-DOCS-IMAGE-PASTE-001 POST).

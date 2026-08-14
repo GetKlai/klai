@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.api import meetings as meetings_module
 from app.api.meetings import VexaWebhookPayload
 
 
@@ -282,3 +284,24 @@ class TestWebhookIdempotency:
         )
         assert flat.event_id is None
         assert flat.vexa_meeting_id == 5
+
+    def test_typed_event_without_meeting_id_is_refused(self) -> None:
+        """A 0.12 envelope always carries the globally unique Vexa meeting id.
+
+        The (platform, native_meeting_id) fallback matches ACROSS TENANTS — a
+        meeting code is not globally unique — so it is only safe pre-spawn. A
+        typed event missing the id means the sender is wrong, and falling back
+        would land the event on another tenant's meeting.
+        """
+        parsed = VexaWebhookPayload.model_validate(
+            {
+                "event_id": "evt_no_meeting_id",
+                "event_type": "meeting.completed",
+                "data": {"meeting": {"platform": "google_meet", "native_meeting_id": "shared-code"}},
+            }
+        )
+        assert parsed.event_id == "evt_no_meeting_id"
+        assert parsed.vexa_meeting_id is None
+        # The handler refuses this combination; see meetings.py::vexa_webhook.
+        source = Path(meetings_module.__file__).read_text()
+        assert "refusing cross-tenant fallback" in source

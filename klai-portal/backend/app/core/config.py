@@ -254,9 +254,16 @@ class Settings(BaseSettings):
 
     # Vexa meeting API (agentic-runtime)
     vexa_meeting_api_url: str = "http://vexa-meeting-api:8080"
-    # @MX:NOTE: reserved for Vexa admin API calls (tenant provisioning, quota inspection).
-    # Stored in SOPS + compose; no runtime reader yet. Keep until admin surface lands.
-    vexa_admin_token: str = ""
+    # vexa_admin_token was "reserved for a future admin surface" since SPEC-VEXA-003
+    # and never gained a reader. Vexa 0.12 deploys its own admin-api with its own
+    # VEXA12_ADMIN_TOKEN, so the reservation can no longer be redeemed by this
+    # field. Removed rather than left as a secret nobody reads.
+    #
+    # vexa_api_key survives ONLY as the X-API-Key header on VexaClient. Vexa 0.12's
+    # meeting-api does not authenticate it (no gateway is deployed, and the raw API
+    # ignores the header) — it is inert defence-in-depth for the day a gateway or
+    # service-authority boundary returns. Do NOT treat it as authentication:
+    # meeting-api's network membership is the real boundary (SPEC-VEXA-004).
     vexa_api_key: str = ""
     vexa_webhook_secret: str = ""
 
