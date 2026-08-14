@@ -54,6 +54,10 @@ jobs:
           sh deploy/scripts/tests/check-klai-librechat-digest.test.sh
           sh deploy/check-klai-librechat-digest.sh
           sh deploy/librechat/check-patch-drift.sh
+          # compose-up.sh decides whether a deploy counts as successful, for
+          # every service. This job is the only thing that installs it on
+          # core-01, so its tests belong here.
+          bash deploy/scripts/tests/compose-up-verify.test.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
@@ -102,7 +106,14 @@ jobs:
               bash -n "$script"
             done
             for script in deploy/scripts/*.sh; do
-              install -m 0755 "$script" "/opt/klai/scripts/$(basename "$script")"
+              # install(1) truncates and writes in place, so a service deploy
+              # running concurrently can read a half-written compose-up.sh.
+              # Staging next to the target and renaming makes the swap atomic
+              # (same filesystem), so a concurrent reader gets either the old
+              # script or the new one.
+              dest="/opt/klai/scripts/$(basename "$script")"
+              install -m 0755 "$script" "$dest.tmp"
+              mv -f "$dest.tmp" "$dest"
             done
             test -x /opt/klai/scripts/backup.sh
 

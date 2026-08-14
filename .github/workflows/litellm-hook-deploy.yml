@@ -17,6 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # This workflow is the second place compose-up.sh is installed on core-01
+      # (the sync step below), so it has to be the second place its tests run.
+      # Otherwise whichever workflow wins the race can put an untested version
+      # of the script that decides every deploy's verdict onto the server.
+      - name: Test compose-up.sh
+        run: bash deploy/scripts/tests/compose-up-verify.test.sh
+
       - name: Set up SSH
         uses: webfactory/ssh-agent@v0.10.0
         with:
@@ -33,6 +40,10 @@ jobs:
           ssh klai@${{ secrets.CORE01_HOST }} 'rm -f /opt/klai/litellm/klai_service_auth.py'
           rsync -av --delete klai-libs/citations/klai_citations/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/klai_citations/
           rsync -av deploy/docker-compose.yml klai@${{ secrets.CORE01_HOST }}:/opt/klai/docker-compose.yml
+          # --inplace would let a concurrent service deploy read a half-written
+          # script; rsync's default is write-to-temp-then-rename, so the swap is
+          # atomic. Kept explicit because compose-up.sh now decides whether a
+          # deploy counts as successful.
           rsync -av deploy/scripts/compose-up.sh klai@${{ secrets.CORE01_HOST }}:/opt/klai/scripts/compose-up.sh
           ssh klai@${{ secrets.CORE01_HOST }} "chmod 0755 /opt/klai/scripts/compose-up.sh"
 
