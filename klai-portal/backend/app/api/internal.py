@@ -22,7 +22,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import redis.asyncio as aioredis
 import structlog
@@ -1500,6 +1500,11 @@ class RegenerateResponse(BaseModel):
     # keys missing (already reconciled / freshly provisioned) or failed
     # entirely (see ``errors``). Never contains an empty list.
     env_keys_added: dict[str, list[str]] = {}
+    # Tenants whose container is compose-managed and was therefore restarted
+    # instead of recreated (see _apply_librechat_container_step). Only ever
+    # non-empty in recreate mode. An image rollout does NOT reach these
+    # tenants -- deploy-compose owns that.
+    compose_managed_skipped: list[str] = []
 
 
 def _regenerate_tenant_yaml_configs(
@@ -1557,10 +1562,22 @@ def _regenerate_tenant_yaml_configs(
     return updated, slugs_to_restart, errors, env_keys_added
 
 
+def _is_compose_managed(container: Any) -> bool:
+    """True when this container is owned by docker compose, not by portal-api.
+
+    Reads ``Config.Labels`` off the already-fetched inspect payload -- that is
+    ``GET /containers/{id}/json``, which docker-socket-proxy allows
+    (CONTAINERS=1). Never touch ``container.image``: that property lazily calls
+    ``GET /images/{id}/json``, which the proxy denies by design.
+    """
+    labels = (container.attrs or {}).get("Config", {}).get("Labels") or {}
+    return "com.docker.compose.project" in labels
+
+
 def _apply_librechat_container_step(
     orgs_to_apply: list[PortalOrg],
     recreate_containers: bool,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]]:
     """Step 3 of the fleet regenerate: restart or recreate each tenant's container.
 
     Default remains restart-only for existing callers. CI passes
@@ -1576,19 +1593,38 @@ def _apply_librechat_container_step(
     remaining tenants are reported as skipped, never attempted. Restart-only
     mode is non-destructive and keeps the pre-existing per-tenant isolation
     (continue on error, report every tenant).
+
+    Incident 2026-08-14: recreate mode used to force-remove a container even
+    when docker compose owned it (``librechat-getklai``, the canary declared in
+    deploy/docker-compose.yml). The replacement kept the name but lost the
+    compose labels, so every later ``docker compose up`` died on a name
+    conflict and the deploy-compose gate stayed red for ALL services. One
+    container has exactly one owner: compose-managed containers are restarted
+    here (config still applies) and their image rollout belongs to
+    deploy-compose.
     """
     import docker
+    import docker.errors
 
-    client = None if recreate_containers else docker.from_env()
+    client = docker.from_env()
     apply_errors: list[str] = []
     apply_skipped: list[str] = []
+    compose_managed: list[str] = []
     for idx, org in enumerate(orgs_to_apply):
         slug = org.slug
         if not slug:
             continue
         container_name = validate_slug_for_provisioning(slug, domain=settings.domain).librechat_container
         try:
-            if recreate_containers:
+            try:
+                ctr = client.containers.get(container_name)
+            except docker.errors.NotFound:
+                # Recreate mode is allowed to create a container that is not
+                # there yet; restart-only mode must still surface the absence.
+                if not recreate_containers:
+                    raise
+                ctr = None
+            if recreate_containers and (ctr is None or not _is_compose_managed(ctr)):
                 from app.services.provisioning.infrastructure import _start_librechat_container
 
                 env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
@@ -1600,10 +1636,17 @@ def _apply_librechat_container_step(
                 )
                 logger.info("Recreated container %s", container_name)
             else:
-                assert client is not None
-                ctr = client.containers.get(container_name)
+                assert ctr is not None
                 ctr.restart(timeout=10)
-                logger.info("Restarted container %s", container_name)
+                if recreate_containers:
+                    compose_managed.append(slug)
+                    logger.warning(
+                        "Container %s is compose-managed: restarted instead of recreated. "
+                        "An image rollout does NOT reach this tenant -- run deploy-compose.",
+                        container_name,
+                    )
+                else:
+                    logger.info("Restarted container %s", container_name)
         except Exception as exc:
             apply_errors.append(f"{slug}: {exc}")
             logger.warning("LibreChat container apply failed for %s: %s", container_name, exc, exc_info=True)
@@ -1611,7 +1654,7 @@ def _apply_librechat_container_step(
                 remaining = [o.slug for o in orgs_to_apply[idx + 1 :] if o.slug]
                 apply_skipped.extend(remaining)
                 break
-    return apply_errors, apply_skipped
+    return apply_errors, apply_skipped, compose_managed
 
 
 @router.post("/librechat/regenerate", response_model=RegenerateResponse)
@@ -1722,7 +1765,7 @@ async def regenerate_librechat_configs(
     # See _apply_librechat_container_step for the abort-on-first-failure
     # contract in recreate mode (finding 3, adversarial review 2026-08-13).
     orgs_to_apply = [org for org in tenants if org.slug in set(slugs_to_restart)]
-    restart_errors, restart_skipped = await loop.run_in_executor(
+    restart_errors, restart_skipped, compose_managed_skipped = await loop.run_in_executor(
         None, _apply_librechat_container_step, orgs_to_apply, recreate_containers
     )
     errors.extend(restart_errors)
@@ -1736,7 +1779,11 @@ async def regenerate_librechat_configs(
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
     return RegenerateResponse(
-        tenants_updated=updated, errors=errors, tenants_skipped=skipped, env_keys_added=env_keys_added
+        tenants_updated=updated,
+        errors=errors,
+        tenants_skipped=skipped,
+        env_keys_added=env_keys_added,
+        compose_managed_skipped=compose_managed_skipped,
     )
 
 

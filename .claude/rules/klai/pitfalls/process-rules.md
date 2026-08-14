@@ -2044,6 +2044,100 @@ Recovery was clean fix-forward (no prod impact): PR #794 added the merge
 migration, PR #795 stripped its unused imports, deploy went green,
 `alembic current` on the container = `0aac04f1bccc (head) (mergepoint)`.
 
+## remove-the-mount-before-you-delete-the-file (CRIT)
+
+Deleting a bind-mount's host source while running containers still declare
+that mount is a **delayed** outage: nothing breaks now, everything breaks on
+the next container start. Docker resolves a bind-mount source at *start*
+time; if the path is gone it silently creates an empty **directory** there.
+A container that expected a file then starts against a directory and dies.
+
+Incident 2026-08-14 (PR #895, SPEC-STREAM-CLEANUP-001). The PR removed the
+now-inert `createStreamServices.ts` patch from the repo. The config-sync step
+runs `rsync -a --delete deploy/librechat/patches/ /opt/klai/librechat/patches/`,
+so the host file disappeared immediately — while all 42 tenant containers
+still declared `- ./librechat/patches/createStreamServices.ts:...`. The
+running containers were unaffected (their mounts were already resolved). The
+restart that followed was not: Docker created a directory at that path and
+**36 of 42 tenants exited with code 127**. The 6 survivors were the ones that
+happened not to restart. Recovery: `rmdir` the directory, write a placeholder
+file, `docker start` the 36.
+
+**The ordering rule.** A bind-mount has two ends and they must be retired in
+this order, never the reverse:
+
+1. Remove the mount from every **container definition** and recreate the
+   containers (they now no longer reference the path at all).
+2. Verify zero containers still declare it:
+   ```bash
+   for n in $(docker ps --filter name=<prefix> --format '{{.Names}}'); do
+     docker inspect "$n" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q <file> && echo "$n"
+   done
+   ```
+3. Only then delete the host file / let the sync's `--delete` remove it.
+
+If steps 1 and 3 cannot land in the same change, keep a placeholder file at
+the path until every container has been recreated. A placeholder is cheap;
+an empty auto-created directory is an outage.
+
+**Generalisation.** Any resource resolved at container-start time and owned by
+a *different* deploy pipeline than the container definition has this hazard:
+bind-mount sources, named-volume contents, secret files, config files pulled
+by an entrypoint. Whenever the "who deletes it" pipeline runs before the
+"who stops referencing it" pipeline, you have a delayed outage armed and
+waiting for the next restart.
+
+**Related:** `bind-mount-without-sync-workflow` (the file never arrives) and
+`bind-mount-content-vs-python-module-cache` (the file arrives but is not
+re-read) are the other two failure modes of the same bind-mount contract.
+
+## one-container-one-owner (HIGH)
+
+A container declared in `deploy/docker-compose.yml` is owned by compose. A
+container created by portal-api provisioning is owned by portal-api. When both
+claim the same name, the second one to run wins the container and silently
+breaks the first one's pipeline — permanently, and for every service it
+deploys, not just the contested one.
+
+Incident 2026-08-14, discovered while cleaning up the incident above. A
+fleet-wide `POST /internal/librechat/regenerate?recreate_containers=true`
+force-removed and recreated `librechat-getklai` — the canary that is declared
+as a compose service. The replacement kept the name and worked fine, but lost
+`com.docker.compose.project`. Every subsequent `docker compose up` then died
+with:
+
+```
+Conflict. The container name "/librechat-getklai" is already in use by container "db6119ef946d…"
+```
+
+That failure is in the `sync-compose` step, which runs BEFORE the per-service
+work — so a single contested container turned the deploy-compose gate red for
+the entire stack. It had been green the previous evening; the takeover was the
+only change.
+
+**Detection** — a container that should be compose-managed but is not:
+
+```bash
+docker inspect <name> --format '{{json .Config.Labels}}' | grep -c com.docker.compose.project
+```
+
+**Prevention (mechanical).** `_apply_librechat_container_step` in
+`klai-portal/backend/app/api/internal.py` now probes `Config.Labels` before
+recreating and **restarts** a compose-managed container instead of replacing
+it. Config regeneration still lands (LibreChat re-reads its yaml on boot); the
+image rollout is left to deploy-compose, which owns it. The tenant is reported
+in the response's `compose_managed_skipped` field and printed by the workflow,
+so an image rollout can never silently miss it. Regression tests:
+`TestComposeManagedOwnership` in `tests/test_librechat_regenerate.py`.
+
+Read labels via `Config.Labels` on the inspect payload — never
+`container.image`, which lazily calls `GET /images/{id}/json` and is denied by
+docker-socket-proxy (see `platform/docker-socket-proxy.md`).
+
+**Prevention (human).** Before adding a container to a second management path,
+decide which single pipeline owns it and remove the other declaration. "Both,
+they're equivalent" is how this class starts.
+
 ## docker-cp-not-a-deploy-mechanism (HIGH)
 
 `docker cp` from a developer laptop into a running production container

@@ -124,8 +124,18 @@ jobs:
             updated = body.get("tenants_updated") or []
             skipped = body.get("tenants_skipped") or []
             errors = body.get("errors") or []
+            compose_managed = body.get("compose_managed_skipped") or []
             print(f"tenants_updated ({len(updated)}): {updated}")
             print(f"tenants_skipped ({len(skipped)}): {skipped}")
+            if compose_managed:
+                # Incident 2026-08-14: portal-api must not take over a container
+                # that docker compose owns, so these were restarted, not
+                # recreated. A restart does NOT change the image -- an image
+                # rollout for these tenants lands via deploy-compose instead.
+                print(
+                    f"compose_managed_skipped ({len(compose_managed)}): {compose_managed} "
+                    "-- restarted, NOT recreated; image rollout belongs to deploy-compose"
+                )
             if errors:
                 print(f"errors ({len(errors)}):")
                 for e in errors:
