@@ -1,14 +1,25 @@
 diff --git a/api/server/routes/messages.js b/api/server/routes/messages.js
-index 17e740c51..eeb650ac1 100644
+index 17e740c51..19ac18009 100644
 --- a/api/server/routes/messages.js
 +++ b/api/server/routes/messages.js
-@@ -415,6 +415,43 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
+@@ -415,6 +415,54 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
        }).catch((err) => logger.error('[langfuse] feedback score failed:', err));
      }
  
 +    // SPEC-KB-015: Forward feedback to portal-api for KB quality scoring.
 +    // Fire-and-forget (REQ-KB-015-06) -- response is sent immediately below.
 +    // Logs on error (REQ-KB-015-07): never surfaces to user, but visible in VictoriaLogs.
++    // db.updateMessage returns a hand-built object with nine fields and does
++    // NOT include createdAt or model. Reading them off it meant
++    // message_created_at silently fell back to Date.now() -- so the retrieval
++    // correlation window was centred on the moment the user clicked the thumb
++    // instead of on the answer, and matched only if they happened to click
++    // within 60s. Fetch the real document (indexed findOne, click path, not a
++    // stream) so both fields are the message's own.
++    const feedbackMessage = await db
++      .getMessage({ user: req.user?.id, messageId })
++      .catch(() => null);
++
 +    const portalUrl = process.env.PORTAL_INTERNAL_URL;
 +    const portalSecret = process.env.PORTAL_INTERNAL_SECRET;
 +    if (portalUrl && portalSecret && feedback) {
@@ -22,11 +33,11 @@ index 17e740c51..eeb650ac1 100644
 +          conversation_id: conversationId,
 +          message_id: messageId,
 +          message_created_at:
-+            updatedMessage?.createdAt?.toISOString?.() ?? new Date().toISOString(),
++            feedbackMessage?.createdAt?.toISOString?.() ?? new Date().toISOString(),
 +          rating: feedback.rating,
 +          tag: feedback.tag ?? null,
 +          text: feedback.text ?? null,
-+          model_alias: updatedMessage?.model ?? null,
++          model_alias: feedbackMessage?.model ?? updatedMessage?.model ?? null,
 +          librechat_user_id: req.user?.id ?? '',
 +          // The retrieval log is keyed by the Zitadel subject, which
 +          // LibreChat stores as openidId. Sending only req.user.id (a
