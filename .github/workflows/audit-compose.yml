@@ -11,6 +11,7 @@ on:
       - 'scripts/audit-compose-orphans.sh'
       - 'scripts/audit-docker-access.sh'
       - 'deploy/tests/test_alloy_docker_access.sh'
+      - 'deploy/tests/test_alloy_drop_socket_proxy_noise.sh'
       - 'deploy/alloy/config.alloy'
       - 'scripts/test-audit-compose.sh'
       - 'scripts/test-audit-compose-orphans.sh'
@@ -72,6 +73,9 @@ jobs:
 
       - name: Alloy must not reach the raw Docker socket (REQ-U-002a)
         run: bash deploy/tests/test_alloy_docker_access.sh
+
+      - name: Alloy drop-filter must remove noise, not denials (REQ-U-002a)
+        run: bash deploy/tests/test_alloy_drop_socket_proxy_noise.sh
 
 
       - name: Orphan regression test — fixtures must catch known anti-patterns
