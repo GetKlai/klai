@@ -1,0 +1,113 @@
+name: CI failure notice
+
+# Makes a broken main branch impossible to miss.
+#
+# Until now nothing in this repo reported CI failures anywhere: a red deploy on
+# main was visible only if somebody happened to open the Actions tab. That is
+# survivable while a human merges every change by hand — it stops being
+# survivable once Renovate merges dependency updates on its own.
+#
+# Two concrete cases this catches:
+#   - A dependency update passes its tests, merges, and then fails at the
+#     deploy step (image build, migration, container health).
+#   - A previous failure blocks the NEXT person's deploy — the
+#     "previous-deploy-failure-blocks-yours" pitfall in
+#     .claude/rules/klai/pitfalls/process-rules.md.
+#
+# One issue per workflow, reopened and re-commented rather than duplicated, so
+# a flapping deploy does not bury the tab. Auto-closes when the same workflow
+# goes green again, so the open-issue list IS the list of things that are
+# currently broken.
+
+on:
+  workflow_run:
+    workflows:
+      - Build and push portal-api
+      - Build and deploy portal-frontend
+      - Build and push knowledge-ingest
+      - Build and push klai-connector
+      - Build and push retrieval-api
+      - Build and push klai-mailer
+      - Build and push scribe-api
+      - Build and push klai-knowledge-mcp
+      - Sync docker-compose.yml + config + smoke-test to core-01
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  notice:
+    # Only main matters: a red PR branch is the author's problem and already
+    # visible on their PR. A red main is everybody's problem.
+    if: github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Open, update or close the failure issue
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const failed = run.conclusion === 'failure';
+            const title = `CI failure: ${run.name}`;
+
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ci-failure',
+              per_page: 100,
+            });
+            const existing = open.find((i) => i.title === title);
+
+            if (!failed) {
+              // Green again — close the issue so the open list stays honest.
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  body: `Recovered: [run ${run.id}](${run.html_url}) succeeded on \`${run.head_sha.slice(0, 9)}\`.`,
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  state: 'closed',
+                });
+              }
+              return;
+            }
+
+            const body = [
+              `**${run.name}** failed on \`main\`.`,
+              '',
+              `- Run: ${run.html_url}`,
+              `- Commit: \`${run.head_sha.slice(0, 9)}\``,
+              `- Started: ${run.run_started_at}`,
+              '',
+              'This blocks the next deploy of this service until it is green again',
+              '(see `previous-deploy-failure-blocks-yours` in',
+              '`.claude/rules/klai/pitfalls/process-rules.md`).',
+              '',
+              'Closes itself automatically when this workflow next succeeds on `main`.',
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['ci-failure'],
+              });
+            }
