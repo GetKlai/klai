@@ -2,13 +2,18 @@ diff --git a/packages/api/src/stream/createStreamServices.ts b/packages/api/src/
 index 11fd535..eb98cab 100644
 --- a/packages/api/src/stream/createStreamServices.ts
 +++ b/packages/api/src/stream/createStreamServices.ts
-@@ -45,8 +45,11 @@ export interface StreamServices {
+@@ -45,8 +45,16 @@ export interface StreamServices {
    jobStore: IJobStore;
    eventTransport: IEventTransport;
    isRedis: boolean;
 +  cleanupOnComplete: boolean;
  }
 
++/* SPEC-STREAM-CLEANUP-001 — baked in at source. The runtime transform in
++   klai-entrypoint.sh stands down when it finds CLEANUP_ON_COMPLETE in the
++   built bundle, so an image carrying this patch does not get a second,
++   duplicate cleanupOnComplete key layered on top at boot. The identifier
++   is the marker, not this comment: the bundler strips comments. */
 +const CLEANUP_ON_COMPLETE = false;
 +
  /**

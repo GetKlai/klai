@@ -63,8 +63,16 @@ for (const [name, target] of [
 ]) {
   assert.match(target, /SPEC-STREAM-CLEANUP-001/, name);
   assert.match(target, /STREAM_CLEANUP_TARGET=\/app\/packages\/api\/dist\/index\.cjs/, name);
-  assert.match(target, /grep -q "SPEC-STREAM-CLEANUP-001" "\$STREAM_CLEANUP_TARGET"/, name);
-  assert.match(target, /already applied, skipping/, name);
+  // The skip-check must recognise BOTH ways the fix can already be present:
+  // this transform having run before, and an image built from the source diff
+  // carrying CLEANUP_ON_COMPLETE. Matching only the first would layer a second,
+  // duplicate cleanupOnComplete key on top of the baked-in one on the canary.
+  assert.match(
+    target,
+    /grep -qE "SPEC-STREAM-CLEANUP-001\|CLEANUP_ON_COMPLETE" "\$STREAM_CLEANUP_TARGET"/,
+    name,
+  );
+  assert.match(target, /already in place .*skipping/, name);
   assert.match(
     target,
     /required SPEC-STREAM-CLEANUP-001 patch target is missing/,

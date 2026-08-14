@@ -16,6 +16,7 @@ on:
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
       - 'deploy/check-image-pullable.sh'          # public self-host image pullability guard
       - 'deploy/check-image-tags.sh'              # compose image tag policy guard
+      - 'deploy/check-klai-librechat-digest.sh'   # Klai LibreChat image must be digest-pinned
       - 'deploy/scripts/**'                       # Public-safe deploy scripts; operator health scripts live in klai-infra
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
@@ -44,9 +45,15 @@ jobs:
       - name: Validate image tags + pullability
         run: |
           set -e
-          chmod +x deploy/check-image-tags.sh deploy/check-image-pullable.sh
+          chmod +x deploy/check-image-tags.sh deploy/check-image-pullable.sh \
+                   deploy/check-klai-librechat-digest.sh
           sh deploy/check-image-tags.sh
           sh deploy/check-image-pullable.sh
+          # The Klai LibreChat image must be pinned by digest: on 2026-08-14 the
+          # tag v0.8.7-klai.1 was overwritten with different content, so a
+          # tag-pinned canary could not be rolled back to what it ran.
+          sh deploy/scripts/tests/check-klai-librechat-digest.test.sh
+          sh deploy/check-klai-librechat-digest.sh
           sh deploy/librechat/check-patch-drift.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
