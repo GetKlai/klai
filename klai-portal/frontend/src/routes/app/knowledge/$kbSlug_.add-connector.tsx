@@ -31,6 +31,7 @@ import {
   joinSeedUrl,
   MARKDOWN_PROSE_CLASSES,
   normalizeConnectorPreselectType,
+  previewUrlOnDetailsAdvance,
   VALID_PRESELECT_TYPES,
 } from './-connector-constants'
 import { AuthProbeFeedback, PreviewClassificationFeedback } from './-connector-feedback'
@@ -775,7 +776,9 @@ function AddConnectorPage() {
                         size="sm"
                         disabled={!name || !webcrawlerConfig.base_url}
                         onClick={() => {
-                          setWcPreviewUrl(webcrawlerConfig.base_url)
+                          setWcPreviewUrl((current) =>
+                            previewUrlOnDetailsAdvance(current, webcrawlerConfig.base_url),
+                          )
                           invalidateAuthProbe()
                           invalidatePreview()
                           setWcStep('auth-question')

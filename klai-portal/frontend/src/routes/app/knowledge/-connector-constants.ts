@@ -63,3 +63,34 @@ export function joinSeedUrl(baseUrl: string, pathPrefix: string): string {
   if (!path) return base + '/'
   return `${base}/${path}/`
 }
+
+/**
+ * Is `url` the base URL itself, or a page below it?
+ *
+ * Boundary-aware on purpose: a bare `startsWith(base)` also accepts
+ * `https://x.com.evil.test/...` for base `https://x.com`, which would let a
+ * crawl seed wander off-site.
+ */
+export function isWithinBaseUrl(url: string, baseUrl: string): boolean {
+  const base = baseUrl.replace(/\/+$/, '')
+  if (!base || !url) return false
+  return url === base || url.startsWith(`${base}/`)
+}
+
+/**
+ * Which preview URL to show when advancing past the details step.
+ *
+ * The preview field doubles as the crawl's discovery seed: the edit wizard
+ * prefills it from the stored `discovery_seed_url`, and a validated non-base
+ * URL is saved back as that seed. Advancing from details used to overwrite it
+ * with the base URL unconditionally, so an operator editing a connector never
+ * saw the interior page they had validated earlier (reported 2026-08-13).
+ *
+ * Keep whatever is in the field while it still belongs to this site; fall back
+ * to the base URL when the field is empty or the operator edited `base_url` so
+ * the previous value is now out of scope.
+ */
+export function previewUrlOnDetailsAdvance(currentPreviewUrl: string, baseUrl: string): string {
+  const current = (currentPreviewUrl || '').trim()
+  return isWithinBaseUrl(current, baseUrl) ? current : baseUrl
+}

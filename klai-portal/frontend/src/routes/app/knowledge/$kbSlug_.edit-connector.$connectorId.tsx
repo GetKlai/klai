@@ -36,8 +36,10 @@ import type {
   WebCrawlerConfig,
 } from './-connector-types'
 import {
+  isWithinBaseUrl,
   joinSeedUrl,
   MARKDOWN_PROSE_CLASSES,
+  previewUrlOnDetailsAdvance,
   VALID_STEPS,
 } from './-connector-constants'
 
@@ -367,7 +369,7 @@ function EditConnectorPage() {
             ? wcPreviewUrl
             : ''
         const carriedSeed =
-          savedDiscoverySeedUrl && savedDiscoverySeedUrl !== base && savedDiscoverySeedUrl.startsWith(base)
+          savedDiscoverySeedUrl && savedDiscoverySeedUrl !== base && isWithinBaseUrl(savedDiscoverySeedUrl, base)
             ? savedDiscoverySeedUrl
             : ''
         const discoverySeed = validatedSeed || carriedSeed
@@ -686,7 +688,9 @@ function EditConnectorPage() {
                       size="sm"
                       disabled={!name || !webcrawlerConfig.base_url}
                       onClick={() => {
-                        setWcPreviewUrl(webcrawlerConfig.base_url)
+                        setWcPreviewUrl((current) =>
+                          previewUrlOnDetailsAdvance(current, webcrawlerConfig.base_url),
+                        )
                         if (hasSavedWebCrawlerCredentials) {
                           setRequiresLogin(true)
                           setWcAuthMode('saved')
