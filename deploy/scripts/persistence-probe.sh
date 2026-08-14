@@ -65,8 +65,8 @@ if p=$(_named_volume_path klai-core_redis-data) && [ -n "${p}" ]; then
 fi
 
 # Vexa-Redis (named volume, AOF)
-if p=$(_named_volume_path klai-core_vexa-redis-data) && [ -n "${p}" ]; then
-  TARGETS+=("vexa-redis|${p}/appendonlydir")
+if p=$(_named_volume_path klai-core_vexa12-redis-data) && [ -n "${p}" ]; then
+  TARGETS+=("vexa12-redis|${p}/appendonlydir")
 fi
 
 # Postgres — newest file inside pg_wal (varies by image layout).

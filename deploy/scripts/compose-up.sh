@@ -130,7 +130,7 @@ check_litellm_prisma_migration_baseline() {
 }
 
 pull_vexa_runtime_images() {
-    # Vexa bot containers are spawned by runtime-api from profile/env image refs
+    # Vexa bot containers are spawned by vexa12-runtime from profile/env image refs
     # such as BOT_IMAGE_NAME / BROWSER_IMAGE. They are not compose services, so
     # `docker compose pull` will not fetch them. Missing bot images surface only
     # later as Docker /containers/create 404s when a user starts Scribe.
@@ -153,7 +153,11 @@ if [[ "$SERVICE" == "litellm" ]]; then
     check_litellm_prisma_migration_baseline
 fi
 
-if [[ -z "$SERVICE" || "$SERVICE" == "runtime-api" || "$SERVICE" == "meeting-api" ]]; then
+# SPEC-VEXA-004 renamed the services; a targeted deploy of the new names used to
+# skip the pre-pull entirely, so a bot image absent from the host surfaced only as
+# a /containers/create 404 on the next real meeting. docker-socket-proxy has IMAGES
+# disabled, so the runtime cannot recover by pulling it itself.
+if [[ -z "$SERVICE" || "$SERVICE" == "vexa12-runtime" || "$SERVICE" == "vexa12-meeting-api" ]]; then
     pull_vexa_runtime_images
 fi
 

@@ -391,6 +391,19 @@
     # Place BEFORE the general /api/* handler so `handle` first-match
     # wins on the narrow path; everything else keeps Caddy's default
     # request-body limit.
+    # Internal-only endpoints: reachable from inside the Docker networks, never
+    # from the internet. The Vexa webhook is the live case — vexa12-meeting-api
+    # POSTs it over the vexa12-portal network, and no external caller has any
+    # business reaching it. It was publicly routable via the /api/* catch-all
+    # below; Bearer auth kept anonymous forgery out (401), but the handler still
+    # parsed attacker-supplied bodies and had no replay or body-integrity check.
+    # 404 rather than 403: do not confirm the path exists.
+    # Place BEFORE the general /api/* handler — `handle` is first-match.
+    @internal-only path /api/bots/internal/*
+    handle @internal-only {
+        respond 404
+    }
+
     @kb-file-upload path_regexp kb_file_upload ^/api/app/knowledge-bases/[^/]+/sources/file$
     handle @kb-file-upload {
         request_body {

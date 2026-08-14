@@ -68,10 +68,12 @@ KLASSE_B_PATTERNS=(
 CADDY_WHITELIST=(
     '^localhost$'
     '^127\.0\.0\.1$'
-    '^api-gateway$'              # Vexa internal — managed by Vexa stack
-    '^admin-api$'                # Vexa internal
-    '^meeting-api$'              # Vexa internal
-    '^runtime-api$'              # Vexa internal
+    # SPEC-VEXA-004: the 0.10 names (api-gateway, admin-api, meeting-api,
+    # runtime-api) are deliberately NOT whitelisted — they no longer exist, so a
+    # Caddy upstream naming one is a resurrected orphan the audit must surface.
+    '^vexa12-meeting-api$'       # Vexa internal — managed by the Vexa stack
+    '^vexa12-admin-api$'         # Vexa internal
+    '^vexa12-runtime$'           # Vexa internal
     '^portal-api-dev$'           # protected dev environment outside prod compose
 )
 

@@ -484,6 +484,11 @@ class VexaWebhookPayload(BaseModel):
     ended_at: str | None = None
     speaker_events: list[SpeakerEvent] = []
     recording_id: int | None = None  # for recording cleanup via API
+    # webhook.v1 is at-least-once and `event_id` is the receiver's idempotency
+    # key — stable across redeliveries, unlike created_at and the signature.
+    # None on the legacy shapes, which predate the contract.
+    event_id: str | None = None
+    event_type: str | None = None
 
     model_config = {"extra": "ignore"}
 
@@ -505,6 +510,8 @@ class VexaWebhookPayload(BaseModel):
                 "status": meeting.get("status"),
                 "ended_at": meeting.get("end_time"),
                 "recording_id": recording.get("id") if isinstance(recording, dict) else None,
+                "event_id": data.get("event_id"),
+                "event_type": data.get("event_type"),
             }
 
         # Shape 2: legacy envelope — `meeting` at top level.
@@ -519,6 +526,8 @@ class VexaWebhookPayload(BaseModel):
                 "recording_id": data.get("recording", {}).get("id")
                 if isinstance(data.get("recording"), dict)
                 else None,
+                "event_id": data.get("event_id"),
+                "event_type": data.get("event_type"),
             }
 
         # Shape 3: flat completion format.
@@ -665,6 +674,48 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
         meeting.error_message = str(exc)
 
 
+async def _claim_webhook_event(payload: "VexaWebhookPayload") -> bool:
+    """Insert the delivery receipt. False means this event_id was already handled.
+
+    Uses its own session, not the request session: the claim must survive whatever
+    the rest of the handler does, and the handler later switches to a
+    tenant-scoped session it cannot share. ON CONFLICT DO NOTHING makes the race
+    between two concurrent deliveries resolve in the database rather than in
+    Python — exactly one insert reports a row.
+
+    Fails OPEN on an unexpected DB error: dropping a real completion is worse
+    than processing a duplicate, and the duplicate path is idempotent-ish
+    (re-running transcription is wasteful, not destructive). The error is logged
+    with a traceback so the degradation is visible rather than silent.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.meetings import VexaWebhookReceipt
+
+    try:
+        async with AsyncSessionLocal() as claim_db:
+            result = await claim_db.execute(
+                pg_insert(VexaWebhookReceipt)
+                .values(
+                    event_id=payload.event_id,
+                    event_type=payload.event_type or "unknown",
+                    vexa_meeting_id=payload.vexa_meeting_id,
+                )
+                .on_conflict_do_nothing(index_elements=["event_id"])
+                .returning(VexaWebhookReceipt.event_id)
+            )
+            claimed = result.scalar_one_or_none() is not None
+            await claim_db.commit()
+            return claimed
+    except Exception:
+        logger.exception(
+            "Vexa webhook: idempotency claim failed, processing anyway",
+            event_id=payload.event_id,
+        )
+        return True
+
+
 @router.post("/internal/webhook", status_code=status.HTTP_200_OK)
 async def vexa_webhook(
     payload: VexaWebhookPayload,
@@ -672,6 +723,22 @@ async def vexa_webhook(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     _require_webhook_secret(request)
+
+    # webhook.v1 is at-least-once by contract: the initial send, a retry-queue
+    # drain (60/300/1800/7200s), a restart replay or a cross-replica race can all
+    # re-emit the SAME logical event, carrying the SAME event_id. Without this
+    # gate a redelivered meeting.completed rewinds the meeting to `stopping`,
+    # re-runs transcription and recording cleanup, and re-emits the product
+    # event — and a transient failure on the replay can overwrite a good `done`
+    # with `failed`. Claim the event_id first; a duplicate is a 200 no-op.
+    if payload.event_id and not await _claim_webhook_event(payload):
+        logger.info(
+            "Vexa webhook: duplicate delivery ignored",
+            event_id=payload.event_id,
+            event_type=payload.event_type,
+            vexa_meeting_id=payload.vexa_meeting_id,
+        )
+        return {"status": "duplicate"}
 
     # SPEC-VEXA-003: upstream `fire_post_meeting_hooks` omits native_meeting_id from the
     # payload (only `meeting.id` + `meeting.platform`). Fall back to vexa_meeting_id

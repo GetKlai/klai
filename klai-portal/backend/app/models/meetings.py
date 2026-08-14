@@ -45,3 +45,20 @@ class VexaMeeting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class VexaWebhookReceipt(Base):
+    """Idempotency ledger for Vexa's at-least-once webhook deliveries.
+
+    `event_id` is stable across redeliveries of one logical event (upstream
+    derives it from connection_id · event_type · new_status), so it is the
+    contract's designated idempotency key. Rows older than 48h are prunable —
+    that is the dedupe window webhook.v1 requires receivers to honour.
+    """
+
+    __tablename__ = "vexa_webhook_receipts"
+
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    vexa_meeting_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

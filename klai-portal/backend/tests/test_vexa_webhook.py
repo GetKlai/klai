@@ -229,3 +229,56 @@ async def test_webhook_rearms_tenant_context_after_stopping_commit(monkeypatch) 
     assert events == ["commit", "set_tenant", "run_transcription", "commit"]
     cleanup_recording.assert_awaited_once_with(meeting, scoped_db, recording_id=None)
     emit_event.assert_called_once()
+
+
+class TestWebhookIdempotency:
+    """webhook.v1 is at-least-once; event_id is the receiver's idempotency key.
+
+    Upstream retries a failed delivery on a 60/300/1800/7200s schedule and replays
+    the queue after a restart, always with the SAME event_id. Without a dedupe
+    gate a redelivered meeting.completed rewinds the meeting to `stopping` and
+    re-runs transcription and cleanup.
+    """
+
+    def test_payload_carries_event_id_from_the_typed_envelope(self) -> None:
+        envelope = {
+            "event_id": "evt_5f3c1a9b8d2e4f6a7b0c1d2e3f4a5b6c",
+            "event_type": "meeting.completed",
+            "api_version": "2026-03-01",
+            "created_at": "2026-06-18T10:42:00.000Z",
+            "data": {
+                "meeting": {
+                    "id": 11367,
+                    "platform": "google_meet",
+                    "native_meeting_id": "abc-defg-hij",
+                    "status": "completed",
+                    "end_time": "2026-06-18T10:42:00.000Z",
+                }
+            },
+        }
+        parsed = VexaWebhookPayload.model_validate(envelope)
+        assert parsed.event_id == envelope["event_id"]
+        assert parsed.event_type == "meeting.completed"
+
+    def test_event_id_is_stable_across_redeliveries(self) -> None:
+        """created_at and the signature change per delivery; event_id must not.
+
+        Keying on the body would treat every retry as a new event — the exact
+        mistake upstream's contract calls out ("Do NOT key on the body").
+        """
+        base = {
+            "event_id": "evt_stable",
+            "event_type": "meeting.completed",
+            "data": {"meeting": {"id": 7, "platform": "google_meet", "native_meeting_id": "x-y-z"}},
+        }
+        first = VexaWebhookPayload.model_validate({**base, "created_at": "2026-06-18T10:42:00Z"})
+        retry = VexaWebhookPayload.model_validate({**base, "created_at": "2026-06-18T10:43:00Z"})
+        assert first.event_id == retry.event_id
+
+    def test_legacy_shapes_have_no_event_id_and_stay_processable(self) -> None:
+        """The flat/legacy envelopes predate the contract — they must not be dropped."""
+        flat = VexaWebhookPayload.model_validate(
+            {"id": 5, "platform": "google_meet", "native_meeting_id": "a-b-c", "status": "completed"}
+        )
+        assert flat.event_id is None
+        assert flat.vexa_meeting_id == 5

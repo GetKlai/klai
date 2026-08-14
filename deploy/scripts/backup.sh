@@ -259,16 +259,29 @@ backup_redis() {
 backup_vexa_redis() {
   local container
   local output
+  local password
 
-  container="$(ctr vexa-redis)"
-  output="${BACKUP_DIR}/vexa-redis-dump.rdb"
+  # SPEC-VEXA-004: vexa-redis -> vexa12-redis. The instance runs with
+  # --requirepass, so an unauthenticated BGSAVE returns NOAUTH; the previous
+  # version discarded that on stdout and copied whatever dump.rdb happened to be
+  # on disk, so a silent no-op looked like a successful backup.
+  container="$(ctr vexa12-redis)"
+  output="${BACKUP_DIR}/vexa12-redis-dump.rdb"
 
   if ! container_running "${container}"; then
     log "      Skipped (container not running)"
     return 0
   fi
 
-  docker exec "${container}" redis-cli BGSAVE >/dev/null
+  password="$(docker inspect "${container}" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    | grep '^VEXA_REDIS_PASSWORD=' | head -1 | cut -d= -f2-)"
+
+  if ! docker exec "${container}" \
+       redis-cli ${password:+-a "${password}"} --no-auth-warning BGSAVE >/dev/null; then
+    log "      FAILED (BGSAVE rejected — check VEXA_REDIS_PASSWORD)"
+    return 1
+  fi
   sleep 3
   docker cp "${container}:/data/dump.rdb" "${output}"
   record_file "${output}"
