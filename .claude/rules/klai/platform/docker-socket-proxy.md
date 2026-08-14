@@ -73,16 +73,37 @@ all tenant provisioning.
 
 ### Who may reach the daemon at all
 
-`scripts/audit-docker-access.sh` pins two sets in CI (via `audit-compose.yml`):
-the `socket-proxy` network members, and the containers mounting the raw
+There are two lanes, and `scripts/audit-docker-access.sh` pins both in CI (via
+`audit-compose.yml`) along with the set of containers mounting the raw
 `/var/run/docker.sock`. The MUST-NOT list further down this file enumerates the
-*forbidden*, so a new service is permitted by default; the audit inverts that.
+*forbidden*, so a new service would be permitted by default; the audit inverts
+that.
 
-`alloy` mounts the raw socket and therefore bypasses `klai-docker-authz`
-entirely. Its mount is `RW=false`, which protects the socket FILE but does not
-make the Docker API read-only — a process that can write the byte stream can
-still `POST /containers/create`. It needs `GET` only. Recorded as an open item in
-SPEC-SEC-DOCKER-AUTHZ-001; do not treat the read-only flag as containment.
+| Lane | Proxy | Verbs | Members |
+|---|---|---|---|
+| Mutating | `docker-socket-proxy` | `CONTAINERS NETWORKS POST DELETE` | portal-api, runtime-api-socket-proxy — both via `klai-docker-authz` |
+| GET-only | `docker-socket-proxy-ro` | `CONTAINERS NETWORKS` | alloy |
+
+`alloy` used to mount the raw socket. That mount was `:ro`, which protects the
+socket FILE and **not** the Docker API — a process that can write that byte
+stream can still `POST /containers/create`. It now uses the GET-only lane, where
+`POST` and `DELETE` are unset, so the read-only intent is structural rather than
+a property of a mount flag.
+
+`NETWORKS` on the read-only lane is required, not incidental: Alloy's
+`discovery.docker` computes network labels per target and 403s without it.
+Read access to the network list is not a mutation primitive — `POST` stays unset,
+so `/networks/{id}/connect` is still refused.
+
+**If you touch `config.alloy`, it has TWO Docker connections.**
+`discovery.docker` finds containers; `loki.source.docker` reads their logs. They
+connect independently. Changing only one produced ~10k
+"error inspecting Docker container" failures on 2026-08-14 while Alloy still
+reported healthy and total log volume stayed in the same order of magnitude —
+nothing looked broken from the outside. `deploy/tests/test_alloy_docker_access.sh`
+now asserts that the count of Docker hosts equals the count going through the
+proxy, so a third connection added later cannot slip past by being new rather
+than by being wrong.
 
 ## Containers that MUST NOT join the socket-proxy network (SPEC-SEC-SSRF-001 REQ-5)
 

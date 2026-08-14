@@ -323,6 +323,29 @@ Both are hours, not weeks, and neither depends on which option is chosen.
       `DELETE` are unset, so the read-only intent is structural instead of a
       mount flag.
 
+      This took three attempts and one unnecessary revert; the record matters
+      more than the outcome.
+
+      1. Moving only `discovery.docker` left `loki.source.docker` — a SECOND,
+         independent Docker connection in the same file — dialling a socket the
+         container no longer mounted. ~10k `error inspecting Docker container`
+         failures.
+      2. The read-only proxy needed `NETWORKS` as well as `CONTAINERS`; discovery
+         computes network labels per target and 403s without it.
+      3. I then reverted the whole change, recording in the commit and in this
+         SPEC that it had "stopped log collection". **That was wrong.** A
+         `hits()` query over the full window shows log ingestion never dropped:
+         236k / 74k / 110k / 70k / 111k / 219k / 93k / 106k entries per 5-minute
+         bucket straight through, including the window I called an outage. My
+         earlier queries had start timestamps in the FUTURE relative to server
+         time, and I read the empty result as absence of data.
+
+      Two lessons, both now mechanical rather than remembered:
+      `deploy/tests/test_alloy_docker_access.sh` asserts the host COUNT matches
+      the proxied count, so a third connection cannot slip past; and any claim
+      about log flow must come from a bounded `hits()` window that ends in the
+      past, not from a `start=` guess.
+
 ### Still open
 
 - **REQ-U-004 — the availability answer.** `klai-docker-authz` is now on the

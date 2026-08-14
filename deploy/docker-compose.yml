@@ -1053,10 +1053,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
-      # REVERTED 2026-08-14 (REQ-U-002a attempt 1): routing Alloy through
-      # docker-socket-proxy-ro stopped log collection. Raw socket restored so
-      # observability works; the requirement stays open in the SPEC.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a: no raw socket. Alloy reaches the
+      # daemon through docker-socket-proxy-ro, which serves GET only.
       # Host-side synthetic probes write JSON logs here for Alloy file scraping.
       - /opt/klai/logs:/opt/klai/logs:ro
       # SPEC-INFRA-005 Phase 6: textfile collector reads .prom files written
@@ -1078,6 +1076,7 @@ services:
     networks:
       - klai-net
       - monitoring
+      - socket-proxy-ro   # SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a: GET-only daemon access
 
   grafana:
     image: grafana/grafana:13.1.3
