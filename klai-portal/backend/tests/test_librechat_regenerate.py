@@ -90,17 +90,39 @@ def _redis_mock(
     return client
 
 
-def _docker_client(restart_raises: dict[str, Exception] | None = None) -> MagicMock:
+def _docker_client(
+    restart_raises: dict[str, Exception] | None = None,
+    compose_managed: set[str] | None = None,
+) -> MagicMock:
+    """Fake docker client.
+
+    ``compose_managed`` names the containers that carry the
+    ``com.docker.compose.project`` label, i.e. the ones portal-api must NOT
+    take over on recreate.
+    """
     raises = restart_raises or {}
+    compose = compose_managed or set()
+
     client = MagicMock()
+    # Cache per name so tests can assert on a container AFTER the handler ran
+    # without a fresh ``containers.get`` call polluting ``call_args_list``.
+    made: dict[str, MagicMock] = {}
+    client._containers = made
 
     def _get(name: str) -> MagicMock:
+        if name in made:
+            return made[name]
         ctr = MagicMock()
         if name in raises:
             ctr.restart = MagicMock(side_effect=raises[name])
         else:
             ctr.restart = MagicMock(return_value=None)
+        labels = {"klai.managed_by": "portal-api-provisioning"}
+        if name in compose:
+            labels = {"com.docker.compose.project": "klai-core", "com.docker.compose.service": name}
+        ctr.attrs = {"Config": {"Labels": labels}}
         ctr._name = name
+        made[name] = ctr
         return ctr
 
     client.containers = MagicMock()
@@ -328,8 +350,87 @@ class TestRecreateMode:
         assert start_librechat.call_count == 2
         start_librechat.assert_any_call("getklai", "/opt/klai/librechat/getklai/.env", None, rollback_on_failure=True)
         start_librechat.assert_any_call("voys", "/opt/klai/librechat/voys/.env", None, rollback_on_failure=True)
-        docker_client.containers.get.assert_not_called()
+        # Recreate mode probes each container's labels first so it can leave
+        # compose-managed containers alone (see TestComposeManagedOwnership).
+        assert docker_client.containers.get.call_count == 2
         redis_client.flushall.assert_not_called()
+
+
+class TestComposeManagedOwnership:
+    """A container declared in deploy/docker-compose.yml has ONE owner: compose.
+
+    Incident 2026-08-14: a fleet-wide ``recreate_containers=true`` replaced the
+    compose-managed canary ``librechat-getklai`` with a provisioning-managed
+    container of the same name. The container itself kept working, but every
+    later ``docker compose up`` failed with ``Conflict. The container name
+    "/librechat-getklai" is already in use``, permanently breaking the
+    deploy-compose gate for ALL services.
+
+    Contract: recreate mode restarts a compose-managed container (so config
+    changes still land) and never force-removes it. The image rollout for
+    those containers belongs to deploy-compose.
+    """
+
+    @pytest.mark.asyncio
+    async def test_recreate_mode_does_not_take_over_compose_managed_container(self):
+        from app.api import internal as internal_mod
+
+        orgs = [_org("getklai", 1), _org("voys", 2)]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client(compose_managed={"librechat-getklai"})
+
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
+            request.query_params = {"recreate_containers": "true"}
+            with patch(
+                "app.services.provisioning.infrastructure._start_librechat_container",
+                MagicMock(return_value=None),
+            ) as start_librechat:
+                resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        # The compose-managed canary was never force-removed/recreated.
+        assert start_librechat.call_count == 1
+        start_librechat.assert_called_once_with("voys", "/opt/klai/librechat/voys/.env", None, rollback_on_failure=True)
+        # ... it was restarted instead, so the regenerated config still applies.
+        assert docker_client._containers["librechat-getklai"].restart.called
+        assert not docker_client._containers["librechat-voys"].restart.called
+
+        # Visible in the response, not silently degraded: an operator running an
+        # image rollout must see that this tenant did NOT get a new image.
+        assert resp.compose_managed_skipped == ["getklai"]
+        assert sorted(resp.tenants_updated) == ["getklai", "voys"]
+        assert resp.errors == []
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_recreate_still_creates_a_container_that_does_not_exist_yet(self):
+        """The ownership probe must not break create-from-nothing.
+
+        Recreate mode is the path that repairs a tenant whose container was
+        removed. Probing labels first means a ``NotFound`` now happens BEFORE
+        the create -- it must not be mistaken for a failure and abort the fleet.
+        """
+        from app.api import internal as internal_mod
+
+        orgs = [_org("gone", 1), _org("voys", 2)]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+        docker_client.containers.get = MagicMock(side_effect=docker.errors.NotFound("no such container"))
+
+        async with _regenerate_setup(orgs, redis_client, docker_client) as (request, response):
+            request.query_params = {"recreate_containers": "true"}
+            with patch(
+                "app.services.provisioning.infrastructure._start_librechat_container",
+                MagicMock(return_value=None),
+            ) as start_librechat:
+                resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        assert start_librechat.call_count == 2
+        assert resp.errors == []
+        assert resp.tenants_skipped == []
+        assert resp.compose_managed_skipped == []
+        assert response.status_code == 200
 
 
 class TestEmptyTenantList:
