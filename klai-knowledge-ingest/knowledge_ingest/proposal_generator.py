@@ -71,6 +71,7 @@ import structlog
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.description_generator import generate_node_description
+from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
 from knowledge_ingest.portal_client import TaxonomyProposal, submit_taxonomy_proposal
 from knowledge_ingest.taxonomy_classifier import TaxonomyNode
 
@@ -286,6 +287,7 @@ async def _suggest_cluster_name(
     doc_lines = "\n".join(f"- {doc.title}: {doc.content_preview[:200]}" for doc in cluster_docs)
     user_message = f"{len(cluster_docs)} documents in this cluster:\n{doc_lines}"
 
+    await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(timeout=settings.taxonomy_classification_timeout) as client:
         resp = await client.post(
             f"{settings.litellm_url}/chat/completions",
@@ -385,6 +387,7 @@ async def _suggest_cluster_names_batched(
     user_message = "\n\n".join(cluster_lines)
 
     try:
+        await shared_klai_fast_limiter().acquire()
         async with httpx.AsyncClient(timeout=settings.taxonomy_classification_timeout) as client:
             resp = await client.post(
                 f"{settings.litellm_url}/chat/completions",
@@ -623,6 +626,7 @@ async def _consolidate_to_parents(
 
     max_tokens = 600 + 80 * n_clusters
 
+    await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(timeout=settings.taxonomy_classification_timeout) as client:
         resp = await client.post(
             f"{settings.litellm_url}/chat/completions",
@@ -1184,6 +1188,7 @@ async def _suggest_category_name(documents: list[DocumentSummary]) -> str | None
     )
     user_message = f"Documents that don't fit existing categories:\n{doc_summaries}"
 
+    await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(timeout=settings.taxonomy_classification_timeout) as client:
         resp = await client.post(
             f"{settings.litellm_url}/chat/completions",

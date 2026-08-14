@@ -8,10 +8,12 @@ This is a deliberate separation of concerns (SPEC-KB-023):
 
 The blind label is the raw material for clustering in SPEC-KB-024.
 
-Rate limiting: shares the module-level _TokenBucketLimiter from taxonomy_classifier
-(same 1 req/s default) so label generation and taxonomy classification never race.
-Since labeling runs first and classification runs second, the two calls are
-naturally sequential with the shared limiter enforcing the upstream rate limit.
+Rate limiting: acquires from the process-wide shared klai-fast token bucket
+(knowledge_ingest.llm_throttle.shared_klai_fast_limiter), the same bucket
+taxonomy_classifier and every other klai-fast caller draws from, so label
+generation and taxonomy classification never combine to exceed the alias
+budget. Since labeling runs first and classification runs second, the two
+calls are naturally sequential.
 """
 
 from __future__ import annotations
@@ -23,8 +25,7 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
-from knowledge_ingest.graph import _RateLimitedTransport
-from knowledge_ingest.taxonomy_classifier import _get_llm_limiter
+from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -85,14 +86,10 @@ async def generate_content_label(
 async def _call_litellm(user_message: str) -> dict:
     """Call LiteLLM proxy for blind content label generation.
 
-    Uses _RateLimitedTransport with the shared taxonomy limiter (graphiti_llm_rps).
+    Acquires from the shared klai-fast token bucket before calling out.
     """
-    transport = _RateLimitedTransport(
-        wrapped=httpx.AsyncHTTPTransport(),
-        limiter=_get_llm_limiter(),
-    )
+    await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(
-        transport=transport,
         timeout=settings.content_label_timeout,
     ) as client:
         resp = await client.post(

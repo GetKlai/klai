@@ -40,6 +40,7 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -214,6 +215,7 @@ async def generate_answer(
     url = f"{settings.litellm_url}/v1/chat/completions"
 
     try:
+        await shared_klai_fast_limiter().acquire()
         async with _build_http_client(float(settings.rag_eval_judge_timeout), _transport) as client:
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()

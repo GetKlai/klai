@@ -17,6 +17,7 @@ import structlog
 from klai_llm_safety import SafetyPhase, SafetyRequest, SafetySurface, check_text
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -47,6 +48,7 @@ DOM Summary:
 async def _call_llm(prompt: str, log_event: str) -> str | None:
     """Shared LLM call via LiteLLM proxy. Returns stripped response or None."""
     try:
+        await shared_klai_fast_limiter().acquire()
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{settings.litellm_url}/v1/chat/completions",

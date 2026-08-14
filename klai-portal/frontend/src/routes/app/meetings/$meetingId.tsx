@@ -12,6 +12,7 @@ import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import { activeMeetingInfoKind } from './-status-copy'
+import { formatSegmentTimestamp, relativeSegmentSeconds } from './-transcript-timestamp'
 
 type TabId = 'summary' | 'transcript'
 
@@ -42,6 +43,7 @@ interface TranscriptSegment {
   end: number
   text: string
   speaker: string
+  absolute_start_time?: string | null
 }
 
 interface SummaryStructured {
@@ -74,15 +76,6 @@ interface MeetingDetail {
   ended_at: string | null
   created_at: string
   summary_json: SummaryJson | null
-}
-
-function formatTimestamp(seconds: number): string {
-  const h = Math.floor(seconds / 3600)
-  const mins = Math.floor((seconds % 3600) / 60)
-  const secs = Math.floor(seconds % 60)
-  if (h > 0)
-    return `${h}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-  return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -448,19 +441,32 @@ function MeetingDetailPage() {
             <section aria-label={m.app_meetings_transcript_title()}>
               {meeting.transcript_segments && meeting.transcript_segments.length > 0 ? (
                 <div className="space-y-2 text-sm">
-                  {meeting.transcript_segments.map((seg, i) => (
-                    <div key={i} className="flex gap-3">
-                      <span className="shrink-0 text-xs text-gray-400 tabular-nums mt-0.5 w-14">
-                        [{formatTimestamp(seg.start)}]
-                      </span>
-                      <div>
-                        <span className="font-medium text-gray-900">
-                          {seg.speaker}:{' '}
-                        </span>
-                        <span className="text-gray-900">{seg.text}</span>
-                      </div>
-                    </div>
-                  ))}
+                  {(() => {
+                    const firstSegmentStart = meeting.transcript_segments[0].start
+                    return meeting.transcript_segments.map((seg, i) => {
+                      const relSeconds = relativeSegmentSeconds(
+                        seg,
+                        meeting.started_at,
+                        firstSegmentStart,
+                      )
+                      const timestamp = formatSegmentTimestamp(relSeconds)
+                      return (
+                        <div key={i} className="flex gap-3">
+                          {timestamp && (
+                            <span className="mt-0.5 shrink-0 whitespace-nowrap text-xs text-gray-400 tabular-nums">
+                              [{timestamp}]
+                            </span>
+                          )}
+                          <div className="min-w-0">
+                            <span className="font-medium text-gray-900">
+                              {seg.speaker}:{' '}
+                            </span>
+                            <span className="text-gray-900">{seg.text}</span>
+                          </div>
+                        </div>
+                      )
+                    })
+                  })()}
                 </div>
               ) : (
                 <p className="text-sm text-gray-400 whitespace-pre-wrap">

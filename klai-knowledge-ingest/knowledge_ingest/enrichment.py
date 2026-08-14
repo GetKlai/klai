@@ -25,6 +25,7 @@ from pydantic import BaseModel, ValidationError
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.context_strategies import STRATEGIES
+from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -169,6 +170,7 @@ async def _call_llm(prompt: str, path: str) -> dict:
         headers["Authorization"] = f"Bearer {settings.litellm_api_key}"
 
     try:
+        await shared_klai_fast_limiter().acquire()
         async with httpx.AsyncClient(timeout=settings.enrichment_timeout) as client:
             resp = await client.post(
                 f"{settings.litellm_url}/v1/chat/completions",
@@ -422,9 +424,7 @@ async def enrich_chunks(
             )
         enriched_text = f"{result.context_prefix}\n\n{chunk_text}"
         heading_path = (
-            heading_paths[chunk_index]
-            if heading_paths and chunk_index < len(heading_paths)
-            else ""
+            heading_paths[chunk_index] if heading_paths and chunk_index < len(heading_paths) else ""
         )
         return EnrichedChunk(
             original_text=chunk_text,

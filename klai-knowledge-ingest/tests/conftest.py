@@ -269,6 +269,26 @@ def _mock_db_helpers(request):
                 pass
 
 
+@pytest.fixture(autouse=True)
+def _reset_shared_klai_fast_limiter():
+    """Reset the process-wide klai-fast token bucket before each test.
+
+    ``knowledge_ingest.llm_throttle.shared_klai_fast_limiter()`` is a lazy
+    singleton by design (one bucket per production process). Left
+    unreset across the test suite, its default burst capacity (10)
+    would be exhausted after the first ~10 tests that exercise a real
+    ``_call_litellm``/``_call_llm`` path, and every test after that
+    would pay the 1/0.6s pacing delay -- silently multiplying suite
+    runtime without any test asserting on it. Resetting to ``None``
+    gives each test a fresh, full-burst bucket.
+    """
+    import knowledge_ingest.llm_throttle as _llm_throttle_mod
+
+    _llm_throttle_mod._shared_limiter = None
+    yield
+    _llm_throttle_mod._shared_limiter = None
+
+
 @pytest.fixture
 def client(mock_pool):
     """Test client with auth middleware.

@@ -3,6 +3,7 @@ Generate short descriptions for taxonomy nodes using klai-fast.
 
 Max 200 chars, 5-second timeout, empty string fallback on error.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +13,7 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -65,6 +67,7 @@ async def generate_node_description(
 
 async def _call_litellm(user_message: str) -> dict:
     """Call LiteLLM proxy for description generation."""
+    await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.post(
             f"{settings.litellm_url}/chat/completions",
