@@ -1,8 +1,8 @@
 diff --git a/src/stream.ts b/src/stream.ts
-index 6913f43..940dd9b 100644
+index 6913f43..19e50d7 100644
 --- a/src/stream.ts
 +++ b/src/stream.ts
-@@ -40,6 +40,143 @@ import { safeDispatchCustomEvent } from '@/utils/events';
+@@ -40,6 +40,177 @@ import { safeDispatchCustomEvent } from '@/utils/events';
  import { isGoogleLike } from '@/utils/llm';
  import { getMessageId } from '@/messages';
  
@@ -38,8 +38,21 @@ index 6913f43..940dd9b 100644
 +  return undefined;
 +}
 +
-+const KLAI_SOURCES_MARKER_RE =
-+  /<!--\s*klai_sources=([A-Za-z0-9_-]+={0,2})\s*-->/g;
++/* The marker grammar, in pieces, so complete-matching and partial (split)
++   detection are DERIVED from the same definition instead of hand-written twice.
++   They disagreed before: the complete regex accepted any whitespace, the
++   partial detector hardcoded exactly one space, so a whitespace-variant marker
++   split at the wrong byte leaked into visible text (adversarial review
++   2026-08-14, finding 6). */
++const KLAI_MARKER_OPEN = '<!--';
++const KLAI_MARKER_KEY = 'klai_sources=';
++const KLAI_MARKER_CLOSE = '-->';
++const KLAI_MARKER_PAYLOAD = '[A-Za-z0-9_-]+={0,2}';
++
++const KLAI_SOURCES_MARKER_RE = new RegExp(
++  `${KLAI_MARKER_OPEN}\\s*${KLAI_MARKER_KEY}(${KLAI_MARKER_PAYLOAD})\\s*${KLAI_MARKER_CLOSE}`,
++  'g'
++);
 +
 +const _klaiStreamWarned = new Set<string>();
 +function klaiWarnOnce(message: string): void {
@@ -63,18 +76,39 @@ index 6913f43..940dd9b 100644
 +  }
 +}
 +
-+const KLAI_MARKER_HEAD = '<!-- klai_sources=';
-+/** Cap on how much text may be held back waiting for a marker to complete. */
-+const KLAI_FRAMER_MAX_TAIL = 8192;
++/**
++ * Protocol contract: the longest a marker may be. It bounds how much text the
++ * framer will hold back waiting for a marker to complete, so a producer that
++ * emits `<!--` and never closes it cannot stall the stream. Sized far above
++ * anything the real producer emits (a handful of sources base64-encodes to
++ * ~1-2 KB) so the bound is a safety valve, never a normal limit -- at 8 KB a
++ * legitimately large marker split past the cap leaked in full.
++ */
++const KLAI_MARKER_MAX_LENGTH = 65536;
 +
++/**
++ * True when `tail` could still grow into a marker the complete grammar matches.
++ * Walks the same pieces as KLAI_SOURCES_MARKER_RE, in order, so the two cannot
++ * drift apart.
++ */
 +function isPotentialPartialKlaiMarker(tail: string): boolean {
-+  if (tail.length > KLAI_FRAMER_MAX_TAIL) return false;
-+  if (tail.length < KLAI_MARKER_HEAD.length) {
-+    return KLAI_MARKER_HEAD.startsWith(tail);
-+  }
-+  if (!tail.startsWith(KLAI_MARKER_HEAD)) return false;
-+  return /^[A-Za-z0-9_-]*={0,2}(?: ?-{0,2})?$/.test(
-+    tail.slice(KLAI_MARKER_HEAD.length)
++  if (tail.length > KLAI_MARKER_MAX_LENGTH) return false;
++
++  // Still typing the opening "<!--".
++  if (KLAI_MARKER_OPEN.startsWith(tail)) return true;
++  if (!tail.startsWith(KLAI_MARKER_OPEN)) return false;
++
++  let rest = tail.slice(KLAI_MARKER_OPEN.length);
++  rest = rest.slice((rest.match(/^\s*/) ?? [''])[0].length);
++  if (rest === '') return true;
++
++  // Partway through "klai_sources=".
++  if (KLAI_MARKER_KEY.startsWith(rest)) return true;
++  if (!rest.startsWith(KLAI_MARKER_KEY)) return false;
++
++  // Payload, then optional whitespace, then a partial "-->".
++  return new RegExp(`^[A-Za-z0-9_-]*={0,2}\\s*-{0,2}$`).test(
++    rest.slice(KLAI_MARKER_KEY.length)
 +  );
 +}
 +
@@ -117,7 +151,7 @@ index 6913f43..940dd9b 100644
 +      const splitIdx = findPartialKlaiMarkerStart(out);
 +      if (splitIdx !== -1) {
 +        const tail = out.slice(splitIdx);
-+        if (tail.length <= KLAI_FRAMER_MAX_TAIL) {
++        if (tail.length <= KLAI_MARKER_MAX_LENGTH) {
 +          buffer = tail;
 +          out = out.slice(0, splitIdx);
 +        } else {
@@ -146,7 +180,7 @@ index 6913f43..940dd9b 100644
  const LOCAL_CODING_BUNDLE_NAME_SET: ReadonlySet<string> = new Set(
    LOCAL_CODING_BUNDLE_NAMES
  );
-@@ -1564,6 +1701,14 @@ hasToolCallChunks: ${hasToolCallChunks}
+@@ -1564,6 +1735,14 @@ hasToolCallChunks: ${hasToolCallChunks}
      ) {
        return;
      } else if (typeof content === 'string') {
@@ -161,7 +195,7 @@ index 6913f43..940dd9b 100644
        if (agentContext.currentTokenType === ContentTypes.TEXT) {
          await graph.dispatchMessageDelta(
            stepId,
-@@ -1571,14 +1716,15 @@ hasToolCallChunks: ${hasToolCallChunks}
+@@ -1571,14 +1750,15 @@ hasToolCallChunks: ${hasToolCallChunks}
              content: [
                {
                  type: ContentTypes.TEXT,
@@ -179,7 +213,7 @@ index 6913f43..940dd9b 100644
          if (thinking) {
            await graph.dispatchReasoningDelta(
              stepId,
-@@ -1617,6 +1763,7 @@ hasToolCallChunks: ${hasToolCallChunks}
+@@ -1617,6 +1797,7 @@ hasToolCallChunks: ${hasToolCallChunks}
                  {
                    type: ContentTypes.TEXT,
                    text: text,
@@ -187,7 +221,7 @@ index 6913f43..940dd9b 100644
                  },
                ],
              },
-@@ -1800,14 +1947,39 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+@@ -1800,14 +1981,46 @@ export function createContentAggregator(): t.ContentAggregatorResult {
      ) {
        // TODO: update this!!
        const currentContent = contentParts[index] as t.MessageDeltaUpdate;
@@ -211,9 +245,16 @@ index 6913f43..940dd9b 100644
        if (contentPart.tool_call_ids) {
          update.tool_call_ids = contentPart.tool_call_ids;
        }
-+      /* Newly-seen sources win; otherwise keep what we already accumulated. */
++      /* Newly-seen sources win; otherwise keep what we already accumulated.
++         `??` is wrong here: an empty array is not nullish, so a delta carrying
++         `sources: []` alongside a valid inline marker would suppress the
++         marker's sources entirely (adversarial review 2026-08-14, finding 4).
++         Only a NON-EMPTY list counts as "the producer said something". */
++      const partSources = (contentPart as { sources?: unknown[] }).sources;
 +      const incomingSources =
-+        (contentPart as { sources?: unknown[] }).sources ?? extracted.sources;
++        Array.isArray(partSources) && partSources.length > 0
++          ? partSources
++          : extracted.sources;
 +      if (Array.isArray(incomingSources) && incomingSources.length > 0) {
 +        (update as { sources?: unknown[] }).sources = incomingSources;
 +      } else if (
@@ -228,7 +269,7 @@ index 6913f43..940dd9b 100644
        contentParts[index] = update;
      } else if (
        partType.startsWith(ContentTypes.THINK) &&
-@@ -2041,9 +2213,20 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+@@ -2041,9 +2254,20 @@ export function createContentAggregator(): t.ContentAggregatorResult {
          return;
        }
  
@@ -252,7 +293,7 @@ index 6913f43..940dd9b 100644
        }
      } else if (
        event === GraphEvents.ON_AGENT_UPDATE &&
-@@ -2062,9 +2245,18 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+@@ -2062,9 +2286,18 @@ export function createContentAggregator(): t.ContentAggregatorResult {
          return;
        }
  

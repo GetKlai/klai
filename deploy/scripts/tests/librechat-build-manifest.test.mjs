@@ -141,3 +141,91 @@ test('the CLI has no environment escape hatch that skips the image', () => {
     'verification succeeded against a non-existent image — an env var redirected it away from the image'
   );
 });
+
+// ---------------------------------------------------------------------------
+// Adversarial review 2026-08-14, finding 2: without external anchors the check
+// is self-attesting. It proved "this image agrees with its own manifest", not
+// "this image is what CI built from our diffs". The reviewer forged upstream
+// tag, agents ref, patch names and patch hashes and still got OK.
+// ---------------------------------------------------------------------------
+
+/** A manifest whose artifact hashes are honest but whose provenance is a lie. */
+function forgedInto(dir) {
+  const honest = generateManifest({
+    image: 'fake:tag',
+    upstreamTag: 'v0.8.7',
+    agentsRef: 'v3.2.46',
+    patchRevision: '1',
+    patchesDir,
+    extract: extractorFor(dir),
+  });
+  const forged = {
+    ...honest,
+    upstream_librechat_tag: 'v999-attacker',
+    agents_ref: 'v999-attacker',
+    klai_patch_revision: '666',
+    artifacts: honest.artifacts.map((a) => ({
+      ...a,
+      patch: `wrong-${a.patch}`,
+      patch_sha256: '0'.repeat(64),
+    })),
+  };
+  fs.writeFileSync(
+    path.join(dir, 'build-manifest.json'),
+    `${JSON.stringify(forged, null, 2)}\n`
+  );
+}
+
+test('forged provenance is caught when expectations are supplied', () => {
+  const dir = fakeImage();
+  forgedInto(dir);
+
+  assert.throws(
+    () =>
+      verifyManifest({
+        image: 'fake:tag',
+        expectUpstreamTag: 'v0.8.7',
+        expectAgentsRef: 'v3.2.46',
+        expectPatchRevision: '1',
+        patchesDir,
+        extract: extractorFor(dir),
+      }),
+    (error) => {
+      // Every lie must be named, not just the first one an operator trips over.
+      assert.match(error.message, /upstream_librechat_tag: expected v0\.8\.7/);
+      assert.match(error.message, /agents_ref: expected v3\.2\.46/);
+      assert.match(error.message, /klai_patch_revision: expected 1/);
+      assert.match(error.message, /built from wrong-/);
+      return true;
+    }
+  );
+});
+
+test('a manifest built from different diffs than this checkout is rejected', () => {
+  const dir = fakeImage();
+  const manifest = generateManifest({
+    image: 'fake:tag',
+    upstreamTag: 'v0.8.7',
+    agentsRef: 'v3.2.46',
+    patchRevision: '1',
+    patchesDir,
+    extract: extractorFor(dir),
+  });
+  // Same diff names, different content: the image was built from an older or
+  // tampered revision of our own patches.
+  manifest.artifacts[0].patch_sha256 = 'f'.repeat(64);
+  fs.writeFileSync(
+    path.join(dir, 'build-manifest.json'),
+    `${JSON.stringify(manifest, null, 2)}\n`
+  );
+
+  assert.throws(
+    () =>
+      verifyManifest({
+        image: 'fake:tag',
+        patchesDir,
+        extract: extractorFor(dir),
+      }),
+    /this checkout hashes to [0-9a-f]{64}, the image was built from f{64}/
+  );
+});

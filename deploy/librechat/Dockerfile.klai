@@ -29,7 +29,11 @@ ARG AGENTS_REF
 RUN test -n "$AGENTS_REF" || (echo "FATAL: AGENTS_REF build-arg is required" >&2; exit 1)
 RUN apk add --no-cache git
 WORKDIR /build
-RUN git clone --quiet --branch "${AGENTS_REF}" --depth 1 \
+# NOT --depth 1: a shallow clone carries no base blobs, so `git apply --3way`
+# silently degrades to plain context application and the 3-way protection this
+# Dockerfile claims does not exist (adversarial review 2026-08-14, finding 5).
+# --filter=blob:none keeps full history cheap and fetches base blobs on demand.
+RUN git clone --quiet --filter=blob:none --branch "${AGENTS_REF}" \
       https://github.com/danny-avila/agents.git agents
 WORKDIR /build/agents
 
@@ -41,11 +45,18 @@ COPY patches-source/format.ts.patch patches-source/stream.ts.patch \
 RUN set -eu; \
     for p in /patches/format.ts.patch /patches/stream.ts.patch /patches/search.ts.patch; do \
       echo "==> git apply --3way $p"; \
-      git apply --3way --verbose "$p" || { \
+      out=$(git apply --3way --verbose "$p" 2>&1) || { \
+        echo "$out" >&2; \
         echo "FATAL: $p did not apply to agents@${AGENTS_REF}." >&2; \
         echo "Re-diff it against that tag's source before retrying — do NOT force it." >&2; \
         exit 1; \
       }; \
+      echo "$out"; \
+      case "$out" in *"lacks the necessary blob"*|*"Falling back to direct application"*) \
+        echo "FATAL: no 3-way merge for $p; git fell back to plain context application." >&2; \
+        echo "That is weaker than what this build claims. Fix the clone filter." >&2; \
+        exit 1;; \
+      esac; \
     done
 
 # REQ-3: upstream's own toolchain, and verify it still exists before invoking
@@ -61,7 +72,7 @@ FROM node:24-alpine AS librechat-build
 ARG LIBRECHAT_TAG
 RUN apk add --no-cache git
 WORKDIR /build
-RUN git clone --quiet --branch "${LIBRECHAT_TAG}" --depth 1 \
+RUN git clone --quiet --filter=blob:none --branch "${LIBRECHAT_TAG}" \
       https://github.com/danny-avila/LibreChat.git librechat
 WORKDIR /build/librechat
 
@@ -71,11 +82,18 @@ COPY patches-source/share.js.patch \
 RUN set -eu; \
     for p in /patches/share.js.patch /patches/createStreamServices.ts.patch; do \
       echo "==> git apply --3way $p"; \
-      git apply --3way --verbose "$p" || { \
+      out=$(git apply --3way --verbose "$p" 2>&1) || { \
+        echo "$out" >&2; \
         echo "FATAL: $p did not apply to LibreChat@${LIBRECHAT_TAG}." >&2; \
         echo "Re-diff it against that tag's source before retrying — do NOT force it." >&2; \
         exit 1; \
       }; \
+      echo "$out"; \
+      case "$out" in *"lacks the necessary blob"*|*"Falling back to direct application"*) \
+        echo "FATAL: no 3-way merge for $p; git fell back to plain context application." >&2; \
+        echo "That is weaker than what this build claims. Fix the clone filter." >&2; \
+        exit 1;; \
+      esac; \
     done
 
 # share.js needs no build step. packages/api does, and it peer-depends on

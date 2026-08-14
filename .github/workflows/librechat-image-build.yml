@@ -71,9 +71,14 @@ jobs:
           set -euo pipefail
           tag="${{ inputs.librechat_tag || env.DEFAULT_LIBRECHAT_TAG }}"
           rev="${{ inputs.patch_revision || env.DEFAULT_PATCH_REVISION }}"
+          # The tag carries the commit that produced it. Without that, every
+          # push rebuilt and OVERWROTE the same v0.8.7-klai.1 -- which really
+          # happened: #908 pushed sha256:518c181f…, #913 replaced it with
+          # sha256:42fa8a92… (adversarial review 2026-08-14, finding 1). A tag
+          # that can move is not something a canary can be rolled back to.
           echo "librechat_tag=$tag" >> "$GITHUB_OUTPUT"
           echo "patch_revision=$rev" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/getklai/librechat:${tag}-klai.${rev}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/getklai/librechat:${tag}-klai.${rev}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v4
         with:
@@ -140,14 +145,19 @@ jobs:
             --build-arg KLAI_PATCH_REVISION='${{ steps.params.outputs.patch_revision }}' \
             -f Dockerfile.klai -t '${{ steps.params.outputs.image }}' .
 
-      # The manifest is only worth something if it describes THIS image. Prove
-      # it before the tag is allowed anywhere near a registry.
+      # The manifest is only worth something if it describes THIS image, built
+      # from THESE diffs, against the upstream we asked for. Checking only that
+      # the image agrees with its own manifest is self-attesting.
       - name: Verify the baked manifest matches the built image (REQ-6 seed)
         working-directory: deploy/librechat
         run: |
           set -euo pipefail
           node ../scripts/verify-librechat-build-manifest.mjs \
-            --image '${{ steps.params.outputs.image }}'
+            --image '${{ steps.params.outputs.image }}' \
+            --expect-upstream-tag '${{ steps.params.outputs.librechat_tag }}' \
+            --expect-agents-ref '${{ steps.agents.outputs.ref }}' \
+            --expect-patch-revision '${{ steps.params.outputs.patch_revision }}' \
+            --patches-dir patches-source
 
       # The patched artifacts must still satisfy the behaviour tests that guard
       # each surface. Running them against the CI-built image (not against the
@@ -167,11 +177,48 @@ jobs:
           node --test deploy/librechat/tests/format_guard.test.cjs
           node --test deploy/librechat/tests/stream_sources.test.cjs
           node --test deploy/librechat/tests/share_sanitizer.test.cjs
+          # search.cjs and index.cjs have no suite of their own above -- the
+          # step used to copy search.cjs without ever loading it and skip
+          # index.cjs entirely, so "behaviour tests against the built image"
+          # covered 3 of 5 artifacts (finding 3). This suite closes that.
+          KLAI_BUILT_ARTIFACTS_DIR=/tmp/built-patches \
+            node --test deploy/librechat/tests/built_artifacts.test.cjs
           git checkout -- deploy/librechat/patches/
+
+      # A tag that can be overwritten cannot be rolled back to. Refuse to
+      # replace an existing tag with different content rather than silently
+      # moving it (finding 1).
+      - name: Refuse to overwrite an existing tag
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          image='${{ steps.params.outputs.image }}'
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "::error::$image already exists in the registry."
+            echo "::error::Tags are immutable here. Bump patch_revision instead of moving a tag a canary may be pinned to."
+            exit 1
+          fi
+          echo "$image is free."
 
       - name: Push
         if: github.event_name != 'pull_request'
-        run: docker push '${{ steps.params.outputs.image }}'
+        id: push
+        run: |
+          set -euo pipefail
+          image='${{ steps.params.outputs.image }}'
+          docker push "$image"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image")
+          echo "Pushed $image"
+          echo "Pin by DIGEST, never by tag: $digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Klai LibreChat image"
+            echo ""
+            echo "- tag: \`$image\`"
+            echo "- digest: \`$digest\`"
+            echo ""
+            echo "Phase 3 must pin the digest."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
