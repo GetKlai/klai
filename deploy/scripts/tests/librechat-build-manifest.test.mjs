@@ -1,10 +1,12 @@
 /**
- * Tests for the build-manifest generate/verify pair (REQ-5 / REQ-6 seed),
- * without a Docker daemon: KLAI_LIBRECHAT_EXTRACT_DIR stands in for the image.
+ * Tests for the build-manifest generate/verify pair (REQ-5 / REQ-6 seed).
  *
- * The point of the manifest is to catch an image whose contents do not match
- * what CI says it built. So the test that matters is the negative one: change
- * a byte in an "image" file and verification must fail.
+ * The fake image is injected as a function argument. It used to be an env var
+ * (KLAI_LIBRECHAT_EXTRACT_DIR) read inside the extractor, which meant the same
+ * switch that made these tests convenient could disable the deploy-time
+ * provenance check in production. A guard whose whole job is to be trustworthy
+ * must not ship its own off switch — see the "no environment escape hatch"
+ * test at the bottom.
  *
  * Run: node --test deploy/scripts/tests/librechat-build-manifest.test.mjs
  */
@@ -17,11 +19,14 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { PATCHED_FILES } from '../lib/librechat-patched-files.mjs';
+import { generateManifest } from '../generate-librechat-build-manifest.mjs';
+import { verifyManifest } from '../verify-librechat-build-manifest.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const scriptsDir = path.resolve(here, '..');
-const librechatDir = path.resolve(here, '../../librechat');
+const repoRoot = path.resolve(here, '../../..');
+const patchesDir = path.join(repoRoot, 'deploy/librechat/patches-source');
 
+/** A directory of files standing in for the contents of a built image. */
 function fakeImage() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'klai-fake-image-'));
   for (const entry of PATCHED_FILES) {
@@ -30,87 +35,109 @@ function fakeImage() {
   return dir;
 }
 
-function generate(imageDir, outPath) {
-  execFileSync(
-    process.execPath,
-    [
-      path.join(scriptsDir, 'generate-librechat-build-manifest.mjs'),
-      '--image', 'fake:tag',
-      '--upstream-tag', 'v0.8.7',
-      '--agents-ref', 'v3.2.46',
-      '--patch-revision', '1',
-      '--patches-dir', path.join(librechatDir, 'patches-source'),
-      '--out', outPath,
-    ],
-    { env: { ...process.env, KLAI_LIBRECHAT_EXTRACT_DIR: imageDir }, stdio: 'pipe' }
-  );
+/** Stand-in extractor: reads the fake image dir instead of calling Docker. */
+function extractorFor(dir) {
+  return (_image, entries) => {
+    const files = new Map();
+    for (const entry of entries) {
+      const hostPath = path.join(dir, entry.key);
+      if (!fs.existsSync(hostPath)) {
+        throw new Error(`fake image is missing ${entry.key}`);
+      }
+      files.set(entry.key, hostPath);
+    }
+    return { dir, files };
+  };
 }
 
-function verify(imageDir) {
-  return execFileSync(
-    process.execPath,
-    [path.join(scriptsDir, 'verify-librechat-build-manifest.mjs'), '--image', 'fake:tag'],
-    { env: { ...process.env, KLAI_LIBRECHAT_EXTRACT_DIR: imageDir }, stdio: 'pipe', encoding: 'utf8' }
+function generateInto(dir) {
+  const manifest = generateManifest({
+    image: 'fake:tag',
+    upstreamTag: 'v0.8.7',
+    agentsRef: 'v3.2.46',
+    patchRevision: '1',
+    patchesDir,
+    extract: extractorFor(dir),
+  });
+  fs.writeFileSync(
+    path.join(dir, 'build-manifest.json'),
+    `${JSON.stringify(manifest, null, 2)}\n`
   );
+  return manifest;
 }
 
 test('manifest records every patched artifact with both hashes', () => {
-  const imageDir = fakeImage();
-  const out = path.join(imageDir, 'manifest.json');
-  generate(imageDir, out);
+  const dir = fakeImage();
+  const manifest = generateInto(dir);
 
-  const manifest = JSON.parse(fs.readFileSync(out, 'utf8'));
   assert.equal(manifest.artifacts.length, PATCHED_FILES.length);
   assert.equal(manifest.upstream_librechat_tag, 'v0.8.7');
   assert.equal(manifest.agents_ref, 'v3.2.46');
   for (const artifact of manifest.artifacts) {
-    // Both the diff that produced it AND the result it produced. patch-manifest.txt
-    // only ever had the upstream-original hash, which is why a stale patch was
-    // invisible to it.
+    // Both the diff that produced it AND the result it produced.
+    // patch-manifest.txt only ever had the upstream-original hash, which is
+    // why a stale patch was invisible to it.
     assert.match(artifact.patch_sha256, /^[0-9a-f]{64}$/, artifact.key);
     assert.match(artifact.artifact_sha256, /^[0-9a-f]{64}$/, artifact.key);
   }
 });
 
 test('verification passes when the image matches its manifest', () => {
-  const imageDir = fakeImage();
-  generate(imageDir, path.join(imageDir, 'build-manifest.json'));
-  const output = verify(imageDir);
-  assert.match(output, /^OK: /m);
+  const dir = fakeImage();
+  generateInto(dir);
+  const summary = verifyManifest({ image: 'fake:tag', extract: extractorFor(dir) });
+  assert.match(summary, /^OK: /);
 });
 
 test('verification FAILS when an artifact changed after the manifest was written', () => {
-  const imageDir = fakeImage();
-  generate(imageDir, path.join(imageDir, 'build-manifest.json'));
+  const dir = fakeImage();
+  generateInto(dir);
 
   // Exactly the drift this check exists for: the image no longer contains what
   // CI recorded. One byte is enough.
-  fs.appendFileSync(path.join(imageDir, 'stream.cjs'), '// tampered\n');
+  fs.appendFileSync(path.join(dir, 'stream.cjs'), '// tampered\n');
 
   assert.throws(
-    () => verify(imageDir),
-    (error) => {
-      const output = `${error.stdout ?? ''}${error.stderr ?? ''}`;
-      assert.match(output, /stream\.cjs/);
-      assert.match(output, /manifest says/);
-      return true;
-    }
+    () => verifyManifest({ image: 'fake:tag', extract: extractorFor(dir) }),
+    /stream\.cjs: manifest says/
   );
 });
 
 test('verification FAILS on the placeholder manifest from build pass 1', () => {
-  const imageDir = fakeImage();
+  const dir = fakeImage();
   fs.writeFileSync(
-    path.join(imageDir, 'build-manifest.json'),
+    path.join(dir, 'build-manifest.json'),
     JSON.stringify({ placeholder: true })
   );
 
   assert.throws(
-    () => verify(imageDir),
-    (error) => {
-      const output = `${error.stdout ?? ''}${error.stderr ?? ''}`;
-      assert.match(output, /placeholder manifest/);
-      return true;
-    }
+    () => verifyManifest({ image: 'fake:tag', extract: extractorFor(dir) }),
+    /placeholder manifest/
+  );
+});
+
+test('the CLI has no environment escape hatch that skips the image', () => {
+  // Regression guard. An earlier revision honoured KLAI_LIBRECHAT_EXTRACT_DIR
+  // inside extractFromImage, so setting it in a deploy environment made the
+  // provenance check "pass" while inspecting local files instead of the image
+  // about to roll out -- fail-open in the one place that must fail closed.
+  const dir = fakeImage();
+  generateInto(dir);
+
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [
+          path.join(here, '..', 'verify-librechat-build-manifest.mjs'),
+          '--image',
+          'this-image-does-not-exist:nope',
+        ],
+        {
+          env: { ...process.env, KLAI_LIBRECHAT_EXTRACT_DIR: dir },
+          stdio: 'pipe',
+        }
+      ),
+    'verification succeeded against a non-existent image — an env var redirected it away from the image'
   );
 });
