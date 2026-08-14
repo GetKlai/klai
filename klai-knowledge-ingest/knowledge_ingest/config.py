@@ -68,6 +68,26 @@ class Settings(BaseSettings):
         default=0.30,
         validation_alias=AliasChoices("KLAI_INGEST_FETCH_FAILURE_DIRTY_TRIP_RATE"),
     )
+    # Sequential bulk-5xx recovery (crawl4ai_client._recover_bulk_5xx_batch).
+    # Three independent bounds; see that function for why all three exist.
+    # Cooldown: crawl4ai reuses ONE browser instance for the duration of a
+    # crawl, so once an anti-bot challenge flags it, every following request
+    # in that session is blocked too — retrying sequentially without a pause
+    # changes nothing. Its pool closes an idle browser after ~53s (measured:
+    # "Closing cold browser (sig=..., idle=53s)"), and a fresh session passes
+    # again. 75s gives margin over that recycle window.
+    crawl_sequential_recovery_cooldown_seconds: float = Field(
+        default=75.0,
+        validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_COOLDOWN_SECONDS"),
+    )
+    crawl_sequential_recovery_max_consecutive_failures: int = Field(
+        default=3,
+        validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_MAX_CONSECUTIVE_FAILURES"),
+    )
+    crawl_sequential_recovery_max_seconds: float = Field(
+        default=1200.0,
+        validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_MAX_SECONDS"),
+    )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""

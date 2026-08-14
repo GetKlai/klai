@@ -289,6 +289,24 @@ def _reset_shared_klai_fast_limiter():
     _llm_throttle_mod._shared_limiter = None
 
 
+@pytest.fixture(autouse=True)
+def _no_real_recovery_cooldown(monkeypatch):
+    """Never sleep the production cooldown in tests.
+
+    ``crawl4ai_client._recover_bulk_5xx_batch`` waits
+    ``crawl_sequential_recovery_cooldown_seconds`` (75s in production)
+    before every attempt so crawl4ai's browser pool can recycle. Honouring
+    that in the suite would turn a handful of recovery tests into hours.
+    Tests that assert ON the pacing patch this themselves with a recorder.
+    """
+    import knowledge_ingest.crawl4ai_client as _crawl_mod
+
+    async def _instant(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(_crawl_mod, "_recovery_sleep", _instant)
+
+
 @pytest.fixture
 def client(mock_pool):
     """Test client with auth middleware.

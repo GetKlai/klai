@@ -12,6 +12,7 @@ import copy
 import fnmatch
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from html import unescape
 from html.parser import HTMLParser
@@ -1645,19 +1646,38 @@ async def _recover_bulk_5xx_batch(
     attempted = 0
     recovered = 0
     still_failing = 0
+    consecutive_failures = 0
+
+    cooldown = settings.crawl_sequential_recovery_cooldown_seconds
+    max_consecutive = settings.crawl_sequential_recovery_max_consecutive_failures
+    time_budget = settings.crawl_sequential_recovery_max_seconds
+    started_at = _recovery_monotonic()
+
+    logger.info(
+        "crawl_sequential_recovery_started",
+        urls=len(urls),
+        budget=recovery_budget,
+        cooldown_seconds=cooldown,
+        max_consecutive_failures=max_consecutive,
+        max_seconds=time_budget,
+    )
+
+    def _abandon_remaining(index: int) -> int:
+        """Mark every not-yet-attempted URL HTTP_5XX; return how many."""
+        for leftover_url in urls[index:]:
+            outcomes.append(
+                {
+                    "url": leftover_url,
+                    "reason_code": FetchReasonCode.HTTP_5XX.value,
+                    "status_code": None,
+                    "content_length": 0,
+                }
+            )
+        return len(urls) - index
 
     for i, url in enumerate(urls):
         if attempted >= recovery_budget:
-            remaining = len(urls) - i
-            for leftover_url in urls[i:]:
-                outcomes.append(
-                    {
-                        "url": leftover_url,
-                        "reason_code": FetchReasonCode.HTTP_5XX.value,
-                        "status_code": None,
-                        "content_length": 0,
-                    }
-                )
+            remaining = _abandon_remaining(i)
             still_failing += remaining
             logger.warning(
                 "crawl_bulk_5xx_recovery_capped",
@@ -1667,6 +1687,40 @@ async def _recover_bulk_5xx_batch(
                 remaining=remaining,
             )
             break
+
+        # Circuit breaker: the cooldown below buys a fresh browser session
+        # per attempt, so a run of failures despite it means the site is not
+        # recoverable — every further attempt would burn another cooldown for
+        # nothing.
+        if consecutive_failures >= max_consecutive:
+            remaining = _abandon_remaining(i)
+            still_failing += remaining
+            logger.warning(
+                "crawl_sequential_recovery_circuit_open",
+                consecutive_failures=consecutive_failures,
+                recovered=recovered,
+                still_failing=still_failing,
+                remaining=remaining,
+            )
+            break
+
+        elapsed = _recovery_monotonic() - started_at
+        if elapsed >= time_budget:
+            remaining = _abandon_remaining(i)
+            still_failing += remaining
+            logger.warning(
+                "crawl_sequential_recovery_time_budget_exhausted",
+                elapsed_seconds=round(elapsed, 1),
+                recovered=recovered,
+                still_failing=still_failing,
+                remaining=remaining,
+            )
+            break
+
+        # Before EVERY attempt, including the first: the bulk burst that just
+        # failed is exactly what left crawl4ai's browser flagged, so attempt
+        # one needs the recycle window as much as the rest.
+        await _recovery_sleep(cooldown)
 
         attempted += 1
         result = await _crawl_page_with_config(url, crawler_config, cookies=cookies, selector=None)
@@ -1691,8 +1745,10 @@ async def _recover_bulk_5xx_batch(
 
         if not result.success:
             still_failing += 1
+            consecutive_failures += 1
             continue
 
+        consecutive_failures = 0
         if _same_site_domain(urlparse(result.url).netloc.lower(), base_domain):
             link_source_results.append(result)
         if _result_is_ingestable(result, base_domain=base_domain) and not is_non_content_listing:
@@ -1921,6 +1977,12 @@ _BULK_CHUNK_SIZE = 100
 # once exhausted, remaining URLs are marked HTTP_5XX (not a guessed
 # BLOCKED_ANTI_BOT) without a network call (crawl_bulk_5xx_recovery_capped).
 _MAX_SEQUENTIAL_RECOVERY = 60
+
+# Indirection so tests can drive the recovery loop's pacing without ever
+# sleeping for real: a suite that honours the 75s production cooldown would
+# take hours. Patch these, not asyncio/time, so nothing else is affected.
+_recovery_sleep = asyncio.sleep
+_recovery_monotonic = time.monotonic
 
 # Server-side BFS deep crawl polling budget. /crawl/job is async — submit,
 # get task_id, poll status. Voys-support full-depth crawl (~500 pages
