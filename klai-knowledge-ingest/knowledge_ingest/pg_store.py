@@ -1521,7 +1521,8 @@ async def list_kb_sources(
 
     Returns ``{"connectors": [...], "uploads": [...]}`` where:
       - connectors: one row per distinct ``source_connector_id`` found in
-        artifacts.extra, with aggregate item_count + chunks_count
+        artifacts.extra, with aggregate items_count + items_failed_count
+        (active artifacts with index_status='failed') + chunks_count
       - uploads: one row per artifact whose ``source_connector_id`` is null
         (direct file/url/text/image uploads), with chunks_count
 
@@ -1529,12 +1530,18 @@ async def list_kb_sources(
     sync status, and last_sync_at from the portal-side ``connectors`` table.
     Knowledge-ingest does NOT know connector display metadata.
     """
-    # Connectors: one row per source_connector_id, with aggregate counts
+    # Connectors: one row per source_connector_id, with aggregate counts.
+    # items_count and items_failed_count both use COUNT(DISTINCT a.id [FILTER]) —
+    # the LEFT JOIN to parent_chunks fans out one row per chunk, so a plain
+    # COUNT(*) FILTER would overcount artifacts with >1 chunk. COUNT(DISTINCT)
+    # collapses the fanout back to one count per artifact regardless of how
+    # many chunk rows the join produced for it.
     connector_rows = await conn.fetch(
         """
         SELECT
             a.extra::jsonb->>'source_connector_id' AS connector_id,
             COUNT(DISTINCT a.id) AS items_count,
+            COUNT(DISTINCT a.id) FILTER (WHERE a.index_status = 'failed') AS items_failed_count,
             COUNT(pc.id) AS chunks_count
         FROM knowledge.artifacts a
         LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
@@ -1552,6 +1559,7 @@ async def list_kb_sources(
         {
             "connector_id": row["connector_id"],
             "items_count": int(row["items_count"] or 0),
+            "items_failed_count": int(row["items_failed_count"] or 0),
             "chunks_count": int(row["chunks_count"] or 0),
         }
         for row in connector_rows

@@ -173,7 +173,7 @@ async def test_list_kb_sources_merges_connectors_and_uploads() -> None:
 
     aggregates = {
         "connectors": [
-            {"connector_id": "conn-1", "items_count": 5, "chunks_count": 23},
+            {"connector_id": "conn-1", "items_count": 5, "chunks_count": 23, "items_failed_count": 3},
         ],
         "uploads": [
             {
@@ -216,11 +216,13 @@ async def test_list_kb_sources_merges_connectors_and_uploads() -> None:
     assert by_id["conn-1"].kind == "connector"
     assert by_id["conn-1"].items_count == 5
     assert by_id["conn-1"].chunks_count == 23
+    assert by_id["conn-1"].items_failed_count == 3
     assert by_id["conn-1"].name == "Productdocs"
     assert by_id["conn-1"].type_label == "Notion"
 
     assert by_id["conn-2"].items_count == 0
     assert by_id["conn-2"].chunks_count == 0
+    assert by_id["conn-2"].items_failed_count == 0
     assert by_id["conn-2"].status == "pending"
 
     assert by_id["art-1"].kind == "upload"
@@ -228,6 +230,7 @@ async def test_list_kb_sources_merges_connectors_and_uploads() -> None:
     assert by_id["art-1"].type_label == "PDF"
     assert by_id["art-1"].source_url is None
     assert by_id["art-1"].chunks_count == 7
+    assert by_id["art-1"].items_failed_count == 0
     assert by_id["art-1"].created_at is not None
     # index_status_changed_at (epoch) surfaces as last_sync_at so the frontend
     # measures "Bezig sinds Xm" from the (re)sync start, not artifact creation.
@@ -328,6 +331,9 @@ async def test_list_kb_sources_handles_orphan_connector_id() -> None:
     bron = result.sources[0]
     assert bron.id == "deleted-conn"
     assert bron.status == "orphan"
+    # Older knowledge-ingest versions may not emit items_failed_count yet —
+    # absence must not crash and must default to 0.
+    assert bron.items_failed_count == 0
     assert "verwijderde" in bron.name
 
 

@@ -17,10 +17,11 @@ import type { Source } from './-sources-types'
  * Below this we just show "Bezig sinds Xm" as informational; at/above it
  * the badge flips to a warning ("Hangt al Xm") so the user knows to retry.
  *
- * Lives here (not in a backend SPEC) until SPEC-KB-INGEST-RELIABILITY-001
- * adds a proper backend timeout + auto-fail reaper for url/upload sources.
- * Mirrors the connector-side `sync_run_reaper._FORCE_FAIL_AFTER_S` logic
- * but on the frontend only, so it's an indicator — not enforcement.
+ * This is a frontend-only indicator, not enforcement: the backend reaper
+ * (knowledge-ingest `stale_pending_artifact_reaper`) auto-fails artifacts
+ * stuck in 'pending' for over 30 minutes, running every 15 minutes. This
+ * threshold is intentionally shorter so the badge warns the user well
+ * before the backend gives up.
  */
 const STUCK_THRESHOLD_MINUTES = 10
 
@@ -144,6 +145,24 @@ export function StatusBadge({ source }: { source: Source }) {
     not_synced: 'secondary' as const,
   }
   return <Badge variant={variantMap[status]}>{labelMap[status]}</Badge>
+}
+
+/**
+ * Partial-failure indicator for connector rows. The connector as a whole
+ * can be "Gesynct" while individual pages under it silently failed — this
+ * surfaces that instead of letting the aggregate status hide it. Deliberately
+ * NOT the destructive/red treatment: the connector itself is healthy, this
+ * is a sub-count warning, not a broken-connector signal.
+ */
+export function FailedItemsWarning({ source }: { source: Source }) {
+  if (source.kind !== 'connector') return null
+  const failedCount = source.items_failed_count ?? 0
+  if (failedCount <= 0) return null
+  return (
+    <span className="text-xs text-[var(--color-warning)]">
+      {m.kb_connector_failed_items({ count: String(failedCount) })}
+    </span>
+  )
 }
 
 export function SourceIcon({ source }: { source: Source }) {
