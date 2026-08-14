@@ -370,8 +370,14 @@ fi
 # literals inside it, and update the anchors below IN BOTH this file and
 # klai-entrypoint.sh.
 STREAM_CLEANUP_TARGET=/app/packages/api/dist/index.cjs
-if grep -q "SPEC-STREAM-CLEANUP-001" "$STREAM_CLEANUP_TARGET" 2>/dev/null; then
-  echo "[klai-entrypoint] SPEC-STREAM-CLEANUP-001 cleanup-on-complete patch already applied, skipping"
+# Two ways this can already be satisfied: this transform ran before (leaves
+# its own marker), or the image was built from the source diff and carries
+# CLEANUP_ON_COMPLETE. The second is the SPEC-LIBRECHAT-PATCH-MODEL-001
+# model, and matching on it is what keeps the runtime transform from
+# layering a duplicate cleanupOnComplete key on top of the baked-in one.
+# The identifier is the marker, not a comment: the bundler strips comments.
+if grep -qE "SPEC-STREAM-CLEANUP-001|CLEANUP_ON_COMPLETE" "$STREAM_CLEANUP_TARGET" 2>/dev/null; then
+  echo "[klai-entrypoint] cleanup-on-complete already in place (runtime marker or baked-in CLEANUP_ON_COMPLETE), skipping"
 else
   node <<'STREAM_CLEANUP_NODE'
 const { existsSync, readFileSync, writeFileSync } = require('fs');
