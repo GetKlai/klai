@@ -1,0 +1,181 @@
+name: Build Klai LibreChat image
+
+# SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 2.
+#
+# Builds ghcr.io/getklai/librechat:<upstream-tag>-klai.<n> from source-level
+# diffs. Phase 2 deliberately does NOT point any compose service or the
+# provisioning default at this tag — that is Phase 3 (canary) and Phase 5
+# (fleet). Until then this workflow's value is the guard: every push that
+# touches a diff proves it still applies to the pinned upstream tag and still
+# builds, instead of finding out during an upgrade.
+#
+# On pull_request the image is built but never pushed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/librechat/patches-source/**'
+      - 'deploy/librechat/Dockerfile.klai'
+      - 'deploy/scripts/lib/librechat-*.mjs'
+      - 'deploy/scripts/*-librechat-*.mjs'
+      - '.github/workflows/librechat-image-build.yml'
+  pull_request:
+    paths:
+      - 'deploy/librechat/patches-source/**'
+      - 'deploy/librechat/Dockerfile.klai'
+      - 'deploy/scripts/lib/librechat-*.mjs'
+      - 'deploy/scripts/*-librechat-*.mjs'
+      - '.github/workflows/librechat-image-build.yml'
+  workflow_dispatch:
+    inputs:
+      librechat_tag:
+        description: 'Upstream LibreChat tag to build from'
+        type: string
+        default: 'v0.8.7'
+      patch_revision:
+        description: 'Klai patch revision suffix (the <n> in -klai.<n>)'
+        type: string
+        default: '1'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  DEFAULT_LIBRECHAT_TAG: v0.8.7
+  DEFAULT_PATCH_REVISION: '1'
+
+jobs:
+  # Cheap, Docker-free, runs first: catches a drifted patched-file contract or
+  # broken provenance logic in seconds instead of after a ~10-minute build.
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Patched-file contract + build-manifest logic
+        run: |
+          node --test \
+            deploy/scripts/tests/librechat-patched-files.test.mjs \
+            deploy/scripts/tests/librechat-build-manifest.test.mjs
+
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve build parameters
+        id: params
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.librechat_tag || env.DEFAULT_LIBRECHAT_TAG }}"
+          rev="${{ inputs.patch_revision || env.DEFAULT_PATCH_REVISION }}"
+          echo "librechat_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "patch_revision=$rev" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/getklai/librechat:${tag}-klai.${rev}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The agents ref is NOT independently pinned. Read the version the
+      # upstream image actually ships, so a LibreChat bump and an agents bump
+      # can never be evaluated separately (the skew that produced the
+      # 2026-08-13 bundler-switch incident).
+      - name: Resolve @librechat/agents ref from the upstream image
+        id: agents
+        run: |
+          set -euo pipefail
+          base="ghcr.io/danny-avila/librechat:${{ steps.params.outputs.librechat_tag }}"
+          docker pull -q "$base"
+          cid=$(docker create "$base")
+          trap 'docker rm -f "$cid" >/dev/null' EXIT
+          docker cp "$cid:/app/node_modules/@librechat/agents/package.json" ./agents-pkg.json
+          version=$(node -p "require('./agents-pkg.json').version")
+          if [ -z "$version" ]; then
+            echo "::error::Could not read @librechat/agents version from $base" >&2
+            exit 1
+          fi
+          echo "Resolved @librechat/agents: v$version"
+          echo "ref=v$version" >> "$GITHUB_OUTPUT"
+
+      # Pass 1 produces the patched artifacts. The manifest cannot exist yet --
+      # it records their post-build hashes -- so a placeholder satisfies the
+      # COPY and pass 2 replaces it. That COPY is the last layer, so pass 2 is
+      # a cache hit for everything expensive.
+      - name: Build (pass 1 — artifacts)
+        working-directory: deploy/librechat
+        run: |
+          set -euo pipefail
+          echo '{"placeholder": true}' > build-manifest.json
+          docker build \
+            --build-arg LIBRECHAT_TAG='${{ steps.params.outputs.librechat_tag }}' \
+            --build-arg AGENTS_REF='${{ steps.agents.outputs.ref }}' \
+            --build-arg KLAI_PATCH_REVISION='${{ steps.params.outputs.patch_revision }}' \
+            -f Dockerfile.klai -t klai-librechat:pass1 .
+
+      - name: Generate build manifest (REQ-5)
+        working-directory: deploy/librechat
+        run: |
+          set -euo pipefail
+          node ../scripts/generate-librechat-build-manifest.mjs \
+            --image klai-librechat:pass1 \
+            --upstream-tag '${{ steps.params.outputs.librechat_tag }}' \
+            --agents-ref '${{ steps.agents.outputs.ref }}' \
+            --patch-revision '${{ steps.params.outputs.patch_revision }}' \
+            --patches-dir patches-source \
+            --out build-manifest.json
+          cat build-manifest.json
+
+      - name: Build (pass 2 — bake the manifest in)
+        working-directory: deploy/librechat
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg LIBRECHAT_TAG='${{ steps.params.outputs.librechat_tag }}' \
+            --build-arg AGENTS_REF='${{ steps.agents.outputs.ref }}' \
+            --build-arg KLAI_PATCH_REVISION='${{ steps.params.outputs.patch_revision }}' \
+            -f Dockerfile.klai -t '${{ steps.params.outputs.image }}' .
+
+      # The manifest is only worth something if it describes THIS image. Prove
+      # it before the tag is allowed anywhere near a registry.
+      - name: Verify the baked manifest matches the built image (REQ-6 seed)
+        working-directory: deploy/librechat
+        run: |
+          set -euo pipefail
+          node ../scripts/verify-librechat-build-manifest.mjs \
+            --image '${{ steps.params.outputs.image }}'
+
+      # The patched artifacts must still satisfy the behaviour tests that guard
+      # each surface. Running them against the CI-built image (not against the
+      # repo's hand-maintained .cjs files) is what makes this a real check.
+      - name: Run patch behaviour tests against the built image
+        working-directory: deploy/librechat
+        run: |
+          set -euo pipefail
+          node ../scripts/extract-librechat-patched-files.mjs \
+            --image '${{ steps.params.outputs.image }}' \
+            --out /tmp/built-patches
+          cp /tmp/built-patches/format.cjs patches/format.cjs
+          cp /tmp/built-patches/stream.cjs patches/stream.cjs
+          cp /tmp/built-patches/search.cjs patches/search.cjs
+          cp /tmp/built-patches/share.js patches/share.js
+          cd "$GITHUB_WORKSPACE"
+          node --test deploy/librechat/tests/format_guard.test.cjs
+          node --test deploy/librechat/tests/stream_sources.test.cjs
+          node --test deploy/librechat/tests/share_sanitizer.test.cjs
+          git checkout -- deploy/librechat/patches/
+
+      - name: Push
+        if: github.event_name != 'pull_request'
+        run: docker push '${{ steps.params.outputs.image }}'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: librechat-build-manifest
+          path: deploy/librechat/build-manifest.json
+          if-no-files-found: warn

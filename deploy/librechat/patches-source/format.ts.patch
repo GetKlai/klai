@@ -1,0 +1,179 @@
+diff --git a/src/messages/format.ts b/src/messages/format.ts
+index 3d690a3..fd47d89 100644
+--- a/src/messages/format.ts
++++ b/src/messages/format.ts
+@@ -31,6 +31,30 @@ import { toLangChainContent, toLangChainMessageFields } from './langchain';
+ import { Providers, ContentTypes, Constants } from '@/common';
+ import { emitAgentLog } from '@/utils/events';
+ 
++/**
++ * Klai patch — defensive guards against malformed message payloads.
++ *
++ * Upstream assumes every message/content entry is a well-formed object. Klai
++ * traffic reaches these functions through LiteLLM, tenant KB retrieval and the
++ * MCP layer, where a provider hiccup can yield a string, null or number where
++ * an object is expected. Upstream then throws deep inside the formatter and the
++ * whole turn fails. These guards degrade to a warning + skip instead, so one bad
++ * entry cannot take down a conversation.
++ *
++ * Each guard logs with the `[klai-patch]` prefix so the frequency is queryable
++ * in VictoriaLogs; `warnOnce` is used where the call site is per-message and
++ * would otherwise flood the log.
++ */
++const isRecord = (value: unknown): value is Record<string, any> =>
++  value != null && typeof value === 'object';
++
++const _klaiWarned = new Set<string>();
++const warnOnce = (message: string): void => {
++  if (_klaiWarned.has(message)) return;
++  _klaiWarned.add(message);
++  console.warn(`[klai-patch] ${message}`);
++};
++
+ interface MediaMessageParams {
+   message: {
+     role: string;
+@@ -154,6 +178,14 @@ export const formatMessage = ({
+   | RoleBearingMessage<HumanMessage>
+   | RoleBearingMessage<AIMessage>
+   | RoleBearingMessage<SystemMessage> => {
++  /* Klai patch: a non-object message destructures to all-undefined and throws
++     further down; degrade to an empty message instead. */
++  if (!isRecord(message)) {
++    console.warn(
++      '[klai-patch] format.formatMessage guard replaced non-object message with {}'
++    );
++    message = {} as FormatMessageParams['message'];
++  }
+   // eslint-disable-next-line prefer-const
+   let { role: _role, _name, sender, text, content: _content, lc_id } = message;
+   if (lc_id && lc_id[2] && !langChain) {
+@@ -284,7 +316,17 @@ export const formatLangChainMessages = (
+   | RoleBearingMessage<AIMessage>
+   | RoleBearingMessage<SystemMessage>
+ > => {
+-  return messages.map((msg) => {
++  /* Klai patch: drop non-object entries rather than letting formatMessage
++     receive them; the caller wants a best-effort list, not a hard failure. */
++  return messages
++    .filter((msg) => {
++      if (isRecord(msg)) return true;
++      console.warn(
++        '[klai-patch] format.formatLangChainMessages guard dropped non-object message entry'
++      );
++      return false;
++    })
++    .map((msg) => {
+     const formatted = formatMessage({
+       ...formatOptions,
+       message: msg,
+@@ -1053,6 +1095,13 @@ function getLatestSummaryBoundary(
+ 
+   for (let i = 0; i < payload.length; i++) {
+     const message = payload[i];
++    /* Klai patch: `message.content` on a non-object throws. */
++    if (!isRecord(message)) {
++      console.warn(
++        '[klai-patch] format.getLatestSummaryBoundary guard skipped non-object message entry'
++      );
++      continue;
++    }
+     if (!Array.isArray(message.content)) {
+       continue;
+     }
+@@ -1115,8 +1164,16 @@ function applySummaryBoundary(
+ 
+   if (
+     messageIndex !== summaryBoundary.messageIndex ||
++    !isRecord(message) ||
+     !Array.isArray(message.content)
+   ) {
++    /* Klai patch: only warn when this IS the boundary message -- a non-object
++       anywhere else is already handled by the pass-through above. */
++    if (messageIndex === summaryBoundary.messageIndex && !isRecord(message)) {
++      console.warn(
++        '[klai-patch] format.applySummaryBoundary guard passed through non-object message'
++      );
++    }
+     return message;
+   }
+ 
+@@ -1234,6 +1291,16 @@ export const formatAgentMessages = (
+   // Process messages with tool conversion if tools set is provided
+   for (let i = 0; i < payload.length; i++) {
+     const rawMessage = payload[i];
++    /* Klai patch: a non-object payload entry breaks getSourceMessageId and
++       every downstream accessor; drop it and keep an empty index mapping so
++       caller-side index arithmetic stays correct. */
++    if (!isRecord(rawMessage)) {
++      console.warn(
++        '[klai-patch] format.formatAgentMessages guard dropped non-object payload entry'
++      );
++      indexMapping[i] = [];
++      continue;
++    }
+     const sourceMessageId = getSourceMessageId(rawMessage);
+     let message = applySummaryBoundary(rawMessage, i, summaryBoundary);
+     if (!message) {
+@@ -1292,6 +1359,14 @@ export const formatAgentMessages = (
+         const invalidToolStrings: string[] = [];
+ 
+         for (const part of content) {
++          /* Klai patch: `part.type` on a non-object throws before any of the
++             upstream malformed-tool_call handling below can run. */
++          if (!isRecord(part)) {
++            console.warn(
++              '[klai-patch] format.formatAgentMessages guard dropped non-object content part'
++            );
++            continue;
++          }
+           if (part.type !== ContentTypes.TOOL_CALL) {
+             filteredContent.push(part);
+             continue;
+@@ -1790,6 +1865,12 @@ export function ensureThinkingBlockInMessages(
+   let lastHumanIndex = -1;
+   for (let k = messages.length - 1; k >= 0; k--) {
+     const m = messages[k];
++    /* Klai patch: `'role' in m` throws on a non-object. warnOnce because this
++       scan runs per message per turn and would otherwise flood the log. */
++    if (!isRecord(m)) {
++      warnOnce('format.ensureThinkingBlockInMessages skipped non-record entry');
++      continue;
++    }
+     if (
+       m instanceof HumanMessage ||
+       ('role' in m && (m as any).role === 'user')
+@@ -1809,6 +1890,15 @@ export function ensureThinkingBlockInMessages(
+ 
+   while (i < messages.length) {
+     const msg = messages[i];
++    /* Klai patch: same guard as the scan above, but this loop REBUILDS the
++       message list -- a skipped entry must still be carried through or we
++       would silently drop it from the conversation. */
++    if (!isRecord(msg)) {
++      warnOnce('format.ensureThinkingBlockInMessages skipped non-record entry');
++      result.push(msg);
++      i++;
++      continue;
++    }
+     /** Detect AI messages by instanceof OR by role, in case cache-control cloning
+      produced a plain object that lost the LangChain prototype. */
+     const isAI =
+@@ -1854,7 +1944,7 @@ export function ensureThinkingBlockInMessages(
+     // Bedrock also stores reasoning in additional_kwargs (may not be in content array)
+     if (
+       !hasThinkingBlock &&
+-      aiMsg.additional_kwargs.reasoning_content != null
++      aiMsg.additional_kwargs?.reasoning_content != null
+     ) {
+       hasThinkingBlock = true;
+     }
+@@ -1983,7 +2073,7 @@ function chainHasThinkingBlock(
+       }
+ 
+       // Bedrock also stores reasoning in additional_kwargs
+-      if (prevAiMsg.additional_kwargs.reasoning_content != null) {
++      if (prevAiMsg.additional_kwargs?.reasoning_content != null) {
+         return true;
+       }
+     }

@@ -1,0 +1,107 @@
+diff --git a/api/server/routes/share.js b/api/server/routes/share.js
+index 1a15bd2..4f5bf0f 100644
+--- a/api/server/routes/share.js
++++ b/api/server/routes/share.js
+@@ -66,6 +66,93 @@ const resolveSharedLinkExpiration = (req, conversationId) =>
+     },
+   );
+ 
++const PLACEHOLDER_HOSTS = new Set([
++  'example.com',
++  'example.org',
++  'example.net',
++  'localhost',
++  'test.com',
++  'test.nl',
++]);
++
++function parseUrl(value) {
++  try {
++    return new URL(value, process.env.DOMAIN_CLIENT || 'https://chat.getklai.com');
++  } catch {
++    return null;
++  }
++}
++
++function isPlaceholderUrl(value) {
++  const parsed = parseUrl(value);
++  if (!parsed) {
++    return false;
++  }
++  const host = parsed.hostname.toLowerCase();
++  return PLACEHOLDER_HOSTS.has(host) || host.endsWith('.example.com');
++}
++
++function isAllowedImageUrl(value) {
++  const parsed = parseUrl(value);
++  if (!parsed) {
++    return false;
++  }
++  const host = parsed.hostname.toLowerCase();
++  const ownHost = parseUrl(process.env.DOMAIN_CLIENT || '')?.hostname?.toLowerCase();
++  const isOwnHost = ownHost && host === ownHost;
++  const isKlaiHost = host === 'getklai.com' || host.endsWith('.getklai.com');
++  return (
++    (isOwnHost || isKlaiHost) &&
++    (parsed.pathname.startsWith('/kb-images/') ||
++      parsed.pathname.startsWith('/images/') ||
++      parsed.pathname.startsWith('/api/files/'))
++  );
++}
++
++function sanitizeMarkdown(text) {
++  if (typeof text !== 'string' || text.length === 0) {
++    return text;
++  }
++  return text
++    .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, (_match, alt, url) => {
++      if (isAllowedImageUrl(url)) {
++        return _match;
++      }
++      return '';
++    })
++    .replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, (_match, label, url) => {
++      if (isPlaceholderUrl(url)) {
++        return String(label);
++      }
++      return _match;
++    })
++    .replace(/https?:\/\/[^\s<>)]+/g, (url) => (isPlaceholderUrl(url) ? '' : url));
++}
++
++function sanitizeMessage(message) {
++  if (!message || typeof message !== 'object') {
++    return message;
++  }
++  if (typeof message.text === 'string') {
++    message.text = sanitizeMarkdown(message.text);
++  }
++  if (Array.isArray(message.content)) {
++    for (const part of message.content) {
++      if (part && typeof part === 'object' && typeof part.text === 'string') {
++        part.text = sanitizeMarkdown(part.text);
++      }
++    }
++  }
++  return message;
++}
++
++function sanitizeShare(share) {
++  if (share && Array.isArray(share.messages)) {
++    share.messages = share.messages.map(sanitizeMessage);
++  }
++  return share;
++}
++
+ /**
+  * Shared messages
+  */
+@@ -249,7 +336,7 @@ if (allowSharedLinks) {
+         });
+         if (share) {
+           res.set('Cache-Control', 'private, no-store');
+-          res.status(200).json(share);
++          res.status(200).json(sanitizeShare(share));
+         } else {
+           res.status(404).end();
+         }

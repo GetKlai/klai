@@ -1,0 +1,118 @@
+# syntax=docker/dockerfile:1.7
+#
+# Klai-owned LibreChat image — SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 2 (REQ-3/4).
+#
+# Replaces five full-file bind-mounts with minimal source-level diffs applied to
+# the real upstream source trees and built with upstream's own toolchain. The
+# bind-mount model could silently no-op (a stale mount, a deleted source file, a
+# .ts file nothing recompiles); a build-time patch cannot — if a diff does not
+# apply, the build fails here and no image is produced.
+#
+# Two lanes feed one assembly stage:
+#   Lane A  danny-avila/agents      -> dist/cjs/{messages/format,stream,tools/search/search}.cjs
+#   Lane B  danny-avila/LibreChat   -> api/server/routes/share.js (no build step)
+#                                      packages/api/dist/index.cjs (tsdown build)
+#
+# AGENTS_REF is NOT an independent pin: it is the version LibreChat itself
+# depends on, read out of the pinned tag. Passing them separately would
+# re-create the version-skew that caused the 2026-08-13 bundler-switch
+# incident, so the CI workflow resolves it from the image and the build
+# asserts the two agree.
+
+ARG LIBRECHAT_TAG=v0.8.7
+
+# --------------------------------------------------------------------------
+# Lane A — @librechat/agents
+# --------------------------------------------------------------------------
+FROM node:24-alpine AS agents-build
+ARG AGENTS_REF
+RUN test -n "$AGENTS_REF" || (echo "FATAL: AGENTS_REF build-arg is required" >&2; exit 1)
+RUN apk add --no-cache git
+WORKDIR /build
+RUN git clone --quiet --branch "${AGENTS_REF}" --depth 1 \
+      https://github.com/danny-avila/agents.git agents
+WORKDIR /build/agents
+
+COPY patches-source/format.ts.patch patches-source/stream.ts.patch \
+     patches-source/search.ts.patch /patches/
+
+# REQ-2: fail loud, never partial-apply. --3way tolerates unrelated nearby
+# upstream churn; a genuine conflict aborts the build with the failing hunk.
+RUN set -eu; \
+    for p in /patches/format.ts.patch /patches/stream.ts.patch /patches/search.ts.patch; do \
+      echo "==> git apply --3way $p"; \
+      git apply --3way --verbose "$p" || { \
+        echo "FATAL: $p did not apply to agents@${AGENTS_REF}." >&2; \
+        echo "Re-diff it against that tag's source before retrying — do NOT force it." >&2; \
+        exit 1; \
+      }; \
+    done
+
+# REQ-3: upstream's own toolchain, and verify it still exists before invoking
+# it. The agents repo switched tsup -> rolldown between LibreChat 0.8.6 and
+# 0.8.7; a missing script must fail with a pointer, not a generic error.
+RUN node -e "const s=require('./package.json').scripts||{}; if(!s.build){console.error('FATAL: agents package.json has no \"build\" script. Upstream restructured its build tooling — re-run the Phase 1 spike to find the new invocation.');process.exit(1)} console.log('agents build script:', s.build)"
+RUN npm ci --no-audit --no-fund && npm run build
+
+# --------------------------------------------------------------------------
+# Lane B — LibreChat app source
+# --------------------------------------------------------------------------
+FROM node:24-alpine AS librechat-build
+ARG LIBRECHAT_TAG
+RUN apk add --no-cache git
+WORKDIR /build
+RUN git clone --quiet --branch "${LIBRECHAT_TAG}" --depth 1 \
+      https://github.com/danny-avila/LibreChat.git librechat
+WORKDIR /build/librechat
+
+COPY patches-source/share.js.patch \
+     patches-source/createStreamServices.ts.patch /patches/
+
+RUN set -eu; \
+    for p in /patches/share.js.patch /patches/createStreamServices.ts.patch; do \
+      echo "==> git apply --3way $p"; \
+      git apply --3way --verbose "$p" || { \
+        echo "FATAL: $p did not apply to LibreChat@${LIBRECHAT_TAG}." >&2; \
+        echo "Re-diff it against that tag's source before retrying — do NOT force it." >&2; \
+        exit 1; \
+      }; \
+    done
+
+# share.js needs no build step. packages/api does, and it peer-depends on
+# data-provider + data-schemas, so those must be built first (this is the
+# scoped subset of the upstream Dockerfile's own frontend build).
+RUN npm ci --no-audit --no-fund \
+ && npm run build:data-provider \
+ && npm run build:data-schemas \
+ && npm run build:api
+
+# --------------------------------------------------------------------------
+# Assembly
+# --------------------------------------------------------------------------
+FROM ghcr.io/danny-avila/librechat:${LIBRECHAT_TAG}
+
+COPY --from=agents-build /build/agents/dist/cjs/messages/format.cjs \
+     /app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs
+COPY --from=agents-build /build/agents/dist/cjs/stream.cjs \
+     /app/node_modules/@librechat/agents/dist/cjs/stream.cjs
+COPY --from=agents-build /build/agents/dist/cjs/tools/search/search.cjs \
+     /app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs
+COPY --from=librechat-build /build/librechat/api/server/routes/share.js \
+     /app/api/server/routes/share.js
+COPY --from=librechat-build /build/librechat/packages/api/dist/index.cjs \
+     /app/packages/api/dist/index.cjs
+
+# REQ-5: the manifest travels INSIDE the image, so REQ-6's deploy-time check
+# needs no side-channel storage and cannot go looking at the wrong tag's
+# manifest. Written by the CI workflow just before this build.
+COPY build-manifest.json /klai-build-manifest.json
+
+ARG LIBRECHAT_TAG
+ARG AGENTS_REF
+ARG KLAI_PATCH_REVISION
+LABEL org.opencontainers.image.source="https://github.com/GetKlai/klai" \
+      org.opencontainers.image.base.name="ghcr.io/danny-avila/librechat:${LIBRECHAT_TAG}" \
+      com.getklai.librechat.upstream-tag="${LIBRECHAT_TAG}" \
+      com.getklai.librechat.agents-ref="${AGENTS_REF}" \
+      com.getklai.librechat.patch-revision="${KLAI_PATCH_REVISION}" \
+      com.getklai.librechat.manifest="/klai-build-manifest.json"
