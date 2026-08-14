@@ -765,6 +765,27 @@ async def vexa_webhook(
     # scoped to the meeting's own org via tenant_scoped_session.
     from app.core.database import cross_org_session, set_tenant, tenant_scoped_session
 
+    # The (platform, native_meeting_id) fallback picks the newest ACTIVE match
+    # ACROSS ALL TENANTS, because a meeting code is not globally unique — two
+    # tenants can legitimately hold the same Google Meet code. That is only safe
+    # while no better key exists, which is the pre-spawn "pending" phase.
+    #
+    # A typed 0.12 envelope always carries the globally unique Vexa meeting id
+    # (it is minted by the same service that sends the webhook), so if one
+    # arrives WITHOUT it, something is wrong with the sender — and silently
+    # falling back to a cross-tenant code match is how such an event lands on
+    # the wrong tenant's meeting. Refuse instead. `event_id` is the marker: only
+    # webhook.v1 envelopes carry it.
+    if payload.event_id and payload.vexa_meeting_id is None:
+        logger.warning(
+            "Vexa webhook: typed event without vexa_meeting_id, refusing cross-tenant fallback",
+            event_id=payload.event_id,
+            event_type=payload.event_type,
+            platform=payload.platform,
+            native_meeting_id=payload.native_meeting_id,
+        )
+        return {"status": "ignored"}
+
     async with cross_org_session() as lookup_db:
         # Prefer vexa_meeting_id (unambiguous FK); fall back to
         # (platform, native_meeting_id) pair which can correlate even
