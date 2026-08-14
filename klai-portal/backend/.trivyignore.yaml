@@ -8,24 +8,6 @@
 # `trivyignores:` (added in PR #3 of SPEC-CI-TRIVY-POLICY-001).
 
 vulnerabilities:
-  - id: CVE-2026-6357
-    statement: |
-      Affects pip 26.0.1 — the GitHub Actions runner image's bootstrap pip,
-      NOT an app dependency resolved by uv at runtime. uv handles all
-      package resolution post-build; the container never invokes pip after
-      the image is built. The vulnerable code path requires user-controlled
-      package install, which the runtime container never performs.
-
-      The same CVE is already explicitly ignored in the workflow's
-      pip-audit step (.github/workflows/portal-api.yml line 74) under
-      its alternative GHSA reference CVE-2026-3219. This entry brings the
-      Trivy scan in line with that pre-existing decision.
-
-      Re-evaluate when actions/runner-images ships a default pip ≥26.1.
-    expired_at: 2026-09-01
-    purls:
-      - "pkg:pypi/pip@26.0.1"
-
   - id: GHSA-6v7p-g79w-8964
     statement: |
       msgpack 1.1.2 lives in the python:3.13-slim base-image site-packages
@@ -47,7 +29,7 @@ vulnerabilities:
       vulnerable path (PackageIndex.download path traversal) only triggers
       when installing packages at runtime; the container never invokes
       setuptools/pip after the image is built — uv resolves everything at
-      build time. Same reasoning as the existing CVE-2026-6357 pip entry.
+      build time.
 
       Re-evaluate when the python:3.13-slim base image ships
       setuptools >= 78.1.1.
