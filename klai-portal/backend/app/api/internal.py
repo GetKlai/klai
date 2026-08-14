@@ -1495,23 +1495,44 @@ class RegenerateResponse(BaseModel):
     tenants_updated: list[str]
     errors: list[str]
     tenants_skipped: list[str] = []
+    # SPEC-TENANT-ENV-RECONCILE-001: slug -> keys additively appended to that
+    # tenant's .env this run. A tenant absent from this dict either has no
+    # keys missing (already reconciled / freshly provisioned) or failed
+    # entirely (see ``errors``). Never contains an empty list.
+    env_keys_added: dict[str, list[str]] = {}
 
 
 def _regenerate_tenant_yaml_configs(
     tenants: list[PortalOrg],
     base_yaml_path: Path,
-) -> tuple[list[str], list[str], list[str]]:
-    """Step 1 of the fleet regenerate: write librechat.yaml for every tenant.
+) -> tuple[list[str], list[str], list[str], dict[str, list[str]]]:
+    """Step 1 of the fleet regenerate: write librechat.yaml + reconcile .env for every tenant.
 
     Non-destructive (file writes only) -- always attempts every tenant and
-    accumulates errors, regardless of ``recreate_containers``. Returns
-    ``(updated, slugs_to_restart, errors)``.
+    accumulates errors, regardless of ``recreate_containers``. Env
+    reconciliation (SPEC-TENANT-ENV-RECONCILE-001) is additive-only: it
+    backfills newly-introduced env vars (e.g. PORTAL_INTERNAL_URL /
+    PORTAL_INTERNAL_SECRET from SPEC-KB-015) into tenants provisioned before
+    those vars existed, WITHOUT touching any existing key -- see the safety
+    invariant documented on ``reconcile_librechat_env``. A reconcile failure
+    (most commonly ``EnvFileMissingError`` for a tenant whose provisioning
+    never completed) is treated the same as a yaml-generation failure: the
+    tenant is excluded from ``updated``/``slugs_to_restart`` and its error is
+    recorded, so it is also excluded from the recreate-mode container step.
+
+    Returns ``(updated, slugs_to_restart, errors, env_keys_added)``.
     """
-    from app.services.provisioning.generators import _generate_librechat_yaml
+    from app.services.provisioning.generators import (
+        _generate_librechat_yaml,
+        _reconcilable_env_vars,
+        reconcile_librechat_env,
+    )
 
     updated: list[str] = []
     slugs_to_restart: list[str] = []
     errors: list[str] = []
+    env_keys_added: dict[str, list[str]] = {}
+    required_env_vars = _reconcilable_env_vars()
     for org in tenants:
         slug = org.slug
         if not slug:
@@ -1521,13 +1542,19 @@ def _regenerate_tenant_yaml_configs(
             tenant_yaml_dir = Path(settings.librechat_container_data_path) / slug
             tenant_yaml_dir.mkdir(parents=True, exist_ok=True)
             (tenant_yaml_dir / "librechat.yaml").write_text(tenant_yaml_content)
+
+            added_keys = reconcile_librechat_env(tenant_yaml_dir / ".env", required_env_vars)
+            if added_keys:
+                env_keys_added[slug] = added_keys
+                structlog_logger.info("tenant_env_reconciled", slug=slug, keys_added=added_keys)
+
             slugs_to_restart.append(slug)
             updated.append(slug)
             logger.info("Regenerated config for tenant %s", slug)
         except Exception as exc:
             errors.append(f"{slug}: {exc}")
             logger.warning("Config regeneration failed for %s: %s", slug, exc, exc_info=True)
-    return updated, slugs_to_restart, errors
+    return updated, slugs_to_restart, errors, env_keys_added
 
 
 def _apply_librechat_container_step(
@@ -1627,8 +1654,9 @@ async def regenerate_librechat_configs(
     loop = asyncio.get_running_loop()
     skipped: list[str] = []
 
-    # Step 1: Regenerate all tenant configs from the updated base template.
-    updated, slugs_to_restart, errors = _regenerate_tenant_yaml_configs(list(tenants), base_yaml_path)
+    # Step 1: Regenerate all tenant configs + reconcile .env from the updated
+    # base template (SPEC-TENANT-ENV-RECONCILE-001).
+    updated, slugs_to_restart, errors, env_keys_added = _regenerate_tenant_yaml_configs(list(tenants), base_yaml_path)
 
     if not slugs_to_restart:
         # Cross-tenant operation — no resolvable org_id. Use 0 per REQ-2.6.
@@ -1638,7 +1666,9 @@ async def regenerate_librechat_configs(
             # broken base template) -- fail loud instead of a green 200 that
             # hides a systemic break from CI.
             response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return RegenerateResponse(tenants_updated=updated, errors=errors, tenants_skipped=skipped)
+        return RegenerateResponse(
+            tenants_updated=updated, errors=errors, tenants_skipped=skipped, env_keys_added=env_keys_added
+        )
 
     # Step 2: Targeted invalidation of the LibreChat config cache via protocol
     # (NOT docker exec -- SEC-021 docker-socket-proxy denies /exec/*/start).
@@ -1705,7 +1735,9 @@ async def regenerate_librechat_configs(
         # must fail loud so CI cannot go green while the fleet crashloops.
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
-    return RegenerateResponse(tenants_updated=updated, errors=errors, tenants_skipped=skipped)
+    return RegenerateResponse(
+        tenants_updated=updated, errors=errors, tenants_skipped=skipped, env_keys_added=env_keys_added
+    )
 
 
 # ---------------------------------------------------------------------------

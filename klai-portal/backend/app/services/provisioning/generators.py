@@ -5,9 +5,12 @@ These functions are pure generators with no side effects on external systems.
 """
 
 import copy
+import os
 import re
 import secrets
 import unicodedata
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -19,6 +22,112 @@ from app.core.provisioning_names import validate_slug_for_provisioning
 from app.services.secrets import decrypt_mcp_secret, is_secret_var
 
 logger = structlog.get_logger()
+
+
+class EnvFileMissingError(RuntimeError):
+    """Raised by ``reconcile_librechat_env`` when the tenant's .env file does not exist.
+
+    A missing env file means provisioning never wrote one for this tenant --
+    that is a provisioning gap, not something reconciliation should paper
+    over by fabricating a partial env from scratch (which would ship with no
+    MongoDB/Zitadel/session secrets wiring). Callers must surface this as an
+    explicit error and route the tenant through provisioning repair instead.
+    """
+
+
+def _reconcilable_env_vars() -> dict[str, str]:
+    """Single source of truth for additive per-tenant LibreChat env vars.
+
+    SPEC-TENANT-ENV-RECONCILE-001: entries here are consumed by BOTH the
+    fresh-provisioning path (``_generate_librechat_env`` below) and the
+    existing-tenant reconciliation path (``reconcile_librechat_env`` /
+    the ``/internal/librechat/regenerate`` endpoint), so a newly introduced
+    env var reaches every tenant -- new and existing -- with a one-line
+    addition here.
+
+    [HARD] Additive-only contract: reconciliation NEVER rewrites or rotates
+    an existing key's value (see ``reconcile_librechat_env``). Do not add an
+    entry here whose value must change per-invocation (e.g. a fresh secrets
+    token) -- those stay inline in ``_generate_librechat_env`` and are never
+    reconciled into existing tenants.
+
+    Computed lazily (not a module-level constant) so ``settings.internal_secret``
+    always reflects the current value at call time.
+    """
+    return {
+        "PORTAL_INTERNAL_URL": "http://portal-api:8010",
+        "PORTAL_INTERNAL_SECRET": settings.internal_secret,
+    }
+
+
+_ENV_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
+
+
+def _parse_env_keys(content: str) -> set[str]:
+    """Return the set of KEY names defined in dotenv-formatted ``content``.
+
+    Ignores comments (lines starting with ``#``) and blank lines. Values may
+    contain ``=`` themselves (e.g. a Mongo URI query string) -- only the
+    first ``=`` on a ``KEY=...`` line is used to detect the key name.
+    """
+    keys: set[str] = set()
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = _ENV_KEY_RE.match(stripped)
+        if match:
+            keys.add(match.group(1))
+    return keys
+
+
+def reconcile_librechat_env(env_path: Path, required: Mapping[str, str]) -> list[str]:
+    """Additively append missing keys to an existing tenant .env file.
+
+    [HARD SAFETY INVARIANT] This function NEVER rewrites, reorders, or
+    re-quotes an existing line. ``_generate_librechat_env`` calls
+    ``secrets.token_hex(...)`` fresh on every invocation for
+    ``JWT_SECRET``/``JWT_REFRESH_SECRET``/``OPENID_SESSION_SECRET``/
+    ``CREDS_KEY``/``CREDS_IV`` -- ``CREDS_KEY``/``CREDS_IV`` encrypt
+    user-stored LibreChat credentials in MongoDB. Regenerating a tenant's
+    .env wholesale would rotate those, making existing user data
+    undecryptable and logging every user out. Reconciliation therefore only
+    APPENDS keys from ``required`` that are absent; every existing line is
+    left byte-identical.
+
+    Raises ``EnvFileMissingError`` if ``env_path`` does not exist -- a
+    tenant without an env file is a provisioning problem to report, not to
+    paper over with a freshly fabricated partial env.
+
+    Writes atomically (write ``<path>.new``, ``chmod 600``, ``os.replace``)
+    per the house rule in ``.claude/rules/klai/infra/deploy.md`` "Atomic env
+    writes".
+
+    Returns the list of keys that were appended, in the order they appear
+    in ``required``. An empty list means the file was left completely
+    untouched (no write, no mtime bump).
+    """
+    if not env_path.exists():
+        raise EnvFileMissingError(f"tenant env file not found: {env_path}")
+
+    existing_content = env_path.read_text()
+    existing_keys = _parse_env_keys(existing_content)
+
+    missing = {key: value for key, value in required.items() if key not in existing_keys}
+    if not missing:
+        return []
+
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d")
+    addition_lines = [f"\n# --- klai managed additions (reconciled {timestamp}) ---"]
+    addition_lines.extend(f"{key}={value}" for key, value in missing.items())
+    new_content = existing_content.rstrip("\n") + "\n" + "\n".join(addition_lines) + "\n"
+
+    tmp_path = env_path.parent / f"{env_path.name}.new"
+    tmp_path.write_text(new_content)
+    tmp_path.chmod(0o600)
+    os.replace(tmp_path, env_path)
+
+    return list(missing.keys())
 
 
 def _slugify_unique(name: str, existing_slugs: set[str]) -> str:
@@ -133,6 +242,11 @@ def _generate_librechat_env(
 
     mcp_env_block = "\n".join(mcp_env_lines)
 
+    # SPEC-TENANT-ENV-RECONCILE-001: same mapping ``reconcile_librechat_env``
+    # uses to backfill existing tenants -- single source of truth so new env
+    # vars reach both fresh and existing tenants from a one-line change.
+    reconcilable_env_lines = "\n".join(f"{key}={value}" for key, value in _reconcilable_env_vars().items())
+
     return f"""# Auto-generated by portal-api at provisioning. Do not edit manually.
 # Tenant: {slug}
 
@@ -222,7 +336,6 @@ KNOWLEDGE_INGEST_SECRET={settings.knowledge_ingest_secret}
 # against (settings.internal_secret / INTERNAL_SECRET); librechat_tenant_id
 # is derived by the patch from KLAI_ORG_SLUG above, not from LibreChat's JWT
 # user object (LibreChat never populates a tenantId claim there).
-PORTAL_INTERNAL_URL=http://portal-api:8010
-PORTAL_INTERNAL_SECRET={settings.internal_secret}
+{reconcilable_env_lines}
 {mcp_env_block}
 """

@@ -501,3 +501,28 @@ class TestGenerateLibrechatYaml:
         result_empty = _generate_librechat_yaml(base_yaml_file, mcp_servers={})
         # Empty dict is falsy, so same as None
         assert yaml.safe_load(result_none) == yaml.safe_load(result_empty)
+
+
+class TestGenerateLibrechatEnvUsesReconcileMapping:
+    """SPEC-TENANT-ENV-RECONCILE-001: fresh provisioning and existing-tenant
+    reconciliation must derive PORTAL_INTERNAL_URL / PORTAL_INTERNAL_SECRET
+    (and any future additive var) from the SAME single-source-of-truth
+    mapping, so a one-line addition to ``_reconcilable_env_vars`` reaches
+    both new and existing tenants without further code changes.
+    """
+
+    def test_fresh_env_contains_every_reconcilable_var(self):
+        from app.services.provisioning import generators as generators_mod
+        from app.services.provisioning.generators import _generate_librechat_env
+
+        result = _generate_librechat_env(
+            slug="acme",
+            client_id="cid",
+            client_secret="csec",
+            litellm_api_key="key",
+            mongo_password="pw",
+            meili_api_key="tenant-meili-key",
+        )
+
+        for key, value in generators_mod._reconcilable_env_vars().items():
+            assert f"{key}={value}" in result
