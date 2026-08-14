@@ -46,6 +46,13 @@ from __future__ import annotations
 # filtered just because their payload predates the field.
 _DEFAULT_QUALITY = 0.5
 
+# SPEC-KB-015 REQ (r.112/118/182): the feedback loop does not treat a score as
+# a signal until three votes have landed — "the cold start guard prevents a
+# single data point from affecting ranking". Mirrors _COLD_START_MIN_VOTES in
+# quality_boost.py; the two MUST stay equal or boost and floor disagree about
+# what counts as a signal.
+_COLD_START_MIN_VOTES = 3
+
 
 def filter_quality_floor(
     chunks: list[dict],
@@ -71,6 +78,20 @@ def filter_quality_floor(
         qs = c.get("quality_score", _DEFAULT_QUALITY)
         if not isinstance(qs, (int, float)):
             # Corrupt payload — treat as default rather than crash.
+            qs = _DEFAULT_QUALITY
+        fc = c.get("feedback_count", 0)
+        if not isinstance(fc, (int, float)):
+            # Corrupt count must not become an accidental exemption.
+            fc = 0
+        if 0 < fc < _COLD_START_MIN_VOTES:
+            # One or two votes are not yet a signal (SPEC-KB-015). Judge the
+            # chunk on the value it had before that feedback landed, so a
+            # cold-start chunk behaves exactly like an unvoted one. Without
+            # this, a single thumbsDown drives the running average to exactly
+            # 0.0 and drops the chunk from results entirely — a far stronger
+            # effect than the +-10% adjustment KB-015 gates behind three votes.
+            # feedback_count == 0 is untouched: that is the auth-wall degrade
+            # marker this filter exists for (LOGIN-WALL-DETECT-001 REQ-07).
             qs = _DEFAULT_QUALITY
         if qs < floor:
             n_filtered += 1
