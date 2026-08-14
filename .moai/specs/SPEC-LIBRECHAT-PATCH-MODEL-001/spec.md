@@ -204,6 +204,32 @@ Dockerfile's `COPY` lines disagree with it (the `url-shape-multi-file-drift`
 class). Provenance logic is testable without a Docker daemon via
 `KLAI_LIBRECHAT_EXTRACT_DIR`.
 
+### Phase 2 — adversarial review outcome (2026-08-14, PR #917)
+
+An external adversarial review confirmed the artifact claim (rebuilt-vs-deployed
+differences are cosmetic; all five local build hashes matched CI) and found six
+defects, three of them Phase 3 blockers. All fixed in #917:
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | HIGH | `v0.8.7-klai.1` was overwritten with a second digest | Tag carries the commit; workflow refuses to overwrite; digest printed for pinning |
+| 2 | HIGH | Provenance check was self-attesting — a manifest claiming `v999-attacker` verified OK | Verification takes expected tag/ref/revision and re-hashes this checkout's diffs |
+| 3 | MED | "Behaviour tests against the built image" covered 3 of 5 artifacts | `built_artifacts.test.cjs` adds search + index.cjs; a drift test keeps the step wired |
+| 4 | MED | `sources: []` suppressed valid marker sources (`??` on a non-nullish empty array) | Only a non-empty list wins; pre-existing in the deployed patch, not introduced by Phase 2 |
+| 5 | MED | `--depth 1` made `git apply --3way` degrade silently to direct application | `--filter=blob:none`; fallback is now fatal |
+| 6 | LOW | Complete and partial marker grammars disagreed (whitespace, >8192 tails) | One grammar drives both; cap documented as a protocol contract at 65536 |
+
+**Do not pin `ghcr.io/getklai/librechat:v0.8.7-klai.1`.** That tag is abandoned:
+it points at one of two builds that were pushed over each other before finding 1
+was fixed, and it cannot be deleted with the tokens available here. Phase 3 pins
+the **digest** of an immutable `-<commit>` tag. The current one is
+`ghcr.io/getklai/librechat:v0.8.7-klai.1-cc75acb0d37c`
+(`sha256:7d8bb07626…`), built from main after #917.
+
+The F4/F6 stream fixes deliberately did NOT go out to the bind-mounted `.cjs`
+in production. Their tests assert against the built artifact, so those fixes
+reach users through the Phase 3 canary — which is what a canary is for.
+
 ### Phase 3 — Migrate surfaces 1–5 to canary
 Point `librechat-getklai`'s image at the Klai-owned tag. Verify against `deploy/librechat/tests/*.test.cjs` plus a new integration smoke test. Remove the corresponding entries from `deploy/librechat/patches/` and `patch-manifest.txt` once verified. Deploy-time drift guard upgraded to REQ-6 (patched-artifact provenance).
 
