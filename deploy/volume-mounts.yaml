@@ -103,6 +103,25 @@ mounts:
     retention_enforced_by: n/a
     notes: Vexa transcription pipeline state.
 
+  vexa12-redis:
+    service: vexa12-redis
+    kind: named
+    host: vexa12-redis-data
+    container_path: /data
+    image: redis:8.10.0-alpine
+    category: data
+    data_path_source: upstream docs (Redis `dir` default)
+    pii: false
+    backup: rdb
+    backup_method: bgsave-copy
+    retention: manual
+    retention_enforced_by: n/a
+    notes: >-
+      SPEC-VEXA-004 parallel Vexa 0.12 stack. A SEPARATE instance from vexa-redis,
+      not a DB index on it: Redis pub/sub is instance-wide, and both versions
+      publish the identical bm:meeting:{id}:status and bot_commands:meeting:{id}
+      channels over independent meeting-id sequences.
+
   meilisearch:
     service: meilisearch
     kind: named
@@ -515,6 +534,25 @@ mounts:
     retention: ephemeral
     retention_enforced_by: n/a
     notes: Shared Vexa Docker socket bridge volume; recreated by runtime-api-socket-proxy.
+
+  vexa12-runtime-docker-socket:
+    service: vexa12-runtime
+    kind: named
+    host: runtime-api-docker-socket
+    container_path: /var/run
+    image: vexaai/v012-runtime:v0.12.22
+    category: ephemeral
+    data_path_source: runtime Unix socket bridge
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: ephemeral
+    retention_enforced_by: n/a
+    notes: >-
+      SPEC-VEXA-004. Same socat-provided socket volume as runtime-api, deliberately
+      reused rather than duplicated: the listener is fork,reuseaddr so a second
+      client is fine, and docker-socket-proxy still enforces the verb whitelist.
+      Like 0.10, this consumer must never bind the raw host /var/run/docker.sock.
 
   caddy-tenants-caddy:
     service: caddy
