@@ -13,9 +13,15 @@
 # production once CI rebuilds and republishes ghcr.io/getklai/caddy-hetzner.
 FROM caddy:2.11.4-builder-alpine AS builder
 
+# The trailing --with pins a dependency, not a plugin: xcaddy turns it into a
+# require+replace, so the built binary links x/net 0.56.0 instead of the 0.55.0
+# Caddy 2.11.4 ships. That closes CVE-2026-46600 properly rather than adding a
+# fourth .trivyignore entry for something with an available fix.
+# Drop the pin once Caddy ships a release that already requires >= 0.56.0.
 RUN xcaddy build \
     --with github.com/caddy-dns/hetzner/v2 \
-    --with github.com/mholt/caddy-ratelimit
+    --with github.com/mholt/caddy-ratelimit \
+    --with golang.org/x/net@v0.56.0
 
 FROM caddy:2.11.4-alpine
 
