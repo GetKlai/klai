@@ -66,6 +66,12 @@ const getklaiSrc = readFileSync(getklaiEntrypointPath, 'utf8');
 const MEILI_RE = /node <<'NODE'\n([\s\S]*?)\nNODE\nfi/;
 // Feedback-forward block: distinct heredoc marker, added 2026-08-13.
 const FEEDBACK_RE = /node <<'KB_FEEDBACK_NODE'\n([\s\S]*?)\nKB_FEEDBACK_NODE\nfi/;
+// Stream-cleanup block: distinct heredoc marker, added 2026-08-14. Patches
+// the BUILT packages/api bundle (dist/index.cjs) in place -- the mounted
+// createStreamServices.ts source patch it replaces was measured inert (the
+// runtime loads the pre-built bundle via the @librechat/api workspace
+// symlink, never the mounted source file).
+const STREAM_CLEANUP_RE = /node <<'STREAM_CLEANUP_NODE'\n([\s\S]*?)\nSTREAM_CLEANUP_NODE\nfi/;
 
 function extractBlock(src, re, label, fileLabel) {
   const m = src.match(re);
@@ -80,6 +86,13 @@ const klaiMeili = extractBlock(klaiSrc, MEILI_RE, 'meili', klaiEntrypointPath);
 const getklaiMeili = extractBlock(getklaiSrc, MEILI_RE, 'meili', getklaiEntrypointPath);
 const klaiFeedback = extractBlock(klaiSrc, FEEDBACK_RE, 'feedback', klaiEntrypointPath);
 const getklaiFeedback = extractBlock(getklaiSrc, FEEDBACK_RE, 'feedback', getklaiEntrypointPath);
+const klaiStreamCleanup = extractBlock(klaiSrc, STREAM_CLEANUP_RE, 'stream-cleanup', klaiEntrypointPath);
+const getklaiStreamCleanup = extractBlock(
+  getklaiSrc,
+  STREAM_CLEANUP_RE,
+  'stream-cleanup',
+  getklaiEntrypointPath,
+);
 
 // --- sync-guard: both entrypoints must embed byte-identical transform logic ---
 if (klaiMeili !== null && getklaiMeili !== null && klaiMeili !== getklaiMeili) {
@@ -94,6 +107,16 @@ if (klaiFeedback !== null && getklaiFeedback !== null && klaiFeedback !== getkla
     'klai-entrypoint.sh and getklai/entrypoint.sh feedback transform blocks have drifted apart; keep them byte-identical',
   );
 }
+if (
+  klaiStreamCleanup !== null &&
+  getklaiStreamCleanup !== null &&
+  klaiStreamCleanup !== getklaiStreamCleanup
+) {
+  fail(
+    'stream-cleanup-sync-guard',
+    'klai-entrypoint.sh and getklai/entrypoint.sh stream-cleanup transform blocks have drifted apart; keep them byte-identical',
+  );
+}
 
 const RUNTIME_PATHS = [
   '/app/packages/data-schemas/dist/models/message.cjs',
@@ -102,6 +125,7 @@ const RUNTIME_PATHS = [
   '/app/packages/data-schemas/dist/index.cjs',
   '/app/api/db/indexSync.js',
   '/app/api/server/routes/messages.js',
+  '/app/packages/api/dist/index.cjs',
 ];
 
 function remapPaths(script) {
@@ -248,6 +272,46 @@ if (klaiFeedback) {
       }
       if (!failed) {
         ok('feedback', 'applied cleanly; SPEC-KB-015 forward call present, node --check passed');
+      }
+    }
+  }
+}
+
+// --- Stream-cleanup dry run: execute the extracted transform against the
+// real, image-extracted packages/api bundle (dist/index.cjs). ---
+if (klaiStreamCleanup) {
+  const streamBundlePath = extractedPath('/app/packages/api/dist/index.cjs');
+  if (!existsSync(streamBundlePath)) {
+    fail('stream-cleanup', `dist/index.cjs was not extracted from the image: ${streamBundlePath}`);
+  } else {
+    const script = remapPaths(klaiStreamCleanup);
+    const result = runNode(script);
+    if (result.status !== 0) {
+      fail(
+        'stream-cleanup',
+        `transform execution failed against extracted image bundle (likely upstream syntax drift):\n${result.stderr}`,
+      );
+    } else {
+      const content = readFileSync(streamBundlePath, 'utf8');
+      const replacementCount = (content.match(/cleanupOnComplete: false/g) || []).length;
+      if (replacementCount !== 2) {
+        fail(
+          'stream-cleanup',
+          `expected exactly 2 "cleanupOnComplete: false" replacements (Redis-backed + in-memory branch), found ${replacementCount} in ${streamBundlePath} -- a leftover un-patched return means the anchor drifted or only matched partially`,
+        );
+      }
+      if (!content.includes('SPEC-STREAM-CLEANUP-001')) {
+        fail('stream-cleanup', 'expected SPEC-STREAM-CLEANUP-001 marker not found in patched bundle');
+      }
+      const chk = nodeCheck(streamBundlePath);
+      if (chk.status !== 0) {
+        fail('stream-cleanup', `node --check failed on transformed ${streamBundlePath}:\n${chk.stderr}`);
+      }
+      if (!failed) {
+        ok(
+          'stream-cleanup',
+          'applied cleanly; both branches carry cleanupOnComplete: false, node --check passed',
+        );
       }
     }
   }

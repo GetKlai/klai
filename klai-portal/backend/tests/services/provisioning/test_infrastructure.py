@@ -404,7 +404,7 @@ class TestCharacterizeStartLibrechatContainer:
         (tenant_dir / ".env").write_text("MONGO_URI=mongodb://example\nALLOW_IFRAME=true\nJWT_SECRET=keep-me\n")
         patch_dir = tmp_path / "patches"
         patch_dir.mkdir(exist_ok=True)
-        for name in ("format.cjs", "share.js", "stream.cjs", "search.cjs", "createStreamServices.ts"):
+        for name in ("format.cjs", "share.js", "stream.cjs", "search.cjs"):
             (patch_dir / name).write_text("// patch\n")
         # Klai light-theme entrypoint wrapper — fail-loud mounted, must exist.
         (tmp_path / "klai-entrypoint.sh").write_text('#!/bin/sh\nexec docker-entrypoint.sh "$@"\n')
@@ -505,10 +505,7 @@ class TestCharacterizeStartLibrechatContainer:
             "bind": "/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs",
             "mode": "ro",
         }
-        assert volumes["/opt/klai/librechat-data/patches/createStreamServices.ts"] == {
-            "bind": "/app/packages/api/src/stream/createStreamServices.ts",
-            "mode": "ro",
-        }
+        assert "/opt/klai/librechat-data/patches/createStreamServices.ts" not in volumes
 
     def test_forces_light_theme_via_entrypoint_wrapper(self, tmp_path):
         """Every provisioned tenant must boot through the Klai entrypoint
@@ -627,7 +624,7 @@ class TestStartLibrechatContainerRollback:
         (tenant_dir / ".env").write_text("MONGO_URI=mongodb://example\nALLOW_IFRAME=true\nJWT_SECRET=keep-me\n")
         patch_dir = tmp_path / "patches"
         patch_dir.mkdir(exist_ok=True)
-        for name in ("format.cjs", "share.js", "stream.cjs", "search.cjs", "createStreamServices.ts"):
+        for name in ("format.cjs", "share.js", "stream.cjs", "search.cjs"):
             (patch_dir / name).write_text("// patch\n")
         (tmp_path / "klai-entrypoint.sh").write_text('#!/bin/sh\nexec docker-entrypoint.sh "$@"\n')
 
