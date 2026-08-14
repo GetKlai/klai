@@ -10,6 +10,80 @@ SEC-021 routes all portal-api and runtime-api Docker API traffic through
 `tecnativa/docker-socket-proxy` instead of binding `/var/run/docker.sock`
 directly. The proxy restricts which Docker API endpoints are reachable.
 
+## Two layers, and what each one can see (CRIT)
+
+There are now TWO controls in front of the daemon, and confusing them is how the
+gap below stayed open for months:
+
+```
+portal-api ──────────────► klai-docker-authz :2375 ┐
+                                                    ├─► docker-socket-proxy ─► /var/run/docker.sock
+runtime-api-socket-proxy ► klai-docker-authz :2376 ┘        (method + path)
+                                    (request BODY)
+```
+
+| Layer | Authorises on | Cannot see |
+|---|---|---|
+| `docker-socket-proxy` | method + path (`CONTAINERS`, `NETWORKS`, `POST`, `DELETE`) | anything inside the request body |
+| `klai-docker-authz` | the `HostConfig` inside `POST /containers/create` | nothing else — every other endpoint passes straight through |
+
+**Why the second layer exists.** `POST /containers/create` is on the path
+whitelist and its body was never parsed. `HostConfig` lives in that body, and
+`HostConfig` is where container isolation is decided. Proven on 2026-08-14
+against `tecnativa/docker-socket-proxy:v0.5.0` with production's exact env: a
+create carrying `Binds: ["/:/host"]`, `Privileged: true`, `PidMode: "host"`
+returned **201**, started **204**, and the container read the host's
+`/etc/hostname`. Endpoint whitelisting does not constrain `HostConfig` — that is
+documented Docker behaviour, not a proxy bug. SPEC-SEC-DOCKER-AUTHZ-001.
+
+### Per-principal allowlist
+
+Identity comes from the listener port, not from a peer address — the Vexa runtime
+arrives through a socat bridge and would otherwise present the sidecar's address.
+
+| Port | Principal | Binds | NetworkMode |
+|---|---|---|---|
+| 2375 | `portal-api` | only under `/opt/klai/librechat` | any (provisioning attaches networks separately) |
+| 2376 | `vexa12-runtime` | **none at all** | `vexa12-bots` only |
+
+Forbidden for BOTH, regardless of port: `Privileged`, `CapAdd`, `Devices`,
+`DeviceCgroupRules`, `CgroupParent`, `PidMode`, `IpcMode`, `UsernsMode`,
+`SecurityOpt`, `Sysctls`, `Runtime`, and `NetworkMode: host|none`.
+
+The two allowlists are not guesses. Every bind in
+`_start_librechat_container` sits under that one prefix, and the Vexa runtime's
+three bind sources all belong to Vexa's agent feature, which Klai does not deploy
+(`AGENT_IMAGE` empty, `HOST_CLAUDE_CREDENTIALS` / `VEXA_AGENT_SRC_MOUNT` unset).
+
+### Extending it
+
+Widening a policy is a security-review event, not a routing tweak.
+
+1. Change `klai-docker-authz/app/policy.py` — the `Policy` for that principal.
+2. Add a test in `klai-docker-authz/tests/test_policy.py` proving the NEW shape
+   passes AND the escalation shape still fails. Both directions, or it is not a
+   test.
+3. Say in the diff WHY the caller's shape changed. "To unblock the deploy" is not
+   a reason; it is the symptom that something upstream changed unnoticed.
+
+Note on falsy values: `Privileged: false` and `CapAdd: null` are what docker-py
+sends on every create and are explicitly ALLOWED. A policy keyed on key-presence
+rather than on a requested value passes every hostile-input test and then refuses
+all tenant provisioning.
+
+### Who may reach the daemon at all
+
+`scripts/audit-docker-access.sh` pins two sets in CI (via `audit-compose.yml`):
+the `socket-proxy` network members, and the containers mounting the raw
+`/var/run/docker.sock`. The MUST-NOT list further down this file enumerates the
+*forbidden*, so a new service is permitted by default; the audit inverts that.
+
+`alloy` mounts the raw socket and therefore bypasses `klai-docker-authz`
+entirely. Its mount is `RW=false`, which protects the socket FILE but does not
+make the Docker API read-only — a process that can write the byte stream can
+still `POST /containers/create`. It needs `GET` only. Recorded as an open item in
+SPEC-SEC-DOCKER-AUTHZ-001; do not treat the read-only flag as containment.
+
 ## Containers that MUST NOT join the socket-proxy network (SPEC-SEC-SSRF-001 REQ-5)
 
 Any container that accepts a user-supplied URL and fetches it is one

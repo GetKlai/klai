@@ -13,7 +13,10 @@
 // ─── Docker container log collection ─────────────────────────────────────────
 
 discovery.docker "containers" {
-  host = "unix:///var/run/docker.sock"
+  // SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a: no raw socket. docker-socket-proxy-ro
+  // serves GET only (POST and DELETE unset), so log discovery and streaming work
+  // while container-create is structurally impossible from here.
+  host = "http://docker-socket-proxy-ro:2375"
 }
 
 // Labels must be applied via discovery.relabel BEFORE loki.source.docker.

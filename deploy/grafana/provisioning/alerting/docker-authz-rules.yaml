@@ -1,0 +1,118 @@
+# SPEC-SEC-DOCKER-AUTHZ-001 — Docker container-create authorization denials.
+#
+# Routed via spec=SPEC-SEC-DOCKER-AUTHZ-001 → klai-ops-alerts-email (policies.yaml).
+#
+# Baseline is ZERO. `klai-docker-authz` denies a container-create only when a
+# principal asked for something its policy forbids: a host bind, Privileged,
+# PidMode:host, a CapAdd, an escape from its network. Neither portal-api's tenant
+# provisioning nor the Vexa bot spawn produces any of those — both were read off
+# their callsites and both are covered by tests. So a denial is one of exactly
+# two things:
+#
+#   1. Someone with code execution inside portal-api or vexa12-runtime is trying
+#      to escalate to host root. That is the attack this service exists to stop,
+#      and the denial is the ONLY signal it happened — the caller sees a 403 and
+#      the operation simply fails, which from the outside looks like a bug.
+#   2. A legitimate need nobody wrote down: upstream Vexa started sending a bind,
+#      or provisioning gained a mount outside /opt/klai/librechat. Then the
+#      allowlist in klai-docker-authz/app/policy.py needs a reviewed change, not
+#      a silent widening.
+#
+# Both want a human, immediately, which is why this fires on the FIRST denial
+# rather than on a rate. A threshold above zero here would mean deciding how much
+# attempted privilege escalation is acceptable per interval.
+#
+# Field shape verified against the live service (2026-08-14):
+#   {"event":"docker_authz_denied","principal":"portal-api",
+#    "reason":"portal-api may not set HostConfig.PidMode (got 'host') — ...",
+#    "container_name":"...","service":"klai-docker-authz","level":"error"}
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: sec-docker-authz-001
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── Any denied container-create ──────────────────────────────────────
+      - uid: spec-authz-001-create-denied
+        title: docker_authz_create_denied
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:klai-docker-authz AND event:docker_authz_denied'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        # execErrState: OK — same VictoriaLogs-plugin/Grafana-SSE shape hiccup
+        # documented in caddy-rules.yaml. Missing a fire on a plugin error is
+        # preferable to paging on one; the denial is also in the service's own
+        # logs, so the evidence survives a missed alert.
+        execErrState: OK
+        # for: 0m — fire on the first evaluation that sees a denial. A sustained
+        # window would delay exactly the signal that matters most.
+        for: 0m
+        keepFiringFor: 15m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-SEC-DOCKER-AUTHZ-001
+          service_group: security
+        annotations:
+          summary: 'klai-docker-authz refused a container-create — privilege escalation attempt or an undocumented need'
+          description: |
+            A principal asked the Docker daemon to create a container with a
+            HostConfig its policy forbids, and klai-docker-authz refused.
+
+            Baseline is zero: neither tenant provisioning nor a bot spawn sends
+            any forbidden field.
+
+            Find the denial and read `principal` + `reason`:
+              service:klai-docker-authz AND event:docker_authz_denied
+
+            If `reason` names Privileged / PidMode / CapAdd / Devices / a bind
+            outside the allowlist, treat it as a compromise of that principal
+            until proven otherwise — that combination has no legitimate caller.
+
+            If it names a bind that looks plausible (a new mount in provisioning,
+            or a Vexa upstream change), the allowlist in
+            klai-docker-authz/app/policy.py needs a reviewed change. Do NOT widen
+            it to unblock a deploy without understanding why the shape changed.
+
+            The proven escalation this service blocks is recorded in
+            .moai/specs/SPEC-SEC-DOCKER-AUTHZ-001/spec.md.
