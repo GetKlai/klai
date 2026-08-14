@@ -1264,6 +1264,17 @@ async def list_kb_sources(
         active_upload_paths.add(path)
         created_at_unix = upload.get("created_at")
         created_at_dt = datetime.fromtimestamp(int(created_at_unix), tz=dt.UTC) if created_at_unix is not None else None
+        # index_status_changed_at marks the start of the LAST (re)index
+        # attempt. Surfacing it as last_sync_at lets the frontend's
+        # "Bezig sinds Xm / Hangt al Xm" badge measure from the re-sync
+        # click instead of the artifact creation date (which showed
+        # "Hangt al 11384m" immediately after re-syncing an 8-day-old
+        # source). NULL for rows that never transitioned since the column
+        # landed — frontend falls back to created_at.
+        status_changed_unix = upload.get("index_status_changed_at")
+        status_changed_dt = (
+            datetime.fromtimestamp(int(status_changed_unix), tz=dt.UTC) if status_changed_unix is not None else None
+        )
         sources.append(
             SourceOut(
                 kind="upload",
@@ -1276,6 +1287,7 @@ async def list_kb_sources(
                 chunks_count=int(upload.get("chunks_count") or 0),
                 status=None,
                 created_at=created_at_dt,
+                last_sync_at=status_changed_dt,
                 index_status=str(upload.get("index_status") or "synced"),
             )
         )

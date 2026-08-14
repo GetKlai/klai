@@ -68,34 +68,51 @@ def test_all_queue_values_use_kebab_case():
 # --- SPEC-WORKER-LANES-001 invariants ---------------------------------------
 
 
-def test_io_and_llm_lanes_partition_all_queues():
-    """Every queue MUST belong to exactly one lane (I/O xor LLM).
+def test_lanes_partition_all_queues():
+    """Every queue MUST belong to exactly one lane (I/O xor interactive xor LLM).
 
-    A queue that escapes both lanes silently disables itself: no worker
-    subscribes to it. A queue that lands in both lanes is double-handled
+    A queue that escapes all lanes silently disables itself: no worker
+    subscribes to it. A queue that lands in two lanes is double-handled
     by competing worker processes and the lane SLAs collapse. Both are
     silent failures — pin the partition mechanically.
     """
     io = set(queues.IO_QUEUES)
+    interactive = set(queues.INTERACTIVE_QUEUES)
     llm = set(queues.LLM_QUEUES)
     all_q = set(queues.ALL_QUEUES)
 
-    assert io & llm == set(), f"queue belongs to both lanes: {io & llm}"
-    assert io | llm == all_q, (
+    assert io & llm == set(), f"queue belongs to both I/O and LLM lanes: {io & llm}"
+    assert io & interactive == set(), f"queue in both I/O and interactive: {io & interactive}"
+    assert interactive & llm == set(), f"queue in both interactive and LLM: {interactive & llm}"
+    assert io | interactive | llm == all_q, (
         f"lanes do not cover ALL_QUEUES.\n"
-        f"  in ALL_QUEUES but not in any lane: {all_q - (io | llm)}\n"
-        f"  in lanes but not in ALL_QUEUES: {(io | llm) - all_q}"
+        f"  in ALL_QUEUES but not in any lane: {all_q - (io | interactive | llm)}\n"
+        f"  in lanes but not in ALL_QUEUES: {(io | interactive | llm) - all_q}"
     )
 
 
-def test_all_queues_is_io_plus_llm_in_order():
-    """``ALL_QUEUES = IO_QUEUES + LLM_QUEUES`` (and order matters: I/O
-    first reflects the 'latency-first' priority of the architecture).
+def test_all_queues_is_lanes_concatenated_in_order():
+    """``ALL_QUEUES = IO_QUEUES + INTERACTIVE_QUEUES + LLM_QUEUES`` (order
+    matters: latency-sensitive lanes first reflects the architecture).
 
     Order matters because ``test_all_queues_contains_every_string_constant``
     + downstream tests rely on the union being deterministic.
     """
-    assert queues.ALL_QUEUES == queues.IO_QUEUES + queues.LLM_QUEUES
+    assert queues.ALL_QUEUES == queues.IO_QUEUES + queues.INTERACTIVE_QUEUES + queues.LLM_QUEUES
+
+
+def test_enrich_interactive_has_its_own_lane():
+    """User-triggered re-syncs must not share a lane with bulk work.
+
+    Procrastinate fetches the oldest todo across a worker's whole queue
+    set — with ENRICH_INTERACTIVE inside the LLM lane, a bulk crawl's
+    backlog of hundreds of enrich-bulk/graphiti-bulk jobs made a single
+    user-requested reindex wait for hours (intermedia.com incident,
+    2026-08-14).
+    """
+    assert queues.INTERACTIVE_QUEUES == [queues.ENRICH_INTERACTIVE]
+    assert queues.ENRICH_INTERACTIVE not in queues.LLM_QUEUES
+    assert queues.ENRICH_INTERACTIVE not in queues.IO_QUEUES
 
 
 def test_crawl_jobs_lives_in_io_lane():

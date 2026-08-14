@@ -1574,14 +1574,16 @@ async def list_kb_sources(
             a.content_type AS content_type,
             a.created_at AS created_at,
             COUNT(pc.id) AS chunks_count,
-            a.index_status AS index_status
+            a.index_status AS index_status,
+            a.index_status_changed_at AS index_status_changed_at
         FROM knowledge.artifacts a
         LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
         WHERE a.org_id = $1
           AND a.kb_slug = $2
           AND a.belief_time_end = $3
           AND (a.extra IS NULL OR a.extra::jsonb->>'source_connector_id' IS NULL)
-        GROUP BY a.id, a.path, a.extra, a.content_type, a.created_at, a.index_status
+        GROUP BY a.id, a.path, a.extra, a.content_type, a.created_at, a.index_status,
+                 a.index_status_changed_at
         ORDER BY a.created_at DESC
         """,
         org_id,
@@ -1598,6 +1600,11 @@ async def list_kb_sources(
             "created_at": int(row["created_at"]),
             "chunks_count": int(row["chunks_count"] or 0),
             "index_status": row["index_status"],
+            "index_status_changed_at": (
+                int(row["index_status_changed_at"])
+                if row["index_status_changed_at"] is not None
+                else None
+            ),
         }
         for row in upload_rows
     ]
@@ -1773,6 +1780,7 @@ async def set_artifact_index_status(
             """
             UPDATE knowledge.artifacts
             SET index_status = $1,
+                index_status_changed_at = $5,
                 belief_time_end = $2
             WHERE id = $3::uuid
               AND org_id = $4
@@ -1783,6 +1791,7 @@ async def set_artifact_index_status(
             _SENTINEL,
             artifact_id,
             org_id,
+            int(time.time()),
         )
     if row is None:
         return None
@@ -1799,7 +1808,8 @@ async def set_artifact_ingest_status(
     row = await conn.fetchrow(
         """
         UPDATE knowledge.artifacts
-        SET index_status = $1
+        SET index_status = $1,
+            index_status_changed_at = $4
         WHERE id = $2::uuid
           AND org_id = $3
         RETURNING id::text AS artifact_id, path
@@ -1807,6 +1817,7 @@ async def set_artifact_ingest_status(
         status,
         artifact_id,
         org_id,
+        int(time.time()),
     )
     if row is None:
         return None
@@ -1845,7 +1856,8 @@ async def mark_stale_pending_artifacts_failed(
             FOR UPDATE SKIP LOCKED
         )
         UPDATE knowledge.artifacts a
-        SET index_status = 'failed'
+        SET index_status = 'failed',
+            index_status_changed_at = extract(epoch from now())::bigint
         FROM stale
         WHERE a.id = stale.id
         RETURNING

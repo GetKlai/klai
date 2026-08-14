@@ -92,6 +92,18 @@ export function StatusBadge({ source }: { source: Source }) {
     )
   }
 
+  // Failed uploads (index_status === 'failed') previously fell through to the
+  // neutral "Leeg" badge, so a permanently failed source looked merely
+  // un-synced — the intermedia.com failure went unnoticed for 8 days. Show
+  // the same destructive treatment connectors get, with a retry hint.
+  if (source.kind === 'upload' && (source.index_status ?? '').toLowerCase() === 'failed') {
+    return (
+      <Badge variant="destructive" title={m.kb_status_failed_tooltip()}>
+        {m.kb_status_probleem()}
+      </Badge>
+    )
+  }
+
   // Stale-indicator for sources stuck in 'pending'. last_sync_at is the
   // best signal of "when did this attempt start" — falls back to created_at
   // for sources that have never completed a sync yet (the common case for
