@@ -1,8 +1,8 @@
 diff --git a/api/server/routes/messages.js b/api/server/routes/messages.js
-index 17e740c51..4fe008979 100644
+index 17e740c51..eeb650ac1 100644
 --- a/api/server/routes/messages.js
 +++ b/api/server/routes/messages.js
-@@ -415,6 +415,36 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
+@@ -415,6 +415,43 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
        }).catch((err) => logger.error('[langfuse] feedback score failed:', err));
      }
  
@@ -28,6 +28,13 @@ index 17e740c51..4fe008979 100644
 +          text: feedback.text ?? null,
 +          model_alias: updatedMessage?.model ?? null,
 +          librechat_user_id: req.user?.id ?? '',
++          // The retrieval log is keyed by the Zitadel subject, which
++          // LibreChat stores as openidId. Sending only req.user.id (a
++          // Mongo ObjectId) meant feedback could never be correlated to
++          // the chunks that produced the answer -- 55 of 58 events came
++          // back uncorrelated. Sent alongside, not instead: the field
++          // above still means what its name says.
++          identity_user_id: req.user?.openidId ?? null,
 +          librechat_tenant_id: process.env.KLAI_ORG_SLUG ? `librechat-${process.env.KLAI_ORG_SLUG}` : null,
 +        }),
 +      }).catch((err) => {

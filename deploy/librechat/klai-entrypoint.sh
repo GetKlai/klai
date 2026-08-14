@@ -314,6 +314,7 @@ const REPLACE = `      { context: 'updateFeedback' },
           text: feedback.text ?? null,
           model_alias: updatedMessage?.model ?? null,
           librechat_user_id: req.user?.id ?? '',
+          identity_user_id: req.user?.openidId ?? null,
           librechat_tenant_id: process.env.KLAI_ORG_SLUG ? \`librechat-\${process.env.KLAI_ORG_SLUG}\` : null,
         }),
       }).catch((err) => {
