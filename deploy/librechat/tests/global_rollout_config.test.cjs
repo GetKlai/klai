@@ -41,7 +41,21 @@ assert.match(workflow, /recreate_containers:/);
 assert.match(workflow, /RECREATE_CONTAINERS=/);
 assert.doesNotMatch(workflow, /regenerate\?recreate_containers=true/);
 assert.match(workflow, /timeout=600\.0/);
-assert.match(drift, /LIBRECHAT_IMAGE="\$\{LIBRECHAT_IMAGE:-ghcr\.io\/danny-avila\/librechat:v0\.8\.7\}"/);
+// The drift guard used to hardcode the fleet image as upstream. It now
+// resolves it the same way portal-api does -- compose LIBRECHAT_IMAGE first,
+// config.py default as fallback -- because Phase 5 moved the fleet and a
+// hardcoded guard would have validated an image nobody runs while reporting
+// green. Pin the resolution ORDER rather than a specific image, so a future
+// rollout does not have to edit this test to stay honest.
+assert.match(drift, /COMPOSE_FLEET_IMAGE=/);
+assert.match(drift, /CONFIG_DEFAULT_IMAGE=/);
+assert.match(
+  drift,
+  /LIBRECHAT_IMAGE="\$\{LIBRECHAT_IMAGE:-\$\{COMPOSE_FLEET_IMAGE:-\$CONFIG_DEFAULT_IMAGE\}\}"/,
+);
+// config.py stays on upstream on purpose: it is the fallback when the compose
+// variable is absent, so it must remain a working image rather than tracking
+// whatever the fleet currently runs.
 assert.match(portalConfig, /librechat_image: str = "ghcr\.io\/danny-avila\/librechat:v0\.8\.7"/);
 
 // Finding 3D (adversarial review 2026-08-13): the deploy step must not treat
