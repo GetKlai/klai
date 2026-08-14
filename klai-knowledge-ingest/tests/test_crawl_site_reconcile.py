@@ -1480,3 +1480,35 @@ async def test_recovery_stops_when_wall_clock_budget_is_exhausted(
     assert attempted == 2, "stopped once the elapsed clock passed the budget"
     assert len(outcomes) == len(urls)
     assert outcomes[-1]["reason_code"] == FetchReasonCode.HTTP_5XX.value
+
+
+@pytest.mark.asyncio
+async def test_recovery_deadline_is_job_wide_not_per_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A many-batch crawl must not spend the wall-clock allowance once per
+    batch. Passing an already-expired deadline means the batch abandons
+    immediately, even though its own elapsed time is zero."""
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_seconds", 1200.0)
+
+    slept: list[float] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(crawl4ai_client, "_recovery_sleep", _record_sleep)
+    monkeypatch.setattr(crawl4ai_client, "_recovery_monotonic", lambda: 5_000.0)
+
+    urls = ["https://example.com/a", "https://example.com/b"]
+    _results, _links, outcomes, attempted = await crawl4ai_client._recover_bulk_5xx_batch(
+        urls,
+        crawler_config={},
+        cookies=None,
+        base_domain="example.com",
+        recovery_budget=60,
+        deadline=4_000.0,  # already spent by earlier batches of the same job
+    )
+
+    assert attempted == 0, "job-wide deadline already passed; no attempt may start"
+    assert slept == [], "and no cooldown may be burned either"
+    assert [o["reason_code"] for o in outcomes] == [FetchReasonCode.HTTP_5XX.value] * 2
