@@ -40,7 +40,7 @@ jobs:
     name: AST pattern checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # need full history for diff vs main
 
@@ -160,7 +160,7 @@ jobs:
     # 2. A small driver script that runs the klai-tenant-review agent in headless mode
     # 3. Cost approval (~$0.50-2 per PR)
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Run klai-tenant-review (headless)

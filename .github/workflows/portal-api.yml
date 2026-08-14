@@ -35,7 +35,7 @@ jobs:
         working-directory: klai-portal/backend
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -132,7 +132,7 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install psql client
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
@@ -347,7 +347,7 @@ jobs:
         working-directory: klai-portal/backend
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -402,7 +402,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -440,7 +440,7 @@ jobs:
     steps:
       # Checkout is required so trivy-action can find .trivy.yaml + the
       # service's .trivyignore.yaml (paths are relative to repo root).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -491,7 +491,7 @@ jobs:
     needs: [quality, rls-policy-smoke-test, zitadel-password-policy-drift, build-push, scan]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Audit 2026-05-05: defence-in-depth gate. The deploy job is gated
       # via `needs: build-push` (build-push is itself gated), but the

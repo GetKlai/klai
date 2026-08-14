@@ -33,7 +33,7 @@ jobs:
     outputs:
       targets: ${{ steps.parse.outputs.targets }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install yq
         run: |
@@ -103,7 +103,7 @@ jobs:
     steps:
       # Checkout is required so trivy-action can find .trivy.yaml
       # (`trivy-config:` resolves relative to repo root).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Sanitize image name for artefact
         id: safe
