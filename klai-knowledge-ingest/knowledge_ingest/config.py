@@ -47,18 +47,26 @@ class Settings(BaseSettings):
         default=0.30,
         validation_alias=AliasChoices("KLAI_INGEST_AUTHWALL_DIRTY_TRIP_RATE"),
     )
-    # 2026-08-14: same trip-rate contract as ingest_authwall_dirty_trip_rate,
-    # for BLOCKED_ANTI_BOT outcomes surviving crawl_site's sequential
-    # anti-bot recovery (see crawl4ai_client._recover_antibot_batch). A
-    # crawl_site run with blocked_count / total_count at or above this
+    # 2026-08-14 (revised same day): same trip-rate contract as
+    # ingest_authwall_dirty_trip_rate, but cause-independent — for ANY real
+    # fetch-failure reason_code (5xx, timeout, DNS, connection, auth,
+    # parse, rate-limited, unknown_exception, or a confirmed anti-bot
+    # block) surviving crawl_site's sequential bulk-5xx recovery (see
+    # crawl4ai_client._recover_bulk_5xx_batch). Originally named
+    # ingest_antibot_dirty_trip_rate / KLAI_INGEST_ANTIBOT_DIRTY_TRIP_RATE
+    # (PR #945) and keyed on BLOCKED_ANTI_BOT only, which never actually
+    # fired against real crawl4ai bulk-500 bodies (opaque, no diagnosable
+    # reason) — renamed when the guard was made cause-independent. A
+    # crawl_site run with failed_count / total_count at or above this
     # ratio ends with status='failed_partial' instead of silently reporting
     # "completed" with most of the site missing (intermedia.com incident,
     # 2026-08-14: 1 of ~18 discovered pages ingested, reported completed).
     # Reuses the auth-wall guard's 0.30 default — same "meaningful fraction
     # of the site is unreachable" semantics, just a different root cause.
-    ingest_antibot_dirty_trip_rate: float = Field(
+    # Not present in production env as of this rename — safe to rename.
+    ingest_fetch_failure_dirty_trip_rate: float = Field(
         default=0.30,
-        validation_alias=AliasChoices("KLAI_INGEST_ANTIBOT_DIRTY_TRIP_RATE"),
+        validation_alias=AliasChoices("KLAI_INGEST_FETCH_FAILURE_DIRTY_TRIP_RATE"),
     )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
