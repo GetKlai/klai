@@ -515,7 +515,12 @@ services:
     restart: unless-stopped
     environment:
       CONTAINERS: 1   # GET /containers/json + /containers/{id}/json — discovery
-      # POST / DELETE deliberately unset: this principal never mutates.
+      NETWORKS: 1     # GET /networks — Alloy's docker discovery computes network
+                      # labels per target and 403s on this without it, which
+                      # breaks log discovery entirely (found on deploy, not in
+                      # review). Still read-only: no POST means no /connect.
+      # POST / DELETE deliberately unset: this principal never mutates. That is
+      # what keeps this a GET-only lane rather than a second create path.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
