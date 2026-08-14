@@ -89,7 +89,7 @@ class WhisperHttpProvider:
                         files={"file": ("audio.wav", audio_wav, "audio/wav")},
                         data=data,
                     )
-            except (httpx.ConnectError, httpx.TimeoutException):
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
                 logger.exception(
                     "transcription-service unreachable",
                     attempt=attempt,
@@ -100,7 +100,7 @@ class WhisperHttpProvider:
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail="Transcriptie tijdelijk niet beschikbaar",
-                    )
+                    ) from exc
                 # Exponential backoff capped at the upper Retry-After clamp.
                 await asyncio.sleep(min(2 ** (attempt - 1), _RETRY_AFTER_CLAMP[1]))
                 continue

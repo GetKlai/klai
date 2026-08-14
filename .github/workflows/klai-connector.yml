@@ -58,6 +58,11 @@ jobs:
       - name: Dependency vulnerability scan (pip-audit)
         run: uv run --with pip-audit pip-audit --skip-editable
 
+      # These 413 tests lived in the repo since the service was created but
+      # never ran in CI — only ruff did, so a regression could ship unnoticed.
+      - name: Test (pytest)
+        run: uv run pytest -q --tb=short
+
       # NOTE: `ruff format --check` is intentionally NOT enforced yet —
       # the connector has never been ruff-formatted (~36 files would
       # change). Add it once a separate format-the-world PR lands.

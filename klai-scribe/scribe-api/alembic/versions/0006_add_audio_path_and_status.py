@@ -9,15 +9,16 @@ the record stays with status='failed' and the audio file is retained for
 retry. Columns that are only populated after successful transcription
 (text, language, duration, etc.) become nullable.
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "0006_b4e8d2f3"
-down_revision: Union[str, Sequence[str], None] = "0005_a3f7c1e2"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "0005_a3f7c1e2"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

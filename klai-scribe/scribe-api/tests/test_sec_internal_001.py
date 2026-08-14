@@ -16,7 +16,6 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-
 _SCRIBE_API_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -64,7 +63,9 @@ class TestKnowledgeAdapterNoSilentOmit:
         src = src_path.read_text(encoding="utf-8")
         # Strip every comment line so a `# ...if settings.knowledge_ingest_secret:` doc
         # quote does not trip the regression guard.
-        code_only = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
+        code_only = "\n".join(
+            line for line in src.splitlines() if not line.lstrip().startswith("#")
+        )
         # Must NOT appear at the start of an indented code line (i.e. as a guard).
         guard = re.compile(r"^\s+if\s+settings\.knowledge_ingest_secret\s*:\s*$", re.MULTILINE)
         assert not guard.search(code_only), (
@@ -76,7 +77,8 @@ class TestKnowledgeAdapterNoSilentOmit:
         """The X-Internal-Secret header is now injected from a single non-empty source."""
         src_path = _SCRIBE_API_DIR / "app" / "services" / "knowledge_adapter.py"
         src = src_path.read_text(encoding="utf-8")
-        # The unconditional shape: dict literal with X-Internal-Secret -> settings.knowledge_ingest_secret.
+        # The unconditional shape: dict literal with X-Internal-Secret ->
+        # settings.knowledge_ingest_secret.
         assert (
             'headers = {"X-Internal-Secret": settings.knowledge_ingest_secret}'
             in src
