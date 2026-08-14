@@ -11,8 +11,27 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 MANIFEST="$ROOT_DIR/deploy/librechat/patch-manifest.txt"
 GETKLAI_MANIFEST="$ROOT_DIR/deploy/librechat/getklai/patch-manifest.txt"
-LIBRECHAT_IMAGE="${LIBRECHAT_IMAGE:-ghcr.io/danny-avila/librechat:v0.8.7}"
 FAIL=0
+
+# The fleet image is what portal-api actually hands to `containers.run`, which
+# is the LIBRECHAT_IMAGE env in docker-compose.yml when set, and only otherwise
+# the config.py default. Hardcoding upstream here made the guard validate an
+# image the fleet no longer runs the moment Phase 5 flipped that env var --
+# checking the wrong artifact is worse than not checking, because it looks
+# green (SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 5).
+COMPOSE_FLEET_IMAGE=$(awk -F': ' '
+  $1 ~ /^ +LIBRECHAT_IMAGE$/ { gsub(/^ +| +$/, "", $2); print $2; exit }
+' "$ROOT_DIR/deploy/docker-compose.yml")
+
+CONFIG_DEFAULT_IMAGE=$(sed -n 's/.*librechat_image: str = "\([^"]*\)".*/\1/p' \
+  "$ROOT_DIR/klai-portal/backend/app/core/config.py" | head -1)
+
+LIBRECHAT_IMAGE="${LIBRECHAT_IMAGE:-${COMPOSE_FLEET_IMAGE:-$CONFIG_DEFAULT_IMAGE}}"
+
+if [ -z "$LIBRECHAT_IMAGE" ]; then
+  echo "ERROR: could not resolve the fleet LibreChat image from compose or config.py" >&2
+  exit 1
+fi
 
 COMPOSE_IMAGE=$(awk '
   $1 == "librechat-getklai:" { in_service = 1; next }
@@ -20,9 +39,12 @@ COMPOSE_IMAGE=$(awk '
   in_service && $1 ~ /^[a-zA-Z0-9_-]+:/ { exit }
 ' "$ROOT_DIR/deploy/docker-compose.yml")
 
-if ! grep -q "librechat_image: str = \"$LIBRECHAT_IMAGE\"" \
-  "$ROOT_DIR/klai-portal/backend/app/core/config.py"; then
-  echo "ERROR: portal-api default librechat_image is not pinned to $LIBRECHAT_IMAGE" >&2
+# config.py's default is the fallback when the env var is absent, so it must
+# stay a real, pullable image -- but it is NOT required to equal the fleet
+# image once compose overrides it. Requiring equality would force the fallback
+# to move in lockstep with the rollout, which defeats the point of having one.
+if [ -z "$CONFIG_DEFAULT_IMAGE" ]; then
+  echo "ERROR: could not read librechat_image default from config.py" >&2
   FAIL=1
 fi
 
@@ -210,7 +232,15 @@ dry_run_transforms() {
 
 validate_image_pin "$LIBRECHAT_IMAGE" "Provisioned LibreChat"
 validate_image_pin "$COMPOSE_IMAGE" "librechat-getklai"
-validate_manifest "$MANIFEST" "$LIBRECHAT_IMAGE"
+# The fleet manifest pins UPSTREAM hashes of files the tenants bind-mount. Once
+# the fleet image bakes those patches in, the tenants stop mounting them (see
+# image_bakes_in_patches) and the manifest describes a model that no longer
+# applies -- provenance then comes from the build manifest inside the image.
+if printf '%s' "$LIBRECHAT_IMAGE" | grep -q '^ghcr.io/getklai/librechat'; then
+  echo "SKIP [manifest]: fleet runs the Klai-owned image; patches are baked in, not mounted"
+else
+  validate_manifest "$MANIFEST" "$LIBRECHAT_IMAGE"
+fi
 validate_runtime_targets "$LIBRECHAT_IMAGE" "Provisioned LibreChat"
 dry_run_transforms "$LIBRECHAT_IMAGE" "Provisioned LibreChat"
 
