@@ -8,6 +8,13 @@ on:
     # schedule (see the comment there for the 28-week no-op it caused).
     - cron: '0 3 * * 1'
   workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Renovate log level (debug explains WHY an update was skipped)'
+        type: choice
+        options: [info, debug]
+        default: info
+        required: false
 
 jobs:
   renovate:
@@ -38,3 +45,6 @@ jobs:
           token: ${{ github.token }}
         env:
           RENOVATE_REPOSITORIES: '["GetKlai/klai"]'
+          # At info level a skipped update is indistinguishable from no update
+          # at all — the 28-week no-op looked exactly like "nothing to do".
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
