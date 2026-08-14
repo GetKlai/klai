@@ -35,7 +35,7 @@ jobs:
   # closes that gap and gates the build/deploy on a green suite. All external
   # services (Postgres/Qdrant/TEI/FalkorDB/LiteLLM/portal) are mocked, so no
   # service containers are needed.
-  tests:
+  quality:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -77,7 +77,7 @@ jobs:
         run: uv run --frozen --extra dev pytest -q --tb=short -n auto
 
   build-push:
-    needs: tests
+    needs: quality
     runs-on: ubuntu-latest
 
     steps:
