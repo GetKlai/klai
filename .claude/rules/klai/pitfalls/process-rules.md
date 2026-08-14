@@ -2108,6 +2108,24 @@ Note the trap that made the pre-existing guard useless: it used
 `is_file()` distinguishes "the file is there" from "Docker put a directory
 where the file used to be".
 
+**Scope: only FILE mounts are exposed.** `rsync --delete` inside a directory
+that is itself the mount source never removes that directory, so Docker has
+nothing to auto-create and the hazard does not exist. The distinction is the
+whole audit:
+
+| `--delete` target | Mounted as | Verdict |
+|---|---|---|
+| `/opt/klai/librechat/patches/` (deploy-librechat-config) | 4 individual **files**, 41 tenants | **Guarded** — this is the incident |
+| `/opt/klai/librechat/getklai/patches/` (deploy-compose) | 4 individual **files**, canary | **Guarded** — same hazard, twin path |
+| `/opt/klai/litellm/klai_citations/` (deploy-compose + litellm-hook) | the **directory** | Safe from this class. A deleted module still breaks litellm, but loudly (ImportError at boot), not silently |
+| `/opt/klai/portal-dist/` → `/srv/portal` (portal-frontend) | the **directory** | Safe — replacing bundle files inside a mounted dir is the normal flow |
+| `/opt/klai/litellm/klai_service_auth.py` (`rm -f`, litellm-hook) | not mounted any more | Safe — this is the correct retire-order: mount removed first, file second |
+
+Audited 2026-08-14 across every `--delete` / `rm /opt` in `.github/workflows/`.
+When you add a new server-side deletion, place it in this table before merging:
+if the target contains an individual-file bind source, wire
+`assert-safe-to-prune.sh` in front of it.
+
 **The structural fix** is to stop bind-mounting patches at all and bake them
 into an image — SPEC-LIBRECHAT-PATCH-MODEL-001. That removes this class along
 with the two sibling bind-mount pitfalls below. Until it lands, the two guards

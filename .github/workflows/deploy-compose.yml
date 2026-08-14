@@ -103,6 +103,15 @@ jobs:
             test -x /opt/klai/scripts/backup.sh
 
             mkdir -p /opt/klai/librechat/getklai/patches
+            # Twin of the fleet patches dir synced by deploy-librechat-config.yml,
+            # and exposed to the same hazard: librechat-getklai bind-mounts these
+            # four files INDIVIDUALLY (see the compose service), so --delete on a
+            # retired patch arms an empty-directory outage for its next start.
+            # PR #895 did delete a file here; the canary only escaped because
+            # this workflow failed earlier on an unrelated container-name
+            # conflict. Guard it the same way.
+            sh deploy/scripts/assert-safe-to-prune.sh \
+              deploy/librechat/getklai/patches /opt/klai/librechat/getklai/patches
             rsync -a --delete deploy/librechat/getklai/patches/ /opt/klai/librechat/getklai/patches/
             getklai_config_status=$(python3 deploy/librechat/getklai/apply-canary-config.py /opt/klai/librechat/getklai/librechat.yaml)
             echo "getklai LibreChat config patch: $getklai_config_status"
