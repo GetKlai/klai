@@ -160,8 +160,49 @@ This SPEC is delivered incrementally; each phase is independently mergeable and 
 ### Phase 1 — Spike: build pipeline plumbing, no behavior change
 Stand up Lane A and Lane B build scripts against the *currently pinned* `v0.8.7` tag, producing artifacts byte-identical (or behaviourally equivalent, if bundler non-determinism prevents byte-identity) to the current `patches/*.cjs`/`*.js`/`*.ts` files. Resolve the open questions on `@librechat/agents` version-pin source and `packages/api`'s build step. No production traffic changes; goal is proving the pipeline works and quantifying build time.
 
-### Phase 2 — CI workflow + build manifest
+### Phase 2 — CI workflow + build manifest — **DONE** (2026-08-14, PR #908)
 Add `.github/workflows/librechat-image-build.yml`. Wire REQ-2 (fail-loud apply), REQ-3 (upstream toolchain), REQ-5 (build manifest). Push `ghcr.io/getklai/librechat:v0.8.7-klai.1` but do not yet point any compose service or provisioning path at it.
+
+**Delivered.** `ghcr.io/getklai/librechat:v0.8.7-klai.1` exists
+(digest `sha256:518c181f40e8…`); nothing points at it — the fleet still runs
+`ghcr.io/danny-avila/librechat:v0.8.7` on all 42 tenants, and neither
+`deploy/docker-compose.yml` nor `config.py::librechat_image` references the
+Klai tag.
+
+All five surfaces (rows 1–5) now have source diffs in
+`deploy/librechat/patches-source/`. The three that Phase 1 did not cover
+(`format.ts`, `stream.ts`, `share.js`) were derived by diffing the deployed
+compiled patches against a pristine rebuild and translating the semantics back
+to source.
+
+Resolutions to the open questions:
+
+- **Open question 1** (agents build invocation) — `npm ci && npm run build`,
+  i.e. `rm -rf ./dist && tsdown && tsc -p tsconfig.build.json`. The ref is
+  resolved at build time from `node_modules/@librechat/agents/package.json`
+  inside the upstream image (v3.2.46 for LibreChat v0.8.7), never pinned
+  independently.
+- **Open question 2** (`packages/api` build) — a scoped build suffices:
+  `build:data-provider` → `build:data-schemas` → `build:api`. No monorepo-wide
+  build, no client bundle.
+- **Open question 4** (where the manifest lives) — **inside the image** at
+  `/klai-build-manifest.json`, plus an OCI label and a CI artifact. Self-
+  describing, so REQ-6 cannot accidentally read a different tag's manifest.
+
+Acceptance criterion note: byte-identity against the hand-maintained
+`patches/*.cjs` was **rejected** as the bar. Those files were edited inside the
+compiled bundle, so formatting differs by construction (helper placement, a
+brace style the bundler collapses, one variable rename). The criterion is
+behavioural — the existing guard tests run against the CI-built artifacts
+extracted from the image, not against the repo snapshots. That is also the
+criterion that would have caught the inert `createStreamServices` mount.
+
+Drift guard: the patched-file list is owned by
+`deploy/scripts/lib/librechat-patched-files.mjs`, and
+`deploy/scripts/tests/librechat-patched-files.test.mjs` fails CI if the
+Dockerfile's `COPY` lines disagree with it (the `url-shape-multi-file-drift`
+class). Provenance logic is testable without a Docker daemon via
+`KLAI_LIBRECHAT_EXTRACT_DIR`.
 
 ### Phase 3 — Migrate surfaces 1–5 to canary
 Point `librechat-getklai`'s image at the Klai-owned tag. Verify against `deploy/librechat/tests/*.test.cjs` plus a new integration smoke test. Remove the corresponding entries from `deploy/librechat/patches/` and `patch-manifest.txt` once verified. Deploy-time drift guard upgraded to REQ-6 (patched-artifact provenance).
