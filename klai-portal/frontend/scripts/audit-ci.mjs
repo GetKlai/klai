@@ -126,17 +126,7 @@ if (tanstackCompromise.compromised) {
 // every entry needs a package, a >=40-char statement, and an expiry. An
 // expired or unmatched entry FAILS the gate, so these cannot rot into
 // permanent exceptions or silently outlive the vulnerable version.
-const auditExemptions = [
-  {
-    package: "nanoid",
-    // The version range this exemption is valid for. Once the lockfile moves
-    // past it the entry no longer matches and the gate fails, forcing cleanup.
-    vulnerableVersion: "3.3.17",
-    statement:
-      "Build-time only: nanoid reaches us solely through postcss (source-map ids), never at runtime and never with attacker input. The advisory (GHSA-2v37-7h3g-55p8) needs a custom generator invoked with size 0, which postcss does not do. Fix 3.3.18 exists but is younger than our min-release-age=7 guard, so it cannot be installed yet.",
-    expiresAt: "2026-08-28",
-  },
-];
+const auditExemptions = [];
 
 function findAuditExemption(vulnerability) {
   const installed = getInstalledVersion(vulnerability.name);
