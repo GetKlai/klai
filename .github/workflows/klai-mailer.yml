@@ -114,29 +114,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 2026-05-05 incident: this step previously had no `if:` gate, so
-      # PR builds also auto-deployed `:latest` to prod. PR #319's first
-      # successful mailer build in months pushed an image with the
-      # SPEC-SEC-WEBHOOK-001 validator into prod where MAILER_WEBHOOK_SECRET
-      # had never been migrated to global SOPS — restart-loop, no email
-      # for ~30 min until manual stabilize. Mirrors the connector workflow
-      # fix from SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR C: deploy ONLY on
-      # main-branch pushes, never from PR builds.
-      - name: Deploy to core-01
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.CORE01_HOST }}
-          username: klai
-          key: ${{ secrets.CORE01_DEPLOY_KEY }}
-          script: |
-            set -e
-            source /opt/klai/.env
-            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
-            docker pull ghcr.io/getklai/klai-mailer:latest
-            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
-            /opt/klai/scripts/compose-up.sh klai-mailer
-
   scan:
     needs: build-push
     runs-on: ubuntu-latest
@@ -186,3 +163,34 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
+
+  deploy:
+    # `needs: scan` ensures the Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
+    # can actually block the rollout: this step used to be the tail of
+    # build-push, so a failing scan could not stop it from deploying.
+    needs: [build-push, scan]
+    runs-on: ubuntu-latest
+
+    steps:
+      # 2026-05-05 incident: this step previously had no `if:` gate, so
+      # PR builds also auto-deployed `:latest` to prod. PR #319's first
+      # successful mailer build in months pushed an image with the
+      # SPEC-SEC-WEBHOOK-001 validator into prod where MAILER_WEBHOOK_SECRET
+      # had never been migrated to global SOPS — restart-loop, no email
+      # for ~30 min until manual stabilize. Mirrors the connector workflow
+      # fix from SPEC-CONNECTOR-DELETE-LIFECYCLE-001 PR C: deploy ONLY on
+      # main-branch pushes, never from PR builds.
+      - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            source /opt/klai/.env
+            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
+            docker pull ghcr.io/getklai/klai-mailer:latest
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh klai-mailer

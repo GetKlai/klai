@@ -173,24 +173,6 @@ jobs:
           # GHA layer cache disabled: it failed to invalidate on source code changes.
           # Builds are fast enough (~1 min) without caching.
 
-      # 2026-05-05 mailer-incident class: this step previously had no `if:`
-      # gate, so PR builds also auto-deployed `:latest` to prod. Same
-      # pattern that bit klai-mailer post PR #319 → hotfix #322.
-      - name: Deploy to core-01
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.CORE01_HOST }}
-          username: klai
-          key: ${{ secrets.CORE01_DEPLOY_KEY }}
-          script: |
-            set -e
-            source /opt/klai/.env
-            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
-            docker pull ghcr.io/getklai/knowledge-ingest:latest
-            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
-            /opt/klai/scripts/compose-up.sh knowledge-ingest
-
   scan:
     needs: build-push
     runs-on: ubuntu-latest
@@ -240,3 +222,29 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
+
+  deploy:
+    # `needs: scan` ensures the Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
+    # can actually block the rollout: this step used to be the tail of
+    # build-push, so a failing scan could not stop it from deploying.
+    needs: [build-push, scan]
+    runs-on: ubuntu-latest
+
+    steps:
+      # 2026-05-05 mailer-incident class: this step previously had no `if:`
+      # gate, so PR builds also auto-deployed `:latest` to prod. Same
+      # pattern that bit klai-mailer post PR #319 → hotfix #322.
+      - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            source /opt/klai/.env
+            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
+            docker pull ghcr.io/getklai/knowledge-ingest:latest
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh knowledge-ingest
