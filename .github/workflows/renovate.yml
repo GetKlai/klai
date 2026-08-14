@@ -4,7 +4,7 @@ on:
   schedule:
     # 03:00 UTC = 05:00 Amsterdam (CEST) / 04:00 (CET). GitHub delays scheduled
     # runs by 1-3h under load, so this lands mid-morning at worst. The cadence
-    # lives HERE and nowhere else — renovate.json deliberately has no top-level
+    # lives HERE and nowhere else — renovate.json5 deliberately has no top-level
     # schedule (see the comment there for the 28-week no-op it caused).
     - cron: '0 3 * * 1'
   workflow_dispatch:
@@ -20,29 +20,35 @@ jobs:
   renovate:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      # Dependency Dashboard is a GitHub issue. Without this the run logs
-      # "Could not ensure issue / integration-unauthorized" and you lose the
-      # single best view of what Renovate wants to do but has not done yet.
-      issues: write
-      # Lets Renovate read our own ghcr.io/getklai/* image tags; without it the
-      # run warns "Failed to look up docker package ghcr.io/getklai/crawl4ai".
-      packages: read
+      # Only what the token-minting step needs. Renovate itself acts as the
+      # Klai Renovate GitHub App, whose rights are granted on the app
+      # installation, not here.
+      contents: read
     steps:
+      # Renovate runs as its own GitHub App rather than with GITHUB_TOKEN, for
+      # two reasons:
+      #
+      #  1. GITHUB_TOKEN cannot open pull requests unless the repo setting
+      #     "Allow GitHub Actions to create and approve pull requests" is on —
+      #     and that same switch also lets ANY workflow self-approve a PR,
+      #     which would undercut review. The app needs no such switch.
+      #  2. Events from GITHUB_TOKEN do not start new workflow runs, so its PRs
+      #     would arrive with zero checks. Renovate never automerges without
+      #     passing checks, so automerge would simply never fire. As the app,
+      #     its PRs trigger the real service test suites, which is exactly what
+      #     automerge should be gating on.
+      - name: Mint a token for the Klai Renovate app
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_PRIVATE_KEY }}
+
       - uses: actions/checkout@v5
 
       - uses: renovatebot/github-action@v46.2.2
         with:
-          # NOTE: the default GITHUB_TOKEN cannot create pull requests unless
-          # the repo setting "Allow GitHub Actions to create and approve pull
-          # requests" is on — it is currently off, and turning it on also lets
-          # any workflow self-approve PRs. The clean alternative is a dedicated
-          # Renovate GitHub App token in secrets.RENOVATE_TOKEN, which also
-          # makes PRs trigger CI so automerge can gate on real tests.
-          # Renovate does not automerge without passing checks, so the failure
-          # mode here is "PRs pile up", never "unverified merge".
-          token: ${{ github.token }}
+          token: ${{ steps.app-token.outputs.token }}
         env:
           RENOVATE_REPOSITORIES: '["GetKlai/klai"]'
           # At info level a skipped update is indistinguishable from no update

@@ -38,8 +38,13 @@
   // Supported for uv.lock via the pep621 manager and for package-lock.json via
   // npm (docs.renovatebot.com/modules/manager/pep621).
   //
-  // Never automerged: a lock refresh touches the whole transitive tree, so it
-  // gets human eyes even when the per-service CI gates are green.
+  // Automerged, deliberately. A lock refresh has the widest blast radius of
+  // anything Renovate does, which argues for review — but requiring review is
+  // exactly what let the locks rot for 28 weeks in the first place, and the
+  // realistic failure mode is nobody looking, not somebody looking and
+  // catching something. Every service now gates on lint + pip-audit + its own
+  // test suite, a failed deploy opens a ci-failure issue, and the refresh
+  // lands as one squash commit that `git revert` undoes cleanly.
   // 'at any time' on purpose, and it is NOT redundant: lockFileMaintenance
   // defaults to its own 'before 4am on monday' window, which would walk
   // straight back into the bug described above — the cron fires at 03:00 UTC
@@ -48,21 +53,14 @@
   lockFileMaintenance: {
     enabled: true,
     schedule: ['at any time'],
-    automerge: false,
+    automerge: true,
     commitMessageAction: 'Refresh lock files',
   },
 
   packageRules: [
     {
-      description: 'Auto-merge patch updates',
-      matchUpdateTypes: ['patch'],
-      automerge: true,
-      automergeStrategy: 'squash',
-    },
-    {
-      description: 'Auto-merge minor dev dependency updates',
-      matchUpdateTypes: ['minor'],
-      matchDepTypes: ['devDependencies'],
+      description: 'Auto-merge patch and minor updates once CI is green',
+      matchUpdateTypes: ['patch', 'minor'],
       automerge: true,
       automergeStrategy: 'squash',
     },
@@ -70,6 +68,11 @@
       description: 'Group Docker images — require manual review',
       matchManagers: ['docker-compose', 'dockerfile'],
       groupName: 'Docker images',
+      automerge: false,
+    },
+    {
+      description: 'Major upgrades always get human eyes',
+      matchUpdateTypes: ['major'],
       automerge: false,
     },
   ],
