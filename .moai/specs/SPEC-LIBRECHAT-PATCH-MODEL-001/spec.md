@@ -301,6 +301,32 @@ a path that never runs at boot — feedback FAILED (its anchor had been consumed
 the very patch it would apply) and stream-cleanup PASSED while proving nothing.
 Both now detect the baked-in marker and assert the behaviour instead.
 
+### Canary moved to a tenant that is actually used (2026-08-14, PR #941)
+
+getklai was the canary because it is the one LibreChat container declared in
+`docker-compose.yml` — so "which tenant is the canary" was a consequence of how
+a container happens to be managed, not a decision. It also serves almost no
+traffic: one conversation between 9 July and today. A canary nobody uses cannot
+produce the evidence Phase 5 is waiting for, no matter how long it runs.
+
+Two capabilities were missing and now exist:
+
+- `LIBRECHAT_IMAGE_OVERRIDES` (`slug=image[,slug=image]`, digest-only) lets a
+  provisioning-managed tenant run a different image from the fleet default.
+  Before this, the only lever was `settings.librechat_image` — all 42 or none,
+  which is why the first canary had to be the compose-declared one.
+- `POST /internal/librechat/regenerate?tenant=<slug>` applies to a single
+  tenant, so trying an image on one tenant no longer restarts 42 containers.
+
+Both are what a staged Phase 5 needs anyway: voys → a handful → the rest.
+
+**Live:** `librechat-voys` runs
+`ghcr.io/getklai/librechat@sha256:3b4fd8440c79…`; the other 40 remain on
+upstream. Verified: both runtime transforms stand down, SPEC-KB-015 and
+cleanup-on-complete baked in, HTTP 200, fewer error lines than a same-moment
+upstream tenant. Rollback is deleting one compose line and recreating that
+tenant.
+
 ### Phase 5 — Production rollout + retire full-file patches — **NOT STARTED**
 
 Deliberately. The gate is not technical readiness — it is canary evidence, and
@@ -309,8 +335,8 @@ the switch (it is Klai's own tenant and nobody has used it). Everything proven
 so far is structural — right image, right files, right transforms standing down,
 HTTP 200 — and structural evidence is exactly what a canary is NOT for.
 
-What unblocks it: real conversations through `getklai`, covering the surfaces
-the diffs touch — a KB answer with sources rendered (stream), a thumbs-up/down
+What unblocks it: real conversations through `voys` (the canary as of PR #941),
+covering the surfaces the diffs touch — a KB answer with sources rendered (stream), a thumbs-up/down
 (messages), a web search (search), a shared link (share). Then flip
 `config.py::librechat_image` to the digest and roll the fleet.
 
