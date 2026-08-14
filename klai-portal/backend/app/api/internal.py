@@ -51,6 +51,7 @@ from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
 from app.services.gap_rescorer import schedule_rescore
 from app.services.partner_rate_limit import check_rate_limit
+from app.services.provisioning.infrastructure import assert_shared_librechat_mount_sources_intact
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.retrieval_log import find_correlated_log
@@ -1765,6 +1766,29 @@ async def regenerate_librechat_configs(
     # See _apply_librechat_container_step for the abort-on-first-failure
     # contract in recreate mode (finding 3, adversarial review 2026-08-13).
     orgs_to_apply = [org for org in tenants if org.slug in set(slugs_to_restart)]
+
+    # Fleet-wide preflight: every tenant mounts the SAME patch files, so one
+    # broken shared source means no container can be safely started -- and,
+    # more importantly, none can be safely *restarted* either: a restart
+    # re-resolves the bind mount and would destroy a currently-working process
+    # (incident 2026-08-14). Fail loud in both modes and touch nothing.
+    compose_managed_skipped: list[str] = []
+    try:
+        assert_shared_librechat_mount_sources_intact()
+    except RuntimeError as exc:
+        logger.exception("Shared LibreChat mount preflight failed; no tenant touched")
+        errors.append(f"shared-mount-preflight: {exc}")
+        skipped.extend([org.slug for org in orgs_to_apply if org.slug])
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        await _audit_internal_call(request, org_id=0)
+        return RegenerateResponse(
+            tenants_updated=updated,
+            errors=errors,
+            tenants_skipped=skipped,
+            env_keys_added=env_keys_added,
+            compose_managed_skipped=compose_managed_skipped,
+        )
+
     restart_errors, restart_skipped, compose_managed_skipped = await loop.run_in_executor(
         None, _apply_librechat_container_step, orgs_to_apply, recreate_containers
     )

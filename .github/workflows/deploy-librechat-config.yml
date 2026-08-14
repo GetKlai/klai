@@ -29,6 +29,9 @@ jobs:
       - name: Validate LibreChat patches
         run: sh deploy/librechat/check-patch-drift.sh
 
+      - name: Validate the prune guard itself
+        run: sh deploy/scripts/tests/assert-safe-to-prune.test.sh
+
       - name: Sync base config and patches to core-01
         uses: appleboy/ssh-action@v1
         with:
@@ -43,14 +46,27 @@ jobs:
             git clone --depth=1 --filter=blob:none --sparse \
               https://github.com/GetKlai/klai.git klai-librechat-sync
             cd klai-librechat-sync
-            git sparse-checkout set --skip-checks deploy/librechat
+            git sparse-checkout set --skip-checks deploy/librechat deploy/scripts
 
             # Sync base config (template for all tenants)
             cp deploy/librechat/librechat.yaml /opt/klai/librechat/librechat.yaml
             cp deploy/librechat/mcp_catalog.yaml /opt/klai/librechat/mcp_catalog.yaml
             cp deploy/librechat/klai-entrypoint.sh /opt/klai/librechat/klai-entrypoint.sh
 
-            # Sync mounted LibreChat patches (format.cjs, stream.cjs, etc.)
+            # Sync mounted LibreChat patches (format.cjs, stream.cjs, etc.).
+            #
+            # --delete is the dangerous half: removing a patch file the repo no
+            # longer ships breaks nothing today, but Docker re-resolves bind
+            # mounts at container START and silently substitutes an empty
+            # DIRECTORY for the missing source. On 2026-08-14 that took down 36
+            # of 42 tenants (exit 127) on their next restart.
+            #
+            # The guard refuses the prune while any running container still
+            # mounts a file that is about to disappear. Retire a patch by
+            # removing its mount from the container definitions and recreating
+            # them FIRST; the delete is then safe and the guard stays quiet.
+            sh deploy/scripts/assert-safe-to-prune.sh \
+              deploy/librechat/patches /opt/klai/librechat/patches
             rsync -a --delete deploy/librechat/patches/ /opt/klai/librechat/patches/
 
             rm -rf /tmp/klai-librechat-sync
