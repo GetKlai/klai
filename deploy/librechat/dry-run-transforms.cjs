@@ -250,6 +250,27 @@ if (klaiFeedback) {
   const messagesPath = extractedPath('/app/api/server/routes/messages.js');
   if (!existsSync(messagesPath)) {
     fail('feedback', `messages.js was not extracted from the image: ${messagesPath}`);
+  } else if (readFileSync(messagesPath, 'utf8').includes('SPEC-KB-015')) {
+    // The image already carries the patch (SPEC-LIBRECHAT-PATCH-MODEL-001
+    // Phase 4 bakes messages.js in). The entrypoint greps for this exact
+    // marker and stands down, so dry-running the transform here would test a
+    // code path that never executes at boot -- and would fail, because the
+    // anchor it looks for has been consumed by the very patch it would apply.
+    //
+    // What matters for an image in this shape is that the behaviour is
+    // present, so assert that instead of the transform's applicability.
+    const content = readFileSync(messagesPath, 'utf8');
+    if (!content.includes('/internal/v1/kb-feedback')) {
+      fail(
+        'feedback',
+        'image carries the SPEC-KB-015 marker but not the kb-feedback forward call',
+      );
+    } else {
+      ok(
+        'feedback',
+        'baked into the image; runtime transform correctly stands down (marker + forward call present)',
+      );
+    }
   } else {
     const script = remapPaths(klaiFeedback);
     const result = runNode(script);
@@ -283,6 +304,26 @@ if (klaiStreamCleanup) {
   const streamBundlePath = extractedPath('/app/packages/api/dist/index.cjs');
   if (!existsSync(streamBundlePath)) {
     fail('stream-cleanup', `dist/index.cjs was not extracted from the image: ${streamBundlePath}`);
+  } else if (readFileSync(streamBundlePath, 'utf8').includes('CLEANUP_ON_COMPLETE')) {
+    // Same reasoning as the feedback block above: the image was built from
+    // createStreamServices.ts.patch, the entrypoint greps for
+    // CLEANUP_ON_COMPLETE and stands down, so dry-running the transform tests
+    // a path that never runs at boot. Unlike feedback the anchors happen to
+    // survive here, so it would "pass" while proving nothing -- assert the
+    // behaviour is present instead.
+    const content = readFileSync(streamBundlePath, 'utf8');
+    const wired = content.split('cleanupOnComplete: CLEANUP_ON_COMPLETE').length - 1;
+    if (wired < 2) {
+      fail(
+        'stream-cleanup',
+        `image carries CLEANUP_ON_COMPLETE but wires it at only ${wired} call site(s); expected both`,
+      );
+    } else {
+      ok(
+        'stream-cleanup',
+        'baked into the image; runtime transform correctly stands down (wired at both call sites)',
+      );
+    }
   } else {
     const script = remapPaths(klaiStreamCleanup);
     const result = runNode(script);

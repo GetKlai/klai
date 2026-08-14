@@ -386,7 +386,7 @@ services:
   librechat-getklai:
     # SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 3 — the canary runs the Klai-owned
     # image, built in CI from the source diffs in deploy/librechat/patches-source/.
-    # Tag for humans: v0.8.7-klai.1-f415a2515817 (upstream v0.8.7, agents v3.2.46).
+    # Tag for humans: v0.8.7-klai.1-80df95854928 (upstream v0.8.7, agents v3.2.46).
     #
     # Pinned by DIGEST, and deploy/check-klai-librechat-digest.sh enforces that:
     # on 2026-08-14 the tag v0.8.7-klai.1 was pushed twice with different
@@ -394,7 +394,7 @@ services:
     #
     # Rollback: put ghcr.io/danny-avila/librechat:v0.8.7 back here and restore
     # the four patch bind-mounts removed below (git revert this commit).
-    image: ghcr.io/getklai/librechat@sha256:360770c500415ef56f915d2ff71b014604a0ddec46708118008cf5019c432793
+    image: ghcr.io/getklai/librechat@sha256:3b4fd8440c79a6ff8c345eb25a6b41fd407a1167e49c84873230c2a38e0d4ebf
     container_name: librechat-getklai
     restart: unless-stopped
     # Force light theme via the Klai entrypoint wrapper (LibreChat has no
