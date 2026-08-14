@@ -43,7 +43,12 @@ discovery.relabel "docker_logs" {
 }
 
 loki.source.docker "containers" {
-  host       = "unix:///var/run/docker.sock"
+  // SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a. This is the SECOND host in this file:
+  // discovery.docker finds the containers, this tailer reads their logs, and
+  // they connect independently. Changing only the first left the tailer dialling
+  // a socket the container no longer mounts — discovery went green while every
+  // inspect failed, 10k errors in ten minutes.
+  host       = "http://docker-socket-proxy-ro:2375"
   targets    = discovery.relabel.docker_logs.output
   forward_to = [loki.process.extract_level.receiver]
 }
