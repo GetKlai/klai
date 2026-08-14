@@ -26,6 +26,23 @@ import pytest
 _CALLER = {"X-Caller-Service": "portal-api"}
 
 
+@pytest.fixture(autouse=True)
+def _stub_embedder(monkeypatch):
+    """Keep the real TEI client out of these guard tests.
+
+    These cases assert the personal-KB owner guard, not embedding. Without
+    the stub the request reaches ``embedder.embed``, TEI is unreachable in
+    CI, and the 5-attempt jitter backoff (30s cap) sleeps ~75s per test
+    before the assertion is ever evaluated — three tests here were the
+    slowest in the whole suite for that reason alone.
+    """
+
+    async def _fake_embed(texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 8 for _ in texts]
+
+    monkeypatch.setattr("knowledge_ingest.embedder.embed", _fake_embed)
+
+
 @pytest.fixture()
 def _identity_ok(monkeypatch):
     """Identity assertion passes through with the claimed org_id / user_id."""

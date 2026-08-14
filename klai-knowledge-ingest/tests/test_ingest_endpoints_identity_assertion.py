@@ -30,6 +30,22 @@ from fastapi import HTTPException, status
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _stub_embedder(monkeypatch):
+    """Keep the real TEI client out of these identity-assertion tests.
+
+    They assert who may call the endpoint, not embedding quality. Without
+    the stub the happy-path case reaches ``embedder.embed``, TEI is
+    unreachable in CI, and the 5-attempt jitter backoff (30s cap) sleeps
+    ~75s before the assertion is ever evaluated.
+    """
+
+    async def _fake_embed(texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 8 for _ in texts]
+
+    monkeypatch.setattr("knowledge_ingest.embedder.embed", _fake_embed)
+
+
 @pytest.fixture()
 def _identity_ok(monkeypatch):
     """Patch assert_caller_identity to succeed, return the claimed org_id."""
