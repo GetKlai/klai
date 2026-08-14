@@ -1,0 +1,55 @@
+name: Deploy-script tests
+
+# The shell that runs the deploys had no pre-merge coverage.
+#
+# deploy-compose.yml, litellm-hook-deploy.yml and deploy-librechat-config.yml
+# all run test suites, and all three are push-to-main only — they SSH to
+# production, so a pull_request trigger is not something to hand out. The
+# consequence was that a change to compose-up.sh, which decides whether every
+# service deploy counts as successful, reached main with its tests never having
+# run, and the first execution of the new code was the one installing it on
+# core-01.
+#
+# This job is the pre-merge half: same suites, no secrets, no SSH, no deploy.
+# The push-triggered runs stay exactly as they are — this does not replace them,
+# it stops them from being the first time anyone finds out.
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/scripts/**'
+      - 'deploy/librechat/tests/**'
+      - '.github/workflows/deploy-scripts-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/scripts/**'
+      - 'deploy/librechat/tests/**'
+      - '.github/workflows/deploy-scripts-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Syntax first: a script that does not parse cannot be installed, and the
+      # error is clearer here than three steps into a deploy.
+      - name: Parse every deploy script
+        run: |
+          set -e
+          for script in deploy/scripts/*.sh; do
+            bash -n "$script"
+          done
+
+      - name: compose-up.sh verification suite
+        run: bash deploy/scripts/tests/compose-up-verify.test.sh
+
+      - name: assert-safe-to-prune guard suite
+        run: sh deploy/scripts/tests/assert-safe-to-prune.test.sh
+
+      - name: klai-librechat digest guard suite
+        run: sh deploy/scripts/tests/check-klai-librechat-digest.test.sh
