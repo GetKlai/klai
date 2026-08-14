@@ -464,6 +464,41 @@ def test_bot_image_is_pinned_and_flagged_as_a_pull_prerequisite() -> None:
     )
 
 
+def test_meeting_api_is_not_on_a_shared_application_network() -> None:
+    """meeting-api's network membership IS its authorization boundary.
+
+    Vexa 0.12's meeting-api has no auth of its own: it trusts the X-User-Id header
+    the gateway would normally set (bot_spawn/router.py::_resolve_user_id accepts any
+    integer) and falls back to AllowAllServiceAuthority when no service-authority
+    config is present — which is Klai's configuration. Whatever network it sits on can
+    therefore read any tenant's transcripts and stop or spawn bots with a forged header.
+
+    It was briefly on klai-net, which carries ~70 containers including ~42 tenant
+    LibreChat instances. An adversarial review proved the spoof from an unrelated
+    container. Its network must stay a closed two-party link with portal-api.
+    """
+    compose = _compose()
+    services = compose["services"]
+    meeting_nets = set(services["vexa12-meeting-api"]["networks"])
+
+    shared = {"klai-net", "net-redis", "net-mongodb", "net-meilisearch", "socket-proxy"}
+    assert not (meeting_nets & shared), (
+        f"vexa12-meeting-api is on shared network(s) {sorted(meeting_nets & shared)}; any "
+        "container there can forge X-User-Id and read every tenant's transcripts"
+    )
+
+    link = meeting_nets & set(services["portal-api"]["networks"])
+    link.discard("net-postgres")  # both need the DB; that is not the API link
+    assert link, "portal-api has no dedicated network in common with vexa12-meeting-api"
+
+    for net in link:
+        members = sorted(n for n, v in services.items() if net in (v.get("networks") or {}))
+        assert members == ["portal-api", "vexa12-meeting-api"], (
+            f"network {net!r} must have exactly portal-api + vexa12-meeting-api, has {members}"
+        )
+        assert compose["networks"][net].get("internal") is True, f"{net!r} must be internal"
+
+
 def test_admin_api_is_not_reachable_from_the_bot_network() -> None:
     """Bot containers are the least-trusted thing in the stack.
 
