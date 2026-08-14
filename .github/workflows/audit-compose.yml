@@ -9,6 +9,7 @@ on:
       - 'deploy/tests/**'
       - 'scripts/audit-compose-volumes.sh'
       - 'scripts/audit-compose-orphans.sh'
+      - 'scripts/audit-docker-access.sh'
       - 'scripts/test-audit-compose.sh'
       - 'scripts/test-audit-compose-orphans.sh'
       - 'klai-scribe/scribe-api/app/core/config.py'
@@ -63,6 +64,9 @@ jobs:
 
       - name: Run orphan audit (SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-2c)
         run: bash scripts/audit-compose-orphans.sh
+
+      - name: Run docker-access audit (SPEC-SEC-DOCKER-AUTHZ-001)
+        run: bash scripts/audit-docker-access.sh
 
       - name: Orphan regression test — fixtures must catch known anti-patterns
         run: bash scripts/test-audit-compose-orphans.sh
