@@ -9,7 +9,6 @@ on:
       - 'deploy/caddy/Caddyfile'                  # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 R1 — sync Caddyfile to bind-mount source
       - 'deploy/alloy/config.alloy'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — alloy log-pipeline config
       - 'deploy/searxng/settings.yml'             # SPEC-INFRA-CONFIG-SYNC-001 R3 — searxng search config
-      - 'deploy/vexa/profiles.yaml'               # SPEC-INFRA-CONFIG-SYNC-001 R3 — vexa runtime-api meeting-bot profiles
       - 'deploy/librechat/klai-entrypoint.sh'     # force light theme — synced before librechat-getklai recreate
       - 'deploy/librechat/getklai/entrypoint.sh'  # getklai-only LibreChat client polish canary
       - 'deploy/librechat/getklai/apply-canary-config.py'
@@ -72,7 +71,6 @@ jobs:
               deploy/caddy/Caddyfile \
               deploy/alloy/config.alloy \
               deploy/searxng/settings.yml \
-              deploy/vexa/profiles.yaml \
               deploy/librechat/klai-entrypoint.sh \
               deploy/librechat/getklai \
               deploy/grafana/provisioning \
@@ -229,7 +227,6 @@ jobs:
             sync_and_recreate caddy       deploy/caddy/Caddyfile        /opt/klai/caddy/Caddyfile
             sync_and_recreate alloy       deploy/alloy/config.alloy     /opt/klai/alloy/config.alloy
             sync_and_recreate searxng     deploy/searxng/settings.yml   /opt/klai/searxng/settings.yml
-            sync_and_recreate runtime-api deploy/vexa/profiles.yaml     /opt/klai/vexa/profiles.yaml
             clear_librechat_config_cache() {
               local pattern="${1:-configs:*}"
               docker compose --project-directory /opt/klai exec -T redis sh -lc '

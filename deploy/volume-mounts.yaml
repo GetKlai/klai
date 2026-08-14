@@ -88,20 +88,6 @@ mounts:
     retention_enforced_by: n/a
     notes: LiteLLM + GlitchTip cache. Loss is recoverable (cache regenerates).
 
-  vexa-redis:
-    service: vexa-redis
-    kind: named
-    host: vexa-redis-data
-    container_path: /data
-    image: redis:8.8.0-alpine
-    category: data
-    data_path_source: upstream docs (Redis `dir` default)
-    pii: false
-    backup: rdb
-    backup_method: bgsave-copy
-    retention: manual
-    retention_enforced_by: n/a
-    notes: Vexa transcription pipeline state.
 
   vexa12-redis:
     service: vexa12-redis
@@ -520,20 +506,6 @@ mounts:
     retention_enforced_by: n/a
     notes: Shared Vexa Docker socket bridge volume; recreated on container start.
 
-  runtime-api-docker-socket:
-    service: runtime-api
-    kind: named
-    host: runtime-api-docker-socket
-    container_path: /var/run
-    image: vexaai/runtime-api:0.10.6.3.14
-    category: ephemeral
-    data_path_source: runtime Unix socket bridge
-    pii: false
-    backup: skip
-    backup_method: skip
-    retention: ephemeral
-    retention_enforced_by: n/a
-    notes: Shared Vexa Docker socket bridge volume; recreated by runtime-api-socket-proxy.
 
   vexa12-runtime-docker-socket:
     service: vexa12-runtime
