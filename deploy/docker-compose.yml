@@ -40,14 +40,6 @@ networks:
     name: vexa12-internal
     driver: bridge
     internal: true   # only vexa12-meeting-api <-> vexa12-admin-api; no bot ever joins
-  vexa12-storage:
-    name: vexa12-storage
-    driver: bridge
-    internal: true
-    # ONLY garage <-> vexa12-meeting-api. meeting-api's MINIO_* config points at
-    # Garage, and its signal-tape janitor probes storage every sweep even with
-    # RECORDING_ENABLED=false. Garage lives on klai-net; reaching it via klai-net
-    # would undo the vexa12-portal boundary, so this is a dedicated two-party link.
   vexa12-portal:
     name: vexa12-portal
     driver: bridge
@@ -384,7 +376,17 @@ services:
 
   # ─── LibreChat (tenant: getklai) ─────────────────────────────────────────
   librechat-getklai:
-    image: ghcr.io/danny-avila/librechat:v0.8.7
+    # SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 3 — the canary runs the Klai-owned
+    # image, built in CI from the source diffs in deploy/librechat/patches-source/.
+    # Tag for humans: v0.8.7-klai.1-f415a2515817 (upstream v0.8.7, agents v3.2.46).
+    #
+    # Pinned by DIGEST, and deploy/check-klai-librechat-digest.sh enforces that:
+    # on 2026-08-14 the tag v0.8.7-klai.1 was pushed twice with different
+    # content, so a tag-pinned canary could not be rolled back to what it ran.
+    #
+    # Rollback: put ghcr.io/danny-avila/librechat:v0.8.7 back here and restore
+    # the four patch bind-mounts removed below (git revert this commit).
+    image: ghcr.io/getklai/librechat@sha256:360770c500415ef56f915d2ff71b014604a0ddec46708118008cf5019c432793
     container_name: librechat-getklai
     restart: unless-stopped
     # Force light theme via the Klai entrypoint wrapper (LibreChat has no
@@ -422,11 +424,18 @@ services:
       - ./librechat/getklai/librechat.yaml:/app/librechat.yaml:ro
       - ./librechat/getklai/images:/app/client/public/images
       - ./librechat/getklai/entrypoint.sh:/klai-entrypoint.sh:ro
-      # Persistent patches - survive image updates until fixed upstream
-      - ./librechat/getklai/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
-      - ./librechat/getklai/patches/share.js:/app/api/server/routes/share.js:ro
-      - ./librechat/getklai/patches/stream.cjs:/app/node_modules/@librechat/agents/dist/cjs/stream.cjs:ro
-      - ./librechat/getklai/patches/search.cjs:/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs:ro
+      # SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 3: the four patch bind-mounts are
+      # GONE from this service — they are baked into the image above, built from
+      # the source diffs in deploy/librechat/patches-source/.
+      #
+      # They cannot coexist. A mount wins over the file in the image, so leaving
+      # them would silently serve the old hand-edited bundles and make the whole
+      # migration a no-op — the same shape as the createStreamServices mount that
+      # sat inert for months.
+      #
+      # The entrypoint mount stays: it carries the two surfaces that remain
+      # runtime transforms on purpose (per-tenant Meili index names, additive
+      # client polish) — see the SPEC's inventory rows 7 and 8.
     depends_on:
       mongodb:
         condition: service_healthy
@@ -1505,7 +1514,6 @@ services:
       vexa12-portal: {}
       net-postgres: {}
       vexa12-internal: {} # reaches vexa12-admin-api without exposing it to bots
-      vexa12-storage: {}  # reaches garage for the S3 config it boots with
       vexa12-bots:
         aliases:
           - meeting-api   # the name a spawned 0.12 bot dials for its callback
@@ -1649,7 +1657,6 @@ services:
       GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
     networks:
       - klai-net
-      - vexa12-storage   # dedicated link to vexa12-meeting-api; see that network's comment
     healthcheck:
       test: ["CMD", "/garage", "status"]
       interval: 10s
