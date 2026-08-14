@@ -515,26 +515,15 @@
     # That handler pulls the Zitadel access_token from the BFF session and
     # forwards to the internal service with Authorization: Bearer injected.
 
-    # Vexa meeting bot gateway (SEC-013 F-030 — fix dead route from VEXA-003 migration)
-    # Route maps /bots/<path> → api-gateway:8000/<path>. The old `vexa-bot-manager`
-    # service was replaced by `api-gateway` during the upstream-main rebuild.
-    handle /bots/* {
-        rate_limit {
-            zone bots_per_ip {
-                key {remote_host}
-                events 10
-                window 1m
-            }
-        }
-        uri strip_prefix /bots
-        reverse_proxy api-gateway:8000 {
-            header_up -X-Internal-Secret
-            header_up -X-Caller-Service
-            header_up -X-Org-ID
-            header_up -X-Org-Slug
-            header_up -X-User-ID
-        }
-    }
+    # No public /bots/* route. It proxied to the 0.10 api-gateway, which
+    # SPEC-VEXA-004 deleted, so it had been answering 502 — and Caddy logs show
+    # zero requests in the preceding 7 days. Klai's own client calls
+    # /api/bots/* (portal-api), never this path.
+    #
+    # Do not reintroduce it. Vexa 0.12's meeting-api has no authentication of
+    # its own: it trusts an X-User-Id header any caller can set, so a public
+    # route to it is a transcript-read primitive for anyone. meeting-api is
+    # deliberately confined to the two-member vexa12-portal network.
 
     # Portal Vite assets. This block must stay before the SPA fallback so
     # deleted chunks return 404 instead of /srv/portal/index.html.
