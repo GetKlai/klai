@@ -40,6 +40,16 @@ networks:
     name: vexa12-internal
     driver: bridge
     internal: true   # only vexa12-meeting-api <-> vexa12-admin-api; no bot ever joins
+  vexa12-portal:
+    name: vexa12-portal
+    driver: bridge
+    internal: true
+    # ONLY portal-api <-> vexa12-meeting-api. meeting-api has no auth of its own in
+    # 0.12 (it trusts the X-User-Id header the absent gateway would set, and defaults
+    # to AllowAllServiceAuthority), so whatever network it sits on IS its authorization
+    # boundary. It was briefly on klai-net, which carries 70 containers including 42
+    # tenant LibreChat instances — any one of them could read any tenant's transcript
+    # with a forged X-User-Id. This network has exactly two members.
   vexa12-bots:
     name: vexa12-bots
     driver: bridge
@@ -760,6 +770,7 @@ services:
       - net-postgres
       - net-mongodb
       - net-redis
+      - vexa12-portal   # SPEC-VEXA-004: reaches vexa12-meeting-api; nothing else may
       - net-meilisearch  # SPEC-INFRA-TENANT-DELETE-003 Bug A — deprovisioning step 6 (_delete_meilisearch_index) needs DNS for meilisearch:7700
       - socket-proxy
 
@@ -1481,7 +1492,9 @@ services:
       vexa12-runtime:
         condition: service_started
     networks:
-      klai-net: {}        # portal-api reaches this directly; no gateway in front
+      # NOT klai-net — see the vexa12-portal network comment. meeting-api's network
+      # membership is its only authorization boundary.
+      vexa12-portal: {}
       net-postgres: {}
       vexa12-internal: {} # reaches vexa12-admin-api without exposing it to bots
       vexa12-bots:
