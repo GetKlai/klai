@@ -55,6 +55,13 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
+      # Dependency vulnerability gate — see knowledge-ingest.yml for the
+      # rationale. This service carried a vulnerable cryptography + h2 for
+      # weeks with nothing scanning it. Runs before pytest so a bad pin fails
+      # fast. --skip-editable: internal klai-libs are editable path deps.
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run --with pip-audit pip-audit --skip-editable
+
       - name: Test (pytest)
         run: uv run --extra dev pytest -q --tb=short
 
