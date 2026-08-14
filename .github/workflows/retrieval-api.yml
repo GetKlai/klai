@@ -40,12 +40,15 @@ env:
 jobs:
   # retrieval-api had NO automated test gate: its ~520 pytest tests only ran
   # locally, so changes (incl. security-critical middleware/auth.py) merged
-  # without CI ever running them. This job closes that gap. It does not gate on
-  # `quality` (that required check is path-scoped to klai-portal/backend); it
-  # provides the missing retrieval-api pytest gate directly. All external
+  # without CI ever running them. This job closes that gap. All external
   # services (Redis/Qdrant/TEI/FalkorDB/portal) are mocked, so no service
   # containers are needed.
-  tests:
+  #
+  # Named `quality` deliberately: that is the required status check on main.
+  # Until 2026-08-14 this job was called `tests`, so the required check never
+  # appeared on a retrieval-api-only PR and the branch protection was
+  # decorative here — every merge went through admin bypass.
+  quality:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -66,6 +69,9 @@ jobs:
         run: uv run --extra dev pytest -q --tb=short
 
   build-push:
+    # Without this the image built and DEPLOYED regardless of the test result —
+    # the suite ran alongside the build rather than gating it.
+    needs: quality
     runs-on: ubuntu-latest
 
     steps:
