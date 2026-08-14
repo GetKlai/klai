@@ -598,7 +598,7 @@ services:
   # compose file once the team is in. Admin token in SOPS (env-first per
   # validator-env-parity).
   vaultwarden:
-    image: vaultwarden/server:1.36.0
+    image: vaultwarden/server:1.37.1
     restart: unless-stopped
     environment:
       DOMAIN: "https://vault.getklai.com"
