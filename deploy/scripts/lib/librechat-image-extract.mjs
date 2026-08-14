@@ -13,10 +13,14 @@ import path from 'node:path';
  * image that is deliberately not deployable yet (Phase 2 pushes a tag nothing
  * points at).
  *
- * Set KLAI_LIBRECHAT_EXTRACT_DIR to a directory of `<key>` files to bypass
- * Docker entirely. That is what lets the manifest generate/verify logic be
- * tested without a daemon and without a 10-minute image build — the same
- * injection trick assert-safe-to-prune.sh uses for its mount table.
+ * There is deliberately NO environment-variable escape hatch here. An earlier
+ * revision honoured KLAI_LIBRECHAT_EXTRACT_DIR so the provenance logic could be
+ * tested without a daemon — which meant a stray env var could redirect the
+ * deploy-time check away from the image and let it "verify" nothing at all.
+ * That is the fail-open class this repo already has pitfalls about, in the one
+ * place whose entire job is to be trustworthy. Tests inject a replacement
+ * extractor as a function argument instead (see verifyManifest/generateManifest);
+ * production code has no bypass to leave switched on by accident.
  *
  * @param {string} image
  * @param {Array<{key: string, containerPath: string}>} entries
@@ -24,22 +28,6 @@ import path from 'node:path';
  * @returns {{dir: string, files: Map<string, string>}} key -> host path
  */
 export function extractFromImage(image, entries, outDir) {
-  const injected = process.env.KLAI_LIBRECHAT_EXTRACT_DIR;
-  if (injected) {
-    const files = new Map();
-    for (const entry of entries) {
-      const hostPath = path.join(injected, entry.key);
-      if (!fs.existsSync(hostPath)) {
-        throw new Error(
-          `KLAI_LIBRECHAT_EXTRACT_DIR is set but ${hostPath} is missing ` +
-            `(needed for ${entry.containerPath})`
-        );
-      }
-      files.set(entry.key, hostPath);
-    }
-    return { dir: injected, files };
-  }
-
   const dir = outDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'klai-lc-'));
   fs.mkdirSync(dir, { recursive: true });
 

@@ -15,61 +15,88 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
-import {
-  PATCHED_FILES,
-} from './lib/librechat-patched-files.mjs';
+import { PATCHED_FILES } from './lib/librechat-patched-files.mjs';
 import {
   extractFromImage,
   sha256File,
 } from './lib/librechat-image-extract.mjs';
 
-function arg(name, required = true) {
-  const idx = process.argv.indexOf(`--${name}`);
-  if (idx === -1 || idx === process.argv.length - 1) {
-    if (!required) return undefined;
-    console.error(`FATAL: missing required --${name}`);
-    process.exit(2);
-  }
-  return process.argv[idx + 1];
+/**
+ * @param {object} options
+ * @param {string} options.image
+ * @param {string} options.upstreamTag
+ * @param {string} options.agentsRef
+ * @param {string} options.patchRevision
+ * @param {string} options.patchesDir
+ * @param {typeof extractFromImage} [options.extract]
+ * @returns {object} the manifest
+ */
+export function generateManifest({
+  image,
+  upstreamTag,
+  agentsRef,
+  patchRevision,
+  patchesDir,
+  extract = extractFromImage,
+}) {
+  const { files } = extract(image, PATCHED_FILES);
+
+  const artifacts = PATCHED_FILES.map((entry) => {
+    const patchPath = path.join(patchesDir, entry.patch);
+    if (!fs.existsSync(patchPath)) {
+      throw new Error(`diff not found: ${patchPath}`);
+    }
+    return {
+      key: entry.key,
+      lane: entry.lane,
+      container_path: entry.containerPath,
+      patch: entry.patch,
+      patch_sha256: sha256File(patchPath),
+      artifact_sha256: sha256File(files.get(entry.key)),
+    };
+  });
+
+  return {
+    spec: 'SPEC-LIBRECHAT-PATCH-MODEL-001',
+    schema_version: 1,
+    upstream_librechat_tag: upstreamTag,
+    // Resolved from the upstream image, never pinned independently -- see the
+    // workflow's resolve step and the 2026-08-13 version-skew incident.
+    agents_ref: agentsRef,
+    klai_patch_revision: patchRevision,
+    artifacts,
+  };
 }
 
-const image = arg('image');
-const upstreamTag = arg('upstream-tag');
-const agentsRef = arg('agents-ref');
-const patchRevision = arg('patch-revision');
-const patchesDir = arg('patches-dir');
-const out = arg('out');
+const invokedDirectly =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
-const { files } = extractFromImage(image, PATCHED_FILES);
+if (invokedDirectly) {
+  const arg = (name) => {
+    const idx = process.argv.indexOf(`--${name}`);
+    if (idx === -1 || idx === process.argv.length - 1) {
+      console.error(`FATAL: missing required --${name}`);
+      process.exit(2);
+    }
+    return process.argv[idx + 1];
+  };
 
-const artifacts = PATCHED_FILES.map((entry) => {
-  const hostPath = files.get(entry.key);
-  const patchPath = path.join(patchesDir, entry.patch);
-  if (!fs.existsSync(patchPath)) {
-    console.error(`FATAL: diff not found: ${patchPath}`);
+  const out = arg('out');
+  try {
+    const manifest = generateManifest({
+      image: arg('image'),
+      upstreamTag: arg('upstream-tag'),
+      agentsRef: arg('agents-ref'),
+      patchRevision: arg('patch-revision'),
+      patchesDir: arg('patches-dir'),
+    });
+    fs.writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`);
+    console.log(`Wrote ${out} (${manifest.artifacts.length} artifacts)`);
+  } catch (error) {
+    console.error(`FATAL: ${error.message}`);
     process.exit(1);
   }
-  return {
-    key: entry.key,
-    lane: entry.lane,
-    container_path: entry.containerPath,
-    patch: entry.patch,
-    patch_sha256: sha256File(patchPath),
-    artifact_sha256: sha256File(hostPath),
-  };
-});
-
-const manifest = {
-  spec: 'SPEC-LIBRECHAT-PATCH-MODEL-001',
-  schema_version: 1,
-  upstream_librechat_tag: upstreamTag,
-  // Resolved from the upstream image, never pinned independently -- see the
-  // workflow's resolve step and the 2026-08-13 version-skew incident.
-  agents_ref: agentsRef,
-  klai_patch_revision: patchRevision,
-  artifacts,
-};
-
-fs.writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`);
-console.log(`Wrote ${out} (${artifacts.length} artifacts)`);
+}
