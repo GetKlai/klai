@@ -316,14 +316,27 @@ def test_signature_scheme_reproduces_the_upstream_golden() -> None:
     timestamp = headers["X-Webhook-Timestamp"]
     envelope = _golden("Envelope.meeting-completed.json")
 
-    # Upstream signs json.dumps(envelope) with Python's default separators.
-    payload_bytes = json.dumps(envelope).encode()
-    recomputed = _sign(payload_bytes, secret, timestamp)
-
-    assert recomputed.startswith("sha256=")
-    assert len(recomputed) == len("sha256=") + 64
-    # Self-consistency: the same bytes + secret + ts must be stable and verifiable.
-    assert hmac.compare_digest(recomputed, _sign(payload_bytes, secret, timestamp))
+    # The golden headers do not say which byte serialisation they were signed over,
+    # and none of the plausible candidates reproduces the published digest:
+    #   json.dumps default / compact separators / indent=2 / the golden file's own bytes.
+    # Until upstream states it (or we capture a real delivery), any receiver-side
+    # verifier we write would be guessing. This xfail keeps the open question in the
+    # suite instead of in someone's head; delete it the moment a candidate matches.
+    candidates = {
+        "json.dumps(default)": json.dumps(envelope).encode(),
+        "compact separators": json.dumps(envelope, separators=(",", ":")).encode(),
+        "indent=2": json.dumps(envelope, indent=2).encode(),
+        "golden file bytes": (GOLDEN / "Envelope.meeting-completed.json").read_bytes(),
+    }
+    matches = [name for name, b in candidates.items() if _sign(b, secret, timestamp) == headers["X-Webhook-Signature"]]
+    if not matches:
+        pytest.xfail(
+            "Cannot reproduce the upstream golden signature from any known serialisation "
+            f"({', '.join(candidates)}). Do NOT add signature verification to the webhook "
+            "handler until this is resolved — it would reject every real delivery. "
+            "Bearer-token auth (tested below) is the working check today."
+        )
+    assert matches, f"reproduced by: {matches}"  # pragma: no cover — xfail above when empty
 
 
 def test_system_webhook_auth_header_matches_what_klai_already_checks() -> None:
@@ -341,8 +354,107 @@ def test_system_webhook_auth_header_matches_what_klai_already_checks() -> None:
     assert "Bearer" in source, "_require_webhook_secret no longer accepts a Bearer token"
 
 
+def test_client_sends_the_user_id_header_0_12_authenticates_on() -> None:
+    """0.12's POST /bots 401s without X-User-Id; Klai deploys no gateway to inject it.
+
+    bot_spawn/router.py::_resolve_user_id raises 401 "Invalid user identity" when the
+    header is absent or unparseable. Klai talks to meeting-api directly, so VexaClient
+    must set it. Regression guard: an adversarial pass found this missing after the
+    parallel stack was already written and committed.
+    """
+    from app.services.vexa import VexaClient
+
+    client = VexaClient()
+    try:
+        assert client._http.headers.get("X-User-Id"), "VexaClient must send X-User-Id (0.12 spawn auth)"
+        assert int(client._http.headers["X-User-Id"]) >= 0, "X-User-Id must parse as an int upstream"
+    finally:
+        pass
+
+
 # ---------------------------------------------------------------------------
-# 5. Live smoke — opt-in, needs a running meeting-api
+# 5. Deployment invariants
+#
+# The API-contract tests above cannot see these: they are properties of how the
+# stack is wired, not of what upstream serves. Every one of them corresponds to a
+# blocking defect an adversarial pass found in the first cut of the parallel stack.
+# ---------------------------------------------------------------------------
+
+COMPOSE = Path(__file__).resolve().parents[4] / "deploy" / "docker-compose.yml"
+
+
+def _compose() -> dict:
+    yaml = pytest.importorskip("yaml", reason="pyyaml not installed")
+    return yaml.safe_load(COMPOSE.read_text())
+
+
+def test_schema_owner_is_deployed_alongside_meeting_api() -> None:
+    """meeting-api ships no alembic and never calls create_all.
+
+    ensure_schema() lives in admin-api and its Base declares meetings /
+    transcriptions / meeting_sessions. Without admin-api the database stays empty
+    and meeting-api has nothing to query.
+    """
+    services = _compose()["services"]
+    assert "vexa12-admin-api" in services, (
+        "vexa12-admin-api owns ensure_schema() for the meetings tables — dropping it leaves vexa_v012 empty."
+    )
+    deps = services["vexa12-meeting-api"]["depends_on"]
+    assert deps.get("vexa12-admin-api", {}).get("condition") == "service_healthy", (
+        "meeting-api must wait for the schema owner to be healthy before its first query"
+    )
+
+
+def test_the_two_stacks_do_not_share_a_redis_instance() -> None:
+    """Redis pub/sub is instance-wide — a DB index does NOT isolate channels.
+
+    0.10 and 0.12 both publish `bm:meeting:{id}:status` and
+    `bot_commands:meeting:{id}`, and their separate databases hand out independent
+    id sequences, so the same channel name refers to two different meetings. 0.12
+    exposes no channel prefix, so separate instances are the only isolation.
+    """
+    services = _compose()["services"]
+    hosts = {}
+    for name in ("meeting-api", "runtime-api", "vexa12-meeting-api", "vexa12-runtime"):
+        url = services[name]["environment"]["REDIS_URL"]
+        hosts[name] = url.split("@", 1)[1].split(":", 1)[0]
+
+    old = {hosts["meeting-api"], hosts["runtime-api"]}
+    new = {hosts["vexa12-meeting-api"], hosts["vexa12-runtime"]}
+    assert not (old & new), (
+        f"0.10 and 0.12 share a Redis instance ({old & new}); pub/sub channels would cross-talk regardless of DB index"
+    )
+
+
+def test_bot_image_is_pinned_and_flagged_as_a_pull_prerequisite() -> None:
+    """docker-socket-proxy has IMAGES disabled, so the runtime cannot pull the bot.
+
+    The bot image is an env value rather than a compose service, so `compose up`
+    does not fetch it either. It must be pre-pulled on the host; this test keeps the
+    requirement attached to the tag it applies to.
+    """
+    services = _compose()["services"]
+    image = services["vexa12-runtime"]["environment"]["BROWSER_IMAGE"]
+    assert image.startswith("vexaai/vexa-bot:"), image
+    assert image.rsplit(":", 1)[1] not in ("latest", "dev", "staging"), "bot image must be immutably pinned"
+
+    body = COMPOSE.read_text()
+    assert "docker pull vexaai/vexa-bot:" in body, (
+        "The pre-pull prerequisite must stay documented next to the stack — the runtime "
+        "cannot fetch the image itself (IMAGES disabled in docker-socket-proxy)."
+    )
+
+
+def test_the_two_stacks_do_not_share_secrets() -> None:
+    """Separate deployments, separate trust boundaries."""
+    services = _compose()["services"]
+    old, new = services["meeting-api"]["environment"], services["vexa12-meeting-api"]["environment"]
+    for key in ("ADMIN_TOKEN", "INTERNAL_API_SECRET"):
+        assert old[key] != new[key], f"{key} is reused across the 0.10 and 0.12 stacks"
+
+
+# ---------------------------------------------------------------------------
+# 6. Live smoke — opt-in, needs a running meeting-api
 # ---------------------------------------------------------------------------
 
 

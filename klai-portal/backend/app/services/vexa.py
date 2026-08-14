@@ -83,10 +83,19 @@ def parse_meeting_url(url: str) -> MeetingRef | None:
 
 
 class VexaClient:
+    # Vexa 0.12 authenticates a spawn on the `X-User-Id` header that its gateway
+    # normally injects (bot_spawn/router.py::_resolve_user_id -> 401 when absent
+    # or unparseable). Klai deploys no gateway — portal-api is the only caller —
+    # so it sets the header itself. The value is a synthetic tenant-less id:
+    # Vexa's `meetings.user_id` is a bare Integer with no FK to any users row, and
+    # Klai's own tenant scoping lives in portal_users/vexa_meetings, not here.
+    # Harmless against 0.10, which ignores the header. Do NOT use it for authz.
+    VEXA_USER_ID = "1"
+
     def __init__(self) -> None:
         self._http = httpx.AsyncClient(
             base_url=settings.vexa_meeting_api_url,
-            headers={"X-API-Key": settings.vexa_api_key},
+            headers={"X-API-Key": settings.vexa_api_key, "X-User-Id": self.VEXA_USER_ID},
             timeout=60.0,
         )
 
