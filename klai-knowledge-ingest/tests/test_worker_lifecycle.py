@@ -93,8 +93,9 @@ def stub_procrastinate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_starts_two_workers(stub_procrastinate):
-    """SPEC-WORKER-LANES-001 REQ-1: I/O and LLM workers start in parallel."""
+async def test_lifecycle_starts_three_workers(stub_procrastinate):
+    """SPEC-WORKER-LANES-001 REQ-1 + interactive lane: I/O, interactive and
+    LLM workers start in parallel."""
     from knowledge_ingest.worker import WorkerLifecycle
 
     async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
@@ -104,7 +105,7 @@ async def test_lifecycle_starts_two_workers(stub_procrastinate):
         await asyncio.sleep(0)
 
     calls = stub_procrastinate["run_worker_calls"]
-    assert len(calls) == 2, f"expected 2 worker calls (I/O + LLM), got {len(calls)}"
+    assert len(calls) == 3, f"expected 3 worker calls (I/O + interactive + LLM), got {len(calls)}"
 
 
 @pytest.mark.asyncio
@@ -122,6 +123,7 @@ async def test_io_worker_subscribed_to_io_queues_only(stub_procrastinate):
     # The IO call's queues must not include any LLM queue.
     io_call = next(c for c in calls if tuple(c["queues"]) == tuple(queues.IO_QUEUES))
     assert set(io_call["queues"]).isdisjoint(queues.LLM_QUEUES)
+    assert set(io_call["queues"]).isdisjoint(queues.INTERACTIVE_QUEUES)
 
 
 @pytest.mark.asyncio
@@ -138,6 +140,29 @@ async def test_llm_worker_subscribed_to_llm_queues_only(stub_procrastinate):
     assert tuple(queues.LLM_QUEUES) in queue_sets
     llm_call = next(c for c in calls if tuple(c["queues"]) == tuple(queues.LLM_QUEUES))
     assert set(llm_call["queues"]).isdisjoint(queues.IO_QUEUES)
+    assert set(llm_call["queues"]).isdisjoint(queues.INTERACTIVE_QUEUES)
+
+
+@pytest.mark.asyncio
+async def test_interactive_worker_subscribed_to_interactive_queue_only(stub_procrastinate):
+    """Interactive lane: user-triggered re-syncs must not share a worker with
+    bulk queues, or a crawl backlog starves them (intermedia.com incident,
+    2026-08-14: a re-sync sat behind ~550 bulk jobs)."""
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    calls = stub_procrastinate["run_worker_calls"]
+    queue_sets = [tuple(c["queues"]) for c in calls]
+    assert tuple(queues.INTERACTIVE_QUEUES) in queue_sets
+    interactive_call = next(
+        c for c in calls if tuple(c["queues"]) == tuple(queues.INTERACTIVE_QUEUES)
+    )
+    assert set(interactive_call["queues"]).isdisjoint(queues.IO_QUEUES)
+    assert set(interactive_call["queues"]).isdisjoint(queues.LLM_QUEUES)
+    assert interactive_call["concurrency"] == WorkerLifecycle.INTERACTIVE_CONCURRENCY
 
 
 @pytest.mark.asyncio
@@ -185,4 +210,4 @@ async def test_zombie_recovery_failure_does_not_block_workers(stub_procrastinate
         await asyncio.sleep(0)
 
     # Workers still started despite the recovery failure.
-    assert len(stub_procrastinate["run_worker_calls"]) == 2
+    assert len(stub_procrastinate["run_worker_calls"]) == 3

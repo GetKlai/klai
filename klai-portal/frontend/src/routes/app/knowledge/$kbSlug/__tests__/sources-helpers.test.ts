@@ -8,6 +8,7 @@ vi.mock('@/paraglide/messages', () => ({
   kb_status_bezig_elapsed: ({ minutes }: { minutes: string }) => `${minutes}m`,
   kb_status_klaar: () => 'Klaar',
   kb_status_leeg: () => 'Leeg',
+  kb_status_failed_tooltip: () => 'Verwerking mislukt',
 }))
 
 import { mapSourceStatus, shouldPollSource } from '../-sources-helpers'
@@ -54,5 +55,25 @@ describe('sources helpers', () => {
 
   it('does not poll terminal sources', () => {
     expect(shouldPollSource(uploadSource({ index_status: 'synced', chunks_count: 4 }))).toBe(false)
+  })
+
+  it('resumes polling when an old source is re-synced (last_sync_at fresh, created_at stale)', () => {
+    // Regression: a re-synced 8-day-old artifact measured elapsed time from
+    // created_at, so it showed "Hangt al 11384m" immediately and polling
+    // never resumed. The backend now sets last_sync_at to the reindex start.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-14T09:20:00Z'))
+
+    const resynced = uploadSource({
+      created_at: '2026-08-06T11:30:00Z',
+      last_sync_at: '2026-08-14T09:13:00Z',
+    })
+
+    expect(mapSourceStatus(resynced)).toBe('pending')
+    expect(shouldPollSource(resynced)).toBe(true)
+  })
+
+  it('maps failed uploads to not_synced', () => {
+    expect(mapSourceStatus(uploadSource({ index_status: 'failed' }))).toBe('not_synced')
   })
 })

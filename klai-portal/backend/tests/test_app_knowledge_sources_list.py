@@ -184,6 +184,7 @@ async def test_list_kb_sources_merges_connectors_and_uploads() -> None:
                 "content_type": "pdf",
                 "created_at": 1700000000,
                 "chunks_count": 7,
+                "index_status_changed_at": 1700005000,
             },
         ],
     }
@@ -228,6 +229,9 @@ async def test_list_kb_sources_merges_connectors_and_uploads() -> None:
     assert by_id["art-1"].source_url is None
     assert by_id["art-1"].chunks_count == 7
     assert by_id["art-1"].created_at is not None
+    # index_status_changed_at (epoch) surfaces as last_sync_at so the frontend
+    # measures "Bezig sinds Xm" from the (re)sync start, not artifact creation.
+    assert by_id["art-1"].last_sync_at == datetime.fromtimestamp(1700005000, tz=UTC)
 
 
 @pytest.mark.asyncio

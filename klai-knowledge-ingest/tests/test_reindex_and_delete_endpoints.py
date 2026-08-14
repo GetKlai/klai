@@ -174,6 +174,53 @@ class TestReindexHappyPath:
         status_arg = conn.fetchrow.await_args_list[1].args[1]
         assert status_arg == "pending"
 
+    def test_double_click_returns_202_when_reindex_already_enqueued(self) -> None:
+        """Regression: a second sync click while the first reindex job was
+        still queued raised procrastinate's AlreadyEnqueued unhandled → 500.
+        The queued job will pick up current PG state, so 202 is truthful.
+        """
+        from procrastinate.exceptions import AlreadyEnqueued
+
+        conn = _make_mock_conn()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {
+                    "id": _ARTIFACT,
+                    "kb_slug": _KB,
+                    "path": _PATH,
+                    "belief_time_end": 253402300800,
+                },
+                {"artifact_id": _ARTIFACT, "path": _PATH},
+            ]
+        )
+
+        mock_job = MagicMock()
+        mock_job.configure = MagicMock(return_value=mock_job)
+        mock_job.defer_async = AsyncMock(side_effect=AlreadyEnqueued("locked"))
+        mock_proc_app = MagicMock()
+        mock_proc_app.enrich_document_interactive = mock_job
+
+        with (
+            patch(
+                "knowledge_ingest.routes.kb_sources.assert_caller_identity_tenant_only",
+                AsyncMock(return_value=_ORG),
+            ),
+            patch(
+                "knowledge_ingest.enrichment_tasks.get_app",
+                return_value=mock_proc_app,
+            ),
+        ):
+            with _client_with_conn(conn) as client:
+                resp = client.post(
+                    f"/knowledge/v1/artifacts/{_ARTIFACT}/reindex",
+                    params={"org_id": _ORG},
+                )
+
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["artifact_id"] == _ARTIFACT
+        assert body["index_status"] == "pending"
+
     def test_reactivates_expired_upload_artifact(self) -> None:
         conn = _make_mock_conn()
         conn.fetchrow = AsyncMock(
@@ -397,6 +444,7 @@ class TestListKbSourcesIndexStatus:
             "created_at": 1751328000,
             "chunks_count": 5,
             "index_status": "pending",
+            "index_status_changed_at": 1751330000,
         }
         # list_kb_sources makes two fetch calls: connectors then uploads.
         # Make the first call return [] (no connectors), second return the upload.
@@ -426,3 +474,4 @@ class TestListKbSourcesIndexStatus:
         uploads = resp.json()["uploads"]
         assert len(uploads) == 1
         assert uploads[0]["index_status"] == "pending"
+        assert uploads[0]["index_status_changed_at"] == 1751330000

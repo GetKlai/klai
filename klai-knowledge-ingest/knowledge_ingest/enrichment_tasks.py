@@ -292,8 +292,19 @@ def _register_tasks(procrastinate_app: Any) -> None:
     """Register task functions on the given App instance."""
     import procrastinate
 
+    # Backoff rationale: enrichment failures in production are dominated by
+    # LiteLLM 429s during bulk crawls. Immediate retries (the previous
+    # default: wait=0) burn every attempt inside the same rate-limit window
+    # — the intermedia.com artifact failed 3x in 20 seconds and went
+    # permanent-failed. exponential_wait waits
+    # ``exponential_wait ** (attempts + 1)`` seconds between attempts, so
+    # retries land after the rate-limit window has moved on.
+
     @procrastinate_app.task(
-        queue=queues.ENRICH_INTERACTIVE, retry=procrastinate.RetryStrategy(max_attempts=2)
+        queue=queues.ENRICH_INTERACTIVE,
+        # Waits 3s, 9s, 27s — user is watching, keep worst-case added latency
+        # under a minute while still escaping a per-minute rate-limit window.
+        retry=procrastinate.RetryStrategy(max_attempts=4, exponential_wait=3),
     )
     async def enrich_document_interactive(artifact_id: str) -> None:
         """Enrich chunks for a single-doc upload (high priority).
@@ -304,7 +315,10 @@ def _register_tasks(procrastinate_app: Any) -> None:
         await _load_and_enrich(artifact_id)
 
     @procrastinate_app.task(
-        queue=queues.ENRICH_BULK, retry=procrastinate.RetryStrategy(max_attempts=2)
+        queue=queues.ENRICH_BULK,
+        # Waits 4s, 16s, 64s, 256s (~5.7 min total) — nobody is watching bulk
+        # jobs, so ride out the whole 429 burst a concurrent crawl produces.
+        retry=procrastinate.RetryStrategy(max_attempts=5, exponential_wait=4),
     )
     async def enrich_document_bulk(artifact_id: str) -> None:
         """Enrich chunks for crawl/import jobs (lower priority).
@@ -318,7 +332,10 @@ def _register_tasks(procrastinate_app: Any) -> None:
     procrastinate_app.enrich_document_bulk = enrich_document_bulk  # type: ignore[attr-defined]
 
     @procrastinate_app.task(
-        queue=queues.GRAPHITI_BULK, retry=procrastinate.RetryStrategy(max_attempts=3)
+        queue=queues.GRAPHITI_BULK,
+        # Waits 4s, 16s — graphiti already has a token bucket in graph.py, but
+        # LiteLLM 429s still surface here during crawl bursts.
+        retry=procrastinate.RetryStrategy(max_attempts=3, exponential_wait=4),
     )
     async def ingest_graphiti_episode(
         artifact_id: str,

@@ -471,6 +471,7 @@ async def test_mark_stale_pending_artifacts_failed_requires_no_runnable_job():
     assert "pj.args->>'artifact_id' = a.id::text" in sql
     assert "FOR UPDATE SKIP LOCKED" in sql
     assert "SET index_status = 'failed'" in sql
+    assert "index_status_changed_at = extract(epoch from now())::bigint" in sql
     assert conn.fetch.call_args[0][1:] == (
         1700001800,
         _SENTINEL,
@@ -492,8 +493,12 @@ async def test_set_artifact_ingest_status_updates_any_artifact():
     assert result == {"artifact_id": "art-1", "path": "doc.md"}
     sql = conn.fetchrow.call_args[0][0]
     assert "SET index_status = $1" in sql
+    assert "index_status_changed_at = $4" in sql
     assert "source_connector_id" not in sql
-    assert conn.fetchrow.call_args[0][1:] == ("synced", "art-1", "org1")
+    args = conn.fetchrow.call_args[0][1:]
+    assert args[:3] == ("synced", "art-1", "org1")
+    # 4th arg is the transition timestamp (epoch seconds).
+    assert isinstance(args[3], int)
 
 
 # -- list_personal_artifacts --------------------------------------------------

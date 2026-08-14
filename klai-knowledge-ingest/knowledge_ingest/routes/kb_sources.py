@@ -65,6 +65,7 @@ class UploadSummary(BaseModel):
     created_at: int
     chunks_count: int = 0
     index_status: str = "synced"
+    index_status_changed_at: int | None = None
 
 
 class KBSourcesResponse(BaseModel):
@@ -258,10 +259,24 @@ async def reindex_upload(
     if updated is None:
         raise HTTPException(status_code=404, detail="artifact not found")
 
+    from procrastinate.exceptions import AlreadyEnqueued
+
     proc_app = enrichment_tasks.get_app()
-    await proc_app.enrich_document_interactive.configure(
-        queueing_lock=f"reindex:{verified_org_id}:{artifact_id}",
-    ).defer_async(artifact_id=artifact_id)
+    try:
+        await proc_app.enrich_document_interactive.configure(
+            queueing_lock=f"reindex:{verified_org_id}:{artifact_id}",
+        ).defer_async(artifact_id=artifact_id)
+    except AlreadyEnqueued:
+        # A reindex for this artifact is already queued (user double-clicked
+        # the sync button, or the queue is still draining). The queued job
+        # will pick up the current PG state, so "accepted" is the truthful
+        # answer — previously this raised an unhandled 500.
+        logger.info(
+            "reindex_already_enqueued",
+            artifact_id=artifact_id,
+            org_id=verified_org_id,
+        )
+        return ReindexResponse(artifact_id=artifact_id, index_status="pending")
 
     logger.info(
         "reindex_enqueued",

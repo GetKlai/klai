@@ -748,6 +748,7 @@
   "kb_status_stuck": "Hangt al {minutes}m",
   "kb_status_stuck_tooltip": "Deze bron is al meer dan 10 minuten aan het verwerken. Klik op het refresh-icoon hiernaast om het opnieuw te proberen, of verwijder en voeg de bron opnieuw toe.",
   "kb_status_probleem": "Probleem",
+  "kb_status_failed_tooltip": "De verwerking van deze bron is mislukt. Klik op het refresh-icoon hiernaast om het opnieuw te proberen.",
   "kb_status_leeg": "Niet gesynct",
   "knowledge_page_meta_items": "{count} items",
   "knowledge_page_meta_items_personal": "{count} items onthouden",
@@ -2111,8 +2112,7 @@
   "admin_widgets_page_context_help": "Stuurt URL, titel en een korte zichtbare pagina-excerpt mee. De AI gebruikt dit alleen wanneer de vraag duidelijk over de huidige pagina gaat.",
   "admin_widgets_position_left": "Linksonder",
   "admin_widgets_position_right": "Rechtsonder",
-  "admin_widgets_subtitle": "Een agent beantwoordt vragen van je bezoekers op basis van jouw kennisbanken, en verwijst altijd naar de bron. Jij bepaalt welke kennis, instructie en vormgeving hij gebruikt."
-  ,
+  "admin_widgets_subtitle": "Een agent beantwoordt vragen van je bezoekers op basis van jouw kennisbanken, en verwijst altijd naar de bron. Jij bepaalt welke kennis, instructie en vormgeving hij gebruikt.",
   "admin_widgets_activity_hourly_title": "Druktespiegel - gesprekken per uur",
   "admin_widgets_activity_top_questions_title": "Meest gestelde vragen",
   "admin_widgets_activity_no_questions": "Nog geen vragen.",
@@ -2300,8 +2300,7 @@
   "platform_role": "Rol",
   "platform_first_name": "Voornaam",
   "platform_last_name": "Achternaam",
-  "platform_send_invite": "Uitnodiging versturen"
-  ,
+  "platform_send_invite": "Uitnodiging versturen",
   "platform_status_portal_api": "Portal API",
   "platform_status_portal_api_description": "Live check via /api/health, ververst elke 30s.",
   "platform_checking": "Controleren...",

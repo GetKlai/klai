@@ -140,6 +140,7 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
                     "created_at": 1700000000,
                     "chunks_count": 7,
                     "index_status": "synced",
+                    "index_status_changed_at": 1700000100,
                 },
             ],
         ]
@@ -160,6 +161,7 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
             "created_at": 1700000000,
             "chunks_count": 7,
             "index_status": "synced",
+            "index_status_changed_at": 1700000100,
         },
     ]
     # Two distinct queries: connectors then uploads

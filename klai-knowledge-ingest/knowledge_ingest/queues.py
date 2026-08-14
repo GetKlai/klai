@@ -91,8 +91,17 @@ IO_QUEUES: list[str] = [
 ]
 """Latency-sensitive I/O work — HTTP, file ops, DB. No LLM calls."""
 
-LLM_QUEUES: list[str] = [
+INTERACTIVE_QUEUES: list[str] = [
     ENRICH_INTERACTIVE,
+]
+"""User-triggered LLM work (re-sync button). Own lane so a bulk-crawl
+backlog of hundreds of enrich-bulk/graphiti-bulk jobs cannot starve a
+single user-requested reindex for hours — procrastinate fetches oldest
+todo across a worker's queue set with no per-queue fairness, so sharing
+a lane with bulk queues made "drains first" a lie in practice
+(intermedia.com incident, 2026-08-14)."""
+
+LLM_QUEUES: list[str] = [
     ENRICH_BULK,
     GRAPHITI_BULK,
     RAG_EVAL,
@@ -101,6 +110,6 @@ LLM_QUEUES: list[str] = [
 ]
 """Throughput-bound LLM work — bounded by upstream rate limit."""
 
-ALL_QUEUES: list[str] = IO_QUEUES + LLM_QUEUES
-"""Union of both lanes. Tests pin that every declared constant is in exactly
+ALL_QUEUES: list[str] = IO_QUEUES + INTERACTIVE_QUEUES + LLM_QUEUES
+"""Union of all lanes. Tests pin that every declared constant is in exactly
 one lane and that ALL_QUEUES contains every constant."""

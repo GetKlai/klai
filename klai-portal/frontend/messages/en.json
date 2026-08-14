@@ -748,6 +748,7 @@
   "kb_status_stuck": "Stuck for {minutes}m",
   "kb_status_stuck_tooltip": "This source has been processing for over 10 minutes. Click the refresh icon to retry, or delete and re-add the source.",
   "kb_status_probleem": "Issue",
+  "kb_status_failed_tooltip": "Processing this source failed. Click the refresh icon to retry.",
   "kb_status_leeg": "Not synced",
   "knowledge_page_meta_items": "{count} items",
   "knowledge_page_meta_items_personal": "{count} items remembered",
@@ -2111,8 +2112,7 @@
   "admin_widgets_page_context_help": "Sends the URL, title, and a short visible page excerpt. The AI only uses this when the question is clearly about the current page.",
   "admin_widgets_position_left": "Bottom left",
   "admin_widgets_position_right": "Bottom right",
-  "admin_widgets_subtitle": "An agent answers your visitors' questions from your knowledge bases, and always cites the source. You decide which knowledge, instruction, and styling it uses."
-  ,
+  "admin_widgets_subtitle": "An agent answers your visitors' questions from your knowledge bases, and always cites the source. You decide which knowledge, instruction, and styling it uses.",
   "admin_widgets_activity_hourly_title": "Load profile - conversations per hour",
   "admin_widgets_activity_top_questions_title": "Most asked questions",
   "admin_widgets_activity_no_questions": "No questions yet.",
@@ -2300,8 +2300,7 @@
   "platform_role": "Role",
   "platform_first_name": "First name",
   "platform_last_name": "Last name",
-  "platform_send_invite": "Send invitation"
-  ,
+  "platform_send_invite": "Send invitation",
   "platform_status_portal_api": "Portal API",
   "platform_status_portal_api_description": "Live check through /api/health, refreshed every 30s.",
   "platform_checking": "Checking...",

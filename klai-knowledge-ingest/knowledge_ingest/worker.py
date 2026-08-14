@@ -82,6 +82,11 @@ class WorkerLifecycle:
     # leaving slots idle.
     IO_CONCURRENCY: int = 8
     LLM_CONCURRENCY: int = 4
+    # Interactive lane: user-triggered re-syncs are rare (single documents,
+    # button clicks) but latency-critical. 2 slots is enough parallelism for
+    # concurrent users while keeping extra LLM pressure negligible next to
+    # the bulk lane's 4 slots.
+    INTERACTIVE_CONCURRENCY: int = 2
 
     def __init__(self, *, postgres_dsn: str) -> None:
         self.postgres_dsn = postgres_dsn
@@ -93,6 +98,7 @@ class WorkerLifecycle:
         # its natural throughput — procrastinate has no per-queue fairness
         # within a single worker.
         self._io_worker_task: asyncio.Task | None = None
+        self._interactive_worker_task: asyncio.Task | None = None
         self._llm_worker_task: asyncio.Task | None = None
         self._stack = AsyncExitStack()
 
@@ -138,7 +144,7 @@ class WorkerLifecycle:
         # design) would still let a backlog of LLM jobs starve I/O work
         # because procrastinate fetches the oldest todo across the worker's
         # queue set, regardless of queue identity.
-        from knowledge_ingest.queues import IO_QUEUES, LLM_QUEUES
+        from knowledge_ingest.queues import INTERACTIVE_QUEUES, IO_QUEUES, LLM_QUEUES
 
         self._io_worker_task = asyncio.create_task(
             self.proc_app.run_worker_async(
@@ -147,6 +153,14 @@ class WorkerLifecycle:
                 install_signal_handlers=False,
             ),
             name="procrastinate-worker-io",
+        )
+        self._interactive_worker_task = asyncio.create_task(
+            self.proc_app.run_worker_async(
+                queues=INTERACTIVE_QUEUES,
+                concurrency=self.INTERACTIVE_CONCURRENCY,
+                install_signal_handlers=False,
+            ),
+            name="procrastinate-worker-interactive",
         )
         self._llm_worker_task = asyncio.create_task(
             self.proc_app.run_worker_async(
@@ -160,6 +174,8 @@ class WorkerLifecycle:
             "procrastinate_workers_started",
             io_queues=IO_QUEUES,
             io_concurrency=self.IO_CONCURRENCY,
+            interactive_queues=INTERACTIVE_QUEUES,
+            interactive_concurrency=self.INTERACTIVE_CONCURRENCY,
             llm_queues=LLM_QUEUES,
             llm_concurrency=self.LLM_CONCURRENCY,
         )
@@ -167,7 +183,11 @@ class WorkerLifecycle:
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         # Cancel both lane workers in parallel and wait for them to exit.
-        worker_tasks = [t for t in (self._io_worker_task, self._llm_worker_task) if t is not None]
+        worker_tasks = [
+            t
+            for t in (self._io_worker_task, self._interactive_worker_task, self._llm_worker_task)
+            if t is not None
+        ]
         if worker_tasks:
             logger.info("procrastinate_workers_stopping", count=len(worker_tasks))
             for t in worker_tasks:
