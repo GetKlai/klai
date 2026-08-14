@@ -1076,10 +1076,28 @@ class KbFeedbackIn(BaseModel):
     librechat_user_id: str
     librechat_tenant_id: str
     model_alias: str | None = None
+    # The identity the RETRIEVAL log is keyed by (Zitadel subject). LibreChat's
+    # own user id is a Mongo ObjectId from a different namespace, so correlating
+    # on it never matched -- 55 of 58 events came back uncorrelated between April
+    # and 2026-08-14. LibreChat carries the subject on the user document as
+    # `openidId`. Optional: the LiteLLM hook and partner paths post here too and
+    # do not know about it, and older LibreChat images do not send it.
+    identity_user_id: str | None = None
 
 
 # @MX:ANCHOR: [AUTO] Public API boundary for KB feedback from LibreChat. SPEC-KB-015.
 # @MX:REASON: Called by LibreChat patch (feedback.cjs) + LiteLLM hook + tests. fan_in >= 3.
+def _correlation_user_id(body: KbFeedbackIn) -> str:
+    """The key to look the retrieval log up under.
+
+    Prefers the identity id, because that is what wrote the log. Falls back to
+    the LibreChat id so a tenant still on an older image behaves exactly as
+    before instead of erroring mid-rollout.
+    """
+    identity = (body.identity_user_id or "").strip()
+    return identity or body.librechat_user_id
+
+
 @router.post("/v1/kb-feedback", status_code=status.HTTP_201_CREATED, response_model=None)
 async def post_kb_feedback(
     body: KbFeedbackIn,
@@ -1117,7 +1135,7 @@ async def post_kb_feedback(
     # 3. Time-window correlation (REQ-KB-015-09)
     correlated_log = await find_correlated_log(
         org_id=org.id,
-        user_id=body.librechat_user_id,
+        user_id=_correlation_user_id(body),
         message_created_at=body.message_created_at,
     )
 
