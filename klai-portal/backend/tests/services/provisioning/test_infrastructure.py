@@ -639,7 +639,15 @@ class TestStartLibrechatContainerRollback:
         self._write_lc_files(tmp_path)
 
         old_container = MagicMock()
-        old_container.image.tags = ["ghcr.io/danny-avila/librechat:v0.8.6"]
+        old_container.attrs = {"Config": {"Image": "ghcr.io/danny-avila/librechat:v0.8.6"}}
+        # Reading .image would call GET /images/{id}/json, which
+        # docker-socket-proxy denies (403). Make any access explode so this
+        # test fails if the lazy property is reintroduced.
+        type(old_container).image = property(
+            lambda _self: (_ for _ in ()).throw(
+                AssertionError("must not touch container.image: socket-proxy denies IMAGES")
+            )
+        )
         broken_container = MagicMock()
 
         mock_client = MagicMock()
@@ -693,7 +701,15 @@ class TestStartLibrechatContainerRollback:
         self._write_lc_files(tmp_path)
 
         old_container = MagicMock()
-        old_container.image.tags = ["ghcr.io/danny-avila/librechat:v0.8.6"]
+        old_container.attrs = {"Config": {"Image": "ghcr.io/danny-avila/librechat:v0.8.6"}}
+        # Reading .image would call GET /images/{id}/json, which
+        # docker-socket-proxy denies (403). Make any access explode so this
+        # test fails if the lazy property is reintroduced.
+        type(old_container).image = property(
+            lambda _self: (_ for _ in ()).throw(
+                AssertionError("must not touch container.image: socket-proxy denies IMAGES")
+            )
+        )
         broken_container = MagicMock()
 
         mock_client = MagicMock()
@@ -738,7 +754,15 @@ class TestStartLibrechatContainerRollback:
         self._write_lc_files(tmp_path)
 
         old_container = MagicMock()
-        old_container.image.tags = ["ghcr.io/danny-avila/librechat:v0.8.6"]
+        old_container.attrs = {"Config": {"Image": "ghcr.io/danny-avila/librechat:v0.8.6"}}
+        # Reading .image would call GET /images/{id}/json, which
+        # docker-socket-proxy denies (403). Make any access explode so this
+        # test fails if the lazy property is reintroduced.
+        type(old_container).image = property(
+            lambda _self: (_ for _ in ()).throw(
+                AssertionError("must not touch container.image: socket-proxy denies IMAGES")
+            )
+        )
 
         mock_client = MagicMock()
         mock_client.containers.get.side_effect = [old_container]
