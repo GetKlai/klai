@@ -1,0 +1,200 @@
+# knowledge-ingest LLM-throttle observability gap — two silent failure
+# classes ran undetected for two weeks (2026-07-31 to 2026-08-14): 641
+# `enrichment_llm_error` 429-storm events (see llm_throttle.py docstring)
+# and an unmonitored `stale_pending_artifacts_failed` reaper. Both events
+# exist in VictoriaLogs today under service:knowledge-ingest but had no
+# alert rule watching them.
+#
+# Pattern mirrored from ingest-rules.yaml (obs-001-ingest group, R16
+# ingest_error_rate_elevated): same folder, same instant-query LogsQL +
+# reduce(count) + threshold(gt) shape, same noDataState/execErrState,
+# same spec label so this routes through the existing SPEC-OBS-001 →
+# klai-ops-alerts-email policy in policies.yaml without adding a new
+# route (see that file's routing comment header).
+#
+# UID convention: spec-llm-0NN-<verb> — kept well under Grafana's hard
+# 40-char UID limit (see .claude/rules/klai/pitfalls/process-rules.md
+# grafana-uid-40-char-limit; a longer UID crashloops Grafana on
+# provisioning). Verified via scripts/audit-alert-uid-length.sh.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-ingest-llm
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R1: enrichment LLM-error burst (429 storm) ───────────────────
+      # Baseline is near-zero: isolated retried-and-recovered LLM calls are
+      # expected and must not page. A real 429 storm (the reference
+      # incident) produced hundreds of these in two weeks — >30 in a 15m
+      # window is well above single-flake noise and below "one bad batch
+      # of a dozen docs".
+      - uid: spec-llm-001-enrich-429-burst
+        title: knowledge_ingest_enrichment_llm_error_burst
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND event:enrichment_llm_error'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [30], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-OBS-001
+          service_group: ingest
+        annotations:
+          summary: 'knowledge-ingest emitted >30 enrichment_llm_error events in 15 min'
+          description: |
+            knowledge-ingest logged more than 30 `enrichment_llm_error`
+            events (structlog warning from enrichment.py) in the last 15
+            minutes. This is the signature of a LiteLLM `klai-fast` alias
+            429 storm — the reference incident produced 641 of these
+            events over two weeks with zero alerting, causing 1165
+            permanently-failed enrich-bulk jobs.
+
+            The client-side token bucket in
+            `knowledge_ingest/llm_throttle.py` (`shared_klai_fast_limiter`)
+            is meant to keep enrichment traffic under the `klai-fast`
+            alias budget (45 rpm / 45k tpm, shared with klai-primary).
+            The pacing rate is controlled by the `LITELLM_KLAI_FAST_RPS`
+            env var (`Settings.litellm_klai_fast_rps`, default 0.6).
+
+            Triage:
+              1. service:knowledge-ingest AND event:enrichment_llm_error | sort by(_time) desc | limit 20
+              2. Confirm the error field on a sample of lines — 429 vs
+                 timeout vs a different upstream failure needs a different
+                 fix.
+              3. If genuinely 429-bound: check current concurrency (worker
+                 lane count) against `LITELLM_KLAI_FAST_RPS` — either the
+                 rate is set too high for current load, or a new caller of
+                 `/v1/chat/completions` is bypassing the shared limiter
+                 (see the drift-guard in tests/test_llm_throttle.py).
+              4. Failed jobs from the storm need manual re-enrichment once
+                 the throttle is corrected — they do not auto-retry
+                 indefinitely.
+
+      # ── R2: stale-pending-artifact reaper fired ───────────────────────
+      # The reaper (stale_pending_artifact_reaper.py) is a final safety
+      # net: normal enrichment should always set index_status to synced or
+      # failed itself. Baseline is zero fires; if the reaper catches
+      # anything, upstream enrichment is leaving artifacts stuck in
+      # `pending` — a single occurrence in the 30m window is worth paging
+      # on, same reasoning as the pg_qdrant_reconcile_failed rule (R17) in
+      # ingest-rules.yaml.
+      - uid: spec-llm-002-reaper-fired
+        title: knowledge_ingest_stale_pending_reaper_fired
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND event:stale_pending_artifacts_failed'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 4h
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-OBS-001
+          service_group: ingest
+        annotations:
+          summary: 'knowledge-ingest stale-pending-artifact reaper failed one or more artifacts'
+          description: |
+            `stale_pending_artifact_reaper.py::reap_stale_pending_artifacts`
+            logged `stale_pending_artifacts_failed` — it force-failed one
+            or more knowledge artifacts that had been stuck in `pending`
+            for over 30 minutes with no runnable Procrastinate enrichment
+            job. This is a vangnet, not the normal path: normal enrichment
+            sets `index_status` to `synced` or `failed` itself.
+
+            A reaper fire means something upstream stopped an enrichment
+            job from ever completing or being retried — a crashed worker,
+            a Procrastinate job that silently dropped, or an enrichment
+            call that hung past the job's own timeout without raising.
+
+            Triage:
+              1. service:knowledge-ingest AND event:stale_pending_artifacts_failed | sort by(_time) desc | limit 20
+              2. The log line includes `count`, `cutoff_created_at`, and
+                 an `artifacts` list — identify the org_id / kb_id / path
+                 of each failed artifact.
+              3. Check whether the enrichment_llm_error burst rule
+                 (spec-llm-001-enrich-429-burst) also fired around the
+                 same window — a 429 storm can starve jobs long enough to
+                 go stale.
+              4. Failed artifacts are NOT automatically retried; re-trigger
+                 enrichment for the affected paths once the root cause is
+                 fixed.
