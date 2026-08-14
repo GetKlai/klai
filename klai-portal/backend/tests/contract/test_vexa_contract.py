@@ -405,25 +405,36 @@ def test_schema_owner_is_deployed_alongside_meeting_api() -> None:
     )
 
 
-def test_the_two_stacks_do_not_share_a_redis_instance() -> None:
+def test_redis_is_not_shared_with_another_vexa_stack() -> None:
     """Redis pub/sub is instance-wide — a DB index does NOT isolate channels.
 
-    0.10 and 0.12 both publish `bm:meeting:{id}:status` and
-    `bot_commands:meeting:{id}`, and their separate databases hand out independent
-    id sequences, so the same channel name refers to two different meetings. 0.12
-    exposes no channel prefix, so separate instances are the only isolation.
+    Vexa publishes `bm:meeting:{id}:status` and `bot_commands:meeting:{id}` with
+    meeting ids drawn from its own database. Any second Vexa deployment sharing this
+    Redis instance would collide on those names even on a different DB index, and
+    Vexa exposes no channel prefix. The 0.10 stack this once guarded against is gone
+    (SPEC-VEXA-004); the invariant stays because the next parallel stack would
+    reintroduce the hazard.
     """
     services = _compose()["services"]
-    hosts = {}
-    for name in ("meeting-api", "runtime-api", "vexa12-meeting-api", "vexa12-runtime"):
-        url = services[name]["environment"]["REDIS_URL"]
-        hosts[name] = url.split("@", 1)[1].split(":", 1)[0]
-
-    old = {hosts["meeting-api"], hosts["runtime-api"]}
-    new = {hosts["vexa12-meeting-api"], hosts["vexa12-runtime"]}
-    assert not (old & new), (
-        f"0.10 and 0.12 share a Redis instance ({old & new}); pub/sub channels would cross-talk regardless of DB index"
+    vexa_hosts = {
+        name: svc["environment"]["REDIS_URL"].split("@", 1)[1].split(":", 1)[0]
+        for name, svc in services.items()
+        if "REDIS_URL" in svc.get("environment", {}) and name.startswith("vexa")
+    }
+    assert vexa_hosts, "no Vexa service declares a REDIS_URL — did the stack move?"
+    assert set(vexa_hosts.values()) == {"vexa12-redis"}, (
+        f"Vexa services point at more than one Redis host: {vexa_hosts}"
     )
+
+    others = {
+        name: svc["environment"]["REDIS_URL"]
+        for name, svc in services.items()
+        if "REDIS_URL" in svc.get("environment", {}) and not name.startswith("vexa")
+    }
+    for name, url in others.items():
+        assert "vexa12-redis" not in url, (
+            f"{name} shares the Vexa Redis instance; its pub/sub channels are not isolated"
+        )
 
 
 def test_bot_image_is_pinned_and_flagged_as_a_pull_prerequisite() -> None:
@@ -489,12 +500,29 @@ def test_meeting_api_and_admin_api_share_the_same_admin_token() -> None:
     assert signer == verifier, f"meeting-api signs MeetingToken with {signer} but admin-api verifies with {verifier}"
 
 
-def test_the_two_stacks_do_not_share_secrets() -> None:
-    """Separate deployments, separate trust boundaries."""
+def test_vexa_secrets_are_dedicated_to_the_vexa_stack() -> None:
+    """The Vexa deployment is its own trust boundary.
+
+    It once ran beside a second Vexa stack and the rule was "do not share a secret
+    across the two" (SPEC-VEXA-004). With the old stack removed the rule generalises:
+    the Vexa admin token and internal secret must not be reused by any other klai
+    service, so a compromise there does not hand over bot orchestration.
+    """
     services = _compose()["services"]
-    old, new = services["meeting-api"]["environment"], services["vexa12-meeting-api"]["environment"]
-    for key in ("ADMIN_TOKEN", "INTERNAL_API_SECRET"):
-        assert old[key] != new[key], f"{key} is reused across the 0.10 and 0.12 stacks"
+    vexa_secrets = set()
+    for name, svc in services.items():
+        if not name.startswith("vexa12"):
+            continue
+        for key in ("ADMIN_TOKEN", "ADMIN_API_TOKEN", "INTERNAL_API_SECRET"):
+            if value := svc.get("environment", {}).get(key):
+                vexa_secrets.add(value)
+    assert vexa_secrets, "the Vexa stack declares no secrets — did the env keys move?"
+
+    for name, svc in services.items():
+        if name.startswith("vexa12"):
+            continue
+        for key, value in (svc.get("environment") or {}).items():
+            assert value not in vexa_secrets, f"{name}.{key} reuses a Vexa stack secret ({value})"
 
 
 # ---------------------------------------------------------------------------
