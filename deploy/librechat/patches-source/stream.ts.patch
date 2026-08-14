@@ -1,13 +1,43 @@
 diff --git a/src/stream.ts b/src/stream.ts
-index 940dd9b..19e50d7 100644
+index 6913f43..19e50d7 100644
 --- a/src/stream.ts
 +++ b/src/stream.ts
-@@ -72,8 +72,21 @@ function getChunkSources(chunk?: any): unknown[] | undefined {
-   return undefined;
- }
+@@ -40,6 +40,177 @@ import { safeDispatchCustomEvent } from '@/utils/events';
+ import { isGoogleLike } from '@/utils/llm';
+ import { getMessageId } from '@/messages';
  
--const KLAI_SOURCES_MARKER_RE =
--  /<!--\s*klai_sources=([A-Za-z0-9_-]+={0,2})\s*-->/g;
++/* ------------------------------------------------------------------------
++ * Klai patch — KB source propagation through the stream (SPEC-KB citations).
++ *
++ * Retrieval attaches source references to a turn, but the model's text stream
++ * carries them as an inline `<!-- klai_sources=<base64url> -->` marker. Two
++ * things have to happen here:
++ *
++ *   1. Strip the marker before the text reaches the user, and surface the
++ *      decoded sources as structured `sources` on the content part.
++ *   2. Survive the marker being SPLIT across stream fragments. A naive
++ *      per-fragment regex leaks half a marker into the visible answer.
++ *
++ * The live-dispatch path uses a stateful framer (it sees each fragment once);
++ * the aggregator re-extracts on the seam of accumulated-tail + new fragment,
++ * which is stateless on purpose so a stream that ends mid-marker keeps those
++ * characters as plain text rather than swallowing them.
++ * ---------------------------------------------------------------------- */
++
++/** Sources can arrive on the chunk itself rather than inline; providers differ. */
++function getChunkSources(chunk?: any): unknown[] | undefined {
++  const candidates = [
++    chunk?.sources,
++    chunk?.additional_kwargs?.sources,
++    chunk?.response_metadata?.sources,
++    chunk?.additional_kwargs?.delta?.sources,
++  ];
++  for (const candidate of candidates) {
++    if (Array.isArray(candidate) && candidate.length > 0) return candidate;
++  }
++  return undefined;
++}
++
 +/* The marker grammar, in pieces, so complete-matching and partial (split)
 +   detection are DERIVED from the same definition instead of hand-written twice.
 +   They disagreed before: the complete regex accepted any whitespace, the
@@ -23,16 +53,29 @@ index 940dd9b..19e50d7 100644
 +  `${KLAI_MARKER_OPEN}\\s*${KLAI_MARKER_KEY}(${KLAI_MARKER_PAYLOAD})\\s*${KLAI_MARKER_CLOSE}`,
 +  'g'
 +);
- 
- const _klaiStreamWarned = new Set<string>();
- function klaiWarnOnce(message: string): void {
-@@ -97,18 +110,39 @@ function decodeKlaiSourcesMarker(encoded: string): unknown[] | undefined {
-   }
- }
- 
--const KLAI_MARKER_HEAD = '<!-- klai_sources=';
--/** Cap on how much text may be held back waiting for a marker to complete. */
--const KLAI_FRAMER_MAX_TAIL = 8192;
++
++const _klaiStreamWarned = new Set<string>();
++function klaiWarnOnce(message: string): void {
++  if (_klaiStreamWarned.has(message)) return;
++  _klaiStreamWarned.add(message);
++  console.warn(`[klai-patch] ${message}`);
++}
++
++function decodeKlaiSourcesMarker(encoded: string): unknown[] | undefined {
++  try {
++    const padded = encoded + '='.repeat((4 - (encoded.length % 4)) % 4);
++    const json = Buffer.from(
++      padded.replace(/-/g, '+').replace(/_/g, '/'),
++      'base64'
++    ).toString('utf8');
++    const parsed = JSON.parse(json);
++    return Array.isArray(parsed) ? parsed : undefined;
++  } catch (_error) {
++    klaiWarnOnce('stream.decodeKlaiSourcesMarker decode failed');
++    return undefined;
++  }
++}
++
 +/**
 + * Protocol contract: the longest a marker may be. It bounds how much text the
 + * framer will hold back waiting for a marker to complete, so a producer that
@@ -42,20 +85,13 @@ index 940dd9b..19e50d7 100644
 + * legitimately large marker split past the cap leaked in full.
 + */
 +const KLAI_MARKER_MAX_LENGTH = 65536;
- 
++
 +/**
 + * True when `tail` could still grow into a marker the complete grammar matches.
 + * Walks the same pieces as KLAI_SOURCES_MARKER_RE, in order, so the two cannot
 + * drift apart.
 + */
- function isPotentialPartialKlaiMarker(tail: string): boolean {
--  if (tail.length > KLAI_FRAMER_MAX_TAIL) return false;
--  if (tail.length < KLAI_MARKER_HEAD.length) {
--    return KLAI_MARKER_HEAD.startsWith(tail);
--  }
--  if (!tail.startsWith(KLAI_MARKER_HEAD)) return false;
--  return /^[A-Za-z0-9_-]*={0,2}(?: ?-{0,2})?$/.test(
--    tail.slice(KLAI_MARKER_HEAD.length)
++function isPotentialPartialKlaiMarker(tail: string): boolean {
 +  if (tail.length > KLAI_MARKER_MAX_LENGTH) return false;
 +
 +  // Still typing the opening "<!--".
@@ -73,34 +109,209 @@ index 940dd9b..19e50d7 100644
 +  // Payload, then optional whitespace, then a partial "-->".
 +  return new RegExp(`^[A-Za-z0-9_-]*={0,2}\\s*-{0,2}$`).test(
 +    rest.slice(KLAI_MARKER_KEY.length)
-   );
- }
- 
-@@ -151,7 +185,7 @@ function createKlaiSourcesFramer(): {
-       const splitIdx = findPartialKlaiMarkerStart(out);
-       if (splitIdx !== -1) {
-         const tail = out.slice(splitIdx);
--        if (tail.length <= KLAI_FRAMER_MAX_TAIL) {
++  );
++}
++
++/** Index where a possibly-incomplete marker starts, or -1. */
++function findPartialKlaiMarkerStart(text: string): number {
++  if (typeof text !== 'string' || text === '') return -1;
++  const idx = text.lastIndexOf('<');
++  if (idx === -1) return -1;
++  return isPotentialPartialKlaiMarker(text.slice(idx)) ? idx : -1;
++}
++
++function extractKlaiSourcesFromText(text: string): {
++  text: string;
++  sources?: unknown[];
++} {
++  let sources: unknown[] | undefined;
++  const cleanText = text.replace(
++    KLAI_SOURCES_MARKER_RE,
++    (_match, encoded: string) => {
++      const decoded = decodeKlaiSourcesMarker(encoded);
++      if (decoded && decoded.length > 0) sources = decoded;
++      return '';
++    }
++  );
++  return { text: cleanText, sources };
++}
++
++/** Stateful framer for the live-dispatch path: holds back a partial marker. */
++function createKlaiSourcesFramer(): {
++  push(fragment: string): { text: string; sources?: unknown[] };
++} {
++  let buffer = '';
++  return {
++    push(fragment: string) {
++      const combined =
++        buffer + (typeof fragment === 'string' ? fragment : '');
++      buffer = '';
++      const extracted = extractKlaiSourcesFromText(combined);
++      let out = extracted.text;
++      const splitIdx = findPartialKlaiMarkerStart(out);
++      if (splitIdx !== -1) {
++        const tail = out.slice(splitIdx);
 +        if (tail.length <= KLAI_MARKER_MAX_LENGTH) {
-           buffer = tail;
-           out = out.slice(0, splitIdx);
-         } else {
-@@ -1966,9 +2000,16 @@ export function createContentAggregator(): t.ContentAggregatorResult {
++          buffer = tail;
++          out = out.slice(0, splitIdx);
++        } else {
++          klaiWarnOnce(
++            'stream.klai_sources framer overflow — tail flushed as text'
++          );
++        }
++      }
++      return { text: out, sources: extracted.sources };
++    },
++  };
++}
++
++/** Where the per-run framer is parked. Local cast keeps the patch to one file. */
++type KlaiFramerHost = {
++  _klaiSourcesFramer?: ReturnType<typeof createKlaiSourcesFramer>;
++};
++
++export {
++  extractKlaiSourcesFromText,
++  createKlaiSourcesFramer,
++  findPartialKlaiMarkerStart,
++  getChunkSources,
++};
++
+ const LOCAL_CODING_BUNDLE_NAME_SET: ReadonlySet<string> = new Set(
+   LOCAL_CODING_BUNDLE_NAMES
+ );
+@@ -1564,6 +1735,14 @@ hasToolCallChunks: ${hasToolCallChunks}
+     ) {
+       return;
+     } else if (typeof content === 'string') {
++      /* Klai patch: strip the inline klai_sources marker before this text is
++         dispatched to the client, and attach the decoded sources. The framer
++         is per-agentContext because a marker can span fragments. */
++      const framerHost = agentContext as unknown as KlaiFramerHost;
++      framerHost._klaiSourcesFramer ??= createKlaiSourcesFramer();
++      const extracted = framerHost._klaiSourcesFramer.push(content);
++      const textContent = extracted.text;
++      const sources = getChunkSources(chunk) ?? extracted.sources;
+       if (agentContext.currentTokenType === ContentTypes.TEXT) {
+         await graph.dispatchMessageDelta(
+           stepId,
+@@ -1571,14 +1750,15 @@ hasToolCallChunks: ${hasToolCallChunks}
+             content: [
+               {
+                 type: ContentTypes.TEXT,
+-                text: content,
++                text: textContent,
++                ...(sources ? { sources } : {}),
+               },
+             ],
+           },
+           metadata
+         );
+       } else if (agentContext.currentTokenType === 'think_and_text') {
+-        const { text, thinking } = parseThinkingContent(content);
++        const { text, thinking } = parseThinkingContent(textContent);
+         if (thinking) {
+           await graph.dispatchReasoningDelta(
+             stepId,
+@@ -1617,6 +1797,7 @@ hasToolCallChunks: ${hasToolCallChunks}
+                 {
+                   type: ContentTypes.TEXT,
+                   text: text,
++                  ...(sources ? { sources } : {}),
+                 },
+               ],
+             },
+@@ -1800,14 +1981,46 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+     ) {
+       // TODO: update this!!
+       const currentContent = contentParts[index] as t.MessageDeltaUpdate;
++      /* Klai patch: a klai_sources marker can be split across delta fragments.
++         Any leaked partial-marker prefix sits at the END of the accumulated
++         text (it matched nothing, so it passed through) -- re-extract on the
++         seam of accumulated tail + new fragment instead of the new fragment
++         alone. Stateless on purpose: the "buffer" IS the accumulated text, so
++         a stream ending mid-marker keeps its characters as plain text. */
++      const accumulated = currentContent.text || '';
++      const seamIdx = findPartialKlaiMarkerStart(accumulated);
++      const head = seamIdx === -1 ? accumulated : accumulated.slice(0, seamIdx);
++      const carry = seamIdx === -1 ? '' : accumulated.slice(seamIdx);
++      const extracted = extractKlaiSourcesFromText(carry + contentPart.text);
+       const update: t.MessageDeltaUpdate = {
+         type: ContentTypes.TEXT,
+-        text: (currentContent.text || '') + contentPart.text,
++        text: head + extracted.text,
+       };
+ 
        if (contentPart.tool_call_ids) {
          update.tool_call_ids = contentPart.tool_call_ids;
        }
--      /* Newly-seen sources win; otherwise keep what we already accumulated. */
 +      /* Newly-seen sources win; otherwise keep what we already accumulated.
 +         `??` is wrong here: an empty array is not nullish, so a delta carrying
 +         `sources: []` alongside a valid inline marker would suppress the
 +         marker's sources entirely (adversarial review 2026-08-14, finding 4).
 +         Only a NON-EMPTY list counts as "the producer said something". */
 +      const partSources = (contentPart as { sources?: unknown[] }).sources;
-       const incomingSources =
--        (contentPart as { sources?: unknown[] }).sources ?? extracted.sources;
++      const incomingSources =
 +        Array.isArray(partSources) && partSources.length > 0
 +          ? partSources
 +          : extracted.sources;
-       if (Array.isArray(incomingSources) && incomingSources.length > 0) {
-         (update as { sources?: unknown[] }).sources = incomingSources;
-       } else if (
++      if (Array.isArray(incomingSources) && incomingSources.length > 0) {
++        (update as { sources?: unknown[] }).sources = incomingSources;
++      } else if (
++        Array.isArray((currentContent as { sources?: unknown[] }).sources) &&
++        ((currentContent as { sources?: unknown[] }).sources as unknown[])
++          .length > 0
++      ) {
++        (update as { sources?: unknown[] }).sources = (
++          currentContent as { sources?: unknown[] }
++        ).sources;
++      }
+       contentParts[index] = update;
+     } else if (
+       partType.startsWith(ContentTypes.THINK) &&
+@@ -2041,9 +2254,20 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+         return;
+       }
+ 
+-      const contentPart = getFirstContentPart(messageDelta.delta.content);
+-      if (contentPart != null) {
+-        updateContent(runStep.index, contentPart);
++      /* Klai patch: upstream only ever reads content[0]. A provider that emits
++         a multi-part delta silently loses everything after the first part --
++         including a content part carrying klai_sources. Iterate all of them
++         and warn once so the frequency is queryable. */
++      const messageDeltaContent = Array.isArray(messageDelta.delta.content)
++        ? messageDelta.delta.content
++        : [messageDelta.delta.content];
++      if (messageDeltaContent.length > 1) {
++        klaiWarnOnce('stream.delta-array guard saw multi-part delta (message)');
++      }
++      for (const contentPart of messageDeltaContent) {
++        if (contentPart != null) {
++          updateContent(runStep.index, contentPart);
++        }
+       }
+     } else if (
+       event === GraphEvents.ON_AGENT_UPDATE &&
+@@ -2062,9 +2286,18 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+         return;
+       }
+ 
+-      const contentPart = getFirstContentPart(reasoningDelta.delta.content);
+-      if (contentPart != null) {
+-        updateContent(runStep.index, contentPart);
++      const reasoningDeltaContent = Array.isArray(reasoningDelta.delta.content)
++        ? reasoningDelta.delta.content
++        : [reasoningDelta.delta.content];
++      if (reasoningDeltaContent.length > 1) {
++        klaiWarnOnce(
++          'stream.delta-array guard saw multi-part delta (reasoning)'
++        );
++      }
++      for (const contentPart of reasoningDeltaContent) {
++        if (contentPart != null) {
++          updateContent(runStep.index, contentPart);
++        }
+       }
+     } else if (event === GraphEvents.ON_RUN_STEP_DELTA) {
+       const runStepDelta = data as t.RunStepDeltaEvent;
