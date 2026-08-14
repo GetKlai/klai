@@ -115,6 +115,7 @@ async def _regenerate_setup(
     docker_client: MagicMock,
     base_config_exists: bool = True,
     generate_yaml: MagicMock | None = None,
+    reconcile_env: MagicMock | None = None,
 ) -> AsyncIterator[tuple[MagicMock, Response]]:
     """Patches every external dep of regenerate_librechat_configs.
 
@@ -126,6 +127,10 @@ async def _regenerate_setup(
     ``generate_yaml`` lets a test override config-regeneration (Step 1) per
     tenant -- e.g. to simulate one tenant's regen failing -- by passing a
     ``MagicMock(side_effect=...)`` keyed on the ``mcp_servers`` argument.
+
+    ``reconcile_env`` lets a test override the per-tenant env reconciliation
+    call (SPEC-TENANT-ENV-RECONCILE-001) -- default is a no-op (``[]``, i.e.
+    nothing missing) so existing tests are unaffected by the reconcile step.
     """
     request = MagicMock()
     request.state = MagicMock()
@@ -143,6 +148,10 @@ async def _regenerate_setup(
         patch(
             "app.services.provisioning.generators._generate_librechat_yaml",
             generate_yaml or MagicMock(return_value="version: 1.3.8\n"),
+        ),
+        patch(
+            "app.services.provisioning.generators.reconcile_librechat_env",
+            reconcile_env or MagicMock(return_value=[]),
         ),
         patch("app.api.internal.aioredis.Redis", MagicMock(return_value=redis_client)),
         patch("docker.from_env", MagicMock(return_value=docker_client)),
@@ -455,3 +464,111 @@ class TestConfigOnlyRegenerationSemantics:
         # Cache invalidation / restart never ran -- there was nothing to apply.
         redis_client.scan_iter.assert_not_called()
         docker_client.containers.get.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# SPEC-TENANT-ENV-RECONCILE-001: per-tenant .env reconciliation wired into
+# Step 1 of the fleet regenerate.
+# ---------------------------------------------------------------------------
+
+
+class TestEnvReconciliationWiring:
+    @pytest.mark.asyncio
+    async def test_env_keys_added_surfaced_in_response(self):
+        """A tenant whose .env was missing keys reports them in env_keys_added."""
+        from app.api import internal as internal_mod
+
+        orgs = [_org("getklai", 1), _org("voys", 2)]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+
+        def _reconcile(_env_path, _required):
+            # Simulate getklai already having the keys (no-op) and voys missing them.
+            return []
+
+        added_for_voys = ["PORTAL_INTERNAL_URL", "PORTAL_INTERNAL_SECRET"]
+        reconcile_env = MagicMock(side_effect=[[], added_for_voys])
+
+        async with _regenerate_setup(orgs, redis_client, docker_client, reconcile_env=reconcile_env) as (
+            request,
+            response,
+        ):
+            resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        assert resp.errors == []
+        assert response.status_code == 200
+        # Only the tenant with actual additions appears; empty-list tenants are omitted.
+        assert resp.env_keys_added == {"voys": added_for_voys}
+
+    @pytest.mark.asyncio
+    async def test_reconcile_failure_isolated_per_tenant_in_restart_only_mode(self):
+        """A single tenant's reconcile failure (e.g. missing .env) does not
+        block other tenants and does not flip restart-only mode to 500 --
+        mirrors the existing config-regen partial-failure semantics.
+        """
+        from app.api import internal as internal_mod
+        from app.services.provisioning.generators import EnvFileMissingError
+
+        orgs = [_org("getklai", 1), _org("voys", 2)]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+
+        def _reconcile(env_path, _required):
+            if "voys" in str(env_path):
+                raise EnvFileMissingError("tenant env file not found")
+            return []
+
+        reconcile_env = MagicMock(side_effect=_reconcile)
+
+        async with _regenerate_setup(orgs, redis_client, docker_client, reconcile_env=reconcile_env) as (
+            request,
+            response,
+        ):
+            resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        assert resp.tenants_updated == ["getklai"]
+        assert any("voys" in e and "tenant env file not found" in e for e in resp.errors), resp.errors
+        assert response.status_code == 200
+        assert resp.env_keys_added == {}
+
+    @pytest.mark.asyncio
+    async def test_reconcile_failure_with_recreate_mode_yields_500(self):
+        """A reconcile failure in recreate mode is destructive-path fail-loud
+        (finding 3C semantics): the failing tenant is excluded from the
+        container-recreate step and the response is 500.
+        """
+        from app.api import internal as internal_mod
+        from app.services.provisioning.generators import EnvFileMissingError
+
+        orgs = [_org("getklai", 1), _org("voys", 2)]
+        db = _db_returning_orgs(orgs)
+        redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
+        docker_client = _docker_client()
+
+        def _reconcile(env_path, _required):
+            if "voys" in str(env_path):
+                raise EnvFileMissingError("tenant env file not found")
+            return []
+
+        reconcile_env = MagicMock(side_effect=_reconcile)
+
+        async with _regenerate_setup(orgs, redis_client, docker_client, reconcile_env=reconcile_env) as (
+            request,
+            response,
+        ):
+            request.query_params = {"recreate_containers": "true"}
+            with patch(
+                "app.services.provisioning.infrastructure._start_librechat_container",
+                MagicMock(return_value=None),
+            ) as start_librechat:
+                resp = await internal_mod.regenerate_librechat_configs(request=request, response=response, db=db)
+
+        # voys never reached the recreate step -- only getklai (the tenant
+        # whose config+env reconciliation both succeeded) was recreated.
+        start_librechat.assert_called_once_with(
+            "getklai", "/opt/klai/librechat/getklai/.env", None, rollback_on_failure=True
+        )
+        assert any("voys" in e for e in resp.errors), resp.errors
+        assert response.status_code == 500
