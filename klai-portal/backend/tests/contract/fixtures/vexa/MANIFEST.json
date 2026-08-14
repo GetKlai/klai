@@ -1,0 +1,22 @@
+{
+  "_README": "Provenance for the vendored Vexa contract fixtures. These files are COPIES from upstream Vexa-ai/vexa at the tag below — never hand-edit them. To refresh: check out the new upstream tag, re-copy the source_paths, update this manifest (tag + commit + seal hashes), and run `pytest tests/contract`. A red test after a refresh is the entire point: it names exactly which upstream change breaks Klai's integration.",
+  "upstream_repo": "https://github.com/Vexa-ai/vexa",
+  "upstream_tag": "v0.12.22",
+  "upstream_commit": "4dfe8b39ed6861318d145242e0c1f85023fec2fe",
+  "vendored_at": "2026-08-14",
+  "contract_seals": {
+    "core/gateway/contracts/api.v1": "9b3fbdc65a049460db486c14ad590b8b7f60fe55ec252db4e5ef5ac2d894e1e6",
+    "core/meetings/contracts/webhook.v1": "7d5b9d674544cf8ce7bdeda85b5156907be7c4d3e9be359366cc2ab1665bafba"
+  },
+  "source_paths": {
+    "api.v1.schema.json": "core/gateway/contracts/api.v1/api.schema.json",
+    "api.v1.KNOWN_GAPS.json": "core/gateway/contracts/api.v1/KNOWN_GAPS.json",
+    "golden/BotStatusResponse.example.json": "core/gateway/contracts/api.v1/golden/BotStatusResponse.example.json",
+    "golden/TranscriptionResponse.example.json": "core/gateway/contracts/api.v1/golden/TranscriptionResponse.example.json",
+    "golden/Envelope.meeting-completed.json": "core/meetings/contracts/webhook.v1/golden/Envelope.meeting-completed.json",
+    "golden/Envelope.bot-failed.json": "core/meetings/contracts/webhook.v1/golden/Envelope.bot-failed.json",
+    "golden/SignatureHeaders.signed.json": "core/meetings/contracts/webhook.v1/golden/SignatureHeaders.signed.json"
+  },
+  "deployed_version": "0.10.6.3.14",
+  "_deployed_note": "Klai production currently runs 0.10.6.3.14. These fixtures are from the 0.12.22 TARGET. api.v1 is sealed hash-equal across both lines (upstream CI-enforced), so the call-surface tests are valid against production today AND against the migration target."
+}

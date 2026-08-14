@@ -40,6 +40,13 @@ networks:
     name: vexa-bots
     driver: bridge
     # NOT internal — bot containers need internet egress to join meeting platforms
+  vexa12-bots:
+    name: vexa12-bots
+    driver: bridge
+    # SPEC-VEXA-004: separate bot network for the parallel 0.12 stack. MUST stay
+    # separate from vexa-bots: a 0.12 bot resolves its lifecycle callback by the
+    # literal name `meeting-api`, which on vexa-bots would hit the 0.10 service.
+    # NOT internal — bot containers need internet egress to join meeting platforms
 
 volumes:
   firecrawl-postgres-data:
@@ -1494,6 +1501,7 @@ services:
           memory: 256M
     networks:
       - vexa-bots   # isolated from klai-net-redis; bot containers resolve vexa-redis via this network
+      - vexa12-bots # SPEC-VEXA-004: parallel 0.12 stack shares the broker on DB index 1
       - net-redis   # api-gateway reads the shared broker from klai net-redis
     volumes:
       - vexa-redis-data:/data
@@ -1502,6 +1510,150 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SPEC-VEXA-004 — parallel Vexa 0.12.22 stack (meeting-capture only)
+  #
+  # Runs ALONGSIDE the 0.10.6.3.14 services above. Nothing here is reachable by
+  # portal-api until VEXA_MEETING_API_URL is repointed — that single env var IS
+  # the cutover, and the rollback. Deliberately NOT an in-place image swap: the
+  # last two Vexa migrations were paid for by doing exactly that
+  # (`no-architecture-change-in-migration`, SPEC-VEXA-001 §7 post-mortem).
+  #
+  # Deliberately NOT deployed from upstream's compose: gateway, admin-api,
+  # agent-api, agent-worker, mcp, terminal, dashboard, minio, and its own
+  # postgres/valkey. Klai uses the meeting-capture brick and nothing else.
+  #   - gateway   → portal-api calls meeting-api:8080 directly on klai-net.
+  #   - admin-api → only feeds /internal/users/{id}/bot-context, which is
+  #                 best-effort BY CONTRACT upstream ("a lookup failure must
+  #                 NEVER block a spawn"). meetings.user_id is a bare Integer
+  #                 with no FK, so no user row has to exist.
+  #   - minio     → Garage already speaks S3 for the 0.10 stack.
+  #
+  # Isolation from the 0.10 stack: own DB (vexa_v012), own bot network
+  # (vexa12-bots), own Redis DB index (1). Shared: postgres, vexa-redis,
+  # Garage, and the SPEC-SEC-021 socat bridge.
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # ─── Vexa 0.12 runtime (Docker-socket bot orchestrator) ─────────────────
+  # Same requests_unixsocket constraint as runtime-api 0.10 (upstream compose
+  # mounts the raw docker.sock; we do not). Reuses the existing socat bridge —
+  # its listener is `fork,reuseaddr`, so a second client is fine.
+  vexa12-runtime:
+    image: vexaai/v012-runtime:v0.12.22
+    restart: unless-stopped
+    environment:
+      DOCKER_NETWORK: vexa12-bots
+      BROWSER_IMAGE: vexaai/vexa-bot:v0.12.22
+      # Agent/worker images are the 0.12 "second kind" — not deployed by Klai.
+      AGENT_IMAGE: ""
+      AGENT_WORKER_IMAGE: ""
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/1
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      LOG_LEVEL: info
+    volumes:
+      - runtime-api-docker-socket:/var/run   # socat-provided docker.sock (SPEC-SEC-021)
+    init: true
+    depends_on:
+      vexa-redis:
+        condition: service_healthy
+      runtime-api-socket-proxy:
+        condition: service_started
+    networks:
+      - vexa12-bots
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8090/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ─── Vexa 0.12 meeting-api (bot lifecycle + transcript collector) ───────
+  vexa12-meeting-api:
+    image: vexaai/v012-meeting-api:v0.12.22
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: vexa_v012          # own database — the 0.10 `vexa` DB is untouched
+      DB_USER: vexa
+      DB_PASSWORD: ${VEXA_DB_PASSWORD}
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/1
+      RUNTIME_API_URL: http://vexa12-runtime:8090
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      # MeetingToken is signed AND verified with ADMIN_TOKEN. Without admin-api
+      # deployed this is a purely local signing secret, not a shared one.
+      ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
+      # Empty => calendar sync no-ops and auto-join spawns uncapped. Both are
+      # upstream features Klai does not use; portal-api owns scheduling.
+      ADMIN_API_URL: ""
+      DEFAULT_BOT_NAME: Klai
+      # GDPR (REQ-U-001, carried over from SPEC-VEXA-003): transcript only,
+      # never audio at rest. portal-api also sends recording_enabled=false per
+      # spawn; this is the deployment-level floor under that.
+      RECORDING_ENABLED: "false"
+      TRANSCRIBE_ENABLED: "true"
+      BOT_AUTHENTICATED: "false"
+      TRANSCRIPTION_SERVICE_URL: http://172.18.0.1:8000/v1/audio/transcriptions
+      TRANSCRIPTION_SERVICE_TOKEN: ${WHISPER_SERVICE_TOKEN:-internal}
+      # Storage backend: Garage speaks S3. Unused while RECORDING_ENABLED=false,
+      # but the service still wants the config to boot (same as 0.10).
+      MINIO_ENDPOINT: garage:3900
+      MINIO_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      MINIO_BUCKET: vexa-recordings
+      MINIO_SECURE: "false"
+      # ─── Operator system webhook (replaces 0.10's POST_MEETING_HOOKS) ────
+      # 0.12 splits webhooks in two: CUSTOMER webhooks (per-user, behind an SSRF
+      # guard that hard-blocks 172.16/12 — portal-api is unreachable that way)
+      # and this OPERATOR sink, which is frozen at boot from deployment config
+      # and may opt into private HTTP for exactly this in-cluster case.
+      #
+      # It delivers only meeting.completed and bot.failed, HMAC-signed, with a
+      # Redis retry queue. Klai's handler needs no change: the sink also sends
+      # `Authorization: Bearer <secret>` (upstream keeps it for back-compat),
+      # which is what _require_webhook_secret already validates, and the
+      # envelope is the same shape VexaWebhookPayload parses today.
+      #
+      # NOTE: credentials-in-URL are REJECTED by the sink, so the 0.10
+      # `http://vexa:<secret>@portal-api:...` form must not be reused here.
+      #
+      # Intermediate statuses (joining/active) do NOT arrive on this sink —
+      # bot_poller.py already polls GET /bots/status every 10s and owns those
+      # transitions, so the webhook is a latency optimisation, not a dependency.
+      VEXA_SYSTEM_WEBHOOK_URL: http://portal-api:8010/api/bots/internal/webhook
+      VEXA_SYSTEM_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
+      VEXA_SYSTEM_WEBHOOK_ALLOW_PRIVATE_HTTP: "true"
+      VEXA_SYSTEM_WEBHOOK_TIMEOUT_S: "10"
+      LOG_LEVEL: info
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vexa-redis:
+        condition: service_healthy
+      vexa12-runtime:
+        condition: service_started
+    networks:
+      klai-net: {}        # portal-api reaches this directly; no gateway in front
+      net-postgres: {}
+      vexa12-bots:
+        aliases:
+          - meeting-api   # the name a spawned 0.12 bot dials for its callback
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
