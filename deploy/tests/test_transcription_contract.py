@@ -48,7 +48,7 @@ def test_scribe_and_vexa_share_transcription_backend_origin():
     compose = _compose()
 
     scribe_env = compose["services"]["scribe-api"]["environment"]
-    meeting_env = compose["services"]["meeting-api"]["environment"]
+    meeting_env = compose["services"]["vexa12-meeting-api"]["environment"]
 
     scribe_base = urlparse(scribe_env["WHISPER_SERVER_URL"])
     meeting_endpoint = urlparse(meeting_env["TRANSCRIPTION_SERVICE_URL"])
