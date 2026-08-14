@@ -2382,3 +2382,61 @@ because nobody runs `gh run list --branch main` between merges.
 Manual playbook is the current state. Option 1 (Husky pre-push
 hook) is the cheapest mechanical guard and would have caught
 this incident before either dev pushed.
+
+## queue-is-not-a-rate-limiter (HIGH)
+A job queue orders work and prevents loss — it does not throttle the pace at
+which queue workers hit a downstream rate-limited service. knowledge-ingest
+runs LLM-enrichment jobs through Procrastinate worker-lanes, but the job
+bodies fired their LiteLLM calls unthrottled. The `klai-fast` alias budget in
+`deploy/litellm/config.yaml` is 45 rpm. During a bulk crawl of 550 jobs on
+2026-08-14, enrichment blew straight through it.
+
+**Reference incident:** 641 `enrichment_llm_error` (429) events over two
+weeks, 1165 permanently-failed enrich-bulk jobs, and one customer-visible
+source (intermedia.com, Ascend-KB) stuck on "failed" for 8 days before
+anyone noticed. Three independent rate-limiters existed on the same budget
+with no shared accounting — graphiti's own token bucket (30 rpm by itself),
+a separate limiter inside `taxonomy_classifier`/`content_labeler`, and none
+at all for enrichment. Each was correct in isolation; combined they offered
+structurally more throughput than the 45 rpm budget allowed. Retries made it
+worse: `RetryStrategy(max_attempts=2)` had no backoff, so both attempts of
+every job burned inside the same 20-second rate-limit window instead of
+spreading out.
+
+**Why:** Rate limits are a property of the downstream API's configured
+budget, not of any single caller. A queue only guarantees ordering and
+at-least-once delivery; nothing about "queue" implies "paced." When more
+than one limiter exists for the same budget/alias, their individual limits
+do not compose into a shared ceiling — they add up, and the real ceiling is
+silently exceeded the moment more than one caller is active concurrently.
+
+**Prevention (mechanical):**
+
+1. **One shared token bucket per budget/alias, not per caller.** All
+   chat/completions callsites in knowledge-ingest now route through
+   `knowledge_ingest/llm_throttle.py::shared_klai_fast_limiter()` — 0.6 rps
+   sustained, burst 10 — sized to the `klai-fast` alias's 45 rpm. Delete
+   any caller-local limiter once it targets the same alias; a second
+   independent limiter is not defense-in-depth, it's a budget leak.
+
+2. **Backoff on retries against a rate-limited call.** `RetryStrategy`
+   without an exponential wait means every retry attempt lands inside the
+   same rate-limit window as the original call, guaranteeing a second
+   429. Any retry policy wrapping an LLM/HTTP call MUST specify backoff
+   (procrastinate: `RetryStrategy(max_attempts=N, exponential_wait=S)` —
+   waits `S ** (attempts + 1)` seconds), not just `max_attempts`.
+
+3. **Drift-guard test, source-scan pattern.**
+   `klai-knowledge-ingest/tests/test_llm_throttle.py` fails CI if any
+   module contains the literal `"chat/completions"` without also
+   referencing `"shared_klai_fast_limiter"` in the same file. Same
+   mechanical shape as the ast-grep guards in `url-shape-multi-file-drift`
+   above: when a contract (here, "every LLM call goes through the shared
+   limiter") can drift silently across files, encode it as a source-scan
+   test rather than trusting code review to catch every new callsite.
+
+4. **Alert on the failure class, not just the root cause.** This was
+   invisible for two weeks because nothing paged on sustained 429s.
+   `deploy/grafana/provisioning/alerting/knowledge-ingest-llm-rules.yaml`
+   adds a rule on `enrichment_llm_error` rate — apply the same pattern to
+   any other queue-consumer calling a rate-limited external API.
