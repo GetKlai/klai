@@ -333,6 +333,89 @@ process.stdout.write(`[klai-entrypoint] SPEC-KB-015 feedback-forward patch appli
 KB_FEEDBACK_NODE
 fi
 
+# SPEC-STREAM-CLEANUP-001: keep completed generation jobs briefly instead of
+# discarding them immediately, so a client that reconnects right as an
+# answer completes can still retrieve it. GenerationJobManager resolves
+# `services.cleanupOnComplete ?? true` (and its own constructor's
+# `options?.cleanupOnComplete ?? true`), so createStreamServices() must
+# literally return `cleanupOnComplete: false` in BOTH the Redis-backed and
+# in-memory branches, or the upstream default `true` (discard immediately)
+# silently wins.
+#
+# Measured 2026-08-14: the earlier deploy/librechat/patches/createStreamServices.ts
+# bind-mount over the SOURCE file
+# /app/packages/api/src/stream/createStreamServices.ts was INERT. The
+# runtime loads @librechat/api via the workspace symlink
+# node_modules/@librechat/api -> packages/api, whose package.json `main`
+# points at the pre-built /app/packages/api/dist/index.cjs bundle; nothing
+# recompiles the mounted .ts at container start, so the mount was silently
+# ignored (confirmed by reading the running bundle: its createStreamServices
+# returned no cleanupOnComplete key at all, resolving to the upstream
+# default `true`). This patches the BUILT bundle in place instead -- same
+# transform-at-boot pattern as the Meili and SPEC-KB-015 blocks above -- so
+# the setting actually takes effect. The mounted-.ts patch, its manifest
+# entries, and the old mount-pinning test were removed in the same change
+# that added this block.
+#
+# Anchors: `isRedis: true` and `isRedis: false` are each exactly one
+# occurrence in the built bundle (verified 2026-08-14 against
+# ghcr.io/danny-avila/librechat:v0.8.7's /app/packages/api/dist/index.cjs),
+# and both live inside the `//#region src/stream/createStreamServices.ts`
+# ... `//#endregion` block. The transform below scopes its search to that
+# region as a second line of defense even though the anchors are already
+# globally unique. Fail-loud on anchor drift: a LibreChat upgrade that
+# reshapes this code must not boot silently unpatched.
+#
+# If this throws after a LibreChat upgrade: extract the new bundle
+# (docker run --rm --entrypoint cat <image> /app/packages/api/dist/index.cjs),
+# search for `//#region src/stream/createStreamServices.ts`, find the two
+# `return { jobStore, eventTransport, isRedis: <true|false> }` object
+# literals inside it, and update the anchors below IN BOTH this file and
+# getklai/entrypoint.sh.
+STREAM_CLEANUP_TARGET=/app/packages/api/dist/index.cjs
+if grep -q "SPEC-STREAM-CLEANUP-001" "$STREAM_CLEANUP_TARGET" 2>/dev/null; then
+  echo "[klai-entrypoint] SPEC-STREAM-CLEANUP-001 cleanup-on-complete patch already applied, skipping"
+else
+  node <<'STREAM_CLEANUP_NODE'
+const { existsSync, readFileSync, writeFileSync } = require('fs');
+
+const target = '/app/packages/api/dist/index.cjs';
+if (!existsSync(target)) {
+  throw new Error(`[klai-entrypoint] required SPEC-STREAM-CLEANUP-001 patch target is missing: ${target}`);
+}
+let content = readFileSync(target, 'utf8');
+
+const REGION_START = '//#region src/stream/createStreamServices.ts';
+const regionStart = content.indexOf(REGION_START);
+if (regionStart === -1) {
+  throw new Error(`[klai-entrypoint] SPEC-STREAM-CLEANUP-001 could not locate '${REGION_START}' in ${target} (LibreChat upgrade likely renamed/moved the module)`);
+}
+const regionEnd = content.indexOf('//#endregion', regionStart);
+if (regionEnd === -1) {
+  throw new Error(`[klai-entrypoint] SPEC-STREAM-CLEANUP-001 could not locate closing '//#endregion' after ${REGION_START} in ${target}`);
+}
+
+let region = content.slice(regionStart, regionEnd);
+
+const REPLACEMENTS = [
+  { label: 'Redis-backed branch', find: 'isRedis: true', replace: 'isRedis: true, cleanupOnComplete: false /*SPEC-STREAM-CLEANUP-001*/' },
+  { label: 'in-memory branch', find: 'isRedis: false', replace: 'isRedis: false, cleanupOnComplete: false /*SPEC-STREAM-CLEANUP-001*/' },
+];
+
+for (const { label, find, replace } of REPLACEMENTS) {
+  const count = region.split(find).length - 1;
+  if (count !== 1) {
+    throw new Error(`[klai-entrypoint] SPEC-STREAM-CLEANUP-001 anchor for ${label} ('${find}') matched ${count} times inside the createStreamServices region of ${target} (expected exactly 1); LibreChat upgrade likely reshaped createStreamServices -- re-derive the anchor against the new image`);
+  }
+  region = region.replace(find, replace);
+}
+
+content = content.slice(0, regionStart) + region + content.slice(regionEnd);
+writeFileSync(target, content);
+process.stdout.write(`[klai-entrypoint] SPEC-STREAM-CLEANUP-001 cleanup-on-complete patch applied: ${target}\n`);
+STREAM_CLEANUP_NODE
+fi
+
 INDEX=${KLAI_LIBRECHAT_INDEX:-/app/client/dist/index.html}
 LIGHT_MARKER=klai-force-light
 FOOTER_MARKER=klai-hide-librechat-footer-v1

@@ -27,10 +27,16 @@ function extractBlock(source, re) {
 
 const MEILI_RE = /node <<'NODE'\n([\s\S]*?)\nNODE\nfi/;
 const FEEDBACK_RE = /node <<'KB_FEEDBACK_NODE'\n([\s\S]*?)\nKB_FEEDBACK_NODE\nfi/;
+const STREAM_CLEANUP_RE = /node <<'STREAM_CLEANUP_NODE'\n([\s\S]*?)\nSTREAM_CLEANUP_NODE\nfi/;
 const realMeiliBlock = extractBlock(realKlaiEntrypoint, MEILI_RE);
 const realFeedbackBlock = extractBlock(realKlaiEntrypoint, FEEDBACK_RE);
+const realStreamCleanupBlock = extractBlock(realKlaiEntrypoint, STREAM_CLEANUP_RE);
 
-function writeFakeEntrypoint(dir, name, { meiliBlock, feedbackBlock }) {
+function writeFakeEntrypoint(
+  dir,
+  name,
+  { meiliBlock, feedbackBlock, streamCleanupBlock = realStreamCleanupBlock },
+) {
   const content = [
     '#!/bin/sh',
     'set -e',
@@ -45,6 +51,11 @@ function writeFakeEntrypoint(dir, name, { meiliBlock, feedbackBlock }) {
     'KB_FEEDBACK_NODE',
     'fi',
     '',
+    "node <<'STREAM_CLEANUP_NODE'",
+    streamCleanupBlock,
+    'STREAM_CLEANUP_NODE',
+    'fi',
+    '',
   ].join('\n');
   const p = path.join(dir, name);
   fs.writeFileSync(p, content);
@@ -55,9 +66,34 @@ function writeExtractedFixtures(dir, { messagesJs } = {}) {
   const bundledPath = path.join(dir, 'app/packages/data-schemas/dist/index.cjs');
   const indexSyncPath = path.join(dir, 'app/api/db/indexSync.js');
   const messagesPath = path.join(dir, 'app/api/server/routes/messages.js');
+  const streamBundlePath = path.join(dir, 'app/packages/api/dist/index.cjs');
   fs.mkdirSync(path.dirname(bundledPath), { recursive: true });
   fs.mkdirSync(path.dirname(indexSyncPath), { recursive: true });
   fs.mkdirSync(path.dirname(messagesPath), { recursive: true });
+  fs.mkdirSync(path.dirname(streamBundlePath), { recursive: true });
+  fs.writeFileSync(
+    streamBundlePath,
+    `//#region src/stream/createStreamServices.ts
+function createStreamServices(config = {}) {
+	return {
+		jobStore,
+		eventTransport,
+		isRedis: true
+	};
+}
+function createInMemoryServices(options) {
+	return {
+		jobStore,
+		eventTransport,
+		isRedis: false
+	};
+}
+//#endregion
+//#region src/utils/memory.ts
+const INTERVAL_MS = 6e4;
+//#endregion
+`,
+  );
   fs.writeFileSync(
     bundledPath,
     `
@@ -153,6 +189,7 @@ function runDryRun(extractedRoot, klaiPath, getklaiPath) {
 
   const r = runDryRun(extractedRoot, klaiPath, getklaiPath);
   assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /DRY-RUN OK \[stream-cleanup\]/);
   assert.match(r.stdout, /DRY-RUN OK: all runtime transforms applied cleanly/);
 }
 
@@ -201,6 +238,64 @@ function runDryRun(extractedRoot, klaiPath, getklaiPath) {
   assert.match(r.stderr, /anchor drift/);
 }
 
+// --- Stream-cleanup sync-guard: entrypoints drift apart. ---
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dry-run-stream-syncguard-'));
+  const klaiPath = writeFakeEntrypoint(dir, 'klai-entrypoint.sh', {
+    meiliBlock: realMeiliBlock,
+    feedbackBlock: realFeedbackBlock,
+  });
+  const getklaiPath = writeFakeEntrypoint(dir, 'getklai-entrypoint.sh', {
+    meiliBlock: realMeiliBlock,
+    feedbackBlock: realFeedbackBlock,
+    streamCleanupBlock: realStreamCleanupBlock.replace(
+      'SPEC-STREAM-CLEANUP-001',
+      'SPEC-STREAM-CLEANUP-001-DRIFTED',
+    ),
+  });
+  const extractedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dry-run-extract-'));
+  writeExtractedFixtures(extractedRoot);
+
+  const r = runDryRun(extractedRoot, klaiPath, getklaiPath);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /DRY-RUN FAIL \[stream-cleanup-sync-guard\]/);
+}
+
+// --- Fail-loud: extracted packages/api bundle has a drifted anchor (no
+// `isRedis: true`/`isRedis: false` literal at all -- simulates an upstream
+// reshape of createStreamServices). ---
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dry-run-stream-anchor-'));
+  const klaiPath = writeFakeEntrypoint(dir, 'klai-entrypoint.sh', {
+    meiliBlock: realMeiliBlock,
+    feedbackBlock: realFeedbackBlock,
+  });
+  const getklaiPath = writeFakeEntrypoint(dir, 'getklai-entrypoint.sh', {
+    meiliBlock: realMeiliBlock,
+    feedbackBlock: realFeedbackBlock,
+  });
+  const extractedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dry-run-extract-'));
+  writeExtractedFixtures(extractedRoot);
+  // Overwrite the stream bundle fixture with a drifted shape (isRedis renamed).
+  fs.writeFileSync(
+    path.join(extractedRoot, 'app/packages/api/dist/index.cjs'),
+    `//#region src/stream/createStreamServices.ts
+function createStreamServices(config = {}) {
+	return {
+		jobStore,
+		eventTransport,
+		usesRedis: true
+	};
+}
+//#endregion
+`,
+  );
+
+  const r = runDryRun(extractedRoot, klaiPath, getklaiPath);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /DRY-RUN FAIL \[stream-cleanup\]/);
+}
+
 // --- Missing extraction: no runtime files at all. ---
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dry-run-missing-'));
@@ -218,6 +313,7 @@ function runDryRun(extractedRoot, klaiPath, getklaiPath) {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /DRY-RUN FAIL \[meili-shape\]/);
   assert.match(r.stderr, /DRY-RUN FAIL \[feedback\]/);
+  assert.match(r.stderr, /DRY-RUN FAIL \[stream-cleanup\]/);
 }
 
 console.log('OK: dry-run-transforms.cjs sync-guard and fail-loud wiring behave correctly on synthetic fixtures.');

@@ -7,4 +7,3 @@ getklai/patches/format.cjs|/app/node_modules/@librechat/agents/dist/cjs/messages
 getklai/patches/share.js|/app/api/server/routes/share.js|2463eb39ae050f595e5578d8d87482ddd1a108078231830229970f4414ea741c|Allow public shares and sanitize placeholder links/images on LibreChat v0.8.7 canary.
 getklai/patches/stream.cjs|/app/node_modules/@librechat/agents/dist/cjs/stream.cjs|a1cde9ccc350eea7852429cce6405a8bc6368cd77216980048f3d43dd5c6fade|Preserve Klai source streaming and sparse aggregation guards on LibreChat v0.8.7 canary.
 getklai/patches/search.cjs|/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs|a64375fbcbc1acc4b0659e966854f7a9c237b2bf45de518c119eff543b800d2c|Preserve Klai web-search behavior on LibreChat v0.8.7 canary.
-getklai/patches/createStreamServices.ts|/app/packages/api/src/stream/createStreamServices.ts|ac039dc98dca672b024e87ea92a4ffb0ed3287b3db8e7e59a46f4ba8fa89ffb3|Keep completed generation jobs briefly for LibreChat v0.8.7 canary.
