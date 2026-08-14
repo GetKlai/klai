@@ -78,7 +78,7 @@ class _FakeClient:
         self._script = list(script)
         self.calls: list[dict] = []
 
-    async def __aenter__(self) -> "_FakeClient":
+    async def __aenter__(self) -> _FakeClient:
         return self
 
     async def __aexit__(self, *_: object) -> None:
@@ -182,7 +182,10 @@ class TestBackpressureRetry:
 class TestTransportErrorRetry:
     async def test_connect_error_then_success(self, patch_client) -> None:
         client = patch_client(
-            [httpx.ConnectError("nope", request=httpx.Request("POST", "http://x")), _success_response()]
+            [
+                httpx.ConnectError("nope", request=httpx.Request("POST", "http://x")),
+                _success_response(),
+            ]
         )
         result = await WhisperHttpProvider().transcribe(b"audio", language=None)
 
@@ -191,7 +194,10 @@ class TestTransportErrorRetry:
 
     async def test_persistent_connect_error_raises_503(self, patch_client) -> None:
         client = patch_client(
-            [httpx.ConnectError("nope", request=httpx.Request("POST", "http://x")) for _ in range(_MAX_RETRIES)]
+            [
+                httpx.ConnectError("nope", request=httpx.Request("POST", "http://x"))
+                for _ in range(_MAX_RETRIES)
+            ]
         )
         with pytest.raises(HTTPException) as exc_info:
             await WhisperHttpProvider().transcribe(b"audio", language=None)

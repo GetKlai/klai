@@ -27,7 +27,40 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  # Until 2026-08-14 this service had NO quality job at all: 108 tests, ruff
+  # config and a lockfile existed in the repo but nothing ever ran them, so
+  # dependency drift and regressions were invisible. Mirrors the portal-api /
+  # knowledge-mcp shape: lint -> vulnerability scan -> tests, all gating the
+  # image build.
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-mailer
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      # --skip-editable keeps the gate on external deps; internal klai-libs are
+      # editable path deps, not PyPI releases to query by distribution name.
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run --with pip-audit pip-audit --skip-editable
+
+      - name: Test (pytest)
+        run: uv run pytest -q --tb=short
+
   build-push:
+    needs: quality
     runs-on: ubuntu-latest
 
     steps:

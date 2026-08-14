@@ -8,15 +8,16 @@ txn_id is generated as "txn_" + uuid4().hex = 4 + 32 = 36 chars.
 The original migration defined id as VARCHAR(32), which is too short.
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
+
 revision: str = "0002_fix_id_varchar_length"
-down_revision: Union[str, Sequence[str], None] = "0001_create_scribe"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "0001_create_scribe"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

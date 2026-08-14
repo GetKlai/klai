@@ -43,7 +43,9 @@ async def ingest_scribe_transcript(
         "chunks": chunks,
         "synthesis_depth": 0,
         "extra": {
-            "recording_duration_seconds": float(transcription.duration_seconds) if transcription.duration_seconds else None,
+            "recording_duration_seconds": (
+                float(transcription.duration_seconds) if transcription.duration_seconds else None
+            ),
             "scribe_id": transcription.id,
         },
     }
@@ -95,7 +97,8 @@ def _cluster_segments(segments: list[dict]) -> list[str]:
         text = seg.get("text", "").strip()
         if not text:
             continue
-        if len(current) >= _SEGMENTS_PER_CHUNK or (current_chars + len(text) > max_chars and current):
+        chunk_is_full = current_chars + len(text) > max_chars and current
+        if len(current) >= _SEGMENTS_PER_CHUNK or chunk_is_full:
             chunks.append(" ".join(current))
             current = []
             current_chars = 0

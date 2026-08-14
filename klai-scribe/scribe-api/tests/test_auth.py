@@ -140,7 +140,7 @@ class TestAuthRejectPaths:
 
         with pytest.raises(HTTPException) as exc:
             await get_authenticated_caller(
-                x_internal_secret="WRONG-SECRET-attacker-attempt",  # noqa: S106 — fixture, not a real credential
+                x_internal_secret="WRONG-SECRET-attacker-attempt",
                 x_klai_verified_user_id="u-1",
                 x_klai_verified_org_id="o-1",
             )
