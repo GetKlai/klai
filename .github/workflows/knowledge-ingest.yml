@@ -47,6 +47,32 @@ jobs:
           version: "0.11.3"
           python-version: "3.12"
           enable-cache: true
+      # Dependency vulnerability gate. This service had 8 findings that went
+      # unnoticed for weeks because nothing scanned it — Renovate only bumps
+      # DECLARED deps in pyproject.toml, so vulnerable TRANSITIVE pins in
+      # uv.lock (h2, idna, ...) drift silently. Mirrors portal-api /
+      # knowledge-mcp: runs against the locked tree before pytest, so a
+      # regression in any direct or transitive package surfaces here.
+      # --skip-editable keeps the gate on external deps; internal klai-libs
+      # are editable path deps, not PyPI releases.
+      #
+      # The two --ignore-vuln entries have NO fix available upstream and are
+      # not reachable in our usage. Re-check when ragas ships a release:
+      #   PYSEC-2026-3046  ragas   SSRF in the MULTI-MODAL faithfulness
+      #                            collection. We import only the text metrics
+      #                            (AnswerRelevancy, ContextPrecision,
+      #                            ContextRecall, Faithfulness) in
+      #                            knowledge_ingest/eval/judge_client.py.
+      #   PYSEC-2026-2447  diskcache  unsafe pickle deserialization, pulled in
+      #                            transitively by ragas. Local attack vector
+      #                            (AV:L) + user interaction; the cache dir is
+      #                            container-internal and not attacker-writable.
+      - name: Dependency vulnerability scan (pip-audit)
+        run: >
+          uv run --with pip-audit pip-audit --skip-editable
+          --ignore-vuln PYSEC-2026-3046
+          --ignore-vuln PYSEC-2026-2447
+
       - name: Test (pytest)
         run: uv run --frozen --extra dev pytest -q --tb=short -n auto
 

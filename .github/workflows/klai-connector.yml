@@ -51,6 +51,13 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check .
 
+      # Dependency vulnerability gate — see knowledge-ingest.yml for the
+      # rationale. This service carried a vulnerable h2 + pypdf for weeks with
+      # nothing scanning it. --skip-editable: internal klai-libs are editable
+      # path deps, not PyPI releases to query by distribution name.
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run --with pip-audit pip-audit --skip-editable
+
       # NOTE: `ruff format --check` is intentionally NOT enforced yet —
       # the connector has never been ruff-formatted (~36 files would
       # change). Add it once a separate format-the-world PR lands.
