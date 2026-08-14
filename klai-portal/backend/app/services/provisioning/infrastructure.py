@@ -690,9 +690,15 @@ def _start_librechat_container(
     old_image_ref: str | None = None
     try:
         old = client.containers.get(container_name)
-        if rollback_on_failure and old.image is not None:
-            tags = old.image.tags
-            old_image_ref = tags[0] if tags else old.image.id
+        if rollback_on_failure:
+            # Read the image ref from the container's own inspect payload
+            # (already fetched by containers.get -> GET /containers/{id}/json).
+            # Do NOT touch `old.image`: that property lazily calls
+            # GET /images/{id}/json, which docker-socket-proxy denies by design
+            # (IMAGES is deliberately not enabled — see
+            # .claude/rules/klai/platform/docker-socket-proxy.md). Reading it
+            # raised 403 and aborted the whole fleet rollout on 2026-08-14.
+            old_image_ref = (old.attrs.get("Config") or {}).get("Image") or None
         old.remove(force=True)
     except docker.errors.NotFound:  # type: ignore[attr-defined]
         pass
