@@ -131,21 +131,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to core-01
-        if: github.event_name == 'push'
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.CORE01_HOST }}
-          username: klai
-          key: ${{ secrets.CORE01_DEPLOY_KEY }}
-          script: |
-            set -e
-            source /opt/klai/.env
-            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
-            docker pull ghcr.io/getklai/klai-knowledge-mcp:latest
-            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
-            /opt/klai/scripts/compose-up.sh klai-knowledge-mcp
-
   scan:
     needs: build-push
     if: github.event_name == 'push'
@@ -196,3 +181,26 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
+
+  deploy:
+    # `needs: scan` ensures the Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
+    # can actually block the rollout: this step used to be the tail of
+    # build-push, so a failing scan could not stop it from deploying.
+    needs: [build-push, scan]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to core-01
+        if: github.event_name == 'push'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            source /opt/klai/.env
+            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
+            docker pull ghcr.io/getklai/klai-knowledge-mcp:latest
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh klai-knowledge-mcp
