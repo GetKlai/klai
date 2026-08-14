@@ -12,7 +12,6 @@ on:
       - 'deploy/librechat/klai-entrypoint.sh'     # force light theme — synced before librechat-getklai recreate
       - 'deploy/librechat/getklai/entrypoint.sh'  # getklai-only LibreChat client polish canary
       - 'deploy/librechat/getklai/apply-canary-config.py'
-      - 'deploy/librechat/getklai/patches/**'     # getklai-only LibreChat canary patches
       - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
       - 'deploy/check-image-pullable.sh'          # public self-host image pullability guard
       - 'deploy/check-image-tags.sh'              # compose image tag policy guard
@@ -107,17 +106,11 @@ jobs:
             done
             test -x /opt/klai/scripts/backup.sh
 
-            mkdir -p /opt/klai/librechat/getklai/patches
-            # Twin of the fleet patches dir synced by deploy-librechat-config.yml,
-            # and exposed to the same hazard: librechat-getklai bind-mounts these
-            # four files INDIVIDUALLY (see the compose service), so --delete on a
-            # retired patch arms an empty-directory outage for its next start.
-            # PR #895 did delete a file here; the canary only escaped because
-            # this workflow failed earlier on an unrelated container-name
-            # conflict. Guard it the same way.
-            sh deploy/scripts/assert-safe-to-prune.sh \
-              deploy/librechat/getklai/patches /opt/klai/librechat/getklai/patches
-            rsync -a --delete deploy/librechat/getklai/patches/ /opt/klai/librechat/getklai/patches/
+            # The canary's four patch bind-mounts are gone (Phase 3): it runs the
+            # Klai-owned image with the patches baked in, so there is nothing left
+            # to sync here. Removing the sync AFTER the container stopped mounting
+            # the files is the required order -- the reverse is what took 36 of 42
+            # tenants down on 2026-08-14.
             getklai_config_status=$(python3 deploy/librechat/getklai/apply-canary-config.py /opt/klai/librechat/getklai/librechat.yaml)
             echo "getklai LibreChat config patch: $getklai_config_status"
 
