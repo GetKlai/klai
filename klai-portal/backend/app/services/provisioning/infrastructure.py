@@ -25,6 +25,10 @@ import structlog
 from pymongo.errors import OperationFailure
 
 from app.core.config import settings
+from app.core.librechat_images import (
+    parse_librechat_image_overrides,
+    resolve_librechat_image,
+)
 from app.core.provisioning_names import validate_slug_for_provisioning
 from app.services.provisioning._slug_guard import _assert_safe_slug
 from app.services.provisioning.generators import _generate_librechat_yaml
@@ -47,6 +51,20 @@ _LIBRECHAT_PATCH_MOUNTS = {
     "patches/stream.cjs": "/app/node_modules/@librechat/agents/dist/cjs/stream.cjs",
     "patches/search.cjs": "/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs",
 }
+
+
+def _tenant_librechat_image(slug: str) -> str:
+    """Image for this tenant: its canary override, else the fleet default.
+
+    Parsed per call rather than cached: the override string comes from the
+    container environment, so a stale cache would mean a deploy that changed it
+    did not take -- the silent-no-op failure this SPEC exists to remove.
+    """
+    overrides = parse_librechat_image_overrides(settings.librechat_image_overrides)
+    image = resolve_librechat_image(slug, settings.librechat_image, overrides)
+    if image != settings.librechat_image:
+        logger.info("librechat_image_override_applied", slug=slug, image=image)
+    return image
 
 
 def assert_shared_librechat_mount_sources_intact() -> None:
@@ -752,7 +770,7 @@ def _start_librechat_container(
             slug,
             env_file_host_path,
             mcp_servers,
-            image=settings.librechat_image,
+            image=_tenant_librechat_image(slug),
         )
     except Exception:
         if rollback_on_failure and old_image_ref:

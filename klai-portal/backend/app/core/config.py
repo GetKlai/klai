@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     librechat_container_data_path: str = "/librechat"  # base dir for per-tenant librechat files
     librechat_host_data_path: str = "/opt/klai/librechat"  # HOST path for Docker volume mounts
     librechat_image: str = "ghcr.io/danny-avila/librechat:v0.8.7"
+    # Per-tenant canary overrides: "slug=image[,slug=image]", digest-only.
+    # Empty by default, so a deploy without the env var behaves exactly as
+    # before (no validator-vs-env-parity crash). See core/librechat_images.py.
+    librechat_image_overrides: str = ""
     caddy_container_name: str = "klai-core-caddy-1"  # Docker container name for Caddy reload
     redis_container_name: str = "klai-core-redis-1"  # Docker container name; legacy operational reference
 
