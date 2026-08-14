@@ -1,0 +1,71 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['config:recommended'],
+  timezone: 'Europe/Amsterdam',
+
+  // Deliberately NO top-level schedule. This is a self-hosted run: the cadence
+  // is the workflow cron in .github/workflows/renovate.yml, and a second
+  // schedule here only creates a window Renovate must ALSO be inside.
+  //
+  // That is exactly what went wrong between Feb and Aug 2026: the cron fired at
+  // 05:00 UTC (07:00 Amsterdam) and GitHub delays scheduled runs by 1-3h, so
+  // every one of the 28 runs landed between 08:00 and 10:30 Amsterdam — always
+  // outside the old 'before 6am on monday' window. Renovate extracted
+  // dependencies, found itself unscheduled, and finished without opening a
+  // single PR. A silent no-op for 28 weeks, which is why transitive pins
+  // (h2, idna, cryptography, pypdf) drifted until a manual audit caught them.
+
+  enabledManagers: [
+    'docker-compose',
+    'dockerfile',
+    'github-actions',
+    'npm',
+    'pep621',
+  ],
+
+  // Mirrors min-release-age=7 in klai-portal/frontend/.npmrc. Without it
+  // Renovate would propose a version the npm CLI then refuses to install while
+  // generating the lockfile, producing a PR that cannot build. Keep the two
+  // numbers in sync; the npm one also applies to every manual install.
+  minimumReleaseAge: '7 days',
+
+  // The gap that caused the August 2026 audit findings. Renovate only bumps
+  // DECLARED dependencies; vulnerable TRANSITIVE pins inside uv.lock and
+  // package-lock.json are invisible to it. Lock file maintenance regenerates
+  // those locks within the existing constraints, so transitive packages like
+  // h2 and cryptography get refreshed instead of rotting.
+  //
+  // Supported for uv.lock via the pep621 manager and for package-lock.json via
+  // npm (docs.renovatebot.com/modules/manager/pep621).
+  //
+  // Never automerged: a lock refresh touches the whole transitive tree, so it
+  // gets human eyes even when the per-service CI gates are green.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ['before 6am on monday'],
+    automerge: false,
+    commitMessageAction: 'Refresh lock files',
+  },
+
+  packageRules: [
+    {
+      description: 'Auto-merge patch updates',
+      matchUpdateTypes: ['patch'],
+      automerge: true,
+      automergeStrategy: 'squash',
+    },
+    {
+      description: 'Auto-merge minor dev dependency updates',
+      matchUpdateTypes: ['minor'],
+      matchDepTypes: ['devDependencies'],
+      automerge: true,
+      automergeStrategy: 'squash',
+    },
+    {
+      description: 'Group Docker images — require manual review',
+      matchManagers: ['docker-compose', 'dockerfile'],
+      groupName: 'Docker images',
+      automerge: false,
+    },
+  ],
+}
