@@ -649,17 +649,19 @@ services:
       DOMAIN: ${DOMAIN}
       FRONTEND_URL: ${FRONTEND_URL:-}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
-      # SPEC-LIBRECHAT-PATCH-MODEL-001 — per-tenant canary. Provisioning-managed
-      # tenants otherwise all take LIBRECHAT_IMAGE; this runs ONE of them on the
-      # Klai-owned image so the migration gets real-conversation evidence before
-      # the fleet moves. getklai was the canary first, but it serves almost no
-      # traffic, and a canary nobody uses proves nothing over time.
+      # SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 5 — the fleet default is the
+      # Klai-owned image, built in CI from deploy/librechat/patches-source/.
+      # Tag for humans: v0.8.7-klai.1-80df95854928 (upstream v0.8.7, agents v3.2.46).
       #
-      # Digest-only, enforced in app/core/librechat_images.py and by
-      # deploy/check-klai-librechat-digest.sh. Rollback: delete this line and
-      # recreate the tenant -- it falls back to LIBRECHAT_IMAGE.
-      # Tag for humans: v0.8.7-klai.1-80df95854928
-      LIBRECHAT_IMAGE_OVERRIDES: voys=ghcr.io/getklai/librechat@sha256:3b4fd8440c79a6ff8c345eb25a6b41fd407a1167e49c84873230c2a38e0d4ebf
+      # Digest-pinned; deploy/check-klai-librechat-digest.sh enforces it. The
+      # default in config.py deliberately stays on upstream, so a deploy that
+      # loses this variable falls back to a working image rather than to
+      # nothing.
+      #
+      # Rollback: delete this line, then recreate tenants (they return to the
+      # config.py default). LIBRECHAT_IMAGE_OVERRIDES can pin individual
+      # tenants either way during a staged move.
+      LIBRECHAT_IMAGE: ghcr.io/getklai/librechat@sha256:3b4fd8440c79a6ff8c345eb25a6b41fd407a1167e49c84873230c2a38e0d4ebf
       # SPEC-SEC-HYGIENE-001 REQ-28.4: explicit deployment-environment marker.
       # Pydantic Settings reads PORTAL_ENV; the in-code default is "production"
       # (REQ-28.2). The validator at config.py:_no_debug_in_production refuses

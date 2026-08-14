@@ -53,6 +53,28 @@ _LIBRECHAT_PATCH_MOUNTS = {
 }
 
 
+# Images we build ourselves already contain the source-level patches
+# (SPEC-LIBRECHAT-PATCH-MODEL-001). Anything else does not.
+_KLAI_LIBRECHAT_IMAGE_PREFIX = "ghcr.io/getklai/librechat"
+
+
+def image_bakes_in_patches(image: str) -> bool:
+    """True when this image already contains the Klai patches.
+
+    A bind-mount WINS over the file in the image, so mounting the old
+    hand-edited bundles on top of an image built from the source diffs would
+    silently serve the old ones and make the migration apply to nothing -- the
+    inert-patch failure this SPEC exists to remove.
+
+    Deliberately fail-safe: an unrecognised image is treated as needing the
+    mounts, because serving an unpatched LibreChat is worse than a redundant
+    mount. Matching on the repository rather than the digest is also why a
+    badly pinned Klai tag still counts -- pin quality is enforced by
+    deploy/check-klai-librechat-digest.sh, not here.
+    """
+    return image.startswith(_KLAI_LIBRECHAT_IMAGE_PREFIX)
+
+
 def _tenant_librechat_image(slug: str) -> str:
     """Image for this tenant: its canary override, else the fleet default.
 
@@ -67,7 +89,7 @@ def _tenant_librechat_image(slug: str) -> str:
     return image
 
 
-def assert_shared_librechat_mount_sources_intact() -> None:
+def assert_shared_librechat_mount_sources_intact(*, require_patches: bool = True) -> None:
     """Refuse to start or restart a tenant when a fleet-shared bind source is broken.
 
     Docker resolves a bind mount at container *start*, not at create. When the
@@ -95,7 +117,11 @@ def assert_shared_librechat_mount_sources_intact() -> None:
     directory), so one run tells an operator the whole story.
     """
     base = Path(settings.librechat_container_data_path)
-    expected = [*_LIBRECHAT_PATCH_MOUNTS, "klai-entrypoint.sh"]
+    # The entrypoint wrapper is mounted on every image; the patch files only on
+    # images that do not already carry them.
+    expected = ["klai-entrypoint.sh"]
+    if require_patches:
+        expected = [*_LIBRECHAT_PATCH_MOUNTS, *expected]
 
     broken: list[str] = []
     for rel_path in expected:
@@ -594,12 +620,22 @@ def _create_and_start_librechat_container(
         f"{librechat_host_base}/{slug}/librechat.yaml": {"bind": "/app/librechat.yaml", "mode": "ro"},
         f"{librechat_host_base}/{slug}/images": {"bind": "/app/client/public/images", "mode": "rw"},
     }
+    # The patch mounts only belong on an image that does NOT already carry the
+    # patches. On a Klai-built image they would win over the baked-in files and
+    # serve the old hand-edited bundles instead (SPEC-LIBRECHAT-PATCH-MODEL-001
+    # Phase 5). Kept conditional rather than deleted so a rollback to the
+    # upstream image still gets a patched LibreChat.
+    patches_baked_in = image_bakes_in_patches(image)
+
     # Every fleet-shared bind source must be an actual FILE before we hand the
     # mount list to Docker -- see assert_shared_librechat_mount_sources_intact.
-    assert_shared_librechat_mount_sources_intact()
+    assert_shared_librechat_mount_sources_intact(require_patches=not patches_baked_in)
 
-    for source_rel_path, destination in _LIBRECHAT_PATCH_MOUNTS.items():
-        volumes[f"{librechat_host_base}/{source_rel_path}"] = {"bind": destination, "mode": "ro"}
+    if patches_baked_in:
+        logger.info("librechat_patch_mounts_skipped", slug=slug, image=image)
+    else:
+        for source_rel_path, destination in _LIBRECHAT_PATCH_MOUNTS.items():
+            volumes[f"{librechat_host_base}/{source_rel_path}"] = {"bind": destination, "mode": "ro"}
 
     # Klai entrypoint wrapper that forces light theme on every tenant (LibreChat
     # has no server-side theme config — see deploy/librechat/klai-entrypoint.sh).
