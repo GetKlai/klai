@@ -464,6 +464,45 @@ def test_bot_image_is_pinned_and_flagged_as_a_pull_prerequisite() -> None:
     )
 
 
+def test_meeting_api_can_still_reach_its_declared_dependencies() -> None:
+    """Confining meeting-api must not cut the links its own config declares.
+
+    Taking it off klai-net once severed its route to garage — its MINIO_* config
+    points at garage:3900 and the signal-tape janitor probes storage every sweep
+    even with RECORDING_ENABLED=false, so it threw a traceback per cycle. The fix
+    (a dedicated internal link) was then silently reverted by an unrelated
+    concurrent PR whose branch predated it, and nothing caught that: the boundary
+    test above only asserts where meeting-api may NOT be.
+
+    Each dependency must share at least one DEDICATED link — internal, and
+    carrying only the two parties. net-postgres is excluded: it is a shared
+    database network by design, so it proves nothing about a private route.
+    """
+    compose = _compose()
+    services = compose["services"]
+    meeting_nets = set(services["vexa12-meeting-api"]["networks"])
+    shared_infra = {"net-postgres"}
+
+    for dependency, why in (
+        ("garage", "MINIO_ENDPOINT / signal-tape janitor"),
+        ("vexa12-admin-api", "schema owner + bot-context lookup"),
+        # vexa12-redis is deliberately NOT here: the bots need the broker too, so
+        # vexa12-bots is a legitimate multi-party network, not a private link.
+    ):
+        candidates = (meeting_nets & set(services[dependency]["networks"])) - shared_infra
+        dedicated = [
+            net
+            for net in candidates
+            if compose["networks"][net].get("internal") is True
+            and sorted(n for n, v in services.items() if net in (v.get("networks") or {}))
+            == sorted(["vexa12-meeting-api", dependency])
+        ]
+        assert dedicated, (
+            f"vexa12-meeting-api has no dedicated internal link to {dependency} ({why}); "
+            f"shared non-infra networks: {sorted(candidates) or 'none'}"
+        )
+
+
 def test_meeting_api_is_not_on_a_shared_application_network() -> None:
     """meeting-api's network membership IS its authorization boundary.
 
