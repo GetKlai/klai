@@ -28,6 +28,15 @@
 # the window the query returns no rows at all -> noData -> OK. A 1-of-2
 # uncorrelated day cannot page anyone; only a sustained pattern can.
 #
+# Reading the data at all needs plumbing
+# ----------------------------------------
+# The rule reads portal_feedback_correlation_stats, a view, NOT the base table.
+# portal_feedback_events is category-C RLS with a SELECT policy scoped to role
+# portal_api, so grafana_reader has no applicable policy and reads zero rows
+# even when granted -- and the base table holds feedback_text, user free text
+# that a dashboard role should never reach. See deploy/grafana/sql/
+# grafana-reader-setup.sql; the view must exist before this rule can evaluate.
+#
 # The e2e tenant is excluded by slug. It drives feedback at the endpoint
 # without ever writing a retrieval log first, so 100% of its events are
 # uncorrelated by construction (70 of them on 2026-08-14 alone). Including it
@@ -61,7 +70,7 @@ groups:
               rawSql: |
                 SELECT count(*) FILTER (WHERE pe.correlated) * 100.0
                          / NULLIF(count(*), 0) AS value
-                  FROM portal_feedback_events pe
+                  FROM portal_feedback_correlation_stats pe
                   JOIN portal_orgs o ON o.id = pe.org_id
                  WHERE pe.occurred_at > now() - interval '30 days'
                    AND o.slug <> 'e2e'
@@ -91,7 +100,12 @@ groups:
                   reducer: { params: [], type: last }
                   type: query
         noDataState: OK
-        execErrState: OK
+        # Error, not OK. The first cut of this rule queried portal_feedback_events
+        # directly and would have thrown "permission denied" on every evaluation
+        # -- with execErrState OK that is indistinguishable from a healthy loop.
+        # A rule whose whole purpose is catching silence must not be able to fail
+        # silently itself.
+        execErrState: Error
         for: 0s
         keepFiringFor: 1d
         isPaused: false
