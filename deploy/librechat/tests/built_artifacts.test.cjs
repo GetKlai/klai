@@ -230,7 +230,38 @@ function splitThroughFramer(body, cut) {
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// messages.js — SPEC-KB-015 feedback forwarding (Phase 4)
+// ---------------------------------------------------------------------------
+// Plain runtime JS, COPYed rather than bundled, so the source diff IS what
+// runs. That also makes the marker survive, which is how the runtime transform
+// in klai-entrypoint.sh knows to stand down instead of applying a second copy.
+const messagesSource = fs.readFileSync(path.join(artifactsDir, 'messages.js'), 'utf8');
+
+assert.ok(
+  messagesSource.includes('SPEC-KB-015'),
+  'messages.js.patch did not reach the built image — the runtime transform would ' +
+    'then apply on top instead of standing down'
+);
+assert.ok(
+  messagesSource.includes('/internal/v1/kb-feedback'),
+  'the kb-feedback forward call is missing from the built messages.js'
+);
+// Fire-and-forget by contract (REQ-KB-015-06): the forward must never block or
+// fail the user's response.
+assert.match(
+  messagesSource,
+  /fetch\([\s\S]{0,600}kb-feedback[\s\S]{0,900}?\.catch\(/,
+  'the kb-feedback forward must be fire-and-forget with a .catch, never awaited'
+);
+assert.ok(
+  !/await\s+fetch\(`\$\{portalUrl\}\/internal\/v1\/kb-feedback/.test(messagesSource),
+  'the kb-feedback forward must not be awaited'
+);
+
 console.log(
   'OK: built artifacts verified — search topResults + surrogate guards, ' +
-    'index.cjs cleanupOnComplete at every call site, stream marker edge cases.'
+    'index.cjs cleanupOnComplete at every call site, stream marker edge cases, ' +
+    'messages.js kb-feedback forward.'
 );

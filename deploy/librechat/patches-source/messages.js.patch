@@ -1,0 +1,41 @@
+diff --git a/api/server/routes/messages.js b/api/server/routes/messages.js
+index 17e740c51..4fe008979 100644
+--- a/api/server/routes/messages.js
++++ b/api/server/routes/messages.js
+@@ -415,6 +415,36 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
+       }).catch((err) => logger.error('[langfuse] feedback score failed:', err));
+     }
+ 
++    // SPEC-KB-015: Forward feedback to portal-api for KB quality scoring.
++    // Fire-and-forget (REQ-KB-015-06) -- response is sent immediately below.
++    // Logs on error (REQ-KB-015-07): never surfaces to user, but visible in VictoriaLogs.
++    const portalUrl = process.env.PORTAL_INTERNAL_URL;
++    const portalSecret = process.env.PORTAL_INTERNAL_SECRET;
++    if (portalUrl && portalSecret && feedback) {
++      fetch(`${portalUrl}/internal/v1/kb-feedback`, {
++        method: 'POST',
++        headers: {
++          'Content-Type': 'application/json',
++          Authorization: `Bearer ${portalSecret}`,
++        },
++        body: JSON.stringify({
++          conversation_id: conversationId,
++          message_id: messageId,
++          message_created_at:
++            updatedMessage?.createdAt?.toISOString?.() ?? new Date().toISOString(),
++          rating: feedback.rating,
++          tag: feedback.tag ?? null,
++          text: feedback.text ?? null,
++          model_alias: updatedMessage?.model ?? null,
++          librechat_user_id: req.user?.id ?? '',
++          librechat_tenant_id: process.env.KLAI_ORG_SLUG ? `librechat-${process.env.KLAI_ORG_SLUG}` : null,
++        }),
++      }).catch((err) => {
++        // REQ-KB-015-07: never surface to user, but log so failures are visible
++        logger.warn('SPEC-KB-015: kb-feedback forward failed', { error: err?.message });
++      });
++    }
++
+     res.json({
+       messageId,
+       conversationId,
