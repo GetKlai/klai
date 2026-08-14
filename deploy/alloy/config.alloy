@@ -73,6 +73,30 @@ loki.source.file "mistral_api_probe" {
 // ─── Extract log level from JSON ────────────────────────────────────────────
 
 loki.process "extract_level" {
+  // ─── Drop the read-only proxy's successful reads ───────────────────────────
+  //
+  // Routing Alloy through docker-socket-proxy-ro (REQ-U-002a) made that proxy
+  // the second-largest log producer on the host overnight: discovery inspects
+  // ~160 containers every 5s, and HAProxy writes an access line per request —
+  // ~2.7M lines/day, every one a 200 on a GET. It is also self-feeding, because
+  // Alloy then tails the logs it just caused the proxy to write.
+  //
+  // Dropped here rather than at the source: LOG_LEVEL=warning on the proxy would
+  // also silence the 403s, and its haproxy.cfg is generated inside the image from
+  // env vars, so shaping it there means forking the image or bind-mounting a
+  // config — both worse than a filter we own. Everything that is NOT a
+  // successful GET still reaches VictoriaLogs, which keeps the signal that
+  // matters: a 403 on this lane means something asked for a verb the GET-only
+  // proxy does not serve.
+  stage.match {
+    selector = "{service=\"docker-socket-proxy-ro\"}"
+
+    stage.drop {
+      expression          = " 200 [0-9]+ .+ \"GET /v[0-9.]+/(containers|networks)"
+      drop_counter_reason = "docker_socket_proxy_ro_successful_get"
+    }
+  }
+
   // Parse JSON log lines and extract the "level" field
   stage.json {
     expressions = { level = "level" }
