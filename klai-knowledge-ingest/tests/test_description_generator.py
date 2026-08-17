@@ -35,7 +35,9 @@ class TestGenerateNodeDescription:
     @pytest.mark.asyncio
     async def test_returns_description(self):
         mock_client = _mock_litellm_response("Questions about invoices and payments")
-        with patch("knowledge_ingest.description_generator.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "knowledge_ingest.description_generator.httpx.AsyncClient", return_value=mock_client
+        ):
             desc = await generate_node_description("Billing", None, ["Invoice FAQ"])
         assert desc == "Questions about invoices and payments"
 
@@ -43,7 +45,9 @@ class TestGenerateNodeDescription:
     async def test_truncates_to_200_chars(self):
         long_desc = "x" * 300
         mock_client = _mock_litellm_response(long_desc)
-        with patch("knowledge_ingest.description_generator.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "knowledge_ingest.description_generator.httpx.AsyncClient", return_value=mock_client
+        ):
             desc = await generate_node_description("Billing", None, [])
         assert len(desc) <= 200
 

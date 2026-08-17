@@ -589,7 +589,9 @@ async def test_load_and_enrich_skips_superseded_artifact():
             new_callable=AsyncMock,
             return_value=fake_artifact,
         ),
-        patch("knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock) as enrich,
+        patch(
+            "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
+        ) as enrich,
     ):
         from knowledge_ingest.enrichment_tasks import _load_and_enrich
 

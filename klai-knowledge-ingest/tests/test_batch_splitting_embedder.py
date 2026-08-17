@@ -111,7 +111,9 @@ async def test_create_delegates_to_inner():
 async def test_tei_info_resolves_batch_size():
     """Batch size is discovered from TEI /info endpoint."""
     inner = _make_inner(batch_result=[[0.1, 0.2, 0.3]])
-    wrapper = _BatchSplittingEmbedder(inner, tei_base_url="http://tei:7997/v1", default_batch_size=32)
+    wrapper = _BatchSplittingEmbedder(
+        inner, tei_base_url="http://tei:7997/v1", default_batch_size=32
+    )
 
     mock_resp = MagicMock()
     mock_resp.status_code = 200

@@ -34,7 +34,9 @@ def _mock_litellm_response(keywords: list[str]) -> AsyncMock:
 class TestGenerateContentLabel:
     @pytest.mark.asyncio
     async def test_returns_keywords_on_success(self):
-        mock_client = _mock_litellm_response(["sip-trunk", "provider-portability", "telefooncentrale"])
+        mock_client = _mock_litellm_response(
+            ["sip-trunk", "provider-portability", "telefooncentrale"]
+        )
         with patch("knowledge_ingest.content_labeler.httpx.AsyncClient", return_value=mock_client):
             labels = await generate_content_label("Fanvil Opties", "Hardware setup guide...")
         assert labels == ["sip-trunk", "provider-portability", "telefooncentrale"]
