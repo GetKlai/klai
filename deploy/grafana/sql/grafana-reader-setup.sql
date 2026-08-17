@@ -58,6 +58,31 @@ GRANT SELECT ON portal_feedback_correlation_stats TO grafana_reader;
 GRANT USAGE ON SCHEMA knowledge TO grafana_reader;
 GRANT SELECT ON knowledge.rag_eval_results TO grafana_reader;
 
+-- ── SPEC-PRIVACY-QUERY-SHADOW-001 — tenant-stuck-in-full alert ───────────
+--
+-- spec-priv-001-tenant-stuck-full asks "which orgs have been in full telemetry
+-- mode for more than 14 days", which needs the moment the mode was switched.
+-- That lives in portal_audit_log, a category-C RLS table whose
+-- tenant_isolation_read policy is scoped to
+-- org_id = current_setting('app.current_org_id') -- a GUC Grafana never sets.
+-- The grant exists, so nothing errors: the read just returns zero rows, the
+-- rule's IN-subquery is always empty, and the alert has never been able to
+-- fire. Found 2026-08-14 by verify-alert-datasource-access.py.
+--
+-- Narrower than the feedback view on purpose. portal_audit_log spans every
+-- audited action and its details jsonb can carry operational specifics, so this
+-- exposes ONLY telemetry-mode transitions, and only three fields of them: which
+-- org, when, and which level it moved to. Nothing about any other action is
+-- reachable through it.
+CREATE OR REPLACE VIEW portal_telemetry_mode_changes AS
+    SELECT org_id,
+           created_at,
+           details ->> 'new_level' AS new_level
+      FROM portal_audit_log
+     WHERE action = 'telemetry_level_changed';
+
+GRANT SELECT ON portal_telemetry_mode_changes TO grafana_reader;
+
 -- Verify after running (must return a non-zero count, not an error and not 0):
 --   SET ROLE grafana_reader;
 --   SELECT count(*) FROM portal_feedback_correlation_stats;

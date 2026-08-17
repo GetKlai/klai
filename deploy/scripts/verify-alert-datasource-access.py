@@ -48,6 +48,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -60,23 +61,79 @@ READER_ROLE = "grafana_reader"
 
 POSTGRES_CONTAINER = "klai-core-postgres-1"
 
-# Rules known to be blind, with the reason. An entry here does NOT make the
-# rule work -- it records that we looked, understood, and chose not to fix it
-# in that change. Same contract as a .trivyignore.yaml entry: a reason, not a
-# shrug. Remove the entry when the rule is fixed; a stale entry fails the
-# self-test, so this cannot rot quietly.
-KNOWN_BLIND: dict[str, str] = {
-    "spec-priv-001-tenant-stuck-full": (
-        "portal_audit_log returns 0 rows for grafana_reader: its "
-        "tenant_isolation_read policy is scoped on org_id = current_setting("
-        "'app.current_org_id'), which Grafana never sets, so the rule's "
-        "id IN (SELECT org_id FROM portal_audit_log ...) subquery is always "
-        "empty and the alert can never fire. Found 2026-08-14 while verifying "
-        "SPEC-KB-015's rule. Belongs to SPEC-PRIVACY-QUERY-SHADOW-001 -- "
-        "flagged rather than silently redesigned, because the fix is a "
-        "decision about exposing audit detail to a dashboard role."
-    ),
-}
+# Rules known to be blind, keyed by uid. An entry does NOT make a rule work --
+# it records that we looked, understood, and chose not to fix it in that change.
+#
+# Empty, and worth keeping that way. The one entry this started with
+# (spec-priv-001-tenant-stuck-full) was retired on 2026-08-17 by giving the rule
+# a superuser-owned view over the telemetry transitions it needs, rather than by
+# writing a better excuse.
+#
+# The shape mirrors .trivyignore.yaml deliberately, because that file solved the
+# harder half of this problem: an exception with only a reason lives forever, so
+# every entry also needs a date on which someone must look again. Enforced by
+# _validate_allowlist below -- a reason under 40 characters, a missing or
+# malformed date, a date already past, or a date more than a year out all fail
+# CI. So does a uid that no longer exists, which is how the list cannot outlive
+# the rules it excuses.
+#
+#   "some-rule-uid": {
+#       "statement": "Why it is blind, what it costs, and who owns the fix.",
+#       "expired_at": "2027-01-31",
+#   },
+KNOWN_BLIND: dict[str, dict[str, str]] = {}
+
+_MIN_STATEMENT_CHARS = 40
+_MAX_EXEMPTION_DAYS = 365
+
+
+def _validate_allowlist(known_uids: set[str]) -> list[str]:
+    """Return the reasons KNOWN_BLIND is itself invalid (empty = fine).
+
+    An allowlist that is never checked becomes the place findings go to die. The
+    two failure modes are a stale entry (the rule is gone, so the excuse is
+    fiction) and a permanent entry (nobody ever looks again).
+    """
+    problems: list[str] = []
+    today = date.today()
+
+    for uid in sorted(set(KNOWN_BLIND) - known_uids):
+        problems.append(
+            f"{uid}: listed in KNOWN_BLIND but no rule with that uid exists -- "
+            "the exemption no longer excuses anything. Remove it."
+        )
+
+    for uid, entry in sorted(KNOWN_BLIND.items()):
+        statement = (entry.get("statement") or "").strip()
+        if len(statement) < _MIN_STATEMENT_CHARS:
+            problems.append(
+                f"{uid}: statement is {len(statement)} chars, needs at least "
+                f"{_MIN_STATEMENT_CHARS}. Say why it is blind, what it costs, "
+                "and who owns the fix -- 'known issue' is not a reason."
+            )
+
+        raw_expiry = (entry.get("expired_at") or "").strip()
+        if not raw_expiry:
+            problems.append(f"{uid}: no expired_at. Every exemption needs a date to look again.")
+            continue
+        try:
+            expires = date.fromisoformat(raw_expiry)
+        except ValueError:
+            problems.append(f"{uid}: expired_at {raw_expiry!r} is not YYYY-MM-DD.")
+            continue
+        if expires < today:
+            problems.append(
+                f"{uid}: exemption expired on {expires}. Fix the rule, or renew "
+                "the date deliberately with a statement that still holds."
+            )
+        elif (expires - today).days > _MAX_EXEMPTION_DAYS:
+            problems.append(
+                f"{uid}: expired_at {expires} is more than "
+                f"{_MAX_EXEMPTION_DAYS} days out, which is indistinguishable "
+                "from permanent."
+            )
+
+    return problems
 
 
 def _postgres_rules(directory: Path) -> list[tuple[str, str, str]]:
@@ -101,19 +158,35 @@ def _postgres_rules(directory: Path) -> list[tuple[str, str, str]]:
 
 _CTE_RE = re.compile(r"(?:\bWITH\b|,)\s*([a-zA-Z_][\w]*)\s+AS\s*\(", re.IGNORECASE)
 _REL_RE = re.compile(r"\b(?:FROM|JOIN)\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)", re.IGNORECASE)
+_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _strip_comments(raw_sql: str) -> str:
+    """Remove SQL comments before any pattern matching.
+
+    Prose is full of "from" and "join". A rule whose rawSql carries a comment
+    explaining WHY it reads a particular view -- exactly the kind of comment
+    worth writing -- would otherwise have words from that sentence extracted as
+    relation names. Caught by the phrase "from the day it was provisioned",
+    which produced `relation "the" does not exist` and reported a healthy rule
+    as blind.
+    """
+    return _BLOCK_COMMENT_RE.sub(" ", _LINE_COMMENT_RE.sub(" ", raw_sql))
 
 
 def referenced_relations(raw_sql: str) -> list[str]:
-    """Relations a query really reads, with CTE names removed.
+    """Relations a query really reads, with comments and CTE names removed.
 
     CTE names appear after FROM exactly like tables do, but they are not
     relations and have no grants -- counting rows on one would error and look
     like a finding. Subqueries need no special handling: their FROM clauses are
     matched on their own.
     """
-    ctes = {m.lower() for m in _CTE_RE.findall(raw_sql)}
+    sql = _strip_comments(raw_sql)
+    ctes = {m.lower() for m in _CTE_RE.findall(sql)}
     seen: list[str] = []
-    for rel in _REL_RE.findall(raw_sql):
+    for rel in _REL_RE.findall(sql):
         if rel.lower() in ctes or rel.lower() in seen:
             continue
         seen.append(rel.lower())
@@ -222,12 +295,11 @@ def main(argv: list[str]) -> int:
         for _file, uid, raw_sql in rules:
             for rel in referenced_relations(raw_sql):
                 print(f"{uid}\t{rel}")
-        # A stale allowlist is a silent lie: it suggests a rule is known-broken
-        # when that rule may no longer exist under that uid.
-        uids = {uid for _f, uid, _s in rules}
-        stale = sorted(set(KNOWN_BLIND) - uids)
-        if stale:
-            print(f"ERROR: KNOWN_BLIND lists uids that no longer exist: {stale}", file=sys.stderr)
+        problems = _validate_allowlist({uid for _f, uid, _s in rules})
+        if problems:
+            print("ERROR: KNOWN_BLIND is not valid:", file=sys.stderr)
+            for problem in problems:
+                print(f"  - {problem}", file=sys.stderr)
             return 1
         return 0
 
@@ -237,13 +309,14 @@ def main(argv: list[str]) -> int:
         if not failures:
             print(f"OK       {uid} ({source})")
             continue
-        excuse = KNOWN_BLIND.get(uid)
-        label = "KNOWN" if excuse else "BLIND"
+        entry = KNOWN_BLIND.get(uid)
+        excuse = (entry or {}).get("statement", "")
+        label = "KNOWN" if entry else "BLIND"
         print(f"{label}    {uid} ({source})")
         for failure in failures:
             print(f"         - {failure}")
-        if excuse:
-            print(f"         allowlisted: {excuse.splitlines()[0]}")
+        if entry:
+            print(f"         allowlisted until {entry.get('expired_at', '?')}: {excuse[:110]}")
         else:
             exit_code = 1
 

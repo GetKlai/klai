@@ -39,7 +39,7 @@ fi
 for expected in \
   "spec-kb-015-feedback-correlation-low	portal_feedback_correlation_stats" \
   "spec-kb-015-feedback-correlation-low	portal_orgs" \
-  "spec-priv-001-tenant-stuck-full	portal_audit_log" \
+  "spec-priv-001-tenant-stuck-full	portal_telemetry_mode_changes" \
   "rag-eval-001-faithfulness-low	knowledge.rag_eval_results"; do
   if printf '%s\n' "$out" | grep -qF "$expected"; then
     ok "finds ${expected//	/ -> }"
@@ -86,37 +86,74 @@ else
   bad "expected exit 2, got $rc: $(cat "$TMP/out2")"
 fi
 
-# ── 3. A stale allowlist entry must fail ──────────────────────────────────
-# KNOWN_BLIND records rules we know are blind. If a uid in there no longer
-# exists, the entry is a lie that makes a future reader think a rule is
-# accounted for. This fixture has a Postgres rule but not the allowlisted uid.
-echo "3. stale KNOWN_BLIND entry"
-mkdir -p "$TMP/stale"
-cat >"$TMP/stale/rules.yaml" <<'YAML'
-apiVersion: 1
-groups:
-  - name: pg-only
-    rules:
-      - uid: some-other-rule
-        data:
-          - refId: query
-            model:
-              refId: query
-              datasource:
-                type: postgres
-                uid: portal-postgres
-              format: table
-              rawSql: |
-                SELECT count(*) AS value FROM portal_orgs
-YAML
+# ── 3. The allowlist is empty, and its validator rejects rot ──────────────
+# KNOWN_BLIND records rules we know are blind. Two ways it goes bad: an entry
+# whose rule no longer exists (a lie), and an entry nobody ever revisits (a
+# permanent exception wearing a reason). Both must fail CI.
+echo "3. KNOWN_BLIND hygiene"
+if "$PYTHON" -c "
+import pathlib, sys
+src = pathlib.Path('$SCRIPT').read_text()
+ns = {}
+exec(compile(src.split('def _validate_allowlist')[0], 'chk', 'exec'), ns)
+sys.exit(0 if ns['KNOWN_BLIND'] == {} else 1)
+" 2>/dev/null; then
+  ok "allowlist is empty (every rule reads its own data)"
+else
+  bad "allowlist is non-empty -- each entry needs a live uid, a >=40-char statement and a future expired_at"
+fi
+
+# Drive the validator directly with hostile entries; building fixture YAML for
+# each case would exercise the parser, not the rot rules.
+cat >"$TMP/val.py" <<'PY'
+import json, pathlib, sys
+src = pathlib.Path(sys.argv[1]).read_text()
+ns = {}
+exec(compile(src, "chk", "exec"), ns)
+ns["KNOWN_BLIND"].clear()
+ns["KNOWN_BLIND"].update(json.loads(sys.argv[2]))
+problems = ns["_validate_allowlist"]({"live-rule"})
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+
+check_rejected() {
+  local label="$1" entries="$2" expect="$3"
+  set +e
+  out="$("$PYTHON" "$TMP/val.py" "$SCRIPT" "$entries" 2>&1)"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi "$expect"; then
+    ok "rejects $label"
+  else
+    bad "should reject $label (rc=$rc): $out"
+  fi
+}
+
+FUTURE="$("$PYTHON" -c 'import datetime;print(datetime.date.today()+datetime.timedelta(days=30))')"
+PAST="$("$PYTHON" -c 'import datetime;print(datetime.date.today()-datetime.timedelta(days=1))')"
+FAR="$("$PYTHON" -c 'import datetime;print(datetime.date.today()+datetime.timedelta(days=400))')"
+LONG="a reason long enough to clear the forty character minimum"
+
+check_rejected "a uid that no longer exists" \
+  "{\"ghost-rule\": {\"statement\": \"$LONG\", \"expired_at\": \"$FUTURE\"}}" "no longer excuses"
+check_rejected "a too-short statement" \
+  "{\"live-rule\": {\"statement\": \"known issue\", \"expired_at\": \"$FUTURE\"}}" "at least 40"
+check_rejected "a missing expiry" \
+  "{\"live-rule\": {\"statement\": \"$LONG\"}}" "expired_at"
+check_rejected "an expiry already past" \
+  "{\"live-rule\": {\"statement\": \"$LONG\", \"expired_at\": \"$PAST\"}}" "expired on"
+check_rejected "an expiry indistinguishable from permanent" \
+  "{\"live-rule\": {\"statement\": \"$LONG\", \"expired_at\": \"$FAR\"}}" "permanent"
+
 set +e
-plan "$TMP/stale" >"$TMP/out3" 2>&1
+"$PYTHON" "$TMP/val.py" "$SCRIPT" "{\"live-rule\": {\"statement\": \"$LONG\", \"expired_at\": \"$FUTURE\"}}" >/dev/null 2>&1
 rc=$?
 set -e
-if [ "$rc" -eq 1 ] && grep -q "no longer exist" "$TMP/out3"; then
-  ok "exits 1 and names the stale uid"
+if [ "$rc" -eq 0 ]; then
+  ok "accepts a well-formed exemption"
 else
-  bad "expected exit 1 naming the stale uid, got $rc: $(cat "$TMP/out3")"
+  bad "a live uid with a long statement and a near-future expiry should pass"
 fi
 
 # ── 4. Schema-qualified names and aliases survive extraction ──────────────
@@ -158,6 +195,46 @@ if printf '%s\n' "$out4" | grep -qE "[[:space:]]recent$"; then
 else
   ok "aliased CTE 'recent' excluded"
 fi
+
+# ── 5. Prose in SQL comments is not a relation ────────────────────────────
+# The regex matches FROM/JOIN anywhere, and English is full of both words. A
+# comment reading "from the day it was provisioned" made the checker look for a
+# table called "the", fail, and report a working rule as blind.
+echo "5. comments are stripped before matching"
+mkdir -p "$TMP/comments"
+cat >"$TMP/comments/rules.yaml" <<'YAML'
+apiVersion: 1
+groups:
+  - name: commented
+    rules:
+      - uid: commented-rule
+        data:
+          - refId: query
+            model:
+              refId: query
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                -- Reads the view, not the base table: blind from the day it
+                -- shipped, and join us in never doing that again.
+                /* block comment: select from nowhere, join nothing */
+                SELECT count(*) AS value FROM real_view
+YAML
+out5="$(plan "$TMP/comments")"
+if printf '%s\n' "$out5" | grep -qE "[[:space:]]real_view$"; then
+  ok "extracts the real relation"
+else
+  bad "missed real_view: $out5"
+fi
+for ghost in the us nowhere nothing; do
+  if printf '%s\n' "$out5" | grep -qE "[[:space:]]$ghost$"; then
+    bad "prose word '$ghost' extracted as a relation"
+  else
+    ok "prose word '$ghost' ignored"
+  fi
+done
 
 echo
 echo "passed=$pass failed=$fail"

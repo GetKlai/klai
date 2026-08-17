@@ -51,15 +51,25 @@ groups:
                 uid: portal-postgres
               format: table
               rawSql: |
+                -- portal_telemetry_mode_changes, not portal_audit_log: the
+                -- audit table is category-C RLS with a SELECT policy scoped to
+                -- a tenant GUC that Grafana never sets, so this subquery
+                -- returned zero rows and the rule could never fire -- silently,
+                -- from the day it was provisioned until 2026-08-17. The view is
+                -- superuser-owned and exposes only telemetry transitions
+                -- (org_id, created_at, new_level). Defined in
+                -- deploy/grafana/sql/grafana-reader-setup.sql; the action filter
+                -- lives inside it. Verified by
+                -- deploy/scripts/verify-alert-datasource-access.py, which fails
+                -- the deploy if this ever goes blind again.
                 SELECT count(*) AS value
                   FROM portal_orgs
                  WHERE telemetry_level = 'full'
                    AND deleted_at IS NULL
                    AND id IN (
                      SELECT org_id
-                       FROM portal_audit_log
-                      WHERE action = 'telemetry_level_changed'
-                        AND (details->>'new_level') = 'full'
+                       FROM portal_telemetry_mode_changes
+                      WHERE new_level = 'full'
                         AND created_at < now() - interval '14 days'
                    )
           - refId: reduce
@@ -87,7 +97,12 @@ groups:
                   reducer: { params: [], type: last }
                   type: query
         noDataState: OK
-        execErrState: OK
+        # Error, not OK. This rule spent its whole life returning zero rows
+        # because it could not read its own data, and execErrState: OK is what
+        # made that indistinguishable from "no tenant is stuck". Now that the
+        # read works, a future permission or policy change must page rather
+        # than restore the silence.
+        execErrState: Error
         for: 0s
         keepFiringFor: 1d
         isPaused: false
