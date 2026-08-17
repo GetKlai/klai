@@ -7,7 +7,18 @@ FROM python:3.12-slim
 # uv from the official distroless image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-RUN apt-get update && apt-get install -y ca-certificates libpq5 && update-ca-certificates && rm -rf /var/lib/apt/lists/*
+# ``apt-get upgrade`` picks up base-image security patches at build time.
+# Without it the image inherits whatever python:3.12-slim was published with,
+# and the Trivy gate in CI (which blocks the deploy job, not just the check)
+# fails the moment Debian discloses a CVE in a base package — even for a PR
+# that changes nothing but Python. That happened on 2026-08-17 with
+# CVE-2026-53615 in util-linux: 8 packages HIGH, fix already in
+# Debian-Security as 2.41.5-0+deb13u1, unreachable without this upgrade.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y ca-certificates libpq5 \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # SEC-018 F-029: create non-root user before COPY so files are owned correctly.
 RUN useradd --create-home --uid 1000 --shell /bin/bash app
